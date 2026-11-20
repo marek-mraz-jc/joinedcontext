@@ -1596,7 +1596,7 @@ mod tests {
             title: Default::default(),
             description: Default::default(),
             space: "barcelona".to_owned(),
-            tenant: tenancy::Tenant::segment("barcelona").ok(),
+            tenant: None,
             project: "barcelona".to_owned(),
             audience: jc_core::kinds::Audience::Public,
             allowed_projects: Vec::new(),
