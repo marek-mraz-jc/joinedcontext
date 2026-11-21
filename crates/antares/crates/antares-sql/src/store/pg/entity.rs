@@ -643,6 +643,19 @@ async fn count_ids(
     binds: impl Iterator<Item = &Bind>,
     res: &[std::sync::Arc<regex::Regex>],
 ) -> Result<i64, sqlx::Error> {
+    Ok(match_ids(tx, sql, binds, res, None).await?.0)
+}
+
+/// [`count_ids`], stopping at the selected id numbered `nth` (from 0) in the
+/// stream's order, which comes back beside the count of the ids before it.
+/// Without `nth`, or past the last selected id, the count is the total.
+async fn match_ids(
+    tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    sql: &str,
+    binds: impl Iterator<Item = &Bind>,
+    res: &[std::sync::Arc<regex::Regex>],
+    nth: Option<i64>,
+) -> Result<(i64, Option<String>), sqlx::Error> {
     use futures_util::TryStreamExt;
     // unprepared, as every statement of `query_in`
     let mut qy =
@@ -664,10 +677,13 @@ async fn count_ids(
             None => res.iter().any(|re| re.is_match(&id)),
         };
         if hit {
+            if nth == Some(n) {
+                return Ok((n, Some(id)));
+            }
             n = n.saturating_add(1);
         }
     }
-    Ok(n)
+    Ok((n, None))
 }
 
 /// `res` as one set that reads an id once for all of them: a whole space's
@@ -1553,12 +1569,65 @@ impl PgEntityStore {
         // the safety LIMIT — without one, a single undecided request (any
         // `scopeQ`, any `georel`, a `q=` shape the compiler declined)
         // materializes the whole tenant into the Vec below.
+        // T-7484: a deep page under a rule's idPatterns starts at the id the
+        // broker finds, never at a SQL OFFSET. PostgreSQL gives
+        // `regexp_like` the default third, so past ~a third of a type the
+        // OFFSET walk looks cheaper as a read of the whole type sorted, and
+        // either way it runs the regex on every skipped id (3-12 µs each:
+        // 358k Trees, 4.5 s and the gateway's 503 on jc-prod). The arms'
+        // ids stream in the page's order without the regex, the rule's own
+        // regex skips `offset` matches (as `count_ids`), and the page reads
+        // from the next one with OFFSET 0: the same rows, the SQL regex and
+        // every other condition still in its WHERE.
+        let mut page_wheres = None;
+        let mut deep_page = None;
+        let mut matched = None;
+        let pushed = f
+            .page
+            .as_ref()
+            .filter(|p| p.offset > 0 && (decided || candidates));
+        if let (Some(p), Some((at, res))) = (pushed, &id_regexes) {
+            let mut ids = wheres.clone();
+            if let Some(w) = ids.get_mut(*at) {
+                "true".clone_into(w);
+            }
+            let sql = format!(
+                "SELECT id FROM ({}) AS arms ORDER BY {order}",
+                ids_sql(&ids, split.as_ref())
+            );
+            let (seen, first) = match_ids(
+                &mut tx,
+                &sql,
+                binds.iter().take(where_binds),
+                res,
+                Some(p.offset),
+            )
+            .await?;
+            let mut w = wheres.clone();
+            match first {
+                Some(id) => {
+                    binds.push(Bind::Text(id));
+                    w.push(format!("{order} >= ${}", binds.len()));
+                }
+                // the page lies past the last match: it is empty
+                None => {
+                    w.push("false".to_owned());
+                    matched = Some(seen);
+                }
+            }
+            page_wheres = Some(w);
+            deep_page = Some(Page {
+                offset: 0,
+                limit: p.limit,
+                count: p.count,
+            });
+        }
         let ceiling = MAX_UNDECIDED_ROWS;
         let (sql, paged) = query_sql(
             &select,
-            &wheres,
+            page_wheres.as_deref().unwrap_or(&wheres),
             split.as_ref(),
-            f.page.as_ref(),
+            deep_page.as_ref().or(f.page.as_ref()),
             decided || candidates,
             order,
             &mut binds,
@@ -1610,8 +1679,10 @@ impl PgEntityStore {
             // same wheres ⇒ same bind prefix; stop before the
             // projection/page binds, which the count statement lacks
             let where_binds = binds.iter().take(where_binds);
-            total = Some(match &id_regexes {
-                Some((at, res)) => {
+            total = Some(match (&id_regexes, matched) {
+                // the deep page's own stream read every match already
+                (_, Some(n)) => n,
+                (Some((at, res)), None) => {
                     let mut wheres = wheres.clone();
                     // its bind stays numbered and unused: sqlx sends every
                     // parameter's type, so Postgres needs no reference to it
@@ -1621,7 +1692,7 @@ impl PgEntityStore {
                     let sql = ids_sql(&wheres, split.as_ref());
                     count_ids(&mut tx, &sql, where_binds, res).await?
                 }
-                None => {
+                (None, None) => {
                     // unprepared for the same reason as the statement above
                     let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql(
                         &wheres,
