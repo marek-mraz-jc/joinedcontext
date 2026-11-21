@@ -1653,6 +1653,110 @@ async fn id_patterns_select_as_the_rule_regex_does() {
     assert_eq!(out.rows.len(), ids.len(), "and narrows nothing");
 }
 
+/// T-7484: under a rule's idPatterns a deep page starts at the id the
+/// broker's regex finds past `offset` matches. Offset pages and cursor pages
+/// return the same ids in the same order over the whole selection, both
+/// arms included (a multi-type match), skipping the ids of the type the
+/// pattern refuses; a page past the end is empty and still counts.
+#[tokio::test(flavor = "multi_thread")]
+async fn id_pattern_offset_pages_follow_the_cursor_pages() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgidpatternpages").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let tree = |i: u32, tail: &str| {
+        format!(
+            "urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-trees-{:08x}{tail}",
+            i.wrapping_mul(2_654_435_761)
+        )
+    };
+    let mut docs: Vec<(String, serde_json::Value)> = Vec::new();
+    for i in 0..120 {
+        let id = tree(i, "");
+        docs.push((id.clone(), expanded(&id, "Tree", json!({}))));
+        // the same type and prefix, refused by the pattern
+        if i % 3 == 0 {
+            let id = tree(i, "x");
+            docs.push((id.clone(), expanded(&id, "Tree", json!({}))));
+        }
+    }
+    for i in 0..5 {
+        let id = tree(1000 + i, "");
+        let mut d = expanded(&id, "Tree", json!({}));
+        d["type"] = json!([format!("{NS}Thing"), format!("{NS}Tree")]);
+        docs.push((id, d));
+    }
+    for i in 0..20 {
+        let id = format!("urn:ngsi-ld:Garden:hel.fi:praha-mesto:green-gardens-{i:08x}");
+        docs.push((id.clone(), expanded(&id, "Garden", json!({}))));
+    }
+    for (id, d) in &docs {
+        let _ = s.delete(&t, id).await;
+        assert!(s.create(&t, id, d).await.expect("create"), "seed {id}");
+    }
+    const PATTERN: &str = "^urn:ngsi-ld:Tree:[a-z0-9]+[.]fi:praha-mesto:green-[a-z-]+-[0-9a-f]{8}$";
+    let mut want: Vec<String> = docs
+        .iter()
+        .map(|(id, _)| id.clone())
+        .filter(|id| id.starts_with("urn:ngsi-ld:Tree:") && !id.ends_with('x'))
+        .collect();
+    want.sort_unstable();
+    assert_eq!(want.len(), 125);
+    async fn page(
+        s: &PgEntityStore,
+        t: &TenantId,
+        offset: i64,
+        after: Option<&str>,
+        count: bool,
+    ) -> (Vec<String>, Option<i64>) {
+        let ex = |t: &str| t.to_owned();
+        let ps = [PATTERN.to_owned()];
+        let prefixes = ["urn:ngsi-ld:Tree:".to_owned()];
+        let types = [vec![format!("{NS}Tree")]];
+        let f = antares_sql::store::pg::entity::EntityFilter {
+            id_patterns: Some(&ps),
+            id_prefixes: Some(&prefixes),
+            types: Some(&types),
+            expand: &ex,
+            page: Some(antares_store::filter::Page {
+                offset,
+                limit: 7,
+                count,
+            }),
+            after_id: after,
+            ..Default::default()
+        };
+        let out = s.query(t, &f).await.expect("query");
+        assert!(out.decided && out.paged, "offset {offset}");
+        let ids = out
+            .rows
+            .iter()
+            .map(|r| r["id"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        (ids, out.total)
+    }
+    let mut by_offset = Vec::new();
+    for offset in (0..want.len() as i64).step_by(7) {
+        let (ids, total) = page(&s, &t, offset, None, true).await;
+        assert_eq!(total, Some(want.len() as i64), "count at offset {offset}");
+        by_offset.extend(ids);
+    }
+    assert_eq!(by_offset, want, "offset pages");
+    let mut by_cursor: Vec<String> = Vec::new();
+    loop {
+        let (ids, _) = page(&s, &t, 0, by_cursor.last().map(String::as_str), false).await;
+        if ids.is_empty() {
+            break;
+        }
+        by_cursor.extend(ids);
+    }
+    assert_eq!(by_cursor, want, "cursor pages");
+    let (ids, total) = page(&s, &t, want.len() as i64 + 3, None, true).await;
+    assert!(ids.is_empty(), "a page past the end: {ids:?}");
+    assert_eq!(total, Some(want.len() as i64), "and its count");
+}
+
 /// F-ANT1-011: `list_slice` is never refused for volume (the driver
 /// contract): a Tenant past the undecided-row ceiling still answers a window
 /// and the exact total.

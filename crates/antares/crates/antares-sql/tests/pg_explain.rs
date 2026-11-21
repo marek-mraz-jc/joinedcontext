@@ -871,23 +871,20 @@ async fn an_id_prefix_probe_seeks_its_byte_range() {
     }
 }
 
-/// T-5826: a rule's idPattern beside its exact prefix, over a Tenant shaped
-/// like dev's praha-mesto: 164 000 Trees whose ids lie in the heap in no id
-/// order. The entity query is planned with its values, and `~` estimates
-/// each fixed character of a dataset pattern as a 1-in-5 filter: expecting
-/// one match, the planner bitmap-read every Tree and sorted them for a page
-/// (10 s on dev). The store writes the pattern as `regexp_like`, which the
-/// planner cannot estimate, and the page reads i_entities_id_bytes in order
-/// up to its LIMIT, at the start and past a keyset.
-#[tokio::test]
-async fn an_id_pattern_page_reads_its_range_in_order() {
-    const T: &str = "pgexplain-idpattern";
+/// The Tenant of [`seed_trees`].
+const TREES_TENANT: &str = "pgexplain-idpattern";
+
+/// 164 000 Trees in [`TREES_TENANT`], shaped like dev's praha-mesto: ids in
+/// the heap in no id order.
+async fn seed_trees(pool: &sqlx::PgPool) {
+    const T: &str = TREES_TENANT;
     const TREES: i64 = 164_000;
-    let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect");
     let mut tx = pool.begin().await.expect("tx");
     for stmt in [
         "SET LOCAL statement_timeout = 0",
+        // both callers seed in parallel: the second waits out the first's
+        // insert, longer than the broker's 5 s lock_timeout
+        "SET LOCAL lock_timeout = 0",
         "SELECT pg_advisory_xact_lock(58260)",
     ] {
         sqlx::query(stmt).execute(&mut *tx).await.expect(stmt);
@@ -907,7 +904,6 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
                     jsonb_build_object('https://x/height', g % 30),
                     ARRAY['https://x/Tree'], now(), now()
                FROM generate_series(1, $2::bigint) g",
-            "ANALYZE entities",
         ] {
             let q = sqlx::query(stmt);
             let q = match stmt.contains("$1") {
@@ -922,6 +918,30 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
         }
     }
     tx.commit().await.expect("seed");
+    // a settled table's visibility map, as autovacuum keeps prod's: the
+    // index-only plans of 0044 count on it, and a fresh insert has none.
+    // Every caller vacuums: one that found the seed done waits here for
+    // the seeder's VACUUM (they conflict) instead of planning before it.
+    let mut conn = pool.acquire().await.expect("conn");
+    for stmt in ["SET lock_timeout = 0", "VACUUM (ANALYZE) entities"] {
+        sqlx::query(stmt).execute(&mut *conn).await.expect(stmt);
+    }
+}
+
+/// T-5826: a rule's idPattern beside its exact prefix, over a Tenant shaped
+/// like dev's praha-mesto: 164 000 Trees whose ids lie in the heap in no id
+/// order. The entity query is planned with its values, and `~` estimates
+/// each fixed character of a dataset pattern as a 1-in-5 filter: expecting
+/// one match, the planner bitmap-read every Tree and sorted them for a page
+/// (10 s on dev). The store writes the pattern as `regexp_like`, which the
+/// planner cannot estimate, and the page reads i_entities_id_bytes in order
+/// up to its LIMIT, at the start and past a keyset.
+#[tokio::test]
+async fn an_id_pattern_page_reads_its_range_in_order() {
+    const T: &str = TREES_TENANT;
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    seed_trees(&pool).await;
     let c = "id COLLATE \"C\"";
     let range = format!("{c} >= 'urn:ngsi-ld:Tree:' AND {c} < 'urn:ngsi-ld:Tree;'");
     // the ARE `antares_store::filter::id_pattern_sql` writes for the
@@ -949,6 +969,73 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
             "an idPattern page sorts its whole range instead of reading it in order:\n{plan}"
         );
     }
+}
+
+/// T-7484: a deep page under a rule's idPattern, as `store::pg::entity`
+/// runs it. The ids stream in the page's order without the regex (the
+/// broker's own regex skips the OFFSET): each arm ordered on its own under
+/// the store's index-only planner settings, so the arms are Index Only
+/// Scans of i_entities_id_bytes (0044) that merge without a sort. Ordered
+/// once over both arms, or planned by cost while other tests' writes kept
+/// the visibility map behind, the stream was a Seq Scan of the table and
+/// an external sort of the type (CI run 44904009419).
+/// The page itself is a keyset
+/// page from the id found there, which reads i_entities_id_bytes in order
+/// up to its LIMIT. The OFFSET statement it replaces planned a Bitmap Heap
+/// Scan of every Tree, ran the regex on each and sorted them all once its
+/// LIMIT passed the third the planner gives `regexp_like` (358k Trees:
+/// 4.5 s, the gateway's 503 on jc-prod).
+#[tokio::test]
+async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
+    const T: &str = TREES_TENANT;
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    seed_trees(&pool).await;
+    let c = "id COLLATE \"C\"";
+    let range = format!("{c} >= 'urn:ngsi-ld:Tree:' AND {c} < 'urn:ngsi-ld:Tree;'");
+    let re = r"^^urn\:ngsi\-ld\:Tree\:(?:[\-\.0-9a-z])+\:praha\-mesto\:green\-(?:[\-a-z])+\-(?:[\-0-9a-f]){32}$$";
+    let w = |regex: &str| {
+        format!(
+            "tenant_id = '{T}' AND (expires_at IS NULL OR expires_at > now()) \
+             AND ({range} AND (({range}))) AND {regex}"
+        )
+    };
+    let t = "'https://x/Tree'";
+    let ids = format!(
+        "SELECT id FROM ((SELECT id FROM entities WHERE {w} AND types[1] = {t} \
+         ORDER BY {c} OFFSET 0) UNION ALL \
+         (SELECT id FROM entities WHERE {w} AND cardinality(types) > 1 \
+         AND types[1] <> ALL(ARRAY[{t}]) AND (types @> ARRAY[{t}]) \
+         ORDER BY {c} OFFSET 0)) AS arms ORDER BY {c}",
+        w = w("true")
+    );
+    let pinned: Vec<&str> = pg::entity::ID_ORDER_PINNED.split("; ").collect();
+    let plan = plan_with(&pool, T, false, &pinned, &ids).await;
+    assert!(
+        !plan.contains("regexp_like")
+            && !plan.contains("Seq Scan")
+            && !plan.contains("Bitmap")
+            && !plan.contains("Sort  (")
+            && plan.contains("Merge Append")
+            && plan.contains("Index Only Scan using i_entities_id_bytes on entities"),
+        "the skip runs the regex in SQL, sweeps the table or sorts the type:\n{plan}"
+    );
+    let page = type_page(
+        &format!(
+            "{} AND {c} >= 'urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-tree-rows-a'",
+            w(&format!("(regexp_like({c}, '{re}'))"))
+        ),
+        &[&["https://x/Tree"]],
+        1001,
+    )
+    .replace("ORDER BY id LIMIT", &format!("ORDER BY {c} LIMIT"));
+    let plan = plan_of(&pool, T, &page).await;
+    assert!(
+        !plan.contains("Seq Scan")
+            && !plan.contains("Bitmap Heap Scan on entities entities_1")
+            && plan.contains("Index Scan using i_entities_id_bytes on entities entities_1"),
+        "the deep page sorts its range instead of reading it in order:\n{plan}"
+    );
 }
 
 /// T-4852 Security: the new arms and the geohash cover isolate Tenants as
