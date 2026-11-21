@@ -27,6 +27,24 @@
   // The view drawn last: a toolbar change of the host (T-7490) swaps its rows without a redraw.
   var shown = null;
 
+  // T-7490: dates and times on an axis or in a tooltip in the page's language, 24-hour clock.
+  var TIME = {
+    sk: { days: ["nedeľa", "pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota"], shortDays: ["ne", "po", "ut", "st", "št", "pi", "so"],
+      months: ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"],
+      shortMonths: ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec"] },
+    cs: { days: ["neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"], shortDays: ["ne", "po", "út", "st", "čt", "pá", "so"],
+      months: ["leden", "únor", "březen", "duben", "květen", "červen", "červenec", "srpen", "září", "říjen", "listopad", "prosinec"],
+      shortMonths: ["led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"] },
+    fi: { days: ["sunnuntai", "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai"], shortDays: ["su", "ma", "ti", "ke", "to", "pe", "la"],
+      months: ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu", "kesäkuu", "heinäkuu", "elokuu", "syyskuu", "lokakuu", "marraskuu", "joulukuu"],
+      shortMonths: ["tammi", "helmi", "maalis", "huhti", "touko", "kesä", "heinä", "elo", "syys", "loka", "marras", "joulu"] }
+  };
+  function timeLocale(lang) {
+    var names = TIME[lang];
+    if (!names) return undefined;
+    return Object.assign({ dateTime: "%-d. %-m. %Y %H:%M:%S", date: "%-d. %-m. %Y", time: "%H:%M:%S", periods: ["", ""] }, names);
+  }
+
   function draw(message) {
     // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
     var mode = message.theme === "dark" ? "dark" : "light";
@@ -44,6 +62,7 @@
       expr: vega.expressionInterpreter,
       loader: loader,
       renderer: "svg",
+      timeFormatLocale: timeLocale(document.documentElement.lang),
       // Export only: no source, no compiled spec, no "open in the editor" (which posts the spec
       // to another site).
       actions: { export: true, source: false, compiled: false, editor: false },

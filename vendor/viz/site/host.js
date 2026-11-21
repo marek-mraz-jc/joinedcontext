@@ -432,7 +432,7 @@
       mark: { type: "line", strokeWidth: 1 },
       params: [{ name: "brush", select: { type: "interval", encodings: ["x"] } }],
       encoding: {
-        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%d.%m.", labelOverlap: true } },
+        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelOverlap: true, tickMinStep: DAY } },
         y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
       }
     };
@@ -965,10 +965,12 @@
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
           note.textContent = notes.join(" ");
           say(data.partial || "", "note");
-          frame.hidden = false;
+          frame.hidden = zoom.hidden = false;
           return ready.then(draw);
         }).catch(function (error) {
           if (mine !== controller) return null;
+          note.textContent = "";
+          zoom.hidden = true;
           if (error && error.message === "dates") return say(t.badDates, "");
           failed(error);
         }).then(function () {

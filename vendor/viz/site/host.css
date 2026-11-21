@@ -17,6 +17,8 @@ a { color: #1d4ed8; }
 .inline main { padding: 0; }
 /* T-4811: pinned to the top with no margin, so the hidden caption below the frame adds no scroll height. */
 .inline .caption { position: absolute; top: 0; left: 0; margin: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* T-7490: hidden wins over any display rule (the frame of a refused read, a control not in use). */
+[hidden] { display: none !important; }
 /* T-7490: the toolbar of a temporal chart: labelled native controls that wrap on a phone. */
 .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; margin: 0 0 8px; }
 .controls[aria-busy="true"] { cursor: progress; }

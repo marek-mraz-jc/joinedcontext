@@ -924,9 +924,122 @@
  iframe { display: block; width: 100%; height: 360px; border: 0; }
  a { color: #1d4ed8; }
  /* In the catalogue the dataset page shows the title, the description and the link itself; they
+@@ -13,3 +17,19 @@
+ .inline main { padding: 0; }
+ /* T-4811: pinned to the top with no margin, so the hidden caption below the frame adds no scroll height. */
+ .inline .caption { position: absolute; top: 0; left: 0; margin: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
++/* T-7490: hidden wins over any display rule (the frame of a refused read, a control not in use). */
++[hidden] { display: none !important; }
++/* T-7490: the toolbar of a temporal chart: labelled native controls that wrap on a phone. */
++.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; margin: 0 0 8px; }
++.controls[aria-busy="true"] { cursor: progress; }
++.control { display: flex; flex-direction: column; gap: 2px; min-width: 9rem; flex: 1 1 9rem; max-width: 16rem; }
++.control label { font-weight: 600; font-size: 0.85rem; }
++.control select, .control input { font: inherit; padding: 4px 6px; border: 1px solid #94a3b8; border-radius: 6px; background: #fff; color: inherit; }
++.control select:focus-visible, .control input:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 1px; }
++.hint { font-size: 0.78rem; color: #475569; margin: 0; }
++#controls-note { flex: 1 1 100%; }
++#controls-note:empty { display: none; }
++#status.loading { background: #eff6ff; color: #1e3a8a; }
++html[data-theme="dark"] .control select, html[data-theme="dark"] .control input { background: #1f2329; border-color: #4b5563; }
++html[data-theme="dark"] .hint { color: #a0a8b3; }
++@media (max-width: 480px) { .control { max-width: none; flex-basis: 40%; } }
 --- a/site/host.js
 +++ site/host.js
-@@ -40,15 +40,27 @@
+@@ -36,19 +36,120 @@
+     en: "Partial chart: it shows data up to {at}; the rest is over the page's limits."
+   };
+ 
++  // T-7490: the toolbar of a temporal chart. Its state lives in the fragment after the view id, so
++  // a link or an embed keeps the reader's choice: `r` range, `from`/`to` days of a custom range,
++  // `g` granularity, `m` method, `a` attribute, `s` stations (comma-separated entity ids).
++  var RANGES = ["PT24H", "P7D", "P31D"];
++  var GRANS = ["raw", "PT1H", "P1D"];
++  var METHODS = ["avg", "min", "max"];
++  var AGGR = /^(avg|min|max|sum|totalCount|distinctCount|stddev|sumsq)$/;
++  var DAY = 86400000;
++  // Raw readings past a week come back hourly: a week of ten-minute readings of eight stations is
++  // already 8,000 instances (payload bound).
++  var RAW_DAYS = 7;
++  // A window longer than the gateway's anonymous 31 days is read as consecutive 31-day daily
++  // windows, at most WALK of them (the newest), never by asking the gateway for more.
++  var WALK = 12;
++  var DATE = /^\d{4}-\d\d-\d\d$/;
++  var ENTITY = /^urn:[A-Za-z0-9][A-Za-z0-9:._~%+-]{0,254}$/;
++  var TEXT = {
++    sk: {
++      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Napr. 7 dní: posledný týždeň do teraz; Vlastné: od a do podľa dátumu.",
++      PT24H: "24 hodín", P7D: "7 dní", P31D: "31 dní", custom: "Vlastné", from: "Od", to: "Do", dateHint: "Napr. 2026-11-01 (deň v UTC).",
++      gran: "Podrobnosť", granHint: "Napr. Hodinovo: jedna hodnota za každú hodinu.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
++      method: "Výpočet", methodHint: "Napr. Maximum: najvyššia hodnota v hodine alebo dni.", avg: "Priemer", min: "Minimum", max: "Maximum",
++      stations: "Stanice", stationsHint: "Ctrl alebo Cmd a klik vyberie viac staníc; bez výberu sú všetky.",
++      attr: "Veličina", attrHint: "Napr. Teplota: graf ukáže iba ju.", all: "Všetky",
++      loading: "Načítavam údaje…", empty: "Za toto obdobie graf nemá žiadne údaje. Skúste dlhšie obdobie alebo inú stanicu.",
++      hourly: "Merania za viac ako 7 dní sa zobrazujú po hodinách.", daily: "Obdobie dlhšie ako 31 dní sa zobrazuje po dňoch.",
++      capped: "Zobrazuje sa posledných {n} dní vybraného obdobia (limit stránky).", badDates: "Dátum Od musí byť najneskôr Do a nie v budúcnosti.",
++      zoom: "Ťahaním v páse pod grafom priblížite časť obdobia, dvojklik ho vráti. Klik na stanicu v legende ju zvýrazní.",
++      time: "Čas", station: "Stanica"
++    },
++    cs: {
++      controls: "Nastavení grafu", range: "Období", rangeHint: "Např. 7 dní: poslední týden do teď; Vlastní: od a do podle data.",
++      PT24H: "24 hodin", P7D: "7 dní", P31D: "31 dní", custom: "Vlastní", from: "Od", to: "Do", dateHint: "Např. 2026-11-01 (den v UTC).",
++      gran: "Podrobnost", granHint: "Např. Po hodinách: jedna hodnota za každou hodinu.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
++      method: "Výpočet", methodHint: "Např. Maximum: nejvyšší hodnota v hodině nebo dni.", avg: "Průměr", min: "Minimum", max: "Maximum",
++      stations: "Stanice", stationsHint: "Ctrl nebo Cmd a klik vybere více stanic; bez výběru jsou všechny.",
++      attr: "Veličina", attrHint: "Např. Teplota: graf ukáže jen ji.", all: "Všechny",
++      loading: "Načítám data…", empty: "Za toto období graf nemá žádná data. Zkuste delší období nebo jinou stanici.",
++      hourly: "Měření za více než 7 dní se zobrazují po hodinách.", daily: "Období delší než 31 dní se zobrazuje po dnech.",
++      capped: "Zobrazuje se posledních {n} dní vybraného období (limit stránky).", badDates: "Datum Od musí být nejpozději Do a ne v budoucnosti.",
++      zoom: "Tažením v pásu pod grafem přiblížíte část období, dvojklik ho vrátí. Klik na stanici v legendě ji zvýrazní.",
++      time: "Čas", station: "Stanice"
++    },
++    fi: {
++      controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Esim. 7 päivää: viimeinen viikko tähän asti; Oma: alku- ja loppupäivä.",
++      PT24H: "24 tuntia", P7D: "7 päivää", P31D: "31 päivää", custom: "Oma", from: "Alkaen", to: "Asti", dateHint: "Esim. 2026-11-01 (päivä UTC-ajassa).",
++      gran: "Tarkkuus", granHint: "Esim. Tunneittain: yksi arvo kultakin tunnilta.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
++      method: "Laskenta", methodHint: "Esim. Maksimi: tunnin tai päivän suurin arvo.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
++      stations: "Asemat", stationsHint: "Ctrl tai Cmd ja napsautus valitsee useita asemia; ilman valintaa kaikki.",
++      attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
++      loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista asemaa.",
++      hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivän aikaväli näytetään päivittäin.",
++      capped: "Näytetään valitun aikavälin viimeiset {n} päivää (sivun raja).", badDates: "Alkupäivän on oltava viimeistään loppupäivä eikä tulevaisuudessa.",
++      zoom: "Vedä kaavion alla olevassa kaistassa lähentääksesi, kaksoisnapsautus palauttaa. Napsauta asemaa selitteessä korostaaksesi sen.",
++      time: "Aika", station: "Asema"
++    },
++    en: {
++      controls: "Chart settings", range: "Range", rangeHint: "E.g. 7 days: the last week up to now; Custom: from and to by date.",
++      PT24H: "24 hours", P7D: "7 days", P31D: "31 days", custom: "Custom", from: "From", to: "To", dateHint: "E.g. 2026-11-01 (a UTC day).",
++      gran: "Granularity", granHint: "E.g. Hourly: one value for each hour.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
++      method: "Method", methodHint: "E.g. Maximum: the highest value of each hour or day.", avg: "Average", min: "Minimum", max: "Maximum",
++      stations: "Stations", stationsHint: "Ctrl or Cmd and click picks several stations; none picked means all.",
++      attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
++      loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another station.",
++      hourly: "Readings over more than 7 days are shown hourly.", daily: "A range over 31 days is shown daily.",
++      capped: "Showing the last {n} days of the range picked (the page's limit).", badDates: "From must be on or before To and not in the future.",
++      zoom: "Drag in the strip under the chart to zoom into part of the range; a double click resets it. Click a station in the legend to highlight it.",
++      time: "Time", station: "Station"
++    }
++  };
++  // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
++  var UNITS = { CEL: "°C", KEL: "K", P1: "%", HPA: "hPa", A97: "hPa", PAL: "Pa", MMT: "mm", MTS: "m/s", KMH: "km/h", DD: "°",
++    GQ: "µg/m³", GP: "mg/m³", "59": "ppm", "61": "ppb", WTT: "W", KWT: "kW", KWH: "kWh", LUX: "lx", DB: "dB", MTR: "m", CMT: "cm" };
++  // The Smart Data Models units of the attributes the catalogue's weather and air charts draw, for
++  // an answer without unitCode; `fraction`: the model stores 0..1 and a reader reads percent.
++  var KNOWN = {
++    temperature: { unit: "CEL", sk: "Teplota", cs: "Teplota", fi: "Lämpötila", en: "Temperature" },
++    relativeHumidity: { unit: "P1", fraction: true, sk: "Relatívna vlhkosť", cs: "Relativní vlhkost", fi: "Suhteellinen kosteus", en: "Relative humidity" },
++    atmosphericPressure: { unit: "HPA", sk: "Tlak vzduchu", cs: "Tlak vzduchu", fi: "Ilmanpaine", en: "Air pressure" },
++    precipitation: { unit: "MMT", sk: "Zrážky", cs: "Srážky", fi: "Sademäärä", en: "Precipitation" },
++    windSpeed: { unit: "MTS", sk: "Rýchlosť vetra", cs: "Rychlost větru", fi: "Tuulen nopeus", en: "Wind speed" },
++    windDirection: { unit: "DD", sk: "Smer vetra", cs: "Směr větru", fi: "Tuulen suunta", en: "Wind direction" },
++    pm10: { unit: "GQ", sk: "PM10", cs: "PM10", fi: "PM10", en: "PM10" },
++    pm25: { unit: "GQ", sk: "PM2,5", cs: "PM2,5", fi: "PM2,5", en: "PM2.5" },
++    no2: { unit: "GQ", sk: "NO₂", cs: "NO₂", fi: "NO₂", en: "NO₂" },
++    o3: { unit: "GQ", sk: "O₃", cs: "O₃", fi: "O₃", en: "O₃" },
++    so2: { unit: "GQ", sk: "SO₂", cs: "SO₂", fi: "SO₂", en: "SO₂" }
++  };
++
+   // `#{viewId}`, then `&inline` (the catalogue shows title and description itself) and
    // `&lang=sk` (the page's language) in any order.
    function parseHash(hash) {
      var parts = String(hash || "").replace(/^#/, "").split("&");
@@ -957,7 +1070,228 @@
    }
  
    // Whether a parent may hand this page a spec (`#show`, ADR-N-053 §2.9): https on the domain or
-@@ -212,7 +224,9 @@
+@@ -138,6 +239,220 @@
+     }
+   }
+ 
++  // The toolbar's defaults: what the view itself asks for. A `last`, an aggrPeriod or an aggrMethod
++  // the toolbar does not list stays as an extra option, so no authored chart changes on its own.
++  function defaults(source) {
++    var s = source || {};
++    var aggregated = !!s.aggrMethod && !!duration(s.aggrPeriod);
++    return {
++      range: duration(s.last) ? s.last : "P7D",
++      from: null,
++      to: null,
++      gran: aggregated ? s.aggrPeriod : "raw",
++      method: aggregated && AGGR.test(s.aggrMethod) ? s.aggrMethod : "avg",
++      attr: null,
++      stations: []
++    };
++  }
++
++  // The fragment's toolbar state over the view's defaults. A part that is not one of the allowed
++  // values is dropped, never repaired, so a link cannot put a value of its own into a URL.
++  function parseState(hash, source) {
++    var state = defaults(source);
++    var own = defaults(source);
++    var attrs = Array.isArray(source && source.attrs) ? source.attrs : [];
++    String(hash || "").replace(/^#/, "").split("&").slice(1).forEach(function (part) {
++      var at = part.indexOf("=");
++      if (at < 1) return;
++      var key = part.slice(0, at);
++      var value;
++      try { value = decodeURIComponent(part.slice(at + 1)); } catch (e) { return; }
++      if (key === "r" && (RANGES.indexOf(value) >= 0 || value === own.range || value === "custom")) state.range = value;
++      if ((key === "from" || key === "to") && day(value) !== null) state[key] = value;
++      if (key === "g" && (GRANS.indexOf(value) >= 0 || value === own.gran)) state.gran = value;
++      if (key === "m" && (METHODS.indexOf(value) >= 0 || value === own.method)) state.method = value;
++      if (key === "a" && attrs.length > 1 && attrs.indexOf(value) >= 0) state.attr = value;
++      if (key === "s") state.stations = value.split(",").filter(function (id) { return ENTITY.test(id); }).slice(0, 50);
++    });
++    if (state.range === "custom" && (!state.from || !state.to)) state.range = own.range;
++    if (state.range !== "custom") state.from = state.to = null;
++    return state;
++  }
++
++  // The fragment parts of a state that differ from the view's defaults, in a fixed order.
++  function stateHash(state, source) {
++    var own = defaults(source);
++    var out = [];
++    if (state.range !== own.range) out.push("r=" + encodeURIComponent(state.range));
++    if (state.range === "custom") out.push("from=" + state.from, "to=" + state.to);
++    if (state.gran !== own.gran) out.push("g=" + encodeURIComponent(state.gran));
++    if (state.method !== own.method) out.push("m=" + encodeURIComponent(state.method));
++    if (state.attr) out.push("a=" + encodeURIComponent(state.attr));
++    if (state.stations.length) out.push("s=" + state.stations.map(encodeURIComponent).join(","));
++    return out.join("&");
++  }
++
++  // A `YYYY-MM-DD` day as the UTC midnight it starts at, or null.
++  function day(text) {
++    if (!DATE.test(String(text || ""))) return null;
++    var ms = Date.parse(text + "T00:00:00Z");
++    return isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== text ? null : ms;
++  }
++
++  function iso(ms) {
++    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
++  }
++
++  // The reads of a temporal chart in the toolbar's state: one window for a range up to 31 days,
++  // else consecutive daily windows of at most 31 days, the newest WALK of them. A preset range is
++  // read `after` now minus the range (a cut answer continues by Content-Range), a custom or walked
++  // one `between`. Throws on a source or a state no read may come from.
++  function temporalPlan(source, state, endpoint, api, now) {
++    firstRequest(source, endpoint, api, now);
++    var s = source;
++    var attrs = state.attr ? [state.attr] : s.attrs;
++    var start;
++    var end;
++    var custom = state.range === "custom";
++    if (custom) {
++      start = day(state.from);
++      end = day(state.to);
++      if (start === null || end === null || start > end || start > now) throw new Error("dates");
++      end = Math.min(end + DAY, now);
++    } else {
++      var span = duration(state.range);
++      if (!span) throw new Error("range");
++      start = now - span;
++      end = now;
++    }
++    var gran = state.gran;
++    var forced = null;
++    if (gran !== "raw" && !duration(gran)) throw new Error("granularity");
++    if (end - start > MAX_DAYS * DAY && gran !== "P1D") {
++      gran = "P1D";
++      forced = "daily";
++    } else if (gran === "raw" && end - start > RAW_DAYS * DAY) {
++      gran = "PT1H";
++      forced = "hourly";
++    }
++    var method = gran === "raw" ? null : state.method;
++    if (method !== null && !AGGR.test(method)) throw new Error("method");
++    var windows = [];
++    var capped = false;
++    for (var to = end; to > start; to -= MAX_DAYS * DAY) {
++      if (windows.length === WALK) {
++        capped = true;
++        break;
++      }
++      windows.unshift({ from: Math.max(start, to - MAX_DAYS * DAY), to: to });
++    }
++    var base = api + "/api/endpoint/" + endpoint + "/ngsi-ld/v1/temporal/entities?";
++    var between = custom || windows.length > 1;
++    return {
++      kind: "temporal",
++      type: s.type,
++      attrs: attrs,
++      method: method,
++      gran: gran,
++      forced: forced,
++      capped: capped ? Math.round((end - windows[0].from) / DAY) : 0,
++      urls: windows.map(function (w) {
++        return base + query({
++          type: s.type,
++          attrs: attrs.join(","),
++          timerel: between ? "between" : "after",
++          timeAt: iso(w.from),
++          endTimeAt: between ? iso(w.to) : undefined,
++          format: method ? "aggregatedValues" : "temporalValues",
++          aggrMethods: method || undefined,
++          aggrPeriodDuration: method ? gran : undefined,
++          firstN: method ? undefined : PAGE,
++          limit: PAGE
++        });
++      })
++    };
++  }
++
++  // An attribute's axis title in the page's language with its unit, and whether its 0..1 values
++  // are drawn as percent: the answer's unitCode first, else the model's.
++  function measure(attr, unitCode, lang, values) {
++    var known = KNOWN[attr] || {};
++    var label = known[lang] || known.en || attr.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, function (c) { return c.toUpperCase(); });
++    var code = typeof unitCode === "string" ? unitCode : known.unit;
++    var percent = !!known.fraction && code === "P1" && values.every(function (v) { return typeof v !== "number" || Math.abs(v) <= 1.5; });
++    var unit = UNITS[code] || "";
++    return { label: label, unit: unit, percent: percent, title: unit ? label + " (" + unit + ")" : label };
++  }
++
++  // The interactive form of a single-view temporal spec (a `mark`, an x of type temporal, nothing
++  // composed and no params of its own): the authored chart at `width` with the y title and the
++  // tooltip naming the measure and its unit, a legend that toggles a station (when colour is a
++  // field), and a strip under it whose x-interval brush zooms the chart. Any other spec only gets
++  // the titles and the full width.
++  function interactive(spec, opts) {
++    var copy = JSON.parse(JSON.stringify(spec));
++    var enc = copy.encoding || {};
++    var t = TEXT[opts.lang] || TEXT.en;
++    if (opts.from && opts.to && opts.from !== opts.to) rename(copy, opts.from, opts.to);
++    if (enc.y && enc.y.field === opts.attr && enc.y.title === undefined) enc.y.title = opts.measure.title;
++    (Array.isArray(enc.tooltip) ? enc.tooltip : []).forEach(function (tip) {
++      if (!tip || typeof tip !== "object" || tip.title !== undefined) return;
++      if (tip.field === opts.attr) tip.title = opts.measure.title;
++      else if (tip.type === "temporal") {
++        tip.title = t.time;
++        if (!tip.format) tip.format = "%d.%m.%Y %H:%M";
++      } else if (tip.field === "name") tip.title = t.station;
++    });
++    var single = copy.mark && enc.x && enc.x.type === "temporal" && enc.x.field &&
++      !copy.layer && !copy.vconcat && !copy.hconcat && !copy.concat && !copy.facet && !copy.repeat && !copy.params && !enc.row && !enc.column;
++    if (!single) {
++      if (copy.width === undefined && !copy.vconcat && !copy.hconcat && !copy.concat && !copy.facet && !copy.repeat) copy.width = "container";
++      return copy;
++    }
++    var outer = { $schema: copy.$schema, data: copy.data };
++    ["datasets", "config", "title", "description"].forEach(function (key) {
++      if (copy[key] !== undefined) outer[key] = copy[key];
++      delete copy[key];
++    });
++    delete copy.$schema;
++    delete copy.data;
++    var width = Math.max(Math.round(opts.width), 200);
++    copy.width = width;
++    if (copy.height === undefined) copy.height = 260;
++    enc.x.scale = Object.assign({}, enc.x.scale, { domain: { param: "brush" } });
++    var color = enc.color && enc.color.field;
++    if (color && !enc.opacity) {
++      copy.params = [{ name: "pick", select: { type: "point", fields: [color] }, bind: "legend" }];
++      enc.opacity = { condition: { param: "pick", value: 1 }, value: 0.15 };
++      enc.color.legend = Object.assign({ orient: "bottom", columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, enc.color.legend);
++    }
++    var strip = {
++      width: width,
++      height: 44,
++      mark: { type: "line", strokeWidth: 1 },
++      params: [{ name: "brush", select: { type: "interval", encodings: ["x"] } }],
++      encoding: {
++        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelOverlap: true, tickMinStep: DAY } },
++        y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
++      }
++    };
++    delete strip.encoding.y.sort;
++    if (color) strip.encoding.color = { field: color, type: enc.color.type || "nominal", legend: null };
++    if (color && enc.detail) strip.encoding.detail = enc.detail;
++    outer.vconcat = [copy, strip];
++    return outer;
++  }
++
++  // Every `field` naming one attribute names another (the toolbar's attribute picker).
++  function rename(node, from, to) {
++    if (Array.isArray(node)) return node.forEach(function (n) { rename(n, from, to); });
++    if (!node || typeof node !== "object") return;
++    Object.keys(node).forEach(function (key) {
++      if (key === "field" && node[key] === from) node[key] = to;
++      else rename(node[key], from, to);
++    });
++  }
++
+   // A LanguageProperty read with `lang`, or its map: the page's language, else the first text.
+   function text(value, lang) {
+     if (value && typeof value === "object" && !Array.isArray(value)) {
+@@ -212,7 +527,9 @@
    var queued = [];
    function slot(run) {
      var locks = root.navigator && root.navigator.locks;
@@ -968,7 +1302,85 @@
        var free = function (i) {
          // Every slot taken: wait in line for one of them.
          if (i === READS) return locks.request("jc-viz-read-" + Math.floor(Math.random() * READS), run);
-@@ -465,7 +479,8 @@
+@@ -340,8 +657,10 @@
+     var byId = {};
+     var byPart = {};
+     var seen = {};
++    var units = {};
+     return {
+       entities: entities,
++      units: units,
+       add: function (body) {
+         (Array.isArray(body) ? body : []).forEach(function (entity) {
+           if (!entity || typeof entity.id !== "string") return;
+@@ -350,6 +669,7 @@
+           request.attrs.forEach(function (attr) {
+             parts(entity, attr).forEach(function (p) {
+               if (!Array.isArray(p[key])) return;
++              if (typeof p.unitCode === "string" && !units[attr]) units[attr] = p.unitCode;
+               var dataset = typeof p.datasetId === "string" ? p.datasetId : "";
+               var at = entity.id + "\n" + attr + "\n" + dataset;
+               var part = byPart[at];
+@@ -373,8 +693,9 @@
+   }
+ 
+   // `deadline`: past it no further window is asked for, so a slow read still draws before the
+-  // page's 15 s timeout; by default 3 s short of it.
+-  function load(view, api, lang, fetcher, now, deadline) {
++  // page's 15 s timeout; by default 3 s short of it. `state`: the toolbar's (T-7490), else the
++  // view's own defaults.
++  function load(view, api, lang, fetcher, now, deadline, state) {
+     var source = JSON.parse(view.source || "{}");
+     var request = firstRequest(source, view.endpoint, api, now);
+     var budget = { rows: LIMIT_ROWS, bytes: LIMIT_BYTES };
+@@ -405,11 +726,13 @@
+       });
+     }
+     if (request.kind === "temporal") {
++      var plan = temporalPlan(source, state || defaults(source), view.endpoint, api, now);
++      request = { kind: "temporal", type: plan.type, attrs: plan.attrs, method: plan.method, url: plan.urls[0] };
+       var merged = merger(request);
+       var partial = false;
+       // `block`: the entities the first window of this entity page listed; a full one (PAGE)
+       // continues with the next entities once its windows are read.
+-      var windowOf = function (url, offset, block) {
++      var windowOf = function (base, url, offset, block) {
+         return open(url).then(function (page) {
+           var body = JSON.parse(page.text);
+           count(new Array(instances(body, request)), budget);
+@@ -424,16 +747,27 @@
+           if (block === null) block = Array.isArray(got.body) ? got.body.length : 0;
+           var next = nextWindow(got.page.response, url, request);
+           if (next && (next === url || Date.now() > stopAt)) partial = true;
+-          else if (next) return windowOf(next, offset, block);
+-          if (!partial && block === PAGE) return windowOf(request.url + "&offset=" + (offset + PAGE), offset + PAGE, null);
++          else if (next) return windowOf(base, next, offset, block);
++          if (!partial && block === PAGE) return windowOf(base, base + "&offset=" + (offset + PAGE), offset + PAGE, null);
+           return null;
+         });
+       };
+-      return windowOf(request.url, 0, null).then(function () {
++      // The windows of a walk one after another, oldest first; a cut one ends the walk.
++      var walk = plan.urls.reduce(function (done, url) {
++        return done.then(function () {
++          if (partial) return null;
++          if (Date.now() > stopAt && merged.entities.length) {
++            partial = true;
++            return null;
++          }
++          return windowOf(url, url, 0, null);
++        });
++      }, Promise.resolve());
++      return walk.then(function () {
+         return names(request.type);
+       }).then(function (map) {
+         var out = rowsFromTemporal(merged.entities, request, map);
+-        var data = { format: "json", rows: count(out, { rows: LIMIT_ROWS }) };
++        var data = { format: "json", rows: count(out, { rows: LIMIT_ROWS }), plan: plan, units: merged.units };
+         if (partial) {
+           var at = out.reduce(function (m, row) { return row.observedAt > m ? row.observedAt : m; }, "");
+           data.partial = (PARTIAL[lang] || PARTIAL.en).replace("{at}", at ? at.slice(0, 16).replace("T", " ") + " UTC" : "?");
+@@ -465,17 +799,21 @@
  
    function main() {
      var where = parseHash(location.hash);
@@ -978,15 +1390,322 @@
      var status = document.getElementById("status");
      var frame = document.getElementById("frame");
      var lang = (where && where.lang) || (navigator.language || "en").slice(0, 2);
-@@ -483,6 +498,7 @@
+-    var fail = function (message) {
++    var say = function (message, kind) {
+       status.textContent = message;
+-      status.className = "";
+-      status.hidden = false;
+-      frame.hidden = true;
++      status.className = kind || "";
++      status.hidden = !message;
+       resize();
+     };
++    var fail = function (message) {
++      say(message, "");
++      frame.hidden = true;
++    };
+     function resize() {
+       // The content, not the viewport: a frame grows and shrinks with its chart.
+       var height = Math.ceil(document.body.getBoundingClientRect().height);
+@@ -483,13 +821,22 @@
      }
      if (location.hash === "#show") return show(h, frame, fail);
      if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
 +    if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
      if (where.inline) document.body.classList.add("inline");
-     var controller = new AbortController();
-     var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
-@@ -572,6 +588,9 @@
+-    var controller = new AbortController();
+-    var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
++    // One controller and one 15 s timer per read: a toolbar change aborts the read before it.
++    var controller = null;
++    var timer = null;
+     var fetcher = function (url, options) {
+       options.signal = controller.signal;
+       return fetch(url, options);
+     };
++    var fresh = function () {
++      if (controller) controller.abort();
++      clearTimeout(timer);
++      var mine = controller = new AbortController();
++      timer = setTimeout(function () { mine.abort(); }, TIMEOUT_MS);
++      return mine;
++    };
+     var ready = new Promise(function (resolve) {
+       window.addEventListener("message", function (event) {
+         // The renderer runs in an opaque origin, so its messages come from "null"; the source
+@@ -504,6 +851,11 @@
+         if (data.type === "jc-viz-error") fail(String(data.message || "The chart could not be drawn."));
+       });
+     });
++    var failed = function (error) {
++      if (error && error.status) return fail(unreadable(error.status, lang));
++      fail(error && error.name === "AbortError" ? "The data took longer than 15 seconds." : String(error.message || error));
++    };
++    fresh();
+     fetcher(h.data + "/api/3/action/resource_view_show?" + query({ id: where.id }), { credentials: "omit", referrerPolicy: "no-referrer" })
+       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("The chart is not published.")); })
+       .then(function (body) {
+@@ -521,23 +873,251 @@
+         var table = document.getElementById("table");
+         table.textContent = LINK[lang] || LINK.en;
+         table.href = h.data + "/dataset/" + encodeURIComponent(view.package_id || "");
++        var source = JSON.parse(view.source || "{}");
++        if (source.source === "temporal") return temporal(view, spec, source);
+         return load(view, h.api, lang, fetcher, Date.now()).then(function (data) {
+-          if (data.partial) {
+-            status.textContent = data.partial;
+-            status.className = "note";
+-            status.hidden = false;
+-          }
++          if (data.partial) say(data.partial, "note");
+           return ready.then(function () {
+             frame.contentWindow.postMessage({ type: "jc-viz-render", spec: spec, data: data, lang: lang }, "*");
+           });
+         });
+       })
+-      .catch(function (error) {
+-        if (error && error.status) return fail(unreadable(error.status, lang));
+-        fail(error && error.name === "AbortError" ? "The data took longer than 15 seconds." : String(error.message || error));
+-      })
++      .catch(failed)
+       .then(function () { clearTimeout(timer); });
+     window.addEventListener("resize", resize);
++
++    // A temporal chart (T-7490): the toolbar over the frame, each change a new read whose rows go
++    // into the running view; a change of attribute or width draws the spec again.
++    function temporal(view, spec, source) {
++      var t = TEXT[lang] || TEXT.en;
++      var state = parseState(location.hash, source);
++      var bar = source.controls === false ? null : toolbar(document, source, state, t, lang, function (next) {
++        state = next;
++        remember();
++        read();
++      });
++      var all = [];
++      var units = {};
++      var plan = null;
++      var drawn = null; // the key of the spec in the frame
++      var note = document.createElement("p");
++      note.id = "controls-note";
++      note.className = "hint";
++      if (bar) bar.form.appendChild(note);
++      var zoom = document.createElement("p");
++      zoom.className = "hint";
++      zoom.textContent = t.zoom;
++      function remember() {
++        var extra = stateHash(state, source);
++        var parts = location.hash.replace(/^#/, "").split("&").filter(function (p) { return p.indexOf("=") < 0 || /^lang=/.test(p); });
++        try { history.replaceState(null, "", "#" + parts.concat(extra ? [extra] : []).join("&")); } catch (e) { /* the hash stays */ }
++      }
++      function picked() {
++        // A picked station the answer lacks is dropped: the rest still draw.
++        state.stations = state.stations.filter(function (id) { return all.some(function (row) { return row.id === id; }); });
++        if (!state.stations.length) return all;
++        return all.filter(function (row) { return state.stations.indexOf(row.id) >= 0; });
++      }
++      function draw() {
++        var attr = plan.attrs.length === 1 ? plan.attrs[0] : null;
++        var rows = picked();
++        var values = attr ? all.map(function (row) { return row[attr]; }) : [];
++        var m = attr ? measure(attr, units[attr], lang, values) : null;
++        if (m && m.percent) {
++          rows = rows.map(function (row) {
++            var copy = Object.assign({}, row);
++            if (typeof copy[attr] === "number") copy[attr] = Math.round(copy[attr] * 1000) / 10;
++            return copy;
++          });
++        }
++        var authored = spec.encoding && spec.encoding.y && source.attrs.indexOf(spec.encoding.y.field) >= 0 ? spec.encoding.y.field : null;
++        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 90;
++        var key = [attr, m && m.title, Math.round(width / 40)].join("|");
++        if (bar) bar.stations(all, state.stations);
++        if (!rows.length) say(t.empty, "note");
++        if (drawn === key) {
++          frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
++          return;
++        }
++        drawn = key;
++        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, from: authored, to: state.attr }) : spec;
++        frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
++        if (shown.vconcat && !zoom.parentNode) frame.parentNode.insertBefore(zoom, frame.nextSibling);
++      }
++      function read() {
++        var mine = fresh();
++        if (bar) bar.busy(true);
++        frame.setAttribute("aria-busy", "true");
++        say(t.loading, "loading");
++        var p;
++        try {
++          p = load(view, h.api, lang, fetcher, Date.now(), null, state);
++        } catch (error) {
++          p = Promise.reject(error);
++        }
++        return p.then(function (data) {
++          if (mine !== controller) return null;
++          all = data.rows;
++          units = data.units || {};
++          plan = data.plan;
++          var notes = [];
++          if (plan.forced) notes.push(t[plan.forced]);
++          if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
++          note.textContent = notes.join(" ");
++          say(data.partial || "", "note");
++          frame.hidden = zoom.hidden = false;
++          return ready.then(draw);
++        }).catch(function (error) {
++          if (mine !== controller) return null;
++          note.textContent = "";
++          zoom.hidden = true;
++          if (error && error.message === "dates") return say(t.badDates, "");
++          failed(error);
++        }).then(function () {
++          if (mine !== controller) return;
++          clearTimeout(timer);
++          frame.removeAttribute("aria-busy");
++          if (bar) bar.busy(false);
++        });
++      }
++      if (bar) bar.onStations(function (ids) {
++        state.stations = ids;
++        remember();
++        if (plan) draw();
++      });
++      var resizing = null;
++      window.addEventListener("resize", function () {
++        clearTimeout(resizing);
++        resizing = setTimeout(function () { if (plan && !frame.hidden) draw(); }, 200);
++      });
++      return read();
++    }
++  }
++
++  // The toolbar: labelled native selects, each with a hint line, in the page's language. `change`
++  // gets a new state for a change that needs a new read; stations filter the rows already read.
++  function toolbar(doc, source, state, t, lang, change) {
++    var own = defaults(source);
++    var form = doc.createElement("form");
++    form.className = "controls";
++    form.setAttribute("aria-label", t.controls);
++    form.addEventListener("submit", function (event) { event.preventDefault(); });
++    var figure = doc.getElementById("status").parentNode;
++    figure.insertBefore(form, doc.getElementById("status"));
++    function field(id, label, hint, control) {
++      var box = doc.createElement("div");
++      box.className = "control";
++      var l = doc.createElement("label");
++      l.htmlFor = id;
++      l.textContent = label;
++      control.id = id;
++      var small = doc.createElement("small");
++      small.id = id + "-hint";
++      small.className = "hint";
++      small.textContent = hint;
++      control.setAttribute("aria-describedby", small.id);
++      box.appendChild(l);
++      box.appendChild(control);
++      box.appendChild(small);
++      form.appendChild(box);
++      return box;
++    }
++    function select(values, labels, value) {
++      var el = doc.createElement("select");
++      values.forEach(function (v, i) {
++        var o = doc.createElement("option");
++        o.value = v;
++        o.textContent = labels[i];
++        el.appendChild(o);
++      });
++      el.value = value;
++      return el;
++    }
++    function label(v) {
++      return t[v] || v;
++    }
++    var ranges = RANGES.indexOf(own.range) >= 0 ? RANGES.slice() : RANGES.concat([own.range]);
++    ranges.push("custom");
++    var range = select(ranges, ranges.map(label), state.range);
++    field("c-range", t.range, t.rangeHint, range);
++    var today = new Date().toISOString().slice(0, 10);
++    var from = doc.createElement("input");
++    var to = doc.createElement("input");
++    [from, to].forEach(function (input) {
++      input.type = "date";
++      input.max = today;
++      input.required = true;
++    });
++    from.value = state.from || new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
++    to.value = state.to || today;
++    var fromBox = field("c-from", t.from, t.dateHint, from);
++    var toBox = field("c-to", t.to, t.dateHint, to);
++    var grans = GRANS.indexOf(own.gran) >= 0 ? GRANS : GRANS.concat([own.gran]);
++    var gran = select(grans, grans.map(label), state.gran);
++    field("c-gran", t.gran, t.granHint, gran);
++    var methods = METHODS.indexOf(own.method) >= 0 ? METHODS : METHODS.concat([own.method]);
++    var method = select(methods, methods.map(label), state.method);
++    var methodBox = field("c-method", t.method, t.methodHint, method);
++    var attr = null;
++    if (source.attrs.length > 1) {
++      attr = select([""].concat(source.attrs), [t.all].concat(source.attrs.map(function (a) { return measure(a, null, lang, []).label; })), state.attr || "");
++      field("c-attr", t.attr, t.attrHint, attr);
++    }
++    var stations = doc.createElement("select");
++    stations.multiple = true;
++    stations.size = 4;
++    var stationsBox = field("c-stations", t.stations, t.stationsHint, stations);
++    stationsBox.hidden = true;
++    function shape() {
++      var custom = range.value === "custom";
++      fromBox.hidden = toBox.hidden = !custom;
++      methodBox.hidden = gran.value === "raw";
++    }
++    shape();
++    function changed() {
++      shape();
++      if (range.value === "custom" && (!from.checkValidity() || !to.checkValidity() || day(from.value) === null || day(to.value) === null)) return;
++      change({
++        range: range.value,
++        from: range.value === "custom" ? from.value : null,
++        to: range.value === "custom" ? to.value : null,
++        gran: gran.value,
++        method: method.value,
++        attr: attr && attr.value ? attr.value : null,
++        stations: state.stations
++      });
++    }
++    [range, from, to, gran, method].concat(attr ? [attr] : []).forEach(function (el) { el.addEventListener("change", changed); });
++    var onStations = function () {};
++    stations.addEventListener("change", function () {
++      var ids = Array.prototype.filter.call(stations.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
++      state.stations = ids;
++      onStations(ids);
++    });
++    return {
++      form: form,
++      busy: function (on) { form.setAttribute("aria-busy", on ? "true" : "false"); },
++      onStations: function (f) { onStations = f; },
++      // The stations of the rows read, by name; a picked one the answer lacks is dropped.
++      stations: function (rows, picked) {
++        var seen = {};
++        var list = [];
++        rows.forEach(function (row) {
++          if (!seen[row.id]) list.push(seen[row.id] = { id: row.id, name: String(row.name || row.id) });
++        });
++        list.sort(function (a, b) { return a.name.localeCompare(b.name); });
++        stations.textContent = "";
++        list.forEach(function (s) {
++          var o = doc.createElement("option");
++          o.value = s.id;
++          o.textContent = s.name;
++          o.selected = picked.indexOf(s.id) >= 0;
++          stations.appendChild(o);
++        });
++        stations.size = Math.min(Math.max(list.length, 2), 6);
++        stationsBox.hidden = list.length < 2;
++      }
++    };
+   }
+ 
+   // `#show`: the assistant's widget hands one spec and its rows by message (ADR-N-053 §2.9). A
+@@ -572,6 +1152,9 @@
          if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
          parent = event.origin;
          var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
@@ -996,7 +1715,7 @@
          document.documentElement.lang = lang;
          map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
          var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
-@@ -579,8 +598,8 @@
+@@ -579,8 +1162,8 @@
          var title = map ? data.spec.title : null;
          document.getElementById("title").textContent = typeof title === "string" ? title : "";
          pending = map
@@ -1007,6 +1726,19 @@
          if (map) {
            // The renderer frame stays empty; the map page takes its place.
            mapFrame = document.createElement("iframe");
+@@ -618,6 +1201,12 @@
+     firstRequest: firstRequest,
+     rowsFromTemporal: rowsFromTemporal,
+     nextWindow: nextWindow,
++    defaults: defaults,
++    parseState: parseState,
++    stateHash: stateHash,
++    temporalPlan: temporalPlan,
++    measure: measure,
++    interactive: interactive,
+     rowsFromOgc: rowsFromOgc,
+     named: named,
+     load: load
 --- a/site/map.html
 +++ site/map.html
 @@ -8,8 +8,8 @@
@@ -1057,9 +1789,31 @@
    }
  
    function height() {
-@@ -24,11 +25,17 @@
+@@ -23,34 +24,92 @@
+   };
    var loader = { load: refused, sanitize: refused, http: refused, file: refused };
  
++  // The view drawn last: a toolbar change of the host (T-7490) swaps its rows without a redraw.
++  var shown = null;
++
++  // T-7490: dates and times on an axis or in a tooltip in the page's language, 24-hour clock.
++  var TIME = {
++    sk: { days: ["nedeľa", "pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota"], shortDays: ["ne", "po", "ut", "st", "št", "pi", "so"],
++      months: ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"],
++      shortMonths: ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec"] },
++    cs: { days: ["neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"], shortDays: ["ne", "po", "út", "st", "čt", "pá", "so"],
++      months: ["leden", "únor", "březen", "duben", "květen", "červen", "červenec", "srpen", "září", "říjen", "listopad", "prosinec"],
++      shortMonths: ["led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"] },
++    fi: { days: ["sunnuntai", "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai"], shortDays: ["su", "ma", "ti", "ke", "to", "pe", "la"],
++      months: ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu", "kesäkuu", "heinäkuu", "elokuu", "syyskuu", "lokakuu", "marraskuu", "joulukuu"],
++      shortMonths: ["tammi", "helmi", "maalis", "huhti", "touko", "kesä", "heinä", "elo", "syys", "loka", "marras", "joulu"] }
++  };
++  function timeLocale(lang) {
++    var names = TIME[lang];
++    if (!names) return undefined;
++    return Object.assign({ dateTime: "%-d. %-m. %Y %H:%M:%S", date: "%-d. %-m. %Y", time: "%H:%M:%S", periods: ["", ""] }, names);
++  }
++
    function draw(message) {
 +    // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
 +    var mode = message.theme === "dark" ? "dark" : "light";
@@ -1073,12 +1827,29 @@
 +    // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
 +    // Function`, which this page's CSP refuses (T-6865).
 +    var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
++    shown = null;
 +    return vegaEmbed(chart, withRows(message.spec, rows, self.jcTheme[mode]), {
        ast: true,
        expr: vega.expressionInterpreter,
        loader: loader,
-@@ -42,15 +49,35 @@
+       renderer: "svg",
++      timeFormatLocale: timeLocale(document.documentElement.lang),
+       // Export only: no source, no compiled spec, no "open in the editor" (which posts the spec
+       // to another site).
+       actions: { export: true, source: false, compiled: false, editor: false },
+       downloadFileName: "chart"
++    }).then(function (result) {
++      shown = result && result.view ? result.view : null;
++      return result;
+     });
+   }
  
++  // New rows for the data set `source` of the view drawn last; the spec is the one already checked.
++  function swap(message) {
++    if (!shown) throw new Error("The chart could not be drawn.");
++    return shown.data("source", Array.isArray(message.rows) ? message.rows : []).runAsync();
++  }
++
    // The rows go in as the named data set `source` before the first draw, so the chart never
    // draws empty first: Vega-Lite's top-level `datasets`, Vega's data entry of that name.
 -  function withRows(spec, rows) {
@@ -1116,7 +1887,7 @@
        }
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
-@@ -61,7 +88,9 @@
+@@ -61,12 +120,14 @@
    }
  
    window.addEventListener("message", function (event) {
@@ -1125,8 +1896,16 @@
 +    // Portal `null`, as the host runs sandboxed there too. The spec is checked again below.
 +    if (event.source !== window.parent || (event.origin !== location.origin && event.origin !== "null")) return;
      var message = event.data || {};
-     if (message.type !== "jc-viz-render") return;
-     document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
+-    if (message.type !== "jc-viz-render") return;
+-    document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
++    if (message.type !== "jc-viz-render" && message.type !== "jc-viz-rows") return;
++    if (message.type === "jc-viz-render") document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
+     Promise.resolve()
+-      .then(function () { return draw(message); })
++      .then(function () { return message.type === "jc-viz-rows" ? swap(message) : draw(message); })
+       .then(height, function (error) {
+         tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
+       });
 --- /dev/null
 +++ site/theme.js
 @@ -0,0 +1,82 @@
