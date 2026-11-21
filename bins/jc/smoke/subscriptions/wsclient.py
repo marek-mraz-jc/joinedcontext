@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import os
 import socket
@@ -182,6 +183,41 @@ class Ws:
             self.sock.close()
         except OSError:
             pass
+
+
+def handshake(base: str, path: str, timeout: float = 10) -> tuple[bool, str]:
+    """One anonymous upgrade through the public edge (T-7478), over http.client: the live guard
+    (live.py) lets an HTTP request reach the edge and refuses a raw socket. Passes on a 101 with
+    the right Sec-WebSocket-Accept followed by one frame from the server (x-welcome, or a close);
+    a 426 means a hop before jc dropped Upgrade. Answers (passed, what came back)."""
+    u = urllib.parse.urlparse(base)
+    kind = http.client.HTTPSConnection if u.scheme in ("https", "wss") else http.client.HTTPConnection
+    conn = kind(u.hostname, u.port, timeout=timeout)
+    key = base64.b64encode(os.urandom(16)).decode()
+    try:
+        conn.request("GET", path, headers={"Upgrade": "websocket", "Connection": "Upgrade",
+                                           "Sec-WebSocket-Key": key, "Sec-WebSocket-Version": "13",
+                                           "Sec-WebSocket-Protocol": "ngsi-ld-ws"})
+        resp = conn.getresponse()
+        if resp.status != 101:
+            return False, f"{resp.status} {resp.read(200).decode(errors='replace')}".strip()
+        if resp.getheader("Sec-WebSocket-Accept") != accept_of(key):
+            return False, "101 with a wrong Sec-WebSocket-Accept"
+        head = resp.fp.read(2)
+        if len(head) < 2:
+            return False, "101, then the connection ended without a frame"
+        opcode = head[0] & 0x0F
+        if opcode not in (0x1, 0x8):
+            return False, f"101, then a frame of opcode {opcode}"
+        try:
+            conn.sock.sendall(frame(0x8, struct.pack("!H", 1000)))
+        except OSError:
+            pass
+        return True, "101 and " + ("a text frame" if opcode == 0x1 else "a close")
+    except (OSError, http.client.HTTPException) as x:
+        return False, f"no answer: {x}"
+    finally:
+        conn.close()
 
 
 def op(m) -> str:

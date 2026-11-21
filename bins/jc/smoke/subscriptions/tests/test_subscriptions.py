@@ -107,6 +107,7 @@ class Jc:
 
     def __init__(self, endpoints, lax=False):
         self.eps, self.lax = endpoints, lax
+        self.edge = 0
         self.lock = threading.Lock()
         self.sockets = []  # [(endpoint, conn, subs {id: (type, q)}, seq [n])]
         self.held = 0
@@ -173,6 +174,8 @@ class Jc:
     def ws(self, h, slug, hdrs):
         e = self.eps.get(slug)
         upgrade = hdrs.get("upgrade", "").lower() == "websocket"
+        if upgrade and self.edge:  # an edge in front that drops Upgrade (426) or the route (404)
+            return self.answer(h, self.edge, b'{"title": "edge"}')
         if not self.lax:
             if e is None or "websocket" not in e.representations:
                 return self.answer(h, 404, b'{"title": "Not Found"}')
@@ -360,10 +363,41 @@ def test_transports_only_reads_part_one_and_names_the_other_parts_skipped(world)
     finally:
         jc.close()
     r = rows(s)
-    assert {k for k, x in r.items() if x["result"] != SKIP} == {"control.unknown-slug"} | {
+    assert {k for k, x in r.items() if x["result"] != SKIP} == {"control.unknown-slug", "transport.edge-upgrade"} | {
         f"transport.{e.slug}" for e in eps}
+    assert r["transport.edge-upgrade"]["result"] == PASS, r["transport.edge-upgrade"]
+    assert r["transport.edge-upgrade"]["actual"] == "101 and a text frame"
     assert all(r[k]["result"] == SKIP and "--transports-only" in r[k]["reason"] for k in ("deliver", "refusals", "mqtt"))
     assert not s.probes
+
+
+@pytest.mark.parametrize("edge", [426, 404])
+def test_an_edge_that_drops_the_upgrade_fails_the_handshake_row_while_every_get_passes(world, edge):
+    """T-7478: jc-dev's edge dropped Upgrade, jc answered each handshake 426 and every GET row passed."""
+    tmp, root, by_slug, eps = world
+    jc = Jc(by_slug)
+    jc.edge = edge
+    try:
+        s = suite.Suite(args(jc.base, tmp, transports_only=True), eps, index_of(eps), [], suite.load_clients(root))
+        s.run()
+    finally:
+        jc.close()
+    r = rows(s)
+    assert r["transport.edge-upgrade"]["result"] == FAIL and r["transport.edge-upgrade"]["actual"].startswith(str(edge))
+    assert all(r[f"transport.{e.slug}"]["result"] == PASS for e in eps)
+
+
+def test_without_a_public_websocket_endpoint_the_handshake_row_is_a_named_skip(world):
+    tmp, root, by_slug, eps = world
+    jc = Jc(by_slug)
+    try:
+        s = suite.Suite(args(jc.base, tmp, transports_only=True), [e for e in eps if e.closed], index_of(eps), [],
+                        suite.load_clients(root))
+        s.run()
+    finally:
+        jc.close()
+    row = rows(s)["transport.edge-upgrade"]
+    assert row["result"] == SKIP and "no public Endpoint" in row["reason"]
 
 
 def test_without_the_realm_secrets_delivery_is_a_named_skip(world):

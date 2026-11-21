@@ -7,7 +7,8 @@ MQTT brokers, against production's transports as the export declares them.
 
 1. transport: every exported Endpoint's `/api/endpoint/{slug}/ws` without an upgrade answers as
    its transports say: the guide (426 Upgrade Required) when it lists `websocket` and is public, 401 when it is
-   closed, 404 when it does not list it; an unknown slug 404s (the control). Production is read
+   closed, 404 when it does not list it; an unknown slug 404s (the control). One anonymous upgrade of the
+   first public websocket Endpoint answers 101 and a first frame (transport.edge-upgrade, never known). Production is read
    from the export alone: this suite opens no subscription on prod or dev.
 2. delivery, per class (project x audience) of public Endpoints serving `websocket`, on a type its
    public grant opens without an id pattern or a q and a bound Policy lets a project ServiceAccount
@@ -197,6 +198,19 @@ class Suite:
                 want, ok = "426 guide", st == 426 and isinstance(as_json(body), dict)
             self.r.check(f"transport.{e.slug}", f"{e.project}/{e.name}", f"GET {ws_path(e.slug)}", want,
                          f"{st} {short(body, 100)}", ok)
+        # T-7478: a real handshake through the edge. Every GET above answered as it should while no
+        # client could open a socket: the edge dropped Upgrade and jc answered each handshake 426.
+        # One anonymous socket, closed after the server's first frame; no subscription, no write.
+        public = sorted((e for e in self.endpoints if not e.closed and "websocket" in e.representations),
+                        key=lambda x: x.slug)
+        if not public:
+            self.r.skip("transport.edge-upgrade", "edge", "WS (upgrade)", "101",
+                        "no public Endpoint lists websocket in the export")
+            return
+        e = public[0]
+        ok, actual = wsclient.handshake(self.a.base_url, ws_path(e.slug), self.a.timeout)
+        self.r.check("transport.edge-upgrade", f"{e.project}/{e.name}", f"WS {ws_path(e.slug)} (anonymous upgrade)",
+                     "101, then the server's first frame or a clean close", actual, ok)
 
     # ------------------------------------------------------------ probes
 
