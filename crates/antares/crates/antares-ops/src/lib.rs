@@ -584,6 +584,7 @@ impl Ops {
         if OperationId::of(req.method.as_str(), path, query) != Some(op) {
             return Err(Refusal::NotAllowed { allow: Vec::new() });
         }
+        let reads = req.method == axum::http::Method::GET || req.method == axum::http::Method::HEAD;
         let mut inner = axum::http::Request::builder()
             .method(req.method)
             .uri(req.path_and_query.as_str())
@@ -604,24 +605,36 @@ impl Ops {
         };
         if let Some(surface) = &self.surface {
             // Threat G10: which surface and view ran it; never the subject
-            // or an argument (ADR-0020).
+            // or an argument (ADR-0020). An answered read is DEBUG: jc's
+            // door counts those, and they were 6.5 % of jc-prod's log (T-7474).
             let status = answer.status().as_u16();
-            if let Some((view, tenant)) = view {
-                tracing::info!(
-                    surface = &**surface,
-                    view,
-                    tenant,
-                    operation = op.id(),
-                    status,
-                    "surface operation"
-                );
+            macro_rules! ran {
+                ($level:expr) => {
+                    if let Some((view, tenant)) = view {
+                        tracing::event!(
+                            $level,
+                            surface = &**surface,
+                            view,
+                            tenant,
+                            operation = op.id(),
+                            status,
+                            "surface operation"
+                        );
+                    } else {
+                        tracing::event!(
+                            $level,
+                            surface = &**surface,
+                            operation = op.id(),
+                            status,
+                            "surface operation"
+                        );
+                    }
+                };
+            }
+            if reads && status < 400 {
+                ran!(tracing::Level::DEBUG);
             } else {
-                tracing::info!(
-                    surface = &**surface,
-                    operation = op.id(),
-                    status,
-                    "surface operation"
-                );
+                ran!(tracing::Level::INFO);
             }
         }
         answered(op, answer).await

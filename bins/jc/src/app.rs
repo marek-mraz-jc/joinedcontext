@@ -2659,6 +2659,7 @@ mod tests {
 
     /// PL-122: the ekiben entry at `/ingest` on a host is where a webhook sender posts, and the
     /// Portal is told so; without one it shows no address.
+    #[cfg(feature = "portal")]
     #[test]
     fn the_ekiben_ingest_entry_tells_the_portal_where_webhooks_post() {
         let cfg = dev_config(
