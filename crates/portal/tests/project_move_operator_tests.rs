@@ -543,7 +543,8 @@ async fn a_move_waits_for_endpoints_whose_policy_refs_name_the_old_domain() {
             "Endpoint",
             "stations",
             &project,
-            json!({ "contextSpaceRef": "air", "audience": "public", "policyRefs": refs }),
+            json!({ "contextSpaceRef": "air", "audience": "public", "policyRefs": refs,
+                    "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "enabledRepresentations": ["ngsi-ld"] }),
         )
     };
     m.upsert(endpoint(vec![urn(&from)]));
