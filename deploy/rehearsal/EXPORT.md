@@ -45,6 +45,8 @@ so they go through `import.sh` (REHEARSAL.md).
   file into manifest.json (P-26). The import refuses a bundle with no digests, or with one file
   that differs from its digest by a byte, is missing or was added; counts alone pass a dropped
   field. A tool that rewrites a bundle on purpose (bins/jc/smoke/ci/redate.py) stamps it again.
+  An export made before digests existed (dev-20261109T1924Z): stamp a copy with `rehearsal.py
+  digest --export <copy>` and import the copy; the original stays as it was exported.
 
 - Realm: `kc.sh export --realm <name> --users skip` (or the admin API's partial export without users),
   then drop `users` except service accounts. Never `--users realm_file`.

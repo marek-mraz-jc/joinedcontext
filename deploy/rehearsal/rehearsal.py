@@ -1237,6 +1237,26 @@ def catalogue_url(value: str) -> bytes:
     return value.encode()
 
 
+def gateway_url(value: str) -> str:
+    """--gateway-url: the gateway base each imported datasource names, `<base>/api/endpoint/<slug>`
+    (a cluster import): the instance Portal's own JC_PORTAL_GATEWAY_URL, the address daiya's
+    outbound guard admits for the Endpoints. An http(s) origin and an optional path only, since it
+    lands verbatim in every datasource; no user, query or fragment."""
+    u = urllib.parse.urlsplit(value)
+    ok = (u.scheme in ("http", "https") and u.hostname and not u.username and not u.password
+          and not u.query and not u.fragment and "?" not in value and "#" not in value
+          and re.fullmatch(r"[\x21-\x7e]+", value) and re.fullmatch(r"[A-Za-z0-9._~/-]*", u.path)
+          and ".." not in u.path.split("/"))
+    try:
+        ok = ok and (u.port is None or u.port > 0)
+    except ValueError:
+        ok = False
+    if not ok:
+        raise SystemExit(f"--gateway-url {value!r}: give http(s)://<host>[:<port>][/<path>] only, no user, "
+                         "query or fragment (the instance Portal's JC_PORTAL_GATEWAY_URL)")
+    return value.rstrip("/")
+
+
 def fence_writes(data: bytes, catalogue: bytes = REHEARSAL_CATALOGUE) -> bytes:
     """A CkanInstance is the one manifest the Portal writes to an outside host with (its API
     token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name
@@ -2170,10 +2190,12 @@ def daiya_org(h: Http, auth: dict, project: str) -> int:
 
 
 def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, report: dict,
-                 dashboards: Path | None = None):
+                 dashboards: Path | None = None, gateway: str | None = None):
     """The deployment's Grafana provisioning into daiya, as provision.sh does it: each project's
     files in its own organization (folder, datasources on the rehearsal's Endpoints, dashboard),
-    the plain dashboard models in the main organization."""
+    the plain dashboard models in the main organization. Each datasource names the Endpoint at
+    `gateway` (--gateway-url on a cluster import), else at `h.base` on loopback (a local gate)."""
+    gateway = gateway or loopback_ip(h.base)
     pw = read_secret(state, "dashboards-password")
     auth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     order = {"folder": 0, "datasource": 1, "dashboard": 2, "model": 2}
@@ -2205,7 +2227,7 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
             call, body = "POST /dashboards/api/folders", {"uid": doc.get("uid"), "title": doc.get("title")}
             row.update(uid=doc.get("uid"), title=doc.get("title"))
         elif kind == "datasource":
-            mapped = rehearsal_endpoint_url(doc.get("url", ""), h.base)
+            mapped = rehearsal_endpoint_url(doc.get("url", ""), gateway)
             doc = {**doc, "url": mapped}
             call, body = "POST /dashboards/api/datasources", doc
             row.update(uid=doc.get("uid"), title=doc.get("name"), url=mapped)
@@ -2243,7 +2265,7 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
         else:
             row.update(result="refused", call=call, status=st, detail=answer)
         rows.append(row)
-    rows.extend(import_portal_made(h, auth, export, orgs))
+    rows.extend(import_portal_made(h, auth, export, orgs, gateway))
     report["daiya"] = rows
 
 
@@ -2342,7 +2364,7 @@ def portal_made_found(h: Http, auth: dict, made: list[tuple[Path, str | None]]) 
     return found, lost
 
 
-def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[dict]:
+def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict, gateway: str | None = None) -> list[dict]:
     """Each source-database dashboard into the daiya organization of its project, as the Portal
     saves one there: the project's folder, a datasource on the project's own Endpoint for each
     one it reads, then POST /dashboards/api/dashboards/db (overwrite). A dashboard with no
@@ -2366,7 +2388,7 @@ def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[di
         for name in sorted(ngsild):
             ep, reason = project_endpoint(export, project, name)
             if ep:
-                sources[name] = endpoint_datasource(name, ep, h.base)
+                sources[name] = endpoint_datasource(name, ep, gateway or h.base)
             else:
                 why.append(reason)
         if why:
@@ -2391,7 +2413,7 @@ def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[di
                 st, answer = h.json("PUT", f"/dashboards/api/datasources/uid/{urllib.parse.quote(name)}",
                                     headers=hdrs, body=body)
             if st not in (200, 201):
-                why.append(f"datasource {name}: {st} {str(answer)[:120]}")
+                why.append(f"datasource {name}: {st} {str(answer)[:400]}")
         if why:
             rows.append({**row, "org": orgs[project], "result": "refused", "reason": "; ".join(why)})
             continue
@@ -2447,7 +2469,8 @@ def digest_problems(export: Path, manifest: dict) -> list[str]:
     want = manifest.get("digests")
     if not isinstance(want, dict):
         return ["manifest.json names no digests: stamp the bundle where it was made "
-                "(rehearsal.py digest --export <dir>, EXPORT.md)"]
+                "(rehearsal.py digest --export <dir>, EXPORT.md); an export made before digests: "
+                "stamp a copy of it"]
     have = bundle_digests(export)
     return ([f"{f}: content differs from its digest" for f in sorted(want) if f in have and have[f] != want[f]]
             + [f"{f}: missing" for f in sorted(set(want) - set(have))]
@@ -2506,6 +2529,7 @@ def cmd_import(a):
         raise SystemExit(f"not importing: --jcctl-bin {a.jcctl_bin or '(unset)'} is no executable; every "
                          "manifest is validated before it is written (build it: cargo build --manifest-path "
                          "vendor/joinedcontext-platform/Cargo.toml -p jcctl)")
+    gateway = gateway_url(a.gateway_url) if a.gateway_url else None  # refused before the first write
     # Every step's secret before the first write: a step that cannot start used to crash after the
     # steps before it wrote, and the crash took their report along (jc-dev 2026-11-11: daiya's
     # missing dashboards-password hid the Antares report of a lost 500-entity batch, T-7016).
@@ -2521,7 +2545,8 @@ def cmd_import(a):
         if "antares" in steps:
             import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"), a.create_only)
         if "daiya" in steps:
-            import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
+            import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None,
+                         gateway)
     finally:
         Path(a.report).write_text(json.dumps(report, indent=1))
     summary = {
@@ -3237,6 +3262,8 @@ def main(argv=None):
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin"); s.add_argument("--jcctl-bin")
     s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
     s.add_argument("--catalogue-url", help="the instance's own catalogue (cluster import): every CkanInstance names it")
+    s.add_argument("--gateway-url", help="the gateway base every imported datasource names (cluster import): the "
+                   "instance Portal's JC_PORTAL_GATEWAY_URL; default --base on loopback (a local gate)")
     s.add_argument("--create-only", action="store_true",
                    help="with --only antares: create the exported entities the broker lacks and leave every one it "
                         "holds untouched (repairs a short import without writing an older copy over live data)")
