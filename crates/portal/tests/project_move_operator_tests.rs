@@ -607,6 +607,55 @@ async fn the_move_policies_open_nothing_to_the_serving_role() {
     );
 }
 
+/// The keyed tables' owner, read on the migration role's own connection.
+async fn owner_pool() -> sqlx::PgPool {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL");
+    joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate")
+}
+
+/// The move policies open to any SECURITY DEFINER function the owner owns: project_move must stay
+/// the only one, or a second one could key jc.project_move to any project (T-7476).
+#[tokio::test]
+async fn project_move_is_the_owners_only_security_definer_function() {
+    let owner = owner_pool().await;
+    let definers: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p WHERE p.prosecdef \
+           AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = 'public.drafts'::regclass) \
+         ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    assert_eq!(
+        definers,
+        vec!["project_move(uuid,text,text)".to_string()],
+        "a SECURITY DEFINER function owned by the tables' owner meets the move policies"
+    );
+}
+
+/// No login role but the migration role acts as the owner, directly or through a group: one that
+/// did would reach the move policies by SET ROLE (T-7476). A superuser bypasses RLS anyway.
+#[tokio::test]
+async fn no_login_role_but_the_migration_role_is_the_owner() {
+    let owner = owner_pool().await;
+    let members: Vec<String> = sqlx::query_scalar(
+        "WITH o AS (SELECT relowner FROM pg_class WHERE oid = 'public.drafts'::regclass) \
+         SELECT r.rolname::text FROM pg_roles r, o WHERE r.rolcanlogin AND NOT r.rolsuper \
+           AND r.oid <> o.relowner AND r.rolname <> current_user \
+           AND pg_has_role(r.oid, o.relowner, 'MEMBER') ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    assert_eq!(
+        members,
+        Vec::<String>::new(),
+        "a login role that is a member of the tables' owner"
+    );
+}
+
 /// Only an operator with a second factor plans or asks for a move; the registry refuses a moved
 /// Organization outside an approved move, and the keyed tables stay forced.
 #[tokio::test]
