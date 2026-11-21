@@ -133,7 +133,9 @@ async fn through_view(
         tracing::error!(space = %endpoint.space, %unpinned, "endpoint names an unusable space");
         return unpinned.problem().into_response();
     }
-    tracing::info!(
+    // GET and HEAD only: jc's door counts answered reads and writes every refusal (T-7474), and
+    // this line was 16 % of jc-prod's log (T-7479).
+    tracing::debug!(
         slug = %endpoint.slug,
         space = %endpoint.space,
         %view,

@@ -35,7 +35,8 @@ fn filter(given: Option<tracing_subscriber::EnvFilter>) -> tracing_subscriber::E
 }
 
 /// Installs the one tracing subscriber (`RUST_LOG` filter, `info` by default, [`QUIET`] libraries
-/// at their level, a probe's lines thinned out: `access::quiet_probes`). Returns `false` when a subscriber was already installed (by an earlier call or
+/// at their level, a probe's lines thinned out: `access::quiet_probes`, sqlx's slow-statement
+/// lines folded per fingerprint and minute: `slow`). Returns `false` when a subscriber was already installed (by an earlier call or
 /// by the embedding test harness).
 pub fn init_tracing(format: LogFormat) -> bool {
     use tracing_subscriber::Layer;
@@ -52,8 +53,12 @@ pub fn init_tracing(format: LogFormat) -> bool {
     tracing_subscriber::registry()
         .with(
             fmt.with_filter(crate::access::quiet_probes())
+                .with_filter(tracing_subscriber::filter::filter_fn(|m| {
+                    !crate::slow::is_slow_statement(m)
+                }))
                 .with_filter(filter),
         )
+        .with(crate::slow::layer())
         .try_init()
         .is_ok()
 }

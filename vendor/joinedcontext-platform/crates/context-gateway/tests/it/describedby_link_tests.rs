@@ -243,6 +243,42 @@ async fn an_endpoint_with_two_majors_names_four_documents() {
     }
 }
 
+/// T-7479: a schema read reaches the broker's view and writes its forwarded line at DEBUG, no INFO
+/// line: jc's door counts answered reads (T-7474).
+#[tokio::test]
+async fn a_schema_read_writes_no_info_line() {
+    #[derive(Clone, Default)]
+    struct Log(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("the log").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let (status, _) = links_of(&format!("/api/endpoint/{SLUG}/schema/index.json")).await;
+    drop(guard);
+    assert!(status.is_success(), "{status}");
+    let text = String::from_utf8_lossy(&log.0.lock().expect("the log")).into_owned();
+    let forwarded: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("schema request forwarded"))
+        .collect();
+    assert_eq!(forwarded.len(), 1, "{text}");
+    assert!(forwarded[0].contains("DEBUG"), "{text}");
+    assert!(!text.lines().any(|line| line.contains(" INFO ")), "{text}");
+}
+
 /// The schema documents describe themselves, and so do the endpoint record and the access
 /// surface: a `describedby` pointing at the document you are reading is noise.
 #[tokio::test]
