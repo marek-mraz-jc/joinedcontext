@@ -625,8 +625,6 @@ fn count_sql(wheres: &[String], split: Option<&TypeSplit>) -> String {
     format!("SELECT {}", counts.join(" + "))
 }
 
-/// The ids of every arm of `count_sql`, for a count the broker decides id by
-/// id. The arms are disjoint (`arms`), so each id comes once.
 /// The planner settings under which a deep idPattern page's skip streams
 /// its arms' ids (T-7484): only index paths, which hand each arm back in
 /// id order, so the arms merge without a sort. Transaction-local, and
@@ -637,6 +635,8 @@ pub const ID_ORDER_PINNED: &str = "SET LOCAL enable_seqscan = off; \
 const ID_ORDER_UNPINNED: &str = "SET LOCAL enable_seqscan TO DEFAULT; \
      SET LOCAL enable_bitmapscan TO DEFAULT; SET LOCAL enable_sort TO DEFAULT";
 
+/// The ids of every arm of `count_sql`, for a count the broker decides id by
+/// id. The arms are disjoint (`arms`), so each id comes once.
 fn ids_sql(wheres: &[String], split: Option<&TypeSplit>) -> String {
     arms(wheres, split)
         .iter()
