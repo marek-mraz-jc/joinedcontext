@@ -206,6 +206,23 @@ def test_a_slug_mode_import_keeps_the_dataroom_path_in_every_catalogue():
             rh.catalogue_url(bad)
 
 
+def test_a_cluster_import_names_the_instances_own_gateway_in_every_datasource_and_nothing_else():
+    # jc-dev 2026-11-21: datasources named the port-forward's loopback --base, and daiya's guard
+    # refused all four ("disallowed URL scheme"); the Portal there names its JC_PORTAL_GATEWAY_URL
+    for good, want in [("http://jc.example:8080/", "http://jc.example:8080"),
+                       ("https://jc.jcdev.dev.joinedcontext.com/gw", "https://jc.jcdev.dev.joinedcontext.com/gw"),
+                       ("http://jc-server.jc-dev.svc.cluster.local:8080", "http://jc-server.jc-dev.svc.cluster.local:8080")]:
+        assert rh.gateway_url(good) == want
+    for bad in ["ftp://x.example", "https://u:p@x.example", "https://x.example?x=1", "https://x.example#a",
+                "https://x.example/../admin", "https://x.example\n/a", "https://x.example:0", "https://", "x.example"]:
+        with pytest.raises(SystemExit):
+            rh.gateway_url(bad)
+    ep = {"slug": "a" * 32, "public": True}
+    assert rh.endpoint_datasource("air", ep, rh.gateway_url("https://jc.example/gw/"))["url"] == \
+        f"https://jc.example/gw/api/endpoint/{'a' * 32}"
+    assert rh.rehearsal_endpoint_url("https://smartcity.example/api/endpoint/x", "https://jc.example/gw") == \
+        "https://jc.example/gw/api/endpoint/x"
+
 
 def test_an_imported_endpoint_without_a_ckan_publish_leaves_jcs_catalogue_as_prods():
     head = b"apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e\nspec:\n  slug: s\n"
@@ -1623,7 +1640,8 @@ def test_a_source_dashboard_goes_into_the_org_of_its_project_with_its_endpoint_d
     (src / "org3-pv-ab12.json").write_text(json.dumps({"id": 41, "uid": "pv-ab12", "title": "Air", "panels": [_panel("air")]}))
     (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
     try:
-        rows = rh.import_portal_made(rh.Http(base), {}, tmp_path, {})
+        # a cluster import: the datasources name the instance's gateway, not the port-forward
+        rows = rh.import_portal_made(rh.Http(base), {}, tmp_path, {}, "https://jc.example/gw")
     finally:
         server.shutdown()
     assert [(r["file"], r["project"], r["result"]) for r in rows] == [
@@ -1633,8 +1651,8 @@ def test_a_source_dashboard_goes_into_the_org_of_its_project_with_its_endpoint_d
     assert {s[2] for s in seen if s[1] != "/dashboards/api/orgs"} == {"6"}
     ds = {s[3]["uid"]: s[3] for s in seen if s[1] == "/dashboards/api/datasources"}
     assert ds["air"] == {"uid": "air", "name": "air", "type": "ngsild-grafana-datasource", "access": "proxy",
-                         "url": f"{base}/api/endpoint/{'a' * 32}", "jsonData": {"pageSize": 1000}}
-    assert ds["bikes"]["url"] == f"{base}/api/endpoint/{'b' * 32}" and ds["bikes"]["jsonData"]["oauthPassThru"] is True
+                         "url": f"https://jc.example/gw/api/endpoint/{'a' * 32}", "jsonData": {"pageSize": 1000}}
+    assert ds["bikes"]["url"] == f"https://jc.example/gw/api/endpoint/{'b' * 32}" and ds["bikes"]["jsonData"]["oauthPassThru"] is True
     dashes = [s[3] for s in seen if s[1] == "/dashboards/api/dashboards/db"]
     assert [(d["dashboard"]["uid"], d["folderUid"], "id" in d["dashboard"]) for d in dashes] == [
         ("project-helsinki", "project-helsinki", False), ("pv-ab12", "project-helsinki", False)]

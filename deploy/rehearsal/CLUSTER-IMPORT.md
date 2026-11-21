@@ -67,6 +67,8 @@ python3 -I rehearsal.py realms --export <export> --out <work>/state/realms \
 - `JCBIN_PORTAL_AGE_KEY_FILE`: the instance's age identity.
 - Each CkanInstance `spec.url` is fenced by `import` to the instance's own dataroom. On the cluster it must name `jc-<instance>`'s own catalogue host, never dev's or prod's CKAN.
   - On the cluster, `rehearsal.py import --catalogue-url https://<instance catalogue host>` (deployer, T-6676 section I: jc-dev `https://jcdev-opendata.dev.joinedcontext.com`, jc-prod `https://jcprod-opendata.dev.joinedcontext.com`). It takes an https origin only.
+- Each daiya datasource the import makes names `<gateway>/api/endpoint/<slug>`. Without a flag `<gateway>` is `--base`, right for a local gate; on the cluster that is the port-forward, and daiya's outbound guard refuses it (jc-dev 2026-11-21: "disallowed URL scheme", T-7477).
+  - On the cluster, `rehearsal.py import --gateway-url <base>` with the base the instance's Portal names in a datasource it makes: its `JC_PORTAL_GATEWAY_URL` (jc fills it with the gateway's internal address when the environment does not set it). A Portal-made datasource of any project organization shows it (`GET /dashboards/api/datasources` with `X-Grafana-Org-Id`). It takes an http(s) origin and path only; a refused datasource names the guard's reason in the report, and a rerun replaces each datasource (409 then PUT).
 
 ## 6. The import (the window: jc on allow-all, reachable only through port-forward)
 
