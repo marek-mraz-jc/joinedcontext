@@ -63,7 +63,8 @@ function answer(url: URL): unknown {
   const method = url.searchParams.get("aggrMethods");
   if (!method) return fixture("praha-humidity-raw.json");
   const daily = url.searchParams.get("aggrPeriodDuration") === "P1D";
-  const body = fixture(daily ? "praha-humidity-daily-max.json" : "praha-humidity-hourly.json") as Record<string, any>[];
+  type Entity = { id: string; relativeHumidity: { avg?: unknown[]; max?: unknown[] } };
+  const body = fixture(daily ? "praha-humidity-daily-max.json" : "praha-humidity-hourly.json") as Entity[];
   return body.map((e) => {
     const attr = e.relativeHumidity;
     const pairs = attr.avg ?? attr.max;

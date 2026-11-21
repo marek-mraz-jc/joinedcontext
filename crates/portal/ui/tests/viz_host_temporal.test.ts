@@ -163,7 +163,8 @@ describe("the interactive chart", () => {
   it("draws the chart at full width with a brush strip and a legend that toggles a station, and compiles", () => {
     const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
     const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 1200 });
-    const [detail, strip] = spec.vconcat as Record<string, any>[];
+    type Unit = { width: number; params: { name: string; bind?: string }[]; encoding: { x: { scale: { domain: unknown } }; y: { title: string }; tooltip: { title: string }[] } };
+    const [detail, strip] = spec.vconcat as Unit[];
     expect(detail.width).toBe(1200);
     expect(detail.encoding.y.title).toBe("Relatívna vlhkosť (%)");
     expect(detail.encoding.x.scale.domain).toEqual({ param: "brush" });
@@ -171,7 +172,7 @@ describe("the interactive chart", () => {
     expect(detail.encoding.tooltip[1].title).toBe("Relatívna vlhkosť (%)");
     expect(detail.encoding.tooltip[0].title).toBe("Čas");
     expect(strip.params[0]).toEqual({ name: "brush", select: { type: "interval", encodings: ["x"] } });
-    const vega = vegaLite.compile(spec as any).spec;
+    const vega = vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec;
     expect(vega.data?.some((d) => d.name === "source")).toBe(true);
     // The authored spec is left as it was.
     expect((SPEC.encoding.y as Record<string, unknown>).title).toBeUndefined();
