@@ -194,6 +194,20 @@ fn oauth_slot(org: &OrgContext, oa: &OAuth2Config) -> Arc<AsyncMutex<OAuthSlot>>
     map.entry(key).or_default().clone()
 }
 
+/// Drops the cached token of `oa` when it is still `stale` (one a server answered 401 to), so the
+/// next caller fetches a new one and concurrent callers do not each refetch.
+async fn forget_oauth2_token(org: &OrgContext, oa: &OAuth2Config, stale: &str) {
+    let slot = oauth_slot(org, oa);
+    let mut held = slot.lock().await;
+    if held
+        .cached
+        .as_ref()
+        .is_some_and(|c| c.access_token.expose() == stale)
+    {
+        held.cached = None;
+    }
+}
+
 /// Shared HTTP client matching `internal/httpclient/client.go` with strict security controls.
 pub struct HttpClient {
     /// Refuses private, loopback and link-local peers, also after DNS and on redirects.
@@ -626,7 +640,15 @@ impl HttpClient {
         batch_as_multipart: bool,
         page: Option<&PageRequest>,
         org: &OrgContext,
-    ) -> Result<(reqwest::RequestBuilder, String, Option<String>), CoreError> {
+    ) -> Result<
+        (
+            reqwest::RequestBuilder,
+            String,
+            Option<String>,
+            Option<String>,
+        ),
+        CoreError,
+    > {
         let view = PartsView(ref_batch);
         let resolved_url_str = match page {
             Some(p) => p.url.to_string(),
@@ -682,10 +704,12 @@ impl HttpClient {
             }
         }
 
+        let mut bearer = None;
         if let Some(ref oa) = self.oauth2 {
             if oa.enabled {
                 let token = self.fetch_oauth2_token(oa, org).await?;
-                req = req.bearer_auth(token);
+                req = req.bearer_auth(&token);
+                bearer = Some(token);
             }
         }
 
@@ -756,7 +780,7 @@ impl HttpClient {
                 .body(body_buf);
         }
 
-        Ok((req, redacted_url, request_id))
+        Ok((req, redacted_url, request_id, bearer))
     }
 
     /// Executes an HTTP request with retries, rate limiting, and response size cap.
@@ -788,10 +812,11 @@ impl HttpClient {
 
         let mut attempt = 0usize;
         let max_attempts = 1 + self.num_retries;
+        let mut refreshed = false;
 
         loop {
             self.wait_rate_limit(org, resources, &send_batch).await?;
-            let (req_builder, redacted_url, request_id) = self
+            let (req_builder, redacted_url, request_id, bearer) = self
                 .build_request(&send_batch, batch_as_multipart, page, org)
                 .await?;
 
@@ -804,6 +829,19 @@ impl HttpClient {
 
                     let (succeeded, retry_strat) = self.check_status(code);
                     let body_bytes = read_capped_body(resp, self.max_response_bytes).await?;
+
+                    if code == 401 && !refreshed {
+                        if let (Some(oa), Some(stale)) = (&self.oauth2, &bearer) {
+                            // The server refused a token the cache still holds: revoked early,
+                            // or minted before its client's audience changed (a ProjectMove,
+                            // T-7473). One fresh token and one more send, at once, not after
+                            // the token's hour.
+                            refreshed = true;
+                            tracing::warn!(url = %redacted_url, "http_client: the server refused the OAuth2 token (401); fetching a new token and sending once more");
+                            forget_oauth2_token(org, oa, stale).await;
+                            continue;
+                        }
+                    }
 
                     if succeeded {
                         if let Some(id) =
