@@ -1591,10 +1591,21 @@ impl PgEntityStore {
             if let Some(w) = ids.get_mut(*at) {
                 "true".clone_into(w);
             }
-            let sql = format!(
-                "SELECT id FROM ({}) AS arms ORDER BY {order}",
-                ids_sql(&ids, split.as_ref())
-            );
+            // each arm ordered on its own (OFFSET 0 keeps the subquery's
+            // ORDER BY from being pulled up), so 0044's index hands every
+            // arm back in order and they merge without a sort of the type
+            let sql = match arms(&ids, split.as_ref()).as_slice() {
+                [w] => format!("SELECT id FROM entities WHERE {w} ORDER BY {order}"),
+                each => format!(
+                    "SELECT id FROM ({}) AS arms ORDER BY {order}",
+                    each.iter()
+                        .map(|w| format!(
+                            "(SELECT id FROM entities WHERE {w} ORDER BY {order} OFFSET 0)"
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(" UNION ALL ")
+                ),
+            };
             let (seen, first) = match_ids(
                 &mut tx,
                 &sql,

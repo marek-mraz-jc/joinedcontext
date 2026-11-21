@@ -963,7 +963,11 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
 
 /// T-7484: a deep page under a rule's idPattern, as `store::pg::entity`
 /// runs it. The ids stream in the page's order without the regex (the
-/// broker's own regex skips the OFFSET), and the page itself is a keyset
+/// broker's own regex skips the OFFSET): each arm ordered on its own, so
+/// the type's arm is an Index Only Scan of i_entities_id_bytes (0044) and
+/// the arms merge without a sort. Ordered once over both arms, the stream
+/// planned a Seq Scan of the table and an external sort of the type on CI.
+/// The page itself is a keyset
 /// page from the id found there, which reads i_entities_id_bytes in order
 /// up to its LIMIT. The OFFSET statement it replaces planned a Bitmap Heap
 /// Scan of every Tree, ran the regex on each and sorted them all once its
@@ -986,15 +990,20 @@ async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
     };
     let t = "'https://x/Tree'";
     let ids = format!(
-        "SELECT id FROM (SELECT id FROM entities WHERE {w} AND types[1] = {t} UNION ALL \
-         SELECT id FROM entities WHERE {w} AND cardinality(types) > 1 \
-         AND types[1] <> ALL(ARRAY[{t}]) AND (types @> ARRAY[{t}])) AS arms ORDER BY {c}",
+        "SELECT id FROM ((SELECT id FROM entities WHERE {w} AND types[1] = {t} \
+         ORDER BY {c} OFFSET 0) UNION ALL \
+         (SELECT id FROM entities WHERE {w} AND cardinality(types) > 1 \
+         AND types[1] <> ALL(ARRAY[{t}]) AND (types @> ARRAY[{t}]) \
+         ORDER BY {c} OFFSET 0)) AS arms ORDER BY {c}",
         w = w("true")
     );
     let plan = plan_of(&pool, T, &ids).await;
     assert!(
-        !plan.contains("regexp_like") && !plan.contains("Seq Scan"),
-        "the skip runs the regex in SQL or sweeps the table:\n{plan}"
+        !plan.contains("regexp_like")
+            && !plan.contains("Seq Scan")
+            && plan.contains("Merge Append")
+            && plan.contains("Index Only Scan using i_entities_id_bytes on entities"),
+        "the skip runs the regex in SQL, sweeps the table or sorts the type:\n{plan}"
     );
     let page = type_page(
         &format!(
