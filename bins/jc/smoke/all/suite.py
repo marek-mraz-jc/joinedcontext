@@ -203,8 +203,10 @@ def run_e2e(out: Path, timeout: float) -> dict:
 # rows that would have shown jc-prod's 253 silent pipelines, so the stamp rule passed). So are a
 # Pipeline whose writes the gateway refuses and a project whose Pipelines have no Organization
 # (T-7458: barcelona's 19 Pipelines refused on jc-prod with no row red).
+# An Endpoint WebSocket that no client can open is one too (T-7478: jc-dev and jc-prod answered
+# every handshake 426 behind the edge while each plain GET row passed).
 NEVER_KNOWN = ("orgs/pipelines.delivering.p/n", "pipelines/delivering.p/n", "orgs/pipelines.refused",
-               "orgs/pipelines.unplaced")
+               "orgs/pipelines.unplaced", "subscriptions/transport.edge-upgrade")
 
 
 def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
@@ -215,9 +217,10 @@ def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
             rx = re.compile(pattern.strip())
             if "delivering" in rx.pattern or any(rx.search(i) for i in NEVER_KNOWN):
                 raise SystemExit(f"{path}:{n}: {rx.pattern!r} would hold pipelines.delivering, .refused or "
-                                 ".unplaced rows: a pipeline that stopped delivering, whose writes are refused "
-                                 "or whose project has no Organization is an incident, never a known failure "
-                                 "(T-7445, T-7458)")
+                                 ".unplaced rows or subscriptions/transport.edge-upgrade: a pipeline that stopped "
+                                 "delivering, whose writes are refused or whose project has no Organization, and an "
+                                 "Endpoint WebSocket no client can open: each is an incident, never a known failure "
+                                 "(T-7445, T-7458, T-7478)")
             out.append((rx, reason.strip()))
     return out
 
