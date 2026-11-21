@@ -27,7 +27,7 @@ use crate::app::Gateway;
 /// The Prometheus text format, the version every scraper since 2014 reads.
 pub const TEXT_FORMAT: &str = "text/plain; version=0.0.4";
 
-/// Requests that reached the surface, by route, endpoint and status.
+/// Requests that reached the surface, by route, method and status.
 const REQUESTS: &str = "jc_gateway_requests_total";
 /// How long the gateway took to answer one, the enforcement point included.
 const REQUEST_SECONDS: &str = "jc_gateway_request_duration_seconds";
@@ -198,8 +198,10 @@ tokio::task_local! {
 
 /// Counts and times every request the surface answers.
 ///
-/// The `endpoint` label names only a slug or space the gateway serves: a path anyone can invent
-/// would otherwise mint one Prometheus series per guess, without a token (T-5701).
+/// No series names an Endpoint or a space (T-7485): their product with every route, method,
+/// status and the histogram's buckets held jc-dev's scrape at 150k series, over Prometheus' sample
+/// limit, so none was stored. The usage tally counts per Endpoint ([`crate::usage::count`], which
+/// takes only a slug or space the gateway serves, T-5701).
 pub async fn record(
     State(gateway): State<Arc<Gateway>>,
     request: Request,
@@ -256,7 +258,6 @@ pub async fn record(
         REQUESTS,
         "route" => route.clone(),
         "method" => method.clone(),
-        "endpoint" => endpoint.clone(),
         "status" => response.status().as_u16().to_string(),
     )
     .increment(1);
@@ -264,7 +265,6 @@ pub async fn record(
         REQUEST_SECONDS,
         "route" => route,
         "method" => method,
-        "endpoint" => endpoint,
     )
     .record(seconds);
     response
@@ -335,5 +335,78 @@ mod tests {
         assert_eq!(named("/api/other/thing"), None);
         assert_eq!(named("/api/endpoint/"), None);
         assert_eq!(named("/"), None);
+    }
+
+    /// T-7485: jc-dev's scrape held 150k series, over Prometheus' 40k sample limit, so none was
+    /// stored. Each Endpoint multiplied every route, method and status, and the histogram its 16
+    /// bucket lines. Requests across many Endpoints, entity ids and statuses must add no series
+    /// per Endpoint or per id: the request families stay bounded by the route table.
+    #[tokio::test]
+    async fn many_endpoints_and_ids_add_no_request_series() {
+        use tower::ServiceExt;
+
+        const PREFIX: &str = "t7485card";
+        let endpoints = (0..40).map(|n| {
+            let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+            endpoint.slug = format!("{PREFIX}{n}");
+            endpoint.base_path = format!("/api/endpoint/{PREFIX}{n}");
+            endpoint.representations = vec![jc_core::kinds::Representation::NgsiLd];
+            endpoint
+        });
+        let gateway = Arc::new(
+            Gateway::new(
+                crate::proxy::Broker::new("http://127.0.0.1:1"),
+                Box::new(crate::pdp::PolicyPdp),
+                "example.org",
+            )
+            .serve(endpoints),
+        );
+        install();
+        let app = crate::app::router(gateway);
+        for n in 0..40 {
+            for (method, path) in [
+                ("GET", format!("/api/endpoint/{PREFIX}{n}")),
+                (
+                    "GET",
+                    format!(
+                        "/api/endpoint/{PREFIX}{n}/ngsi-ld/v1/entities/urn:ngsi-ld:T:{PREFIX}id{n}"
+                    ),
+                ),
+                (
+                    "POST",
+                    format!("/api/endpoint/{PREFIX}{n}/ngsi-ld/v1/entities"),
+                ),
+                (
+                    "GET",
+                    format!("/api/endpoint/{PREFIX}{n}/no/such/{PREFIX}path{n}"),
+                ),
+            ] {
+                let request = axum::http::Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"id":"urn:ngsi-ld:T:{PREFIX}id{n}","type":"T"}}"#
+                    )))
+                    .expect("a request");
+                let _ = app.clone().oneshot(request).await.expect("an answer");
+            }
+        }
+        let text = handle().render();
+        let series: Vec<&str> = text
+            .lines()
+            .filter(|line| line.starts_with(REQUESTS) || line.starts_with(REQUEST_SECONDS))
+            .collect();
+        let named: Vec<&&str> = series.iter().filter(|line| line.contains(PREFIX)).collect();
+        assert!(
+            named.is_empty(),
+            "a label names an Endpoint or an id: {named:#?}"
+        );
+        // 160 requests on 40 Endpoints; the old labels made over 600 series here.
+        assert!(
+            series.len() < 200,
+            "{} request series:\n{text}",
+            series.len()
+        );
     }
 }
