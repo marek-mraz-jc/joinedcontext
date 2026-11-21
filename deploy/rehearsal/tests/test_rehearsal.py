@@ -1574,7 +1574,18 @@ def test_org_1_panels_count_data_and_red_apart(tmp_path):
     assert (o["data"], o["red"]) == (1, 1) and [r["panel"] for r in o["rows"]] == [1, 3]
 
 
-def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_path):
+def _endpoint(export, project, name, audience, slug="a" * 32):
+    d = export / "gitea" / "files" / "joinedcontext" / project / "spaces" / project / "endpoints"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{name}.yaml").write_text(f"kind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  slug: {slug}\n"
+                                    f"  audience: {audience}\n")
+
+
+def _panel(uid, kind="ngsild-grafana-datasource"):
+    return {"id": 1, "datasource": {"type": kind, "uid": uid}, "targets": [{"datasource": {"type": kind, "uid": uid}}]}
+
+
+def test_a_source_dashboard_goes_into_the_org_of_its_project_with_its_endpoint_datasources(tmp_path):
     seen = []
 
     class Daiya(http.server.BaseHTTPRequestHandler):
@@ -1587,9 +1598,11 @@ def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_pat
 
         def do_POST(self):  # noqa: N802
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append((self.command, self.path, self.headers.get("X-Grafana-Org-Id"), body))
             if self.path == "/dashboards/api/orgs":
                 return self.answer(409, {"message": "exists"})
-            seen.append((self.headers.get("X-Grafana-Org-Id"), body["dashboard"]["uid"], "id" in body["dashboard"]))
+            if self.path == "/dashboards/api/folders":
+                return self.answer(412, {"message": "exists"})
             self.answer(200, {"status": "success"})
 
         def do_GET(self):  # noqa: N802
@@ -1600,18 +1613,64 @@ def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_pat
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
     src = tmp_path / "grafana" / "dashboards"
     src.mkdir(parents=True)
-    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki"}))
-    (src / "org3-pv-ab12.json").write_text(json.dumps({"id": 41, "uid": "pv-ab12", "title": "Air"}))
+    _endpoint(tmp_path, "helsinki", "air", "public")
+    _endpoint(tmp_path, "helsinki", "bikes", "organization", "b" * 32)
+    (src / "org3-project-helsinki.json").write_text(json.dumps(
+        {"uid": "project-helsinki", "panels": [_panel("air"), _panel("bikes")]}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"id": 41, "uid": "pv-ab12", "title": "Air", "panels": [_panel("air")]}))
     (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
     try:
-        rows = rh.import_portal_made(rh.Http(f"http://127.0.0.1:{server.server_port}"), {}, tmp_path, {})
+        rows = rh.import_portal_made(rh.Http(base), {}, tmp_path, {})
     finally:
         server.shutdown()
-    assert seen == [("6", "pv-ab12", False)]
     assert [(r["file"], r["project"], r["result"]) for r in rows] == [
-        ("org3-pv-ab12.json", "helsinki", "imported"), ("org9-pv-cd34.json", None, "refused")]
+        ("org3-project-helsinki.json", "helsinki", "imported"), ("org3-pv-ab12.json", "helsinki", "imported"),
+        ("org9-pv-cd34.json", None, "refused")]
+    # every write of the project goes to its organization, none to the main one
+    assert {s[2] for s in seen if s[1] != "/dashboards/api/orgs"} == {"6"}
+    ds = {s[3]["uid"]: s[3] for s in seen if s[1] == "/dashboards/api/datasources"}
+    assert ds["air"] == {"uid": "air", "name": "air", "type": "ngsild-grafana-datasource", "access": "proxy",
+                         "url": f"{base}/api/endpoint/{'a' * 32}", "jsonData": {"pageSize": 1000}}
+    assert ds["bikes"]["url"] == f"{base}/api/endpoint/{'b' * 32}" and ds["bikes"]["jsonData"]["oauthPassThru"] is True
+    dashes = [s[3] for s in seen if s[1] == "/dashboards/api/dashboards/db"]
+    assert [(d["dashboard"]["uid"], d["folderUid"], "id" in d["dashboard"]) for d in dashes] == [
+        ("project-helsinki", "project-helsinki", False), ("pv-ab12", "project-helsinki", False)]
+
+
+def test_a_source_dashboard_reading_no_endpoint_of_its_project_is_refused_and_writes_nothing(tmp_path):
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    # bbsk's Endpoint of that name is another project's: never borrowed
+    _endpoint(tmp_path, "bbsk", "air", "public")
+    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki", "panels": [_panel("air")]}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"uid": "pv-ab12", "panels": [_panel("metrics", "prometheus")]}))
+    rows = rh.import_portal_made(rh.Http("http://127.0.0.1:9"), {}, tmp_path, {})
+    assert [(r["file"], r["result"]) for r in rows] == [("org3-project-helsinki.json", "refused"),
+                                                        ("org3-pv-ab12.json", "refused")]
+    assert rows[0]["reason"] == "datasource air: project helsinki has no Endpoint air"
+    assert rows[1]["reason"] == "datasource metrics is not an NGSI-LD Endpoint"
+
+
+def test_a_source_org_maps_to_the_one_project_its_project_file_names(tmp_path):
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    for name in ("org2-project-bbsk.json", "org3-project-helsinki.json", "org3-pv-ab12.json", "org4-project-a.json",
+                 "org4-project-b.json", "org4-pv-cd34.json", "org9-pv-ef56.json", "org1-jc-portal.json"):
+        (src / name).write_text("{}")
+    assert {f.name: p for f, p in rh.portal_made(tmp_path)} == {
+        "org2-project-bbsk.json": "bbsk", "org3-project-helsinki.json": "helsinki", "org3-pv-ab12.json": "helsinki",
+        "org4-project-a.json": None, "org4-project-b.json": None, "org4-pv-cd34.json": None,
+        "org9-pv-ef56.json": None}
+
+
+def test_an_endpoint_name_that_is_no_name_finds_nothing(tmp_path):
+    _endpoint(tmp_path, "helsinki", "air", "public")
+    assert rh.project_endpoint(tmp_path, "helsinki", "*")[0] is None
+    assert rh.project_endpoint(tmp_path, "helsinki", "../helsinki/spaces/helsinki/endpoints/air")[0] is None
+    assert rh.project_endpoint(tmp_path, "helsinki", "air")[0] == {"slug": "a" * 32, "public": True}
 
 
 @pytest.mark.parametrize("dist_age, bin_age, ok", [(-10, -5, False), (10, 20, True), (10, 5, False)])
@@ -1679,16 +1738,22 @@ def test_the_smoke_counts_each_portal_made_dashboard_in_its_project_org(tmp_path
                                            rh.portal_made(tmp_path))
     finally:
         server.shutdown()
-    assert (found, sorted(lost)) == (1, ["org3-pv-ef56.json", "org9-pv-cd34.json"])
+    assert (found, sorted(lost)) == (1, ["org3-project-helsinki.json", "org3-pv-ef56.json", "org9-pv-cd34.json"])
 
 
 DEV_BUNDLE = Path("/workspace/evidence/jc-rehearsal/export/dev")
 
 
 @pytest.mark.skipif(not (DEV_BUNDLE / "grafana/dashboards").is_dir(), reason="the dev bundle is not on this host")
-def test_the_dev_bundle_holds_two_portal_made_dashboards_of_helsinki():
+def test_the_dev_bundle_holds_four_project_dashboards_each_reading_its_projects_endpoints():
     made = rh.portal_made(DEV_BUNDLE)
-    assert len(made) == 2 and {p for _, p in made} == {"helsinki"}
+    assert sorted((f.name.split("-", 1)[1], p) for f, p in made) == [
+        ("project-bbsk.json", "bbsk"), ("project-helsinki.json", "helsinki"),
+        ("pv-97058e3a30c95eb36b80743122d56561.json", "helsinki"), ("pv-e8c0d2a5fe1309ba15c39e1c7042526d.json", "helsinki")]
+    for f, project in made:
+        ngsild, other = rh.dashboard_datasources(json.loads(f.read_text()))
+        assert ngsild and not other, f.name
+        assert all(rh.project_endpoint(DEV_BUNDLE, project, n)[0] for n in ngsild), f.name
 
 
 def test_a_jc_that_ignores_sigterm_is_killed_before_the_next_starts():

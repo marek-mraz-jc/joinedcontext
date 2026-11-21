@@ -2249,25 +2249,83 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
 
 SOURCE_ORG_FILE = re.compile(r"^org(\d+)-(project-(?P<project>[a-z0-9-]+)|pv-[0-9a-f]+)\.json$")
 
+# The datasource type of the NGSI-LD plugin, the only kind a project dashboard reads (portal grafana.rs).
+NGSILD_DATASOURCE = "ngsild-grafana-datasource"
+# Grafana's built-in pseudo datasources: they read no data source of their own.
+BUILTIN_DATASOURCES = {"grafana", "-- Grafana --", "-- Mixed --", "-- Dashboard --", "datasource"}
+ENDPOINT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+
 
 def portal_made(export: Path) -> list[tuple[Path, str | None]]:
-    """The dev bundle's Portal-made dashboards (`org<N>-pv-<id>.json`, read from the source Grafana's
-    database), each with the project of source organization N: the one `org<N>-project-<p>.json`
-    names. None when no such file names N."""
+    """The dev bundle's source-database dashboards (`org<N>-project-<p>.json` and the Portal-made
+    `org<N>-pv-<id>.json`), each with the project of source organization N: the one
+    `org<N>-project-<p>.json` names. None when no such file names N, or two name different
+    projects: such a dashboard has no project and is never put anywhere."""
     src = export / "grafana" / "dashboards"
-    projects, made = {}, []
+    projects, files = {}, []
     for f in sorted(src.glob("org*.json")) if src.is_dir() else []:
         m = SOURCE_ORG_FILE.match(f.name)
-        if m and m.group("project"):
-            projects[m.group(1)] = m.group("project")
-        elif m:
-            made.append((f, m.group(1)))
-    return [(f, projects.get(n)) for f, n in made]
+        if not m:
+            continue
+        files.append((f, m.group(1)))
+        if m.group("project"):
+            projects.setdefault(m.group(1), set()).add(m.group("project"))
+    named = {n: next(iter(ps)) for n, ps in projects.items() if len(ps) == 1}
+    return [(f, named.get(n)) for f, n in files]
+
+
+def dashboard_datasources(dash) -> tuple[set[str], set[str]]:
+    """The datasource uids a dashboard model's panels and targets name: (NGSI-LD ones, any other
+    kind). A bare string reference is taken as an NGSI-LD uid; Grafana's built-ins are left out."""
+    ngsild, other = set(), set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            ref = x.get("datasource")
+            if isinstance(ref, dict) and ref.get("uid") and ref["uid"] not in BUILTIN_DATASOURCES:
+                (ngsild if ref.get("type") in (None, NGSILD_DATASOURCE) else other).add(str(ref["uid"]))
+            elif isinstance(ref, str) and ref not in BUILTIN_DATASOURCES and not ref.startswith("$"):
+                ngsild.add(ref)
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(dash)
+    return ngsild, other
+
+
+def project_endpoint(export: Path, project: str, name: str) -> tuple[dict | None, str]:
+    """Endpoint `name` of `project`, read from the project's own repository in the bundle
+    (`gitea/files/<org>/<project>/spaces/*/endpoints/<name>.yaml`): its slug and whether it is
+    public; or None and why. Another project's Endpoint of the same name is never found."""
+    if not ENDPOINT_NAME.fullmatch(name):
+        return None, f"datasource {name!r} names no Endpoint"
+    hits = sorted((export / "gitea" / "files").glob(f"*/{project}/spaces/*/endpoints/{name}.yaml"))
+    if len(hits) != 1:
+        return None, (f"datasource {name}: project {project} has no Endpoint {name}" if not hits else
+                      f"datasource {name}: project {project} has {len(hits)} Endpoints {name}")
+    text = hits[0].read_text()
+    slug = re.search(r"(?m)^  slug: ([a-z2-7]{26,})\s*$", text)
+    if not slug:
+        return None, f"datasource {name}: Endpoint {name} of {project} has no slug"
+    return {"slug": slug.group(1), "public": bool(re.search(r"(?m)^  audience: public\s*$", text))}, ""
+
+
+def endpoint_datasource(name: str, endpoint: dict, base: str) -> dict:
+    """The datasource of `endpoint` on the rehearsal's gateway, as the Portal adds a public one
+    (grafana.rs create_public_datasource) and the deployment's chart a closed one, which forwards
+    the signed-in person's token (projects.yaml, oauthPassThru). No credential is stored in it."""
+    json_data = {"pageSize": 1000, **({} if endpoint["public"] else {"oauthPassThru": True})}
+    return {"uid": name, "name": name, "type": NGSILD_DATASOURCE, "access": "proxy",
+            "url": f"{loopback_ip(base)}/api/endpoint/{endpoint['slug']}", "jsonData": json_data}
 
 
 def portal_made_found(h: Http, auth: dict, made: list[tuple[Path, str | None]]) -> tuple[int, list[str]]:
-    """How many of the bundle's Portal-made dashboards daiya holds in their project's organization,
-    and the files of the ones it does not (a pv whose source org names no project is missing)."""
+    """How many of the bundle's source-database dashboards daiya holds in their project's
+    organization, and the files of the ones it does not (one whose source org names no project
+    is missing)."""
     found, lost, orgs = 0, [], {}
     for f, project in made:
         uid = json.loads(f.read_text()).get("uid")
@@ -2285,25 +2343,62 @@ def portal_made_found(h: Http, auth: dict, made: list[tuple[Path, str | None]]) 
 
 
 def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[dict]:
-    """Each Portal-made dashboard into the daiya organization of its project, as the Portal
-    would save it there (POST /dashboards/api/dashboards/db, overwrite)."""
+    """Each source-database dashboard into the daiya organization of its project, as the Portal
+    saves one there: the project's folder, a datasource on the project's own Endpoint for each
+    one it reads, then POST /dashboards/api/dashboards/db (overwrite). A dashboard with no
+    project, or reading a datasource its project has no Endpoint for, is refused with the reason;
+    none goes into the main organization."""
     rows = []
     for f, project in portal_made(export):
-        row = {"file": f.name, "kind": "portal-made", "project": project}
+        row = {"file": f.name, "kind": "source-project" if "-project-" in f.name else "portal-made",
+               "project": project}
         if not project:
             rows.append({**row, "result": "refused", "reason": "its source organization names no project"})
             continue
         try:
-            if project not in orgs:
-                orgs[project] = daiya_org(h, auth, project)
             doc = json.loads(f.read_text())
-        except (RuntimeError, ValueError) as e:
-            rows.append({**row, "result": "refused", "reason": str(e)})
+        except ValueError as e:
+            rows.append({**row, "result": "refused", "reason": f"not JSON: {e}"})
             continue
         dash = {k: v for k, v in doc.get("dashboard", doc).items() if k != "id"}
-        st, answer = h.json("POST", "/dashboards/api/dashboards/db", body={"dashboard": dash, "overwrite": True},
-                            headers={**auth, "X-Grafana-Org-Id": str(orgs[project])})
-        row.update(org=orgs[project], uid=dash.get("uid"), status=st,
+        ngsild, other = dashboard_datasources(dash)
+        sources, why = {}, [f"datasource {u} is not an NGSI-LD Endpoint" for u in sorted(other)]
+        for name in sorted(ngsild):
+            ep, reason = project_endpoint(export, project, name)
+            if ep:
+                sources[name] = endpoint_datasource(name, ep, h.base)
+            else:
+                why.append(reason)
+        if why:
+            rows.append({**row, "result": "refused", "reason": "; ".join(why)})
+            continue
+        try:
+            if project not in orgs:
+                orgs[project] = daiya_org(h, auth, project)
+        except RuntimeError as e:
+            rows.append({**row, "result": "refused", "reason": str(e)})
+            continue
+        hdrs = {**auth, "X-Grafana-Org-Id": str(orgs[project])}
+        folder = f"project-{project}"
+        st, answer = h.json("POST", "/dashboards/api/folders", headers=hdrs, body={"uid": folder, "title": project})
+        if st not in (200, 409, 412):  # an existing folder answers 409 or 412
+            rows.append({**row, "org": orgs[project], "result": "refused", "call": "POST /dashboards/api/folders",
+                         "status": st, "detail": answer})
+            continue
+        for name, body in sources.items():
+            st, answer = h.json("POST", "/dashboards/api/datasources", headers=hdrs, body=body)
+            if st == 409:  # provision.sh: an existing one is replaced
+                st, answer = h.json("PUT", f"/dashboards/api/datasources/uid/{urllib.parse.quote(name)}",
+                                    headers=hdrs, body=body)
+            if st not in (200, 201):
+                why.append(f"datasource {name}: {st} {str(answer)[:120]}")
+        if why:
+            rows.append({**row, "org": orgs[project], "result": "refused", "reason": "; ".join(why)})
+            continue
+        st, answer = h.json("POST", "/dashboards/api/dashboards/db", headers=hdrs,
+                            body={"dashboard": dash, "folderUid": folder, "overwrite": True,
+                                  "message": "rehearsal import"})
+        row.update(org=orgs[project], uid=dash.get("uid"), datasources=sorted(sources), status=st,
                    result="imported" if st in (200, 201) else "refused", **({} if st in (200, 201) else {"detail": answer}))
         rows.append(row)
     return rows
@@ -2809,7 +2904,7 @@ def cmd_smoke(a):
     pw = read_secret(state, "dashboards-password")
     dauth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     dashdir = Path(a.dashboards) if a.dashboards else export / "grafana" / "dashboards"
-    files = sorted(dashdir.glob("*.json"))
+    files = sorted(f for f in dashdir.glob("*.json") if not SOURCE_ORG_FILE.match(f.name))
     # each project's dashboard sits in its own organization, the platform models in the main one
     orgs = {f.name.split(".", 1)[0] for f in files if _daiya_kind(f.name) == "dashboard"}
     found_uids, missing = set(), []
@@ -2833,11 +2928,12 @@ def cmd_smoke(a):
     want = sum(1 for f in files if _daiya_kind(f.name) in ("dashboard", "model"))
     check(f"daiya: {want} dashboards in their organizations", not missing and want > 0,
           "; ".join(missing[:8]) or f"{want} found", "GET /dashboards/api/search (per organization)")
-    # the bundle's Portal-made dashboards (org<N>-pv-*), each in the organization of its project
+    # the bundle's source-database dashboards (org<N>-project-*, org<N>-pv-*), each in the
+    # organization of its project
     made = portal_made(export)
     if made:
         found, lost = portal_made_found(h, dauth, made)
-        check(f"daiya: {len(made)} Portal-made dashboards in their project organizations",
+        check(f"daiya: {len(made)} source dashboards in their project organizations",
               found == len(made), f"{found} of {len(made)} found" + (f"; missing {', '.join(lost[:5])}" if lost else ""),
               "GET /dashboards/api/search (X-Grafana-Org-Id of the project)")
     if any(_daiya_kind(f.name) == "dashboard" for f in files):
