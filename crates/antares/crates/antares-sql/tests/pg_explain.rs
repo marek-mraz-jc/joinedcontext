@@ -981,7 +981,7 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
 /// an external sort of the type (CI run 44904009419). Each arm and the
 /// merge stop at the chunk's LIMIT: a stream stopped early by the broker
 /// is still sent in full, so an unbounded skip read the whole type. The
-/// multi-type arm reads its own partial index (0045): on 0044's it walked
+/// multi-type arm reads its own partial index (0046): on 0044's it walked
 /// every id of the type's range for its few rows, once per chunk.
 /// The page itself is a keyset
 /// page from the id found there, which reads i_entities_id_bytes in order
