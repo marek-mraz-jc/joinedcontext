@@ -464,16 +464,27 @@ pub(crate) async fn serve_ngsi_ld_view(
         return *answer;
     }
     // The audit line names the principal the gateway established (PF-46); the decision is the
-    // broker's, and its answer says what it was.
-    tracing::info!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        %view,
-        principal = %principal_of(&subject),
-        agreement = subject.agreement.as_deref().unwrap_or_default(),
-        operation = %operation.as_str(),
-        "forwarded to the broker's view"
-    );
+    // broker's, and its answer says what it was. A GET or HEAD writes it at DEBUG: jc's door
+    // counts answered reads and writes every refusal (T-7474), and reads were 7 % of jc-prod's log.
+    macro_rules! forwarded {
+        ($level:expr) => {
+            tracing::event!(
+                $level,
+                slug = %endpoint.slug,
+                space = %endpoint.space,
+                %view,
+                principal = %principal_of(&subject),
+                agreement = subject.agreement.as_deref().unwrap_or_default(),
+                operation = %operation.as_str(),
+                "forwarded to the broker's view"
+            )
+        };
+    }
+    if method == Method::GET || method == Method::HEAD {
+        forwarded!(tracing::Level::DEBUG);
+    } else {
+        forwarded!(tracing::Level::INFO);
+    }
     match view_request(gateway, &endpoint, &subject, &path, operation, &mut request).await {
         Ok(()) => {}
         Err(answer) => return *answer,

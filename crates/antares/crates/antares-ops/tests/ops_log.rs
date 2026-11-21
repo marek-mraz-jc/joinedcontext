@@ -9,7 +9,7 @@ use antares_ops::{Caller, OperationId, Ops, OpsRequest, Surface};
 use axum::body::Body;
 use axum::extract::Path;
 use axum::http::{Method, Request, StatusCode};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
@@ -64,6 +64,7 @@ impl Surface for Writer {
     }
     fn router(&self, ops: Ops) -> Router {
         let root = ops.clone();
+        let reader = ops.clone();
         Router::new()
             .route(
                 "/{view}",
@@ -75,6 +76,17 @@ impl Surface for Writer {
                         .run(OperationId::AppendAttributes, &caller, append())
                         .await
                     {
+                        Ok(r) => r.status(),
+                        Err(_) => StatusCode::FORBIDDEN,
+                    }
+                }),
+            )
+            .route(
+                "/read",
+                get(move |caller: Caller| async move {
+                    let car =
+                        OpsRequest::new(Method::GET, "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1");
+                    match reader.run(OperationId::RetrieveEntity, &caller, car).await {
                         Ok(r) => r.status(),
                         Err(_) => StatusCode::FORBIDDEN,
                     }
@@ -153,6 +165,13 @@ async fn a_surface_operation_is_logged_with_the_surface_and_the_view() -> Result
     assert_eq!(
         send(&app, Method::POST, "/x/writer", &root, &json!({})).await,
         StatusCode::NO_CONTENT
+    );
+
+    let read = [("x-user", "alice-7f3"), ("NGSILD-Tenant", "city")];
+    assert_eq!(
+        send(&app, Method::GET, "/x/writer/read", &read, &json!({})).await,
+        StatusCode::OK,
+        "an answered read runs and writes no INFO line (T-7474)"
     );
 
     let log = lines

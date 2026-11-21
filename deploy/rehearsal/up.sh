@@ -242,7 +242,10 @@ if [ -n "${REHEARSAL_AGE_KEY_FILE:-}" ]; then
 fi
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
-export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
+# jc writes an answered read at DEBUG and counts it per minute (T-7474); the logs suite's request-id
+# flows are reads, so the smoke's own ids (smokelogs-*) keep their door, gateway and surface lines.
+smoke_reads='jc::access[request{request_id=smokelogs-.*}]=debug,context_gateway[request{request_id=smokelogs-.*}]=debug,antares_ops[request{request_id=smokelogs-.*}]=debug'
+export RUST_LOG="${RUST_LOG:-info,sqlx=warn,$smoke_reads}"
 # The client id a stream gives a broker outside the platform ends in JC_MQTT_NAMESPACE: prod and
 # dev read mqtt.hsl.fi too, and a rehearsal sharing their id would drop their session in a loop.
 export EKIBEN_VAR_JC_MQTT_NAMESPACE=${EKIBEN_VAR_JC_MQTT_NAMESPACE:-rehearsal-$env_name-$port-$(hostname -s | tr -c 'a-z0-9\n' -)}

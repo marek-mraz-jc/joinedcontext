@@ -156,6 +156,19 @@ def test_a_refusal_is_judged_by_the_line_that_carries_its_request_id():
     assert got["refused.shako.echo"] == "fail" and got["refused.shako.logged"] == "fail"
 
 
+def test_a_refusal_is_judged_by_its_access_line_when_a_debug_line_of_its_span_comes_first():
+    # The rehearsal turns DEBUG on inside the smoke's own request spans (deploy/rehearsal/up.sh).
+    rid = "smokelogs-00112233445566778899"
+    res = Results("logs", "http://localhost:1")
+    suite.judge_refused(res, probe(rid), records(
+        f"2026-11-08T21:00:00Z DEBUG request{{module=\"shako\" request_id={rid}}}: sqlx::query: "
+        "summary=\"SELECT set_config('jc.org', $1, true)\" rows_affected=1",
+        f"2026-11-08T21:00:00Z  INFO request{{module=\"shako\" request_id={rid}}}: jc::access: refused "
+        "module=shako status=401"))
+    got = by_id(res)
+    assert got["refused.shako.logged"] == "pass" and got["refused.shako.reason"] == "pass"
+
+
 def test_a_refusal_nobody_logged_fails_and_a_dead_door_skips():
     rid = "smokelogs-fedcba9876543210"
     res = Results("logs", "http://localhost:1")
