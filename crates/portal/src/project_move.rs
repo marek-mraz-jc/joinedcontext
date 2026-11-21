@@ -15,6 +15,14 @@ use utoipa::ToSchema;
 use crate::permissions::{installation_organization, organization_of, ORG_NAMESPACE};
 use crate::store::{ListOptions, Mirror};
 
+tokio::task_local! {
+    /// The domains of the Organizations a proposed `ProjectMove` takes the judged project to: a
+    /// policyRef on one of them binds once the project moves, so an Endpoint Change may list it
+    /// beside the references that bind now (T-7462). The Endpoint door and a Change's approval
+    /// set it around their judge ([`moving_domains`]).
+    pub static MOVING: Vec<String>;
+}
+
 /// The rows of one keyed table that move.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TableRows {
@@ -163,6 +171,120 @@ fn bindings(mirror: &Mirror, project: &str) -> Vec<String> {
         .collect()
 }
 
+/// The domain an Organization manifest of the mirror declares.
+fn domain_of(mirror: &Mirror, kind: &str, name: &str) -> Option<String> {
+    mirror.get(ORG_NAMESPACE, kind, name).and_then(|env| {
+        env.spec["domain"]
+            .as_str()
+            .filter(|domain| !domain.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// The policyRefs of `project`'s Endpoints that bind one of its Policies now and would bind none
+/// once the project publishes under Organization `to` (T-7462): the gateway binds a Policy URN on
+/// the domains of the project and of the Organization its manifest names, so a move from
+/// `hel.fi` to `ctl-b.joinedcontext.com` leaves `urn:ngsi-ld:Policy:hel.fi:...` granting nothing
+/// at the next load. Each line names the Endpoint and the URN to list beside the old one, which
+/// keeps the Endpoint granting before and after the manifest names `to`. A reference binds now on
+/// the project's domains as its manifest stands and on the domain of `from`, the Organization the
+/// registry files it under, so a manifest that names `to` already still shows what the move
+/// leaves behind.
+pub fn stray_policy_refs(
+    mirror: &Mirror,
+    project: &str,
+    from: Option<&str>,
+    to: &str,
+) -> Vec<String> {
+    use jc_core::kinds::EndpointSpec;
+    let mut now = crate::permissions::project_domains(mirror, project);
+    now.extend(from.and_then(|from| domain_of(mirror, "Organization", from)));
+    let target = domain_of(mirror, "Organization", to);
+    let then: std::collections::BTreeSet<String> = domain_of(mirror, "Project", project)
+        .into_iter()
+        .chain(target.clone())
+        .collect();
+    let on = |domains: &std::collections::BTreeSet<String>, reference: &jc_core::Urn| {
+        reference
+            .org_domain()
+            .is_some_and(|domain| domains.contains(domain))
+    };
+    let mut lines = Vec::new();
+    for endpoint in mirror
+        .list(project, "Endpoint", &ListOptions::default())
+        .items
+    {
+        let Ok(spec) = serde_json::from_value::<EndpointSpec>(endpoint.spec) else {
+            continue;
+        };
+        let Some(refs) = spec.policy_refs() else {
+            continue;
+        };
+        let field = match spec.policy_ref {
+            Some(_) => "spec.policyRef",
+            None => "spec.policyRefs",
+        };
+        for reference in refs {
+            // Without a domain of its own the project binds on the installation's: counted as
+            // binding now, so nothing it grants today is missed.
+            let binds_now = now.is_empty() || on(&now, reference);
+            let kept = refs.iter().any(|other| {
+                other.space() == reference.space()
+                    && other.local_id() == reference.local_id()
+                    && on(&then, other)
+            });
+            if !binds_now
+                || kept
+                || mirror
+                    .get(project, "Policy", reference.local_id())
+                    .is_none()
+            {
+                continue;
+            }
+            let name = &endpoint.metadata.name;
+            lines.push(match &target {
+                Some(domain) => format!(
+                    "{field}: Endpoint '{name}' of project '{project}' names {reference}, which binds nothing under Organization '{to}' (domain {domain}); with the move asked for, list urn:ngsi-ld:Policy:{domain}:{}:{} beside it (an Endpoint Change), then name '{to}' in the Project",
+                    reference.space().unwrap_or_default(),
+                    reference.local_id()
+                ),
+                None => format!(
+                    "{field}: Endpoint '{name}' of project '{project}' names {reference}, and Organization '{to}' declares no domain, so no policyRef binds under it; give the Organization its domain first"
+                ),
+            });
+        }
+    }
+    lines
+}
+
+/// The domains of the Organizations a proposed `ProjectMove` takes `project` to, for [`MOVING`];
+/// empty without a database or a proposal.
+pub async fn moving_domains(
+    state: &crate::state::AppState,
+    project: &str,
+) -> Result<Vec<String>, crate::error::ApiError> {
+    let Some(pool) = state.db.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let targets: Vec<String> = sqlx::query_scalar(
+        "SELECT payload->>'organization' FROM operator_changes WHERE kind = 'ProjectMove' \
+         AND state = 'proposed' AND payload->>'project' = $1",
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| {
+        tracing::warn!(error = %err, %project, "the operator changes could not be read");
+        crate::error::ApiError::Unavailable(
+            "the operator changes could not be read; try again".into(),
+        )
+    })?;
+    Ok(targets
+        .iter()
+        .filter_map(|to| domain_of(&state.mirror, "Organization", to))
+        .collect())
+}
+
 /// What moving `project` to `to` does now. `None` when the registry holds no live project of
 /// that name.
 pub async fn plan(
@@ -200,6 +322,13 @@ pub async fn plan(
             manifest_organization.as_deref().unwrap_or("none")
         ));
     }
+    // The Project Change naming `to` waits for these, and so does the approval.
+    waits.extend(stray_policy_refs(
+        mirror,
+        project,
+        found.organization.as_deref(),
+        to,
+    ));
     let branches: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
          WHERE p.parent = $1::uuid AND b.expires_at > now()",
@@ -293,7 +422,13 @@ pub async fn check_manifest(
     .fetch_one(pool)
     .await?;
     if asked {
-        return Ok(Ok(()));
+        // Its Endpoints keep granting once the manifest names the target: the gateway binds
+        // their policyRefs on the target's domain from the next load on.
+        let stray = stray_policy_refs(mirror, project, Some(&filed), &named);
+        return Ok(match stray.is_empty() {
+            true => Ok(()),
+            false => Err(format!("spec.organizationRef: {}", stray.join("; "))),
+        });
     }
     Ok(Err(format!(
         "spec.organizationRef: the registry files project '{project}' under Organization \
