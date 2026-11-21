@@ -947,6 +947,116 @@ async fn components_of_one_client_share_its_token_and_its_backoff() {
     );
 }
 
+/// T-7473: after the ProjectMoves on jc-prod barcelona's pipelines wrote 401 for 40 minutes,
+/// each write presenting the cached token minted before the client's audience changed. A 401 to
+/// an OAuth2 call drops that token and sends once more with a fresh one; a second 401 fails the
+/// call with no further token request, so a refused client never loops on the realm.
+#[tokio::test]
+async fn a_refused_token_is_fetched_again_once_and_the_call_sent_once_more() {
+    let (reg, pctx, _) = setup_contexts(true);
+    // The token endpoint mints t1, t2, ...; the API admits only the token it is told to.
+    let minted = Arc::new(AtomicUsize::new(0));
+    let admitted = Arc::new(std::sync::Mutex::new(String::from("Bearer t1")));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/token",
+            post({
+                let minted = minted.clone();
+                move || async move {
+                    let n = minted.fetch_add(1, Ordering::SeqCst) + 1;
+                    format!(r#"{{"access_token":"t{n}","expires_in":3600}}"#)
+                }
+            }),
+        )
+        .route(
+            "/write",
+            post({
+                let admitted = admitted.clone();
+                let calls = calls.clone();
+                move |headers: HeaderMap| async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    if auth == admitted.lock().unwrap().as_str() {
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::UNAUTHORIZED
+                    }
+                }
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    // The pipeline's client, `{project}/{pipeline}` as the runner names it.
+    let client = "barcelona/kpi";
+    let conf = ComponentConfig::from_json_value(
+        &serde_json::json!({ "http": {
+            "url": format!("{base}/write"),
+            "verb": "POST",
+            "retries": 0,
+            "oauth2": {
+                "enabled": true,
+                "client_key": client,
+                "client_secret": "s",
+                "token_url": format!("{base}/token")
+            }
+        }}),
+        "noop",
+        None,
+    )
+    .unwrap();
+    let proc = reg.build_processor(&conf, &pctx, "0").unwrap();
+    let send = || {
+        execute_all(
+            &pctx,
+            std::slice::from_ref(&proc),
+            vec![vec![Part::from_str("{}")]],
+        )
+    };
+
+    let res = send().await.unwrap();
+    assert!(!res[0][0].is_errored(), "the first token is admitted");
+    assert_eq!(
+        (minted.load(Ordering::SeqCst), calls.load(Ordering::SeqCst)),
+        (1, 1)
+    );
+
+    // The move: the server no longer admits t1.
+    *admitted.lock().unwrap() = "Bearer t2".into();
+    let res = send().await.unwrap();
+    assert!(
+        !res[0][0].is_errored(),
+        "the fresh token is admitted at once"
+    );
+    assert_eq!(
+        (minted.load(Ordering::SeqCst), calls.load(Ordering::SeqCst)),
+        (2, 3),
+        "one token request and one more send"
+    );
+    let res = send().await.unwrap();
+    assert!(!res[0][0].is_errored(), "the fresh token stays cached");
+    assert_eq!(
+        (minted.load(Ordering::SeqCst), calls.load(Ordering::SeqCst)),
+        (2, 4)
+    );
+
+    // A client the server refuses whatever token it holds: one refresh, one retry, then fail.
+    *admitted.lock().unwrap() = "Bearer none".into();
+    let res = send().await.unwrap();
+    assert!(res[0][0].is_errored(), "a second 401 fails the call");
+    assert_eq!(
+        (minted.load(Ordering::SeqCst), calls.load(Ordering::SeqCst)),
+        (3, 6),
+        "no token request loop"
+    );
+}
+
 /// A server that answers every request with the status line it is given, as some sources do
 /// (a code without a phrase, a phrase of their own).
 async fn status_line_server(line: &'static str) -> String {
