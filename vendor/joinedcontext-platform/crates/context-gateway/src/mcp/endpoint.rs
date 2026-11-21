@@ -155,14 +155,26 @@ pub(crate) async fn mcp_answer(
         ACCEPT,
         HeaderValue::from_static("application/json, text/event-stream"),
     );
-    tracing::info!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        %view,
-        principal = %principal_of(&subject),
-        tool = tool.as_deref().unwrap_or_default(),
-        "MCP message forwarded to the broker's view"
-    );
+    // A read (any method but a call, or a call of a broker read tool) writes it at DEBUG: jc's door
+    // counts answered reads and writes every refusal (T-7474, T-7479); a write call keeps INFO.
+    macro_rules! forwarded {
+        ($level:expr) => {
+            tracing::event!(
+                $level,
+                slug = %endpoint.slug,
+                space = %endpoint.space,
+                %view,
+                principal = %principal_of(&subject),
+                tool = tool.as_deref().unwrap_or_default(),
+                "MCP message forwarded to the broker's view"
+            )
+        };
+    }
+    if forward_level(calls, tool.as_deref()) == tracing::Level::INFO {
+        forwarded!(tracing::Level::INFO);
+    } else {
+        forwarded!(tracing::Level::DEBUG);
+    }
     let method = message["method"].as_str().unwrap_or_default().to_owned();
     let answer = match gateway
         .broker
@@ -510,6 +522,16 @@ fn unreadable_tool_list(id: Value, endpoint: &Endpoint) -> Response<Body> {
 }
 
 /// The registrations of the endpoint's space, by name and never by address (EP-71).
+/// The level of the forwarded line: INFO for a `tools/call` of anything but a broker read tool
+/// (an unknown name counts as a write), DEBUG for every other message.
+fn forward_level(calls: bool, tool: Option<&str>) -> tracing::Level {
+    if calls && !tool.is_some_and(mcp::writes::is_read_tool) {
+        tracing::Level::INFO
+    } else {
+        tracing::Level::DEBUG
+    }
+}
+
 fn member_names(gateway: &Gateway, endpoint: &Endpoint) -> Vec<String> {
     gateway
         .members_of(&endpoint.project, &endpoint.space)
@@ -931,6 +953,18 @@ pub(crate) fn unauthorized(gateway: &Gateway, slug: &str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7479: a read writes its forwarded line at DEBUG, a write call and an unnamed call at INFO.
+    #[test]
+    fn only_a_write_call_writes_its_forwarded_line_at_info() {
+        use tracing::Level;
+        assert_eq!(forward_level(false, None), Level::DEBUG);
+        assert_eq!(forward_level(false, Some("delete_entity")), Level::DEBUG);
+        assert_eq!(forward_level(true, Some("query_entities")), Level::DEBUG);
+        assert_eq!(forward_level(true, Some("batch_upsert")), Level::INFO);
+        assert_eq!(forward_level(true, Some("no_such_tool")), Level::INFO);
+        assert_eq!(forward_level(true, None), Level::INFO);
+    }
 
     /// NET-03: the hop to the broker's view carries the headers its checks and the MCP transport
     /// read, and none of the client's other headers.
