@@ -521,7 +521,6 @@ fn unreadable_tool_list(id: Value, endpoint: &Endpoint) -> Response<Body> {
     mcp::jsonrpc::json_response(StatusCode::OK, &refusal)
 }
 
-/// The registrations of the endpoint's space, by name and never by address (EP-71).
 /// The level of the forwarded line: INFO for a `tools/call` of anything but a broker read tool
 /// (an unknown name counts as a write), DEBUG for every other message.
 fn forward_level(calls: bool, tool: Option<&str>) -> tracing::Level {
@@ -532,6 +531,7 @@ fn forward_level(calls: bool, tool: Option<&str>) -> tracing::Level {
     }
 }
 
+/// The registrations of the endpoint's space, by name and never by address (EP-71).
 fn member_names(gateway: &Gateway, endpoint: &Endpoint) -> Vec<String> {
     gateway
         .members_of(&endpoint.project, &endpoint.space)
