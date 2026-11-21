@@ -111,6 +111,10 @@ pub enum VisualizationData {
             skip_serializing_if = "Option::is_none"
         )]
         aggr_period: Option<String>,
+        /// Whether readers get the chart's toolbar (range, granularity, method); absent means
+        /// `true`. The view's `last`, `aggrMethod` and `aggrPeriod` are the toolbar's defaults.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controls: Option<bool>,
     },
 }
 
@@ -481,6 +485,7 @@ pub fn check_source(at: &str, data: &VisualizationData) -> Result<()> {
             last,
             aggr_method,
             aggr_period,
+            controls: _,
         } => {
             name("type", entity_type)?;
             if attrs.is_empty() || attrs.iter().any(|a| !is_attribute(a)) {
@@ -596,5 +601,46 @@ fn invalid(at: &str, rule: &str, reason: String) -> Error {
     Error::Invalid {
         field: at.to_owned(),
         reason: format!("{rule}: {reason}"),
+    }
+}
+
+#[cfg(test)]
+mod controls_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse(data: Value) -> std::result::Result<VisualizationData, serde_json::Error> {
+        serde_json::from_value(data)
+    }
+
+    #[test]
+    fn a_temporal_source_takes_controls_as_a_boolean_and_round_trips_it() {
+        let data = json!({ "source": "temporal", "type": "WeatherObserved", "attrs": ["temperature"],
+                           "last": "P7D", "aggrMethod": "max", "aggrPeriod": "P1D", "controls": false });
+        let source = parse(data.clone()).expect("parses");
+        assert!(matches!(source, VisualizationData::Temporal { controls: Some(false), .. }));
+        assert!(check_source("/data", &source).is_ok());
+        assert_eq!(serde_json::to_value(&source).expect("serializes"), data);
+    }
+
+    #[test]
+    fn controls_default_to_shown_and_are_not_written_when_absent() {
+        let data = json!({ "source": "temporal", "type": "WeatherObserved", "attrs": ["temperature"], "last": "PT24H" });
+        let source = parse(data.clone()).expect("parses");
+        assert!(matches!(source, VisualizationData::Temporal { controls: None, .. }));
+        assert_eq!(serde_json::to_value(&source).expect("serializes"), data);
+    }
+
+    #[test]
+    fn controls_that_are_not_a_boolean_or_on_another_source_are_refused() {
+        let temporal = |controls: Value| json!({ "source": "temporal", "type": "WeatherObserved",
+                                                 "attrs": ["temperature"], "last": "P7D", "controls": controls });
+        for bad in [json!("no"), json!(0), json!({})] {
+            let error = parse(temporal(bad.clone())).expect_err("refused").to_string();
+            assert!(error.contains("expected a boolean"), "{bad}: {error}");
+        }
+        let csv = json!({ "source": "csv", "type": "WeatherObserved", "controls": false });
+        let error = parse(csv).expect_err("refused").to_string();
+        assert!(error.contains("unknown field `controls`"), "{error}");
     }
 }

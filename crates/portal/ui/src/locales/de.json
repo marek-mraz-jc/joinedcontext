@@ -1868,6 +1868,30 @@
         "incomplete": "Geben Sie dem Diagramm einen Namen, einen Titel, eine Beschreibung und eine Spezifikation.",
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
+        "toolbar": "Diagrammeinstellungen für Lesende",
+        "range": "Standardzeitraum",
+        "rangeHint": "Was Lesende beim Öffnen des Diagramms sehen, z. B. 7 Tage: die letzte Woche bis jetzt.",
+        "ranges": {
+          "day": "24 Stunden",
+          "week": "7 Tage",
+          "month": "31 Tage"
+        },
+        "granularity": "Standardauflösung",
+        "granularityHint": "Rohwerte zeichnen jede Messung; stündlich und täglich einen Punkt pro Stunde oder Tag, z. B. täglich für 31 Tage.",
+        "granularities": {
+          "raw": "Rohwerte",
+          "hourly": "Stündlich",
+          "daily": "Täglich"
+        },
+        "method": "Standardberechnung",
+        "methodHint": "Wie die Messungen einer Stunde oder eines Tages zu einem Punkt werden, z. B. Maximum für die Tagesspitze.",
+        "methods": {
+          "avg": "Mittelwert",
+          "min": "Minimum",
+          "max": "Maximum"
+        },
+        "controls": "Lesenden die Einstellungsleiste zeigen",
+        "controlsHint": "Lesende können Zeitraum, Auflösung und Berechnung selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm.",
         "templates": {
           "bar": "Balkendiagramm",
           "line": "Verlauf über die Zeit",

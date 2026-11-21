@@ -572,6 +572,52 @@ async fn a_map_role_the_model_cannot_fill_is_a_422_naming_the_member() {
     refused(&state, &shako, not_a_flag, "spec.representations").await;
 }
 
+/// An Endpoint with one chart over the temporal source, its data block given.
+fn charted(data: Value) -> Value {
+    let mut manifest = endpoint(json!(["ngsi-ld"]));
+    manifest["spec"]["catalog"] = json!({ "visualizations": [{
+        "name": "teplota",
+        "title": { "sk": "Teplota" },
+        "description": { "sk": "Teplota za týždeň." },
+        "data": data,
+        "spec": {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": { "name": "source" },
+            "mark": "line",
+            "encoding": { "x": { "field": "observedAt", "type": "temporal" } }
+        }
+    }]});
+    manifest
+}
+
+/// T-7491: the editor's toolbar defaults and switch on a temporal chart save as written.
+#[tokio::test]
+async fn temporal_chart_defaults_and_a_hidden_toolbar_open_a_change() {
+    let (state, _gitea) = portal(EVENTS).await;
+    let data = json!({ "source": "temporal", "type": "Event", "attrs": ["startDate"], "last": "P31D",
+        "aggrMethod": "min", "aggrPeriod": "P1D", "controls": false });
+    let answer = propose(&state, charted(data)).await;
+    assert!(answer.status.is_success(), "{} {}", answer.status, answer.text);
+}
+
+/// T-7491: one 422 per temporal chart member outside its allow-list, naming the member.
+#[tokio::test]
+async fn a_temporal_chart_default_outside_its_list_is_a_422_naming_the_member() {
+    let (state, shako) = portal(EVENTS).await;
+    let base = json!({ "source": "temporal", "type": "Event", "attrs": ["startDate"], "last": "P7D",
+        "aggrMethod": "avg", "aggrPeriod": "PT1H" });
+    for (member, value, named) in [
+        ("last", json!("P32D"), "visualizations/0/data/last"),
+        ("aggrPeriod", json!("PT0S"), "visualizations/0/data/aggrPeriod"),
+        ("aggrMethod", json!("median"), "median"),
+        ("controls", json!("no"), "expected a boolean"),
+    ] {
+        let mut data = base.clone();
+        data[member] = value;
+        refused(&state, &shako, charted(data), named).await;
+    }
+}
+
 fn table(start: Value) -> Value {
     with_outputs(
         json!({ "widget": [{ "name": "tabulka", "sources": [{ "type": "Event", "table": start }] }] }),

@@ -34,20 +34,54 @@ const PREFERRED: Record<TemplateName, string[]> = {
 /** The representation each source reads, as jc-core's `VisualizationData::representation`. */
 const REPRESENTATION: Record<string, string> = { csv: "csv", odata: "odata", temporal: "ngsi-ld", ogc: "ogc-features" };
 
+/** The ranges a reader's toolbar opens on (T-7491), as the source's `last`. */
+export const RANGES = { day: "PT24H", week: "P7D", month: "P31D" } as const;
+/** The granularities, as the source's `aggrPeriod`; `raw` reads every value. */
+export const GRANULARITIES = { raw: undefined, hourly: "PT1H", daily: "P1D" } as const;
+/** The aggregation methods the editor offers. */
+export const METHODS = ["avg", "min", "max"] as const;
+
+/** What the reader's toolbar starts from, and whether readers get it at all. */
+export interface TemporalDefaults {
+  range: keyof typeof RANGES;
+  granularity: keyof typeof GRANULARITIES;
+  method: (typeof METHODS)[number];
+  controls: boolean;
+}
+
+/** The last day hour by hour, averaged, with the toolbar shown. */
+export const DEFAULT_TEMPORAL: TemporalDefaults = { range: "day", granularity: "hourly", method: "avg", controls: true };
+
+/** The source a template reads, by the representations the Endpoint serves; `undefined` for none. */
+export function sourceOf(template: TemplateName, served: string[]): string | undefined {
+  return PREFERRED[template].find((one) => served.includes(REPRESENTATION[one] ?? one));
+}
+
 /**
- * The data block a new chart starts from: a time series reads the last day of its measure hour by
- * hour, a comparison the entity set; `undefined` when the Endpoint serves none of the sources.
+ * The data block a new chart starts from: a time series reads its measure over the range at the
+ * granularity the editor picked, a comparison the entity set; `undefined` when the Endpoint serves
+ * none of the sources.
  */
 export function defaultData(
   template: TemplateName,
   type: string,
   measure: string,
   served: string[],
+  temporal: TemporalDefaults = DEFAULT_TEMPORAL,
 ): Visualization["data"] | undefined {
-  const source = PREFERRED[template].find((one) => served.includes(REPRESENTATION[one] ?? one));
+  const source = sourceOf(template, served);
   switch (source) {
-    case "temporal":
-      return { source, type, attrs: [measure], last: "PT24H", aggrMethod: "avg", aggrPeriod: "PT1H" };
+    case "temporal": {
+      const period = GRANULARITIES[temporal.granularity];
+      return {
+        source,
+        type,
+        attrs: [measure],
+        last: RANGES[temporal.range],
+        ...(period ? { aggrMethod: temporal.method, aggrPeriod: period } : {}),
+        ...(temporal.controls ? {} : { controls: false }),
+      };
+    }
     case "odata":
       return { source, entitySet: type };
     case "csv":

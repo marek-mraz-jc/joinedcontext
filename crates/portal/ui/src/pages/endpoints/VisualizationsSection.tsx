@@ -10,19 +10,30 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Field,
   Input,
   Select,
   Textarea,
 } from "../../components/ui";
 import {
+  DEFAULT_TEMPORAL,
+  GRANULARITIES,
+  METHODS,
+  RANGES,
   TEMPLATES,
   complete,
   defaultData,
+  sourceOf,
   visualizationsOf,
   withVisualizations,
 } from "./visualizations";
-import type { Role, TemplateName, Visualization } from "./visualizations";
+import type {
+  Role,
+  TemplateName,
+  TemporalDefaults,
+  Visualization,
+} from "./visualizations";
 
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -59,6 +70,7 @@ export function VisualizationsSection({
   const [type, setType] = useState(types[0] ?? "");
   const [columns, setColumns] = useState<Partial<Record<Role, string>>>({});
   const [specText, setSpecText] = useState("");
+  const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
   const [failed, setFailed] = useState<string | null>(null);
 
   const propose = (next: Visualization[]) =>
@@ -93,7 +105,7 @@ export function VisualizationsSection({
       setFailed(t("endpoints.page.visualizations.badJson"));
       return;
     }
-    const data = defaultData(template, type, columns.y ?? "", served);
+    const data = defaultData(template, type, columns.y ?? "", served, temporal);
     if (!data) {
       setFailed(t("endpoints.page.visualizations.noSource"));
       return;
@@ -261,6 +273,104 @@ export function VisualizationsSection({
               </Field>
             ))}
           </div>
+          {sourceOf(template, served) === "temporal" ? (
+            <fieldset
+              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
+              data-testid="viz-temporal"
+            >
+              <legend className="px-1 text-sm font-medium text-fg">
+                {t("endpoints.page.visualizations.toolbar")}
+              </legend>
+              <Field
+                id="viz-range"
+                label={t("endpoints.page.visualizations.range")}
+                help={t("endpoints.page.visualizations.rangeHint")}
+              >
+                <Select
+                  id="viz-range"
+                  value={temporal.range}
+                  onChange={(event) =>
+                    setTemporal({
+                      ...temporal,
+                      range: event.target.value as TemporalDefaults["range"],
+                    })
+                  }
+                >
+                  {(Object.keys(RANGES) as TemporalDefaults["range"][]).map(
+                    (one) => (
+                      <option key={one} value={one}>
+                        {t(`endpoints.page.visualizations.ranges.${one}`)}
+                      </option>
+                    ),
+                  )}
+                </Select>
+              </Field>
+              <Field
+                id="viz-granularity"
+                label={t("endpoints.page.visualizations.granularity")}
+                help={t("endpoints.page.visualizations.granularityHint")}
+              >
+                <Select
+                  id="viz-granularity"
+                  value={temporal.granularity}
+                  onChange={(event) =>
+                    setTemporal({
+                      ...temporal,
+                      granularity: event.target
+                        .value as TemporalDefaults["granularity"],
+                    })
+                  }
+                >
+                  {(
+                    Object.keys(GRANULARITIES) as TemporalDefaults["granularity"][]
+                  ).map((one) => (
+                    <option key={one} value={one}>
+                      {t(`endpoints.page.visualizations.granularities.${one}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {temporal.granularity === "raw" ? null : (
+                <Field
+                  id="viz-method"
+                  label={t("endpoints.page.visualizations.method")}
+                  help={t("endpoints.page.visualizations.methodHint")}
+                >
+                  <Select
+                    id="viz-method"
+                    value={temporal.method}
+                    onChange={(event) =>
+                      setTemporal({
+                        ...temporal,
+                        method: event.target.value as TemporalDefaults["method"],
+                      })
+                    }
+                  >
+                    {METHODS.map((one) => (
+                      <option key={one} value={one}>
+                        {t(`endpoints.page.visualizations.methods.${one}`)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              <Field
+                id="viz-controls"
+                hideLabel
+                help={t("endpoints.page.visualizations.controlsHint")}
+                className="sm:col-span-3"
+              >
+                <Checkbox
+                  id="viz-controls"
+                  label={t("endpoints.page.visualizations.controls")}
+                  checked={temporal.controls}
+                  onChange={(event) =>
+                    setTemporal({ ...temporal, controls: event.target.checked })
+                  }
+                />
+              </Field>
+            </fieldset>
+          ) : null}
           <Button
             size="sm"
             variant="secondary"

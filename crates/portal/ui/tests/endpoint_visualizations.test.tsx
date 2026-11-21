@@ -173,6 +173,62 @@ describe("VisualizationsSection", () => {
     ]);
   });
 
+  it("proposes the reader's toolbar defaults and switch picked for a temporal chart (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    const toolbar = screen.getByTestId("viz-temporal");
+    expect(toolbar).toHaveAccessibleName(V.toolbar);
+    // Each field has its hint with an example, read after the control's name.
+    expect(screen.getByLabelText(V.range)).toHaveAccessibleDescription(V.rangeHint);
+    expect(screen.getByLabelText(V.granularity)).toHaveAccessibleDescription(V.granularityHint);
+    expect(screen.getByLabelText(V.method)).toHaveAccessibleDescription(V.methodHint);
+    expect(screen.getByLabelText(V.controls)).toHaveAccessibleDescription(V.controlsHint);
+    // Only the allow-listed values are offered.
+    const options = (label: string) =>
+      Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.text);
+    expect(options(V.range)).toEqual([V.ranges.day, V.ranges.week, V.ranges.month]);
+    expect(options(V.granularity)).toEqual([V.granularities.raw, V.granularities.hourly, V.granularities.daily]);
+    expect(options(V.method)).toEqual([V.methods.avg, V.methods.min, V.methods.max]);
+
+    // Raw readings take no method: the field goes and the data block holds no aggregation.
+    await userEvent.selectOptions(screen.getByLabelText(V.granularity), "raw");
+    expect(screen.queryByLabelText(V.method)).toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText(V.granularity), "daily");
+    await userEvent.selectOptions(screen.getByLabelText(V.range), "week");
+    await userEvent.selectOptions(screen.getByLabelText(V.method), "max");
+    await userEvent.click(screen.getByLabelText(V.controls));
+
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.x), "dateObserved");
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
+    await userEvent.click(screen.getByRole("button", { name: V.fill }));
+    await waitFor(() =>
+      expect((screen.getByLabelText(V.spec) as HTMLTextAreaElement).value).toContain("dateObserved"),
+    );
+    await userEvent.type(screen.getByLabelText(V.name), "no2-week");
+    await userEvent.type(screen.getByLabelText(V.chartTitle), "NO2 this week");
+    await userEvent.type(screen.getByLabelText(V.description), "Daily peak.");
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    const put = sent.filter((r) => r.method === "PUT")[1];
+    expect(JSON.parse(put.body).spec.catalog.visualizations[0].data).toEqual({
+      source: "temporal",
+      type: "AirQualityObserved",
+      attrs: ["no2"],
+      last: "P7D",
+      aggrMethod: "max",
+      aggrPeriod: "P1D",
+      controls: false,
+    });
+  });
+
+  it("offers no toolbar defaults for a chart that does not read the history", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.selectOptions(screen.getByLabelText(V.template), "bar");
+    expect(screen.queryByTestId("viz-temporal")).toBeNull();
+  });
+
   it("refuses a name already taken and a spec that is not JSON before anything is sent", async () => {
     mount(endpoint({ visualizations: [BAR] }), true);
     await userEvent.click(screen.getByText(V.add));
@@ -219,6 +275,12 @@ describe("visualization data", () => {
       type: "T",
     });
     expect(defaultData("heatmap", "T", "v", ["ogc-features"])).toBeUndefined();
+  });
+
+  it("writes raw readings without an aggregation and a shown toolbar without the switch", () => {
+    expect(
+      defaultData("line", "T", "v", ["ngsi-ld"], { range: "month", granularity: "raw", method: "max", controls: true }),
+    ).toEqual({ source: "temporal", type: "T", attrs: ["v"], last: "P31D" });
   });
 
   it("keeps the rest of the catalogue when the list empties", () => {
