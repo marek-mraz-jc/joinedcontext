@@ -67,7 +67,9 @@ export function VisualizationsSection({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [template, setTemplate] = useState<TemplateName>("line");
-  const [type, setType] = useState(types[0] ?? "");
+  const [picked, setType] = useState("");
+  // The model loads after the Endpoint: until a type is picked, the first one listed is the type.
+  const type = types.includes(picked) ? picked : (types[0] ?? "");
   const [columns, setColumns] = useState<Partial<Record<Role, string>>>({});
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
