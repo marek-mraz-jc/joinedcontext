@@ -7458,6 +7458,125 @@ output_error{stream="kpi"} 6
         );
     }
 
+    /// T-7462 (jc-dev t6025-full): a project whose Endpoint names its write Policy on a domain
+    /// it no longer holds (moved to an Organization of another domain) loads with that Policy
+    /// refused as bound by no Endpoint. One Endpoint Change naming the Policy on the project's
+    /// domain passes the propose door against that load, and the next load serves both.
+    #[test]
+    fn an_endpoint_change_repairs_a_write_policy_its_dead_reference_left_unbound() {
+        let render = |root: &Path| Render {
+            layout: 1,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let syncer = bare_syncer();
+        let run = |files: &[(&str, String)], revision: &str| {
+            let dir = Scratch::new("t7462").expect("a scratch directory");
+            let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+            write_tree(dir.path(), &files);
+            let loaded = Repository::load(dir.path()).expect("the repository loads");
+            let (served, refusals) =
+                syncer.refuse_invalid(&render(dir.path()), Arc::new(loaded), revision, "main");
+            *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
+            let (fresh, _) = syncer
+                .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
+                .expect("the mirror loads");
+            syncer.mirror.replace_all(&fresh);
+            refusals
+        };
+        let endpoint = |reference: &str| {
+            json!({
+                "contextSpaceRef": "air",
+                "slug": "eeeeeeeeeeeeeeeeeeeeeeeeee",
+                "audience": "organization",
+                "enabledRepresentations": ["ngsi-ld"],
+                "policyRefs": [reference],
+            })
+        };
+        let files = |reference: &str| {
+            vec![
+                (
+                    "projects/city/project.yaml",
+                    serde_json::to_string(&json!({
+                        "apiVersion": "joinedcontext.com/v1alpha1",
+                        "kind": "Project",
+                        "metadata": {"name": "city", "namespace": "org"},
+                        "spec": {"organizationRef": "ctl-b", "domain": "ctl-b.example"},
+                    }))
+                    .expect("JSON"),
+                ),
+                (
+                    "projects/city/spaces/air/space.yaml",
+                    manifest("ContextSpace", "air", json!({})),
+                ),
+                (
+                    "projects/city/spaces/air/policies/sensors-write.yaml",
+                    manifest(
+                        "Policy",
+                        "sensors-write",
+                        json!({
+                            "contextSpaceRef": "air",
+                            "assigner": "did:web:ctl-b.example",
+                            "assignee": {"kind": "serviceAccount", "id": "sensors"},
+                            "operations": ["upsertBatch"],
+                        }),
+                    ),
+                ),
+                (
+                    "projects/city/spaces/air/endpoints/air-write.yaml",
+                    manifest("Endpoint", "air-write", endpoint(reference)),
+                ),
+            ]
+        };
+        const DEAD: &str = "urn:ngsi-ld:Policy:hel.fi:city-air:sensors-write";
+        const LIVE: &str = "urn:ngsi-ld:Policy:ctl-b.example:city-air:sensors-write";
+        let refusals = run(&files(DEAD), "aaaa1111");
+        let policy = refusals
+            .iter()
+            .find(|(id, _)| id.kind == "Policy")
+            .map(|(_, refusal)| refusal.reason.clone())
+            .expect("the write Policy is refused");
+        assert!(policy.contains("but no Endpoint binds it"), "{policy}");
+        assert!(syncer
+            .mirror
+            .get("city", "Policy", "sensors-write")
+            .is_none());
+
+        let bounds = jc_core::kinds::OrganizationBounds::default();
+        let ground = crate::judge::Ground {
+            mirror: &syncer.mirror,
+            bounds: &bounds,
+            mqtt_default: None,
+            apex: None,
+            domain: None,
+            portals: None,
+            load: false,
+        };
+        let mut change: crate::resource::ResourceEnvelope =
+            serde_json::from_str(&manifest("Endpoint", "air-write", endpoint(LIVE)))
+                .expect("an envelope");
+        change.status = None;
+        crate::api::mutate::check_policy_refs(&ground, "city", &change)
+            .expect("the Endpoint Change binding the refused Policy passes the door");
+
+        let refusals = run(&files(LIVE), "bbbb2222");
+        assert!(
+            refusals.is_empty(),
+            "{:?}",
+            refusals.values().map(|r| &r.reason).collect::<Vec<_>>()
+        );
+        assert!(syncer
+            .mirror
+            .get("city", "Policy", "sensors-write")
+            .is_some());
+        assert!(syncer.mirror.get("city", "Endpoint", "air-write").is_some());
+    }
+
     /// P-2, CHG-03: a manifest committed straight to `main` meets the Portal's judge at load,
     /// with the words the propose door gives: an Endpoint published to CKAN while it is not
     /// public is refused, its last good revision keeps serving, and an unchanged one is not
