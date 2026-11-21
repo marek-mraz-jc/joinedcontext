@@ -510,6 +510,140 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
     assert_eq!(unforced, Vec::<String>::new());
 }
 
+/// T-7462 (jc-dev t6025-full, 2026-11-21): the gateway binds a policyRef on the domains of the
+/// project and of the Organization its manifest names, so a move from `{from}.example` to
+/// `{to}.example` left every `urn:ngsi-ld:Policy:{from}.example:...` granting nothing at the next
+/// load. The plan waits for an Endpoint listing the target's URN beside the old one, the Project
+/// Change naming the target is refused until then (its dry run says so), and the approval waits
+/// too, even when the manifest names the target already; once the Endpoint lists both, the move
+/// applies and nothing of it binds on the old domain alone.
+#[tokio::test]
+async fn a_move_waits_for_endpoints_whose_policy_refs_name_the_old_domain() {
+    let state = world().await;
+    let from = run("hel");
+    let to = run("ctlb");
+    let project = run("refs");
+    people(&state, &from, &to);
+    placed(&state, &project, &from, &to).await;
+    let segment = joinedcontext_portal::spaces::segment(&state.mirror, &project, "air");
+    let urn = |organization: &str| {
+        format!("urn:ngsi-ld:Policy:{organization}.example:{segment}:public-read")
+    };
+    let m = &state.mirror;
+    m.upsert(envelope("ContextSpace", "air", &project, json!({})));
+    m.upsert(envelope(
+        "Policy",
+        "public-read",
+        &project,
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                "assignee": { "kind": "role", "id": "public" }, "operations": ["retrieveOps"] }),
+    ));
+    let endpoint = |refs: Vec<String>| {
+        envelope(
+            "Endpoint",
+            "stations",
+            &project,
+            json!({ "contextSpaceRef": "air", "audience": "public", "policyRefs": refs,
+                    "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "enabledRepresentations": ["ngsi-ld"] }),
+        )
+    };
+    m.upsert(endpoint(vec![urn(&from)]));
+
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("an id").to_owned();
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    let waits = planned["waits"].to_string();
+    assert!(
+        waits.contains("Endpoint 'stations'")
+            && waits.contains(&urn(&from))
+            && waits.contains(&urn(&to)),
+        "{planned}"
+    );
+    let check = || {
+        let state = state.clone();
+        let project = project.clone();
+        let to = to.clone();
+        async move {
+            joinedcontext_portal::project_move::check_manifest(
+                pool(&state),
+                &state.mirror,
+                &project,
+                &json!({ "organizationRef": to }),
+            )
+            .await
+            .expect("registry")
+        }
+    };
+    let refused = check().await.expect_err("the Endpoint would grant nothing");
+    assert!(
+        refused.starts_with("spec.organizationRef:") && refused.contains(&urn(&to)),
+        "{refused}"
+    );
+    // The Project door's dry run gives the same finding.
+    let door = send(
+        &state,
+        operator(&state, "ops-a"),
+        "PUT",
+        &format!("/api/v1/projects/{ORG_NAMESPACE}/projects/{project}?dryRun=All"),
+        Some(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": { "name": project, "namespace": ORG_NAMESPACE },
+            "spec": { "organizationRef": to }
+        })),
+    )
+    .await;
+    assert_eq!(door.status, StatusCode::OK, "{}", door.text);
+    let finding = &body(&door.text)["verdict"]["findings"][0];
+    assert_eq!(
+        finding["path"],
+        json!("spec.organizationRef"),
+        "{}",
+        door.text
+    );
+    assert!(
+        finding["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(&urn(&from))),
+        "{}",
+        door.text
+    );
+    // The Endpoint door lets the target's URN in because the move is asked for.
+    assert_eq!(
+        joinedcontext_portal::project_move::moving_domains(&state, &project)
+            .await
+            .expect("operator changes"),
+        [format!("{to}.example")]
+    );
+
+    // A manifest that names the target already (a Change from before the check) still waits.
+    manifest(&state, &project, &to);
+    let (status, refused) = approve(&state, operator(&state, "ops-b"), &id).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains(&urn(&to)), "{refused}");
+
+    manifest(&state, &project, &from);
+    m.upsert(endpoint(vec![urn(&from), urn(&to)]));
+    assert_eq!(check().await, Ok(()), "the Endpoint grants under both");
+    manifest(&state, &project, &to);
+    let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(joinedcontext_portal::project_move::stray_policy_refs(
+        &state.mirror,
+        &project,
+        Some(&to),
+        &to
+    )
+    .is_empty());
+    assert!(
+        joinedcontext_portal::permissions::project_domains(&state.mirror, &project)
+            .contains(&format!("{to}.example")),
+        "the gateway binds the Endpoint's second URN"
+    );
+}
+
 /// A forge holding one open Change of `project`, #5, which adds the Context Space `air`.
 async fn forge_with_open_change(project: &str) -> MockServer {
     let shako = common::forge().await;
