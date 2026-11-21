@@ -424,9 +424,14 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
 
 - Migrations run as `migrate_url`'s role under the module's advisory lock (sqlx `Migrator` for shako, ekiben,
   kaisatsu; daiya's and dataroom's own `pg_advisory_lock`), then grant the request role. Without `migrate_url` the schema must be
-  migrated already; the boot check refuses a missing table. Antares migrates itself: as `migrate_url`'s role (the
-  tables' owner, which also builds its weekly history partitions) when set, else as its request role; its
-  `maintenance_url` role, a member of `antares_maintenance`, runs the cross-Tenant work (T-7310).
+  migrated already; the boot check refuses a missing table. Antares migrates itself as `migrate_url`'s role (the
+  tables' owner, which also builds its weekly history partitions); its `maintenance_url` role, a member of
+  `antares_maintenance`, runs the cross-Tenant work (T-7310).
+- Antares and the assistant require the split (T-7488): `migrate_url` names the owner, `url` another login, and
+  for Antares `maintenance_url` a third; one login in two of them is refused at load. The Portal inside jc
+  requires `JC_PORTAL_MIGRATION_DATABASE_URL` beside `JC_PORTAL_DATABASE_URL`. Before serving, each of the three
+  request pools passes `pg::refuse_unsafe_request_role`: no SUPERUSER, no BYPASSRLS, no membership in the owner,
+  no relation owned outside the system schemas; the refusal names the database, the login and the setting.
 - Boot checks run inside jc as standalone: the request role must be neither SUPERUSER nor BYPASSRLS, own no table
   of the module's schema, and every table there has forced RLS and a policy. Antares runs with `require_rls`
   forced whenever it has a database.
@@ -699,7 +704,8 @@ jc's dataroom, reading the wave's report.
 - Settings: `JC_ASSISTANT_*`, `JC_MODEL_BASE`, `JC_MODEL_PROVIDER`, `ORT_DYLIB_PATH` from the environment first
   (`config::assistant_env`), then `modules::assistant::vars` from the siblings (gateway, kaisatsu client
   `jc-assistant`, the Portal, the gateway's shako checkout for `JC_ASSISTANT_REPO_DIR`). Database:
-  `[assistant.database]` (request role; it migrates as that role so forced RLS holds; `migrate_url` is refused).
+  `[assistant.database]`: it migrates as `migrate_url`'s role (the owner), grants `url`'s login the rows of every
+  table but `_sqlx_migrations` and serves as that login under the forced RLS (T-7488).
 - The model proxy (`jc-agent-proxy`) runs on a loopback port with the key from `JCBIN_MODEL_KEY_FILE` /
   `[assistant] model_key_file`, read by `jc_secret::read_file` and set on the proxy's config field: no lookup, no
   environment, no log line carries it. `JCBIN_MODEL_KEY` and `JC_MODEL_KEY` as values refuse the start

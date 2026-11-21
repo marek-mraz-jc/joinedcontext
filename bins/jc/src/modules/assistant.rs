@@ -1264,7 +1264,8 @@ mod tests {
 
         let err = migrate_and_connect(&section(&owner)).await.unwrap_err();
         assert!(
-            err.contains(&format!("database {db}")) && err.contains("owns public."),
+            err.contains(&format!("database {db}"))
+                && err.contains(&format!("is a member of the owner `{owner}`")),
             "{err}"
         );
         assert!(!err.contains(&password), "{err}");
