@@ -1039,6 +1039,17 @@ against 0.5 s at offset 0, and `name~="zzz"` at 1.31 s against
   as an index-only scan (their INCLUDE columns, 0013), then reads only the
   page's documents through `entities_pkey`. Before, OFFSET walked the
   jsonb documents it then threw away.
+- **A rule's idPatterns skip in the broker** (T-7484). PostgreSQL gives
+  `regexp_like` the default third, so once a deep page's LIMIT passed a
+  third of the type the planner read the whole type, ran the regex on
+  every id (3-12 µs each) and sorted it: 4.5 s for 358 000 Trees from
+  offset 100 000 on, the gateway's 503 on jc-prod. Such a page now streams
+  the arms' ids in page order without the regex, matches them with the
+  rule's own regex as `count_ids` does, and reads the page from the id
+  after `offset` matches as a keyset page (OFFSET 0, the SQL regex still in
+  its WHERE). Every page past offset 0 then costs one sort of the type's
+  ids: 0.5 s at 358 000, whatever the offset; offset 0 and the cursor keep
+  their 40 ms.
 - **The next cursor.** An Entity query whose page is kept in id order and
   is not counted (no `count=true`, no `orderBy`, no federation, no
   `idPattern`) carries `cursor=` on its `rel="next"` Link beside `offset`.
