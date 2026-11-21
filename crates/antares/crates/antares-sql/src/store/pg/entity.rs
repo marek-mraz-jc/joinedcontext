@@ -46,6 +46,7 @@ pub use crate::store::filter::{EntityFilter, Page, QueryOutcome};
 
 /// A bound value. Enumerated because the bind list is built dynamically while
 /// the SQL is assembled — the alternative would be string interpolation.
+#[derive(Clone)]
 enum Bind {
     Text(String),
     TextArr(Vec<String>),
@@ -653,19 +654,32 @@ async fn count_ids(
     binds: impl Iterator<Item = &Bind>,
     res: &[std::sync::Arc<regex::Regex>],
 ) -> Result<i64, sqlx::Error> {
-    Ok(match_ids(tx, sql, binds, res, None).await?.0)
+    Ok(match_ids(tx, sql, binds, res, None).await?.hits)
+}
+
+/// What [`match_ids`] read: `hits` selected ids before it stopped, the
+/// selected id numbered `nth` when it got there, and how many rows it read
+/// up to which id.
+struct Matched {
+    hits: i64,
+    nth: Option<String>,
+    rows: i64,
+    last: Option<String>,
 }
 
 /// [`count_ids`], stopping at the selected id numbered `nth` (from 0) in the
 /// stream's order, which comes back beside the count of the ids before it.
 /// Without `nth`, or past the last selected id, the count is the total.
+/// PostgreSQL still sends the rest of the result when this stops early (the
+/// connection drains it before the next statement): bound `sql` with a
+/// LIMIT where only a prefix matters ([`skip_matches`]).
 async fn match_ids(
     tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
     sql: &str,
     binds: impl Iterator<Item = &Bind>,
     res: &[std::sync::Arc<regex::Regex>],
     nth: Option<i64>,
-) -> Result<(i64, Option<String>), sqlx::Error> {
+) -> Result<Matched, sqlx::Error> {
     use futures_util::TryStreamExt;
     // unprepared, as every statement of `query_in`
     let mut qy =
@@ -680,20 +694,93 @@ async fn match_ids(
     }
     let set = one_pass(res);
     let mut ids = qy.fetch(&mut **tx);
-    let mut n: i64 = 0;
+    let mut m = Matched {
+        hits: 0,
+        nth: None,
+        rows: 0,
+        last: None,
+    };
     while let Some(id) = ids.try_next().await? {
+        m.rows = m.rows.saturating_add(1);
         let hit = match &set {
             Some(set) => set.is_match(&id),
             None => res.iter().any(|re| re.is_match(&id)),
         };
         if hit {
-            if nth == Some(n) {
-                return Ok((n, Some(id)));
+            if nth == Some(m.hits) {
+                m.nth = Some(id);
+                return Ok(m);
             }
-            n = n.saturating_add(1);
+            m.hits = m.hits.saturating_add(1);
         }
+        m.last = Some(id);
     }
-    Ok((n, None))
+    Ok(m)
+}
+
+/// The first chunk [`skip_matches`] reads, and the largest it grows to.
+const SKIP_CHUNK: (i64, i64) = (1024, 65_536);
+
+/// The selected id numbered `nth` (from 0) among the ids of `arms`, each
+/// arm read in `order` without the regex (T-7484), beside the count of the
+/// selected ids before it; past the last one, `None` and the total. The
+/// arms are read in keyset chunks (`order > last id`, LIMIT per arm and
+/// overall), so a page at offset 500 reads about 500 ids, never the whole
+/// type: an unbounded stream stopped early was still sent in full (358k
+/// Trees, 2.5-6 s a page on jc-dev). Each chunk doubles the last, from
+/// `nth + 1` within [`SKIP_CHUNK`], so a sparse match costs few statements.
+/// Run under [`ID_ORDER_PINNED`]: each arm is an index-only walk in order.
+async fn skip_matches(
+    tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    arms: &[String],
+    order: &str,
+    binds: &[Bind],
+    res: &[std::sync::Arc<regex::Regex>],
+    nth: i64,
+) -> Result<(i64, Option<String>), sqlx::Error> {
+    let (after, limit) = (binds.len().saturating_add(1), binds.len().saturating_add(2));
+    let arm = |w: &String| {
+        format!(
+            "SELECT id FROM entities WHERE {w} AND {order} > ${after} \
+             ORDER BY {order} LIMIT ${limit}"
+        )
+    };
+    // each arm ordered and limited on its own, so 0044's index hands every
+    // arm back in order and they merge without a sort of the type
+    let sql = match arms {
+        [w] => arm(w),
+        each => format!(
+            "SELECT id FROM ({}) AS arms ORDER BY {order} LIMIT ${limit}",
+            each.iter()
+                .map(|w| format!("({})", arm(w)))
+                .collect::<Vec<_>>()
+                .join(" UNION ALL ")
+        ),
+    };
+    let mut chunk = nth.saturating_add(1).clamp(SKIP_CHUNK.0, SKIP_CHUNK.1);
+    // every stored id sorts after '' (ids are never empty)
+    let mut last = String::new();
+    let mut seen: i64 = 0;
+    loop {
+        let tail = [Bind::Text(std::mem::take(&mut last)), Bind::Int(chunk)];
+        let m = match_ids(
+            tx,
+            &sql,
+            binds.iter().chain(&tail),
+            res,
+            Some(nth.saturating_sub(seen)),
+        )
+        .await?;
+        seen = seen.saturating_add(m.hits);
+        if m.nth.is_some() {
+            return Ok((seen, m.nth));
+        }
+        match m.last {
+            Some(id) if m.rows >= chunk => last = id,
+            _ => return Ok((seen, None)),
+        }
+        chunk = chunk.saturating_mul(2).min(SKIP_CHUNK.1);
+    }
 }
 
 /// `res` as one set that reads an id once for all of them: a whole space's
@@ -1601,32 +1688,19 @@ impl PgEntityStore {
             if let Some(w) = ids.get_mut(*at) {
                 "true".clone_into(w);
             }
-            // each arm ordered on its own (OFFSET 0 keeps the subquery's
-            // ORDER BY from being pulled up), so 0044's index hands every
-            // arm back in order and they merge without a sort of the type
-            // (pinned below: by cost alone, a table whose visibility map
-            // lags behind its writes reads as a Seq Scan and an external
-            // sort of the type, every Tenant's rows read)
-            let sql = match arms(&ids, split.as_ref()).as_slice() {
-                [w] => format!("SELECT id FROM entities WHERE {w} ORDER BY {order}"),
-                each => format!(
-                    "SELECT id FROM ({}) AS arms ORDER BY {order}",
-                    each.iter()
-                        .map(|w| format!(
-                            "(SELECT id FROM entities WHERE {w} ORDER BY {order} OFFSET 0)"
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(" UNION ALL ")
-                ),
-            };
+            // pinned: by cost alone, a table whose visibility map lags
+            // behind its writes reads as a Seq Scan and a sort of the type,
+            // every Tenant's rows read
             use sqlx::Executor as _;
             tx.execute(sqlx::raw_sql(ID_ORDER_PINNED)).await?;
-            let (seen, first) = match_ids(
+            let where_binds: Vec<Bind> = binds.iter().take(where_binds).cloned().collect();
+            let (seen, first) = skip_matches(
                 &mut tx,
-                &sql,
-                binds.iter().take(where_binds),
+                &arms(&ids, split.as_ref()),
+                order,
+                &where_binds,
                 res,
-                Some(p.offset),
+                p.offset,
             )
             .await?;
             tx.execute(sqlx::raw_sql(ID_ORDER_UNPINNED)).await?;

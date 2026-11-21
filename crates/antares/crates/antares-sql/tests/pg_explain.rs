@@ -978,7 +978,9 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
 /// Scans of i_entities_id_bytes (0044) that merge without a sort. Ordered
 /// once over both arms, or planned by cost while other tests' writes kept
 /// the visibility map behind, the stream was a Seq Scan of the table and
-/// an external sort of the type (CI run 44904009419).
+/// an external sort of the type (CI run 44904009419). Each arm and the
+/// merge stop at the chunk's LIMIT: a stream stopped early by the broker
+/// is still sent in full, so an unbounded skip read the whole type.
 /// The page itself is a keyset
 /// page from the id found there, which reads i_entities_id_bytes in order
 /// up to its LIMIT. The OFFSET statement it replaces planned a Bitmap Heap
@@ -1001,12 +1003,15 @@ async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
         )
     };
     let t = "'https://x/Tree'";
+    // one keyset chunk of the skip, as `skip_matches` sends it (the
+    // jc-dev pin streamed the whole type without the LIMITs: 2.5-6 s)
+    let after = "'urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-tree-rows-a'";
     let ids = format!(
         "SELECT id FROM ((SELECT id FROM entities WHERE {w} AND types[1] = {t} \
-         ORDER BY {c} OFFSET 0) UNION ALL \
+         AND {c} > {after} ORDER BY {c} LIMIT 4096) UNION ALL \
          (SELECT id FROM entities WHERE {w} AND cardinality(types) > 1 \
          AND types[1] <> ALL(ARRAY[{t}]) AND (types @> ARRAY[{t}]) \
-         ORDER BY {c} OFFSET 0)) AS arms ORDER BY {c}",
+         AND {c} > {after} ORDER BY {c} LIMIT 4096)) AS arms ORDER BY {c} LIMIT 4096",
         w = w("true")
     );
     let pinned: Vec<&str> = pg::entity::ID_ORDER_PINNED.split("; ").collect();
@@ -1017,8 +1022,10 @@ async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
             && !plan.contains("Bitmap")
             && !plan.contains("Sort  (")
             && plan.contains("Merge Append")
+            && plan.matches("Limit  (").count() == 3
             && plan.contains("Index Only Scan using i_entities_id_bytes on entities"),
-        "the skip runs the regex in SQL, sweeps the table or sorts the type:\n{plan}"
+        "the skip runs the regex in SQL, sweeps the table, sorts the type \
+         or reads past its chunk:\n{plan}"
     );
     let page = type_page(
         &format!(
