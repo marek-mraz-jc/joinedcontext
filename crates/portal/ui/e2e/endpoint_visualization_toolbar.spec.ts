@@ -75,7 +75,7 @@ async function stub(page: Page, s: Stub) {
             title: "The manifest is not valid",
             status: 422,
             detail: "/spec/catalog/visualizations/0/data/last: source: `P32D` is not an ISO 8601 duration up to P31D",
-            errors: [{ field: "/spec/catalog/visualizations/0/data/last", reason: "source: `P32D` is not an ISO 8601 duration up to P31D" }],
+            errors: ["invalid /spec/catalog/visualizations/0/data/last: source: `P32D` is not an ISO 8601 duration up to P31D"],
           },
           422,
         );

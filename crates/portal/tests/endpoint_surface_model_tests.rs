@@ -597,7 +597,12 @@ async fn temporal_chart_defaults_and_a_hidden_toolbar_open_a_change() {
     let data = json!({ "source": "temporal", "type": "Event", "attrs": ["startDate"], "last": "P31D",
         "aggrMethod": "min", "aggrPeriod": "P1D", "controls": false });
     let answer = propose(&state, charted(data)).await;
-    assert!(answer.status.is_success(), "{} {}", answer.status, answer.text);
+    assert!(
+        answer.status.is_success(),
+        "{} {}",
+        answer.status,
+        answer.text
+    );
 }
 
 /// T-7491: one 422 per temporal chart member outside its allow-list, naming the member.
@@ -608,9 +613,17 @@ async fn a_temporal_chart_default_outside_its_list_is_a_422_naming_the_member() 
         "aggrMethod": "avg", "aggrPeriod": "PT1H" });
     for (member, value, named) in [
         ("last", json!("P32D"), "visualizations/0/data/last"),
-        ("aggrPeriod", json!("PT0S"), "visualizations/0/data/aggrPeriod"),
-        ("aggrMethod", json!("median"), "median"),
-        ("controls", json!("no"), "expected a boolean"),
+        (
+            "aggrPeriod",
+            json!("PT0S"),
+            "visualizations/0/data/aggrPeriod",
+        ),
+        (
+            "aggrMethod",
+            json!("median"),
+            "visualizations/0/data/aggrMethod",
+        ),
+        ("controls", json!("no"), "visualizations/0/data/controls"),
     ] {
         let mut data = base.clone();
         data[member] = value;

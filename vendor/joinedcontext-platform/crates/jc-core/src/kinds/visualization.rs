@@ -618,7 +618,13 @@ mod controls_tests {
         let data = json!({ "source": "temporal", "type": "WeatherObserved", "attrs": ["temperature"],
                            "last": "P7D", "aggrMethod": "max", "aggrPeriod": "P1D", "controls": false });
         let source = parse(data.clone()).expect("parses");
-        assert!(matches!(source, VisualizationData::Temporal { controls: Some(false), .. }));
+        assert!(matches!(
+            source,
+            VisualizationData::Temporal {
+                controls: Some(false),
+                ..
+            }
+        ));
         assert!(check_source("/data", &source).is_ok());
         assert_eq!(serde_json::to_value(&source).expect("serializes"), data);
     }
@@ -627,16 +633,23 @@ mod controls_tests {
     fn controls_default_to_shown_and_are_not_written_when_absent() {
         let data = json!({ "source": "temporal", "type": "WeatherObserved", "attrs": ["temperature"], "last": "PT24H" });
         let source = parse(data.clone()).expect("parses");
-        assert!(matches!(source, VisualizationData::Temporal { controls: None, .. }));
+        assert!(matches!(
+            source,
+            VisualizationData::Temporal { controls: None, .. }
+        ));
         assert_eq!(serde_json::to_value(&source).expect("serializes"), data);
     }
 
     #[test]
     fn controls_that_are_not_a_boolean_or_on_another_source_are_refused() {
-        let temporal = |controls: Value| json!({ "source": "temporal", "type": "WeatherObserved",
-                                                 "attrs": ["temperature"], "last": "P7D", "controls": controls });
+        let temporal = |controls: Value| {
+            json!({ "source": "temporal", "type": "WeatherObserved",
+                                                 "attrs": ["temperature"], "last": "P7D", "controls": controls })
+        };
         for bad in [json!("no"), json!(0), json!({})] {
-            let error = parse(temporal(bad.clone())).expect_err("refused").to_string();
+            let error = parse(temporal(bad.clone()))
+                .expect_err("refused")
+                .to_string();
             assert!(error.contains("expected a boolean"), "{bad}: {error}");
         }
         let csv = json!({ "source": "csv", "type": "WeatherObserved", "controls": false });
