@@ -2808,7 +2808,12 @@ pub async fn approve_change_as(
             data.name
         )));
     }
-    judge_at_approval(state, project, &judged)?;
+    let moving = match judged.iter().any(|e| e.kind == "Endpoint") {
+        true => crate::project_move::moving_domains(state, project).await?,
+        false => Vec::new(),
+    };
+    crate::project_move::MOVING
+        .sync_scope(moving, || judge_at_approval(state, project, &judged))?;
     // A Project names the Organization the registry files it under, or one a proposed
     // ProjectMove takes it to (T-7462): a Change from any door meets it at its approval.
     for envelope in judged.iter().filter(|e| e.kind == "Project") {

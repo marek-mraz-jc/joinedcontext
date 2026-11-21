@@ -1727,7 +1727,13 @@ async fn check_content(
             &envelope.spec,
         );
     }
-    crate::judge::manifest(&ground, project, envelope)?;
+    let moving = match kind {
+        "Endpoint" => crate::project_move::moving_domains(state, project).await?,
+        _ => Vec::new(),
+    };
+    crate::project_move::MOVING.sync_scope(moving, || {
+        crate::judge::manifest(&ground, project, envelope)
+    })?;
 
     // 4b-widgets. An Organization's home page names only Dashboards of its own projects the
     //       proposer may read (UIX-16, T-6779); the page reads each one again for its viewer.
@@ -2531,10 +2537,20 @@ pub(crate) fn check_policy_refs(
         Some(_) => "spec.policyRef",
         None => "spec.policyRefs",
     };
+    // A domain a proposed ProjectMove takes the project to binds once it moves (T-7462).
+    let moving = crate::project_move::MOVING
+        .try_with(Clone::clone)
+        .unwrap_or_default();
     let lines: Vec<String> = fresh
         .into_iter()
         .filter_map(|reference| {
             let domain = match own.first() {
+                _ if reference
+                    .org_domain()
+                    .is_some_and(|domain| moving.iter().any(|m| m == domain)) =>
+                {
+                    reference.org_domain().unwrap_or_default()
+                }
                 Some(first) => reference
                     .org_domain()
                     .filter(|domain| own.contains(*domain))
@@ -4956,6 +4972,47 @@ mod tests {
         );
         accepted(OWN).expect("the project's own Organization binds");
         assert_eq!(written(&[OWN.into()]), grant);
+    }
+
+    /// T-7462: an Endpoint of a project that a proposed ProjectMove takes to another Organization
+    /// may list a policyRef on that Organization's domain beside the one that binds now, so it
+    /// grants before and after the move; without the proposal the door refuses it as binding
+    /// nothing, and a domain no move names stays refused.
+    #[test]
+    fn a_policy_ref_on_a_moves_target_domain_is_accepted_beside_the_bound_one() {
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "city",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
+        state.mirror.upsert(manifest(
+            "Policy",
+            "public-read",
+            space_policy(
+                "{ \"kind\": \"role\", \"id\": \"public\" }",
+                &["retrieveOps"],
+            ),
+        ));
+        const HELD: &str = "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:public-read";
+        const TARGET: &str = "urn:ngsi-ld:Policy:ctl-b.example:ovzdusie-ovzdusie:public-read";
+        state
+            .mirror
+            .upsert(manifest("Endpoint", "public-air", public_air(Some(HELD))));
+        let mut spec = public_air(None);
+        spec["policyRefs"] = json!([HELD, TARGET]);
+        let endpoint = manifest("Endpoint", "public-air", spec);
+        let check = || check_policy_refs(&crate::judge::Ground::of(&state), "ovzdusie", &endpoint);
+        let refused = check().expect_err("no move names ctl-b.example");
+        assert!(format!("{refused:?}").contains(TARGET), "{refused:?}");
+        crate::project_move::MOVING
+            .sync_scope(vec!["ctl-b.example".into()], check)
+            .expect("the move's target domain binds once the project moves");
+        crate::project_move::MOVING
+            .sync_scope(vec!["other.example".into()], check)
+            .expect_err("only the domain a move names");
     }
 
     /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: B naming no
