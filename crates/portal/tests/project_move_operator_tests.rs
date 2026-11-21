@@ -23,9 +23,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CHANGES: &str = "/api/v1/operator/changes";
 
-/// A Portal serving as a role apart from the migrating one, without BYPASSRLS, as on the cluster
-/// (T-7179): forced row-level security holds for every statement of these tests.
-async fn world() -> AppState {
+/// The owner's URL and a fresh serving role's URL, a role apart from the migrating one, without
+/// BYPASSRLS, as on the cluster (T-7179).
+async fn serving_role() -> (String, String) {
     let owner_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
     let owner = joinedcontext_portal::db::connect(&owner_url)
@@ -38,18 +38,23 @@ async fn world() -> AppState {
     .execute(&owner)
     .await
     .expect("a serving role");
+    owner.close().await;
     let mut serving_url = url::Url::parse(&owner_url).expect("the test URL");
     serving_url.set_username(&role).expect("a user");
     serving_url
         .set_password(Some("serving-pw"))
         .expect("a password");
-    // The grants to a serving role race when two tests of this binary boot at once.
-    static BOOT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let booting = BOOT.lock().await;
-    let pool = joinedcontext_portal::db::connect_as(serving_url.as_str(), Some(&owner_url))
+    (owner_url, serving_url.into())
+}
+
+/// A Portal serving as its own serving role: forced row-level security holds for every statement
+/// of these tests. Two tests of this binary boot at once with no lock of their own: the grants
+/// take the catalog lock (T-7476).
+async fn world() -> AppState {
+    let (owner_url, serving_url) = serving_role().await;
+    let pool = joinedcontext_portal::db::connect_as(&serving_url, Some(&owner_url))
         .await
         .expect("serve as the serving role");
-    drop(booting);
     let mut config = Config::for_tests();
     config.decisions_need_second_factor = false;
     AppState::new(config, None).with_db(pool)
@@ -419,6 +424,34 @@ async fn a_project_named_like_its_new_organization_moves() {
         .expect("registry")
         .expect("the reserved project");
     assert_ne!(reserved.project, new.project);
+}
+
+/// A move lifts and restores FORCE ROW LEVEL SECURITY while a Portal start grants the serving role
+/// ON ALL TABLES: both rewrite the same `pg_class` rows, and without the one catalog lock they
+/// met as XX000 "tuple concurrently updated" (T-7476). Twenty rounds, each a move beside a grant.
+#[tokio::test]
+async fn a_move_and_a_portal_start_run_side_by_side() {
+    let state = world().await;
+    let (owner_url, serving_url) = serving_role().await;
+    for round in 0..20 {
+        let from = run("hel");
+        let to = run("bbsk");
+        let project = run("side");
+        placed(&state, &project, &from, &to).await;
+        manifest(&state, &project, &to);
+        let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+        assert_eq!(status, StatusCode::CREATED, "round {round}: {made}");
+        let id = made["id"].as_str().expect("an id").to_owned();
+        let (moved, started) = tokio::join!(
+            approve(&state, operator(&state, "ops-b"), &id),
+            joinedcontext_portal::db::connect_as(&serving_url, Some(&owner_url)),
+        );
+        assert_eq!(moved.0, StatusCode::OK, "round {round}: {}", moved.1);
+        started
+            .unwrap_or_else(|err| panic!("round {round}: the start beside a move: {err}"))
+            .close()
+            .await;
+    }
 }
 
 /// Only an operator with a second factor plans or asks for a move; the registry refuses a moved

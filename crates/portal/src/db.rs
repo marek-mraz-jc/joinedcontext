@@ -203,12 +203,25 @@ async fn rls_bypass(pool: &PgPool) -> Result<Option<&'static str>, sqlx::Error> 
     })
 }
 
+/// The advisory lock key text of every statement that rewrites the public tables' `pg_class`
+/// rows: the serving-role grants here and `project_move` (migration 0092), a constant.
+pub const CATALOG_LOCK: &str = "jc/pg_class";
+
 /// What the serving role may do, granted again after every migration so a new table is covered:
 /// the rows of every table of `public`, never TRUNCATE, never the migration history or the rows
 /// 0080 set aside (no project holds them), and on the operators' audit only INSERT and SELECT;
 /// of the functions only `project_move` (0089, T-7305) needs a grant. The role name is quoted by
 /// Postgres (`%I`).
+///
+/// The grants run in one transaction under [`CATALOG_LOCK`], as `project_move` does: both rewrite
+/// the tables' `pg_class` rows, and two sessions doing so at once fail with "tuple concurrently
+/// updated" (T-7476).
 async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Error> {
+    let mut tx = owner.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(CATALOG_LOCK)
+        .execute(&mut *tx)
+        .await?;
     let sql: String = sqlx::query_scalar(
         "SELECT format('GRANT USAGE ON SCHEMA public TO %1$I; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %1$I; \
@@ -220,10 +233,10 @@ async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Erro
          GRANT EXECUTE ON FUNCTION project_move(uuid, text, text) TO %1$I;', $1::text)",
     )
     .bind(role)
-    .fetch_one(owner)
+    .fetch_one(&mut *tx)
     .await?;
-    sqlx::raw_sql(AssertSqlSafe(sql)).execute(owner).await?;
-    Ok(())
+    sqlx::raw_sql(AssertSqlSafe(sql)).execute(&mut *tx).await?;
+    tx.commit().await
 }
 
 /// A transaction keyed on one project of one Organization (ARCH/TEN-04, STO-06; T-7191 PK-1c):
