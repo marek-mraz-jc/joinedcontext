@@ -6,6 +6,8 @@
 import importlib.util
 import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -235,7 +237,7 @@ class FakeJc:
     def tools(self, path):
         return {"list_endpoints"}, ""
 
-    def datasets(self):
+    def datasets(self, wanted=()):
         return {"air-data"} - self.missing, ""
 
     def realm(self, name):
@@ -277,6 +279,47 @@ def test_the_whole_run_fails_each_name_jc_lost(tmp_path):
     failed = {(r["id"], r["target"]) for r in res.rows if r["result"] == FAIL}
     assert failed == {("space", "p/air"), ("dataset", "air-data"), ("client", "city/gone"),
                       ("mcp-server", "/api/mcp/p/open")}
+
+
+def test_datasets_moved_to_an_organization_catalogue_are_listed_through_its_host(monkeypatch):
+    # jc-dev 2026-11-21 (T-7470): after move_out the installation catalogue listed 0 names and each
+    # Organization's datasets sat on its own opendata host; their old pages answer 301 there.
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            host, path = self.headers.get("Host", ""), self.path
+            seen.append((host, path))
+            if host.startswith("127.0.0.1") and path == "/opendata/api/3/action/package_list":
+                st, body, extra = 200, {"success": True, "result": ["here"]}, {}
+            elif host.startswith("127.0.0.1") and path == "/opendata/dataset/moved":
+                st, body, extra = 301, {}, {"Location": "https://opendata.alpha.test/dataset/moved"}
+            elif host == "opendata.alpha.test" and path == "/api/3/action/package_list":
+                st, body, extra = 200, {"success": True, "result": ["moved", "sibling"]}, {}
+            else:
+                st, body, extra = 404, {}, {}
+            raw = json.dumps(body).encode()
+            self.send_response(st)
+            for k, v in {"Content-Length": str(len(raw)), **extra}.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *_):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.delenv("JC_SMOKE_OPENDATA_ORIGIN", raising=False)
+    try:
+        jc = suite.Jc(suite.Http(f"http://127.0.0.1:{srv.server_port}"))
+        got, why = jc.datasets(["here", "moved", "sibling", "lost"])
+    finally:
+        srv.shutdown()
+    assert (got, why) == ({"here", "moved", "sibling"}, "")
+    # One probe per catalogue found and per name listed nowhere: `sibling` came with its catalogue.
+    probes = [p for _, p in seen if p.startswith("/opendata/dataset/")]
+    assert probes == ["/opendata/dataset/moved", "/opendata/dataset/lost"]
 
 
 def test_a_surface_that_answers_for_an_unknown_slug_proves_nothing(tmp_path):
