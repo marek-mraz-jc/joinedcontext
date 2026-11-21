@@ -402,7 +402,7 @@ mod tests {
             named.is_empty(),
             "a label names an Endpoint or an id: {named:#?}"
         );
-        // 160 requests on 40 Endpoints; the old labels made over 600 series here.
+        // 160 requests on 40 Endpoints; the old `endpoint` label made 2,720 series here.
         assert!(
             series.len() < 200,
             "{} request series:\n{text}",
