@@ -33,3 +33,5 @@ a { color: #1d4ed8; }
 html[data-theme="dark"] .control select, html[data-theme="dark"] .control input { background: #1f2329; border-color: #4b5563; }
 html[data-theme="dark"] .hint { color: #a0a8b3; }
 @media (max-width: 480px) { .control { max-width: none; flex-basis: 40%; } }
+.retry { font: inherit; margin: 0 0 8px; padding: 6px 14px; border: 1px solid #1d4ed8; border-radius: 6px; background: #1d4ed8; color: #fff; cursor: pointer; }
+.retry:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }

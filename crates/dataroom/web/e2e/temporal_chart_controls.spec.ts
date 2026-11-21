@@ -116,7 +116,7 @@ async function open(page: Page, state: { mode: Mode; asked: URL[] }, hash = "") 
   await page.clock.setFixedTime(NOW);
   await serve(page, state, `<!doctype html><html lang="sk"><body style="margin:0;padding:16px;font:16px system-ui">
 <h1>Počasie Praha</h1><iframe title="Relatívna vlhkosť" src="${JC}/embed/#${VIEW}&inline&lang=sk${hash}" sandbox="allow-scripts allow-downloads"
- style="width:100%;height:760px;border:0"></iframe></body></html>`);
+ style="width:100%;height:900px;border:0"></iframe></body></html>`);
   await page.goto(`${JC}/opendata/dataset/praha-pocasi`);
   const host = page.frameLocator('iframe[title="Relatívna vlhkosť"]');
   return { host, chart: host.frameLocator("iframe#frame") };
@@ -193,6 +193,8 @@ for (const width of [1440, 400]) {
   });
 
   test(`empty, error, loading and cut answers each say so (${width})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("console", (m) => { if (m.type() === "error" && !/503/.test(m.text())) errors.push(m.text()); });
     await page.setViewportSize({ width, height: 900 });
     const state = { mode: "empty" as Mode, asked: [] as URL[] };
     const { host } = await open(page, state);
@@ -215,9 +217,16 @@ for (const width of [1440, 400]) {
     await expect(host.locator("#status")).toContainText("HTTP 503", { timeout: 20_000 });
     await shot(page, "error", width);
 
+    // The reader retries once the Endpoint answers again.
+    state.mode = "normal";
+    await host.getByRole("button", { name: "Skúsiť znova" }).click();
+    await expect(host.locator("#status")).toBeHidden({ timeout: 10_000 });
+    await expect(host.getByRole("button", { name: "Skúsiť znova" })).toBeHidden();
+
     // The choice survives in the fragment: a reload keeps 7 days and the view's default granularity.
     const src = await page.locator("iframe").getAttribute("src");
     expect(src).toContain(VIEW);
+    expect(errors).toEqual([]);
   });
 }
 

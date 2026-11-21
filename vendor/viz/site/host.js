@@ -60,11 +60,11 @@
       method: "Výpočet", methodHint: "Napr. Maximum: najvyššia hodnota v hodine alebo dni.", avg: "Priemer", min: "Minimum", max: "Maximum",
       stations: "Stanice", stationsHint: "Ctrl alebo Cmd a klik vyberie viac staníc; bez výberu sú všetky.",
       attr: "Veličina", attrHint: "Napr. Teplota: graf ukáže iba ju.", all: "Všetky",
-      loading: "Načítavam údaje…", empty: "Za toto obdobie graf nemá žiadne údaje. Skúste dlhšie obdobie alebo inú stanicu.",
+      loading: "Načítavam údaje…", empty: "Za toto obdobie graf nemá žiadne údaje. Skúste dlhšie obdobie alebo inú podrobnosť.",
       hourly: "Merania za viac ako 7 dní sa zobrazujú po hodinách.", daily: "Obdobie dlhšie ako 31 dní sa zobrazuje po dňoch.",
       capped: "Zobrazuje sa posledných {n} dní vybraného obdobia (limit stránky).", badDates: "Dátum Od musí byť najneskôr Do a nie v budúcnosti.",
       zoom: "Ťahaním v páse pod grafom priblížite časť obdobia, dvojklik ho vráti. Klik na stanicu v legende ju zvýrazní.",
-      time: "Čas", station: "Stanica"
+      time: "Čas", station: "Stanica", retry: "Skúsiť znova"
     },
     cs: {
       controls: "Nastavení grafu", range: "Období", rangeHint: "Např. 7 dní: poslední týden do teď; Vlastní: od a do podle data.",
@@ -73,11 +73,11 @@
       method: "Výpočet", methodHint: "Např. Maximum: nejvyšší hodnota v hodině nebo dni.", avg: "Průměr", min: "Minimum", max: "Maximum",
       stations: "Stanice", stationsHint: "Ctrl nebo Cmd a klik vybere více stanic; bez výběru jsou všechny.",
       attr: "Veličina", attrHint: "Např. Teplota: graf ukáže jen ji.", all: "Všechny",
-      loading: "Načítám data…", empty: "Za toto období graf nemá žádná data. Zkuste delší období nebo jinou stanici.",
+      loading: "Načítám data…", empty: "Za toto období graf nemá žádná data. Zkuste delší období nebo jinou podrobnost.",
       hourly: "Měření za více než 7 dní se zobrazují po hodinách.", daily: "Období delší než 31 dní se zobrazuje po dnech.",
       capped: "Zobrazuje se posledních {n} dní vybraného období (limit stránky).", badDates: "Datum Od musí být nejpozději Do a ne v budoucnosti.",
       zoom: "Tažením v pásu pod grafem přiblížíte část období, dvojklik ho vrátí. Klik na stanici v legendě ji zvýrazní.",
-      time: "Čas", station: "Stanice"
+      time: "Čas", station: "Stanice", retry: "Zkusit znovu"
     },
     fi: {
       controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Esim. 7 päivää: viimeinen viikko tähän asti; Oma: alku- ja loppupäivä.",
@@ -86,11 +86,11 @@
       method: "Laskenta", methodHint: "Esim. Maksimi: tunnin tai päivän suurin arvo.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
       stations: "Asemat", stationsHint: "Ctrl tai Cmd ja napsautus valitsee useita asemia; ilman valintaa kaikki.",
       attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
-      loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista asemaa.",
+      loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista tarkkuutta.",
       hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivän aikaväli näytetään päivittäin.",
       capped: "Näytetään valitun aikavälin viimeiset {n} päivää (sivun raja).", badDates: "Alkupäivän on oltava viimeistään loppupäivä eikä tulevaisuudessa.",
       zoom: "Vedä kaavion alla olevassa kaistassa lähentääksesi, kaksoisnapsautus palauttaa. Napsauta asemaa selitteessä korostaaksesi sen.",
-      time: "Aika", station: "Asema"
+      time: "Aika", station: "Asema", retry: "Yritä uudelleen"
     },
     en: {
       controls: "Chart settings", range: "Range", rangeHint: "E.g. 7 days: the last week up to now; Custom: from and to by date.",
@@ -99,11 +99,11 @@
       method: "Method", methodHint: "E.g. Maximum: the highest value of each hour or day.", avg: "Average", min: "Minimum", max: "Maximum",
       stations: "Stations", stationsHint: "Ctrl or Cmd and click picks several stations; none picked means all.",
       attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
-      loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another station.",
+      loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another granularity.",
       hourly: "Readings over more than 7 days are shown hourly.", daily: "A range over 31 days is shown daily.",
       capped: "Showing the last {n} days of the range picked (the page's limit).", badDates: "From must be on or before To and not in the future.",
       zoom: "Drag in the strip under the chart to zoom into part of the range; a double click resets it. Click a station in the legend to highlight it.",
-      time: "Time", station: "Station"
+      time: "Time", station: "Station", retry: "Try again"
     }
   };
   // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
@@ -418,6 +418,11 @@
     delete copy.data;
     var width = Math.max(Math.round(opts.width), 200);
     copy.width = width;
+    // A gap in the readings breaks the line (gapped() puts a null there) instead of passing for
+    // readings; past 60 points a series draws without its markers.
+    copy.mark = Object.assign({}, typeof copy.mark === "string" ? { type: copy.mark } : copy.mark, { invalid: "break-paths-show-domains" });
+    if (opts.dense && copy.mark.point) copy.mark.point = false;
+    enc.x.axis = enc.x.axis === null ? null : Object.assign({ labelOverlap: "greedy", labelSeparation: 8 }, enc.x.axis);
     if (copy.height === undefined) copy.height = 260;
     enc.x.scale = Object.assign({}, enc.x.scale, { domain: { param: "brush" } });
     var color = enc.color && enc.color.field;
@@ -429,10 +434,10 @@
     var strip = {
       width: width,
       height: 44,
-      mark: { type: "line", strokeWidth: 1 },
+      mark: { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains" },
       params: [{ name: "brush", select: { type: "interval", encodings: ["x"] } }],
       encoding: {
-        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelOverlap: true, tickMinStep: DAY } },
+        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelOverlap: "greedy", labelSeparation: 8, tickMinStep: DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
         y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
       }
     };
@@ -441,6 +446,32 @@
     if (color && enc.detail) strip.encoding.detail = enc.detail;
     outer.vconcat = [copy, strip];
     return outer;
+  }
+
+  // Rows of each series (name and datasetId) in time order, with a row whose value is null
+  // inside every gap over three times the series' median step, which breaks the drawn line there.
+  function gapped(rows, attr) {
+    var series = {};
+    rows.forEach(function (row) {
+      var key = row.name + "\n" + (row.datasetId || "");
+      (series[key] = series[key] || []).push(row);
+    });
+    var out = [];
+    Object.keys(series).forEach(function (key) {
+      var list = series[key].slice().sort(function (a, b) { return a.observedAt < b.observedAt ? -1 : a.observedAt > b.observedAt ? 1 : 0; });
+      var times = list.map(function (row) { return Date.parse(row.observedAt); });
+      var steps = times.slice(1).map(function (t, i) { return t - times[i]; }).filter(function (d) { return d > 0; }).sort(function (a, b) { return a - b; });
+      var step = steps.length ? steps[Math.floor(steps.length / 2)] : 0;
+      list.forEach(function (row, i) {
+        if (i && step && times[i] - times[i - 1] > 3 * step) {
+          var hole = Object.assign({}, row, { observedAt: iso(times[i - 1] + step) });
+          hole[attr] = null;
+          out.push(hole);
+        }
+        out.push(row);
+      });
+    });
+    return out;
   }
 
   // Every `field` naming one attribute names another (the toolbar's attribute picker).
@@ -904,6 +935,13 @@
       note.id = "controls-note";
       note.className = "hint";
       if (bar) bar.form.appendChild(note);
+      var retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "retry";
+      retry.textContent = t.retry;
+      retry.hidden = true;
+      retry.addEventListener("click", function () { read(); });
+      status.parentNode.insertBefore(retry, status.nextSibling);
       var zoom = document.createElement("p");
       zoom.className = "hint";
       zoom.textContent = t.zoom;
@@ -931,16 +969,21 @@
           });
         }
         var authored = spec.encoding && spec.encoding.y && source.attrs.indexOf(spec.encoding.y.field) >= 0 ? spec.encoding.y.field : null;
-        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 90;
-        var key = [attr, m && m.title, Math.round(width / 40)].join("|");
+        if (attr) rows = gapped(rows, attr);
+        var series = {};
+        rows.forEach(function (row) { series[row.name] = (series[row.name] || 0) + 1; });
+        var dense = Object.keys(series).some(function (k) { return series[k] > 60; });
+        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 70;
+        var key = [attr, m && m.title, dense, Math.round(width / 40)].join("|");
         if (bar) bar.stations(all, state.stations);
-        if (!rows.length) say(t.empty, "note");
+        frame.hidden = zoom.hidden = !rows.length;
+        if (!rows.length) return say(t.empty, "note");
         if (drawn === key) {
           frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
           return;
         }
         drawn = key;
-        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, from: authored, to: state.attr }) : spec;
+        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, from: authored, to: state.attr }) : spec;
         frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
         if (shown.vconcat && !zoom.parentNode) frame.parentNode.insertBefore(zoom, frame.nextSibling);
       }
@@ -949,6 +992,7 @@
         if (bar) bar.busy(true);
         frame.setAttribute("aria-busy", "true");
         say(t.loading, "loading");
+        retry.hidden = true;
         var p;
         try {
           p = load(view, h.api, lang, fetcher, Date.now(), null, state);
@@ -973,6 +1017,7 @@
           zoom.hidden = true;
           if (error && error.message === "dates") return say(t.badDates, "");
           failed(error);
+          retry.hidden = false;
         }).then(function () {
           if (mine !== controller) return;
           clearTimeout(timer);
@@ -1207,6 +1252,7 @@
     temporalPlan: temporalPlan,
     measure: measure,
     interactive: interactive,
+    gapped: gapped,
     rowsFromOgc: rowsFromOgc,
     named: named,
     load: load

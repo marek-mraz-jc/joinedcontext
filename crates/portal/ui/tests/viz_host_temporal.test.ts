@@ -21,6 +21,7 @@ type Host = {
   temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number) => Plan;
   measure: (attr: string, unitCode: string | null, lang: string, values: unknown[]) => { title: string; percent: boolean };
   interactive: (spec: unknown, opts: Record<string, unknown>) => Record<string, unknown>;
+  gapped: (rows: Record<string, unknown>[], attr: string) => Record<string, unknown>[];
 };
 const module = { exports: {} as Host };
 new Function("module", "self", readFileSync(resolve(site, "host.js"), "utf8"))(module, {});
@@ -174,6 +175,19 @@ describe("the interactive chart", () => {
     expect(vega.data?.some((d) => d.name === "source")).toBe(true);
     // The authored spec is left as it was.
     expect((SPEC.encoding.y as Record<string, unknown>).title).toBeUndefined();
+  });
+
+  it("breaks a series' line at a gap over three steps, and only there", () => {
+    const row = (name: string, at: string, v: number) => ({ id: name, name, observedAt: at, t: v });
+    const rows = host.gapped([
+      row("A", "2026-11-18T10:00:00Z", 1), row("A", "2026-11-18T11:00:00Z", 2), row("A", "2026-11-18T12:00:00Z", 3),
+      row("A", "2026-11-20T06:00:00Z", 4), row("B", "2026-11-18T10:00:00Z", 5), row("B", "2026-11-18T11:00:00Z", 6),
+    ], "t");
+    expect(rows.map((r) => [r.name, r.observedAt, r.t])).toEqual([
+      ["A", "2026-11-18T10:00:00Z", 1], ["A", "2026-11-18T11:00:00Z", 2], ["A", "2026-11-18T12:00:00Z", 3],
+      ["A", "2026-11-18T13:00:00Z", null], ["A", "2026-11-20T06:00:00Z", 4],
+      ["B", "2026-11-18T10:00:00Z", 5], ["B", "2026-11-18T11:00:00Z", 6],
+    ]);
   });
 
   it("swaps the authored attribute's fields for the one picked", () => {
