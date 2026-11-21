@@ -148,9 +148,13 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
     await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
-    const alert = section.getByRole("alert");
+    const alert = section.getByRole("alert").last();
     await expect(alert).toContainText("visualizations/0/data/last");
-    await alert.scrollIntoViewIfNeeded();
+    // The field the refusal names is marked, with the server's sentence under it.
+    const range = page.getByLabel("Default range");
+    await expect(range).toHaveAttribute("aria-invalid", "true");
+    await expect(range).toHaveAccessibleDescription(/P32D/);
+    await section.getByTestId("viz-temporal").scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-${width}.png`) });
   });
 
@@ -161,6 +165,7 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
+    await expect(section.getByText("Toolbar hidden from readers")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-reader-${width}.png`) });
   });

@@ -1869,6 +1869,7 @@
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
         "toolbar": "Nastavenia grafu pre čitateľov",
+        "toolbarHidden": "Panel nastavení je čitateľom skrytý",
         "range": "Predvolené obdobie",
         "ranges": {
           "day": "24 hodín",

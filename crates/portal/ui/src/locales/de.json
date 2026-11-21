@@ -1869,6 +1869,7 @@
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Diagrammeinstellungen für Lesende",
+        "toolbarHidden": "Einstellungsleiste für Lesende ausgeblendet",
         "range": "Standardzeitraum",
         "ranges": {
           "day": "24 Stunden",

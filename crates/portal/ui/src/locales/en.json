@@ -1869,6 +1869,7 @@
         "propose": "Propose the chart",
         "remove": "Remove",
         "toolbar": "Reader's chart settings",
+        "toolbarHidden": "Toolbar hidden from readers",
         "range": "Default range",
         "ranges": {
           "day": "24 hours",

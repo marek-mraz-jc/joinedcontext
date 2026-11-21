@@ -124,6 +124,13 @@ export function VisualizationsSection({
     ]);
   };
 
+  // A refusal naming one toolbar default marks that field, beside the alert under the form.
+  const refused = /\/data\/(last|aggrPeriod|aggrMethod|controls)\b/.exec(
+    proposal.error ?? "",
+  )?.[1];
+  const errorsOf = (member: string) =>
+    refused === member && proposal.error ? [proposal.error] : undefined;
+
   const roles = [
     ...TEMPLATES[template].required,
     ...TEMPLATES[template].optional,
@@ -153,6 +160,9 @@ export function VisualizationsSection({
               </span>
               <Badge mono>{one.name}</Badge>
               <Badge>{one.data.source}</Badge>
+              {one.data.source === "temporal" && one.data.controls === false ? (
+                <Badge>{t("endpoints.page.visualizations.toolbarHidden")}</Badge>
+              ) : null}
               {canEdit ? (
                 <Button
                   size="sm"
@@ -285,6 +295,7 @@ export function VisualizationsSection({
               </legend>
               <Field
                 id="viz-range"
+                errors={errorsOf("last")}
                 label={t("endpoints.page.visualizations.range")}
                 help={t("endpoints.page.visualizations.hint.range")}
               >
@@ -309,6 +320,7 @@ export function VisualizationsSection({
               </Field>
               <Field
                 id="viz-granularity"
+                errors={errorsOf("aggrPeriod")}
                 label={t("endpoints.page.visualizations.granularity")}
                 help={t("endpoints.page.visualizations.hint.granularity")}
               >
@@ -335,6 +347,7 @@ export function VisualizationsSection({
               {temporal.granularity === "raw" ? null : (
                 <Field
                   id="viz-method"
+                  errors={errorsOf("aggrMethod")}
                   label={t("endpoints.page.visualizations.method")}
                   help={t("endpoints.page.visualizations.hint.method")}
                 >
@@ -358,6 +371,7 @@ export function VisualizationsSection({
               )}
               <Field
                 id="viz-controls"
+                errors={errorsOf("controls")}
                 hideLabel
                 help={t("endpoints.page.visualizations.hint.controls")}
                 className="sm:col-span-3"
