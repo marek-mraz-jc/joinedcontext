@@ -525,6 +525,40 @@ mod tests {
         assert!(!again.contains("jc::access"), "a new window: {again}");
     }
 
+    /// deploy/rehearsal/up.sh's switch: the smoke's own reads keep their line, nobody else's.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_span_filter_brings_back_the_read_lines_of_one_request_id_prefix() {
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::SubscriberExt;
+        let filter = "info,jc::access[request{request_id=smokelogs-.*}]=debug";
+        let app = layer("t7474-switch", module());
+        let mut log = String::new();
+        for id in ["smokelogs-0123456789ab", "apisix-0123456789ab"] {
+            let buf = Buffer::default();
+            let writer = buf.clone();
+            let fmt = tracing_subscriber::fmt::layer()
+                .with_writer(move || writer.clone())
+                .with_ansi(false);
+            let subscriber = tracing_subscriber::registry()
+                .with(fmt.with_filter(tracing_subscriber::EnvFilter::new(filter)));
+            let req = Request::builder()
+                .uri("/open")
+                .header(HEADER, id)
+                .body(Body::empty())
+                .expect("request");
+            let _guard = tracing::subscriber::set_default(subscriber);
+            app.clone().oneshot(req).await.expect("answer");
+            log += &String::from_utf8(buf.0.lock().expect("log").clone()).expect("utf8");
+        }
+        let access: Vec<_> = log.lines().filter(|l| l.contains("jc::access")).collect();
+        assert_eq!(access.len(), 1, "{log}");
+        assert!(
+            access[0].contains("request_id=smokelogs-0123456789ab")
+                && access[0].contains("status=200"),
+            "{log}"
+        );
+    }
+
     #[test]
     fn a_minute_line_is_written_by_the_next_call_without_a_ticker_and_sums_by_status() {
         let tally = Tally::new("t7474-lazy");
