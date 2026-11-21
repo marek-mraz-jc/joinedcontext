@@ -2486,6 +2486,41 @@ pub(crate) fn policy_urn_beside(
         .then(|| format!("urn:ngsi-ld:Policy:{domain}:{}:{policy}", policies.segment))
 }
 
+/// The words of `jcctl validate`'s sentence for a write Policy no Endpoint binds (EP-14,
+/// ADR-N-057), as a refused Policy's `Accepted=False` condition carries them.
+const UNBOUND_WRITE: &str = "but no Endpoint binds it";
+
+/// The write Policies of `space` the last load refused only because no Endpoint binds them
+/// (EP-14). The Endpoint that binds one is what lifts the refusal, so a reference to it counts
+/// as one to a Policy of the space: otherwise an Endpoint whose references went dead (a project
+/// moved to an Organization of another domain, T-7462) waits on a Policy that waits on it.
+fn unbound_refused_policies(
+    mirror: &crate::store::Mirror,
+    project: &str,
+    space: &str,
+) -> std::collections::BTreeSet<String> {
+    mirror
+        .refused_of(project, "Policy")
+        .into_iter()
+        .filter(|policy| {
+            crate::api::assistant::ref_name(&policy.spec["contextSpaceRef"]).as_deref()
+                == Some(space)
+        })
+        .filter(|policy| {
+            policy.status.as_ref().is_some_and(|status| {
+                status.conditions.iter().any(|condition| {
+                    condition.reason.as_deref() == Some("Refused")
+                        && condition
+                            .message
+                            .as_deref()
+                            .is_some_and(|message| message.contains(UNBOUND_WRITE))
+                })
+            })
+        })
+        .map(|policy| policy.metadata.name)
+        .collect()
+}
+
 /// Refuses a Policy reference the proposed Endpoint would not bind (EP-117, T-6435): another
 /// organization's, another space's (a person writes the space's name, the URN wants its rendered
 /// segment), or one naming no Policy of the space in the mirror or the same Change. Such an
@@ -2537,6 +2572,7 @@ pub(crate) fn check_policy_refs(
         Some(_) => "spec.policyRef",
         None => "spec.policyRefs",
     };
+    let unbound = unbound_refused_policies(mirror, project, space);
     // A domain a proposed ProjectMove takes the project to binds once it moves (T-7462).
     let moving = crate::project_move::MOVING
         .try_with(Clone::clone)
@@ -2562,7 +2598,7 @@ pub(crate) fn check_policy_refs(
             };
             let policy = reference.local_id();
             let urn = format!("urn:ngsi-ld:Policy:{domain}:{segment}:{policy}");
-            if !policies.contains(policy) {
+            if !policies.contains(policy) && !unbound.contains(policy) {
                 let known = policies.iter().cloned().collect::<Vec<_>>().join(", ");
                 return Some(format!(
                     "{field}: {reference} names no Policy of the space {space}, so this Endpoint \
@@ -2659,7 +2695,15 @@ pub(crate) fn check_policy_refs_readable(
         .iter()
         .filter(|reference| !held.contains(reference))
         .filter_map(|reference| {
-            let policy = state.mirror.get(project, "Policy", reference.local_id())?;
+            // A refused Policy is still one the proposer must read to bind (T-7462).
+            let policy = state
+                .mirror
+                .get(project, "Policy", reference.local_id())
+                .or_else(|| {
+                    state
+                        .mirror
+                        .refused(project, "Policy", reference.local_id())
+                })?;
             let manifest = serde_json::to_value(&policy).unwrap_or(Value::Null);
             (!effective.may_read_manifest("Policy", &manifest)).then(|| reference.to_string())
         })
@@ -5013,6 +5057,67 @@ mod tests {
         crate::project_move::MOVING
             .sync_scope(vec!["other.example".into()], check)
             .expect_err("only the domain a move names");
+    }
+
+    /// T-7462 (jc-dev t6025-full): a write Policy the load refused because no Endpoint binds it
+    /// can be named by the Endpoint Change that binds it, with `jcctl validate`'s own sentence as
+    /// the refusal; a Policy refused for another reason still binds nothing and stays refused, and
+    /// the proposer must read the refused Policy to bind it.
+    #[test]
+    fn an_endpoint_may_name_the_write_policy_refused_for_want_of_it() {
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "city",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
+        let write = manifest(
+            "Policy",
+            "pipeline-write",
+            space_policy(
+                "{ \"kind\": \"serviceAccount\", \"id\": \"sensors\" }",
+                &["upsertBatch"],
+            ),
+        );
+        let sentence = unmade_writes(
+            &[
+                manifest("ContextSpace", "ovzdusie", json!({})),
+                write.clone(),
+            ],
+            Some("hel.fi"),
+        )
+        .into_iter()
+        .map(|unmade| unmade.message)
+        .find(|message| message.contains(UNBOUND_WRITE))
+        .expect("jcctl validate words an unbound write Policy as the door reads it");
+        let refused = |reason: &str| {
+            let mut policy = write.clone();
+            policy.status = serde_json::from_value(json!({
+                "phase": "Error",
+                "conditions": [{ "type": "Accepted", "status": "False", "reason": "Refused",
+                    "message": format!("revision c2e8fd7b3aa0 fails this kind's validation, nothing is served for it: {reason}") }]
+            }))
+            .expect("a refused status");
+            policy
+        };
+        const URN: &str = "urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:pipeline-write";
+        let endpoint = manifest("Endpoint", "sensors-write", public_air(Some(URN)));
+        let check = || check_policy_refs(&crate::judge::Ground::of(&state), "ovzdusie", &endpoint);
+        check().expect_err("no Policy of that name anywhere");
+        state.mirror.refuse(refused("spec.operations: slug"));
+        check().expect_err("a Policy refused for its own fault binds nothing");
+        state.mirror.refuse(refused(&sentence));
+        check().expect("the Endpoint binding it lifts the refusal");
+
+        let mut stranger = dummy_user().0.identity;
+        stranger.groups = Vec::new();
+        stranger.username = "stranger".into();
+        match check_names_policies(&state, &stranger, "ovzdusie", &endpoint) {
+            Err(ApiError::Denied(detail)) => assert!(detail.contains(URN), "{detail}"),
+            other => panic!("a refused Policy is read before it is bound, got {other:?}"),
+        }
     }
 
     /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: B naming no
