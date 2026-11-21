@@ -21,6 +21,12 @@ use std::collections::BTreeSet;
 /// Ids the existence read of a write asks for at once; a batch naming more is read in chunks.
 const TARGETS_PER_READ: usize = 100;
 
+/// The longest path and query one existence read sends. The broker answers a request URI over
+/// 8 KiB with a bare 414 (Antares `crates/antares-api/src/bounds.rs`, `MAX_URI_BYTES`); 1 KiB is
+/// left for the broker's base path. A hundred long URNs under a grant's filter passed it and every
+/// write of barcelona/air-quality answered 502 (T-7481).
+const PROBE_URI_BYTES: usize = 7 * 1024;
+
 /// One-to-one targets of a batch whose holders one read asks for at once (`slot=="a","b"`).
 const CLAIMS_PER_READ: usize = 50;
 
@@ -350,21 +356,17 @@ impl HeldWrite<'_> {
         let urns: Vec<&String> = targets.keys().collect();
         for probe in &probes {
             let narrowed = query::upstream(&[], probe, &[]);
-            for chunk in urns.chunks(TARGETS_PER_READ) {
-                let ids = chunk
-                    .iter()
-                    .map(|urn| query::encode(urn))
-                    .collect::<Vec<_>>()
-                    .join(",");
+            // Everything but the ids, with the longest `limit` a chunk can carry.
+            let fixed =
+                format!("/ngsi-ld/v1/entities?id=&pick=id&limit={TARGETS_PER_READ}&{narrowed}");
+            let room = PROBE_URI_BYTES.saturating_sub(fixed.len());
+            for (ids, count) in id_chunks(&urns, room) {
                 let answer = conditional::retrieve(
                     &self.gateway.broker,
                     // Only which ids exist is asked (`pick=id`, CIM 009 4.21): a target with a
                     // polygon or a long history is megabytes, and a chunk of them outgrew the
                     // probe's cap and answered every write 500 (praha CityDistrict, T-2971).
-                    &format!(
-                        "/ngsi-ld/v1/entities?id={ids}&pick=id&limit={}&{narrowed}",
-                        chunk.len()
-                    ),
+                    &format!("/ngsi-ld/v1/entities?id={ids}&pick=id&limit={count}&{narrowed}"),
                     self.headers,
                 )
                 .await?;
@@ -393,6 +395,29 @@ impl HeldWrite<'_> {
         }
         Ok(found)
     }
+}
+
+/// `urns` encoded and joined by commas into chunks of at most [`TARGETS_PER_READ`] ids and
+/// `room` bytes, each with its id count. A single id longer than `room` is read alone, so the
+/// broker's 414 answers it rather than the gateway dropping it unread.
+fn id_chunks(urns: &[&String], room: usize) -> Vec<(String, usize)> {
+    let mut chunks = Vec::new();
+    let (mut ids, mut count) = (String::new(), 0);
+    for urn in urns {
+        let id = query::encode(urn);
+        if count > 0 && (count == TARGETS_PER_READ || ids.len() + 1 + id.len() > room) {
+            chunks.push((std::mem::take(&mut ids), std::mem::take(&mut count)));
+        }
+        if count > 0 {
+            ids.push(',');
+        }
+        ids.push_str(&id);
+        count += 1;
+    }
+    if count > 0 {
+        chunks.push((ids, count));
+    }
+    chunks
 }
 
 /// The caller's read grant on `endpoint` over `requested`: a query by `GET /entities` or by

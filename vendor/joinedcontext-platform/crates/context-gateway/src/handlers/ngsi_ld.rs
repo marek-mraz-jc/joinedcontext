@@ -1532,8 +1532,14 @@ async fn relationships_held(
             operation,
             rules,
         };
-        held.check(sent, divided).await.inspect_err(|_| {
-            tracing::info!(slug = %endpoint.slug, "write refused: it breaks a relationship of the space's model");
+        held.check(sent, divided).await.inspect_err(|answer| {
+            // A probe the broker failed is no relationship the write broke (T-7481).
+            let status = answer.status().as_u16();
+            if answer.status().is_client_error() {
+                tracing::info!(slug = %endpoint.slug, status, "write refused: it breaks a relationship of the space's model");
+            } else {
+                tracing::warn!(slug = %endpoint.slug, status, "write refused: its relationships could not be checked");
+            }
         })?;
     }
     if !matches!(operation, Operation::DeleteEntity | Operation::DeleteBatch) {
