@@ -142,6 +142,31 @@ class Http:
             return 0, {}, repr(e).encode()
 
 
+def moved_home(http: Http, name: str) -> str | None:
+    """The base of the catalogue the dataset `name` moved to, or None. Each Organization's datasets
+    live in its own catalogue on its opendata host and leave the installation catalogue at
+    /opendata (move_out, T-7020; jc-dev since T-7470): their old page there answers 301 to
+    `{home}/dataset/{name}` (dataroom moved_home, T-6853)."""
+    tail = f"/dataset/{urllib.parse.quote(name, safe='')}"
+    st, h, _ = http.call("GET", "/opendata" + tail)
+    u = urllib.parse.urlsplit(h.get("location") or "")
+    if st != 301 or u.scheme not in ("https", "http") or not u.netloc or not u.path.endswith(tail):
+        return None
+    return f"{u.scheme}://{u.netloc}{u.path[:-len(tail)]}"
+
+
+def catalogue_at(http: Http, home: str) -> tuple[Http, dict]:
+    """(Http, headers) reading the catalogue at `home`. Live mode: home's own host (the guard admits
+    only the deployment's hosts). Otherwise the /opendata door (--opendata-origin, else the base's
+    own door) with home's host in Host: the edge and jc's host router pick the catalogue by Host."""
+    if live.serves(http.base):
+        return Http(home, http.timeout), {}
+    door = urllib.parse.urlsplit(os.environ.get(OPENDATA_ORIGIN) or http.base)
+    loopback_only(f"{door.scheme}://{door.netloc}")
+    o = urllib.parse.urlsplit(home)
+    return Http(f"{door.scheme}://{door.netloc}{o.path}", http.timeout), {"Host": o.netloc}
+
+
 def issuer_of(http: Http, realm: str) -> str | None:
     """The issuer the realm's discovery document names on `http`'s base (OIDC Discovery 1.0 §3:
     every token's `iss` is exactly it), or None when the document does not answer one."""

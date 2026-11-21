@@ -47,7 +47,7 @@ for p in (HERE, SMOKE, SMOKE / "pipelines"):
 import compare as cmp
 import prodnames
 import sources
-from common import FAIL, PASS, SKIP, Http, Results, as_json, loopback_only, short
+from common import FAIL, PASS, SKIP, Http, Results, as_json, catalogue_at, loopback_only, moved_home, short
 
 PROTOCOL = "2025-06-18"
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL,
@@ -149,12 +149,19 @@ class Jc:
                 break
         return names, ""
 
-    def datasets(self):
-        st, _, raw = self.http.call("GET", "/opendata/api/3/action/package_list", headers={"Accept": "application/json"})
-        body = as_json(raw)
-        if st != 200 or not isinstance(body, dict) or not isinstance(body.get("result"), list):
-            return None, f"{st} {short(raw, 100)}"
-        return {str(x) for x in body["result"]}, ""
+    def datasets(self, wanted=()):
+        """The dataset names jc lists: the installation catalogue's, and those of each Organization
+        catalogue a wanted name it lacks moved to (common.moved_home, T-7470). One extra call per
+        catalogue found and per name listed nowhere."""
+        got, why = package_list(self.http, "/opendata", {})
+        homes = set()
+        for name in wanted if got is not None else ():
+            home = None if name in got else moved_home(self.http, name)
+            if home and home not in homes:
+                homes.add(home)
+                http, headers = catalogue_at(self.http, home)
+                got |= package_list(http, "", headers)[0] or set()
+        return got, why
 
     def realm(self, name: str):
         path = f"/login/realms/{q(name)}/.well-known/openid-configuration"
@@ -174,6 +181,14 @@ class Jc:
     def client_answers(self, realm: str, clients: list[str]) -> dict:
         with cf.ThreadPoolExecutor(self.workers) as pool:
             return dict(zip(clients, pool.map(lambda c: self.client_answer(realm, c), clients)))
+
+
+def package_list(http: Http, prefix: str, headers: dict):
+    st, _, raw = http.call("GET", f"{prefix}/api/3/action/package_list", headers={**headers, "Accept": "application/json"})
+    body = as_json(raw)
+    if st != 200 or not isinstance(body, dict) or not isinstance(body.get("result"), list):
+        return None, f"{st} {short(raw, 100)}"
+    return {str(x) for x in body["result"]}, ""
 
 
 # ---------------------------------------------------------------------- the run
@@ -244,11 +259,12 @@ def run(a, prod: dict, jc: Jc, res: Results, renames, prod_tools: dict | None, e
     tools(res, jc, prod_tools, sorted(servers), renames, a.repo)
 
     # ---- the catalogue, the realm, its clients
-    ds, why = jc.datasets()
+    ds, why = jc.datasets(prod["datasets"])
     extra["dataset"] = cmp.compare(
         res, "dataset", prod["datasets"], ds, renames,
         lambda old: (jc.http.call("GET", f"/opendata/api/3/action/package_show?id={q(old)}")[0] == 200,
-                     f"package_show {old}"), "GET /opendata/api/3/action/package_list", why)
+                     f"package_show {old}"),
+        "GET /opendata/api/3/action/package_list, and each Organization catalogue's a dataset moved to", why)
     jc_realms = {r for r in [*prod["realms"], *renamed.get("realm", {}).values()] if jc.realm(r)[0]}
     extra["realm"] = cmp.compare(res, "realm", sorted(prod["realms"]), jc_realms, renames, jc.realm,
                                  "GET /login/realms/{realm}/.well-known/openid-configuration")
