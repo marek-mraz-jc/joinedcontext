@@ -298,7 +298,8 @@ def judge_refused(res: Results, probe: dict, records) -> None:
               len(access) == 1,
               "" if tagged else "no log line names the request id")
     if tagged:
-        line = tagged[0]
+        # The door's access line says why; a DEBUG line of the same span (sqlx, tower) may come first.
+        line = access[0]
         has_reason = bool(REASON_WORDS.search(line.raw)) or any(
             k in line.fields for k in ("reason", "error", "status"))
         res.check(f"refused.{pid}.reason", m, call, "the line says why (status, reason or error)",
