@@ -180,10 +180,10 @@ describe("VisualizationsSection", () => {
     const toolbar = screen.getByTestId("viz-temporal");
     expect(toolbar).toHaveAccessibleName(V.toolbar);
     // Each field has its hint with an example, read after the control's name.
-    expect(screen.getByLabelText(V.range)).toHaveAccessibleDescription(V.rangeHint);
-    expect(screen.getByLabelText(V.granularity)).toHaveAccessibleDescription(V.granularityHint);
-    expect(screen.getByLabelText(V.method)).toHaveAccessibleDescription(V.methodHint);
-    expect(screen.getByLabelText(V.controls)).toHaveAccessibleDescription(V.controlsHint);
+    expect(screen.getByLabelText(V.range)).toHaveAccessibleDescription(V.hint.range);
+    expect(screen.getByLabelText(V.granularity)).toHaveAccessibleDescription(V.hint.granularity);
+    expect(screen.getByLabelText(V.method)).toHaveAccessibleDescription(V.hint.method);
+    expect(screen.getByLabelText(V.controls)).toHaveAccessibleDescription(V.hint.controls);
     // Only the allow-listed values are offered.
     const options = (label: string) =>
       Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.text);

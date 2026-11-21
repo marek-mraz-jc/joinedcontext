@@ -284,7 +284,7 @@ export function VisualizationsSection({
               <Field
                 id="viz-range"
                 label={t("endpoints.page.visualizations.range")}
-                help={t("endpoints.page.visualizations.rangeHint")}
+                help={t("endpoints.page.visualizations.hint.range")}
               >
                 <Select
                   id="viz-range"
@@ -308,7 +308,7 @@ export function VisualizationsSection({
               <Field
                 id="viz-granularity"
                 label={t("endpoints.page.visualizations.granularity")}
-                help={t("endpoints.page.visualizations.granularityHint")}
+                help={t("endpoints.page.visualizations.hint.granularity")}
               >
                 <Select
                   id="viz-granularity"
@@ -334,7 +334,7 @@ export function VisualizationsSection({
                 <Field
                   id="viz-method"
                   label={t("endpoints.page.visualizations.method")}
-                  help={t("endpoints.page.visualizations.methodHint")}
+                  help={t("endpoints.page.visualizations.hint.method")}
                 >
                   <Select
                     id="viz-method"
@@ -357,7 +357,7 @@ export function VisualizationsSection({
               <Field
                 id="viz-controls"
                 hideLabel
-                help={t("endpoints.page.visualizations.controlsHint")}
+                help={t("endpoints.page.visualizations.hint.controls")}
                 className="sm:col-span-3"
               >
                 <Checkbox

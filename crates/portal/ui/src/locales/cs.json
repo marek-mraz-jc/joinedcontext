@@ -1870,28 +1870,30 @@
         "remove": "Odebrat",
         "toolbar": "Nastavení grafu pro čtenáře",
         "range": "Výchozí období",
-        "rangeHint": "Co čtenář uvidí po otevření grafu, např. 7 dní: poslední týden do teď.",
         "ranges": {
           "day": "24 hodin",
           "week": "7 dní",
           "month": "31 dní"
         },
         "granularity": "Výchozí podrobnost",
-        "granularityHint": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
         "granularities": {
           "raw": "Surové hodnoty",
           "hourly": "Po hodinách",
           "daily": "Po dnech"
         },
         "method": "Výchozí výpočet",
-        "methodHint": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
         "methods": {
           "avg": "Průměr",
           "min": "Minimum",
           "max": "Maximum"
         },
         "controls": "Zobrazit čtenářům panel nastavení",
-        "controlsHint": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
+        "hint": {
+          "range": "Co čtenář uvidí po otevření grafu, např. 7 dní: poslední týden do teď.",
+          "granularity": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
+          "method": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
+          "controls": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf."
+        },
         "templates": {
           "bar": "Sloupcový graf",
           "line": "Průběh v čase",

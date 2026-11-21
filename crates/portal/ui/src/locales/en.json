@@ -1870,28 +1870,30 @@
         "remove": "Remove",
         "toolbar": "Reader's chart settings",
         "range": "Default range",
-        "rangeHint": "What a reader sees on opening the chart, e.g. 7 days: the last week up to now.",
         "ranges": {
           "day": "24 hours",
           "week": "7 days",
           "month": "31 days"
         },
         "granularity": "Default granularity",
-        "granularityHint": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for 31 days.",
         "granularities": {
           "raw": "Raw readings",
           "hourly": "Hourly",
           "daily": "Daily"
         },
         "method": "Default method",
-        "methodHint": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
         "methods": {
           "avg": "Average",
           "min": "Minimum",
           "max": "Maximum"
         },
         "controls": "Show the toolbar to readers",
-        "controlsHint": "Readers can change the range, granularity and method themselves, e.g. switch to 31 days. Untick it for a fixed chart.",
+        "hint": {
+          "range": "What a reader sees on opening the chart, e.g. 7 days: the last week up to now.",
+          "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for 31 days.",
+          "method": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
+          "controls": "Readers can change the range, granularity and method themselves, e.g. switch to 31 days. Untick it for a fixed chart."
+        },
         "templates": {
           "bar": "Bar chart",
           "line": "Line over time",

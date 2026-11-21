@@ -1870,28 +1870,30 @@
         "remove": "Odstrániť",
         "toolbar": "Nastavenia grafu pre čitateľov",
         "range": "Predvolené obdobie",
-        "rangeHint": "Čo čitateľ uvidí po otvorení grafu, napr. 7 dní: posledný týždeň do teraz.",
         "ranges": {
           "day": "24 hodín",
           "week": "7 dní",
           "month": "31 dní"
         },
         "granularity": "Predvolená podrobnosť",
-        "granularityHint": "Surové hodnoty kreslia každé meranie; po hodinách a po dňoch jeden bod za hodinu alebo deň, napr. po dňoch pre 31 dní.",
         "granularities": {
           "raw": "Surové hodnoty",
           "hourly": "Po hodinách",
           "daily": "Po dňoch"
         },
         "method": "Predvolený výpočet",
-        "methodHint": "Ako sa merania jednej hodiny alebo dňa zlúčia do bodu, napr. maximum pre dennú špičku.",
         "methods": {
           "avg": "Priemer",
           "min": "Minimum",
           "max": "Maximum"
         },
         "controls": "Zobraziť čitateľom panel nastavení",
-        "controlsHint": "Čitatelia si môžu sami zmeniť obdobie, podrobnosť a výpočet, napr. prepnúť na 31 dní. Zrušte zaškrtnutie pre pevný graf.",
+        "hint": {
+          "range": "Čo čitateľ uvidí po otvorení grafu, napr. 7 dní: posledný týždeň do teraz.",
+          "granularity": "Surové hodnoty kreslia každé meranie; po hodinách a po dňoch jeden bod za hodinu alebo deň, napr. po dňoch pre 31 dní.",
+          "method": "Ako sa merania jednej hodiny alebo dňa zlúčia do bodu, napr. maximum pre dennú špičku.",
+          "controls": "Čitatelia si môžu sami zmeniť obdobie, podrobnosť a výpočet, napr. prepnúť na 31 dní. Zrušte zaškrtnutie pre pevný graf."
+        },
         "templates": {
           "bar": "Stĺpcový graf",
           "line": "Priebeh v čase",
