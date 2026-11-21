@@ -62,7 +62,7 @@ async fn broker_holding(more: &[String], reads: Option<StatusCode>) -> (String, 
         .collect();
     let app = Router::new()
         .fallback(any(
-            |State((calls, held)): State<(Calls, Arc<Vec<Value>>)>, request: Request| async move {
+            move |State((calls, held)): State<(Calls, Arc<Vec<Value>>)>, request: Request| async move {
                 let method = request.method().clone();
                 let query = request.uri().query().unwrap_or_default().to_owned();
                 let tenant = request
@@ -599,6 +599,7 @@ async fn a_hundred_long_targets_under_a_filter_are_read_in_chunks_the_broker_tak
 /// answered as a broken relationship, and nothing is written.
 #[tokio::test]
 async fn a_refused_targets_read_answers_502_and_never_a_broken_relationship() {
+    let captured = common::Log::capture();
     let answer = send_through(
         broker_holding(&[], Some(StatusCode::URI_TOO_LONG)).await,
         filtered_pipeline(),
@@ -621,6 +622,10 @@ async fn a_refused_targets_read_answers_502_and_never_a_broken_relationship() {
         answer.body
     );
     assert!(answer.writes().is_empty(), "{:?}", answer.calls);
+    let log = captured.text();
+    assert!(log.contains("could not be checked"), "{log}");
+    assert!(log.contains("414"), "the log names no status: {log}");
+    assert!(!log.contains("breaks a relationship"), "{log}");
 }
 
 #[tokio::test]
