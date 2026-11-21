@@ -68,14 +68,15 @@ impl Drop for Jc {
     }
 }
 
-/// Request and migration login roles per module. Antares migrates as its own request role.
+/// Request and migration login roles per module. Antares also runs its cross-Tenant work as
+/// `antares_maint`, a member of `antares_maintenance` (T-7310, T-7488).
 const ROLES: &[(&str, &str, &str)] = &[
     ("kaisatsu", "kaisatsu_app", "kaisatsu_migrate"),
     ("shako", "shako_app", "shako_migrate"),
     ("daiya", "daiya_app", "daiya_migrate"),
     ("dataroom", "dataroom_app", "dataroom_migrate"),
     ("ekiben", "ekiben_app", "ekiben_migrate"),
-    ("antares", "antares_app", ""),
+    ("antares", "antares_app", "antares_owner"),
 ];
 
 fn password() -> String {
@@ -158,6 +159,28 @@ async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
                 }
             });
         }
+        if *module == "antares" {
+            let pw = password();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DO $$ BEGIN CREATE ROLE antares_maint; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 DO $$ BEGIN CREATE ROLE antares_maintenance NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 ALTER ROLE antares_maint LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD '{pw}';
+                 GRANT antares_maintenance TO antares_maint;
+                 GRANT CONNECT ON DATABASE {db} TO antares_maint;"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+            let file = dir.join("antares_maint-password");
+            std::fs::write(&file, pw).unwrap();
+            section = section.map(|s| {
+                format!(
+                    "{s}maintenance_url = \"postgres://antares_maint@{}:{}/{db}\"\nmaintenance_password_file = {file:?}\n",
+                    base.get_host(),
+                    base.get_port()
+                )
+            });
+        }
         if !memory.contains(module) {
             writeln!(toml, "{}", section.unwrap()).unwrap();
         }
@@ -173,7 +196,11 @@ async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
     sqlx::raw_sql(
         "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS btree_gin;
          CREATE EXTENSION IF NOT EXISTS unaccent;
-         GRANT CREATE ON SCHEMA public TO daiya_migrate, antares_app;",
+         GRANT CREATE ON SCHEMA public TO daiya_migrate, antares_owner;
+         ALTER DEFAULT PRIVILEGES FOR ROLE antares_owner IN SCHEMA public
+           GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO antares_app, antares_maint;
+         ALTER DEFAULT PRIVILEGES FOR ROLE antares_owner IN SCHEMA public
+           GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO antares_app, antares_maint;",
     )
     .execute(&on_db)
     .await
@@ -689,9 +716,20 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         "kaisatsu", "shako", "daiya", "dataroom", "ekiben", "antares",
     ] {
         let config = dir.path().join(format!("{module}.toml"));
+        // Antares names its owner and maintenance logins too (T-7488); the refusal comes first.
+        let split = if module == "antares" {
+            let other = |role: &str| url.replacen(base.get_username(), role, 1);
+            format!(
+                "migrate_url = \"{}\"\nmigrate_password_file = {pw:?}\nmaintenance_url = \"{}\"\nmaintenance_password_file = {pw:?}\n",
+                other("antares_owner"),
+                other("antares_maint")
+            )
+        } else {
+            String::new()
+        };
         std::fs::write(
             &config,
-            format!("[{module}.database]\nurl = \"{url}\"\npassword_file = {pw:?}\n"),
+            format!("[{module}.database]\nurl = \"{url}\"\npassword_file = {pw:?}\n{split}"),
         )
         .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
@@ -724,6 +762,119 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+}
+
+/// T-7488: Antares' request login that owns a table of its database, belongs to the owner or
+/// has BYPASSRLS stops jc before it migrates or listens, and the message names the database and the login.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_antares_request_login_that_owns_a_table_or_belongs_to_the_owner_is_refused() {
+    let Ok(admin_url) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
+        println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let _serial = PG_SERIAL.lock().await;
+    let base = PgConnectOptions::from_str(&admin_url).unwrap();
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone())
+        .await
+        .unwrap();
+    let db = format!("jc_owns_{:x}", std::process::id());
+    let pw = password();
+    for statement in [
+        format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        format!("CREATE DATABASE {db}"),
+        "DO $$ BEGIN CREATE ROLE jc_owns_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+            .into(),
+        "DO $$ BEGIN CREATE ROLE jc_owns_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+            .into(),
+        format!("ALTER ROLE jc_owns_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{pw}'"),
+        format!("GRANT CONNECT, CREATE ON DATABASE {db} TO jc_owns_app"),
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
+    let on_db = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone().database(&db))
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "CREATE TABLE public.stray (id int); ALTER TABLE public.stray OWNER TO jc_owns_app;",
+    )
+    .execute(&on_db)
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("pw");
+    std::fs::write(&file, &pw).unwrap();
+    let at = |role: &str| {
+        format!(
+            "postgres://{role}@{}:{}/{db}",
+            base.get_host(),
+            base.get_port()
+        )
+    };
+    let run = |says: &'static str| {
+        let config = dir.path().join("antares.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "[antares.database]\nurl = \"{}\"\npassword_file = {file:?}\nmigrate_url = \"{}\"\nmigrate_password_file = {file:?}\nmaintenance_url = \"{}\"\nmaintenance_password_file = {file:?}\n",
+                at("jc_owns_app"),
+                at("jc_owns_owner"),
+                at("jc_owns_maint")
+            ),
+        )
+        .unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+        cmd.args(["--profile", "development"]);
+        for (key, _) in std::env::vars() {
+            if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
+                cmd.env_remove(key);
+            }
+        }
+        cmd.args(["--role", "antares", "--log-format", "text"])
+            .arg("--config")
+            .arg(&config)
+            .args(["--listen", "127.0.0.1:0"])
+            .arg("--state-dir")
+            .arg(dir.path().join("state"))
+            .env("ANTARES_ALLOW_SHARED_LOCAL", "1");
+        let (code, stderr) = exit_within(cmd, Duration::from_secs(90));
+        assert_eq!(code, Some(1), "{stderr}");
+        assert!(!stderr.contains("jc listening"), "{stderr}");
+        assert!(
+            stderr.contains(&format!("database {db}")) && stderr.contains("`jc_owns_app`"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(says), "{says}: {stderr}");
+        assert!(!stderr.contains(&pw), "the password was printed");
+    };
+    run("owns public.stray");
+    // Owning nothing but holding the owner's role is the same power.
+    sqlx::raw_sql(
+        "ALTER TABLE public.stray OWNER TO jc_owns_owner; GRANT jc_owns_owner TO jc_owns_app;",
+    )
+    .execute(&on_db)
+    .await
+    .unwrap();
+    run("is a member of the owner `jc_owns_owner`");
+    sqlx::raw_sql("REVOKE jc_owns_owner FROM jc_owns_app; ALTER ROLE jc_owns_app BYPASSRLS;")
+        .execute(&on_db)
+        .await
+        .unwrap();
+    run("has BYPASSRLS");
+    on_db.close().await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {db} WITH (FORCE); REVOKE jc_owns_owner FROM jc_owns_app; \
+         DROP ROLE IF EXISTS jc_owns_app; DROP ROLE IF EXISTS jc_owns_owner;"
     )))
     .execute(&admin)
     .await
