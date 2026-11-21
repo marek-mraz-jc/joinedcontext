@@ -882,6 +882,9 @@ async fn seed_trees(pool: &sqlx::PgPool) {
     let mut tx = pool.begin().await.expect("tx");
     for stmt in [
         "SET LOCAL statement_timeout = 0",
+        // both callers seed in parallel: the second waits out the first's
+        // insert, longer than the broker's 5 s lock_timeout
+        "SET LOCAL lock_timeout = 0",
         "SELECT pg_advisory_xact_lock(58260)",
     ] {
         sqlx::query(stmt).execute(&mut *tx).await.expect(stmt);
@@ -901,7 +904,6 @@ async fn seed_trees(pool: &sqlx::PgPool) {
                     jsonb_build_object('https://x/height', g % 30),
                     ARRAY['https://x/Tree'], now(), now()
                FROM generate_series(1, $2::bigint) g",
-            "ANALYZE entities",
         ] {
             let q = sqlx::query(stmt);
             let q = match stmt.contains("$1") {
@@ -916,6 +918,14 @@ async fn seed_trees(pool: &sqlx::PgPool) {
         }
     }
     tx.commit().await.expect("seed");
+    // a settled table's visibility map, as autovacuum keeps prod's: the
+    // index-only plans of 0044 count on it, and a fresh insert has none.
+    // Every caller vacuums: one that found the seed done waits here for
+    // the seeder's VACUUM (they conflict) instead of planning before it.
+    let mut conn = pool.acquire().await.expect("conn");
+    for stmt in ["SET lock_timeout = 0", "VACUUM (ANALYZE) entities"] {
+        sqlx::query(stmt).execute(&mut *conn).await.expect(stmt);
+    }
 }
 
 /// T-5826: a rule's idPattern beside its exact prefix, over a Tenant shaped
@@ -963,10 +973,12 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
 
 /// T-7484: a deep page under a rule's idPattern, as `store::pg::entity`
 /// runs it. The ids stream in the page's order without the regex (the
-/// broker's own regex skips the OFFSET): each arm ordered on its own, so
-/// the type's arm is an Index Only Scan of i_entities_id_bytes (0044) and
-/// the arms merge without a sort. Ordered once over both arms, the stream
-/// planned a Seq Scan of the table and an external sort of the type on CI.
+/// broker's own regex skips the OFFSET): each arm ordered on its own under
+/// the store's index-only planner settings, so the arms are Index Only
+/// Scans of i_entities_id_bytes (0044) that merge without a sort. Ordered
+/// once over both arms, or planned by cost while other tests' writes kept
+/// the visibility map behind, the stream was a Seq Scan of the table and
+/// an external sort of the type (CI run 44904009419).
 /// The page itself is a keyset
 /// page from the id found there, which reads i_entities_id_bytes in order
 /// up to its LIMIT. The OFFSET statement it replaces planned a Bitmap Heap
@@ -997,10 +1009,13 @@ async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
          ORDER BY {c} OFFSET 0)) AS arms ORDER BY {c}",
         w = w("true")
     );
-    let plan = plan_of(&pool, T, &ids).await;
+    let pinned: Vec<&str> = pg::entity::ID_ORDER_PINNED.split("; ").collect();
+    let plan = plan_with(&pool, T, false, &pinned, &ids).await;
     assert!(
         !plan.contains("regexp_like")
             && !plan.contains("Seq Scan")
+            && !plan.contains("Bitmap")
+            && !plan.contains("Sort  (")
             && plan.contains("Merge Append")
             && plan.contains("Index Only Scan using i_entities_id_bytes on entities"),
         "the skip runs the regex in SQL, sweeps the table or sorts the type:\n{plan}"

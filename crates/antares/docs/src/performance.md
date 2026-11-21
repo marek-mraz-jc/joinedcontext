@@ -1047,9 +1047,15 @@ against 0.5 s at offset 0, and `name~="zzz"` at 1.31 s against
   the arms' ids in page order without the regex, matches them with the
   rule's own regex as `count_ids` does, and reads the page from the id
   after `offset` matches as a keyset page (OFFSET 0, the SQL regex still in
-  its WHERE). Every page past offset 0 then costs one sort of the type's
-  ids: 0.5 s at 358 000, whatever the offset; offset 0 and the cursor keep
-  their 40 ms.
+  its WHERE). Each arm streams in order from `i_entities_id_bytes`, which
+  carries `types` and `expires_at` since 0044: an Index Only Scan the arms
+  merge without a sort or a temp file. The skip statement runs with seq
+  scans, bitmap scans and sorts off (`ID_ORDER_PINNED`, transaction-local,
+  undone before the page): planned by cost, a table whose visibility map
+  lags behind its writes read as a Seq Scan of the table and an external
+  sort of the type. 8 such skips side by side over 164 000 Trees: 116-137 ms
+  each, no temp file. Offset 0 and the cursor keep their
+  40 ms.
 - **The next cursor.** An Entity query whose page is kept in id order and
   is not counted (no `count=true`, no `orderBy`, no federation, no
   `idPattern`) carries `cursor=` on its `rel="next"` Link beside `offset`.

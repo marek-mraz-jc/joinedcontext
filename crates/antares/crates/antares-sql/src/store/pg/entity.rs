@@ -627,6 +627,16 @@ fn count_sql(wheres: &[String], split: Option<&TypeSplit>) -> String {
 
 /// The ids of every arm of `count_sql`, for a count the broker decides id by
 /// id. The arms are disjoint (`arms`), so each id comes once.
+/// The planner settings under which a deep idPattern page's skip streams
+/// its arms' ids (T-7484): only index paths, which hand each arm back in
+/// id order, so the arms merge without a sort. Transaction-local, and
+/// [`ID_ORDER_UNPINNED`] puts them back before the page statement.
+pub const ID_ORDER_PINNED: &str = "SET LOCAL enable_seqscan = off; \
+     SET LOCAL enable_bitmapscan = off; SET LOCAL enable_sort = off";
+/// [`ID_ORDER_PINNED`] undone: the session's own values again.
+const ID_ORDER_UNPINNED: &str = "SET LOCAL enable_seqscan TO DEFAULT; \
+     SET LOCAL enable_bitmapscan TO DEFAULT; SET LOCAL enable_sort TO DEFAULT";
+
 fn ids_sql(wheres: &[String], split: Option<&TypeSplit>) -> String {
     arms(wheres, split)
         .iter()
@@ -1594,6 +1604,9 @@ impl PgEntityStore {
             // each arm ordered on its own (OFFSET 0 keeps the subquery's
             // ORDER BY from being pulled up), so 0044's index hands every
             // arm back in order and they merge without a sort of the type
+            // (pinned below: by cost alone, a table whose visibility map
+            // lags behind its writes reads as a Seq Scan and an external
+            // sort of the type, every Tenant's rows read)
             let sql = match arms(&ids, split.as_ref()).as_slice() {
                 [w] => format!("SELECT id FROM entities WHERE {w} ORDER BY {order}"),
                 each => format!(
@@ -1606,6 +1619,8 @@ impl PgEntityStore {
                         .join(" UNION ALL ")
                 ),
             };
+            use sqlx::Executor as _;
+            tx.execute(sqlx::raw_sql(ID_ORDER_PINNED)).await?;
             let (seen, first) = match_ids(
                 &mut tx,
                 &sql,
@@ -1614,6 +1629,7 @@ impl PgEntityStore {
                 Some(p.offset),
             )
             .await?;
+            tx.execute(sqlx::raw_sql(ID_ORDER_UNPINNED)).await?;
             let mut w = wheres.clone();
             match first {
                 Some(id) => {

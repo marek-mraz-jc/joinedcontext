@@ -180,3 +180,7 @@ note = "the cross-Tenant escape of every policy also needs a member of antares_m
 [0043]
 rollback = "compatible"
 note = "tenants, tenant_rename and tenant_seal_alias admit the scoped Tenant's row or a member of antares_maintenance, and antares_tenant_standing answers one name's standing; an older release connects as the owner, which the policies do not bind (ENABLE, not FORCE), so its reads and writes of the inventory keep working"
+
+[0044]
+rollback = "compatible"
+note = "i_entities_id_bytes keeps its name and key and only carries types and expires_at (INCLUDE); an older release plans its id-prefix probes on it as before and its writes keep it current"
