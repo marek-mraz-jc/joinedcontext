@@ -95,8 +95,8 @@ ANTARES_MAINTENANCE_POOL = 4
 
 
 def antares(docs: list[dict], jc: bool = False, role: str | None = None) -> int:
-    # jc runs the broker in its own process and logs in as jc_antares, counted apart; with the role
-    # split each URL's role is counted under its own name.
+    # jc runs the broker in its own process, counted apart; each URL's role (jc_antares,
+    # jc_antares_app, jc_antares_maint) under its own name.
     def logins(env: dict) -> list[tuple[str, int]]:
         pools = (("ANTARES_DATABASE_URL", int(env.get("ANTARES_PG_POOL", ANTARES_DEFAULT))),
                  ("ANTARES_MIGRATION_DATABASE_URL", ANTARES_OWNER_POOL),
@@ -141,14 +141,18 @@ def jc_module(module: str):
     return count
 
 
-def jc_assistant(docs: list[dict]) -> int:
-    # The assistant in jc migrates and serves as jc_assistant: [assistant.database] max_connections.
-    found = named(docs, "jc")
-    assert found, "role jc_assistant has a database but no jc workload in the render"
-    (toml,) = [d["data"]["jc.toml"] for d in docs if d.get("kind") == "ConfigMap" and "jc.toml" in d.get("data", {})]
-    section = tomllib.loads(toml).get("assistant", {}).get("database", {})
-    assert "max_connections" in section, "jc.toml sets no [assistant.database] max_connections"
-    return sum(replicas(w) for w in found) * section["max_connections"]
+def jc_assistant(app: bool):
+    # The assistant in jc serves as jc_assistant_app ([assistant.database] max_connections) and
+    # migrates as the owner jc_assistant, one login at start (T-7488).
+    def count(docs: list[dict]) -> int:
+        found = named(docs, "jc")
+        assert found, "role jc_assistant has a database but no jc workload in the render"
+        (toml,) = [d["data"]["jc.toml"] for d in docs if d.get("kind") == "ConfigMap" and "jc.toml" in d.get("data", {})]
+        section = tomllib.loads(toml).get("assistant", {}).get("database", {})
+        assert "max_connections" in section, "jc.toml sets no [assistant.database] max_connections"
+        return sum(replicas(w) for w in found) * (section["max_connections"] if app else 1)
+
+    return count
 
 
 def keycloak(docs: list[dict]) -> int:
@@ -232,7 +236,8 @@ CLIENTS = {
     "jc_antares_maint": lambda docs: antares(docs, jc=True, role="jc_antares_maint"),
     "kaisatsu_migrate": jc_kaisatsu,
     **{f"{m}_migrate": jc_module(m) for m in ("shako", "daiya", "dataroom", "ekiben")},
-    "jc_assistant": jc_assistant,
+    "jc_assistant": jc_assistant(app=False),
+    "jc_assistant_app": jc_assistant(app=True),
     # The branch previews' group never logs in; each member pv_{slug} has CONNECTION LIMIT 5, the
     # preview Portal's pool, and scripts/preview.sh starts at most PREVIEW_MAX = 2 of them (T-5548).
     "pv_previews": lambda docs: 2 * COMPILED["portal"][1],

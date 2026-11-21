@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from conftest import TREE_IGNORE, need_environment
+from conftest import PUBLIC_ENVS, TREE_IGNORE, need_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENVIRONMENTS = PROJECT_ROOT / "ci/example-deployments/environments"
@@ -265,43 +265,66 @@ def test_jc_portal_serves_as_a_role_apart_from_the_one_that_migrates(rendered, e
     assert refs == {"PORTAL_APP_DB_PASSWORD": "db-jc-portal-app", "PORTAL_DB_PASSWORD": "db-jc-portal"}
 
 
+# smoke-test renders only inside its CI pipeline (requiredEnv PIPELINE_SLUG).
+JC_ENVIRONMENTS = sorted((PUBLIC_ENVS - {"smoke-test"}) | {"jc-dev", "jc-prod"})
+
+
+def test_no_switch_turns_the_request_logins_back_into_owners():
+    # T-7488: the split is the only path; no flag left that serves Antares as its owner.
+    hits = [str(p.relative_to(PROJECT_ROOT)) for top in ("components", "defaults", "ci", "gitops")
+            for p in (PROJECT_ROOT / top).rglob("*")
+            if p.is_file() and p.suffix in {".gotmpl", ".yaml", ".yml", ".tpl"} and "antaresRoleSplit" in p.read_text(errors="ignore")]
+    assert not hits, hits
+
+
 @requires_helmfile
-def test_jc_antares_serves_apart_from_its_owner_once_the_role_split_is_on(rendered, rendered_variant):
-    # T-7310: off, the broker logs in as the owner jc_antares as before (an older image knows no
-    # ANTARES_MIGRATION_DATABASE_URL); on, it migrates as jc_antares, serves as jc_antares_app and
-    # drains and reaps as jc_antares_maint, each password from its own Secret.
-    off = {e["name"]: e for e in jc_container(rendered("addons"))["env"]}
-    assert off["ANTARES_DATABASE_URL"]["value"].startswith("postgresql://jc_antares:$(BROKER_DB_PASSWORD)@")
-    assert "ANTARES_MIGRATION_DATABASE_URL" not in off and "ANTARES_MAINTENANCE_DATABASE_URL" not in off
-
-    def split_on(tree):
-        path = tree / "components/jc/default-environment.yaml.gotmpl"
-        text = path.read_text()
-        assert "antaresRoleSplit: false" in text
-        path.write_text(text.replace("antaresRoleSplit: false", "antaresRoleSplit: true"))
-
-    docs = rendered_variant("addons", split_on)
-    on = {e["name"]: e for e in jc_container(docs)["env"]}
-    urls = {k: on[k]["value"] for k in ("ANTARES_DATABASE_URL", "ANTARES_MIGRATION_DATABASE_URL",
-                                        "ANTARES_MAINTENANCE_DATABASE_URL")}
-    assert urls["ANTARES_DATABASE_URL"].startswith("postgresql://jc_antares_app:$(BROKER_APP_DB_PASSWORD)@")
-    assert urls["ANTARES_MIGRATION_DATABASE_URL"].startswith("postgresql://jc_antares:$(BROKER_DB_PASSWORD)@")
-    assert urls["ANTARES_MAINTENANCE_DATABASE_URL"].startswith(
-        "postgresql://jc_antares_maint:$(BROKER_MAINT_DB_PASSWORD)@")
-    assert all(u.endswith("/jc_antares") for u in urls.values())
-    refs = {k: on[k]["valueFrom"]["secretKeyRef"]["name"]
+@pytest.mark.parametrize("env", JC_ENVIRONMENTS)
+def test_jc_request_pools_log_in_apart_from_the_owners(rendered, env):
+    # T-7488 (T-7179, T-7310): in every environment that runs jc, Antares, the Portal and the
+    # assistant migrate as the owner and serve as a login that owns nothing, each password from its
+    # own Secret; Antares runs the cross-Tenant work as jc_antares_maint.
+    docs = rendered(env)
+    if not [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == "jc"]:
+        pytest.skip(f"{env} runs no jc")
+    env_of = {e["name"]: e for e in jc_container(docs)["env"]}
+    login = {k: re.match(r"postgres(?:ql)?://([^:@/]+)", env_of[k]["value"])[1] for k in (
+        "ANTARES_DATABASE_URL", "ANTARES_MIGRATION_DATABASE_URL", "ANTARES_MAINTENANCE_DATABASE_URL",
+        "JC_PORTAL_DATABASE_URL", "JC_PORTAL_MIGRATION_DATABASE_URL")}
+    assert login == {
+        "ANTARES_DATABASE_URL": "jc_antares_app", "ANTARES_MIGRATION_DATABASE_URL": "jc_antares",
+        "ANTARES_MAINTENANCE_DATABASE_URL": "jc_antares_maint",
+        "JC_PORTAL_DATABASE_URL": "jc_portal_app", "JC_PORTAL_MIGRATION_DATABASE_URL": "jc_portal"}, env
+    refs = {k: env_of[k]["valueFrom"]["secretKeyRef"]["name"]
             for k in ("BROKER_DB_PASSWORD", "BROKER_APP_DB_PASSWORD", "BROKER_MAINT_DB_PASSWORD")}
     assert refs == {"BROKER_DB_PASSWORD": "db-jc-antares", "BROKER_APP_DB_PASSWORD": "db-jc-antares-app",
                     "BROKER_MAINT_DB_PASSWORD": "db-jc-antares-maint"}
-    # The roles behind them: rows only, the maintenance one in antares_maintenance.
+    (toml,) = [d["data"]["jc.toml"] for d in docs if d.get("kind") == "ConfigMap" and "jc.toml" in d.get("data", {})]
+    assistant = tomllib.loads(toml)["assistant"]["database"]
+    assert assistant["url"].startswith("postgres://jc_assistant_app@"), assistant
+    assert assistant["migrate_url"].startswith("postgres://jc_assistant@"), assistant
+    mounts = {m["mountPath"]: m["name"] for m in jc_container(docs).get("volumeMounts", [])}
+    (jc,) = [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == "jc"]
+    secrets = {v["name"]: v["secret"]["secretName"] for v in jc["spec"]["template"]["spec"]["volumes"] if "secret" in v}
+    assert secrets[mounts[str(Path(assistant["password_file"]).parent)]] == "db-jc-assistant-app"
+    assert secrets[mounts[str(Path(assistant["migrate_password_file"]).parent)]] == "db-jc-assistant"
+
+
+@requires_helmfile
+def test_the_request_roles_hold_rows_only(rendered):
+    # The roles behind the request logins: rows only (dml), the maintenance one in
+    # antares_maintenance, each owned database's owner the migrating login.
+    docs = rendered("addons")
     jobs = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Job" and "create-role" in d["metadata"]["name"]}
     def job_env(name):
         return {e["name"]: e.get("value") for e in jobs[name]["spec"]["template"]["spec"]["containers"][0]["env"]}
     app = job_env("jc-antares-db-create-role-jc-antares-app-dml")
     maint = job_env("jc-antares-db-create-role-jc-antares-maint-dml")
+    assistant = job_env("jc-assistant-db-create-role-jc-assistant-app-dml")
     assert (app["ROLE_TYPE"], app["ROLE_MEMBER_OF"]) == ("dml", "[]")
     assert (maint["ROLE_TYPE"], maint["ROLE_MEMBER_OF"]) == ("dml", '["antares_maintenance"]')
+    assert (assistant["ROLE_TYPE"], assistant["ROLE_MEMBER_OF"]) == ("dml", "[]")
     assert app["DB_OWNER"] == maint["DB_OWNER"] == "jc_antares"
+    assert assistant["DB_OWNER"] == "jc_assistant"
 
 
 @requires_helmfile

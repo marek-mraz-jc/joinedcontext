@@ -246,6 +246,48 @@ fn organization_realms(sign_ins: &[super::sign_in::SignIn], kaisatsu: &str) -> O
     (!realms.is_empty()).then(|| serde_json::Value::from(realms).to_string())
 }
 
+/// The assistant's store (T-7488): migrated as the owner (`migrate_url`), which then grants the
+/// request login (`url`) the rows of every table, the migration history excepted; the request
+/// pool is refused unless its login owns nothing and passes row-level security, which the
+/// migrations force on every table (T-3050).
+async fn migrate_and_connect(db: &crate::pg::DatabaseSection) -> Result<sqlx::PgPool, String> {
+    let owner_opts = db
+        .migrate_options()?
+        .ok_or("[assistant.database] migrate_url is required")?;
+    let owner_role = owner_opts.get_username().to_owned();
+    let owner = assistant::host::pool_options()
+        .max_connections(1)
+        .connect_with(owner_opts)
+        .await
+        .map_err(|e| format!("the assistant's database is not reachable as {owner_role}: {e}"))?;
+    assistant::MIGRATOR
+        .run(&owner)
+        .await
+        .map_err(|e| format!("the assistant's migrations did not run: {e}"))?;
+    let grant: String = sqlx::query_scalar(
+        "SELECT format('GRANT USAGE ON SCHEMA public TO %1$I; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %1$I; \
+         GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %1$I; \
+         REVOKE ALL ON _sqlx_migrations FROM %1$I;', $1::text)",
+    )
+    .bind(db.app_role()?)
+    .fetch_one(&owner)
+    .await
+    .map_err(|e| format!("the assistant's request login grant: {e}"))?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grant))
+        .execute(&owner)
+        .await
+        .map_err(|e| format!("the assistant's request login grant: {e}"))?;
+    owner.close().await;
+    let pool = assistant::host::pool_options()
+        .max_connections(db.max_connections())
+        .connect_with(db.app_options()?)
+        .await
+        .map_err(|e| format!("the assistant's database is not reachable: {e}"))?;
+    crate::pg::refuse_unsafe_request_role("[assistant.database] url", &pool, &owner_role).await?;
+    Ok(pool)
+}
+
 /// What the module needs before anything is built, or why it is off: the siblings, the client
 /// secrets, the embedding model's directory, ONNX Runtime's library and the database section.
 fn missing(
@@ -474,16 +516,7 @@ async fn try_start(
         return Err("the organization or its checkout is unknown".into());
     };
     let embedder = embedder(&lookup).await?;
-    let pool = assistant::host::pool_options()
-        .max_connections(db.max_connections())
-        .connect_with(db.app_options()?)
-        .await
-        .map_err(|e| format!("the assistant's database is not reachable: {e}"))?;
-    // As its own role, not a superuser, so the forced row-level security holds (T-3050).
-    assistant::MIGRATOR
-        .run(&pool)
-        .await
-        .map_err(|e| format!("the assistant's migrations did not run: {e}"))?;
+    let pool = migrate_and_connect(db).await?;
     let crawler = assistant::crawl::Crawler::public().map_err(|e| e.to_string())?;
     let secret = setup
         .value(Secret::AssistantClientSecret)
@@ -1114,6 +1147,142 @@ mod tests {
         ))
     }
 
+    /// A PostgreSQL with pgvector whose user may create roles and databases, for the store tests.
+    #[allow(clippy::disallowed_methods)] // The test's own input, not jc's configuration.
+    fn test_database_url() -> Option<String> {
+        std::env::var("JC_ASSISTANT_TEST_DATABASE_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+    }
+
+    /// T-7488: the assistant migrates as the owner and serves as a login that owns nothing: that
+    /// login reads no project's rows without `jc.project`, cannot switch the forced row-level
+    /// security off and cannot touch the migration history; the owner as request login is refused.
+    #[tokio::test]
+    async fn the_request_login_owns_nothing_and_reads_only_its_project() {
+        let Some(admin_url) = test_database_url() else {
+            eprintln!("SKIP: set JC_ASSISTANT_TEST_DATABASE_URL");
+            return;
+        };
+        let id = std::process::id();
+        let (owner, app, db) = (
+            format!("jc_asst_owner_{id}"),
+            format!("jc_asst_app_{id}"),
+            format!("jc_asst_split_{id}"),
+        );
+        let password = format!("pw-{id}");
+        let admin = sqlx::PgPool::connect(&admin_url).await.unwrap();
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("DROP ROLE IF EXISTS {app}"),
+            format!("DROP ROLE IF EXISTS {owner}"),
+            format!("CREATE ROLE {owner} LOGIN PASSWORD '{password}'"),
+            format!("CREATE ROLE {app} LOGIN NOBYPASSRLS PASSWORD '{password}'"),
+            format!("CREATE DATABASE {db} OWNER {owner}"),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        let in_db: sqlx::postgres::PgConnectOptions = admin_url.parse().unwrap();
+        let db_admin = sqlx::PgPool::connect_with(in_db.database(&db))
+            .await
+            .unwrap();
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+            .execute(&db_admin)
+            .await
+            .unwrap();
+        db_admin.close().await;
+        let dir = tempfile::tempdir().unwrap();
+        let password_file = dir.path().join("pw");
+        std::fs::write(&password_file, &password).unwrap();
+        let at = |role: &str| {
+            let mut url = url::Url::parse(&admin_url).unwrap();
+            url.set_username(role).unwrap();
+            url.set_password(None).unwrap();
+            url.set_path(&format!("/{db}"));
+            url.to_string()
+        };
+        let section = |request: &str| crate::pg::DatabaseSection {
+            url: at(request),
+            password_file: password_file.clone(),
+            max_connections: Some(2),
+            migrate_url: Some(at(&owner)),
+            migrate_password_file: Some(password_file.clone()),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        };
+        let pool = migrate_and_connect(&section(&app)).await.unwrap();
+
+        let owner_pool = sqlx::PgPool::connect_with(section(&owner).app_options().unwrap())
+            .await
+            .unwrap();
+        let mut tx = owner_pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('jc.project', 'p', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO usage (project, deployment, day) VALUES ('p', 'd', current_date)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let unnamed: i64 = sqlx::query_scalar("SELECT count(*) FROM usage")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            unnamed, 0,
+            "a session naming no project read a project's rows"
+        );
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('jc.project', 'p', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let named: i64 = sqlx::query_scalar("SELECT count(*) FROM usage")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(named, 1, "the request login holds the rows of its project");
+        tx.rollback().await.unwrap();
+        for refused in [
+            "ALTER TABLE usage NO FORCE ROW LEVEL SECURITY",
+            "DROP POLICY usage_by_project ON usage",
+            "DELETE FROM _sqlx_migrations",
+        ] {
+            let err = sqlx::query(refused).execute(&pool).await.unwrap_err();
+            assert!(
+                err.to_string().contains("must be owner")
+                    || err.to_string().contains("permission denied"),
+                "{refused}: {err}"
+            );
+        }
+        pool.close().await;
+
+        let err = migrate_and_connect(&section(&owner)).await.unwrap_err();
+        assert!(
+            err.contains(&format!("database {db}"))
+                && err.contains(&format!("is a member of the owner `{owner}`")),
+            "{err}"
+        );
+        assert!(!err.contains(&password), "{err}");
+
+        owner_pool.close().await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("DROP ROLE IF EXISTS {app}"),
+            format!("DROP ROLE IF EXISTS {owner}"),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn with_its_model_key_and_database_the_module_is_on() {
         let Some((model_dir, ort, admin_url)) = test_inputs() else {
@@ -1134,8 +1303,10 @@ mod tests {
         let admin = sqlx::PgPool::connect(&admin_url).await.unwrap();
         for sql in [
             format!("DROP DATABASE IF EXISTS {db}"),
+            format!("DROP ROLE IF EXISTS {role}_app"),
             format!("DROP ROLE IF EXISTS {role}"),
             format!("CREATE ROLE {role} LOGIN PASSWORD '{password}'"),
+            format!("CREATE ROLE {role}_app LOGIN NOBYPASSRLS PASSWORD '{password}'"),
             format!("CREATE DATABASE {db} OWNER {role}"),
         ] {
             sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -1152,17 +1323,18 @@ mod tests {
             .unwrap();
         owner_admin.close().await;
         let mut url = url::Url::parse(&admin_url).unwrap();
-        url.set_username(&role).unwrap();
+        url.set_username(&format!("{role}_app")).unwrap();
         url.set_password(None).unwrap();
         url.set_path(&format!("/{db}"));
         let password_file = dir.path().join("assistant-password");
         std::fs::write(&password_file, &password).unwrap();
         cfg.assistant.database = Some(crate::pg::DatabaseSection {
             url: url.to_string(),
-            password_file,
+            password_file: password_file.clone(),
             max_connections: Some(2),
-            migrate_url: None,
-            migrate_password_file: None,
+            // The owner migrates, `{role}_app` serves (T-7488).
+            migrate_url: Some(url.to_string().replacen(&format!("{role}_app"), &role, 1)),
+            migrate_password_file: Some(password_file.clone()),
             maintenance_url: None,
             maintenance_password_file: None,
         });

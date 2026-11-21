@@ -1657,7 +1657,9 @@ async fn id_patterns_select_as_the_rule_regex_does() {
 /// broker's regex finds past `offset` matches. Offset pages and cursor pages
 /// return the same ids in the same order over the whole selection, both
 /// arms included (a multi-type match), skipping the ids of the type the
-/// pattern refuses; a page past the end is empty and still counts.
+/// pattern refuses; a page past the end is empty and still counts. The
+/// selection spans several of the skip's keyset chunks (1024 rows, then
+/// doubling), so a skip crosses chunk boundaries with refused ids in them.
 #[tokio::test(flavor = "multi_thread")]
 async fn id_pattern_offset_pages_follow_the_cursor_pages() {
     let url = require_db!();
@@ -1672,7 +1674,7 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
         )
     };
     let mut docs: Vec<(String, serde_json::Value)> = Vec::new();
-    for i in 0..120 {
+    for i in 0..2400 {
         let id = tree(i, "");
         docs.push((id.clone(), expanded(&id, "Tree", json!({}))));
         // the same type and prefix, refused by the pattern
@@ -1682,7 +1684,7 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
         }
     }
     for i in 0..5 {
-        let id = tree(1000 + i, "");
+        let id = tree(10_000 + i, "");
         let mut d = expanded(&id, "Tree", json!({}));
         d["type"] = json!([format!("{NS}Thing"), format!("{NS}Tree")]);
         docs.push((id, d));
@@ -1702,7 +1704,7 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
         .filter(|id| id.starts_with("urn:ngsi-ld:Tree:") && !id.ends_with('x'))
         .collect();
     want.sort_unstable();
-    assert_eq!(want.len(), 125);
+    assert_eq!(want.len(), 2405);
     async fn page(
         s: &PgEntityStore,
         t: &TenantId,
@@ -1721,7 +1723,7 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
             expand: &ex,
             page: Some(antares_store::filter::Page {
                 offset,
-                limit: 7,
+                limit: 97,
                 count,
             }),
             after_id: after,
@@ -1737,7 +1739,7 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
         (ids, out.total)
     }
     let mut by_offset = Vec::new();
-    for offset in (0..want.len() as i64).step_by(7) {
+    for offset in (0..want.len() as i64).step_by(97) {
         let (ids, total) = page(&s, &t, offset, None, true).await;
         assert_eq!(total, Some(want.len() as i64), "count at offset {offset}");
         by_offset.extend(ids);

@@ -39,7 +39,7 @@ jc_antares:
       ensure: present
   # The Portal's data backup reader (T-7170): as the module readers below, under Antares' own
   # row-level security per tenant.
-  # jc_antares owns the tables and migrates; with jc.antaresRoleSplit the broker serves as
+  # jc_antares owns the tables and migrates; the broker serves as
   # jc_antares_app (rows only, no group, never past row-level security) and runs the cross-Tenant
   # work (outbox drain, reaps, retention, the Tenant inventory) as jc_antares_maint, a member of
   # antares_maintenance, the role migration 0042 keys the escape on (T-7307, T-7310).
@@ -233,9 +233,10 @@ jc_ekiben:
       credentialsSecret:
         name: 'db-jc-ekiben-app'
         passwordKey: 'password'
-# The assistant's own store (pages, chunks with embeddings, crawl queue, usage): it migrates itself as
-# jc_assistant under forced RLS (bins/jc/src/config.rs AssistantSection). `vector` is not trusted, so
-# the role job creates it (components/assistant/databases.yaml).
+# The assistant's own store (pages, chunks with embeddings, crawl queue, usage): it migrates as the
+# owner jc_assistant and serves as jc_assistant_app (rows only, never past the forced row-level
+# security; T-7488). `vector` is not trusted, so the role job creates it
+# (components/assistant/databases.yaml).
 jc_assistant:
   name: 'jc_assistant'
   embedded: true
@@ -249,3 +250,9 @@ jc_assistant:
   extensions:
     - name: vector
       ensure: present
+  additionalRoles:
+    - name: 'jc_assistant_app'
+      type: 'dml'
+      credentialsSecret:
+        name: 'db-jc-assistant-app'
+        passwordKey: 'password'

@@ -79,12 +79,30 @@ database() { # database <name> <owner>
 }
 role kaisatsu_migrate "$(secret kaisatsu-migrate-pw)"
 role kaisatsu_app "$(secret kaisatsu-app-pw)"
+# The Portal and Antares migrate as the owners portal and antares and serve as portal_app and
+# antares_app, which own nothing (T-7488: jc refuses a request login that owns a table or has
+# BYPASSRLS). The Portal grants portal_app its rows at each start; antares_app and antares_maint
+# get the rows of every table antares holds now or creates later (the cluster's role job `dml`),
+# antares_maint also the cross-Tenant escape of antares_maintenance (T-7310).
 role portal "$(secret portal-pw)"
+role portal_app "$(secret portal_app-pw)"
 role antares "$(secret antares-pw)"
+role antares_app "$(secret antares_app-pw)"
+role antares_maint "$(secret antares_maint-pw)"
 database kaisatsu kaisatsu_migrate
 database portal portal
 database antares antares
-sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis"
+sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis" >/dev/null
+sql -d antares >/dev/null <<'SQL'
+SELECT 'CREATE ROLE antares_maintenance NOLOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'antares_maintenance') \gexec
+GRANT antares_maintenance TO antares_maint;
+GRANT CONNECT ON DATABASE antares TO antares_app, antares_maint;
+GRANT USAGE ON SCHEMA public TO antares_app, antares_maint;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO antares_app, antares_maint;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO antares_app, antares_maint;
+ALTER DEFAULT PRIVILEGES FOR ROLE antares IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO antares_app, antares_maint;
+ALTER DEFAULT PRIVILEGES FOR ROLE antares IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO antares_app, antares_maint;
+SQL
 
 # shako, daiya, dataroom and ekiben: each migration runs as <m>_rh_migrate (owner of its database, member of
 # <m>_migrate) and grants its tables to <m>_app, which the login role <m>_rh holds (NOBYPASSRLS).
@@ -112,10 +130,10 @@ harvest_hosts='"data.slovensko.sk", "egov.banskabystrica.sk", "dtm-banskabystric
 # Each module's sections apart (part[m]): the split layout gives each to its own jc.toml.
 declare -A part
 for m in shako daiya dataroom ekiben; do part[$m]=$(module_db "$m"); done
-# Antares migrates as its own request role and takes no migrate_url; the section switches it to
-# its Postgres store (ANTARES_STORE).
-part[antares]=$(printf '\n[antares.database]\nurl = "postgres://antares@127.0.0.1:%s/antares"\npassword_file = "%s"\n' \
-  "$pg_port" "$(secret antares-pw)")
+# Antares migrates as antares, serves as antares_app and runs the cross-Tenant work as
+# antares_maint; the section switches it to its Postgres store (ANTARES_STORE).
+part[antares]=$(printf '\n[antares.database]\nurl = "postgres://antares_app@127.0.0.1:%s/antares"\npassword_file = "%s"\nmigrate_url = "postgres://antares@127.0.0.1:%s/antares"\nmigrate_password_file = "%s"\nmaintenance_url = "postgres://antares_maint@127.0.0.1:%s/antares"\nmaintenance_password_file = "%s"\n' \
+  "$pg_port" "$(secret antares_app-pw)" "$pg_port" "$(secret antares-pw)" "$pg_port" "$(secret antares_maint-pw)")
 
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
 "$kaisatsu_bin" migrate --database-url "postgres://kaisatsu_migrate@127.0.0.1:$pg_port/kaisatsu" \
@@ -180,7 +198,8 @@ if [ -s "$home/state/realm-name.txt" ]; then
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
-JC_PORTAL_DATABASE_URL=$(url portal portal); export JC_PORTAL_DATABASE_URL
+JC_PORTAL_DATABASE_URL=$(url portal_app portal); export JC_PORTAL_DATABASE_URL
+JC_PORTAL_MIGRATION_DATABASE_URL=$(url portal portal); export JC_PORTAL_MIGRATION_DATABASE_URL
 # The broker serves on jc's default policy (joinedcontext: an anonymous write answers 401). Only
 # import.sh asks for allow-all, for the import's subject-less writes, and only on a loopback bind;
 # it restarts on the default policy afterwards and checks it.

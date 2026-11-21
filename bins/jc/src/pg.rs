@@ -102,11 +102,106 @@ impl DatabaseSection {
 
     /// The role `url` names (the role a migration grants to).
     pub fn app_role(&self) -> Result<String, String> {
-        Ok(PgConnectOptions::from_str(&self.url)
-            .map_err(|_| "url does not parse".to_owned())?
-            .get_username()
-            .to_owned())
+        role_of("url", &self.url)
     }
+
+    /// The owner/request split a database serving requests under row-level security needs
+    /// (T-7488): `migrate_url` names the owner, `url` a login that owns nothing, and with
+    /// `maintenance` (Antares) `maintenance_url` a third login. One login in two places would
+    /// serve requests as the owner, which can switch its tables' row-level security off.
+    pub fn require_owner_split(&self, maintenance: bool) -> Result<(), String> {
+        let Some(owner_url) = &self.migrate_url else {
+            return Err(
+                "migrate_url is required: jc migrates as the owner of the tables \
+                 (migrate_url) and serves as a login that owns nothing (url)"
+                    .into(),
+            );
+        };
+        let request = self.app_role()?;
+        let owner = role_of("migrate_url", owner_url)?;
+        if request == owner {
+            return Err(format!(
+                "url and migrate_url both name `{owner}`: url must name a login that owns \
+                 nothing, e.g. `{owner}_app`"
+            ));
+        }
+        if !maintenance {
+            return Ok(());
+        }
+        let Some(maint_url) = &self.maintenance_url else {
+            return Err(
+                "maintenance_url is required: Antares runs its cross-Tenant work as a \
+                 member of antares_maintenance, apart from the request login"
+                    .into(),
+            );
+        };
+        let maint = role_of("maintenance_url", maint_url)?;
+        if maint == request || maint == owner {
+            return Err(format!(
+                "maintenance_url names `{maint}`, which url or migrate_url names too: give it a \
+                 login of its own, e.g. `{owner}_maint`"
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn role_of(key: &str, raw: &str) -> Result<String, String> {
+    Ok(PgConnectOptions::from_str(raw)
+        .map_err(|_| format!("{key} does not parse"))?
+        .get_username()
+        .to_owned())
+}
+
+/// The boot refusal of every request pool that row-level security guards (Antares, the Portal,
+/// the assistant; T-7488): the pool's login must not be a superuser, have BYPASSRLS, belong to
+/// `owner` (the migrating login) or own a relation outside the system schemas. Each would let a
+/// request path read or write another tenant's rows, or switch row-level security off. `key`
+/// names the setting that configured the login, so the error says what to change.
+pub async fn refuse_unsafe_request_role(
+    key: &str,
+    pool: &PgPool,
+    owner: &str,
+) -> Result<(), String> {
+    let (database, login, superuser, bypass, member, owned): (
+        String,
+        String,
+        bool,
+        bool,
+        bool,
+        Vec<String>,
+    ) = sqlx::query_as(
+        "SELECT current_database()::text, current_user::text, r.rolsuper, r.rolbypassrls, \
+           EXISTS (SELECT 1 FROM pg_catalog.pg_roles o WHERE o.rolname = $1 \
+                     AND pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER')), \
+           ARRAY(SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c \
+                   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                  WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg\\_%' \
+                    AND c.relkind IN ('r', 'p', 'v', 'm', 'S') \
+                    AND pg_catalog.pg_has_role(current_user, c.relowner, 'MEMBER') \
+                  ORDER BY 1 LIMIT 5) \
+         FROM pg_catalog.pg_roles r WHERE r.rolname = current_user",
+    )
+    .bind(owner)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("{key}: the request login check failed: {e}"))?;
+    let why = if superuser {
+        "is a superuser".to_owned()
+    } else if bypass {
+        "has BYPASSRLS".to_owned()
+    } else if member {
+        format!("is a member of the owner `{owner}`")
+    } else if !owned.is_empty() {
+        format!("owns {}", owned.join(", "))
+    } else {
+        return Ok(());
+    };
+    Err(format!(
+        "database {database}: the request login `{login}` ({key}) {why}, so a request could pass \
+         row-level security or switch it off; serve as a login with NOBYPASSRLS that owns \
+         nothing and belongs to no owner, and migrate as `{owner}`"
+    ))
 }
 
 /// `raw` with the password of `file` in it. Hold it as a secret: never log or print it.

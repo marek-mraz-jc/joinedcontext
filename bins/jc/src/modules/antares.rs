@@ -214,6 +214,20 @@ pub async fn build(
         // Unset: ANTARES_PG_POOL (default 20), as standalone.
         broker_cfg.pg_pool = db.max_connections;
     }
+    if let Some(url) = &broker_cfg.database_url {
+        refuse_shared_login(
+            url.expose(),
+            broker_cfg
+                .migration_database_url
+                .as_ref()
+                .map(|s| s.expose()),
+            broker_cfg
+                .maintenance_database_url
+                .as_ref()
+                .map(|s| s.expose()),
+        )
+        .await?;
+    }
     if broker_cfg.database_url.is_some() || broker_cfg.store_name != "memory" {
         broker_cfg.require_rls = true;
     }
@@ -238,6 +252,54 @@ pub async fn build(
         .fallback_service(served.app)
         .layer(axum::middleware::from_fn(public_guard));
     Ok(Built { router, hop })
+}
+
+/// Before the broker migrates or serves (T-7488): it migrates as the owner, serves as a second
+/// login and runs the cross-Tenant work as a third, and the serving login passes row-level
+/// security and owns nothing ([`crate::pg::refuse_unsafe_request_role`]). The URLs carry
+/// passwords: no error repeats one.
+async fn refuse_shared_login(
+    request: &str,
+    owner: Option<&str>,
+    maintenance: Option<&str>,
+) -> Result<(), StartError> {
+    let (Some(owner), Some(maintenance)) = (owner, maintenance) else {
+        return Err(err(
+            "Antares serves on Postgres without ANTARES_MIGRATION_DATABASE_URL and \
+             ANTARES_MAINTENANCE_DATABASE_URL ([antares.database] migrate_url and \
+             maintenance_url): it migrates as the owner of the tables, serves as a login that \
+             owns nothing and runs the cross-Tenant work as a member of antares_maintenance",
+        ));
+    };
+    let options = |key: &str, url: &str| {
+        <sqlx::postgres::PgConnectOptions as std::str::FromStr>::from_str(url)
+            .map_err(|_| err(format!("{key} is not a Postgres URL")))
+    };
+    let request = options("ANTARES_DATABASE_URL", request)?;
+    let owner = options("ANTARES_MIGRATION_DATABASE_URL", owner)?
+        .get_username()
+        .to_owned();
+    let maintenance = options("ANTARES_MAINTENANCE_DATABASE_URL", maintenance)?
+        .get_username()
+        .to_owned();
+    let login = request.get_username().to_owned();
+    if login == owner || maintenance == owner || maintenance == login {
+        return Err(err(format!(
+            "Antares' request ({login}), owner ({owner}) and maintenance ({maintenance}) logins \
+             must be three different logins, e.g. {owner}_app and {owner}_maint beside {owner}"
+        )));
+    }
+    let probe = crate::pg::connect(request, 1)
+        .await
+        .map_err(|e| err(format!("ANTARES_DATABASE_URL: {e}")))?;
+    let refused = crate::pg::refuse_unsafe_request_role(
+        "ANTARES_DATABASE_URL, [antares.database] url",
+        &probe,
+        &owner,
+    )
+    .await;
+    probe.close().await;
+    refused.map_err(err)
 }
 
 async fn serve_hop(
