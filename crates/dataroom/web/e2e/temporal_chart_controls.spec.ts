@@ -5,7 +5,11 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 // A temporal chart's toolbar (T-7490) in jc slug mode, served as slug_chart_host.spec.ts serves it:
 // the chart host and the renderer sandboxed to opaque origins under jc's CSP, every address
 // answered here. The temporal answers are praha-pocasi's (jc-prod Endpoint fudnrvyz…, three
-// stations, relativeHumidity, read 2026-11-21 15:15Z): raw readings, hourly averages, daily maxima.
+// stations, relativeHumidity, read 2026-11-21 15:15Z): raw readings, hourly averages, daily maxima
+// per UTC day (read again ~16:40Z with lastN 1000, whole days; the data starts on 2026-11-14). The hourly answer leaves out the
+// buckets of 2026-11-19 00:00..2026-11-20 05:00Z: the broker filled them with the last reading
+// while the raw answer has none there (chyby.md), and the chart must show that gap as a gap; the
+// daily answer leaves out 2026-11-19, a UTC day without a reading, for the same reason.
 //   node <portal ui>/node_modules/@playwright/test/cli.js test -c crates/dataroom/web/e2e temporal_chart_controls
 // SHOTS=<dir> also writes the 1440 and 400 shots of each state.
 
@@ -23,6 +27,9 @@ const CSP = {
   host: `default-src 'none'; script-src ${JC}; style-src ${JC}; img-src ${JC} data:; connect-src ${JC} ${JC}; frame-src ${JC}; ${TAIL}; frame-ancestors *`,
   render: `default-src 'none'; script-src ${JC}; style-src ${JC} 'unsafe-inline'; img-src ${JC} data:; connect-src 'none'; ${TAIL}`,
 };
+// A Slovak reader in Prague: native date fields and the axis in their own format and time.
+test.use({ locale: "sk-SK", timezoneId: "Europe/Prague" });
+
 const META = `<meta name="jc-viz" content="${JSON.stringify({ api: JC, tiles: "", catalogue: `${JC}/opendata` }).replace(/"/g, "&quot;")}">\n`;
 
 // praha-pocasi's humidity view as the catalogue serves it (2026-11-21).
@@ -112,18 +119,22 @@ async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPag
   });
 }
 
-// The catalogue's frame of the chart host: sandboxed, without allow-same-origin.
+// The catalogue's frame of the chart host: sandboxed, without allow-same-origin, sized by the
+// host's jc-viz-height message as the catalogue sizes it.
 async function open(page: Page, state: { mode: Mode; asked: URL[] }, hash = "") {
   await page.clock.setFixedTime(NOW);
   await serve(page, state, `<!doctype html><html lang="sk"><body style="margin:0;padding:16px;font:16px system-ui">
 <h1>Počasie Praha</h1><iframe title="Relatívna vlhkosť" src="${JC}/embed/#${VIEW}&inline&lang=sk${hash}" sandbox="allow-scripts allow-downloads"
- style="width:100%;height:900px;border:0"></iframe></body></html>`);
+ style="width:100%;height:900px;border:0"></iframe>
+<script>addEventListener("message", (e) => { if (e.data && e.data.type === "jc-viz-height") document.querySelector("iframe").style.height = Math.min(e.data.height, 3000) + "px"; });</script></body></html>`);
   await page.goto(`${JC}/opendata/dataset/praha-pocasi`);
   const host = page.frameLocator('iframe[title="Relatívna vlhkosť"]');
   return { host, chart: host.frameLocator("iframe#frame") };
 }
 
 const shot = async (page: Page, name: string, width: number) => {
+  // The catalogue frame takes the host's new height by message: let it land before the shot.
+  if (process.env.SHOTS) await page.waitForTimeout(500);
   if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/temporal-${name}-${width}.png`, fullPage: true });
 };
 
@@ -150,13 +161,14 @@ for (const width of [1440, 400]) {
     await host.getByLabel("Výpočet").selectOption("max");
     await expect.poll(() => state.asked.at(-1)?.searchParams.get("aggrMethods")).toBe("max");
     const last = state.asked.at(-1)!;
-    expect(Object.fromEntries(last.searchParams)).toMatchObject({ timerel: "after", timeAt: "2026-11-20T15:10:00Z", format: "aggregatedValues", aggrPeriodDuration: "PT1H" });
+    expect(Object.fromEntries(last.searchParams)).toMatchObject({ timerel: "after", timeAt: "2026-11-20T15:00:00Z", format: "aggregatedValues", aggrPeriodDuration: "PT1H" });
 
     // 31 days raw becomes hourly and says so.
     await host.getByLabel("Podrobnosť").selectOption("raw");
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#controls-note")).toContainText("po hodinách");
     expect(state.asked.at(-1)!.searchParams.get("aggrPeriodDuration")).toBe("PT1H");
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("PT1H");
 
     // Custom range over 31 days: consecutive daily windows `between`, the note names the switch.
     await host.getByLabel("Obdobie").selectOption("custom");
@@ -167,10 +179,15 @@ for (const width of [1440, 400]) {
     const walk = state.asked.slice(before).filter((u) => u.searchParams.get("timeAt")?.startsWith("2026-09-01") || u.searchParams.get("endTimeAt") === "2026-11-21T00:00:00Z");
     expect(walk.length).toBeGreaterThanOrEqual(2);
     for (const u of walk) expect(u.searchParams.get("timerel")).toBe("between");
+    // The walk's earlier windows came back empty: the chart says where the data starts.
+    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14. 11. 2026");
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
+    await expect(chart.locator("g.concat_0_group g.role-axis-label text").first()).toHaveText(/^\d+\. \d+\.$/);
     await shot(page, "daily-walk", width);
 
     // Back to 7 days, then two stations: the third line goes, no new read.
     await host.getByLabel("Obdobie").selectOption("P7D");
+    await host.getByLabel("Podrobnosť").selectOption("raw");
     await expect(chart.locator("g.mark-line path")).toHaveCount(6, { timeout: 10_000 });
     const reads = state.asked.length;
     await host.getByLabel("Stanice").selectOption(["urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11518", "urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11519"]);
@@ -190,6 +207,9 @@ for (const width of [1440, 400]) {
     await page.mouse.up();
     await expect.poll(firstLabel).not.toBe(unzoomed);
     await shot(page, "zoomed", width);
+    // The reset button draws the whole range again.
+    await host.getByRole("button", { name: "Zobraziť celé obdobie" }).click();
+    await expect.poll(firstLabel).toBe(unzoomed);
     expect(errors).toEqual([]);
   });
 
@@ -211,6 +231,7 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
+    await expect(host.locator("#status")).toContainText(/od 14\. 11\. 2026 \d\d:\d\d do 21\. 11\. 2026 \d\d:\d\d/);
     await shot(page, "cut", width);
 
     state.mode = "error";
@@ -238,7 +259,7 @@ test("a link's fragment restores the toolbar and a bad value is dropped", async 
   await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
   await expect(host.getByLabel("Výpočet")).toHaveValue("min");
   await expect.poll(() => state.asked.length).toBeGreaterThan(0);
-  expect(Object.fromEntries(state.asked[0].searchParams)).toMatchObject({ aggrMethods: "min", aggrPeriodDuration: "P1D", timeAt: "2026-11-20T15:10:00Z" });
+  expect(Object.fromEntries(state.asked[0].searchParams)).toMatchObject({ aggrMethods: "min", aggrPeriodDuration: "P1D", timeAt: "2026-11-20T00:00:00Z" });
   await expect(host.getByLabel("Stanice")).toBeVisible();
   await expect(host.locator("#c-stations option:checked")).toHaveText(["Praha, Libuš"]);
 });
