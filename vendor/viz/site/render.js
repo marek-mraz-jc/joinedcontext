@@ -24,6 +24,9 @@
   };
   var loader = { load: refused, sanitize: refused, http: refused, file: refused };
 
+  // The view drawn last: a toolbar change of the host (T-7490) swaps its rows without a redraw.
+  var shown = null;
+
   function draw(message) {
     // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
     var mode = message.theme === "dark" ? "dark" : "light";
@@ -35,6 +38,7 @@
     // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
     // Function`, which this page's CSP refuses (T-6865).
     var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
+    shown = null;
     return vegaEmbed(chart, withRows(message.spec, rows, self.jcTheme[mode]), {
       ast: true,
       expr: vega.expressionInterpreter,
@@ -44,7 +48,16 @@
       // to another site).
       actions: { export: true, source: false, compiled: false, editor: false },
       downloadFileName: "chart"
+    }).then(function (result) {
+      shown = result && result.view ? result.view : null;
+      return result;
     });
+  }
+
+  // New rows for the data set `source` of the view drawn last; the spec is the one already checked.
+  function swap(message) {
+    if (!shown) throw new Error("The chart could not be drawn.");
+    return shown.data("source", Array.isArray(message.rows) ? message.rows : []).runAsync();
   }
 
   // The rows go in as the named data set `source` before the first draw, so the chart never
@@ -92,10 +105,10 @@
     // Portal `null`, as the host runs sandboxed there too. The spec is checked again below.
     if (event.source !== window.parent || (event.origin !== location.origin && event.origin !== "null")) return;
     var message = event.data || {};
-    if (message.type !== "jc-viz-render") return;
-    document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
+    if (message.type !== "jc-viz-render" && message.type !== "jc-viz-rows") return;
+    if (message.type === "jc-viz-render") document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
     Promise.resolve()
-      .then(function () { return draw(message); })
+      .then(function () { return message.type === "jc-viz-rows" ? swap(message) : draw(message); })
       .then(height, function (error) {
         tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
       });
