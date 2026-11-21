@@ -201,8 +201,11 @@ impl Kind {
 /// two kinds times the status codes axum can send: the table stays small).
 struct Tally {
     module: &'static str,
-    counts: Mutex<(Instant, HashMap<(Kind, u16), u64>)>,
+    counts: Mutex<Window>,
 }
+
+/// When the window began, and its counts by kind and status.
+type Window = (Instant, HashMap<(Kind, u16), u64>);
 
 /// Each module's tally (a renamed mount shares its module's), for the minute ticker.
 static TALLIES: Mutex<Vec<std::sync::Weak<Tally>>> = Mutex::new(Vec::new());
@@ -252,7 +255,7 @@ impl Tally {
 
     /// One INFO line per kind and status counted since the window began, and a new window. The
     /// line names the module, kind, status, count and seconds: never a path, query or caller.
-    fn write(&self, held: &mut (Instant, HashMap<(Kind, u16), u64>), now: Instant) {
+    fn write(&self, held: &mut Window, now: Instant) {
         let seconds = now.saturating_duration_since(held.0).as_secs();
         let mut lines: Vec<_> = held.1.drain().collect();
         lines.sort_unstable();
