@@ -18,13 +18,9 @@ jc:
     # kaisatsu's request role, Antares' store. The Portal's pool is compiled in (5).
     kaisatsuPool: 4
     antaresPool: 8
-    # Antares serves as jc_antares_app and drains and reaps as jc_antares_maint instead of the owner
-    # jc_antares (T-7310). Needs a jc image with ANTARES_MIGRATION_DATABASE_URL: turn it on once
-    # images.yaml pins one.
-    antaresRoleSplit: false
     # shako's, daiya's, dataroom's and ekiben's request roles, each (plus one migration login at start).
     modulePool: 3
-    # The assistant's pool on jc_assistant (it migrates as the same role).
+    # The assistant's pool on jc_assistant_app (it migrates as the owner jc_assistant).
     assistantPool: 3
     # The knowledge assistant (bins/jc/src/modules/assistant.rs): on with a model key, which jc's own
     # proxy calls the provider with; off (404 on its mount) without. The key comes from a Secret

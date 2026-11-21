@@ -49,6 +49,25 @@ pub(crate) fn config(
     Ok(config)
 }
 
+/// The owner the Portal migrates as, inside jc required beside a database (T-7488): serving as
+/// the owner would let a request switch the tables' row-level security off. `None` without a
+/// database (the Portal keeps memory).
+fn portal_owner(config: &Config) -> Result<Option<String>, StartError> {
+    if config.database_url.is_none() {
+        return Ok(None);
+    }
+    let Some(migration) = config.migration_database_url.as_deref() else {
+        return Err(err(
+            "JC_PORTAL_DATABASE_URL is set without JC_PORTAL_MIGRATION_DATABASE_URL: the Portal \
+             migrates as the owner of its tables (JC_PORTAL_MIGRATION_DATABASE_URL) and serves as \
+             a login that owns nothing (JC_PORTAL_DATABASE_URL)",
+        ));
+    };
+    <sqlx::postgres::PgConnectOptions as std::str::FromStr>::from_str(migration)
+        .map(|o| Some(o.get_username().to_owned()))
+        .map_err(|_| err("JC_PORTAL_MIGRATION_DATABASE_URL is not a Postgres URL"))
+}
+
 /// Builds the Portal and starts its internal listener; answers the router and the address the
 /// listener took (a free loopback port unless `JC_INTERNAL_BIND` says otherwise), which the
 /// gateway reads revocations, connectors and usage from.
@@ -113,7 +132,13 @@ pub async fn build(
     }
     // The health probe marks its calls so the gateway door writes them as a poll's.
     let _ = joinedcontext_portal::health_probe::MARK.set(crate::access::probe_mark().to_owned());
+    let portal_owner = portal_owner(&config)?;
     let state = AppState::from_config(config).await.map_err(err)?;
+    if let (Some(pool), Some(owner)) = (&state.db, &portal_owner) {
+        crate::pg::refuse_unsafe_request_role("JC_PORTAL_DATABASE_URL", pool, owner)
+            .await
+            .map_err(err)?;
+    }
     if let Some(pool) = &state.db {
         let added =
             joinedcontext_portal::host_registry::seed_organizations(pool, &registry.organizations)
