@@ -156,7 +156,7 @@ async fn a_request_through_the_surface_moves_the_counter() {
     let counted: Vec<&str> = body
         .lines()
         .filter(|line| line.starts_with("jc_gateway_requests_total{"))
-        .filter(|line| line.contains(&format!("endpoint=\"{SLUG}\"")))
+        .filter(|line| line.contains("{slug}"))
         .collect();
     assert!(!counted.is_empty(), "nothing counted the request:\n{body}");
     for line in &counted {
@@ -276,8 +276,8 @@ async fn an_undecided_answer_names_no_decision_time() {
     assert_eq!(duration(&timing, "broker"), 0.0, "{timing}");
 }
 
-/// A slug nobody serves is labelled "-": a scanner guessing paths, without a token, mints no
-/// series of its own (T-5701).
+/// A scanner guessing paths, without a token, mints no series of its own (T-5701): no request
+/// series names an Endpoint or a space at all (T-7485).
 #[tokio::test]
 async fn a_slug_the_gateway_does_not_serve_mints_no_series() {
     for guess in 0..50 {
@@ -292,5 +292,5 @@ async fn a_slug_the_gateway_does_not_serve_mints_no_series() {
         !body.contains("guess-"),
         "an unknown slug became a label:\n{body}"
     );
-    assert!(body.contains("endpoint=\"-\""), "{body}");
+    assert!(!body.contains("endpoint=\""), "{body}");
 }
