@@ -169,17 +169,18 @@ pub async fn connect_upgrading(
     }
     let owned: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relowner = \
-         (SELECT oid FROM pg_roles WHERE rolname = current_user) ORDER BY 1",
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') \
+         AND pg_has_role(current_user, c.relowner, 'MEMBER') ORDER BY 1",
     )
     .fetch_all(&pool)
     .await?;
     if !owned.is_empty() {
         return Err(sqlx::Error::Configuration(
             format!(
-                "the serving role `{role}` (JC_PORTAL_DATABASE_URL) owns the tables {owned:?}: \
-                 it could drop the operators' audit triggers; name a role that owns nothing, \
-                 the owner goes in JC_PORTAL_MIGRATION_DATABASE_URL"
+                "the serving role `{role}` (JC_PORTAL_DATABASE_URL) owns, or is a member of the \
+                 role that owns, the tables {owned:?}: it could drop the operators' audit \
+                 triggers and act as their owner; name a role that owns nothing and belongs to \
+                 no owner, the owner goes in JC_PORTAL_MIGRATION_DATABASE_URL"
             )
             .into(),
         ));
@@ -204,7 +205,8 @@ async fn rls_bypass(pool: &PgPool) -> Result<Option<&'static str>, sqlx::Error> 
 }
 
 /// The advisory lock key text of every statement that rewrites the public tables' `pg_class`
-/// rows: the serving-role grants here and `project_move` (migration 0092), a constant.
+/// rows, a constant: the serving-role grants here, which two Portal starts can run at once.
+/// `project_move` took it too (0092) until 0093 stopped it altering tables.
 pub const CATALOG_LOCK: &str = "jc/pg_class";
 
 /// What the serving role may do, granted again after every migration so a new table is covered:
@@ -213,9 +215,8 @@ pub const CATALOG_LOCK: &str = "jc/pg_class";
 /// of the functions only `project_move` (0089, T-7305) needs a grant. The role name is quoted by
 /// Postgres (`%I`).
 ///
-/// The grants run in one transaction under [`CATALOG_LOCK`], as `project_move` does: both rewrite
-/// the tables' `pg_class` rows, and two sessions doing so at once fail with "tuple concurrently
-/// updated" (T-7476).
+/// The grants run in one transaction under [`CATALOG_LOCK`]: they rewrite the tables' `pg_class`
+/// rows, and two sessions doing so at once fail with "tuple concurrently updated" (T-7476).
 async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Error> {
     let mut tx = owner.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")

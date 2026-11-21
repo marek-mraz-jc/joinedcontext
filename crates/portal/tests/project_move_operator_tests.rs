@@ -426,9 +426,9 @@ async fn a_project_named_like_its_new_organization_moves() {
     assert_ne!(reserved.project, new.project);
 }
 
-/// A move lifts and restores FORCE ROW LEVEL SECURITY while a Portal start grants the serving role
-/// ON ALL TABLES: both rewrite the same `pg_class` rows, and without the one catalog lock they
-/// met as XX000 "tuple concurrently updated" (T-7476). Twenty rounds, each a move beside a grant.
+/// A move beside a Portal start granting the serving role ON ALL TABLES: when the move lifted and
+/// restored FORCE ROW LEVEL SECURITY, both rewrote the same `pg_class` rows and met as XX000
+/// "tuple concurrently updated" (T-7476). Twenty rounds, each a move beside a grant.
 #[tokio::test]
 async fn a_move_and_a_portal_start_run_side_by_side() {
     let state = world().await;
@@ -452,6 +452,208 @@ async fn a_move_and_a_portal_start_run_side_by_side() {
             .close()
             .await;
     }
+}
+
+/// A move beside twenty writers, each keyed on another project and holding `drafts` while it
+/// writes `activity`: when the move altered each table (ACCESS EXCLUSIVE to its end) it held
+/// `activity` and waited for `drafts`, and met a writer as 40P01 "deadlock detected" (ci
+/// 44860151279). Now it takes row locks only, so neither side waits on the other.
+#[tokio::test]
+async fn a_move_beside_twenty_writers_never_deadlocks() {
+    let state = world().await;
+    let writers = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(20)
+        .connect(
+            &std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL"),
+        )
+        .await
+        .expect("the writers' pool");
+    for round in 0..3 {
+        let from = run("hel");
+        let to = run("bbsk");
+        let project = run("busy");
+        let other = run("other");
+        placed(&state, &project, &from, &to).await;
+        let busy = placed(&state, &other, &from, &to).await;
+        manifest(&state, &project, &to);
+        let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+        assert_eq!(status, StatusCode::CREATED, "round {round}: {made}");
+        let id = made["id"].as_str().expect("an id").to_owned();
+        let start = std::sync::Arc::new(tokio::sync::Barrier::new(21));
+        let mut writing = Vec::new();
+        for writer in 0..20 {
+            let (pool, start, other) = (writers.clone(), start.clone(), other.clone());
+            writing.push(tokio::spawn(async move {
+                start.wait().await;
+                for step in 0..5 {
+                    let mut tx = joinedcontext_portal::db::tenant_tx(&pool, busy).await?;
+                    sqlx::query(
+                        "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+                         VALUES ($1, 'ContextSpace', $2, '{}', 'test', 'person')",
+                    )
+                    .bind(&other)
+                    .bind(format!("w{writer}s{step}"))
+                    .execute(&mut *tx)
+                    .await?;
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    sqlx::query(
+                        "INSERT INTO activity (time, project, kind, source, summary, severity) \
+                         VALUES (now(), $1, 'Space', 'test', 'written', 'info')",
+                    )
+                    .bind(&other)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                }
+                Ok::<(), sqlx::Error>(())
+            }));
+        }
+        start.wait().await;
+        let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
+        assert_eq!(status, StatusCode::OK, "round {round}: {applied}");
+        for written in writing {
+            written
+                .await
+                .expect("a writer")
+                .unwrap_or_else(|err| panic!("round {round}: a writer beside the move: {err}"));
+        }
+    }
+}
+
+/// The move's policies open nothing to the serving role (S5-45): it is no member of the tables'
+/// owner, setting `jc.project_move` to another project shows and updates none of that project's
+/// rows, every keyed table carries both policies, and the owner calling the function itself (a
+/// one-role Portal) is refused rather than given an unforced table.
+#[tokio::test]
+async fn the_move_policies_open_nothing_to_the_serving_role() {
+    let state = world().await;
+    let from = run("hel");
+    let to = run("bbsk");
+    let theirs = placed(&state, &run("theirs"), &from, &to).await;
+    let ours = placed(&state, &run("ours"), &from, &to).await;
+    let member: bool = sqlx::query_scalar(
+        "SELECT pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE relname = 'drafts'), 'MEMBER')",
+    )
+    .fetch_one(pool(&state))
+    .await
+    .expect("membership");
+    assert!(!member, "the serving role is no member of the owner");
+
+    let mut tx = pool(&state).begin().await.expect("a transaction");
+    sqlx::query(
+        "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true), \
+                set_config('jc.project_move', $3, true)",
+    )
+    .bind(ours.org.as_uuid().to_string())
+    .bind(ours.project.as_uuid().to_string())
+    .bind(theirs.project.as_uuid().to_string())
+    .execute(&mut *tx)
+    .await
+    .expect("settings");
+    let seen: i64 = sqlx::query_scalar("SELECT count(*) FROM drafts WHERE project_id = $1::uuid")
+        .bind(theirs.project.as_uuid().to_string())
+        .fetch_one(&mut *tx)
+        .await
+        .expect("a read");
+    assert_eq!(seen, 0, "another project's rows stay hidden");
+    let mine: i64 = sqlx::query_scalar("SELECT count(*) FROM drafts")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("a read");
+    assert_eq!(mine, 1, "the keyed project's own draft alone");
+    let updated = sqlx::query("UPDATE drafts SET org_id = $1::uuid WHERE project_id = $2::uuid")
+        .bind(ours.org.as_uuid().to_string())
+        .bind(theirs.project.as_uuid().to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("an update");
+    assert_eq!(
+        updated.rows_affected(),
+        0,
+        "another project's rows stay unwritten"
+    );
+    tx.rollback().await.expect("rollback");
+
+    let owner = sqlx::PgPool::connect(
+        &std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL"),
+    )
+    .await
+    .expect("the owner");
+    let bare: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity \
+           AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'org_id') \
+           AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'project_id') \
+           AND (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid \
+                AND p.polname IN ('project_move', 'project_move_read')) <> 2 ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    assert_eq!(
+        bare,
+        Vec::<String>::new(),
+        "a keyed table a move cannot re-key"
+    );
+    let refused = sqlx::query("SELECT * FROM project_move(gen_random_uuid(), 'sub-ops-b', '')")
+        .fetch_all(&owner)
+        .await
+        .expect_err("the owner itself moves nothing");
+    assert!(
+        refused
+            .to_string()
+            .contains("JC_PORTAL_MIGRATION_DATABASE_URL"),
+        "{refused}"
+    );
+}
+
+/// The keyed tables' owner, read on the migration role's own connection.
+async fn owner_pool() -> sqlx::PgPool {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL");
+    joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate")
+}
+
+/// The move policies open to any SECURITY DEFINER function the owner owns: project_move must stay
+/// the only one, or a second one could key jc.project_move to any project (T-7476).
+#[tokio::test]
+async fn project_move_is_the_owners_only_security_definer_function() {
+    let owner = owner_pool().await;
+    let definers: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p WHERE p.prosecdef \
+           AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = 'public.drafts'::regclass) \
+         ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    assert_eq!(
+        definers,
+        vec!["project_move(uuid,text,text)".to_string()],
+        "a SECURITY DEFINER function owned by the tables' owner meets the move policies"
+    );
+}
+
+/// No login role but the migration role acts as the owner, directly or through a group: one that
+/// did would reach the move policies by SET ROLE (T-7476). A superuser bypasses RLS anyway.
+#[tokio::test]
+async fn no_login_role_but_the_migration_role_is_the_owner() {
+    let owner = owner_pool().await;
+    let members: Vec<String> = sqlx::query_scalar(
+        "WITH o AS (SELECT relowner FROM pg_class WHERE oid = 'public.drafts'::regclass) \
+         SELECT r.rolname::text FROM pg_roles r, o WHERE r.rolcanlogin AND NOT r.rolsuper \
+           AND r.oid <> o.relowner AND r.rolname <> current_user \
+           AND pg_has_role(r.oid, o.relowner, 'MEMBER') ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    assert_eq!(
+        members,
+        Vec::<String>::new(),
+        "a login role that is a member of the tables' owner"
+    );
 }
 
 /// Only an operator with a second factor plans or asks for a move; the registry refuses a moved
@@ -533,7 +735,7 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
             .expect("the audit");
     assert_eq!(audited, 1, "one audit row per applied move");
 
-    // The tables stay forced: the move lifts FORCE only inside its own transaction.
+    // The tables stay forced: the move never lifts FORCE (0093).
     let unforced: Vec<String> = sqlx::query_scalar(
         "SELECT relname::text FROM pg_class WHERE relname IN ('drafts', 'activity') AND NOT relforcerowsecurity",
     )

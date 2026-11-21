@@ -567,19 +567,41 @@ async fn every_keyed_table_has_forced_row_level_security_on_the_key_alone() {
             "{table} is keyed: {keyed:?}"
         );
     }
-    let policies: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT tablename::text, coalesce(qual, ''), coalesce(with_check, '') FROM pg_policies \
-         WHERE schemaname = 'public'",
+    let policies: Vec<(String, String, String, String, bool)> = sqlx::query_as(
+        "SELECT p.tablename::text, p.policyname::text, coalesce(p.qual, ''), \
+                coalesce(p.with_check, ''), \
+                p.roles = ARRAY[pg_get_userbyid(c.relowner)]::name[] \
+         FROM pg_policies p JOIN pg_namespace n ON n.nspname = p.schemaname \
+         JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = p.tablename \
+         WHERE p.schemaname = 'public'",
     )
     .fetch_all(&pool)
     .await
     .expect("policies");
-    for (table, using, check) in &policies {
+    for (table, name, using, check, to_owner) in &policies {
+        // The reviewed exception (T-7476): the move's two policies apply only to the table's
+        // owner inside a SECURITY DEFINER call (session_user <> current_user) and narrow to the
+        // one project the function moves. Exempt by exact name and shape only.
+        let move_policy = match name.as_str() {
+            "project_move_read" => Some(check.is_empty()),
+            "project_move" => Some(!check.is_empty()),
+            _ => None,
+        };
+        if let Some(shape) = move_policy {
+            for text in [using, check].into_iter().filter(|t| !t.is_empty()) {
+                assert!(
+                    *to_owner
+                        && shape
+                        && text.starts_with("((SESSION_USER <> CURRENT_USER) AND ")
+                        && settings_read(text) == ["jc.project_move"],
+                    "{table}.{name}: a move policy is TO the table owner, gated on \
+                     session_user <> current_user and reads jc.project_move alone: {text}"
+                );
+            }
+            continue;
+        }
         for text in [using, check] {
-            let settings: Vec<&str> = text
-                .match_indices("current_setting('")
-                .map(|(at, m)| text[at + m.len()..].split('\'').next().unwrap_or(""))
-                .collect();
+            let settings = settings_read(text);
             assert!(
                 settings.contains(&"jc.org") && settings.contains(&"jc.project"),
                 "{table}: the policy keys on jc.org and jc.project: {text}"
@@ -592,6 +614,13 @@ async fn every_keyed_table_has_forced_row_level_security_on_the_key_alone() {
             );
         }
     }
+}
+
+/// The `current_setting('...')` names a policy expression reads.
+fn settings_read(text: &str) -> Vec<&str> {
+    text.match_indices("current_setting('")
+        .map(|(at, m)| text[at + m.len()..].split('\'').next().unwrap_or(""))
+        .collect()
 }
 
 /// Runs a test's CREATE ROLE / GRANT statements. Roles live in the cluster's shared catalog, so
