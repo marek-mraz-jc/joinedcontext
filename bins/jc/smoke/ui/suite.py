@@ -55,12 +55,14 @@ from urllib.parse import urljoin, urlsplit
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
+sys.path.append(str(HERE.parent / "endpoints"))
 
 import checks  # noqa: E402
+import export as ex  # noqa: E402
 import personas as ps  # noqa: E402
 import walk  # noqa: E402
-from common import (FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, public_origin, read_token,  # noqa: E402
-                    realm_of)
+from common import (FAIL, SECOND_FACTOR, SKIP, Http, Results, browser_get, loopback_only, moved_home,  # noqa: E402
+                    public_origin, read_token, realm_of)
 
 LOGIN = "/api/v1/auth/login"
 HEIGHT = {400: 860, 1440: 900}
@@ -358,8 +360,12 @@ def dataroom(w: Walker):
             if found:
                 addrs.append(found[0])
             else:
+                want = list_page.endswith("dataset") and w.datasets()
+                home = moved_catalogue(w) if want else None
                 w.res.add(f"dataroom.item:{list_page}", "dataroom", f"GET {list_page} (first item link)",
-                          "a link to one item", "none", FAIL if list_page.endswith("dataset") and w.datasets() else SKIP,
+                          "a link to one item", "none", FAIL if want and not home else SKIP,
+                          f"the installation catalogue holds no dataset: they moved to their Organization "
+                          f"catalogues ({home} and others), which this walk does not browse" if home else
                           "the catalogue lists nothing to open")
         for a in addrs:
             w.judge(page, "anonymous", "dataroom", a, a, portal=False, viewer=False)
@@ -367,6 +373,16 @@ def dataroom(w: Walker):
             viz_sandbox(w, ctx, page, datasets[0], datasets[1:GRID_DATASETS])
     finally:
         ctx.close()
+
+
+def moved_catalogue(w: Walker) -> str | None:
+    """The Organization catalogue an exported dataset moved to, when /opendata lists none (move_out,
+    T-7020; jc-dev since T-7470): the designed empty installation catalogue, not a lost one."""
+    http = Http(w.a.base_url)
+    for name in w.dataset_names()[:3]:
+        if home := moved_home(http, name):
+            return home
+    return None
 
 
 SANDBOX_PAGES = ("/embed/explore.html", "/embed/embed.html")
@@ -625,6 +641,8 @@ def main(argv=None) -> int:
         browser = pw.chromium.launch(args=["--disable-dev-shm-usage", "--disable-gpu"])
         w = Walker(a, browser, res, a.out)
         w.datasets = lambda: bool(list(a.export.glob("gitea/files/*/*/ckan/*.yaml"))) if a.export else False
+        w.dataset_names = lambda: sorted({n for e in ex.load_endpoints(a.export / "gitea" / "files")
+                                          for n in e.datasets if not e.closed}) if a.export else []
         for x in plan:
             walk_persona(w, x, passwords.get(x["name"]))
         if a.shared:

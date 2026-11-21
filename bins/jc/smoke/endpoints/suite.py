@@ -36,7 +36,8 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import export as ex  # noqa: E402
-from common import Http, Results, as_json, jwt_claims, loopback_only, read_token, short  # noqa: E402
+from common import (Http, Results, as_json, catalogue_at, jwt_claims, loopback_only, moved_home, read_token,  # noqa: E402
+                    short)
 
 LD = "application/ld+json"
 GEO = "application/geo+json"
@@ -682,6 +683,13 @@ class Suite:
         for name in e.datasets:
             path = f"/opendata/api/3/action/package_show?id={q(name)}"
             st, _, raw = self.get(path, accept="application/json")
+            # Moved to its Organization's catalogue (T-7470): read it there.
+            home = moved_home(self.http, name) if st == 404 else None
+            if home:
+                http, headers = catalogue_at(self.http, home)
+                path = f"/api/3/action/package_show?id={q(name)}"
+                st, _, raw = http.call("GET", path, headers={**headers, "Accept": "application/json"})
+                path = f"{home}{path} (moved from /opendata, 301)"
             body = as_json(raw)
             res = (body or {}).get("result") or {} if isinstance(body, dict) else {}
             n = len(res.get("resources") or []) if isinstance(res, dict) else 0

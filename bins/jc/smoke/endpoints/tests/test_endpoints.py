@@ -202,6 +202,14 @@ class Fake:
             if self.broken == "paged-list" and not qs.get("cursor"):
                 return 200, {}, {"items": [{"slug": "c" * 32}], "nextCursor": "1"}
             return 200, {}, {"items": [{"slug": OPEN}]}
+        if self.broken == "moved":  # T-7470: the dataset lives in its Organization's catalogue
+            org = headers.get("Host") == "opendata.alpha.test"
+            if p.startswith("/opendata/dataset/") and not org:
+                return 301, {"Location": "https://opendata.alpha.test/dataset/" + p.rsplit("/", 1)[1]}, b""
+            if p.startswith("/opendata/api/3/action/package_show") and not org:
+                return 404, {}, {"success": False}
+            if p.startswith("/api/3/action/package_show") and org:
+                return 200, {}, {"success": True, "result": {"resources": [{"url": "x"}]}}
         if p.startswith("/opendata/api/3/action/package_show"):
             if self.broken == "portal-page":  # jc-dev's jc pod: no dataroom, the Portal's page
                 return 200, {"Content-Type": "text/html"}, b'<!doctype html> <html lang="en">'
@@ -407,6 +415,16 @@ def test_a_door_answering_a_page_for_the_catalogue_names_it_and_the_opendata_ori
     monkeypatch.setenv(common.OPENDATA_ORIGIN, dataroom)
     _, res = run(tmp_path / "b", portal, now_iso())
     assert [r["result"] for r in res["checks"] if r["id"] == "dataset"] == ["pass"]
+
+
+def test_a_dataset_moved_to_its_organizations_catalogue_is_read_on_that_host(tmp_path, serve, monkeypatch):
+    # jc-dev 2026-11-21 (T-7470): 347 dataset rows 404 on /opendata after move_out, each answering
+    # 200 on its Organization's opendata host, reached through the same door by Host.
+    monkeypatch.delenv(common.OPENDATA_ORIGIN, raising=False)
+    _, res = run(tmp_path, serve(Fake("moved")), now_iso())
+    row = next(r for r in res["checks"] if r["id"] == "dataset")
+    assert row["result"] == "pass", row
+    assert row["call"].startswith("GET https://opendata.alpha.test/api/3/action/package_show?id=")
 
 
 def test_the_opendata_origin_takes_only_opendata_paths_and_only_loopback(monkeypatch):
