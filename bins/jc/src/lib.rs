@@ -18,6 +18,7 @@ mod provision;
 pub mod runtime;
 pub mod setup;
 pub mod siblings;
+mod slow;
 #[cfg(feature = "kaisatsu")]
 pub mod split_realm;
 

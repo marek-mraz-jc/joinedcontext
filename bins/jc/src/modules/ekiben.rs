@@ -39,7 +39,7 @@ use ekiben_server::{
 };
 use jc_core::kinds::mqtt_broker::{RUNNER_USERNAME, runner_username};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -116,6 +116,7 @@ async fn build_with(
         org: resources.get_or_create_org(&OrgId::default()),
         given: variables(&defaults, &shared, &secrets.ekiben_vars),
         files: per_project,
+        warned: Default::default(),
     };
     runner.org.replace_secrets(runner.given.clone());
     runner
@@ -343,6 +344,9 @@ pub struct HostRunner {
     given: HashMap<String, String>,
     /// Each project's client secret file, by project.
     files: BTreeMap<String, HashMap<String, String>>,
+    /// The project and variable pairs already warned about: a sync runs per pipeline run, and the
+    /// same warning each time was 10.8 % of jc-prod's log (T-7479).
+    warned: std::sync::Mutex<HashSet<(String, String)>>,
 }
 
 impl HostRunner {
@@ -357,10 +361,17 @@ impl HostRunner {
             .map(|(project, vars)| (project.clone(), vars.clone()))
             .collect();
         for (project, vars) in resolved {
-            let scope = out.entry(project).or_default();
+            let scope = out.entry(project.clone()).or_default();
             for (name, value) in vars {
                 if self.given.contains_key(&name) {
-                    tracing::warn!(variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+                    let first = self
+                        .warned
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert((project.clone(), name.clone()));
+                    if first {
+                        tracing::warn!(%project, variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+                    }
                     continue;
                 }
                 scope.insert(name, value);
@@ -998,9 +1009,8 @@ mod tests {
         assert_eq!(admit(&hosts, Some("banskabystrica.p"), &stream), Ok(()));
     }
 
-    /// A refusal is logged with the stream and its reason, and with no variable's value.
-    #[test]
-    fn a_refusal_is_logged_with_its_reason() {
+    /// What `f` returns and the text lines it logs.
+    fn logged<T>(f: impl FnOnce() -> T) -> (T, String) {
         #[derive(Clone, Default)]
         struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
         impl std::io::Write for Buf {
@@ -1018,13 +1028,18 @@ mod tests {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
+        let out = tracing::subscriber::with_default(subscriber, f);
+        let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        (out, log)
+    }
+
+    /// A refusal is logged with the stream and its reason, and with no variable's value.
+    #[test]
+    fn a_refusal_is_logged_with_its_reason() {
         let mut stream = mqtt_stream(OVZDUSIE, "pipeline-runner-banskabystrica");
         stream["input"]["mqtt"]["password"] = "filled-in-secret".into();
-        let refused = tracing::subscriber::with_default(subscriber, || {
-            admission(prod_hosts())(Some("helsinki.steal"), &stream)
-        });
+        let (refused, log) = logged(|| admission(prod_hosts())(Some("helsinki.steal"), &stream));
         assert!(refused.is_err());
-        let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         assert!(log.contains("ekiben refused a stream"), "{log}");
         assert!(
             log.contains("helsinki.steal") && log.contains("belongs to another project"),
@@ -1040,16 +1055,27 @@ mod tests {
             org: resources.get_or_create_org(&OrgId::default()),
             given: HashMap::from([("SHARED".to_owned(), "operator".to_owned())]),
             files: BTreeMap::new(),
+            warned: Default::default(),
         };
-        let scopes = runner.scopes(BTreeMap::from([(
-            "praha".to_owned(),
-            BTreeMap::from([
-                ("SHARED".to_owned(), "pipeline".to_owned()),
-                ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
-            ]),
-        )]));
+        let synced = || {
+            BTreeMap::from([(
+                "praha".to_owned(),
+                BTreeMap::from([
+                    ("SHARED".to_owned(), "pipeline".to_owned()),
+                    ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
+                ]),
+            )])
+        };
+        let (scopes, log) = logged(|| runner.scopes(synced()));
         assert!(!scopes["praha"].contains_key("SHARED"));
         assert_eq!(scopes["praha"]["GOLEMIO_KEY"], "k");
+        // Two runs, one warning: the pair is named once, never its value.
+        let (again, later) = logged(|| runner.scopes(synced()));
+        assert!(!again["praha"].contains_key("SHARED"));
+        assert_eq!(log.matches("jc's value is kept").count(), 1, "{log}");
+        assert!(log.contains("praha") && log.contains("SHARED"), "{log}");
+        assert!(!log.contains("operator"), "{log}");
+        assert!(later.is_empty(), "{later}");
         // A later sync without the credential drops it again.
         assert!(runner.scopes(BTreeMap::new()).is_empty());
     }
@@ -1075,6 +1101,7 @@ mod tests {
             org: resources.get_or_create_org(&OrgId::default()),
             given: variables(&BTreeMap::new(), &shared, &BTreeMap::new()),
             files,
+            warned: Default::default(),
         };
         runner.org.replace_secrets(runner.given.clone());
         runner.replace(BTreeMap::from([(
