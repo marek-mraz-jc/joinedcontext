@@ -184,3 +184,7 @@ note = "tenants, tenant_rename and tenant_seal_alias admit the scoped Tenant's r
 [0044]
 rollback = "compatible"
 note = "i_entities_id_bytes keeps its name and key and only carries types and expires_at (INCLUDE); an older release plans its id-prefix probes on it as before and its writes keep it current"
+
+[0045]
+rollback = "compatible"
+note = "entities gains history_retention, which a BEFORE trigger sets from the document on every write, and the sweep's partial index moves onto it; an older release still finds its Entities with `entity ? historyRetention`, without an index (one scan of entities per sweep) until the release comes back, and its writes keep the flag current through the trigger"
