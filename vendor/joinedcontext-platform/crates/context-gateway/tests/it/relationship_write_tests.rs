@@ -38,11 +38,23 @@ const BAD_REQUEST_DATA: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestDa
 
 type Calls = Arc<Mutex<Vec<String>>>;
 
+/// The longest request URI the broker takes; Antares answers a longer one with a bare 414
+/// (`crates/antares-api/src/bounds.rs`, `MAX_URI_BYTES`).
+const BROKER_URI_BYTES: usize = 8 * 1024;
+
 /// A broker holding two schools and two courses: it answers a read by id and takes every write.
 async fn broker() -> (String, Calls) {
+    broker_holding(&[], None).await
+}
+
+/// [`broker`] holding `more` ids as well, and answering every read with `reads` when one is
+/// given.
+async fn broker_holding(more: &[String], reads: Option<StatusCode>) -> (String, Calls) {
     let calls: Calls = Arc::new(Mutex::new(Vec::new()));
     let held: Vec<Value> = [SCHOOL, OTHER_SCHOOL, COURSE, OTHER_COURSE]
         .iter()
+        .copied()
+        .chain(more.iter().map(String::as_str))
         .map(|id| {
             let kind = id.split(':').nth(2).unwrap_or_default();
             json!({ "id": id, "type": kind })
@@ -65,6 +77,12 @@ async fn broker() -> (String, Calls) {
                 ));
                 if method != Method::GET {
                     return StatusCode::NO_CONTENT.into_response();
+                }
+                if request.uri().to_string().len() > BROKER_URI_BYTES {
+                    return StatusCode::URI_TOO_LONG.into_response();
+                }
+                if let Some(status) = reads {
+                    return status.into_response();
                 }
                 // The space's entities are in its tenant; the broker's default one holds none.
                 if tenant != SPACE {
@@ -247,7 +265,16 @@ async fn send(readable: &[&str], method: Method, uri: &str, body: Option<Value>)
 }
 
 async fn send_to(endpoint: Endpoint, method: Method, uri: &str, body: Option<Value>) -> Answer {
-    let (upstream, calls) = broker().await;
+    send_through(broker().await, endpoint, method, uri, body).await
+}
+
+async fn send_through(
+    (upstream, calls): (String, Calls),
+    endpoint: Endpoint,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Answer {
     let gateway = Arc::new(
         Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint]),
     );
@@ -509,6 +536,87 @@ async fn a_writer_without_a_read_grant_finds_no_target() {
     assert_eq!(
         answer.body["errors"][0]["error"]["rule"],
         json!("target-missing"),
+        "{}",
+        answer.body
+    );
+    assert!(answer.writes().is_empty(), "{:?}", answer.calls);
+}
+
+/// A Pipeline's grant with a `q` filter, reading Courses by `queryBatch`.
+fn filtered_pipeline() -> Endpoint {
+    let mut pipeline = endpoint(&[]);
+    let mut grant = policy("upsertBatch, createBatch, queryBatch", READS_ALL);
+    grant.q = Some("name!=\"closed\"".to_owned());
+    pipeline.policies = vec![grant];
+    pipeline
+}
+
+/// A hundred Course URNs of 120 characters each.
+fn long_courses() -> Vec<String> {
+    let prefix = format!("urn:ngsi-ld:Course:{DOMAIN}:{SPACE}:");
+    (0..100)
+        .map(|n| format!("{prefix}{n:0>width$}", width = 120 - prefix.len()))
+        .collect()
+}
+
+/// T-7481: a batch naming a hundred long targets under a grant's filter is read in chunks the
+/// broker takes, so its links are written instead of every write answering 502.
+#[tokio::test]
+async fn a_hundred_long_targets_under_a_filter_are_read_in_chunks_the_broker_takes() {
+    let courses = long_courses();
+    let named: Vec<&str> = courses.iter().map(String::as_str).collect();
+    let answer = send_through(
+        broker_holding(&courses, None).await,
+        filtered_pipeline(),
+        Method::POST,
+        "/entityOperations/upsert",
+        Some(json!([user("many", at(SCHOOL), &named)])),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
+    let probes: Vec<&String> = answer
+        .calls
+        .iter()
+        .filter(|call| call.contains("pick=id"))
+        .collect();
+    assert!(probes.len() > 1, "one probe read all targets: {probes:?}");
+    for probe in &probes {
+        assert!(
+            probe.contains("q="),
+            "a probe lost the grant's filter: {probe}"
+        );
+        let uri = probe.split(' ').nth(1).unwrap_or_default();
+        assert!(
+            uri.len() <= 7 * 1024,
+            "a probe of {} bytes: {uri}",
+            uri.len()
+        );
+    }
+    assert_eq!(answer.writes().len(), 1, "{:?}", answer.calls);
+}
+
+/// T-7481: a broker that refuses the targets' read refuses the write as unavailable; it is never
+/// answered as a broken relationship, and nothing is written.
+#[tokio::test]
+async fn a_refused_targets_read_answers_502_and_never_a_broken_relationship() {
+    let answer = send_through(
+        broker_holding(&[], Some(StatusCode::URI_TOO_LONG)).await,
+        filtered_pipeline(),
+        Method::POST,
+        "/entityOperations/upsert",
+        Some(json!([user("ok", at(SCHOOL), &[COURSE])])),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_GATEWAY, "{}", answer.body);
+    assert!(
+        answer.body["type"]
+            .as_str()
+            .is_some_and(|kind| kind.ends_with("upstream-unavailable")),
+        "{}",
+        answer.body
+    );
+    assert!(
+        !answer.body.to_string().contains("target-missing"),
         "{}",
         answer.body
     );
