@@ -479,3 +479,21 @@ def test_the_embed_pages_are_sandboxed_and_the_old_viz_path_moves_with_its_query
         assert moved["result"] == "pass", moved["actual"]
     finally:
         srv.shutdown()
+
+
+def test_an_empty_installation_catalogue_whose_datasets_moved_names_their_home(monkeypatch):
+    # jc-dev 2026-11-21 (T-7470): /opendata lists nothing after move_out; the first exported dataset
+    # whose old page answers 301 names the Organization catalogue, so the empty list is designed.
+    asked = []
+
+    def home(http, name):
+        asked.append((http.base, name))
+        return "https://opendata.alpha.test" if name == "moved" else None
+
+    monkeypatch.setattr(suite, "moved_home", home)
+    w = type("W", (), {"a": type("A", (), {"base_url": "http://127.0.0.1:9"})(),
+                       "dataset_names": lambda self: ["lost", "moved", "later"]})()
+    assert suite.moved_catalogue(w) == "https://opendata.alpha.test"
+    assert asked == [("http://127.0.0.1:9", "lost"), ("http://127.0.0.1:9", "moved")]
+    w.dataset_names = lambda: ["lost"]
+    assert suite.moved_catalogue(w) is None
