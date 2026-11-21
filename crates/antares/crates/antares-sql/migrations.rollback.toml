@@ -184,3 +184,7 @@ note = "tenants, tenant_rename and tenant_seal_alias admit the scoped Tenant's r
 [0044]
 rollback = "compatible"
 note = "i_entities_id_bytes keeps its name and key and only carries types and expires_at (INCLUDE); an older release plans its id-prefix probes on it as before and its writes keep it current"
+
+[0045]
+rollback = "compatible"
+note = "a new partial index i_entities_multi_type_id_bytes over the Entities of two or more types; an older release never names it and its writes keep it current"

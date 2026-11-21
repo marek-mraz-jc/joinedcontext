@@ -980,7 +980,9 @@ async fn an_id_pattern_page_reads_its_range_in_order() {
 /// the visibility map behind, the stream was a Seq Scan of the table and
 /// an external sort of the type (CI run 44904009419). Each arm and the
 /// merge stop at the chunk's LIMIT: a stream stopped early by the broker
-/// is still sent in full, so an unbounded skip read the whole type.
+/// is still sent in full, so an unbounded skip read the whole type. The
+/// multi-type arm reads its own partial index (0045): on 0044's it walked
+/// every id of the type's range for its few rows, once per chunk.
 /// The page itself is a keyset
 /// page from the id found there, which reads i_entities_id_bytes in order
 /// up to its LIMIT. The OFFSET statement it replaces planned a Bitmap Heap
@@ -1023,7 +1025,8 @@ async fn a_deep_id_pattern_page_runs_no_regex_over_its_offset() {
             && !plan.contains("Sort  (")
             && plan.contains("Merge Append")
             && plan.matches("Limit  (").count() == 3
-            && plan.contains("Index Only Scan using i_entities_id_bytes on entities"),
+            && plan.contains("Index Only Scan using i_entities_id_bytes on entities")
+            && plan.contains("Index Only Scan using i_entities_multi_type_id_bytes"),
         "the skip runs the regex in SQL, sweeps the table, sorts the type \
          or reads past its chunk:\n{plan}"
     );
