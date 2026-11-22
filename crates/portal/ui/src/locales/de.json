@@ -13544,7 +13544,7 @@
       "noCatalogue": "Diese Installation stellt noch keinen Open-Data-Katalog bereit, daher listet dieses Portal hier keine Datensätze. Bitten Sie Ihren Betreiber, den Katalog einzuschalten.",
       "toSources": "Zu den Quellen",
       "noCatalogueTitle": "Hier noch kein Open-Data-Katalog",
-      "feeds": "Feeds",
+      "feeds": "Profil-Feeds",
       "allFeeds": "In allen gewählten Feeds",
       "notIn": "Nicht in {profile}",
       "lacks": "Fehlt oder ist ungültig: {fields}",
