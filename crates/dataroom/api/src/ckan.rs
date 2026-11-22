@@ -844,12 +844,13 @@ async fn answer_ckan_action(
                     }
                 }
             }
-            let updated_dist = distribution_from_ckan(
+            let mut updated_dist = distribution_from_ckan(
                 &merged_json,
                 &ds.id,
                 &existing_dist.id,
                 &cat.default_language,
             );
+            updated_dist.terms_of_use = existing_dist.terms_of_use.clone();
             ds.distributions[pos] = updated_dist.clone();
             ds.modified = TimestampTz::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {

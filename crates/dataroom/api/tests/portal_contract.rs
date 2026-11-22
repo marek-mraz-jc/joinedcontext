@@ -119,7 +119,10 @@ fn endpoint(name: &str, dataset: &str, audience: &str, slug: &str) -> RawManifes
                 "organization": ORGANIZATION,
                 "name": dataset,
             }},
-            "catalog": { "visualizations": [{
+            "catalog": {
+                "personalData": "does-not-contain",
+                "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+                "visualizations": [{
                 "name": "no2-bar",
                 "title": { "sk": "NO2", "en": "NO2 (en)" },
                 "description": { "sk": "Popis." },
@@ -283,6 +286,24 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     .await;
     assert_eq!(first.expect("created"), Outcome::Created);
     assert_eq!(again.expect("converged"), Outcome::Unchanged);
+
+    // What the Endpoint declares reaches the national renderings, each in its own code list.
+    for (profile, code) in [
+        ("dcat-ap-sk-2.0", "personal-data-occurence-type/2"),
+        ("dcat-ap-cz", "neobsahuje-osobní-údaje"),
+    ] {
+        let ttl = reqwest::Client::new()
+            .get(format!("{base}/dataset/{PUBLIC_DATASET}.ttl"))
+            .query(&[("_profile", profile)])
+            .send()
+            .await
+            .expect("dataroom answers")
+            .text()
+            .await
+            .expect("a Turtle document");
+        assert!(ttl.contains(code), "{profile}: {ttl}");
+        assert!(ttl.contains("reg_impl/2023/138/oj"), "{profile}: {ttl}");
+    }
 
     // EP-139: a public Endpoint's dataset is read anonymously, with the fields the Portal reads.
     let shown = portal_dataset(&base, PUBLIC_DATASET)
