@@ -333,8 +333,8 @@ describe("VisualizationsSection", () => {
     await userEvent.click(screen.getByLabelText(V.controls));
     expect(screen.getByLabelText(V.fixed.range)).toBeInTheDocument();
     const box = screen.getByLabelText(V.controls);
-    expect(box).toHaveAccessibleDescription(/cannot change.*24 hours · Hourly · Average/);
-    expect(box).not.toHaveAccessibleDescription(/Readers can change/);
+    expect(box).toHaveAccessibleDescription(V.hint.locked);
+    expect(box).not.toHaveAccessibleDescription(V.hint.controls);
   });
 
   it("empties the form once the chart is proposed, so it is not proposed twice (T-7491)", async () => {

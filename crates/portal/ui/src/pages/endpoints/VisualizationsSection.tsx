@@ -257,8 +257,6 @@ export function VisualizationsSection({
   const added = change && sent.added !== undefined ? sent.charts[sent.added] : undefined;
   // Proposed and not yet approved: the Endpoint read back does not list it.
   const awaiting = added && !list.some((one) => one.name === added.name) ? added : undefined;
-  const unsaved = defaultData(template, type, "", served, temporal);
-  const lockedTo = unsaved ? settingsOf(unsaved) : "";
 
   const roles = [
     ...TEMPLATES[template].required,
@@ -346,7 +344,7 @@ export function VisualizationsSection({
                 ? refused
                     .filter((at) => at.index === other?.index)
                     .map(({ field }) => (
-                      <InlineError key={field} className="w-full">
+                      <InlineError key={field} className="w-full text-body">
                         {t(`endpoints.page.visualizations.invalid.${field}`, {
                           value: word("ranges", RANGES, one.data.last),
                         })}
@@ -472,9 +470,15 @@ export function VisualizationsSection({
           >
             {t("endpoints.page.visualizations.fill")}
           </Button>
+          {complete(template, columns) ? null : (
+            <p className="mt-1 text-caption text-fg-muted">
+              {t("endpoints.page.visualizations.pickRoles")}
+            </p>
+          )}
           {sourceOf(template, served) === "temporal" ? (
             <fieldset
-              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
+              // What to pick and why is read here, so it is set at body size.
+              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3 [&_[role=alert]]:text-body [&_p]:text-body"
               data-testid="viz-temporal"
             >
               <legend className="px-1 text-sm font-medium text-fg">
@@ -484,11 +488,11 @@ export function VisualizationsSection({
                 id="viz-controls"
                 errors={errorsOf("controls")}
                 hideLabel
-                help={
+                help={t(
                   temporal.controls
-                    ? t("endpoints.page.visualizations.hint.controls")
-                    : t("endpoints.page.visualizations.hint.locked", { settings: lockedTo })
-                }
+                    ? "endpoints.page.visualizations.hint.controls"
+                    : "endpoints.page.visualizations.hint.locked",
+                )}
                 className="sm:col-span-3"
               >
                 <Checkbox

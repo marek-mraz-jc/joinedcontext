@@ -128,10 +128,10 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Default granularity").selectOption("daily");
     await page.getByLabel("Default range").selectOption("week");
     await page.getByLabel("Default method").selectOption("max");
-    await expect(page.getByLabel("Default range")).toHaveAccessibleDescription(/e\.g\. 7 days/);
+    await expect(page.getByLabel("Default range")).toHaveAccessibleDescription(/e\.g\. 7 days for the last week/);
     await page.getByLabel("Show the toolbar to readers").uncheck();
     await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
-    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change.*always see: 7 days · Daily · Maximum/);
+    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change the settings below/);
 
     await page.getByLabel("Horizontal axis").selectOption("dateObserved");
     await page.getByLabel("Measure").selectOption("no2");

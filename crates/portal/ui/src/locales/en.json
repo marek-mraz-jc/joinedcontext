@@ -1875,8 +1875,8 @@
         "startsWith": "Readers start with: {settings}",
         "lockedTo": "Readers see only: {settings}",
         "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
-        "refusedOther": "Nothing was proposed, because “{chart}” on this endpoint has a setting that is not allowed: {fields}. Remove “{chart}” and have that change approved, then try again.",
-        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed: {fields}. Remove “{chart}” and have that change approved, then try again.",
+        "refusedOther": "Nothing was proposed, because the saved chart “{chart}” has to be fixed first ({fields}). Remove “{chart}”, wait until that change is approved, then propose your chart again.",
+        "refusedRemoval": "“{removed}” was not removed, because the saved chart “{chart}” has to be fixed first ({fields}). Remove “{chart}”, wait until that change is approved, then remove “{removed}” again.",
         "days": "{count, plural, one {# day} other {# days}}",
         "fixed": {
           "range": "Range",
@@ -1884,7 +1884,7 @@
           "method": "Method"
         },
         "invalid": {
-          "range": "{value} is not an allowed range: the maximum is 31 days. To fix it, remove this chart and add it again with a shorter range.",
+          "range": "{value} is not an allowed range. The maximum is 31 days.",
           "granularity": "This granularity is not allowed. It needs a period and a method.",
           "method": "This method is not allowed. Add the chart again with average, minimum or maximum.",
           "controls": "This toolbar switch is not allowed. It is either on or off."
@@ -1916,13 +1916,13 @@
         },
         "controls": "Show the toolbar to readers",
         "hint": {
-          "range": "What a reader sees on opening the chart, e.g. 7 days: the last week up to now.",
-          "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for a long range.",
-          "method": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
-          "controls": "Readers can change these settings themselves, e.g. pick another range. Untick it for a fixed chart.",
-          "locked": "Readers cannot change this chart. They always see: {settings}. Tick the box to let them change these settings, e.g. the range.",
-          "raw": "Every reading is drawn as recorded, e.g. each measurement of the day, so no method is needed.",
-          "fixedRange": "The period readers always see, e.g. 7 days: the last week up to now."
+          "range": "The period shown on opening, e.g. 7 days for the last week.",
+          "granularity": "How often a point is drawn, e.g. daily for one point per day.",
+          "method": "How the readings of an hour or a day become one point, e.g. maximum for the peak.",
+          "controls": "The toolbar above the chart lets readers change these settings, e.g. pick another range.",
+          "locked": "Readers cannot change the settings below, e.g. they always see the range you pick.",
+          "raw": "Draws every recorded reading, e.g. one every ten minutes. No method is needed.",
+          "fixedRange": "The period readers always see, e.g. 7 days for the last week."
         },
         "templates": {
           "bar": "Bar chart",
