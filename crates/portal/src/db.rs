@@ -1286,14 +1286,14 @@ mod pool_tests {
             return;
         };
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
-        let mut listeners = Vec::new();
-        for channel in ["t7494_drafts", "t7494_hosts"] {
-            let mut listener = sqlx::postgres::PgListener::connect_with(&session_pool(&pool))
-                .await
-                .expect("a session");
-            listener.listen(channel).await.expect("listening");
-            listeners.push(listener);
-        }
+        crate::ops::drafts::DraftHub::new().connect(pool.clone());
+        // The hub listens from a task of its own: give it its session before the pool is drained.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // jc's host registry listens as this does (bins/jc/src/modules/portal.rs).
+        let mut hosts = sqlx::postgres::PgListener::connect_with(&session_pool(&pool))
+            .await
+            .expect("a session");
+        hosts.listen("t7494_hosts").await.expect("listening");
         let leader = crate::reconciler::Leadership::new(pool.clone(), 0x7494);
         leader.acquire().await.expect("election");
         let mut working = Vec::new();
