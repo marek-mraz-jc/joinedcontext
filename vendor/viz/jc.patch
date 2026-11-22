@@ -1456,7 +1456,7 @@
          }
          return data;
        });
-@@ -465,17 +856,21 @@
+@@ -465,31 +856,46 @@
  
    function main() {
      var where = parseHash(location.hash);
@@ -1483,8 +1483,10 @@
      function resize() {
        // The content, not the viewport: a frame grows and shrinks with its chart.
        var height = Math.ceil(document.body.getBoundingClientRect().height);
-@@ -483,13 +878,22 @@
+       if (window.parent !== window) window.parent.postMessage({ type: "jc-viz-height", height: height }, "*");
      }
++    // A note, the toolbar or the reset button changes the height as much as the chart does.
++    if (typeof ResizeObserver === "function") new ResizeObserver(resize).observe(document.body);
      if (location.hash === "#show") return show(h, frame, fail);
      if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
 +    if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
@@ -1508,7 +1510,7 @@
      var ready = new Promise(function (resolve) {
        window.addEventListener("message", function (event) {
          // The renderer runs in an opaque origin, so its messages come from "null"; the source
-@@ -502,8 +906,14 @@
+@@ -502,8 +908,14 @@
            resize();
          }
          if (data.type === "jc-viz-error") fail(String(data.message || "The chart could not be drawn."));
@@ -1523,7 +1525,7 @@
      fetcher(h.data + "/api/3/action/resource_view_show?" + query({ id: where.id }), { credentials: "omit", referrerPolicy: "no-referrer" })
        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("The chart is not published.")); })
        .then(function (body) {
-@@ -521,23 +931,314 @@
+@@ -521,23 +933,314 @@
          var table = document.getElementById("table");
          table.textContent = LINK[lang] || LINK.en;
          table.href = h.data + "/dataset/" + encodeURIComponent(view.package_id || "");
@@ -1847,7 +1849,7 @@
    }
  
    // `#show`: the assistant's widget hands one spec and its rows by message (ADR-N-053 §2.9). A
-@@ -572,6 +1273,9 @@
+@@ -572,6 +1275,9 @@
          if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
          parent = event.origin;
          var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
@@ -1857,7 +1859,7 @@
          document.documentElement.lang = lang;
          map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
          var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
-@@ -579,8 +1283,8 @@
+@@ -579,8 +1285,8 @@
          var title = map ? data.spec.title : null;
          document.getElementById("title").textContent = typeof title === "string" ? title : "";
          pending = map
@@ -1868,7 +1870,7 @@
          if (map) {
            // The renderer frame stays empty; the map page takes its place.
            mapFrame = document.createElement("iframe");
-@@ -618,6 +1322,13 @@
+@@ -618,6 +1324,13 @@
      firstRequest: firstRequest,
      rowsFromTemporal: rowsFromTemporal,
      nextWindow: nextWindow,

@@ -876,6 +876,8 @@
       var height = Math.ceil(document.body.getBoundingClientRect().height);
       if (window.parent !== window) window.parent.postMessage({ type: "jc-viz-height", height: height }, "*");
     }
+    // A note, the toolbar or the reset button changes the height as much as the chart does.
+    if (typeof ResizeObserver === "function") new ResizeObserver(resize).observe(document.body);
     if (location.hash === "#show") return show(h, frame, fail);
     if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
     if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
