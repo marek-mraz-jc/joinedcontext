@@ -1865,7 +1865,7 @@
         "spec": "Špecifikácia grafu (Vega-Lite)",
         "badJson": "Špecifikácia nie je platný JSON.",
         "noSource": "Tento endpoint neposkytuje žiadny zo zdrojov, ktoré graf číta.",
-        "incomplete": "Ak chcete navrhnúť graf, vyplňte: {fields}.",
+        "incomplete": "Na návrh ešte vyplňte tieto polia: {fields}.",
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
         "toolbar": "Čo uvidia čitatelia",
@@ -1892,10 +1892,10 @@
           "granularity": "Server neprijal podrobnosť „{value}“. Vyberte {choices}.",
           "method": "Server neprijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova.",
-          "spec": "Toto nie je platný graf Vega-Lite. Opravte ho alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
-          "outside": "Graf smie používať len údaje tohto endpointu. Odstráňte odkaz na inú adresu alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
-          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
-          "dataLink": "Graf smie používať len údaje tohto endpointu. Nahraďte {link} za {example} alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu."
+          "spec": "Toto nie je platný graf. Opravte ho alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
+          "outside": "Graf smie používať len údaje tohto endpointu. Odstráňte odkaz na inú adresu alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
+          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
+          "dataLink": "Graf smie používať len údaje tohto endpointu. Tlačidlom „Použiť údaje tohto endpointu“ nižšie nahradíte {address} a ostatné úpravy zostanú."
         },
         "range": "Predvolené obdobie",
         "ranges": {
@@ -1967,7 +1967,9 @@
         "chooseColumn": "Vyberte stĺpec",
         "removeThenRemove": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny znova odstráňte „{removed}“.",
         "setRange": "Navrhnúť {range} pre „{chart}“",
-        "edited": "To, čo ste napísali v časti Pokročilé, nahrádza polia grafu a stĺpcov vyššie, preto graf nemenia. Ak ich chcete znova použiť, vyprázdnite ten rámček."
+        "edited": "To, čo ste napísali v časti Pokročilé, nahrádza tvar a stĺpce grafu vyššie.",
+        "useFields": "Použiť znova polia",
+        "useSource": "Použiť údaje tohto endpointu"
       },
       "firstCall": "Prvé volanie",
       "firstCallOpen": "Otvoriť v prehliadači",

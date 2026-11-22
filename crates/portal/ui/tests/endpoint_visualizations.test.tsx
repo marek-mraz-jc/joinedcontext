@@ -403,7 +403,8 @@ describe("VisualizationsSection", () => {
     expect(spec).toHaveValue("");
     await userEvent.click(spec);
     await userEvent.paste("{}");
-    await userEvent.selectOptions(screen.getByLabelText(V.roles.color), "id");
+    expect(screen.getByLabelText(V.roles.color)).toBeDisabled();
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "name");
     expect(spec).toHaveValue("{}");
   });
 
@@ -467,8 +468,18 @@ describe("VisualizationsSection", () => {
     refusal = ["spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: never a URL"];
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
     await userEvent.click(await screen.findByRole("button", { name: V.showField }));
-    expect(spec).toHaveAccessibleDescription(expect.stringContaining('Replace "url": "https://example.org/no2.csv" with "name": "source",'));
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining("replace https://example.org/no2.csv and keep your other edits"));
     expect(spec.value.slice(spec.selectionStart, spec.selectionEnd)).toBe('"url":"https://example.org/no2.csv"');
+    // The fields it replaces take no pick; the measure, which is also what is read, still does.
+    expect(screen.getByLabelText(marked(V.template))).toBeDisabled();
+    expect(screen.getByLabelText(V.roles.color)).toBeDisabled();
+    expect(screen.getByLabelText(marked(V.roles.y))).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: V.useSource }));
+    expect(JSON.parse(spec.value)).toEqual(LINE);
+    await waitFor(() => expect(spec).not.toHaveAttribute("aria-invalid"));
+    await userEvent.click(screen.getByRole("button", { name: V.useFields }));
+    expect(spec).toHaveValue("");
+    expect(screen.getByLabelText(marked(V.template))).toBeEnabled();
   });
 
   it("sets a blocking chart's range to one that is allowed, and leaves the rest of it (T-7491)", async () => {

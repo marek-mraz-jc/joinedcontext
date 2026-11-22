@@ -136,6 +136,11 @@ for (const width of [1440, 400]) {
     }
     const size = (locator: Locator) => locator.evaluate((node) => getComputedStyle(node).fontSize);
     expect(await size(section.locator("#viz-title__help"))).toBe(await size(section.locator("label[for=viz-title]")));
+    const px = async (locator: Locator) => parseFloat(await size(locator));
+    if (width === 400) {
+      expect(await px(section.locator("#viz-title__help"))).toBeGreaterThanOrEqual(12.8);
+      for (const id of ["#viz-title", "#viz-y"]) expect(await px(section.locator(id))).toBeGreaterThanOrEqual(16);
+    }
     await shootForm(page, `toolbar-empty-${width}.png`, width);
 
     // Raw readings take no method.
@@ -190,7 +195,7 @@ for (const width of [1440, 400]) {
     await expect(alert).toContainText("Nothing was proposed. Correct “Chart specification (Vega-Lite)” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
-    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Replace "url": "https:\/\/example\.org\/no2\.csv" with "name": "source"/);
+    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Press “Use this endpoint's data” below to replace https:\/\/example\.org\/no2\.csv/);
     // The shots show the member that was refused, at the top of the box.
     await spec.evaluate((box) => (box.scrollTop = 0));
     await alert.scrollIntoViewIfNeeded();
@@ -199,6 +204,13 @@ for (const width of [1440, 400]) {
     await expect(spec).toBeFocused();
     await spec.evaluate((box) => (box.scrollTop = 0));
     await page.screenshot({ path: join(DIR, `toolbar-refused-${width}.png`) });
+    // The whole way out: one click, the rest of the edit kept, and the check is asked again.
+    await section.getByRole("button", { name: "Use this endpoint's data" }).click();
+    await expect(spec).toHaveValue(/"name": "source"/);
+    await expect(spec).not.toHaveAttribute("aria-invalid");
+    s.refuse = undefined;
+    await page.getByRole("button", { name: "Propose the chart" }).click();
+    await expect(section.getByText("“NO2 this week” is waiting for approval")).toBeVisible();
   });
 
   test(`a saved chart that blocks a removal is named at ${width} px (T-7491)`, async ({ page }) => {

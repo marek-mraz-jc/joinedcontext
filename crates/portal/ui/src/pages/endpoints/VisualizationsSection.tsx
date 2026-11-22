@@ -253,6 +253,20 @@ export function VisualizationsSection({
     const member = dataLink ? field.value.lastIndexOf('"url"', at) : -1;
     field.setSelectionRange(member >= 0 ? member : at, at + address.length + (member >= 0 ? 1 : 0));
   };
+  /** Feeds a refused data link from the Endpoint and leaves the rest of the edit as it is. */
+  const useSource = () => {
+    if (!ownSpec) return;
+    try {
+      const edit = JSON.parse(specText) as unknown;
+      let at = edit as Record<string, unknown> | undefined;
+      for (const key of ownSpec.path.slice(0, -2)) at = at?.[key] as Record<string, unknown> | undefined;
+      if (at) at.data = { name: "source" };
+      setSpecText(JSON.stringify(edit, null, 2));
+      proposal.reset();
+    } catch {
+      setFailed(t("endpoints.page.visualizations.badJson"));
+    }
+  };
   const blocking = other ? sent.charts[other.index] : undefined;
   const blocked = blocking && {
     chart: titleOf(blocking),
@@ -323,13 +337,16 @@ export function VisualizationsSection({
               </Button>
             </>
           ) : refusedField ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={showRefused}
-            >
-              {t("endpoints.page.visualizations.showField")}
-            </Button>
+            <>
+              {dataLink ? (
+                <Button size="sm" variant="primary" onClick={useSource}>
+                  {t("endpoints.page.visualizations.useSource")}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="secondary" onClick={showRefused}>
+                {t("endpoints.page.visualizations.showField")}
+              </Button>
+            </>
           ) : undefined
         }
       >
@@ -384,6 +401,12 @@ export function VisualizationsSection({
     </p>
   );
 
+  // A specification written by hand stands in for the shape and the columns.
+  const edited = specText.trim() !== "" && specText !== filled;
+  const useFields = () => {
+    setSpecText("");
+    proposal.reset();
+  };
   /** The history's time axis: there is nothing to pick. */
   const fixedAxis = (role: Role) => source === "temporal" && role === "x";
   /** What a role's column is for, in the chart picked, or what to do when there is none. */
@@ -491,8 +514,9 @@ export function VisualizationsSection({
         <details
           ref={editor}
           // In this form the hints, and what to do on a refusal, are read at body size.
-          // At phone width what is typed or picked is 16 px, which iOS does not zoom into.
-          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-title"
+          // The Portal's root is 80 %: at phone width the form reads at the title size and what is
+          // typed or picked at the display size, 16 px, which iOS does not zoom into.
+          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-display max-sm:[&_:is(p,label,output,[role=alert])]:text-title"
         >
           <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
@@ -545,6 +569,8 @@ export function VisualizationsSection({
               <Select
                 id="viz-template"
                 value={template}
+                disabled={edited}
+                title={edited ? t("endpoints.page.visualizations.edited") : undefined}
                 onChange={(event) => {
                   setTemplate(event.target.value as TemplateName);
                   setSpecText("");
@@ -599,6 +625,9 @@ export function VisualizationsSection({
                   <Select
                     id={`viz-${role}`}
                     value={columns[role] ?? ""}
+                    // The history is read for its measure, whatever the specification draws.
+                    disabled={edited && !(source === "temporal" && role === "y")}
+                    title={edited ? t("endpoints.page.visualizations.edited") : undefined}
                     onChange={(event) =>
                       repick({ ...picks, [role]: event.target.value })
                     }
@@ -620,8 +649,16 @@ export function VisualizationsSection({
               </Field>
             ))}
           </div>
-          {specText.trim() && specText !== filled ? (
-            <Alert tone="info" className="mt-3">
+          {edited ? (
+            <Alert
+              tone="info"
+              className="mt-3"
+              actions={
+                <Button size="sm" variant="secondary" onClick={useFields}>
+                  {t("endpoints.page.visualizations.useFields")}
+                </Button>
+              }
+            >
               {t("endpoints.page.visualizations.edited")}
             </Alert>
           ) : null}
@@ -777,11 +814,7 @@ export function VisualizationsSection({
                 ownSpec
                   ? [
                     address
-                      ? t(`endpoints.page.visualizations.fix.${dataLink ? "dataLink" : "address"}`, {
-                          address,
-                          link: `"url": "${address}"`,
-                          example: '"name": "source"',
-                        })
+                      ? t(`endpoints.page.visualizations.fix.${dataLink ? "dataLink" : "address"}`, { address })
                       : t(`endpoints.page.visualizations.fix.${ownSpec.why}`),
                   ]
                   : undefined

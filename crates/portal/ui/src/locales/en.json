@@ -1892,10 +1892,10 @@
           "granularity": "The server did not accept {value} as the granularity. Pick {choices}.",
           "method": "The server did not accept {value} as the method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again.",
-          "spec": "This is not a valid Vega-Lite chart. Correct it, or press “Write it from the fields above”, which replaces your edits.",
-          "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Write it from the fields above”, which replaces your edits.",
-          "address": "A chart may use only this endpoint's data. Remove {address}, or press “Write it from the fields above”, which replaces your edits.",
-          "dataLink": "A chart may use only this endpoint's data. Replace {link} with {example}, or press “Write it from the fields above”, which replaces your edits."
+          "spec": "This is not a valid chart. Correct it, or press “Use the fields again” to drop your edits.",
+          "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Use the fields again” to drop your edits.",
+          "address": "A chart may use only this endpoint's data. Remove {address}, or press “Use the fields again” to drop your edits.",
+          "dataLink": "A chart may use only this endpoint's data. Press “Use this endpoint's data” below to replace {address} and keep your other edits."
         },
         "range": "Default range",
         "ranges": {
@@ -1967,7 +1967,9 @@
         "chooseColumn": "Choose a column",
         "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",
         "setRange": "Propose {range} for “{chart}”",
-        "edited": "What you wrote under Advanced replaces the chart and column fields above, so they do not change the chart. Empty that box to use them again."
+        "edited": "What you wrote under Advanced replaces the chart's shape and columns above.",
+        "useFields": "Use the fields again",
+        "useSource": "Use this endpoint's data"
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",
