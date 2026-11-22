@@ -192,3 +192,7 @@ note = "entities gains history_retention, which a BEFORE trigger sets from the d
 [0046]
 rollback = "compatible"
 note = "a new partial index i_entities_multi_type_id_bytes over the Entities of two or more types; an older release never names it and its writes keep it current"
+
+[0047]
+rollback = "compatible"
+note = "a new table only; the previous release never reads it and keeps open write confirmations in the process again, so a rollback drops those still open (ten minutes at most)"

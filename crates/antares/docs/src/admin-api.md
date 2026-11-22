@@ -426,8 +426,10 @@ is not made.
 Only in a broker built with the `mcp` feature and started with
 `ANTARES_MCP_CONFIRM_URL` set (T-5816): the deployment's decision page reads
 the question a write tool asked and records the person's decision on it. See
-[MCP](mcp.md) section 3. Questions live ten minutes in the process that
-asked them; bound: 4 KiB per decision body.
+[MCP](mcp.md) section 3. Questions live ten minutes in the store, so any
+replica answers for them; the id names its Tenant and the route reads that
+Tenant alone; `500` when the store cannot answer; bound: 4 KiB per
+decision body.
 
 ### GET /q/mcp-confirmations/{id}
 

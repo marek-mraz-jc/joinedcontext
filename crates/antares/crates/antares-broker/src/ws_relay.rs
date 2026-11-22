@@ -25,13 +25,7 @@ const SUBJECT: &str = "antares.ws.";
 /// subject token of the names a Tenant (`[A-Za-z0-9_-]`) or a connection id
 /// (lowercase base32) is made of: no `.`, `*` or `>` reaches a subject.
 fn subject(tenant: &str, connection: &str) -> Option<String> {
-    let token = |s: &str| {
-        !s.is_empty()
-            && s.len() <= 128
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-    };
-    (token(tenant) && token(connection)).then(|| format!("{SUBJECT}{tenant}.{connection}"))
+    crate::relay_subject(SUBJECT, tenant, connection)
 }
 
 /// How long a notifier waits for the holding pod. A pod that does not

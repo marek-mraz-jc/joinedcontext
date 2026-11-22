@@ -290,21 +290,27 @@ impl Server {
             return refused("this tool needs a client that can ask the person").into();
         }
         let subject = self.caller.subject();
-        let bound = confirm::bound_to(&self.id, &subject, tool.name, &given);
+        let kept = self.view.confirmations();
+        let tenant = kept.tenant();
+        let bound = confirm::bound_to(tenant, &self.id, &subject, tool.name, &given);
         let asking = decided::asking();
         let Some(state) = request.request_state else {
             let message = confirm::question(tool.name, tool.op.id(), &given);
-            let Some((state, nonce)) = confirm::seal(&bound).filter(|(_, nonce)| {
-                decided::opens(asking, nonce, &subject, (&self.id, tool.name, &message))
-            }) else {
+            let Some((state, id)) = confirm::seal(tenant, &bound) else {
                 return refused(decided::BROKEN).into();
             };
+            let about = (&*self.id, tool.name, message.as_str());
+            match decided::opens(&kept, asking, &id, &subject, about).await {
+                Ok(true) => {}
+                Ok(false) => return refused(decided::BROKEN).into(),
+                Err(e) => return refused(decided::unavailable(&e)).into(),
+            }
             let params = if let decided::Asking::Page(template) = asking {
                 ElicitRequestParams::UrlElicitationParams {
                     meta: None,
                     message,
-                    url: decided::page_of(template, &nonce),
-                    elicitation_id: nonce,
+                    url: decided::page_of(template, &id),
+                    elicitation_id: id,
                 }
             } else {
                 ElicitRequestParams::FormElicitationParams {
@@ -322,17 +328,9 @@ impl Server {
         // a decline or an open question spends nothing: only an accepted
         // answer redeems the state; with a decision page only the decision
         // it recorded is an answer, never the client's
-        let found = matches!(asking, decided::Asking::Page(_))
-            .then(|| confirm::opened(&state, &bound).map(|n| decided::take(&n, &subject)))
-            .flatten();
         let form_accepted = confirm::accepted(request.input_responses.as_ref());
-        let confirmed = decided::confirms(asking, found, form_accepted).and_then(|()| {
-            if confirm::redeem(&state, &bound, &subject) {
-                Ok(())
-            } else {
-                Err(decided::STALE)
-            }
-        });
+        let retry = (state.as_str(), bound.as_slice());
+        let confirmed = decided::answered(&kept, asking, retry, &subject, form_accepted).await;
         if let Err(why) = confirmed {
             tracing::info!(view = %self.id, tool = tool.name, "mcp write not confirmed");
             return refused(why).into();
@@ -1200,6 +1198,9 @@ impl ServerHandler for Server {
             view: self.view.clone(),
             caller: self.caller.clone(),
         };
+        // answered for before the first Subscription exists, so a change
+        // another replica delivers the moment after finds it (S10-19)
+        listen::streams().relayed(&stream, self.view.tenant()).await;
         // every Attribute the view shows, whether or not a schema may name
         // it: a name left out here would make a change to it no event, but
         // one left out of `watchedAttributes` would make every change one

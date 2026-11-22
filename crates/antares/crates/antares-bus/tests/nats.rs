@@ -394,6 +394,26 @@ async fn core_request_reaches_the_replier_and_is_none_without_one() {
     assert_eq!(asker.request(subject, b"late".to_vec(), within).await, None);
 }
 
+/// `reply_ready` (T-7507, the MCP relay): a request sent the moment it
+/// resolves is answered, with no wait for the subscription.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ready_replier_hears_the_first_request() {
+    let url = require_nats!();
+    let holder = NatsBus::connect(&url).await.expect("holder");
+    let asker = NatsBus::connect(&url).await.expect("asker");
+    for i in 0..20 {
+        let subject = format!("antares.mcp.test{}.s{i}", nonce());
+        let task = holder
+            .reply_ready(subject.clone(), |p| Some(p.to_vec()))
+            .await
+            .expect("ready");
+        let within = Duration::from_secs(2);
+        let heard = asker.request(subject, b"first".to_vec(), within).await;
+        assert_eq!(heard.as_deref(), Some(b"first".as_slice()), "try {i}");
+        task.abort();
+    }
+}
+
 /// A page written whole before its acks are awaited (T-6608) reaches the
 /// stream complete and in page order, so the matcher still sees an entity's
 /// changes in the order the outbox holds them. The run prints the drain's
