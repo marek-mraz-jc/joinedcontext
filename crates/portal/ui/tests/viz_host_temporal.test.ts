@@ -21,7 +21,7 @@ type Host = {
   temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number) => Plan;
   measure: (attr: string, unitCode: string | null, lang: string, values: unknown[]) => { title: string; percent: boolean };
   interactive: (spec: unknown, opts: Record<string, unknown>) => Record<string, unknown>;
-  gapped: (rows: Record<string, unknown>[], attr: string) => Record<string, unknown>[];
+  gapped: (rows: Record<string, unknown>[], attr: string, factor?: number) => Record<string, unknown>[];
 };
 const module = { exports: {} as Host };
 new Function("module", "self", readFileSync(resolve(site, "host.js"), "utf8"))(module, {});
@@ -54,10 +54,22 @@ describe("the toolbar's reads", () => {
     for (const [gran, method] of [["PT1H", "avg"], ["P1D", "max"], ["PT1H", "min"]]) {
       const plan = host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range: "PT24H", gran, method }, SLUG, API, NOW);
       expect(params(plan.urls[0])).toEqual({
-        type: "WeatherObserved", attrs: "temperature", timerel: "after", timeAt: "2026-11-20T16:00:00Z",
+        type: "WeatherObserved", attrs: "temperature", timerel: "after", timeAt: gran === "P1D" ? "2026-11-20T00:00:00Z" : "2026-11-20T16:00:00Z",
         format: "aggregatedValues", aggrMethods: method, aggrPeriodDuration: gran, limit: "1000",
       });
     }
+  });
+
+  it("starts an aggregated read on a whole hour or UTC day, within the gateway's 31 days", () => {
+    const now = Date.parse("2026-11-21T15:10:00Z");
+    const at = (range: string, gran: string) =>
+      params(host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range, gran, method: "avg" }, SLUG, API, now).urls[0]).timeAt;
+    expect(at("PT24H", "PT1H")).toBe("2026-11-20T15:00:00Z");
+    expect(at("PT24H", "P1D")).toBe("2026-11-20T00:00:00Z");
+    expect(at("P7D", "P1D")).toBe("2026-11-14T00:00:00Z");
+    // A whole first day would make the window 31 days and 15 hours: it starts on the next day.
+    expect(at("P31D", "P1D")).toBe("2026-10-22T00:00:00Z");
+    expect(at("P31D", "PT1H")).toBe("2026-10-21T16:00:00Z");
   });
 
   it("turns raw readings past seven days hourly and says so", () => {
@@ -75,9 +87,9 @@ describe("the toolbar's reads", () => {
     expect(plan.capped).toBe(0);
     const windows = plan.urls.map(params);
     expect(windows.map((w) => [w.timeAt, w.endTimeAt])).toEqual([
-      ["2026-09-01T00:00:00Z", "2026-09-20T00:00:00Z"],
-      ["2026-09-20T00:00:00Z", "2026-10-21T00:00:00Z"],
-      ["2026-10-21T00:00:00Z", "2026-11-21T00:00:00Z"],
+      ["2026-09-01T00:00:00Z", "2026-10-02T00:00:00Z"],
+      ["2026-10-02T00:00:00Z", "2026-11-02T00:00:00Z"],
+      ["2026-11-02T00:00:00Z", "2026-11-21T00:00:00Z"],
     ]);
     for (const w of windows) {
       expect(w).toMatchObject({ timerel: "between", format: "aggregatedValues", aggrPeriodDuration: "P1D" });
@@ -89,7 +101,8 @@ describe("the toolbar's reads", () => {
     const state = { ...host.defaults(SOURCE), range: "custom", from: "2024-01-01", to: "2026-11-20" };
     const plan = host.temporalPlan(SOURCE, state, SLUG, API, NOW);
     expect(plan.urls).toHaveLength(12);
-    expect(plan.capped).toBe(372);
+    // Eleven whole 31-day windows and the newest, shorter one (counted from 2024-01-01).
+    expect(plan.capped).toBe(342);
     expect(params(plan.urls[11]).endTimeAt).toBe("2026-11-21T00:00:00Z");
   });
 
@@ -188,6 +201,15 @@ describe("the interactive chart", () => {
       ["A", "2026-11-18T10:00:00Z", 1], ["A", "2026-11-18T11:00:00Z", 2], ["A", "2026-11-18T12:00:00Z", 3],
       ["A", "2026-11-18T13:00:00Z", null], ["A", "2026-11-20T06:00:00Z", 4],
       ["B", "2026-11-18T10:00:00Z", 5], ["B", "2026-11-18T11:00:00Z", 6],
+    ]);
+  });
+
+  it("breaks an aggregated line at one missing bucket", () => {
+    const days = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-20"].map((d, i) => ({ name: "A", observedAt: `${d}T00:00:00Z`, t: i }));
+    expect(host.gapped(days, "t").some((r) => r.t === null)).toBe(false);
+    expect(host.gapped(days, "t", 1.5).map((r) => [r.observedAt, r.t])).toEqual([
+      ["2026-11-16T00:00:00Z", 0], ["2026-11-17T00:00:00Z", 1], ["2026-11-18T00:00:00Z", 2],
+      ["2026-11-19T00:00:00Z", null], ["2026-11-20T00:00:00Z", 3],
     ]);
   });
 
