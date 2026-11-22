@@ -684,14 +684,20 @@ async fn remove_credential(
         .store
         .list_credentials(&c.realm.id, &c.user.id)
         .await?;
+    let passkeys = state
+        .store
+        .list_webauthn_credentials(&c.realm.id, &c.user.id)
+        .await?;
+    // The second factors left once `id` is gone: TOTP and passkeys both count.
+    let factors_left = creds
+        .iter()
+        .filter(|cr| cr.credential_type == "otp" && cr.id != id)
+        .count()
+        + passkeys.iter().filter(|p| p.id != id).count();
     if let Some(cred) = creds.iter().find(|cr| cr.id == id) {
         match cred.credential_type.as_str() {
             "otp" => {
-                let others = creds
-                    .iter()
-                    .filter(|cr| cr.credential_type == "otp" && cr.id != id)
-                    .count();
-                if others == 0 && second_factor_required(state, &c.realm, &c.user).await? {
+                if factors_left == 0 && second_factor_required(state, &c.realm, &c.user).await? {
                     return Ok(field_error(
                         StatusCode::CONFLICT,
                         "otp",
@@ -715,13 +721,17 @@ async fn remove_credential(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     // A passkey: the store deletes by id alone, so only one of the caller's own goes.
-    let own_passkey = state
-        .store
-        .list_webauthn_credentials(&c.realm.id, &c.user.id)
-        .await?
-        .into_iter()
+    let own_passkey = passkeys
+        .iter()
         .any(|p| p.id == id && p.user_id == c.user.id);
     if own_passkey {
+        if factors_left == 0 && second_factor_required(state, &c.realm, &c.user).await? {
+            return Ok(field_error(
+                StatusCode::CONFLICT,
+                "webauthn-passwordless",
+                "accountSecondFactorRequired",
+            ));
+        }
         state
             .store
             .delete_webauthn_credential(&c.realm.id, None, id)
