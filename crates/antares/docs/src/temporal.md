@@ -196,6 +196,16 @@ typed value, `{"@type": "DateTime", "@value": "..."}`, or as a string with
 and a `Time` also has an `avg`, returned as a `Time`. A plain JSON string
 is ordered lexicographically and has no average.
 
+On Postgres the store computes an aggregation itself, for periods of
+seconds or of whole months, also under a policy's rules: it reads only the
+Attributes the rules show, inside the windows they share, and no expired
+instance. Such a read under rules may take 10 seconds, or the session's
+`statement_timeout` when that is shorter. Past it the answer is 403
+TooManyResults and the caller asks a shorter window, fewer Entities or
+fewer `attrs`. A range of 10 or 100 years by month or year is one such
+read. `omit`, `lastN`, an Attribute recorded `onChange` or a period mixing
+months with days is computed in the broker from the instances instead.
+
 An Attribute its type records `onChange` holds each value until the next
 row. A window that opens after its last row carries that row in, so a
 chart starts at the level the Attribute held. `avg` weighs each value by
