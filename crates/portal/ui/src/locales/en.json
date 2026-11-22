@@ -1871,12 +1871,11 @@
         "propose": "Propose the chart",
         "remove": "Remove",
         "toolbar": "What readers see",
-        "toolbarHidden": "Fixed for readers",
-        "startsWith": "Readers start with: {settings}",
-        "lockedTo": "Readers see only: {settings}",
+        "startsWith": "Readers start with {settings}",
+        "lockedTo": "Readers see only {settings}",
         "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
-        "refusedOther": "Nothing was proposed, because the saved chart “{chart}” has to be fixed first ({fields}). Remove “{chart}”, wait until that change is approved, then propose your chart again.",
-        "refusedRemoval": "“{removed}” was not removed, because the saved chart “{chart}” has to be fixed first ({fields}). Remove “{chart}”, wait until that change is approved, then remove “{removed}” again.",
+        "refusedOther": "Nothing was proposed, because “{chart}” has a setting that is not allowed: {fields}. A saved chart cannot be edited here: remove “{chart}”, wait until that change is approved, then propose your chart again.",
+        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed: {fields}. A saved chart cannot be edited here: remove “{chart}”, wait until that change is approved, then remove “{removed}” again.",
         "days": "{count, plural, one {# day} other {# days}}",
         "fixed": {
           "range": "Range",
@@ -1884,16 +1883,16 @@
           "method": "Method"
         },
         "invalid": {
-          "range": "{value} is not an allowed range. The maximum is 31 days.",
+          "range": "{value} is not an allowed range. Up to 31 days are allowed.",
           "granularity": "This granularity is not allowed. It needs a period and a method.",
           "method": "This method is not allowed. Add the chart again with average, minimum or maximum.",
           "controls": "This toolbar switch is not allowed. It is either on or off."
         },
         "showField": "Go to the field",
         "fix": {
-          "range": "{value} can't be used as the range here. Pick {choices}.",
-          "granularity": "{value} can't be used as the granularity here. Pick {choices}.",
-          "method": "{value} can't be used as the method here. Pick {choices}.",
+          "range": "{value} was not accepted as this chart's range. Pick {choices}.",
+          "granularity": "{value} was not accepted as this chart's granularity. Pick {choices}.",
+          "method": "{value} was not accepted as this chart's method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again."
         },
         "range": "Default range",
@@ -1920,7 +1919,7 @@
           "granularity": "How often a point is drawn, e.g. daily for one point per day.",
           "method": "How the readings of an hour or a day become one point, e.g. maximum for the peak.",
           "controls": "The toolbar above the chart lets readers change these settings, e.g. pick another range.",
-          "locked": "Readers cannot change the settings below, e.g. they always see the range you pick.",
+          "locked": "Readers always see the settings below, e.g. the range you pick, and cannot change them.",
           "raw": "Draws every recorded reading, e.g. one every ten minutes. No method is needed.",
           "fixedRange": "The period readers always see, e.g. 7 days for the last week."
         },

@@ -1871,12 +1871,11 @@
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
         "toolbar": "Čo uvidia čitatelia",
-        "toolbarHidden": "Čitatelia nemôžu meniť",
-        "startsWith": "Predvolene sa zobrazí: {settings}",
-        "lockedTo": "Vždy sa zobrazí: {settings}",
+        "startsWith": "Predvolene sa zobrazí {settings}",
+        "lockedTo": "Čitatelia vidia iba {settings}",
         "refusedOwn": "Nič sa nenavrhlo. Opravte „{fields}“ vyššie a navrhnite znova.",
-        "refusedOther": "Nič sa nenavrhlo, lebo uložený graf „{chart}“ treba najprv opraviť ({fields}). Odstráňte „{chart}“, počkajte na schválenie zmeny a potom navrhnite svoj graf znova.",
-        "refusedRemoval": "Graf „{removed}“ sa neodstránil, lebo uložený graf „{chart}“ treba najprv opraviť ({fields}). Odstráňte „{chart}“, počkajte na schválenie zmeny a potom znova odstráňte „{removed}“.",
+        "refusedOther": "Nič sa nenavrhlo, lebo graf „{chart}“ má nepovolené nastavenie: {fields}. Uložený graf sa tu nedá upraviť: odstráňte „{chart}“, počkajte na schválenie zmeny a potom navrhnite svoj graf znova.",
+        "refusedRemoval": "Graf „{removed}“ sa neodstránil, lebo „{chart}“ má nepovolené nastavenie: {fields}. Uložený graf sa tu nedá upraviť: odstráňte „{chart}“, počkajte na schválenie zmeny a potom znova odstráňte „{removed}“.",
         "days": "{count, plural, one {# deň} few {# dni} other {# dní}}",
         "fixed": {
           "range": "Obdobie",
@@ -1884,16 +1883,16 @@
           "method": "Výpočet"
         },
         "invalid": {
-          "range": "Obdobie „{value}“ nie je povolené. Maximum je 31 dní.",
+          "range": "Obdobie „{value}“ nie je povolené. Povolených je najviac 31 dní.",
           "granularity": "Táto podrobnosť nie je povolená. Potrebuje periódu a výpočet.",
           "method": "Tento výpočet nie je povolený. Pridajte graf znova s priemerom, minimom alebo maximom.",
           "controls": "Tento prepínač panela nie je povolený. Môže byť len zapnutý alebo vypnutý."
         },
         "showField": "Prejsť na pole",
         "fix": {
-          "range": "Obdobie „{value}“ sa tu nedá použiť. Vyberte {choices}.",
-          "granularity": "Podrobnosť „{value}“ sa tu nedá použiť. Vyberte {choices}.",
-          "method": "Výpočet „{value}“ sa tu nedá použiť. Vyberte {choices}.",
+          "range": "Obdobie „{value}“ nebolo pre tento graf prijaté. Vyberte {choices}.",
+          "granularity": "Podrobnosť „{value}“ nebola pre tento graf prijatá. Vyberte {choices}.",
+          "method": "Výpočet „{value}“ nebol pre tento graf prijatý. Vyberte {choices}.",
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova."
         },
         "range": "Predvolené obdobie",
@@ -1920,7 +1919,7 @@
           "granularity": "Ako často sa kreslí bod, napr. po dňoch jeden bod za deň.",
           "method": "Ako sa z meraní hodiny alebo dňa stane jeden bod, napr. maximum pre špičku.",
           "controls": "Panelom nad grafom si čitatelia menia tieto nastavenia, napr. vyberú iné obdobie.",
-          "locked": "Čitatelia nemôžu meniť nastavenia nižšie, napr. vždy vidia obdobie, ktoré vyberiete.",
+          "locked": "Čitatelia vždy vidia nastavenia nižšie, napr. vybrané obdobie, a nemôžu ich meniť.",
           "raw": "Kreslí každé zapísané meranie, napr. každých desať minút. Výpočet netreba.",
           "fixedRange": "Obdobie, ktoré čitatelia vždy vidia, napr. 7 dní pre posledný týždeň."
         },

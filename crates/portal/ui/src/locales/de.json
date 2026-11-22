@@ -1871,12 +1871,11 @@
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Was Lesende sehen",
-        "toolbarHidden": "Für Lesende fest",
-        "startsWith": "Standardansicht: {settings}",
-        "lockedTo": "Immer angezeigt: {settings}",
+        "startsWith": "Standardansicht {settings}",
+        "lockedTo": "Lesende sehen nur {settings}",
         "refusedOwn": "Es wurde nichts vorgeschlagen. Korrigieren Sie „{fields}“ oben und schlagen Sie erneut vor.",
-        "refusedOther": "Es wurde nichts vorgeschlagen, weil das gespeicherte Diagramm „{chart}“ zuerst korrigiert werden muss ({fields}). Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und schlagen Sie Ihr Diagramm dann erneut vor.",
-        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil das gespeicherte Diagramm „{chart}“ zuerst korrigiert werden muss ({fields}). Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und entfernen Sie dann „{removed}“ erneut.",
+        "refusedOther": "Es wurde nichts vorgeschlagen, weil „{chart}“ eine unzulässige Einstellung hat: {fields}. Ein gespeichertes Diagramm lässt sich hier nicht bearbeiten: Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und schlagen Sie Ihr Diagramm dann erneut vor.",
+        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat: {fields}. Ein gespeichertes Diagramm lässt sich hier nicht bearbeiten: Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und entfernen Sie dann „{removed}“ erneut.",
         "days": "{count, plural, one {# Tag} other {# Tage}}",
         "fixed": {
           "range": "Zeitraum",
@@ -1884,16 +1883,16 @@
           "method": "Berechnung"
         },
         "invalid": {
-          "range": "Der Zeitraum „{value}“ ist nicht zulässig. Das Maximum sind 31 Tage.",
+          "range": "Der Zeitraum „{value}“ ist nicht zulässig. Bis zu 31 Tage sind zulässig.",
           "granularity": "Diese Auflösung ist nicht zulässig. Sie braucht eine Periode und eine Berechnung.",
           "method": "Diese Berechnung ist nicht zulässig. Fügen Sie das Diagramm mit Mittelwert, Minimum oder Maximum neu hinzu.",
           "controls": "Dieser Schalter der Leiste ist nicht zulässig. Er ist entweder an oder aus."
         },
         "showField": "Zum Feld",
         "fix": {
-          "range": "„{value}“ kann hier nicht als Zeitraum dienen. Wählen Sie {choices}.",
-          "granularity": "„{value}“ kann hier nicht als Auflösung dienen. Wählen Sie {choices}.",
-          "method": "„{value}“ kann hier nicht als Berechnung dienen. Wählen Sie {choices}.",
+          "range": "Der Zeitraum „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
+          "granularity": "Die Auflösung „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
+          "method": "Die Berechnung „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
         },
         "range": "Standardzeitraum",
@@ -1920,7 +1919,7 @@
           "granularity": "Wie oft ein Punkt gezeichnet wird, z. B. täglich ein Punkt pro Tag.",
           "method": "Wie die Messungen einer Stunde oder eines Tages ein Punkt werden, z. B. Maximum für die Spitze.",
           "controls": "Mit der Leiste über dem Diagramm ändern Lesende diese Einstellungen, z. B. den Zeitraum.",
-          "locked": "Lesende können die Einstellungen unten nicht ändern, z. B. sehen sie immer den gewählten Zeitraum.",
+          "locked": "Lesende sehen immer die Einstellungen unten, z. B. den gewählten Zeitraum, und können sie nicht ändern.",
           "raw": "Zeichnet jede Messung, z. B. alle zehn Minuten. Keine Berechnung nötig.",
           "fixedRange": "Der Zeitraum, den Lesende immer sehen, z. B. 7 Tage für die letzte Woche."
         },

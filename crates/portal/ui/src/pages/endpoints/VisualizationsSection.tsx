@@ -246,11 +246,13 @@ export function VisualizationsSection({
   /** A temporal source's defaults in words. */
   const settingsOf = (data: Visualization["data"]) => {
     const aggregated = Boolean(data.aggrMethod && data.aggrPeriod);
+    const named = (field: string, value: string) =>
+      `${t(`endpoints.page.visualizations.fixed.${field}`)}: ${value}`;
     return [
-      word("ranges", RANGES, data.last),
-      word("granularities", GRANULARITIES, aggregated ? data.aggrPeriod : undefined),
+      named("range", word("ranges", RANGES, data.last)),
+      named("granularity", word("granularities", GRANULARITIES, aggregated ? data.aggrPeriod : undefined)),
       ...(aggregated
-        ? [word("methods", Object.fromEntries(METHODS.map((one) => [one, one])), data.aggrMethod)]
+        ? [named("method", word("methods", Object.fromEntries(METHODS.map((one) => [one, one])), data.aggrMethod))]
         : []),
     ].join(" · ");
   };
@@ -276,6 +278,9 @@ export function VisualizationsSection({
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
             <span className="text-sm font-medium text-fg">{titleOf(awaiting)}</span>
             <Badge mono>{awaiting.name}</Badge>
+            {awaiting.data.source === "temporal" ? (
+              <Badge>{t("endpoints.page.visualizations.overTime")}</Badge>
+            ) : null}
             <Badge>{t("endpoints.page.visualizations.awaiting")}</Badge>
             {awaiting.data.source === "temporal" ? (
               <p className="w-full text-body text-fg">
@@ -313,9 +318,6 @@ export function VisualizationsSection({
                   ? t("endpoints.page.visualizations.overTime")
                   : one.data.source}
               </Badge>
-              {one.data.source === "temporal" && one.data.controls === false ? (
-                <Badge>{t("endpoints.page.visualizations.toolbarHidden")}</Badge>
-              ) : null}
               {canEdit ? (
                 <Button
                   size="sm"
@@ -344,7 +346,7 @@ export function VisualizationsSection({
                 ? refused
                     .filter((at) => at.index === other?.index)
                     .map(({ field }) => (
-                      <InlineError key={field} className="w-full text-body">
+                      <InlineError key={field} className="w-full [&>span:last-child]:text-body">
                         {t(`endpoints.page.visualizations.invalid.${field}`, {
                           value: word("ranges", RANGES, one.data.last),
                         })}
@@ -475,10 +477,24 @@ export function VisualizationsSection({
               {t("endpoints.page.visualizations.pickRoles")}
             </p>
           )}
+          <Field
+            id="viz-spec"
+            label={t("endpoints.page.visualizations.spec")}
+            help={t("endpoints.page.visualizations.specHint")}
+            className="mt-3"
+          >
+            <Textarea
+              id="viz-spec"
+              rows={12}
+              className="font-mono text-caption"
+              value={specText}
+              onChange={(event) => setSpecText(event.target.value)}
+            />
+          </Field>
           {sourceOf(template, served) === "temporal" ? (
             <fieldset
-              // What to pick and why is read here, so it is set at body size.
-              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3 [&_[role=alert]]:text-body [&_p]:text-body"
+              // A refusal says what to pick, so it is set at body size.
+              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3 [&_[role=alert]]:text-body"
               data-testid="viz-temporal"
             >
               <legend className="px-1 text-sm font-medium text-fg">
@@ -597,20 +613,6 @@ export function VisualizationsSection({
               )}
             </fieldset>
           ) : null}
-          <Field
-            id="viz-spec"
-            label={t("endpoints.page.visualizations.spec")}
-            help={t("endpoints.page.visualizations.specHint")}
-            className="mt-3"
-          >
-            <Textarea
-              id="viz-spec"
-              rows={12}
-              className="font-mono text-caption"
-              value={specText}
-              onChange={(event) => setSpecText(event.target.value)}
-            />
-          </Field>
           {removing ? null : alert}
           {ready ? null : (
             <p className="mt-3 text-caption text-fg-muted">

@@ -251,9 +251,9 @@ describe("VisualizationsSection", () => {
   }
 
   it.each([
-    ["last", "range", "24 hours can't be used as the range here. Pick 7 days or 31 days."],
-    ["aggrPeriod", "granularity", "Hourly can't be used as the granularity here. Pick Raw readings or Daily."],
-    ["aggrMethod", "method", "Average can't be used as the method here. Pick Minimum or Maximum."],
+    ["last", "range", "24 hours was not accepted as this chart's range. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "Hourly was not accepted as this chart's granularity. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "Average was not accepted as this chart's method. Pick Minimum or Maximum."],
     ["controls", "controls", V.fix.controls],
   ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
     mount(endpoint({ visualizations: [BAR] }), true);
@@ -286,7 +286,7 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
     await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
-    const alert = await screen.findByText(/“NO2 now” was not removed, because the saved chart “NO2 week”/);
+    const alert = await screen.findByText(/“NO2 now” was not removed, because “NO2 week”/);
     expect(screen.getByText(/^7 days is not an allowed range/).closest("li")).toHaveTextContent("no2-week");
     expect(alert).toBeVisible();
     expect(alert.closest("details")).toBeNull();
@@ -322,9 +322,9 @@ describe("VisualizationsSection", () => {
     const long = { ...WEEK, name: "no2-long", data: { ...WEEK.data, last: "P14D" } };
     const raw = { ...WEEK, name: "no2-raw", data: { source: "temporal", type: "T", attrs: ["no2"], last: "PT24H", controls: false } };
     mount(endpoint({ visualizations: [WEEK, raw, long] }), false);
-    expect(screen.getByText("Readers start with: 14 days · Daily · Maximum")).toBeVisible();
-    expect(screen.getByText("Readers start with: 7 days · Daily · Maximum")).toBeVisible();
-    expect(screen.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
+    expect(screen.getByText("Readers start with Range: 14 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Readers start with Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Readers see only Range: 24 hours · Granularity: Raw readings")).toBeVisible();
   });
 
   it("tells the editor what an unticked toolbar means for readers (T-7491)", async () => {

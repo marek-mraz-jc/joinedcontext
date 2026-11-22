@@ -131,7 +131,7 @@ for (const width of [1440, 400]) {
     await expect(page.getByLabel("Default range")).toHaveAccessibleDescription(/e\.g\. 7 days for the last week/);
     await page.getByLabel("Show the toolbar to readers").uncheck();
     await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
-    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change the settings below/);
+    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/always see the settings below/);
 
     await page.getByLabel("Horizontal axis").selectOption("dateObserved");
     await page.getByLabel("Measure").selectOption("no2");
@@ -173,7 +173,7 @@ for (const width of [1440, 400]) {
     await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/31 days can't be used as the range here. Pick 24 hours or 7 days/);
+    await expect(range).toHaveAccessibleDescription(/31 days was not accepted as this chart's range. Pick 24 hours or 7 days/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
@@ -189,7 +189,7 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
     await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
-    await expect(section.getByText("Readers see only: 90 days · Daily · Maximum")).toBeVisible();
+    await expect(section.getByText("Readers see only Range: 90 days · Granularity: Daily · Method: Maximum")).toBeVisible();
     await expect(section.getByText("90 days is not an allowed range")).toBeVisible();
     await expect(section).not.toContainText("/spec/catalog");
     await section.getByRole("alert").filter({ hasText: "was not removed" }).scrollIntoViewIfNeeded();
@@ -227,10 +227,9 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
-    await expect(section.getByText("Fixed for readers", { exact: true })).toHaveCount(2);
-    await expect(section.getByText("Readers start with: 24 hours · Hourly · Average")).toBeVisible();
-    await expect(section.getByText("Readers see only: 7 days · Daily · Maximum")).toBeVisible();
-    await expect(section.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
+    await expect(section.getByText("Readers start with Range: 24 hours · Granularity: Hourly · Method: Average")).toBeVisible();
+    await expect(section.getByText("Readers see only Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    await expect(section.getByText("Readers see only Range: 24 hours · Granularity: Raw readings")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-reader-${width}.png`) });
   });
