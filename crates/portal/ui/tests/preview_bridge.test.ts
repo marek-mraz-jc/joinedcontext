@@ -75,6 +75,16 @@ describe("operationOf", () => {
   });
 });
 
+describe("what no URL parser or decoder keeps", () => {
+  it("names nothing for a path that does not parse or a segment that does not decode", () => {
+    expect(operationOf("GET", "http://[", SLUG)).toBeNull();
+    expect(operationOf("GET", `${BASE}/%E0%A4%A`, SLUG)).toBeNull();
+    expect(functionPathOf("POST", "http://[", FUNCTIONS)).toBeNull();
+    expect(previewObservationOf({ kind: "jc-error" }, 3)).toBeNull();
+    expect(previewObservationOf(null, 3)).toBeNull();
+  });
+});
+
 describe("functionPathOf", () => {
   it("sends a POST of a function name to the run's route with its query and nothing else", () => {
     expect(functionPathOf("POST", "/functions/summary", FUNCTIONS)).toBe(`${FUNCTIONS}summary`);
@@ -157,6 +167,20 @@ describe("handleBridgeMessage", () => {
 
     await send(request({ id: 8 }), { source, fetchImpl });
     expect(source.postMessage).toHaveBeenLastCalledWith({ kind: "jc-response", id: 8, status: 403, body: problem }, "*");
+  });
+
+  it("hands back the text of an answer that is not JSON, or none, and a network failure as status 0", async () => {
+    const read = (fetchImpl: unknown) => send(request({ method: "GET", path: `${BASE}?type=A`, body: undefined }), { fetchImpl });
+    const posted = (source: { postMessage: ReturnType<typeof vi.fn> }) => source.postMessage.mock.calls[0][0];
+    let { source } = await read(vi.fn(async () => new Response("{oops", { status: 502, headers: { "content-type": "application/json" } })));
+    expect(posted(source)).toEqual({ kind: "jc-response", id: 7, status: 502, body: "{oops" });
+    const unreadable = { status: 500, headers: new Headers(), text: () => Promise.reject(new Error("reset")) };
+    ({ source } = await read(vi.fn(async () => unreadable)));
+    expect(posted(source)).toEqual({ kind: "jc-response", id: 7, status: 500, body: null });
+    ({ source } = await read(vi.fn(async () => Promise.reject(new TypeError("Failed to fetch")))));
+    expect(posted(source)).toEqual({ kind: "jc-response", id: 7, status: 0, body: { title: "Failed to fetch" } });
+    ({ source } = await read(vi.fn(async () => Promise.reject("offline"))));
+    expect(posted(source)).toEqual({ kind: "jc-response", id: 7, status: 0, body: { title: "offline" } });
   });
 
   it("calls the run's function with the session and hands back its answer", async () => {

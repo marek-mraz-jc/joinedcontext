@@ -237,6 +237,8 @@ mod tests {
         assert!(!constant_time_eq(b"token", b"token2"));
         assert!(!constant_time_eq(b"token", b""));
         assert!(constant_time_eq(b"", b""));
+        // Two differences that cancel under XOR still differ: each byte's difference is kept.
+        assert!(!constant_time_eq(b"ab", b"`c"));
     }
 
     #[test]
