@@ -6,8 +6,10 @@ has no time for gets the median, so a new test joins a partition by itself. The 
 tests between partitions, never in or out of the run.
 
 Portal (cargo test; its database tests serialize on in-process locks, so binaries run one after
-another): the integration test targets (every member's tests/*.rs, as `cargo metadata` lists
-them), each weighed by its build plus run time; partition 1 also takes every lib and bin target.
+another): partition 1 takes every lib target and nothing else, the others the bins (2) and the
+integration test targets (every member's tests/*.rs, as `cargo metadata` lists them), each
+weighed by its build plus run time. A bin or integration target makes cargo compile the normal
+lib beside the lib's test build: two rustc of 7 to 9 GB on a 16 GB runner, which lost it (T-7513).
 A workspace with an example, a bench or a `test = false` target is refused: `cargo test`'s
 default treats those differently from an explicit target flag. The doc tests run as their own
 command (`cargo test --doc` refuses other target flags).
@@ -49,11 +51,9 @@ import sys
 DURATIONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ci-durations.json")
 # Portal, measured on ci runs 42756711313, 42760631366, 42767791074 and 42769151385 (build phase
 # over target count, four partitions): one integration target compiles and links in about 2 s at
-# -j 4; the lib test binary compiles for up to 276 s (cargo --timings, 42764897027) but beside the
-# lib every partition builds, so it adds about 100 s, and its tests run about 25 s; `cargo test
-# --doc` takes about 135 s when the lib changed.
+# -j 4; the lib test binary compiles for up to 276 s (cargo --timings, 42764897027) and has its
+# partition to itself; `cargo test --doc` takes about 135 s when the lib changed.
 PORTAL_BUILD = 2.0
-PORTAL_LIB = 125.0
 PORTAL_DOC = 135.0
 # root by binary, from cargo --timings of root-test (runs 42764897027, 42769151385: 474 CPU
 # seconds of build on 4 cores took 121 s, so wall time follows CPU time) and the build times of
@@ -100,19 +100,22 @@ def lpt(items, n, cost, loads=None):
 
 
 def portal_split(tests, k, n, times, doc=None):
-    """Partition k (1-based) of n: the libs and bins in 1, the tests by recorded time."""
+    """Partition k (1-based) of n: the libs alone in 1, the bins in 2, the tests by recorded time."""
     # by name: `--test x` selects every member's tests/x.rs, so one name goes to one partition
     names = sorted({name for _, name in tests})
     known = [times[x] for x in names if x in times]
     median = statistics.median(known) if known else 1.0
     weight = {x: PORTAL_BUILD + times.get(x, median) for x in names}
     loads = [0.0] * n
-    loads[0] += PORTAL_LIB
+    if n > 1:
+        loads[0] = math.inf  # nothing beside the lib's test build
     if doc:
         loads[doc - 1] += PORTAL_DOC
     items = sorted(names, key=lambda x: (-weight[x], x))
     parts = lpt(items, n, lambda load, x: load + weight[x], loads)
-    args = ["--lib", "--bins"] if k == 1 else []
+    args = ["--lib"] if k == 1 else []
+    if k == min(n, 2):
+        args.append("--bins")
     for name in sorted(parts[k - 1]):
         args += ["--test", name]
     return args
@@ -461,13 +464,16 @@ def record(key, paths):
 
 
 def selftest():
-    # portal: every name once, libs in 1, the doc partition loaded, unknown names placed
+    # portal: every name once, the libs alone in 1 (no target that pulls the normal lib beside
+    # the lib's test build), the doc partition loaded, unknown names placed
     tests = [("a", "t%d" % i) for i in range(7)] + [("b", "t0")]
     times = {"t0": 300.0, "t1": 1.0, "t2": 1.0}
     parts = [portal_split(tests, k, 3, times, doc=2) for k in (1, 2, 3)]
     named = [a for p in parts for a in p if a not in ("--test", "--lib", "--bins")]
     assert sorted(named) == sorted({n for _, n in tests}), named
-    assert parts[0][:2] == ["--lib", "--bins"] and "--lib" not in parts[1] + parts[2]
+    assert parts[0] == ["--lib"] and parts[1][0] == "--bins", parts
+    assert "--lib" not in parts[1] + parts[2] and "--bins" not in parts[2], parts
+    assert portal_split(tests, 1, 1, times)[:2] == ["--lib", "--bins"]
     # the 300 s target sits alone in the partition without the lib and the doc tests
     assert parts[2] == ["--test", "t0"], parts
     # nextest: every test exactly once, a serial group spread, unknown tests placed
