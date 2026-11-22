@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * My Connector's Calls
-         * @description Every call through the connector, newest first, at most 200 of the last 30 days: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
+         * @description Every call through the connector, newest first, the latest 200 the installation still keeps: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
          */
         get: operations["connector_activity"];
         put?: never;

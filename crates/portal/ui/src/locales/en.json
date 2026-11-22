@@ -12207,7 +12207,7 @@
     "lastCall": "Last call",
     "setupTitle": "Add it to your AI client",
     "activityLoading": "Loading the calls",
-    "noCalls": "No calls through this connector in the last 30 days.",
+    "noCalls": "No calls through this connector are kept. Each call it makes appears here.",
     "activityOf": "Calls through {name}",
     "noProjects": "You read no project and nothing is shared with you yet, so a connector has nothing to reach. Ask a project owner or your organization's administrator for access.",
     "accessOf": "Access for {what}",

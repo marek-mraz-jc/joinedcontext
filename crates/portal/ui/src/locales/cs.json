@@ -12207,7 +12207,7 @@
     "lastCall": "Poslední volání",
     "setupTitle": "Přidejte ho do svého AI klienta",
     "activityLoading": "Načítají se volání",
-    "noCalls": "Za posledních 30 dní přes tento konektor nepřišlo žádné volání.",
+    "noCalls": "Žádné volání přes tento konektor není uchováno. Každé jeho volání se zobrazí zde.",
     "activityOf": "Volání přes {name}",
     "noProjects": "Zatím nečtete žádný projekt a nic s vámi není sdíleno, takže konektor nemá na co sahat. Požádejte vlastníka projektu nebo správce organizace o přístup.",
     "accessOf": "Přístup pro {what}",
