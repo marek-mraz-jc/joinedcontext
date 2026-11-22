@@ -14,6 +14,8 @@ use odata_table::{MemoryTable, query};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const LEASE: std::time::Duration = std::time::Duration::from_secs(90);
+
 mod common;
 
 async fn seed_store(store: &Arc<dyn Store>) {
@@ -167,27 +169,28 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
     let s1 = store.clone();
     let s2 = store.clone();
     let (b1, b2) = tokio::join!(
-        s1.claim_outbox_batch("dev", 10),
-        s2.claim_outbox_batch("dev", 10)
+        s1.claim_outbox_batch("dev", 10, LEASE, 5),
+        s2.claim_outbox_batch("dev", 10, LEASE, 5)
     );
-    let mut claimed_ids: Vec<String> = b1
-        .unwrap()
-        .into_iter()
-        .chain(b2.unwrap())
-        .map(|r| r.id)
-        .collect();
-    claimed_ids.sort();
-    assert_eq!(claimed_ids, vec!["ob-1".to_owned(), "ob-2".to_owned()]);
+    let mut claimed: Vec<EmailOutboxRecord> =
+        b1.unwrap().into_iter().chain(b2.unwrap()).collect();
+    claimed.sort_by(|a, b| a.id.cmp(&b.id));
+    let claimed_ids: Vec<&str> = claimed.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(claimed_ids, ["ob-1", "ob-2"]);
 
     // Mark ob-1 sent and ob-2 failed after max_attempts=1, then retry ob-2.
-    store
-        .complete_outbox_row("dev", "ob-1", true, None, None, 3)
-        .await
-        .unwrap();
-    store
-        .complete_outbox_row("dev", "ob-2", false, Some("SMTP timeout".into()), None, 1)
-        .await
-        .unwrap();
+    assert!(
+        store
+            .complete_outbox_row(&claimed[0], true, None, None, 3)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .complete_outbox_row(&claimed[1], false, Some("SMTP timeout".into()), None, 1)
+            .await
+            .unwrap()
+    );
     let rows = store.list_outbox_rows("dev", None).await.unwrap();
     let r2 = rows.iter().find(|r| r.id == "ob-2").unwrap();
     assert_eq!(r2.status, "failed");
@@ -410,7 +413,7 @@ async fn pg_outbox_claim_skips_rows_another_dispatcher_holds() {
         .unwrap();
     let claimed = tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        store.claim_outbox_batch("dev", 10),
+        store.claim_outbox_batch("dev", 10, LEASE, 5),
     )
     .await
     .expect("the claim does not wait for the held row")
