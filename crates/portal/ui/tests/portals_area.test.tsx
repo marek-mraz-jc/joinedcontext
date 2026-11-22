@@ -5,6 +5,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/re
 import { hostOf } from "../src/pages/portals/PortalHosts";
 import userEvent from "@testing-library/user-event";
 import { draftOf, faultsOf, fieldOfRefusal, portalAddress, specOf } from "../src/pages/portals/PortalsArea";
+import { choiceOf } from "../src/pages/portals/PortalProfiles";
 import { expectAxeClean, expectOneH1, jsonResponse, list, problem, renderRoute } from "./pageHarness";
 
 afterEach(() => {
@@ -12,8 +13,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const PROFILES = [
+  { id: "dcat-ap-3.0.1", title: { en: "DCAT-AP 3.0.1" }, always: true },
+  { id: "geodcat-ap-3.1.0", title: { en: "GeoDCAT-AP 3.1.0" }, always: false },
+  { id: "dcat-ap-fi-2.0", title: { en: "DCAT-AP-FI 2.0" }, country: "FI", always: false, blocked: "dcat-ap-fi-2.0 needs the publisher's IRI" },
+];
+
 const HOSTS = {
-  items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk", sites: [], bases: [] }],
+  items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk", sites: [], bases: [], profiles: PROFILES }],
 };
 
 const BASE_HOST = "bbsk.smartcity.example";
@@ -61,6 +68,18 @@ describe("portal helpers", () => {
     const back = specOf({ ...draft, mode: "slug" }, spec);
     expect(back.host).toBeUndefined();
     expect(back.slug).toBeUndefined();
+  });
+
+  it("tells a stated profile choice from none (T-7521)", () => {
+    expect(choiceOf(undefined)).toBeUndefined();
+    expect(choiceOf(["dcat-ap-3.0.1"])).toBeUndefined();
+    expect(choiceOf([])).toEqual([]);
+    expect(choiceOf(["dcat-ap-3.0.1", "dcat-ap-cz"])).toEqual(["dcat-ap-cz"]);
+    const stored = { organizationRef: "bbsk", path: "mobility", profiles: ["dcat-ap-3.0.1"] };
+    expect(specOf(draftOf(stored, "bbsk"), stored).profiles).toEqual(["dcat-ap-3.0.1"]);
+    expect(specOf(draftOf(undefined, "bbsk"), undefined).profiles).toBeUndefined();
+    expect(specOf({ ...draftOf(stored, "bbsk"), profiles: [] }, stored).profiles).toEqual([]);
+    expect(fieldOfRefusal("spec.profiles[0]: x is not installed here")).toBe("profiles");
   });
 
   it("refuses a bad name, default, a taken name, no title and a domain not chosen", () => {
@@ -170,6 +189,61 @@ describe("the portal editor", () => {
     await user.click(screen.getByRole("button", { name: "Propose the portal" }));
     expect(await screen.findByText("Write the title in the first language.")).toBeInTheDocument();
     expect(rendered.calls().filter((call) => call.startsWith("POST"))).toEqual([]);
+  });
+
+  it("offers the installed profiles, refuses the blocked one and puts a refusal on the field", async () => {
+    const user = userEvent.setup();
+    const sent: { spec: { profiles?: string[] } }[] = [];
+    const { container } = await renderRoute({
+      path: "/portals/bbsk-mobility",
+      permissions: ADMIN,
+      answer: (path, request) => {
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(HOSTS);
+        if (path === "/api/v1/projects/org/portals/bbsk-mobility/datasets") return jsonResponse({ total: 0, missingPublisher: [], profiles: [], items: [] });
+        if (path === "/api/v1/projects/org/portals/bbsk-mobility") {
+          if (request.method === "GET") return jsonResponse(portal("mobility", { languages: ["en"] }));
+          return request.json().then((body) => {
+            sent.push(body);
+            return problem(422, "spec.profiles[0]: geodcat-ap-3.1.0 is not installed here");
+          });
+        }
+        return undefined;
+      },
+    });
+    const fi = await screen.findByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
+    expect(fi).toBeDisabled();
+    expect(fi).toHaveAccessibleDescription("dcat-ap-fi-2.0 needs the publisher's IRI");
+    expect(screen.getByRole("checkbox", { name: "DCAT-AP 3.0.1" })).toBeChecked();
+    const geo = screen.getByRole("checkbox", { name: "GeoDCAT-AP 3.1.0" });
+    await waitFor(() => expect(geo).toBeEnabled());
+    await user.click(geo);
+    await user.click(screen.getByRole("button", { name: "Propose the changes" }));
+    await waitFor(() => expect(sent.length).toBe(1));
+    expect(sent[0].spec.profiles).toEqual(["geodcat-ap-3.1.0"]);
+    expect(await screen.findByText("geodcat-ap-3.1.0 is not installed here")).toBeInTheDocument();
+    await expectAxeClean(container);
+  });
+
+  it("starts from what the catalogue serves and never withdraws it unread", async () => {
+    const answers = (datasets: () => Response) => ({
+      path: "/portals/bbsk-mobility",
+      permissions: ADMIN,
+      answer: (path: string) => {
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(HOSTS);
+        if (path === "/api/v1/projects/org/portals/bbsk-mobility/datasets") return datasets();
+        if (path === "/api/v1/projects/org/portals/bbsk-mobility") return jsonResponse(portal("mobility"));
+        return undefined;
+      },
+    });
+    await renderRoute(answers(() => jsonResponse({ total: 0, missingPublisher: [], profiles: ["dcat-ap-fi-2.0"], items: [] })));
+    const served = await screen.findByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
+    await waitFor(() => expect(served).toBeChecked());
+    expect(served).toBeEnabled();
+    cleanup();
+
+    await renderRoute(answers(() => problem(503, "no catalogue")));
+    expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "GeoDCAT-AP 3.1.0" })).toBeDisabled();
   });
 
   it("does not offer to remove the default portal", async () => {

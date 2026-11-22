@@ -38,15 +38,13 @@ import {
 import { PortalFilesTab } from "./PortalFiles";
 import { PortalLayoutTab } from "./PortalLayout";
 import { PortalHostsPanel } from "./PortalHosts";
+import { PortalProfilesField } from "./PortalProfiles";
 import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
 type PortalOrganization = components["schemas"]["PortalOrganization"];
 
 /** The languages a portal is shown in: the Portal's own locales (ODP-08). */
 export const PORTAL_LANGUAGES = ["sk", "en", "cs", "de"] as const;
-
-/** The DCAT-AP profiles the catalogue's feeds know (dataroom profile registry). */
-export const PORTAL_PROFILES = ["dcat-ap-3.0.1", "dcat-ap-sk-2.0", "dcat-ap-cz"] as const;
 
 /** The default portal of an Organization: its own catalogue, never deleted (ODP-09). */
 const DEFAULT_PATH = "default";
@@ -253,7 +251,8 @@ export interface PortalDraft {
   keepSlug: boolean;
   instanceName: string;
   primary: string;
-  profiles: string[];
+  /** The profiles chosen in the editor; `undefined` leaves `spec.profiles` as it is stored. */
+  profiles: string[] | undefined;
 }
 
 export function draftOf(spec: PortalSpec | undefined, organization: string): PortalDraft {
@@ -267,7 +266,7 @@ export function draftOf(spec: PortalSpec | undefined, organization: string): Por
     keepSlug: spec?.slug === "keep",
     instanceName: spec?.appearance?.instanceName ?? "",
     primary: spec?.appearance?.colours?.primary ?? "",
-    profiles: spec?.profiles ? [...spec.profiles] : ["dcat-ap-3.0.1"],
+    profiles: undefined,
   };
 }
 
@@ -296,12 +295,11 @@ export function specOf(draft: PortalDraft, stored: PortalSpec | undefined): Port
   if (!appearance.colours) delete appearance.colours;
   if (Object.keys(appearance).length > 0) spec.appearance = appearance;
   else delete spec.appearance;
-  if (draft.profiles.length > 0) spec.profiles = draft.profiles;
-  else delete spec.profiles;
+  if (draft.profiles) spec.profiles = draft.profiles;
   return spec;
 }
 
-type DraftField = "organization" | "path" | "title" | "languages" | "host" | "primary";
+type DraftField = "organization" | "path" | "title" | "languages" | "host" | "primary" | "profiles";
 
 /** What the editor refuses before anything is sent, by field, as locale keys. */
 export function faultsOf(draft: PortalDraft, creating: boolean, taken: string[]): Partial<Record<DraftField, string>> {
@@ -326,6 +324,7 @@ export function fieldOfRefusal(line: string): DraftField | undefined {
   if (member.startsWith("spec.title")) return "title";
   if (member.startsWith("spec.languages")) return "languages";
   if (member.startsWith("spec.appearance")) return "primary";
+  if (member.startsWith("spec.profiles")) return "profiles";
   return undefined;
 }
 
@@ -527,7 +526,7 @@ function PortalForm({
             value={draft.organization}
             disabled={!creating}
             title={creating ? undefined : t("portals.editor.fixed")}
-            onChange={(event) => set({ organization: event.target.value, host: "" })}
+            onChange={(event) => set({ organization: event.target.value, host: "", profiles: undefined })}
           >
             <option value="">{t("portals.field.organizationPick")}</option>
             {organizations.map((o) => (
@@ -650,24 +649,14 @@ function PortalForm({
         <Field id="portal-primary" label={t("portals.field.primary")} description={t("portals.hint.primary")} errors={errorOf("primary")}>
           <Input id="portal-primary" value={draft.primary} spellCheck={false} onChange={(event) => set({ primary: event.target.value })} />
         </Field>
-        <fieldset className="space-y-2" aria-describedby="portal-profiles-hint">
-          <legend className="text-body font-medium text-fg">{t("portals.field.profiles")}</legend>
-          <p id="portal-profiles-hint" className="text-caption text-fg-muted">
-            {t("portals.hint.profiles")}
-          </p>
-          <div className="flex flex-wrap gap-4">
-            {PORTAL_PROFILES.map((profile) => (
-              <Checkbox
-                key={profile}
-                label={profile}
-                checked={draft.profiles.includes(profile)}
-                onChange={(event) =>
-                  set({ profiles: event.target.checked ? [...draft.profiles, profile] : draft.profiles.filter((p) => p !== profile) })
-                }
-              />
-            ))}
-          </div>
-        </fieldset>
+        <PortalProfilesField
+          name={name}
+          profiles={org?.profiles ?? []}
+          stored={stored?.spec.profiles}
+          chosen={draft.profiles}
+          error={errorOf("profiles")?.[0]}
+          onChange={(profiles) => set({ profiles })}
+        />
       </Card>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant="primary" loading={mutation.isPending}>

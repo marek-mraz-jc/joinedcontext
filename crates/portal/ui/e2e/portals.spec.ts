@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
+import { writePhoneReport } from "./phoneCheck.cts";
 
 // The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
@@ -62,6 +63,8 @@ interface Stub {
   hostsBody?: unknown;
   /** What a write of a portal host answers; the default is the hosts answer. */
   hostWrite?: (route: Route) => Promise<void>;
+  /** The datasets read of a portal (T-7520); 503 when false. */
+  datasets?: unknown;
 }
 
 async function stub(page: Page, options: Stub): Promise<string[]> {
@@ -84,6 +87,9 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
     if (path === "/api/v1/organization/portal-hosts") {
       if (options.hostsBody) return json(options.hostsBody);
       return options.hosts ? json({ type: "about:blank", title: "Forbidden", status: options.hosts, detail: "only an Organization's administrator" }, options.hosts) : json(HOSTS);
+    }
+    if (/^\/api\/v1\/projects\/org\/portals\/[^/]+\/datasets$/.test(path) && options.datasets !== undefined) {
+      return options.datasets === false ? json({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "no catalogue" }, 503) : json(options.datasets);
     }
     if (path.startsWith("/api/v1/projects/org/portals")) {
       if (request.method() !== "GET") {
@@ -274,3 +280,95 @@ test("create, edit and delete a portal: each write a checked proposal", async ({
   await expect.poll(() => sent.some((s) => s.startsWith("DELETE /api/v1/projects/org/portals/bbsk-skoly"))).toBe(true);
   expect(sent.filter((s) => s.startsWith("POST")).map((s) => s.includes("dryRun"))).toEqual([true, false]);
 });
+
+// T-7520 and T-7521: the profiles an administrator chooses, and what keeps a dataset out of a feed.
+const PROFILES = [
+  { id: "dcat-ap-3.0.1", title: { en: "DCAT-AP 3.0.1 (European Union)" }, always: true },
+  { id: "dcat-ap-fi-2.0", title: { en: "DCAT-AP-FI 2.0" }, country: "FI", always: false },
+  { id: "geodcat-ap-3.1.0", title: { en: "GeoDCAT-AP 3.1.0" }, always: false },
+  {
+    id: "dcat-ap-sk-2.0",
+    title: { en: "DCAT-AP-SK 2.0" },
+    country: "SK",
+    always: false,
+    blocked: "dcat-ap-sk-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki, e.g. https://data.gov.sk/id/legal-subject/…",
+  },
+];
+const HELSINKI = portal("helsinki", { en: "Helsinki open data", fi: "Helsingin avoin data" });
+const profileHosts = (profiles: unknown[]) => ({ items: [{ ...HOSTS.items[0], profiles }] });
+const CATALOGUE = {
+  total: 2,
+  missingPublisher: ["dcat-ap-sk-2.0"],
+  profiles: ["dcat-ap-sk-2.0", "dcat-ap-fi-2.0"],
+  items: [
+    { name: "bike-stations", title: "City bike stations", source: "endpoints", hidden: false, missing: [] },
+    {
+      name: "tree-register",
+      title: "Register of street trees",
+      source: "endpoints",
+      hidden: false,
+      missing: [{ profile: "dcat-ap-sk-2.0", fields: ["personal_data", "applicable_legislation"] }],
+    },
+  ],
+};
+
+for (const width of [1440, 400]) {
+  test.describe(`profiles at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: width === 400, isMobile: width === 400 });
+
+    test("the choice with none, some, a refusal and no answer, and the datasets out of a feed", async ({ page }, info) => {
+      const state = async (name: string) => {
+        const dir = process.env.JC_EVIDENCE_DIR;
+        const shot = dir ? `${dir}/${name}-${width}.png` : info.outputPath(`${name}-${width}.png`);
+        await shoot(page, name, width, shot);
+        if (width === 400) expect(await writePhoneReport(page, shot)).toEqual([]);
+        expect(await axeViolations(page)).toEqual([]);
+        await page.setViewportSize({ width, height: 900 });
+      };
+      const field = page.getByRole("group", { name: "Catalogue profiles" });
+      const open = async (options: Partial<Stub>) => {
+        await page.unrouteAll();
+        await manifestReadsAsRest(page);
+        const sent = await stub(page, { portals: [HELSINKI], hostsBody: profileHosts(PROFILES), ...options });
+        await page.goto("/portals/bbsk-helsinki?lang=en");
+        await expect(field).toBeVisible();
+        return sent;
+      };
+
+      await open({ hostsBody: profileHosts(PROFILES.slice(0, 1)), datasets: { total: 0, missingPublisher: [], profiles: [], items: [] } });
+      await expect(field.getByText(/No other profile is installed/)).toBeVisible();
+      await state("profiles-empty");
+
+      await open({ datasets: false });
+      await expect(field.getByText(/could not be read/)).toBeVisible();
+      await state("profiles-error");
+
+      const refuse = (route: Route) =>
+        route.fulfill({
+          status: 422,
+          contentType: "application/problem+json",
+          body: JSON.stringify({ type: "about:blank", title: "Unprocessable", status: 422, detail: "refused", errors: ["spec.profiles[0]: dcat-ap-fi-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki"] }),
+        });
+      const sent = await open({ datasets: { total: 0, missingPublisher: [], profiles: [], items: [] }, write: refuse });
+      const fi = field.getByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
+      await expect(fi).toBeEnabled();
+      await expect(field.getByRole("checkbox", { name: "DCAT-AP-SK 2.0 (SK)" })).toBeDisabled();
+      await state("profiles-choice");
+      await fi.check();
+      const write = page.waitForRequest((request) => request.method() === "PUT");
+      await page.getByRole("button", { name: "Propose the changes" }).click();
+      expect(((await write).postDataJSON() as { spec: { profiles: string[] } }).spec.profiles).toEqual(["dcat-ap-fi-2.0"]);
+      await expect(field.getByRole("alert")).toContainText("needs the publisher's IRI");
+      expect(sent.length).toBeGreaterThan(0);
+      await state("profiles-refusal");
+
+      await open({ datasets: CATALOGUE });
+      await expect(fi).toBeChecked();
+      await state("profiles-filled");
+      await page.getByRole("tab", { name: "Datasets" }).click();
+      await expect(page.getByText("Missing publisher")).toBeVisible();
+      await expect(page.getByText(/applicable_legislation/).filter({ visible: true }).first()).toBeVisible();
+      await state("datasets-gaps");
+    });
+  });
+}

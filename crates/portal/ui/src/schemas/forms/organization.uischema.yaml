@@ -25,7 +25,7 @@ spec:
       Die Organisation ist die Stelle, der jedes Projekt hier gehört: ihre Internet-Domain benennt
       jede Entität, ihre Sprachen bietet das Portal an, und ihre Kontakte stehen für sie ein. Die
       Projektregeln unten bestimmen, wer ein Projekt eröffnet, wer es liest und was es enthalten darf.
-  order: [domain, locales, defaultLocale, contacts, appearance, projects, policies, limits]
+  order: [domain, locales, defaultLocale, contacts, catalog, appearance, projects, policies, limits]
   groups:
     - title:
         en: The organization
@@ -48,7 +48,7 @@ spec:
         sk: Ľudia, ktorým píše používateľ zverejnených dát, jeden na každú zodpovednosť.
         cs: Lidé, kterým píše uživatel zveřejněných dat, jeden na každou odpovědnost.
         de: Die Menschen, an die Nutzer der veröffentlichten Daten schreiben, je Zuständigkeit.
-      fields: [contacts]
+      fields: [contacts, catalog]
     - title:
         en: How it looks
         sk: Ako vyzerá
@@ -321,6 +321,18 @@ spec:
         sk: Telefónne číslo v medzinárodnom tvare, ak kontakt prijíma hovory.
         cs: Telefonní číslo v mezinárodním tvaru, pokud kontakt přijímá hovory.
         de: Eine Telefonnummer im internationalen Format, falls der Kontakt Anrufe annimmt.
+    catalog.publisher.uri:
+      help:
+        en: "The publisher's IRI in the register your national portal reads; without it the national feeds are unavailable. For example https://data.gov.sk/id/legal-subject/00691135 or https://www.helsinki.fi/."
+        sk: "IRI poskytovateľa v registri, ktorý číta národný portál; bez neho sú národné feedy nedostupné. Napríklad https://data.gov.sk/id/legal-subject/00691135."
+        cs: "IRI poskytovatele v registru, který čte národní portál; bez něj jsou národní feedy nedostupné. Například https://www.helsinki.fi/ nebo IRI z registru orgánů veřejné moci."
+        de: "Die IRI des Herausgebers im Register Ihres nationalen Portals; ohne sie sind die nationalen Feeds nicht verfügbar. Zum Beispiel https://www.helsinki.fi/."
+    catalog.publisher.name:
+      help:
+        en: "The legal name the catalogue publishes as its publisher, by language. For example City of Helsinki."
+        sk: "Úradný názov, ktorý katalóg uvádza ako poskytovateľa, podľa jazyka. Napríklad Mesto Košice."
+        cs: "Úřední název, který katalog uvádí jako poskytovatele, podle jazyka. Například Hlavní město Praha."
+        de: "Der amtliche Name, den der Katalog als Herausgeber nennt, je Sprache. Zum Beispiel Stadt Helsinki."
     projects.creation:
       help:
         en: Who may open a project - anyone signed in (anyone), only an organization administrator (org-admin), or the members of one group (group:<name>).

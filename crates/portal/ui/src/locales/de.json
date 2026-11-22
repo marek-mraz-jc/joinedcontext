@@ -13306,7 +13306,7 @@
       "keepSlug": "Die übliche Adresse ebenfalls behalten",
       "instanceName": "Name in der Kopfzeile",
       "primary": "Hauptfarbe",
-      "profiles": "DCAT-AP-Profile"
+      "profiles": "Katalogprofile"
     },
     "hint": {
       "organization": "Die Organisation, der das Portal gehört; es zieht nie zu einer anderen um. Zum Beispiel berlin.",
@@ -13318,7 +13318,7 @@
       "keepSlug": "Aus: die übliche Adresse leitet zur Domain weiter. An: beide antworten, die Domain gilt als kanonisch.",
       "instanceName": "Ersetzt den Namen der Organisation in der Kopfzeile dieses Portals, zum Beispiel Mobilität Berlin. Leer behält den der Organisation.",
       "primary": "Eine Hex-Farbe für Schaltflächen und Links des Portals, zum Beispiel #0b5394. Leer behält die der Organisation.",
-      "profiles": "Die Profile, in denen das Portal seine DCAT-AP-Feeds anbietet, zum Beispiel dcat-ap-3.0.1."
+      "profiles": "EU DCAT-AP wird immer angeboten. Haken Sie das Profil eines Landes oder Themas an, um dessen Feed hinzuzufügen, zum Beispiel DCAT-AP-FI für avoindata.fi. Ein Datensatz ohne ein vom Profil verlangtes Feld fehlt in diesem Feed und steht im Reiter der Datensätze."
     },
     "mode": {
       "slug": "Übliche Adresse unter dem Open-Data-Portal der Organisation",
@@ -13543,7 +13543,13 @@
       "unhideNamed": "{name} wieder anzeigen",
       "noCatalogue": "Diese Installation stellt noch keinen Open-Data-Katalog bereit, daher listet dieses Portal hier keine Datensätze. Bitten Sie Ihren Betreiber, den Katalog einzuschalten.",
       "toSources": "Zu den Quellen",
-      "noCatalogueTitle": "Hier noch kein Open-Data-Katalog"
+      "noCatalogueTitle": "Hier noch kein Open-Data-Katalog",
+      "feeds": "Feeds",
+      "allFeeds": "In allen gewählten Feeds",
+      "notIn": "Nicht in {profile}",
+      "lacks": "Fehlt oder ist ungültig: {fields}",
+      "noPublisherTitle": "Herausgeber fehlt",
+      "noPublisher": "Diese Feeds sind nicht verfügbar, bis die Organisation ihre Herausgeber-IRI in spec.catalog.publisher.uri angibt: {profiles}."
     },
     "hosts": {
       "title": "Portal-Adressen",
@@ -13727,6 +13733,14 @@
       "edit": "{type} bearbeiten",
       "fold": "{type} einklappen",
       "hidePreview": "Vorschau ausblenden"
+    },
+    "profiles": {
+      "always": "Immer angeboten",
+      "none": "Hier ist kein weiteres Profil installiert. Bitten Sie Ihren Betreiber um das Profil Ihres nationalen Portals.",
+      "notInstalled": "Hier nicht installiert: sein Feed ist nicht verfügbar. Entfernen Sie den Haken oder fragen Sie Ihren Betreiber.",
+      "unknown": "Die derzeit angebotenen Profile konnten nicht gelesen und daher nicht geändert werden. Laden Sie die Seite neu.",
+      "declare": "Ein nationales Profil braucht die Herausgeber-IRI Ihrer Organisation, zum Beispiel https://www.helsinki.fi/.",
+      "declareLink": "Einstellungen der Organisation öffnen"
     }
   },
   "assistantGuides": {

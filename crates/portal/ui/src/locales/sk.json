@@ -13306,7 +13306,7 @@
       "keepSlug": "Ponechať aj bežnú adresu",
       "instanceName": "Meno v hlavičke",
       "primary": "Hlavná farba",
-      "profiles": "Profily DCAT-AP"
+      "profiles": "Profily katalógu"
     },
     "hint": {
       "organization": "Organizácia, ktorej portál patrí; nikdy sa nepresunie k inej. Napríklad bratislava.",
@@ -13318,7 +13318,7 @@
       "keepSlug": "Vypnuté: bežná adresa presmeruje na doménu. Zapnuté: odpovedajú obe a doména je uvedená ako kanonická.",
       "instanceName": "Nahradí meno organizácie v hlavičke tohto portálu, napríklad Doprava Bratislava. Prázdne ponechá meno organizácie.",
       "primary": "Farba tlačidiel a odkazov portálu v tvare hex, napríklad #0b5394. Prázdne ponechá farbu organizácie.",
-      "profiles": "Profily, v ktorých portál ponúka DCAT-AP, napríklad dcat-ap-3.0.1."
+      "profiles": "EU DCAT-AP sa poskytuje vždy. Zaškrtnutím profilu krajiny alebo témy pridáte jeho feed, napríklad DCAT-AP-FI pre avoindata.fi. Dataset bez poľa, ktoré profil vyžaduje, v tom feede nebude a uvidíte ho na karte Datasety."
     },
     "mode": {
       "slug": "Bežná adresa pod portálom otvorených údajov organizácie",
@@ -13543,7 +13543,13 @@
       "unhideNamed": "Znova zobraziť {name}",
       "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tento portál tu nevypíše žiadne datasety. Požiadajte operátora o zapnutie katalógu.",
       "toSources": "Prejsť na Zdroje",
-      "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát"
+      "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát",
+      "feeds": "Feedy",
+      "allFeeds": "Vo všetkých zvolených feedoch",
+      "notIn": "Nie je v {profile}",
+      "lacks": "Chýba alebo je neplatné: {fields}",
+      "noPublisherTitle": "Chýba poskytovateľ",
+      "noPublisher": "Tieto feedy sú nedostupné, kým organizácia neuvedie IRI poskytovateľa v spec.catalog.publisher.uri: {profiles}."
     },
     "hosts": {
       "title": "Adresy portálov",
@@ -13727,6 +13733,14 @@
       "edit": "Upraviť: {type}",
       "fold": "Zbaliť: {type}",
       "hidePreview": "Skryť náhľad"
+    },
+    "profiles": {
+      "always": "Poskytuje sa vždy",
+      "none": "Iný profil tu nie je nainštalovaný. Požiadajte prevádzkovateľa o ten, ktorý zbiera váš národný portál.",
+      "notInstalled": "Tu nie je nainštalovaný: jeho feed je nedostupný. Odškrtnite ho alebo požiadajte prevádzkovateľa.",
+      "unknown": "Profily, ktoré katalóg práve poskytuje, sa nepodarilo načítať, preto ich nemožno zmeniť. Obnovte stránku.",
+      "declare": "Národný profil potrebuje IRI poskytovateľa vašej organizácie, napríklad https://data.gov.sk/id/legal-subject/00691135.",
+      "declareLink": "Otvoriť nastavenia organizácie"
     }
   },
   "assistantGuides": {

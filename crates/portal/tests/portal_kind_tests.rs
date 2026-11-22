@@ -39,6 +39,12 @@ fn world() -> AppState {
     config.portal_settings =
         joinedcontext_portal::portals::parse("bbsk=doprava.bbsk.sk", Some("6"), "")
             .expect("settings");
+    config.portal_settings.profiles = joinedcontext_portal::portals::parse_profiles(
+        r#"[{"id": "geodcat-ap-3.1.0", "title": {"en": "GeoDCAT-AP"}},
+            {"id": "dcat-ap-fi-2.0", "title": {"en": "DCAT-AP-FI"}, "country": "FI",
+             "publisher": true}]"#,
+    )
+    .expect("profiles");
     let state = AppState::new(config, None).with_mirror(Arc::new(Mirror::new()));
     let m = &state.mirror;
     for (name, spec) in [
@@ -49,7 +55,10 @@ fn world() -> AppState {
         ("bbsk", json!({ "domain": "bbsk.sk" })),
         ("praha", json!({ "domain": "praha.eu" })),
     ] {
-        m.upsert(envelope("Organization", name, ORG_NAMESPACE, spec));
+        let mut org = envelope("Organization", name, ORG_NAMESPACE, spec);
+        // The name its catalogues publish under (T-7520).
+        org.metadata.title = serde_json::from_value(json!(name.to_uppercase())).expect("a title");
+        m.upsert(org);
     }
     let kinds: Vec<&str> = joinedcontext_portal::resource::kinds()
         .map(|info| info.kind)
@@ -213,18 +222,27 @@ async fn another_organizations_portal_is_not_there() {
 async fn portal_hosts_lists_only_the_callers_organizations() {
     let state = world();
     let hosts = "/api/v1/organization/portal-hosts";
+    let profiles = |org: &str| {
+        json!([
+            { "id": "geodcat-ap-3.1.0", "title": { "en": "GeoDCAT-AP" }, "always": false },
+            { "id": "dcat-ap-fi-2.0", "title": { "en": "DCAT-AP-FI" }, "country": "FI",
+              "always": false, "blocked": format!(
+                "dcat-ap-fi-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on \
+                 Organization {org}, e.g. https://www.helsinki.fi/…") },
+        ])
+    };
     let own = http(&state, admin("bbadmin"), "GET", hosts, None).await;
     assert_eq!(own.status, StatusCode::OK, "{}", own.body);
     assert_eq!(
         own.body["items"],
-        json!([{ "organization": "bbsk", "hosts": ["doprava.bbsk.sk"], "sites": [], "bases": [] }]),
+        json!([{ "organization": "bbsk", "hosts": ["doprava.bbsk.sk"], "sites": [], "bases": [], "profiles": profiles("bbsk") }]),
         "{}",
         own.body
     );
     let theirs = http(&state, admin("prahaadmin"), "GET", hosts, None).await;
     assert_eq!(
         theirs.body["items"],
-        json!([{ "organization": "praha", "hosts": [], "sites": [], "bases": [] }]),
+        json!([{ "organization": "praha", "hosts": [], "sites": [], "bases": [], "profiles": profiles("praha") }]),
         "{}",
         theirs.body
     );
@@ -240,6 +258,44 @@ async fn portal_hosts_lists_only_the_callers_organizations() {
         .await
         .expect("response");
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// T-7521: only the Organization's administrator chooses, and only what the server offers.
+#[tokio::test]
+async fn a_profile_choice_is_the_admins_and_is_checked_again() {
+    let state = world();
+    let choosing = |profiles: Value| {
+        let mut manifest = manifest("bbsk", "skoly", None);
+        manifest["spec"]["profiles"] = profiles;
+        manifest
+    };
+    let geo = put(&state, "bbadmin", choosing(json!(["geodcat-ap-3.1.0"]))).await;
+    assert!(
+        geo.status.is_success() && refusal(&geo).is_none(),
+        "{} {}",
+        geo.status,
+        geo.body
+    );
+    for who in ["prahaadmin", "stranger"] {
+        let answer = put(&state, who, choosing(json!(["geodcat-ap-3.1.0"]))).await;
+        assert!(
+            matches!(answer.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+            "{who}: {} {}",
+            answer.status,
+            answer.body
+        );
+    }
+    for (id, why) in [
+        ("dcat-ap-zz", "not installed"),
+        ("dcat-ap-fi-2.0", "spec.catalog.publisher.uri"),
+    ] {
+        let answer = put(&state, "bbadmin", choosing(json!([id]))).await;
+        let line = refusal(&answer).unwrap_or_default();
+        assert!(
+            line.contains("spec.profiles[0]") && line.contains(why),
+            "{line}"
+        );
+    }
 }
 
 #[tokio::test]

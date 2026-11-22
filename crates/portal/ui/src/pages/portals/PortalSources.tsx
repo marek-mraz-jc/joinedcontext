@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { JSX } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ApiError, queryKeys } from "../../api/client";
@@ -26,6 +27,8 @@ import {
   Select,
 } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
+import { profileLabel } from "./PortalProfiles";
+import { usePortalHosts } from "./PortalsArea";
 import type { PortalSpec } from "./PortalsArea";
 
 /** The source types a Portal knows (docs/kinds/Portal.md, ODP-10), the harvested ones after `endpoints`. */
@@ -661,10 +664,12 @@ interface DatasetRow {
   title: string;
   source: string;
   hidden: boolean;
+  /** The feeds it is absent from, with the fields that keep it out (T-7520). */
+  missing: { profile: string; fields: string[] }[];
 }
 
 /** The portal's datasets, its first {@link MOST}, page by page. */
-export async function readDatasets(name: string): Promise<{ total: number; items: DatasetRow[] }> {
+export async function readDatasets(name: string): Promise<{ total: number; missingPublisher: string[]; items: DatasetRow[] }> {
   const read = async (offset: number) =>
     (await door("portal_portal_datasets", { name, offset, limit: PAGE })) as RestAnswer<"list_portal_datasets">;
   const first = await read(0);
@@ -674,7 +679,7 @@ export async function readDatasets(name: string): Promise<{ total: number; items
     if (next.items.length === 0) break;
     items.push(...next.items);
   }
-  return { total: first.total, items: items as DatasetRow[] };
+  return { total: first.total, missingPublisher: first.missingPublisher, items: items as DatasetRow[] };
 }
 
 /**
@@ -682,10 +687,11 @@ export async function readDatasets(name: string): Promise<{ total: number; items
  * hidden or listed; hiding or listing one again proposes a Change of `spec.hidden`.
  */
 export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spec: PortalSpec; onSources: () => void }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [change, setChange] = useState<Change | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const propose = usePortalChange(name);
+  const hosts = usePortalHosts();
   const datasets = useQuery({
     queryKey: ["portalDatasets", name],
     retry: false,
@@ -715,8 +721,25 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
       },
     );
   };
+  const installed = hosts.data?.items.find((o) => o.organization === spec.organizationRef)?.profiles ?? [];
+  const labelOf = (id: string) => profileLabel(installed, id, i18n.resolvedLanguage ?? i18n.language);
+  const gapsOf = (d: DatasetRow) =>
+    d.missing.length === 0
+      ? t("portals.datasets.allFeeds")
+      : d.missing.map((gap) => `${labelOf(gap.profile)}: ${gap.fields.join(", ")}`).join("; ");
+  const noPublisher =
+    datasets.data.missingPublisher.length > 0 ? (
+      <Alert tone="warning" role="status" title={t("portals.datasets.noPublisherTitle")}>
+        {t("portals.datasets.noPublisher", { profiles: datasets.data.missingPublisher.map(labelOf).join(", ") })}{" "}
+        <Link to="/organization/$tab" params={{ tab: "settings" }} className="focus-ring underline hover:no-underline">
+          {t("portals.profiles.declareLink")}
+        </Link>
+      </Alert>
+    ) : null;
   if (datasets.data.total === 0) {
     return (
+      <div className="space-y-4">
+      {noPublisher}
       <EmptyState
         icon="inbox"
         title={t("portals.datasets.empty")}
@@ -727,6 +750,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
           </Button>
         }
       />
+      </div>
     );
   }
   return (
@@ -737,6 +761,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
           {refusal}
         </Alert>
       ) : null}
+      {noPublisher}
       <p className="text-caption text-fg-muted">{t("portals.datasets.hint")}</p>
       <ManifestGrid<DatasetRow>
         caption={t("portals.datasets.caption")}
@@ -759,6 +784,24 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
         }}
         columns={[
           { id: "source", label: t("portals.datasets.source"), filter: true, text: sourceOf },
+          {
+            id: "feeds",
+            label: t("portals.datasets.feeds"),
+            text: gapsOf,
+            cell: (d) =>
+              d.missing.length === 0 ? (
+                <span className="text-fg-muted">{t("portals.datasets.allFeeds")}</span>
+              ) : (
+                <ul className="space-y-1">
+                  {d.missing.map((gap) => (
+                    <li key={gap.profile} className="text-caption">
+                      <span className="block font-medium">{t("portals.datasets.notIn", { profile: labelOf(gap.profile) })}</span>
+                      <span className="block break-all text-fg-muted">{t("portals.datasets.lacks", { fields: gap.fields.join(", ") })}</span>
+                    </li>
+                  ))}
+                </ul>
+              ),
+          },
           {
             id: "listed",
             label: t("portals.datasets.listed"),

@@ -263,10 +263,12 @@ describe("the sources tab", () => {
       if (path === "/api/v1/projects/org/portals/bbsk-mobility/datasets") {
         return jsonResponse({
           total: 3,
+          missingPublisher: [],
+          profiles: [],
           items: [
-            { name: "ke-ovzdusie", title: "Ovzdušie", source: "kosice", hidden: false },
-            { name: "ke-skoly", title: "Školy", source: "kosice", hidden: false },
-            { name: "pr-bus", title: "Bus", source: "praha", hidden: false },
+            { name: "ke-ovzdusie", title: "Ovzdušie", source: "kosice", hidden: false, missing: [] },
+            { name: "ke-skoly", title: "Školy", source: "kosice", hidden: false, missing: [] },
+            { name: "pr-bus", title: "Bus", source: "praha", hidden: false, missing: [] },
           ],
         });
       }
@@ -301,9 +303,11 @@ describe("the sources tab", () => {
 describe("the datasets tab", () => {
   const DATASETS = {
     total: 2,
+    missingPublisher: ["dcat-ap-sk-2.0"],
+    profiles: ["dcat-ap-sk-2.0"],
     items: [
-      { name: "ke-ovzdusie", title: "Ovzdušie Košice", source: "kosice", hidden: false },
-      { name: "ke-skoly", title: "Školy", source: "kosice", hidden: true },
+      { name: "ke-ovzdusie", title: "Ovzdušie Košice", source: "kosice", hidden: false, missing: [{ profile: "dcat-ap-sk-2.0", fields: ["personal_data"] }] },
+      { name: "ke-skoly", title: "Školy", source: "kosice", hidden: true, missing: [] },
     ],
   };
 
@@ -322,6 +326,9 @@ describe("the datasets tab", () => {
     const table = await screen.findByRole("table", { name: "Datasets of the portal" });
     expect(within(table).getAllByText("kosice")).toHaveLength(2);
     expect(within(table).getByText("Hidden")).toBeInTheDocument();
+    expect(within(table).getByText("Not in dcat-ap-sk-2.0")).toBeInTheDocument();
+    expect(within(table).getByText("Missing or not valid: personal_data")).toBeInTheDocument();
+    expect(screen.getByText("Missing publisher")).toBeInTheDocument();
     fireEvent.click(within(table).getByRole("button", { name: "Hide Ovzdušie Košice" }));
     await waitFor(() => expect(sent.length).toBe(2));
     expect(sent[1].spec.hidden).toEqual(["ke-skoly", "ke-ovzdusie"]);
@@ -330,8 +337,9 @@ describe("the datasets tab", () => {
   });
 
   it("says what to do before any source has run", async () => {
-    await openTab("Datasets", {}, (path) => (path.endsWith("/datasets") ? jsonResponse({ total: 0, items: [] }) : undefined));
+    await openTab("Datasets", {}, (path) => (path.endsWith("/datasets") ? jsonResponse({ total: 0, missingPublisher: ["dcat-ap-cz"], profiles: ["dcat-ap-cz"], items: [] }) : undefined));
     expect(await screen.findByText("No dataset yet")).toBeInTheDocument();
+    expect(screen.getByText(/unavailable until the Organization declares/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to Sources" }));
     expect(await screen.findByRole("tab", { name: "Sources", selected: true })).toBeInTheDocument();
   });

@@ -13306,7 +13306,7 @@
       "keepSlug": "Ponechat i běžnou adresu",
       "instanceName": "Jméno v záhlaví",
       "primary": "Hlavní barva",
-      "profiles": "Profily DCAT-AP"
+      "profiles": "Profily katalogu"
     },
     "hint": {
       "organization": "Organizace, které portál patří; nikdy se nepřesune k jiné. Například praha.",
@@ -13318,7 +13318,7 @@
       "keepSlug": "Vypnuto: běžná adresa přesměruje na doménu. Zapnuto: odpovídají obě a doména je uvedena jako kanonická.",
       "instanceName": "Nahradí jméno organizace v záhlaví tohoto portálu, například Doprava Praha. Prázdné ponechá jméno organizace.",
       "primary": "Barva tlačítek a odkazů portálu v hex tvaru, například #0b5394. Prázdné ponechá barvu organizace.",
-      "profiles": "Profily, ve kterých portál nabízí své DCAT-AP kanály, například dcat-ap-3.0.1."
+      "profiles": "EU DCAT-AP se poskytuje vždy. Zaškrtnutím profilu země nebo tématu přidáte jeho feed, například DCAT-AP-FI pro avoindata.fi. Datová sada bez pole, které profil vyžaduje, v tom feedu nebude a uvidíte ji na kartě datových sad."
     },
     "mode": {
       "slug": "Běžná adresa pod portálem otevřených dat organizace",
@@ -13543,7 +13543,13 @@
       "unhideNamed": "Znovu zobrazit {name}",
       "noCatalogue": "Tato instalace zatím neposkytuje katalog otevřených dat, proto tento portál zde nevypíše žádné datové sady. Požádejte operátora o zapnutí katalogu.",
       "toSources": "Přejít na Zdroje",
-      "noCatalogueTitle": "Zatím zde není katalog otevřených dat"
+      "noCatalogueTitle": "Zatím zde není katalog otevřených dat",
+      "feeds": "Feedy",
+      "allFeeds": "Ve všech zvolených feedech",
+      "notIn": "Není v {profile}",
+      "lacks": "Chybí nebo je neplatné: {fields}",
+      "noPublisherTitle": "Chybí poskytovatel",
+      "noPublisher": "Tyto feedy jsou nedostupné, dokud organizace neuvede IRI poskytovatele v spec.catalog.publisher.uri: {profiles}."
     },
     "hosts": {
       "title": "Adresy portálů",
@@ -13727,6 +13733,14 @@
       "edit": "Upravit: {type}",
       "fold": "Sbalit: {type}",
       "hidePreview": "Skrýt náhled"
+    },
+    "profiles": {
+      "always": "Poskytuje se vždy",
+      "none": "Jiný profil zde není nainstalován. Požádejte provozovatele o ten, který sklízí váš národní portál.",
+      "notInstalled": "Zde není nainstalován: jeho feed je nedostupný. Odškrtněte jej nebo požádejte provozovatele.",
+      "unknown": "Profily, které katalog právě poskytuje, se nepodařilo načíst, proto je nelze změnit. Obnovte stránku.",
+      "declare": "Národní profil potřebuje IRI poskytovatele vaší organizace, například z registru orgánů veřejné moci.",
+      "declareLink": "Otevřít nastavení organizace"
     }
   },
   "assistantGuides": {
