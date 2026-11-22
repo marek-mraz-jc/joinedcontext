@@ -1,5 +1,5 @@
 //! Catalogue publication profiles as data (T-7521): every directory of `crates/dataroom/profiles`
-//! holds a `profile.json` beside or pointing at its shapes and contexts, embedded by `build.rs`
+//! holds a `profile.json` beside or pointing at its shapes and contexts, embedded in the binary
 //! and parsed once. A country or a standard is a directory; this module knows what a manifest
 //! may say and nothing of any country. A profile names its bases: shapes and properties add up,
 //! every other member is the profile's own, else the first base's that has one.
@@ -10,7 +10,17 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-include!(concat!(env!("OUT_DIR"), "/profiles.rs"));
+/// The profile directories, whole.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../profiles"]
+struct Directories;
+
+/// The published specifications a manifest may point at as `../../specs/…`.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../specs"]
+struct Specifications;
+
+type Embedded<'a> = (&'a str, &'static str, &'a [(&'a str, &'static str)]);
 
 /// The profile every catalogue serves: EU DCAT-AP.
 pub const BASE_PROFILE: &str = "dcat-ap-3.0.1";
@@ -239,7 +249,7 @@ pub struct Profile {
     pub properties: Vec<Property>,
     pub contexts: Vec<Context>,
     #[serde(skip)]
-    files: &'static [(&'static str, &'static str)],
+    files: Vec<(String, &'static str)>,
 }
 
 impl Profile {
@@ -247,7 +257,7 @@ impl Profile {
     pub fn file(&self, path: &str) -> &'static str {
         self.files
             .iter()
-            .find(|(name, _)| *name == path)
+            .find(|(name, _)| name == path)
             .map_or("", |(_, text)| text)
     }
 
@@ -326,14 +336,71 @@ fn is_iri(text: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "<>\"{}|\\^`".contains(c))
 }
 
+/// An embedded file's text. `debug-embed` keeps it borrowed from the binary in every build.
+fn embedded<E: rust_embed::RustEmbed>(path: &str) -> std::result::Result<&'static str, String> {
+    match E::get(path).map(|file| file.data) {
+        Some(std::borrow::Cow::Borrowed(bytes)) => {
+            std::str::from_utf8(bytes).map_err(|e| format!("{path}: {e}"))
+        }
+        _ => Err(format!("{path}: not embedded")),
+    }
+}
+
+/// Every embedded directory with a `profile.json`, with the files its manifest may name.
+fn installed_profiles() -> std::result::Result<Vec<Profile>, String> {
+    let paths: Vec<_> = Directories::iter().collect();
+    let mut specifications = Vec::new();
+    for path in Specifications::iter() {
+        // A specification folder also holds what no manifest can name, e.g. an image.
+        if let Ok(text) = embedded::<Specifications>(&path) {
+            specifications.push((format!("../../specs/{path}"), text));
+        }
+    }
+    let mut found = Vec::new();
+    for path in &paths {
+        let Some(dir) = path.strip_suffix("/profile.json") else {
+            continue;
+        };
+        let mut files = specifications.clone();
+        for file in &paths {
+            let name = file
+                .strip_prefix(dir)
+                .and_then(|rest| rest.strip_prefix('/'));
+            if let Some(name) = name {
+                files.push((name.to_owned(), embedded::<Directories>(file)?));
+            }
+        }
+        found.push((dir.to_owned(), embedded::<Directories>(path)?, files));
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let named: Vec<Vec<(&str, &'static str)>> = found
+        .iter()
+        .map(|(_, _, files)| {
+            files
+                .iter()
+                .map(|(name, text)| (name.as_str(), *text))
+                .collect()
+        })
+        .collect();
+    let sources: Vec<Embedded<'_>> = found
+        .iter()
+        .zip(&named)
+        .map(|((dir, text, _), files)| (dir.as_str(), *text, files.as_slice()))
+        .collect();
+    load(&sources)
+}
+
 /// Parses and resolves manifests `(directory, text, files)`; the error names the directory.
-fn load(sources: &[Embedded]) -> std::result::Result<Vec<Profile>, String> {
+fn load(sources: &[Embedded<'_>]) -> std::result::Result<Vec<Profile>, String> {
     let mut read = Vec::new();
     let mut names = BTreeSet::new();
     for (dir, text, files) in sources {
         let bad = |what: &str| format!("profile {dir}: {what}");
         let mut profile: Profile = serde_json::from_str(text).map_err(|e| bad(&e.to_string()))?;
-        profile.files = *files;
+        profile.files = files
+            .iter()
+            .map(|(name, text)| ((*name).to_owned(), *text))
+            .collect();
         if profile.id != *dir {
             return Err(bad("id is not the directory's name"));
         }
@@ -421,7 +488,7 @@ fn load(sources: &[Embedded]) -> std::result::Result<Vec<Profile>, String> {
 }
 
 static INSTALLED: LazyLock<std::result::Result<Vec<Profile>, String>> =
-    LazyLock::new(|| load(EMBEDDED));
+    LazyLock::new(installed_profiles);
 static NONE: LazyLock<Profile> = LazyLock::new(Profile::default);
 
 /// Refuses to start on a manifest that does not load; without it every profiled feed is closed.

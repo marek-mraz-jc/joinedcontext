@@ -14,9 +14,8 @@ oxjsonld = "0.1.0"
 oxrdf = "0.2.4"
 oxrdfxml = "0.1.7"
 oxttl = "0.1.8"
+# `debug-embed`: a profile is in every binary, a debug one included.
+rust-embed = { version = "8", features = ["debug-embed"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
-
-[build-dependencies]
-serde_json = "1.0.140"

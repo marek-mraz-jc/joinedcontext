@@ -3042,6 +3042,7 @@ dependencies = [
  "oxrdf",
  "oxrdfxml",
  "oxttl",
+ "rust-embed",
  "serde",
  "serde_json",
  "uuid",
