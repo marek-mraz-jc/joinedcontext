@@ -279,8 +279,9 @@ fn verb_through_connector(
     if !matches!(caller.via, super::Via::Mcp) {
         return Ok(());
     }
-    let ceiling = crate::connectors::Ceiling::of(&state.mirror, &caller.identity);
-    if ceiling.honours(connector) || ceiling.allows_change(project, kind, name, verb) {
+    let ceiling =
+        crate::connectors::Ceiling::of(&state.mirror, &caller.identity).with_approved(connector);
+    if ceiling.allows_change(project, kind, name, verb) {
         return Ok(());
     }
     Err(denied(format!(
@@ -2252,6 +2253,7 @@ mod tests {
             state: "active".into(),
             created_at: TimestampTz::now(),
             granted_at: TimestampTz::now(),
+            over: vec![],
             last_used_at: None,
             url: "https://portal.test/c/c1".into(),
             limits: crate::connectors::DEFAULT_LIMITS,

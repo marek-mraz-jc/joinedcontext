@@ -378,14 +378,13 @@ async fn judge(
         );
     }
     // The owner's DelegationPolicy ceiling, read again on this call (AG-150).
-    let ceiling = connectors::Ceiling::of(&state.mirror, &identity);
+    let ceiling = connectors::Ceiling::of(&state.mirror, &identity).with_approved(connector);
     if let Err(why) = ceiling.door(connector, client, jc_time::TimestampTz::now()) {
         return (
             ApiError::Denied(why).into_response(),
             "refused: ceiling".to_owned(),
         );
     }
-    let honoured = ceiling.honours(connector);
     if body.len() > MAX_REQUEST_BYTES {
         let why = format!(
             "the request is {} bytes; this route reads at most {MAX_REQUEST_BYTES}",
@@ -462,7 +461,7 @@ async fn judge(
             };
             let mut tools = merged(projects.iter().map(|project| {
                 listed(state, connector, &caller, project, |op| {
-                    honoured || ceiling.lists(connector, op, project)
+                    ceiling.lists(connector, op, project)
                 })
             }));
             // The UI tools reach the person's paired tab only, so they are offered only while
@@ -822,13 +821,7 @@ async fn checks(
             .admits(op, project, args, &|kind, name| {
                 connectors::space_now(&state.mirror, project, kind, name)
             })
-            .and_then(|()| {
-                if ceiling.honours(connector) {
-                    Ok(())
-                } else {
-                    ceiling.admits(connector, op, project, args)
-                }
-            })
+            .and_then(|()| ceiling.admits(connector, op, project, args))
             .map_err(|why| ("refused: target", why))?;
     }
     let shows = project.is_some_and(|p| connector.shows_personal(p, args));
@@ -852,7 +845,8 @@ pub(crate) async fn admits_read(
     let Some(connector) = caller.access.as_ref().and_then(|a| a.connector()) else {
         return Ok(());
     };
-    let ceiling = connectors::Ceiling::of(&state.mirror, &caller.identity);
+    let ceiling =
+        connectors::Ceiling::of(&state.mirror, &caller.identity).with_approved(connector);
     checks(
         state,
         connector,
