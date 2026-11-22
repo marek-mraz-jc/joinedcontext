@@ -416,6 +416,10 @@ fn keycloak_argon2_variants_and_parameter_shapes() {
         json!({"algorithm":"argon2","additionalParameters":{"memory":"1024","iterations":[3]}})
             .to_string();
     assert!(!verify_keycloak_credential(pw, &s, &wrong).unwrap());
+    // A positive hashIterations wins over additionalParameters.iterations.
+    let s = argon_secret(pw, salt, Algorithm::Argon2id, Version::V0x13, 1024, 2);
+    let c = json!({"algorithm":"argon2","hashIterations":2,"additionalParameters":{"memory":1024,"iterations":3}}).to_string();
+    assert!(verify_keycloak_credential(pw, &s, &c).unwrap());
     // Empty credentialData means Keycloak's argon2id defaults.
     let s = argon_secret(pw, salt, Algorithm::Argon2id, Version::V0x13, 7168, 5);
     assert!(verify_keycloak_credential(pw, &s, " ").unwrap());
@@ -487,7 +491,10 @@ fn keycloak_pbkdf2_variants_and_malformed_credentials() {
     assert!(verify_and_maybe_rehash(pw, &phc).unwrap().valid);
     let out = verify_and_maybe_rehash("x", &phc).unwrap();
     assert!(!out.valid && out.rehashed_phc.is_none());
+    // The unknown-user path costs a real Argon2id hash, so its timing matches a wrong password.
+    let started = std::time::Instant::now();
     password::dummy_verify_password("anything");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1));
 }
 
 #[test]
@@ -516,6 +523,15 @@ fn every_policy_clause_refuses_its_violation() {
     let policy = "length(12) and upperCase(1) and lowerCase(1) and digits(2) and specialChars(1) and notUsername and notEmail and passwordHistory(x) and unknownClause(3) and ";
     check_password_policy(policy, ok, "alice", Some("a@b.cz"), &[]).unwrap();
     check_password_policy("notUsername and notEmail", ok, "", Some(""), &[]).unwrap();
+    // Each count exactly at its minimum passes.
+    check_password_policy(
+        "length(12) and upperCase(1) and lowerCase(8) and digits(2) and specialChars(1)",
+        ok,
+        "alice",
+        None,
+        &[],
+    )
+    .unwrap();
     check_password_policy("notEmail", ok, "u", None, &[]).unwrap();
     // History: a record that cannot be parsed never blocks, a matching one does.
     let history = vec![
@@ -577,6 +593,45 @@ fn totp_algorithms_and_malformed_credentials() {
     };
     assert!(generate_totp_code_for_credential(&bad_meta, now).is_err());
     assert!(verify_recovery_code("  abcde-fghjk ", &[]).is_none());
+}
+
+/// RFC 6238 appendix B: the 8-digit codes of the reference seeds at T=59 s and T=1111111109 s, one
+/// per HMAC algorithm.
+#[test]
+fn totp_codes_match_the_rfc_6238_vectors() {
+    let seed1 = "12345678901234567890";
+    let seed256 = "12345678901234567890123456789012";
+    let seed512 = "1234567890123456789012345678901234567890123456789012345678901234";
+    for (seed, alg, at59, at1111111109) in [
+        (seed1, "HmacSHA1", "94287082", "07081804"),
+        (seed256, "HmacSHA256", "46119246", "68084774"),
+        (seed512, "HmacSHA512", "90693936", "25091201"),
+    ] {
+        assert_eq!(
+            generate_totp_code(seed, 8, 30, alg, 59).unwrap(),
+            at59,
+            "{alg}"
+        );
+        assert_eq!(
+            generate_totp_code(seed, 8, 30, alg, 1_111_111_109).unwrap(),
+            at1111111109,
+            "{alg}"
+        );
+    }
+    // credentialData `{}` takes Keycloak's defaults: 6 digits, 30 s, HmacSHA256.
+    let cred = CredentialRecord {
+        secret_data: seed256.into(),
+        credential_data: "{}".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        generate_totp_code_for_credential(&cred, 59).unwrap(),
+        "119246"
+    );
+    assert_eq!(
+        generate_totp_code_for_credential(&cred, 89).unwrap(),
+        generate_totp_code(seed256, 6, 30, "HmacSHA256", 89).unwrap()
+    );
 }
 
 /// A person with several authenticators: the first `otp` credential whose code matches answers,

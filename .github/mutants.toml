@@ -10,4 +10,7 @@ exclude_re = [
   # kaisatsu-crypto: aws-lc-rs hands every generated P-256 public key back as the 65-byte uncompressed point,
   # so the format guard in generate_es256 never sees another shape and `||` and `&&` refuse the same keys.
   'crates/kaisatsu/crypto/src/keys\.rs:.*replace \|\| with && in KeyManager::generate_es256',
+  # kaisatsu-crypto: compute_hotp_at joins four bytes shifted to disjoint bit ranges (24, 16, 8, 0), where `|`
+  # and `^` give the same word.
+  'crates/kaisatsu/crypto/src/totp\.rs:.*replace \| with \^ in compute_hotp_at',
 ]
