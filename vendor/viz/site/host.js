@@ -80,8 +80,7 @@
       gap: "Medzera v čiare: v tom čase nie sú merania.", legend: "Kliknutím alebo ťuknutím na stanicu v legende ju zvýrazníte.",
       utcAxis: "Deň (UTC)", dateHintTo: "Napr. 20. nov. 2026 (UTC).",
       stationsExample: "Napr. {names}.", twoStations: "dve stanice", missing: "nenačítané",
-      measuredWeek: " za posledných 7 dní", noReadings: "bez meraní", stored: "Údaje: ",
-      storedFrom: "Údaje až od {from} (do {to})"
+      measuredWeek: " za posledných 7 dní", noReadings: "bez meraní", stored: "Údaje: "
     },
     cs: {
       controls: "Nastavení grafu", range: "Období", rangeHint: "Časový rozsah, např. 7 dní.",
@@ -100,8 +99,7 @@
       gap: "Mezera v čáře: v tu dobu nejsou měření.", legend: "Kliknutím nebo klepnutím na stanici v legendě ji zvýrazníte.",
       utcAxis: "Den (UTC)", dateHintTo: "Např. 20. lis. 2026 (UTC).",
       stationsExample: "Např. {names}.", twoStations: "dvě stanice", missing: "nenačteno",
-      measuredWeek: " za posledních 7 dní", noReadings: "bez měření", stored: "Data: ",
-      storedFrom: "Data až od {from} (do {to})"
+      measuredWeek: " za posledních 7 dní", noReadings: "bez měření", stored: "Data: "
     },
     fi: {
       controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Miltä ajalta, esim. 7 päivää.",
@@ -120,8 +118,7 @@
       gap: "Aukko viivassa: ajalta ei ole mittauksia.", legend: "Napsauta tai napauta asemaa selitteessä korostaaksesi sen.",
       utcAxis: "Päivä (UTC)", dateHintTo: "Esim. 20.11.2026 (UTC).",
       stationsExample: "Esim. {names}.", twoStations: "kaksi asemaa", missing: "ei ladattu",
-      measuredWeek: " viimeisiltä 7 päivältä", noReadings: "ei mittauksia", stored: "Tiedot: ",
-      storedFrom: "Tietoja vasta {from} alkaen ({to} asti)"
+      measuredWeek: " viimeisiltä 7 päivältä", noReadings: "ei mittauksia", stored: "Tiedot: "
     },
     en: {
       controls: "Chart settings", range: "Range", rangeHint: "How long, e.g. 7 days.",
@@ -140,8 +137,7 @@
       gap: "A gap in a line: no readings at that time.", legend: "Click or tap a station in the legend to highlight it.",
       utcAxis: "Day (UTC)", dateHintTo: "E.g. 20 Nov 2026 (UTC).",
       stationsExample: "E.g. {names}.", twoStations: "two stations", missing: "not loaded",
-      measuredWeek: " of the last 7 days", noReadings: "no readings", stored: "Data: ",
-      storedFrom: "Data only from {from} (to {to})"
+      measuredWeek: " of the last 7 days", noReadings: "no readings", stored: "Data: "
     }
   };
   // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
@@ -1093,7 +1089,6 @@
       var units = {};
       var plan = null;
       var drawn = null; // the key of the spec in the frame
-      var late = false; // the stored readings start inside the range picked
       var notes = []; // what the line under the chart says of the rows read
       var short = false; // the answer was cut before the end of the range
       var listed = false; // the stations of an answer are in the list
@@ -1180,7 +1175,7 @@
         var times = rows.filter(function (row) { return attr && row[attr] !== null; }).map(function (row) { return Date.parse(row.observedAt); }).sort(function (a, b) { return a - b; });
         var date = function (ms) { return nb(new Date(ms).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })); };
         var ends = times.length ? [date(times[0]), date(times[times.length - 1])] : null;
-        var span = !ends ? "" : late ? t.storedFrom.replace("{from}", ends[0]).replace("{to}", ends[1]) : t.stored + ends[0] + " – " + ends[1];
+        var span = ends ? t.stored + ends[0] + " – " + ends[1] : "";
         var bands = [];
         var band = function (from, to, text) {
           bands.push({ from: iso(from), middle: iso((from + to) / 2), to: iso(to), text: text });
@@ -1251,8 +1246,6 @@
         if (!plan) frame.hidden = true;
         if (frame.hidden) caveat.hidden = true;
         skeleton.hidden = !frame.hidden;
-        // The place of the chart drawn before, else the skeleton's own height.
-        if (frame.style.height) skeleton.style.height = frame.style.height;
         var p;
         try {
           p = load(view, h.api, lang, fetcher, Date.now(), null, state, function (map) {
@@ -1274,18 +1267,18 @@
           notes = [];
           if (plan.forced) {
             // The toolbar shows what is drawn: the forced granularity becomes the choice.
-            notes.push(t[plan.forced]);
+            if (plan.forced === "hourly") notes.push(t.hourly);
             state.gran = plan.gran;
             if (bar) bar.gran(plan.gran);
             remember();
           }
-          late = false;
+          // A walk is daily on every read of it, also once the toolbar already shows that.
+          if (plan.end - plan.start > MAX_DAYS * DAY) notes.push(t.daily);
           var span = plan.end - plan.start;
           var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
           // An answer is read oldest first, so a cut one misses its end: a late first reading is
           // still where the source starts, and both notes hold.
           if (first !== Infinity && !data.moreStations && first - plan.start > Math.max(span > DAY ? DAY / 2 : DAY, span / 20)) {
-            late = true;
             notes.push(t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: plan.gran === "P1D" ? "UTC" : undefined }))));
           }
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));

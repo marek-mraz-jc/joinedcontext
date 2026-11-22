@@ -231,6 +231,12 @@ for (const width of [1440, 400]) {
     }).map((l) => l.textContent))).toEqual([]);
     await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: /\d\./ }).first()).toHaveText(/^\d+\.\d+\.$/);
     await shot(page, "daily-walk", width);
+    // A second change inside a daily walk still says why it is daily.
+    const walked = state.asked.length;
+    await host.getByLabel("Výpočet").selectOption("min");
+    await expect.poll(() => state.asked.length).toBeGreaterThan(walked);
+    await expect(host.locator("iframe#frame[aria-busy=true]")).toHaveCount(0);
+    await expect(host.locator("#controls-note")).toContainText("po dňoch");
 
     // The notice's own step to the measured times: the last week's readings, the gap named.
     await host.getByRole("button", { name: "Zobraziť časy meraní („Merania“) za posledných 7 dní" }).click();
@@ -289,6 +295,8 @@ for (const width of [1440, 400]) {
     await host.getByLabel("Obdobie").selectOption("PT24H");
     await expect(host.locator("#status")).toContainText("Načítavam");
     await expect(host.locator("#c-stations-picker summary")).toBeVisible();
+    // After an empty answer the chart's place keeps its height.
+    expect((await host.locator(".skeleton").boundingBox())!.height).toBeGreaterThanOrEqual(400);
     await shot(page, "loading", width);
     await expect(host.locator("#status")).toBeHidden({ timeout: 10_000 });
     await expect(stations).toHaveValues([karlov]);
