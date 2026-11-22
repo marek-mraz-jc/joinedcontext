@@ -115,29 +115,20 @@ struct Cell {
 /// Decodes a whole Parquet file into one structured value per row.
 pub fn decode(data: Bytes, list_format: bool) -> Result<Vec<Value>, String> {
     check_magic(&data)?;
-    let reader = SerializedFileReader::new(data).map_err(|e| e.to_string())?;
+    let reader = SerializedFileReader::new(data).map_err(text)?;
     let meta = reader.metadata();
-    let total: i64 = meta.file_metadata().num_rows();
-    if total == 0 {
-        // parquet-go v0.29.0 fails to open a file without rows, and Bento with it.
-        return Err("Seek: invalid offset".to_string());
-    }
-    if usize::try_from(total).map_or(true, |n| n > MAX_ROWS) {
-        return Err(format!(
-            "parquet file holds {total} rows, more than {MAX_ROWS}"
-        ));
-    }
+    row_count(meta.file_metadata().num_rows())?;
     let schema = meta.file_metadata().schema_descr_ptr();
     let root = schema.root_schema_ptr();
     let mut rows = Vec::new();
     for g in 0..meta.num_row_groups() {
-        let rg = reader.get_row_group(g).map_err(|e| e.to_string())?;
+        let rg = reader.get_row_group(g).map_err(text)?;
         let mut columns = Vec::with_capacity(schema.num_columns());
         for c in 0..schema.num_columns() {
-            let col = rg.get_column_reader(c).map_err(|e| e.to_string())?;
+            let col = rg.get_column_reader(c).map_err(text)?;
             columns.push(read_column(col, &schema.column(c))?);
         }
-        let n = usize::try_from(rg.metadata().num_rows()).map_err(|e| e.to_string())?;
+        let n = usize::try_from(rg.metadata().num_rows()).map_err(text)?;
         // Each column split at repetition level 0: one slice per row.
         let mut starts = vec![0usize; columns.len()];
         for _ in 0..n {
@@ -162,6 +153,25 @@ pub fn decode(data: Bytes, list_format: bool) -> Result<Vec<Value>, String> {
         }
     }
     Ok(rows)
+}
+
+/// An error of the parquet reader or a number conversion, as its text.
+fn text(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+/// The file's row count when the decoder takes it: at least one row, at most [`MAX_ROWS`].
+fn row_count(total: i64) -> Result<usize, String> {
+    if total == 0 {
+        // parquet-go v0.29.0 fails to open a file without rows, and Bento with it.
+        return Err("Seek: invalid offset".to_string());
+    }
+    match usize::try_from(total) {
+        Ok(n) if n <= MAX_ROWS => Ok(n),
+        _ => Err(format!(
+            "parquet file holds {total} rows, more than {MAX_ROWS}"
+        )),
+    }
 }
 
 /// parquet-go's `OpenFile` checks of the leading and trailing `PAR1`, with its error texts.
@@ -243,7 +253,7 @@ fn cells<T: DataType>(
                 (max_rep > 0).then_some(&mut reps),
                 &mut values,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(text)?;
         if records == 0 {
             break;
         }
@@ -334,7 +344,7 @@ fn bytes(desc: &ColumnDescPtr, data: &[u8], fixed: bool) -> Result<Value, String
         return Ok(Value::String(decimal_text(data, scale)));
     }
     if is_json(desc) {
-        let doc: JsonValue = serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        let doc: JsonValue = serde_json::from_slice(data).map_err(text)?;
         return Ok(Value::from_json_value(doc));
     }
     if fixed && desc.physical_type() == PhysicalType::FIXED_LEN_BYTE_ARRAY {
@@ -492,6 +502,7 @@ fn node(t: &TypePtr, lv: Levels, cols: &[&[Cell]], rep: Repetition) -> Result<Va
         }
         Repetition::REPEATED => {
             repeated(lv, cols, |lv, item| node(t, lv, item, Repetition::REQUIRED))
+                .map(|items| Value::Array(items.into()))
         }
         Repetition::REQUIRED if is_list(t) => {
             let Some(inner) = t.get_fields().first() else {
@@ -509,6 +520,7 @@ fn node(t: &TypePtr, lv: Levels, cols: &[&[Cell]], rep: Repetition) -> Result<Va
                 repetition(&elem)
             };
             repeated(lv, cols, |lv, item| node(&elem, lv, item, er))
+                .map(|items| Value::Array(items.into()))
         }
         Repetition::REQUIRED if is_map(t) => map(t, lv, cols),
         Repetition::REQUIRED if t.is_primitive() => Ok(cols
@@ -521,20 +533,21 @@ fn node(t: &TypePtr, lv: Levels, cols: &[&[Cell]], rep: Repetition) -> Result<Va
 }
 
 /// `reconstructFuncOfRepeated`: one item per run of repetition levels above the current depth.
-fn repeated(
+fn repeated<T>(
     lv: Levels,
     cols: &[&[Cell]],
-    item: impl Fn(Levels, &[&[Cell]]) -> Result<Value, String>,
-) -> Result<Value, String> {
+    item: impl Fn(Levels, &[&[Cell]]) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
     let lv = Levels {
         rep: lv.rep + 1,
         def: lv.def + 1,
     };
-    let Some(first) = cols.first() else {
-        return Ok(Value::Array(Vec::new().into()));
-    };
-    if first.first().is_none_or(|c| c.def < lv.def) {
-        return Ok(Value::Array(Vec::new().into()));
+    if cols
+        .first()
+        .and_then(|c| c.first())
+        .is_none_or(|c| c.def < lv.def)
+    {
+        return Ok(Vec::new());
     }
     let mut starts = vec![0usize; cols.len()];
     let mut out = Vec::new();
@@ -560,7 +573,7 @@ fn repeated(
         }
         out.push(item(lv, &item_cols)?);
     }
-    Ok(Value::Array(out.into()))
+    Ok(out)
 }
 
 fn group(t: &TypePtr, lv: Levels, cols: &[&[Cell]]) -> Result<Value, String> {
@@ -610,28 +623,18 @@ fn map(t: &TypePtr, lv: Levels, cols: &[&[Cell]]) -> Result<Value, String> {
                 Some(vf) => node(vf, lv, &item[kn..], repetition(vf))?,
                 None => Value::Null,
             };
-            Ok(Value::Array(vec![key, val].into()))
+            Ok((key, val))
         },
     )?;
     let mut obj = BTreeMap::new();
-    if let Value::Array(items) = entries {
-        for e in items {
-            if let Value::Array(mut kv) = e {
-                let v = kv.pop().unwrap_or(Value::Null);
-                match kv.pop() {
-                    Some(Value::String(k)) => {
-                        obj.insert(k, v);
-                    }
-                    Some(other) => {
-                        return Err(format!(
-                            "decoding panic: reflect.Set: value of type {} is not assignable to type string",
-                            go_type(&other)
-                        ))
-                    }
-                    None => {}
-                }
-            }
-        }
+    for (key, val) in entries {
+        let Value::String(k) = key else {
+            return Err(format!(
+                "decoding panic: reflect.Set: value of type {} is not assignable to type string",
+                go_type(&key)
+            ));
+        };
+        obj.insert(k, val);
     }
     Ok(Value::Object(obj.into()))
 }
@@ -685,6 +688,228 @@ fn wrap_lists(v: Value, fields: &[TypePtr]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parquet::data_type::{ByteArray, ByteArrayType, FloatType, Int32Type};
+    use parquet::file::properties::WriterProperties;
+    use parquet::file::writer::SerializedFileWriter;
+    use parquet::schema::parser::parse_message_type;
+    use serde_json::json;
+
+    /// One leaf column of a test file: its values with their definition and repetition levels.
+    enum Col {
+        I32(Vec<i32>, Vec<i16>, Vec<i16>),
+        Str(Vec<&'static str>, Vec<i16>, Vec<i16>),
+        F32(Vec<f32>, Vec<i16>, Vec<i16>),
+    }
+
+    /// A one-row-group Parquet file of `schema` holding `cols`, written by the parquet crate.
+    fn file(schema: &str, cols: Vec<Col>) -> Bytes {
+        let schema = Arc::new(parse_message_type(schema).expect("schema parses"));
+        let mut buf = Vec::new();
+        let mut w = SerializedFileWriter::new(&mut buf, schema, Arc::new(WriterProperties::new()))
+            .expect("writer");
+        let mut rg = w.next_row_group().expect("row group");
+        for col in cols {
+            let mut c = rg.next_column().expect("column").expect("a leaf per col");
+            match col {
+                Col::I32(v, d, r) => {
+                    c.typed::<Int32Type>()
+                        .write_batch(&v, Some(&d), Some(&r))
+                        .expect("writes");
+                }
+                Col::Str(v, d, r) => {
+                    let v: Vec<ByteArray> = v.into_iter().map(ByteArray::from).collect();
+                    c.typed::<ByteArrayType>()
+                        .write_batch(&v, Some(&d), Some(&r))
+                        .expect("writes");
+                }
+                Col::F32(v, d, r) => {
+                    c.typed::<FloatType>()
+                        .write_batch(&v, Some(&d), Some(&r))
+                        .expect("writes");
+                }
+            }
+            c.close().expect("column closes");
+        }
+        rg.close().expect("row group closes");
+        w.close().expect("file closes");
+        Bytes::from(buf)
+    }
+
+    fn rows(data: Bytes, list_format: bool) -> Vec<JsonValue> {
+        decode(data, list_format)
+            .expect("decodes")
+            .iter()
+            .map(Value::to_json_value)
+            .collect()
+    }
+
+    #[test]
+    fn a_repeated_field_outside_a_list_is_an_array_per_row() {
+        let f = file(
+            "message m { repeated int32 xs; }",
+            vec![Col::I32(vec![1, 2], vec![1, 1, 0], vec![0, 1, 0])],
+        );
+        assert_eq!(rows(f, true), [json!({"xs": [1, 2]}), json!({"xs": []})]);
+    }
+
+    #[test]
+    fn a_two_level_list_takes_its_repeated_leaf_as_the_element() {
+        let schema = "message m { required group l (LIST) { repeated int32 element; } }";
+        let col = || vec![Col::I32(vec![1, 2], vec![1, 1], vec![0, 1])];
+        assert_eq!(rows(file(schema, col()), false), [json!({"l": [1, 2]})]);
+        assert_eq!(
+            rows(file(schema, col()), true),
+            [json!({"l": {"list": [{"element": 1}, {"element": 2}]}})]
+        );
+    }
+
+    #[test]
+    fn a_null_list_stays_null_and_lists_inside_groups_are_wrapped() {
+        let f = file(
+            "message m { optional group l (LIST) { repeated group list { optional int32 element; } } }",
+            vec![Col::I32(vec![5], vec![0, 3], vec![0, 0])],
+        );
+        assert_eq!(
+            rows(f, true),
+            [json!({"l": null}), json!({"l": {"list": [{"element": 5}]}})]
+        );
+        let f = file(
+            "message m { required group g { required group l (LIST) { repeated group list { required int32 element; } } required int32 n; } }",
+            vec![
+                Col::I32(vec![7], vec![1], vec![0]),
+                Col::I32(vec![9], vec![0], vec![0]),
+            ],
+        );
+        assert_eq!(
+            rows(f, true),
+            [json!({"g": {"l": {"list": [{"element": 7}]}, "n": 9}})]
+        );
+    }
+
+    #[test]
+    fn map_keys_must_be_strings_and_a_map_without_values_holds_nulls() {
+        let f = file(
+            "message m { required group m (MAP) { repeated group key_value { required int32 key; optional binary value (UTF8); } } }",
+            vec![
+                Col::I32(vec![1], vec![1], vec![0]),
+                Col::Str(vec!["a"], vec![2], vec![0]),
+            ],
+        );
+        assert_eq!(
+            decode(f, true).unwrap_err(),
+            "decoding panic: reflect.Set: value of type int64 is not assignable to type string"
+        );
+        let f = file(
+            "message m { required group m (MAP) { repeated group key_value { required binary key (UTF8); } } }",
+            vec![Col::Str(vec!["a", "b"], vec![1, 1], vec![0, 1])],
+        );
+        assert_eq!(rows(f, true), [json!({"m": {"a": null, "b": null}})]);
+    }
+
+    #[test]
+    fn go_type_names_each_value_as_go_prints_it() {
+        assert_eq!(go_type(&Value::Int(1)), "int64");
+        assert_eq!(go_type(&Value::Uint(1)), "uint64");
+        assert_eq!(go_type(&Value::Float(1.5)), "float64");
+        assert_eq!(go_type(&Value::Bool(true)), "bool");
+        assert_eq!(go_type(&Value::Bytes(vec![1])), "[]uint8");
+        assert_eq!(go_type(&Value::Null), "interface {}");
+    }
+
+    #[test]
+    fn float32_keeps_its_shortest_digits_and_non_finite_values() {
+        let f = file(
+            "message m { required float f; }",
+            vec![Col::F32(
+                vec![0.1, f32::INFINITY, f32::NAN],
+                vec![0, 0, 0],
+                vec![0, 0, 0],
+            )],
+        );
+        let out = decode(f, true).expect("decodes");
+        let get = |i: usize| out[i].to_json_value();
+        assert_eq!(get(0), json!({"f": 0.1}), "the f32 0.1, not 0.100000001");
+        let float = |i: usize| out[i].get_path(&["f".to_string()]).as_f64();
+        assert_eq!(float(1), Some(f64::INFINITY));
+        assert!(float(2).is_some_and(f64::is_nan));
+    }
+
+    #[test]
+    fn a_json_column_that_is_not_json_is_refused() {
+        let f = file(
+            "message m { required binary j (JSON); }",
+            vec![Col::Str(vec!["{\"a\": 1}"], vec![0], vec![0])],
+        );
+        assert_eq!(rows(f, true), [json!({"j": {"a": 1}})]);
+        let f = file(
+            "message m { required binary j (JSON); }",
+            vec![Col::Str(vec!["{"], vec![0], vec![0])],
+        );
+        assert!(decode(f, true).unwrap_err().contains("EOF"));
+    }
+
+    #[test]
+    fn magic_checks_quote_what_they_found_as_go_does() {
+        assert_eq!(
+            check_magic(b""),
+            Err("reading magic header of parquet file: EOF".into())
+        );
+        assert_eq!(
+            check_magic(b"PA"),
+            Err("reading magic header of parquet file: unexpected EOF".into())
+        );
+        assert_eq!(
+            check_magic(b"\"\\\n\trest"),
+            Err(r#"invalid magic header of parquet file: "\"\\\n\t""#.into())
+        );
+        assert_eq!(
+            check_magic(b"PAR1\r\x01ab"),
+            Err(r#"invalid magic footer of parquet file: "\r\x01ab""#.into())
+        );
+        assert_eq!(
+            check_magic(b"PAR1"),
+            Err(r#"invalid magic footer of parquet file: "PAR1""#.into())
+        );
+        assert_eq!(check_magic(b"PAR1PAR1"), Ok(()));
+        assert!(decode(Bytes::from_static(b"PAR1\0\0\0\0PAR1"), true).is_err());
+    }
+
+    #[test]
+    fn row_count_takes_one_to_max_rows() {
+        assert_eq!(row_count(0), Err("Seek: invalid offset".into()));
+        assert_eq!(row_count(1), Ok(1));
+        assert_eq!(row_count(5_000_000), Ok(MAX_ROWS));
+        let over = "parquet file holds 5000001 rows, more than 5000000";
+        assert_eq!(row_count(5_000_001), Err(over.into()));
+        assert_eq!(
+            row_count(-1),
+            Err("parquet file holds -1 rows, more than 5000000".into())
+        );
+    }
+
+    #[test]
+    fn config_is_an_object_or_nothing() {
+        let conf = |config: JsonValue| ComponentConfig {
+            label: String::new(),
+            component_type: "parquet_decode".into(),
+            config,
+            processors: Vec::new(),
+        };
+        let p = ParquetDecodeProcessor::from_config(&conf(JsonValue::Null)).expect("null");
+        assert!(p.list_format);
+        assert_eq!(p.processor_type(), "parquet_decode");
+        let p =
+            ParquetDecodeProcessor::from_config(&conf(json!({"use_parquet_list_format": false})))
+                .expect("bool");
+        assert!(!p.list_format);
+        let e = ParquetDecodeProcessor::from_config(&conf(json!([1])))
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            e.as_deref(),
+            Some("configuration error: parquet_decode config must be an object")
+        );
+    }
 
     #[test]
     fn decimal_text_matches_go_big_float() {
@@ -704,5 +929,17 @@ mod tests {
         );
         assert_eq!(decimal_text(&be(100_000_000_000_000_000_000), 18), "100");
         assert_eq!(decimal_text(&[0x00, 0x7b], 0), "123");
+    }
+
+    #[test]
+    fn groups_without_fields_decode_empty() {
+        let f = file(
+            "message m { required int32 n; required group m (MAP) { } required group k (MAP) { repeated group key_value { } } required group l (LIST) { } }",
+            vec![Col::I32(vec![1], vec![0], vec![0])],
+        );
+        assert_eq!(
+            rows(f, true),
+            [json!({"n": 1, "m": {}, "k": {}, "l": {"list": []}})]
+        );
     }
 }

@@ -221,20 +221,23 @@ fn exception_text(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
         .unwrap_or_else(|| "the script threw a value that is not an Error".to_string())
 }
 
+/// Sets one native as a global of the context.
+fn native<'js, P>(
+    ctx: &Ctx<'js>,
+    name: &str,
+    f: impl rquickjs::function::IntoJsFunc<'js, P> + 'js,
+) -> rquickjs::Result<()> {
+    ctx.globals().set(name, Function::new(ctx.clone(), f)?)
+}
+
 fn install<'js>(ctx: &Ctx<'js>, run: &Rc<RefCell<Run>>) -> rquickjs::Result<()> {
-    let g = ctx.globals();
-    let r = run.clone();
-    g.set(
-        "__ekiben_as_string",
-        Function::new(ctx.clone(), move || {
-            String::from_utf8_lossy(&r.borrow().part.as_bytes_ref()).into_owned()
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_as_json",
-        Function::new(ctx.clone(), move || -> Option<String> {
-            let part = &r.borrow().part;
+    let [r0, r1, r2, r3, r4, r5, r6]: [Rc<RefCell<Run>>; 7] = std::array::from_fn(|_| run.clone());
+    [
+        native(ctx, "__ekiben_as_string", move || {
+            String::from_utf8_lossy(&r0.borrow().part.as_bytes_ref()).into_owned()
+        }),
+        native(ctx, "__ekiben_as_json", move || -> Option<String> {
+            let part = &r1.borrow().part;
             if part.holds_structured() {
                 let v = part.as_structured_ref().ok()?;
                 return serde_json::to_string(&v.to_json_value()).ok();
@@ -242,66 +245,65 @@ fn install<'js>(ctx: &Ctx<'js>, run: &Rc<RefCell<Run>>) -> rquickjs::Result<()> 
             let bytes = part.as_bytes_ref();
             serde_json::from_slice::<JsonValue>(&bytes).ok()?;
             Some(String::from_utf8_lossy(&bytes).into_owned())
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_set_string",
-        Function::new(ctx.clone(), move |s: String| {
-            r.borrow_mut().part.set_bytes(s.into_bytes());
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_set_json",
-        Function::new(ctx.clone(), move |s: String| {
+        }),
+        native(ctx, "__ekiben_set_string", move |s: String| {
+            r2.borrow_mut().part.set_bytes(s.into_bytes());
+        }),
+        native(ctx, "__ekiben_set_json", move |s: String| {
             if let Ok(v) = serde_json::from_str::<JsonValue>(&s) {
-                r.borrow_mut()
+                r3.borrow_mut()
                     .part
                     .set_structured(Value::from_json_value(v));
             }
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_get_meta",
-        Function::new(ctx.clone(), move |k: String| -> Option<String> {
-            let run = r.borrow();
-            let v = run.part.meta_get(&k)?;
-            serde_json::to_string(&v.to_json_value()).ok()
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_set_meta",
-        Function::new(ctx.clone(), move |k: String, s: String| {
+        }),
+        native(
+            ctx,
+            "__ekiben_get_meta",
+            move |k: String| -> Option<String> {
+                let run = r4.borrow();
+                let v = run.part.meta_get(&k)?;
+                serde_json::to_string(&v.to_json_value()).ok()
+            },
+        ),
+        native(ctx, "__ekiben_set_meta", move |k: String, s: String| {
             if let Ok(v) = serde_json::from_str::<JsonValue>(&s) {
-                r.borrow_mut().part.meta_set(k, Value::from_json_value(v));
+                r5.borrow_mut().part.meta_set(k, Value::from_json_value(v));
             }
-        })?,
-    )?;
-    let r = run.clone();
-    g.set(
-        "__ekiben_log",
-        Function::new(ctx.clone(), move |level: String, mut line: String| {
-            let logs = &mut r.borrow_mut().logs;
-            if logs.len() < MAX_LOG_LINES {
-                if line.len() > MAX_LOG_LINE {
-                    let mut cut = MAX_LOG_LINE;
-                    while !line.is_char_boundary(cut) {
-                        cut -= 1;
+        }),
+        native(
+            ctx,
+            "__ekiben_log",
+            move |level: String, mut line: String| {
+                let logs = &mut r6.borrow_mut().logs;
+                if logs.len() < MAX_LOG_LINES {
+                    if line.len() > MAX_LOG_LINE {
+                        let mut cut = MAX_LOG_LINE;
+                        while !line.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        line.truncate(cut);
                     }
-                    line.truncate(cut);
+                    logs.push((level, line));
                 }
-                logs.push((level, line));
-            }
-        })?,
-    )?;
-    Ok(())
+            },
+        ),
+    ]
+    .into_iter()
+    .collect()
 }
 
-fn new_runtime(limits: Limits, deadline: &Rc<Cell<Instant>>) -> Result<Runtime, String> {
-    let rt = Runtime::new().map_err(|e| format!("javascript: starting the engine: {e}"))?;
+/// The engine's constructor: `Runtime::new`, or a failing one in the tests.
+type StartEngine = fn() -> rquickjs::Result<Runtime>;
+
+fn new_runtime(
+    start: StartEngine,
+    limits: Limits,
+    deadline: &Rc<Cell<Instant>>,
+) -> Result<Runtime, String> {
+    let rt = match start() {
+        Ok(rt) => rt,
+        Err(e) => return Err(format!("javascript: starting the engine: {e}")),
+    };
     rt.set_memory_limit(limits.memory_bytes);
     rt.set_max_stack_size(STACK_BYTES);
     let d = deadline.clone();
@@ -326,17 +328,16 @@ fn run_one(rt: &Runtime, code: &str, part: Part, limits: Limits) -> (Run, Result
         // Without Promise an async function leaves objects QuickJS asserts on when the runtime
         // is freed (an abort of the runner); with it, a promise's jobs are simply never run.
         .with::<intrinsic::Promise>()
-        .build(rt)
-        .map_err(|e| reason(&e.to_string(), limits))
-        .and_then(|context| {
-            context.with(|ctx| {
-                install(&ctx, &run).map_err(|e| reason(&exception_text(&ctx, e), limits))?;
-                ctx.eval::<(), _>(PRELUDE)
-                    .map_err(|e| reason(&exception_text(&ctx, e), limits))?;
-                ctx.eval::<(), _>(code)
-                    .map_err(|e| reason(&exception_text(&ctx, e), limits))
-            })
-        });
+        .build(rt);
+    let outcome = match outcome {
+        Ok(context) => context.with(|ctx| {
+            install(&ctx, &run)
+                .and_then(|()| ctx.eval::<(), _>(PRELUDE))
+                .and_then(|()| ctx.eval::<(), _>(code))
+                .map_err(|e| reason(&exception_text(&ctx, e), limits))
+        }),
+        Err(e) => Err(reason(&e.to_string(), limits)),
+    };
     rt.run_gc();
     let run = Rc::try_unwrap(run).map_or_else(
         // A closure still held: the context is gone, so this is unreachable in practice; the
@@ -367,34 +368,44 @@ fn budget_spent(budget: Duration) -> String {
 /// going from 1.2 ms to 9-13 ms with eight spinning on eight workers (T-7082).
 fn script_slots() -> &'static tokio::sync::Semaphore {
     static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-    SLOTS.get_or_init(|| {
-        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-        tokio::sync::Semaphore::new((cores / 4).max(1))
-    })
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(slots_for(cores())))
+}
+
+fn cores() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+}
+
+/// A quarter of the cores, at least one.
+fn slots_for(cores: usize) -> usize {
+    (cores / 4).max(1)
 }
 
 /// The batch after the script ran on each message: the flags to set and the lines to log.
 type Outcome = (Batch, Vec<(usize, String)>, Vec<(String, String)>);
 
 /// Runs `code` over each message of `batch`, spending at most `budget` in total.
-fn run_batch(code: &str, limits: Limits, budget: Duration, mut batch: Batch) -> Outcome {
+fn run_batch(
+    start: StartEngine,
+    code: &str,
+    limits: Limits,
+    budget: Duration,
+    mut batch: Batch,
+) -> Outcome {
     let started = Instant::now();
     let deadline = Rc::new(Cell::new(started));
     let mut errors = Vec::new();
     let mut logs = Vec::new();
     let mut rt = None;
     for (i, slot) in batch.iter_mut().enumerate() {
-        if rt.is_none() {
-            match new_runtime(limits, &deadline) {
-                Ok(r) => rt = Some(r),
+        let runtime = match rt {
+            Some(ref r) => r,
+            None => match new_runtime(start, limits, &deadline) {
+                Ok(r) => rt.insert(r),
                 Err(e) => {
                     errors.push((i, e));
                     continue;
                 }
-            }
-        }
-        let Some(runtime) = rt.as_ref() else {
-            continue;
+            },
         };
         let left = budget.saturating_sub(started.elapsed());
         if left.is_zero() {
@@ -441,16 +452,21 @@ impl Processor for JavascriptProcessor {
             .max_cpu_time_ms_per_run
             .saturating_mul(1_000_000);
         let budget = Duration::from_nanos(limit_ns.saturating_sub(ctx.metrics.processing_ns()));
-        let _slot = script_slots()
-            .acquire()
-            .await
-            .map_err(|e| CoreError::other(format!("javascript: {e}")))?;
-        let (mut batch, errors, logs) =
-            tokio::task::spawn_blocking(move || run_batch(&code, limits, budget, batch))
-                .await
-                .map_err(|e| {
-                    CoreError::other(format!("javascript: the script task failed: {e}"))
-                })?;
+        let _slot = match script_slots().acquire().await {
+            Ok(slot) => slot,
+            Err(e) => return Err(CoreError::other(format!("javascript: {e}"))),
+        };
+        let task = tokio::task::spawn_blocking(move || {
+            run_batch(Runtime::new, &code, limits, budget, batch)
+        });
+        let (mut batch, errors, logs) = match task.await {
+            Ok(done) => done,
+            Err(e) => {
+                return Err(CoreError::other(format!(
+                    "javascript: the script task failed: {e}"
+                )))
+            }
+        };
         for (level, line) in logs {
             match level.as_str() {
                 "error" => tracing::error!(stream = %ctx.stream_id, label = %self.label, "{line}"),
@@ -480,7 +496,7 @@ pub mod fuzzing {
             memory_bytes: usize::try_from(DEFAULT_MEMORY_MB << 20).unwrap_or(usize::MAX),
         };
         let batch = vec![Part::new(message.to_vec()), Part::new(message.to_vec())];
-        run_batch(code, limits, Duration::from_secs(1), batch).1
+        run_batch(Runtime::new, code, limits, Duration::from_secs(1), batch).1
     }
 }
 
