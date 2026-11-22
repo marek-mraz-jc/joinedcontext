@@ -1772,9 +1772,7 @@ pub async fn export_realm(
             serde_json::to_value(&idps).unwrap_or(Value::Array(Vec::new())),
         );
         if with_users {
-            let users = store
-                .list_users(realm_id, None, None, None, None, false, 0, 10_000)
-                .await?;
+            let users = kaisatsu_core::listing::all_users(store.as_ref(), realm_id).await?;
             map.insert(
                 "users".into(),
                 serde_json::to_value(&users).unwrap_or(Value::Array(Vec::new())),

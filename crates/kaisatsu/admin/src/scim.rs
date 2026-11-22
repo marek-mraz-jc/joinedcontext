@@ -24,6 +24,8 @@ use std::collections::BTreeMap;
 pub const MAX_SCIM_FILTER_DEPTH: usize = 16;
 pub const MAX_SCIM_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_SCIM_PATCH_OPS: usize = 100;
+/// Groups carry their members, so a page of them is shorter than a page of users.
+const SCIM_GROUPS_PAGE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScimOp {
@@ -166,46 +168,87 @@ fn split_top_level_and(s: &str) -> Result<Option<(&str, &str)>> {
     Ok(None)
 }
 
-pub fn eval_scim_user(expr: &ScimExpr, u: &UserRepresentation) -> bool {
+/// The expression as the store's conjunction; `None` when it names an attribute the resource
+/// does not have, which matches nothing.
+fn scim_conditions<F>(
+    expr: &ScimExpr,
+    field_of: fn(&str) -> Option<F>,
+) -> Option<Vec<FieldMatch<F>>> {
     match expr {
-        ScimExpr::And(a, b) => eval_scim_user(a, u) && eval_scim_user(b, u),
-        ScimExpr::Compare { attr, op, value } => {
-            let field_val = match attr.to_ascii_lowercase().as_str() {
-                "username" => u.username.as_str(),
-                "emails.value" | "email" => u.email.as_deref().unwrap_or_default(),
-                "name.givenname" | "givenname" => u.first_name.as_deref().unwrap_or_default(),
-                "name.familyname" | "familyname" => u.last_name.as_deref().unwrap_or_default(),
-                "id" => u.id.as_str(),
-                _ => return false,
-            };
-            let f_low = field_val.to_ascii_lowercase();
-            let v_low = value.to_ascii_lowercase();
-            match op {
-                ScimOp::Eq => f_low == v_low,
-                ScimOp::Co => f_low.contains(&v_low),
-                ScimOp::Sw => f_low.starts_with(&v_low),
-            }
+        ScimExpr::And(a, b) => {
+            let mut all = scim_conditions(a, field_of)?;
+            all.extend(scim_conditions(b, field_of)?);
+            Some(all)
         }
+        ScimExpr::Compare { attr, op, value } => Some(vec![FieldMatch {
+            field: field_of(&attr.to_ascii_lowercase())?,
+            op: match op {
+                ScimOp::Eq => MatchOp::Equals,
+                ScimOp::Co => MatchOp::Contains,
+                ScimOp::Sw => MatchOp::StartsWith,
+            },
+            value: value.clone(),
+        }]),
     }
 }
 
-pub fn eval_scim_group(expr: &ScimExpr, g: &GroupRepresentation) -> bool {
-    match expr {
-        ScimExpr::And(a, b) => eval_scim_group(a, g) && eval_scim_group(b, g),
-        ScimExpr::Compare { attr, op, value } => {
-            let field_val = match attr.to_ascii_lowercase().as_str() {
-                "displayname" | "name" => g.name.as_str(),
-                "id" => g.id.as_str(),
-                _ => return false,
-            };
-            let f_low = field_val.to_ascii_lowercase();
-            let v_low = value.to_ascii_lowercase();
-            match op {
-                ScimOp::Eq => f_low == v_low,
-                ScimOp::Co => f_low.contains(&v_low),
-                ScimOp::Sw => f_low.starts_with(&v_low),
-            }
-        }
+fn person_field(attr: &str) -> Option<PersonField> {
+    match attr {
+        "username" => Some(PersonField::Username),
+        "emails.value" | "email" => Some(PersonField::Email),
+        "name.givenname" | "givenname" => Some(PersonField::FirstName),
+        "name.familyname" | "familyname" => Some(PersonField::LastName),
+        "id" => Some(PersonField::Id),
+        _ => None,
+    }
+}
+
+fn group_field(attr: &str) -> Option<GroupField> {
+    match attr {
+        "displayname" | "name" => Some(GroupField::Name),
+        "id" => Some(GroupField::Id),
+        _ => None,
+    }
+}
+
+/// RFC 7644 section 3.4.2.4: `startIndex` counts from 1 and less reads as 1; a negative `count`
+/// reads as 0 and no page is longer than [`MAX_PAGE`].
+#[derive(Debug, Clone, Copy)]
+struct ScimPage {
+    start_index: usize,
+    count: usize,
+}
+
+impl ScimPage {
+    fn parse(query: &BTreeMap<String, String>, default_count: usize) -> Result<Self> {
+        let number = |name: &str| -> Result<Option<i64>> {
+            query
+                .get(name)
+                .map(|v| v.parse::<i64>())
+                .transpose()
+                .map_err(|_| {
+                    KaisatsuError::BadRequest(format!(
+                        "{name}: give a whole number, e.g. {name}=100"
+                    ))
+                })
+        };
+        Ok(Self {
+            start_index: number("startIndex")?
+                .map_or(1, |n| usize::try_from(n).unwrap_or(1).max(1)),
+            count: number("count")?
+                .map_or(default_count, |n| usize::try_from(n).unwrap_or(0))
+                .min(MAX_PAGE),
+        })
+    }
+
+    fn answer(self, total: usize, resources: Vec<Value>) -> Json<Value> {
+        Json(json!({
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+            "totalResults": total,
+            "startIndex": self.start_index,
+            "itemsPerPage": resources.len(),
+            "Resources": resources,
+        }))
     }
 }
 
@@ -514,26 +557,30 @@ async fn scim_list_users(
     if !dec.allowed {
         return Err(KaisatsuError::Forbidden(dec.reason));
     }
-    let filter = match q.get("filter") {
-        Some(f) => Some(parse_scim_filter(f)?),
-        None => None,
+    let page = ScimPage::parse(&q, MAX_PAGE)?;
+    let conditions = match q.get("filter") {
+        Some(f) => scim_conditions(&parse_scim_filter(f)?, person_field),
+        None => Some(Vec::new()),
     };
     let allowed = ctx.allowed_orgs();
-    let users = state
-        .oidc
-        .store
-        .list_users(&realm, allowed.as_deref(), None, None, None, false, 0, 1000)
-        .await?;
-    let resources: Vec<Value> = users
-        .into_iter()
-        .filter(|u| filter.as_ref().is_none_or(|f| eval_scim_user(f, u)))
-        .map(|u| to_scim_user_json(&u))
-        .collect();
-    Ok(Json(json!({
-        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
-        "totalResults": resources.len(),
-        "Resources": resources,
-    })))
+    let found = match &conditions {
+        Some(filter) => {
+            state
+                .oidc
+                .store
+                .find_users(
+                    &realm,
+                    allowed.as_deref(),
+                    filter,
+                    page.start_index - 1,
+                    page.count,
+                )
+                .await?
+        }
+        None => ListPage::default(),
+    };
+    let resources = found.items.iter().map(to_scim_user_json).collect();
+    Ok(page.answer(found.total, resources))
 }
 
 async fn run_op(
@@ -1137,34 +1184,34 @@ async fn scim_list_groups(
     if !dec.allowed {
         return Err(KaisatsuError::Forbidden(dec.reason));
     }
-    let filter = match q.get("filter") {
-        Some(f) => Some(parse_scim_filter(f)?),
-        None => None,
+    let page = ScimPage::parse(&q, SCIM_GROUPS_PAGE)?;
+    let conditions = match q.get("filter") {
+        Some(f) => scim_conditions(&parse_scim_filter(f)?, group_field),
+        None => Some(Vec::new()),
     };
     let allowed = ctx.allowed_orgs();
-    let groups = state
-        .oidc
-        .store
-        .list_groups(&realm, allowed.as_deref(), None, false)
-        .await?;
-    let mut resources = Vec::new();
-    for g in groups
-        .into_iter()
-        .filter(|g| filter.as_ref().is_none_or(|f| eval_scim_group(f, g)))
-    {
-        let members = state
-            .oidc
-            .store
-            .list_group_members(&realm, allowed.as_deref(), &g.id, 1000)
-            .await
-            .unwrap_or_default();
-        resources.push(to_scim_group_json(&g, &members));
-    }
-    Ok(Json(json!({
-        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
-        "totalResults": resources.len(),
-        "Resources": resources,
-    })))
+    let found = match &conditions {
+        Some(filter) => {
+            state
+                .oidc
+                .store
+                .find_groups(
+                    &realm,
+                    allowed.as_deref(),
+                    filter,
+                    page.start_index - 1,
+                    page.count,
+                )
+                .await?
+        }
+        None => ListPage::default(),
+    };
+    let resources = found
+        .items
+        .iter()
+        .map(|g| to_scim_group_json(&g.group, &g.members))
+        .collect();
+    Ok(page.answer(found.total, resources))
 }
 
 async fn scim_create_group(
@@ -1236,7 +1283,7 @@ async fn scim_create_group(
     let members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     record_admin_write(
         &state,
@@ -1284,7 +1331,7 @@ async fn scim_get_group(
     let members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     Ok(scim_json_with_etag(
         StatusCode::OK,
@@ -1325,7 +1372,7 @@ async fn scim_put_group(
     let cur_members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     if let Err(resp) = check_if_match(&headers, &group_etag(&grp, &cur_members)) {
         return Ok(resp);
@@ -1407,7 +1454,7 @@ async fn scim_put_group(
     let new_members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     Ok(scim_json_with_etag(
         StatusCode::OK,
@@ -1449,7 +1496,7 @@ async fn scim_patch_group(
     let cur_members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     if let Err(resp) = check_if_match(&headers, &group_etag(&grp, &cur_members)) {
         return Ok(resp);
@@ -1661,7 +1708,7 @@ async fn scim_patch_group(
     let updated_members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &grp.id, 1000)
+        .list_group_members(&realm, allowed.as_deref(), &grp.id, 0, MAX_PAGE)
         .await?;
     Ok(scim_json_with_etag(
         StatusCode::OK,
@@ -1743,7 +1790,12 @@ mod tests {
             email: Some("alice.smith@hel.fi".into()),
             ..Default::default()
         };
-        assert!(eval_scim_user(&f, &u));
+        assert!(
+            scim_conditions(&f, person_field)
+                .expect("known attributes")
+                .iter()
+                .all(|m| m.matches(&u))
+        );
 
         // Regression test for Kanidm GHSA-2pm5-6m23-h692 / GHSA-r5fr-9gmv-jggh: deeply nested
         // filter must return 400 BadRequest instead of overflowing the stack.
@@ -1763,6 +1815,11 @@ mod tests {
             username: "žofia".into(),
             ..Default::default()
         };
-        assert!(eval_scim_user(&f, &u));
+        assert!(
+            scim_conditions(&f, person_field)
+                .expect("known attributes")
+                .iter()
+                .all(|m| m.matches(&u))
+        );
     }
 }

@@ -14,13 +14,19 @@ pub(crate) struct Table {
     name: &'static str,
     key: &'static [&'static str],
     has_id: bool,
+    /// What a read and a write's `RETURNING` take of a row `t`.
+    read: &'static str,
 }
+
+/// A whole row; `row_to_json`, as `to_jsonb` takes half as long again on a list.
+const WHOLE_ROW: &str = "row_to_json(t)";
 
 const fn table(name: &'static str, key: &'static [&'static str]) -> Table {
     Table {
         name,
         key,
         has_id: true,
+        read: WHOLE_ROW,
     }
 }
 
@@ -28,11 +34,13 @@ pub(crate) const INSTANCE: Table = Table {
     name: "instance",
     key: &[],
     has_id: false,
+    read: WHOLE_ROW,
 };
 pub(crate) const QUOTA_USAGE: Table = Table {
     name: "quota_usage",
     key: &[],
     has_id: false,
+    read: WHOLE_ROW,
 };
 pub(crate) const REPO: Table = table("repo", &[]);
 /// Branch and tag rules share the table and differ in `kind`.
@@ -45,10 +53,19 @@ pub(crate) const WEBHOOK: Table = table("webhook", &[]);
 pub(crate) const DELIVERY: Table = table("delivery", &[]);
 pub(crate) const PUSH_MIRROR: Table = table("push_mirror", &["repo_id", "remote_name"]);
 pub(crate) const PACKAGE: Table = table("package", &["owner", "package_type", "name"]);
-pub(crate) const PACKAGE_VERSION: Table = table(
-    "package_version",
-    &["owner", "package_type", "package_name", "version"],
-);
+/// Never `manifest_bytes`: a manifest is a blob (T-7523).
+pub(crate) const PACKAGE_VERSION: Table = Table {
+    read: "json_build_object('id', t.id, 'instance_id', t.instance_id, 'org_id', t.org_id, \
+           'package_id', t.package_id, 'owner', t.owner, 'package_type', t.package_type, \
+           'package_name', t.package_name, 'version', t.version, 'digest', t.digest, \
+           'media_type', t.media_type, 'subject_digest', t.subject_digest, \
+           'artifact_type', t.artifact_type, 'size_bytes', t.size_bytes, 'signed', t.signed, \
+           'created_at', t.created_at)",
+    ..table(
+        "package_version",
+        &["owner", "package_type", "package_name", "version"],
+    )
+};
 pub(crate) const PACKAGE_FILE: Table = table(
     "package_file",
     &["owner", "package_name", "version", "filename"],
@@ -146,19 +163,6 @@ pub(crate) fn to_record(table: &Table, row: Value) -> ShakoResult<Value> {
                 row.insert("rule".into(), doc);
             }
         }
-        "package_version" => {
-            if let Some(Value::String(hex)) = row.remove("manifest_bytes") {
-                let digits = hex.trim_start_matches("\\x").as_bytes();
-                let bytes: Vec<u8> = digits
-                    .chunks(2)
-                    .map(|pair| {
-                        let pair = std::str::from_utf8(pair).map_err(unreadable)?;
-                        u8::from_str_radix(pair, 16).map_err(unreadable)
-                    })
-                    .collect::<ShakoResult<_>>()?;
-                row.insert("manifest_bytes".into(), bytes.into());
-            }
-        }
         _ => {}
     }
     Ok(Value::Object(
@@ -223,10 +227,11 @@ pub(crate) async fn put(
         Taken::Replace => format!("ON CONFLICT ({pk}) DO UPDATE SET {update}"),
         Taken::Keep => "ON CONFLICT DO NOTHING".to_owned(),
     };
+    let read = table.read;
     let stored: Option<Value> = sqlx::query_scalar(AssertSqlSafe(format!(
         "INSERT INTO shako.{name} AS t ({columns})
          SELECT {columns} FROM jsonb_populate_record(NULL::shako.{name}, $1) {conflict}
-         RETURNING to_jsonb(t)"
+         RETURNING {read}"
     )))
     .bind(&doc)
     .fetch_optional(&mut **tx)
@@ -236,7 +241,6 @@ pub(crate) async fn put(
 }
 
 /// The tenant's records `rest` selects: SQL after the tenant's predicate, with `binds` from $3.
-/// `row_to_json`, as `to_jsonb` takes half as long again on a list.
 pub(crate) async fn select<T: DeserializeOwned>(
     tx: &mut Transaction<'_, Postgres>,
     tenant: (InstanceId, OrgId),
@@ -248,9 +252,9 @@ pub(crate) async fn select<T: DeserializeOwned>(
     if binds.iter().flatten().any(|b| b.contains('\0')) {
         return Ok(Vec::new());
     }
-    let name = table.name;
+    let (name, read) = (table.name, table.read);
     let mut query = sqlx::query_scalar::<_, Value>(AssertSqlSafe(format!(
-        "SELECT row_to_json(t) FROM shako.{name} t WHERE t.instance_id = $1 AND t.org_id = $2 {rest}"
+        "SELECT {read} FROM shako.{name} t WHERE t.instance_id = $1 AND t.org_id = $2 {rest}"
     )))
     .bind(tenant.0.as_uuid())
     .bind(tenant.1.as_uuid());

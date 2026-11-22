@@ -53,7 +53,7 @@ item below is marked **not verified (not compiled)** alongside the implemented c
   - Implemented: Bearer, `token`, Basic, and `/v2/token` forms; JWKS cache with bounded refresh on unknown `kid`; ES256 registry token minting (<= 15 min); `Authorizer` with 7 verbs and 404 for hidden objects.
   - Tests written: `crates/shako/core/src/auth.rs::tests`, `crates/shako/server/tests/e2e.rs`.
 - **S13 Package registry and signing (`shako-registry/src/lib.rs`)**: not verified (not compiled).
-  - Implemented: OCI distribution (`/v2/`, `/v2/token`, blob HEAD/GET, monolithic and chunked uploads, same-owner cross-repo mount, manifest PUT/GET/HEAD with 4 MiB cap, tag list, referrers), generic packages (`409` on overwrite), and automatic ECDSA P-256 cosign simple-signing (`sha256-<digest>.sig`).
+  - Implemented: OCI distribution (`/v2/`, `/v2/token`, blob HEAD/GET, monolithic and chunked uploads, same-owner cross-repo mount, manifest PUT/GET/HEAD with 4 MiB cap, stored as blobs under the quota, tag list paged by `n`/`last` up to 1000, referrers), generic packages (`409` on overwrite), and automatic ECDSA P-256 cosign simple-signing (`sha256-<digest>.sig`).
   - Tests written: `crates/shako/server/tests/e2e.rs::s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats`.
 - **S14 Events, outbox, webhooks (`shako-api/src/outbox.rs`)**: not verified (not compiled).
   - Implemented: Idempotent outbox rows, in-process broadcast bus + subscribers, and Gitea-format webhooks with `X-Gitea-Event` and `X-Gitea-Signature` (HMAC-SHA256 hex), secret rotation support, `OutboundGuard`, and 3 retries.

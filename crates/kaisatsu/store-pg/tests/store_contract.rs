@@ -643,18 +643,18 @@ async fn groups(store: &dyn Store) {
             .is_empty()
     );
     let m = store
-        .list_group_members(R, None, &members.id, 10)
+        .list_group_members(R, None, &members.id, 0, 10)
         .await
         .expect("members");
     assert_eq!(m.iter().map(|u| u.id.as_str()).collect::<Vec<_>>(), ["u1"]);
     assert!(matches!(
         store
-            .list_group_members(R, Some(&["zil".to_owned()]), &members.id, 10)
+            .list_group_members(R, Some(&["zil".to_owned()]), &members.id, 0, 10)
             .await,
         Err(KaisatsuError::NotFound(_))
     ));
     assert!(matches!(
-        store.list_group_members(R, None, "no-group", 10).await,
+        store.list_group_members(R, None, "no-group", 0, 10).await,
         Err(KaisatsuError::NotFound(_))
     ));
     store
@@ -1899,6 +1899,282 @@ async fn device_codes(store: &dyn Store) {
     assert_eq!(denied, DevicePoll::Denied);
 }
 
+/// T-7525: the paged list calls answer the same in SQL as in memory.
+async fn paged_lists(store: &dyn Store) {
+    const P: &str = "paging";
+    store
+        .upsert_realm(RealmConfig {
+            id: P.into(),
+            realm: P.into(),
+            ..Default::default()
+        })
+        .await
+        .expect("realm");
+    let person = |id: &str, name: &str, email: Option<&str>| UserRepresentation {
+        realm_id: P.into(),
+        ..user(id, name, email, None)
+    };
+    for u in [
+        person("a", "Anna", Some("Anna@City.Example")),
+        person("b", "bea%_", None),
+        UserRepresentation {
+            first_name: Some("\u{c4}rne".into()),
+            ..person("c", "carl", Some("carl@city.example"))
+        },
+        UserRepresentation {
+            service_account_client_id: Some("sync".into()),
+            ..person("s", "service-account-sync", None)
+        },
+    ] {
+        store.create_user(u).await.expect("person");
+    }
+
+    type Query = (
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<&'static str>,
+        bool,
+    );
+    let queries: [(Query, &[&str]); 14] = [
+        ((None, None, None, false), &["a", "b", "c", "s"]),
+        // A search given, also an empty one, lists people only.
+        ((Some(""), None, None, false), &["a", "b", "c"]),
+        ((Some("service"), None, None, false), &[]),
+        ((Some("ANNA@city"), None, None, false), &["a"]),
+        ((Some("%_"), None, None, false), &["b"]),
+        ((Some("\u{c4}RNE"), None, None, false), &["c"]),
+        // ASCII case only, as the stores have always compared.
+        ((Some("\u{e4}rne"), None, None, false), &[]),
+        ((Some("a\0"), None, None, false), &[]),
+        ((None, Some("ANNA@CITY.EXAMPLE"), None, true), &["a"]),
+        ((None, Some(""), None, true), &["b", "s"]),
+        ((None, Some(""), None, false), &["a", "b", "c", "s"]),
+        ((None, Some("city"), None, true), &[]),
+        ((None, None, Some("ANNA"), true), &["a"]),
+        ((None, None, Some("' OR true --"), false), &[]),
+    ];
+    for ((search, email, name, exact), expected) in queries {
+        let found = store
+            .list_users(P, None, search, email, name, exact, 0, 100)
+            .await
+            .expect("list");
+        let ids: Vec<&str> = found.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(ids, expected, "{search:?} {email:?} {name:?} exact={exact}");
+    }
+    let second = store
+        .list_users(P, None, Some(""), None, None, false, 1, 1)
+        .await
+        .expect("second");
+    assert_eq!(second[0].id, "b", "first counts people only");
+
+    use MatchOp::{Contains, Equals, StartsWith};
+    use PersonField::{Email, FirstName, Id, LastName, Username};
+    type Conditions = &'static [(PersonField, MatchOp, &'static str)];
+    let filters: [(Conditions, &[&str]); 8] = [
+        (&[], &["a", "b", "c", "s"]),
+        (&[(Username, Equals, "ANNA")], &["a"]),
+        (&[(Email, Equals, "")], &["b", "s"]),
+        (&[(Email, StartsWith, "CARL@")], &["c"]),
+        (&[(FirstName, Contains, "RNE")], &["c"]),
+        (&[(LastName, Equals, "last-b"), (Id, Equals, "B")], &["b"]),
+        (
+            &[(Username, Contains, "a"), (Email, Contains, "city")],
+            &["a", "c"],
+        ),
+        (&[(Username, Contains, "a\0")], &[]),
+    ];
+    for (conditions, expected) in filters {
+        let filter: Vec<FieldMatch<PersonField>> = conditions
+            .iter()
+            .map(|(field, op, value)| FieldMatch {
+                field: *field,
+                op: *op,
+                value: (*value).into(),
+            })
+            .collect();
+        let all = store
+            .find_users(P, None, &filter, 0, 100)
+            .await
+            .expect("find");
+        let ids: Vec<&str> = all.items.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(
+            (ids, all.total),
+            (expected.to_vec(), expected.len()),
+            "{filter:?}"
+        );
+        let none = store
+            .find_users(P, None, &filter, 0, 0)
+            .await
+            .expect("count");
+        assert_eq!((none.items.len(), none.total), (0, expected.len()));
+    }
+
+    let group = |id: &str, org: &str, parent: Option<&str>, path: &str| GroupRepresentation {
+        id: id.into(),
+        realm_id: P.into(),
+        org_id: Some(org.into()),
+        parent_id: parent.map(str::to_owned),
+        name: path.rsplit('/').next().unwrap_or_default().into(),
+        path: path.into(),
+        ..Default::default()
+    };
+    for g in [
+        group("h", "hel", None, "/hel"),
+        group("hm", "hel", Some("h"), "/hel/members"),
+        // No parentId: the path alone places it.
+        group("hb", "hel", None, "/hel/members/board"),
+        group("hx", "hel", None, "/helper"),
+        group("z", "zil", None, "/zil"),
+        group("zm", "zil", Some("z"), "/zil/members"),
+    ] {
+        store.upsert_group(g).await.expect("group");
+    }
+    let (hel, zil) = (["hel".to_owned()], ["zil".to_owned()]);
+    let exact = store
+        .list_groups(P, None, Some("MEMBERS"), true)
+        .await
+        .expect("exact");
+    assert_eq!(exact.len(), 2);
+    assert_eq!(exact[0].sub_groups[0].id, "hm");
+    assert!(exact[0].sub_groups[0].sub_groups.is_empty());
+    let deep = store
+        .list_groups(P, None, Some("oar"), false)
+        .await
+        .expect("deep");
+    assert_eq!(deep.len(), 1);
+    assert_eq!(deep[0].sub_groups[0].sub_groups[0].id, "hb");
+
+    let root = store
+        .get_group(P, None, "h")
+        .await
+        .expect("get")
+        .expect("root");
+    let below = store
+        .list_child_groups(None, &root)
+        .await
+        .expect("children");
+    assert_eq!(below.len(), 1, "/helper is no child of /hel");
+    assert_eq!(below[0].sub_groups[0].id, "hb");
+    assert!(
+        store
+            .list_child_groups(Some(&zil), &root)
+            .await
+            .expect("scoped children")
+            .is_empty()
+    );
+
+    // Membership has two sources: the row and the path in the person's own document.
+    store.add_user_to_group(P, "a", "hm").await.expect("member");
+    let mut named = store
+        .get_user_by_id(P, None, "c")
+        .await
+        .expect("get")
+        .expect("c");
+    named.groups.push("/hel/members".into());
+    store.update_user(named).await.expect("named member");
+    let members_group = [FieldMatch {
+        field: GroupField::Name,
+        op: Equals,
+        value: "members".into(),
+    }];
+    let mine = store
+        .find_groups(P, Some(&hel), &members_group, 0, 100)
+        .await
+        .expect("find groups");
+    assert_eq!(
+        mine.total, 1,
+        "another Organization's nested group stays out"
+    );
+    assert_eq!(mine.items[0].group.id, "hm");
+    let ids: Vec<&str> = mine.items[0]
+        .members
+        .iter()
+        .map(|u| u.id.as_str())
+        .collect();
+    assert_eq!(ids, ["a", "c"]);
+    let page = store.find_groups(P, None, &[], 1, 2).await.expect("page");
+    assert_eq!(page.total, 6);
+    let ids: Vec<&str> = page.items.iter().map(|g| g.group.id.as_str()).collect();
+    assert_eq!(ids, ["hm", "hb"], "flat, ordered by path");
+
+    for (realm, id, name) in [
+        (P, "1", "endpoint:abcdefgh"),
+        (P, "2", "endpoint:qrstuvwx"),
+        (P, "3", "endpoints"),
+        (R, "4", "endpoint:otherrlm"),
+    ] {
+        store
+            .upsert_client_scope(ClientScopeRepresentation {
+                id: id.into(),
+                realm_id: realm.into(),
+                name: name.into(),
+                ..Default::default()
+            })
+            .await
+            .expect("scope");
+    }
+    let keys = ["endpoint:abcdefgh", "3", "endpoint:otherrlm", "4", "a\0"].map(str::to_owned);
+    let mut ids: Vec<String> = store
+        .get_client_scopes(P, &keys)
+        .await
+        .expect("by key")
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["1", "3"], "by name or id, never another realm's");
+    let mut ids: Vec<String> = store
+        .list_client_scopes_with_prefix(P, "endpoint:")
+        .await
+        .expect("by prefix")
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["1", "2"]);
+    store.delete_client_scope(R, "4").await.expect("clean up");
+
+    // A group past one page is read whole with `first`; one call stops at MAX_PAGE.
+    let crowd = store
+        .upsert_group(group("crowd", "hel", None, "/crowd"))
+        .await
+        .expect("crowd");
+    for n in 0..1201 {
+        store
+            .create_user(UserRepresentation {
+                groups: vec![crowd.path.clone()],
+                ..person(&format!("m{n}"), &format!("member-{n:04}"), None)
+            })
+            .await
+            .expect("crowd member");
+    }
+    let page = |first, max| store.list_group_members(P, None, "crowd", first, max);
+    let mut seen = std::collections::BTreeSet::new();
+    for first in [0, 500, 1000] {
+        seen.extend(
+            page(first, 500)
+                .await
+                .expect("members")
+                .into_iter()
+                .map(|u| u.id),
+        );
+    }
+    assert_eq!(seen.len(), 1201);
+    assert_eq!(page(0, usize::MAX).await.expect("clamp").len(), MAX_PAGE);
+    assert!(page(usize::MAX, 10).await.expect("past the end").is_empty());
+    let one_call = store
+        .list_users(P, None, None, None, None, false, 0, usize::MAX)
+        .await
+        .expect("clamp");
+    assert_eq!(one_call.len(), MAX_PAGE);
+    let whole = listing::all_users(store, P).await.expect("every person");
+    assert_eq!(whole.len(), 1205);
+    let whole = listing::all_group_members(store, P, "crowd")
+        .await
+        .expect("every member");
+    assert_eq!(whole.len(), 1201);
+}
+
 async fn run_contract(store: Arc<dyn Store>) {
     realms_orgs_and_memberships(store.as_ref()).await;
     people_and_credentials(store.as_ref()).await;
@@ -1907,6 +2183,7 @@ async fn run_contract(store: Arc<dyn Store>) {
     sessions_and_tokens(store.as_ref()).await;
     device_codes(store.as_ref()).await;
     config_events_and_sweeper(store.as_ref()).await;
+    paged_lists(store.as_ref()).await;
 }
 
 #[tokio::test]
