@@ -25,6 +25,10 @@ fn deployment(name: &str, issuer: &Issuer, client: &str, per_minute: u32) -> Dep
 }
 
 async fn world(limits: Limits, per_minute: u32, millis: u64) -> World {
+    world_with(limits, per_minute, Embedder::fake(millis)).await
+}
+
+async fn world_with(limits: Limits, per_minute: u32, embedder: Embedder) -> World {
     logs();
     let a = Issuer::start("https://id.a.example/realms/a", "a1").await;
     let b = Issuer::start("https://id.b.example/realms/b", "b1").await;
@@ -39,7 +43,7 @@ async fn world(limits: Limits, per_minute: u32, millis: u64) -> World {
             deployment("b", &b, "assistant-b", per_minute),
         ],
     };
-    let service = Arc::new(Service::new(Embedder::fake(millis), &cfg).expect("service"));
+    let service = Arc::new(Service::new(embedder, &cfg).expect("service"));
     World { a, b, service }
 }
 
@@ -171,6 +175,45 @@ async fn the_quota_is_per_deployment_and_refuses_past_it() {
     // a may still use what is left of its own.
     let (status, ..) = call(&w.service, request(Some(&a), body("query", &["5"]))).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// The minute is a window: once 60 s passed since it began, the deployment's count starts again;
+/// up to the limit is admitted, one text past it is not.
+#[tokio::test]
+async fn the_quota_starts_again_after_a_minute_and_admits_exactly_the_limit() {
+    let w = world(Limits::default(), 3, 0).await;
+    let a = &w.service.deployments[0];
+    assert_eq!(a.charge(3), Ok(()), "exactly the limit");
+    let wait = a.charge(1).expect_err("one past the limit");
+    assert!((1..=60).contains(&wait), "{wait}");
+    *a.used.lock().expect("lock") = (Instant::now() - Duration::from_secs(61), 3);
+    assert_eq!(a.charge(3), Ok(()), "a new minute");
+    assert_eq!(a.used.lock().expect("lock").1, 3);
+    *a.used.lock().expect("lock") = (Instant::now() - Duration::from_secs(59), 3);
+    let wait = a.charge(1).expect_err("the same minute");
+    assert!(wait <= 2, "about a second of the minute is left: {wait}");
+    assert_eq!(
+        a.used.lock().expect("lock").1,
+        3,
+        "a refusal charges nothing"
+    );
+    assert!(a.charge(u32::MAX).is_err(), "no overflow past the limit");
+}
+
+/// A model that fails is a 503 the caller can retry, naming neither the text nor the cause.
+#[tokio::test]
+async fn a_failing_model_is_a_503_without_the_cause() {
+    let w = world_with(Limits::default(), 10, Embedder::broken()).await;
+    let a = w.a.token("assistant-a", AUDIENCE, 300);
+    let (status, answer, _) =
+        call(&w.service, request(Some(&a), body("query", &[SECRET_TEXT]))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert_eq!(
+        answer["error"], "the model failed on this request",
+        "{answer}"
+    );
+    let logs = String::from_utf8(logs().0.lock().expect("lock").clone()).expect("utf-8");
+    assert!(logs.contains("the model failed"), "{logs}");
 }
 
 #[tokio::test]
@@ -417,6 +460,94 @@ max_texts_per_minute = 600
     .expect("parses");
     assert!(twice.check().is_err(), "two deployments named dev");
     assert!(toml::from_str::<Config>(&format!("{base}\ntypo = 1\n")).is_err());
+}
+
+/// Every rule of `check`, each refused with a message naming what to fix, and `read` naming the
+/// file it could not use.
+#[test]
+fn each_config_rule_is_refused_by_name_and_read_names_the_file() {
+    let base = r#"
+model_path = "/models/e5-small"
+[[deployments]]
+name = "dev"
+issuer = "https://id.dev.example/realms/dev"
+jwks_url = "https://id.dev.example/realms/dev/certs"
+clients = ["jc-assistant"]
+max_texts_per_minute = 600
+"#;
+    let refused = |edit: &dyn Fn(&mut Config)| {
+        let mut cfg: Config = toml::from_str(base).expect("parses");
+        edit(&mut cfg);
+        cfg.check().expect_err("refused")
+    };
+    for limit in 0..4 {
+        let why = refused(&|c: &mut Config| match limit {
+            0 => c.limits.max_texts = 0,
+            1 => c.limits.max_text_bytes = 0,
+            2 => c.limits.timeout_secs = 0,
+            _ => c.limits.max_in_flight = 0,
+        });
+        assert_eq!(why, "every [limits] value is at least 1", "limit {limit}");
+    }
+    for threads in [0, 17] {
+        assert_eq!(
+            refused(&|c: &mut Config| c.threads = threads),
+            "threads is a number from 1 to 16"
+        );
+    }
+    for threads in [1, 16] {
+        let mut cfg: Config = toml::from_str(base).expect("parses");
+        cfg.threads = threads;
+        cfg.check().expect("in range");
+    }
+    assert!(
+        refused(&|c: &mut Config| c.deployments[0].name = " ".into()).contains("a name, unique")
+    );
+    assert_eq!(
+        refused(&|c: &mut Config| c.deployments[0].clients = vec![" ".into(), String::new()]),
+        "deployment dev: name its clients"
+    );
+    assert_eq!(
+        refused(&|c: &mut Config| c.deployments[0].clients = vec![]),
+        "deployment dev: name its clients"
+    );
+    assert_eq!(
+        refused(&|c: &mut Config| c.deployments[0].max_texts_per_minute = 0),
+        "deployment dev: max_texts_per_minute is at least 1"
+    );
+    for url in ["ftp://id.dev.example/certs", "id.dev.example/certs"] {
+        assert_eq!(
+            refused(&|c: &mut Config| c.deployments[0].jwks_url = url.into()),
+            "deployment dev: jwks_url is an http(s) URL"
+        );
+    }
+    let mut http: Config = toml::from_str(base).expect("parses");
+    http.deployments[0].jwks_url = "http://kaisatsu.dev.svc/certs".into();
+    http.check().expect("in-cluster http is allowed");
+
+    let dir = std::env::temp_dir().join(format!("jc-embedder-config-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let good = dir.join("good.toml");
+    std::fs::write(&good, base).expect("write");
+    let cfg = Config::read(&good).expect("read");
+    assert_eq!((cfg.threads, cfg.listen_addr), (2, default_listen()));
+    let missing = Config::read(&dir.join("missing.toml")).expect_err("missing");
+    assert!(
+        missing.contains("missing.toml could not be read"),
+        "{missing}"
+    );
+    let broken = dir.join("broken.toml");
+    std::fs::write(&broken, "model_path = ").expect("write");
+    let invalid = Config::read(&broken).expect_err("invalid");
+    assert!(invalid.contains("broken.toml is not valid"), "{invalid}");
+    let empty = dir.join("empty.toml");
+    std::fs::write(&empty, "model_path = \"/m\"\ndeployments = []\n").expect("write");
+    assert!(
+        Config::read(&empty)
+            .expect_err("no deployments")
+            .contains("[[deployments]]")
+    );
+    std::fs::remove_dir_all(dir).expect("clean");
 }
 
 #[test]
