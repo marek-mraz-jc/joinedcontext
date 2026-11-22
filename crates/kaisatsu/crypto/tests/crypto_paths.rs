@@ -166,6 +166,26 @@ fn staged_key_becomes_active_at_its_activation_time() {
     assert!(KeyManager::promote_due(&mut keys, 60).is_empty());
 }
 
+/// Two staged keys of one algorithm both due: they are promoted oldest activation first, so the
+/// newest ends ACTIVE and the older one is demoted by it, whatever order the store listed them in.
+#[test]
+fn due_keys_of_one_algorithm_promote_in_activation_order() {
+    let kek = Kek::generate_for_tests();
+    let mut newer = KeyManager::generate_es256("dev", &kek, 100, "PASSIVE").unwrap();
+    newer.activate_at = Some(TimestampTz::now() - SignedDuration::from_secs(1));
+    let mut older = KeyManager::generate_es256("dev", &kek, 100, "PASSIVE").unwrap();
+    older.activate_at = Some(TimestampTz::now() - SignedDuration::from_secs(60));
+    let mut keys = vec![newer.clone(), older.clone()];
+    let changed = KeyManager::promote_due(&mut keys, 60);
+    assert_eq!(changed.len(), 2);
+    let by = |kid: &str| keys.iter().find(|k| k.kid == kid).unwrap().clone();
+    assert_eq!(by(&newer.kid).status, "ACTIVE");
+    assert_eq!(by(&older.kid).status, "PASSIVE");
+    // The demoted key stays published for two token lifetimes (the 300 s floor, doubled).
+    let left = by(&older.kid).expires_at.unwrap() - TimestampTz::now();
+    assert!(left > SignedDuration::from_secs(590) && left <= SignedDuration::from_secs(600));
+}
+
 fn header_b64(v: Value) -> String {
     URL_SAFE_NO_PAD.encode(v.to_string())
 }
@@ -326,6 +346,25 @@ fn verification_against_a_presented_jwk() {
     assert!(err(&token, &bad_x).contains("cannot build decoding key"));
 }
 
+/// An `id_token_hint` (RP-Initiated Logout) verifies after it expired; every other check holds.
+#[test]
+fn an_expired_token_verifies_only_where_expiry_is_allowed() {
+    let kek = Kek::generate_for_tests();
+    let es = KeyManager::generate_es256("dev", &kek, 100, "ACTIVE").unwrap();
+    let iss = "https://idm.example.test/realms/dev";
+    let expired = json!({ "iss": iss, "sub": "u1", "exp": TimestampTz::now().as_second() - 3600 });
+    let token = sign_jwt(&es, &kek, None, &expired).unwrap();
+    let keys = vec![es];
+    assert!(verify_jwt::<Value>(&token, &keys, Some(iss), None).is_err());
+    let (header, got) = verify_jwt_allowing_expired::<Value>(&token, &keys, Some(iss)).unwrap();
+    assert_eq!(got["sub"], "u1");
+    assert_eq!(header.alg, jsonwebtoken::Algorithm::ES256);
+    assert!(
+        verify_jwt_allowing_expired::<Value>(&token, &keys, Some("https://other.test")).is_err()
+    );
+    assert!(verify_jwt_allowing_expired::<Value>(&token, &[], Some(iss)).is_err());
+}
+
 fn argon_secret(
     password: &str,
     salt: &[u8],
@@ -355,6 +394,15 @@ fn keycloak_argon2_variants_and_parameter_shapes() {
     let s = argon_secret(pw, salt, Algorithm::Argon2d, Version::V0x10, 2048, 2);
     let c = json!({"algorithm":"ARGON2","additionalParameters":{"memory":[2048],"iterations":["2"],"parallelism":["x"],"type":["d"],"version":["16"]}}).to_string();
     assert!(verify_keycloak_credential(pw, &s, &c).unwrap());
+    // Parameters as a plain string and as an array holding a number.
+    let s = argon_secret(pw, salt, Algorithm::Argon2id, Version::V0x13, 1024, 2);
+    let c = json!({"algorithm":"argon2","additionalParameters":{"memory":"1024","iterations":[2]}})
+        .to_string();
+    assert!(verify_keycloak_credential(pw, &s, &c).unwrap());
+    let wrong =
+        json!({"algorithm":"argon2","additionalParameters":{"memory":"1024","iterations":[3]}})
+            .to_string();
+    assert!(!verify_keycloak_credential(pw, &s, &wrong).unwrap());
     // Empty credentialData means Keycloak's argon2id defaults.
     let s = argon_secret(pw, salt, Algorithm::Argon2id, Version::V0x13, 7168, 5);
     assert!(verify_keycloak_credential(pw, &s, " ").unwrap());
@@ -518,6 +566,41 @@ fn totp_algorithms_and_malformed_credentials() {
     assert!(verify_recovery_code("  abcde-fghjk ", &[]).is_none());
 }
 
+/// A person with several authenticators: the first `otp` credential whose code matches answers,
+/// other credential types are never tried, and no match is `None`.
+#[test]
+fn any_totp_code_matches_the_authenticator_that_shows_it() {
+    let now = 1_700_000_000u64;
+    let otp = |seed: &str| CredentialRecord {
+        credential_type: "otp".into(),
+        secret_data: seed.into(),
+        ..Default::default()
+    };
+    let password_cred = CredentialRecord {
+        credential_type: "password".into(),
+        secret_data: "phone-seed".into(),
+        ..Default::default()
+    };
+    let creds = vec![password_cred, otp("laptop-seed"), otp("phone-seed")];
+    let code = generate_totp_code("phone-seed", 6, 30, "HmacSHA256", now).unwrap();
+    let (cred, step) = verify_any_totp_code(&creds, &code, 0, now)
+        .unwrap()
+        .unwrap();
+    assert_eq!((cred.secret_data.as_str(), step), ("phone-seed", now / 30));
+    assert!(
+        verify_any_totp_code(&creds[..2], &code, 0, now)
+            .unwrap()
+            .is_none()
+    );
+    assert!(verify_any_totp_code(&[], &code, 0, now).unwrap().is_none());
+    let broken = vec![CredentialRecord {
+        credential_type: "otp".into(),
+        secret_data: "{\"nope\":1}".into(),
+        ..Default::default()
+    }];
+    assert!(verify_any_totp_code(&broken, &code, 0, now).is_err());
+}
+
 #[test]
 fn handles_and_comparisons() {
     let a = random_handle_256();
@@ -527,6 +610,15 @@ fn handles_and_comparisons() {
     assert!(!constant_time_str_eq("abc", "abd"));
     assert!(!constant_time_str_eq("abc", "abcd"));
     assert_eq!(sha256_hex("").len(), 64);
+    assert_eq!(
+        sha256_hex("abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    // RFC 7636 appendix B: the S256 challenge of the example verifier.
+    assert_eq!(
+        sha256_base64url("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
 }
 
 /// D1: device user codes are `XXXX-XXXX` over the 20-letter alphabet, and the page compares them

@@ -121,6 +121,7 @@ fn cbor_refuses_every_malformed_head_and_length() {
     assert_eq!(v.as_str(), Some("x"));
     assert!(v.as_i64().is_none() && v.as_bytes().is_none());
     assert!(v.map_get_int(1).is_none() && v.map_get_str("x").is_none());
+    assert_eq!(decode_cbor(&int(5)).unwrap().as_str(), None);
 }
 
 type Entries = Vec<(i64, Vec<u8>)>;
