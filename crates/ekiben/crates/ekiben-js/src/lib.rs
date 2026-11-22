@@ -276,13 +276,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: &Rc<RefCell<Run>>) -> rquickjs::Result<()> 
             move |level: String, mut line: String| {
                 let logs = &mut r6.borrow_mut().logs;
                 if logs.len() < MAX_LOG_LINES {
-                    if line.len() > MAX_LOG_LINE {
-                        let mut cut = MAX_LOG_LINE;
-                        while !line.is_char_boundary(cut) {
-                            cut -= 1;
-                        }
-                        line.truncate(cut);
-                    }
+                    line.truncate(line.floor_char_boundary(MAX_LOG_LINE));
                     logs.push((level, line));
                 }
             },
