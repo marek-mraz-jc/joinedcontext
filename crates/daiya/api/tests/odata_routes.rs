@@ -515,6 +515,179 @@ async fn actions_query_import_plan_apply_and_rotate() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
+/// Every write and decision of daiya, through its door, leaves exactly one audit row that
+/// commits with it (S9-28): the kind of `AUDITED_WRITES`, the actor's subject id and ids, never
+/// a token, a secret or a name. A write operation of the registry or a door missing from the
+/// table fails this test.
+#[tokio::test]
+async fn every_write_operation_leaves_one_audit_row() {
+    use daiya_api::AUDITED_WRITES;
+    use daiya_model::DaiyaStore as _;
+    let w = world();
+    let (prom, _) = prometheus().await;
+    let ds = |name: &str| json!({ "uid": "prom", "name": name, "type": "prometheus", "url": prom });
+    let mut steps: Vec<(&str, &str, String, Option<Value>)> = vec![
+        (
+            "CreateOrg",
+            "POST",
+            "/api/orgs".into(),
+            Some(json!({ "name": "tampere" })),
+        ),
+        (
+            "AddDatasource",
+            "POST",
+            "/api/datasources".into(),
+            Some(ds("Prom")),
+        ),
+        (
+            "UpdateDatasource",
+            "PUT",
+            "/api/datasources/uid/prom".into(),
+            Some(ds("Prom city")),
+        ),
+        (
+            "CreateFolder",
+            "POST",
+            "/api/folders".into(),
+            Some(json!({ "uid": "ops", "title": "Ops" })),
+        ),
+        (
+            "Import",
+            "POST",
+            "/api/dashboards/db".into(),
+            Some(json!({ "dashboard": dashboard("edge", "prom"), "overwrite": true })),
+        ),
+        (
+            "Import",
+            "POST",
+            "/odata/v4/Import".into(),
+            Some(json!({ "dashboard": dashboard("two", "prom") })),
+        ),
+        (
+            "Plan",
+            "POST",
+            "/odata/v4/Plan".into(),
+            Some(
+                json!({ "bundle": { "dashboards": [{ "rawJson": dashboard("planned", "prom") }] } }),
+            ),
+        ),
+        (
+            "SavePublicDashboard",
+            "POST",
+            "/api/dashboards/uid/edge/public-dashboards".into(),
+            Some(json!({ "isEnabled": true })),
+        ),
+        (
+            "DeleteDashboard",
+            "DELETE",
+            "/api/dashboards/uid/two".into(),
+            None,
+        ),
+        ("DeleteFolder", "DELETE", "/api/folders/ops".into(), None),
+    ];
+    let mut tokens = Vec::new();
+    let mut seen = Vec::new();
+    let mut i = 0;
+    while i < steps.len() {
+        let (operation, method, uri, body) = steps[i].clone();
+        let before = w.store.list_audit(ORG).await.expect("rows").len();
+        let (st, answer) = w.call(method, &uri, Some("admin"), body).await;
+        assert_eq!(st, StatusCode::OK, "{operation}: {answer}");
+        let rows = w.store.list_audit(ORG).await.expect("rows");
+        assert_eq!(rows.len(), before + 1, "{operation} leaves one row");
+        let row = rows.last().expect("row");
+        let kind = AUDITED_WRITES
+            .iter()
+            .find(|(name, _)| *name == operation)
+            .map(|(_, kind)| *kind);
+        assert_eq!(
+            (row.operation.as_str(), Some(row.kind.as_str())),
+            (operation, kind)
+        );
+        assert_eq!(
+            (row.actor_id.as_str(), row.decision.as_str()),
+            ("admin", "allow")
+        );
+        if let Some(token) = answer["accessToken"].as_str() {
+            tokens.push(token.to_owned());
+        }
+        let text = serde_json::to_string(row).expect("row json");
+        for never in tokens.iter().map(String::as_str).chain(["@", "Board "]) {
+            assert!(
+                !text.contains(never),
+                "{operation}: the row holds {never}: {text}"
+            );
+        }
+        match operation {
+            "CreateOrg" => {
+                let number = answer["orgId"].as_i64().expect("org number");
+                steps.push(("RetireOrg", "DELETE", format!("/api/orgs/{number}"), None));
+            }
+            "Plan" => {
+                let digest = answer["digest"].as_str().expect("digest").to_owned();
+                // Apply right after its Plan: any later write moves the organization's state.
+                steps.insert(
+                    i + 1,
+                    (
+                        "Apply",
+                        "POST",
+                        "/odata/v4/Apply".into(),
+                        Some(json!({ "digest": digest })),
+                    ),
+                );
+            }
+            "SavePublicDashboard" if method == "POST" => {
+                let uid = answer["uid"].as_str().expect("uid").to_owned();
+                steps.push((
+                    "PublicDashboard/Rotate",
+                    "POST",
+                    "/odata/v4/PublicDashboard.Rotate".into(),
+                    Some(json!({ "uid": uid })),
+                ));
+                steps.push((
+                    "SavePublicDashboard",
+                    "PATCH",
+                    format!("/api/dashboards/uid/edge/public-dashboards/{uid}"),
+                    Some(json!({ "isEnabled": false })),
+                ));
+            }
+            "DeleteFolder" => {
+                steps.push((
+                    "DeleteDatasource",
+                    "DELETE",
+                    "/api/datasources/uid/prom".into(),
+                    None,
+                ));
+            }
+            _ => {}
+        }
+        seen.push(operation);
+        i += 1;
+    }
+    let unaudited: Vec<&str> = AUDITED_WRITES
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !seen.contains(name))
+        .collect();
+    assert!(
+        unaudited.is_empty(),
+        "writes without an audit row step: {unaudited:?}"
+    );
+    let registry_writes: Vec<String> = w
+        .state
+        .registry
+        .operations
+        .iter()
+        .filter(|op| op.required_action != Action::Read)
+        .map(|op| op.name.clone())
+        .filter(|name| !AUDITED_WRITES.iter().any(|(audited, _)| audited == name))
+        .collect();
+    assert!(
+        registry_writes.is_empty(),
+        "registry writes without an audit kind: {registry_writes:?}"
+    );
+}
+
 #[tokio::test]
 async fn malformed_action_bodies_and_unknown_actions() {
     let w = seeded().await;

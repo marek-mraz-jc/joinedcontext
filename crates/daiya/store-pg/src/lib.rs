@@ -8,9 +8,9 @@
 //!   `cr_quota` during write transactions (§5.3).
 
 use daiya_model::{
-    ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
-    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
+    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
+    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
+    InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
     PublicDashboardRecord, RowPage, RowQuery, ShareType, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
@@ -31,6 +31,9 @@ pub const ORGANIZATIONS_SQL: &str = include_str!("../migrations/0002_organizatio
 /// The key indexes of the lists (T-7524). A release before it never reads them.
 pub const LIST_INDEXES_SQL: &str = include_str!("../migrations/0003_list_indexes.sql");
 
+/// The audit rows (S9-28, T-7572). A release before it never reads them.
+pub const AUDIT_SQL: &str = include_str!("../migrations/0004_audit.sql");
+
 /// Required tables that MUST have both `relrowsecurity` and `relforcerowsecurity` enabled at boot (§5.3, R8).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "cr_quota",
@@ -45,6 +48,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "cr_query_cache",
     "cr_import_report",
     "cr_plan",
+    "cr_audit",
 ];
 
 /// Pool configuration for `daiya-store-pg` (R8, R11: passed as a struct, password from secret file).
@@ -203,6 +207,7 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
         (1_i32, MIGRATION_SQL),
         (2, ORGANIZATIONS_SQL),
         (3, LIST_INDEXES_SQL),
+        (4, AUDIT_SQL),
     ] {
         let checksum = daiya_model::sha256_hex(sql.as_bytes());
         let applied: Option<String> =
@@ -327,10 +332,10 @@ impl PgStore {
     }
 
     /// Begins a transaction scoped to `org_id` via `SELECT set_config('cr.org', $1, true)` (§5.3).
-    async fn begin_org_tx(&self, org_id: OrgId) -> CrResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
+    /// Inside a write request's unit this is a savepoint of its one transaction, so the audit
+    /// row commits with the change it records (S9-28).
+    async fn begin_org_tx(&self, org_id: OrgId) -> CrResult<jc_audit::Tx> {
+        let mut tx = jc_audit::begin(&self.pool)
             .await
             .map_err(|e| CrError::Internal(format!("begin tx failed: {e}")))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
@@ -358,7 +363,7 @@ impl PgStore {
 
     /// Locks and reads the organization's quota row (`SELECT ... FOR UPDATE`) inside `tx` (§5.3).
     async fn lock_org_quotas(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         installation_id: InstallationId,
         org_id: OrgId,
         instance_id: InstanceId,
@@ -413,10 +418,7 @@ impl PgStore {
         })
     }
 
-    async fn list_folders_tx(
-        tx: &mut Transaction<'_, Postgres>,
-        org_id: OrgId,
-    ) -> CrResult<Vec<FolderRecord>> {
+    async fn list_folders_tx(tx: &mut jc_audit::Tx, org_id: OrgId) -> CrResult<Vec<FolderRecord>> {
         let rows = sqlx::query(
             "SELECT installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at
              FROM cr_folder WHERE org_id = $1 ORDER BY uid",
@@ -429,7 +431,7 @@ impl PgStore {
     }
 
     async fn upsert_folder_tx(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         folder: FolderRecord,
     ) -> CrResult<FolderRecord> {
         if folder.uid == "general" {
@@ -476,7 +478,7 @@ impl PgStore {
     }
 
     async fn list_dashboards_tx(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         org_id: OrgId,
     ) -> CrResult<Vec<DashboardRecord>> {
         let rows = sqlx::query(
@@ -491,7 +493,7 @@ impl PgStore {
     }
 
     async fn upsert_dashboard_tx(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         mut dashboard: DashboardRecord,
         msg: &str,
         overwrite: bool,
@@ -633,7 +635,7 @@ impl PgStore {
     }
 
     async fn list_datasources_tx(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         org_id: OrgId,
     ) -> CrResult<Vec<DatasourceRecord>> {
         let rows = sqlx::query(
@@ -648,7 +650,7 @@ impl PgStore {
     }
 
     async fn upsert_datasource_tx(
-        tx: &mut Transaction<'_, Postgres>,
+        tx: &mut jc_audit::Tx,
         ds: DatasourceRecord,
     ) -> CrResult<DatasourceRecord> {
         let quotas =
@@ -809,6 +811,8 @@ impl DaiyaStore for PgStore {
     ) -> StoreFuture<'_, OrgRow> {
         let name = name.to_owned();
         Box::pin(async move {
+            // In the request's unit: the organization stands with its audit row.
+            let mut tx = jc_audit::begin(&self.pool).await.map_err(db_err)?;
             let row = sqlx::query(
                 "SELECT number, name, org_id, retired_at IS NOT NULL AS retired
                  FROM daiya_org_create($1, $2, $3, $4, $5)",
@@ -818,9 +822,10 @@ impl DaiyaStore for PgStore {
             .bind(number)
             .bind(first_id.as_uuid())
             .bind(OrgId::new().as_uuid())
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             row.as_ref()
                 .map(row_to_org)
                 .ok_or_else(|| CrError::Conflict("Organization name taken".into()))
@@ -829,12 +834,15 @@ impl DaiyaStore for PgStore {
 
     fn retire_org(&self, installation: InstallationId, number: i64) -> StoreFuture<'_, bool> {
         Box::pin(async move {
-            sqlx::query_scalar("SELECT daiya_org_retire($1, $2)")
+            let mut tx = jc_audit::begin(&self.pool).await.map_err(db_err)?;
+            let retired = sqlx::query_scalar("SELECT daiya_org_retire($1, $2)")
                 .bind(installation.as_uuid())
                 .bind(number)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
-                .map_err(db_err)
+                .map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
+            Ok(retired)
         })
     }
 
@@ -896,7 +904,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
 
             Ok(opt.map_or_else(OrgQuotas::default, |row| OrgQuotas {
                 max_dashboards: row.get::<i64, _>("max_dashboards") as u64,
@@ -951,7 +959,7 @@ impl DaiyaStore for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -960,7 +968,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
             let out = Self::list_folders_tx(&mut tx, org_id).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -978,7 +986,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_folder))
         })
     }
@@ -987,7 +995,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(folder.org_id).await?;
             let out = Self::upsert_folder_tx(&mut tx, folder).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -1023,7 +1031,7 @@ impl DaiyaStore for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1032,7 +1040,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
             let out = Self::list_dashboards_tx(&mut tx, org_id).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -1050,7 +1058,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_dashboard))
         })
     }
@@ -1065,7 +1073,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(dashboard.org_id).await?;
             let out = Self::upsert_dashboard_tx(&mut tx, dashboard, &msg, overwrite).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -1094,7 +1102,7 @@ impl DaiyaStore for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1116,7 +1124,7 @@ impl DaiyaStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| DashboardVersionRecord {
@@ -1140,7 +1148,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
             let out = Self::list_datasources_tx(&mut tx, org_id).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -1162,7 +1170,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_datasource))
         })
     }
@@ -1184,7 +1192,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_datasource))
         })
     }
@@ -1193,7 +1201,7 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(ds.org_id).await?;
             let out = Self::upsert_datasource_tx(&mut tx, ds).await?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(out)
         })
     }
@@ -1221,7 +1229,7 @@ impl DaiyaStore for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1237,7 +1245,7 @@ impl DaiyaStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_library_panel).collect())
         })
     }
@@ -1259,7 +1267,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_library_panel))
         })
     }
@@ -1295,7 +1303,7 @@ impl DaiyaStore for PgStore {
             .fetch_one(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row_to_library_panel(row))
         })
     }
@@ -1310,7 +1318,7 @@ impl DaiyaStore for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1326,7 +1334,7 @@ impl DaiyaStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_public_dashboard).collect())
         })
     }
@@ -1348,7 +1356,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_public_dashboard))
         })
     }
@@ -1370,7 +1378,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(row_to_public_dashboard))
         })
     }
@@ -1400,7 +1408,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
 
             let Some(pd_row) = row else {
                 return Ok(None);
@@ -1461,7 +1469,7 @@ impl DaiyaStore for PgStore {
             .fetch_one(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             pubdash = row_to_public_dashboard(row);
             pubdash.access_token = raw_token;
             Ok(pubdash)
@@ -1478,7 +1486,7 @@ impl DaiyaStore for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1503,7 +1511,7 @@ impl DaiyaStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| ImportReportRecord {
@@ -1519,6 +1527,60 @@ impl DaiyaStore for PgStore {
                     created_at: r.get("created_at"),
                 })
                 .collect())
+        })
+    }
+
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin_org_tx(row.org_id).await?;
+            sqlx::query(
+                "INSERT INTO cr_audit (org_id, id, instance_id, kind, operation, actor_id, target,
+                     decision, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(row.org_id.as_uuid())
+            .bind(row.id)
+            .bind(row.instance_id.as_uuid())
+            .bind(&row.kind)
+            .bind(&row.operation)
+            .bind(&row.actor_id)
+            .bind(&row.target)
+            .bind(&row.decision)
+            .bind(row.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CrError::Internal(format!("audit write failed: {e}")))?;
+            jc_audit::commit(tx).await.map_err(db_err)
+        })
+    }
+
+    fn list_audit(&self, org_id: OrgId) -> StoreFuture<'_, Vec<AuditRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin_org_tx(org_id).await?;
+            let rows = sqlx::query(
+                "SELECT id, instance_id, kind, operation, actor_id, target, decision, created_at
+                 FROM cr_audit WHERE org_id = $1 ORDER BY created_at, id",
+            )
+            .bind(org_id.as_uuid())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
+            rows.iter()
+                .map(|r| {
+                    Ok(AuditRecord {
+                        id: r.try_get("id").map_err(db_err)?,
+                        org_id,
+                        instance_id: InstanceId(r.try_get("instance_id").map_err(db_err)?),
+                        kind: r.try_get("kind").map_err(db_err)?,
+                        operation: r.try_get("operation").map_err(db_err)?,
+                        actor_id: r.try_get("actor_id").map_err(db_err)?,
+                        target: r.try_get("target").map_err(db_err)?,
+                        decision: r.try_get("decision").map_err(db_err)?,
+                        created_at: r.try_get("created_at").map_err(db_err)?,
+                    })
+                })
+                .collect()
         })
     }
 
@@ -1543,7 +1605,7 @@ impl DaiyaStore for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -1589,7 +1651,7 @@ impl DaiyaStore for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -1607,7 +1669,7 @@ impl DaiyaStore for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(row.map(|r| PlanRecord {
                 installation_id: InstallationId(r.get("installation_id")),
                 org_id: OrgId(r.get("org_id")),
@@ -1658,7 +1720,7 @@ impl DaiyaStore for PgStore {
                     Self::upsert_dashboard_tx(&mut tx, dashboard, &bundle.message, true).await?,
                 );
             }
-            tx.commit().await.map_err(db_err)?;
+            jc_audit::commit(tx).await.map_err(db_err)?;
             Ok(saved)
         })
     }
@@ -1667,7 +1729,7 @@ impl DaiyaStore for PgStore {
 /// Refuses a parent chain that loops back (also to the folder itself) or nests deeper than
 /// Grafana's `MaxNestedFolderDepth` of 4 (`GF pkg/services/folder/model.go:30`).
 async fn check_folder_parents(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut jc_audit::Tx,
     org_id: OrgId,
     folder_uid: &str,
     mut parent_uid: Option<String>,

@@ -4,10 +4,11 @@
 //! verification (R8, §5.3).
 
 use daiya_model::{
-    ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, LibraryPanelRecord,
-    MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage,
-    RowQuery, RowSet, constant_time_eq, org_state_etag, store::StoreFuture,
+    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
+    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
+    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
+    PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, org_state_etag,
+    store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
@@ -25,6 +26,7 @@ struct OrgState {
     public_dashboards: BTreeMap<String, PublicDashboardRecord>,
     import_reports: Vec<ImportReportRecord>,
     plans: BTreeMap<String, PlanRecord>,
+    audit: Vec<AuditRecord>,
 }
 
 #[derive(Debug, Default)]
@@ -776,6 +778,25 @@ impl DaiyaStore for MemoryStore {
                 .import_reports
                 .push(report);
             Ok(())
+        })
+    }
+
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            guard.orgs.entry(row.org_id).or_default().audit.push(row);
+            Ok(())
+        })
+    }
+
+    fn list_audit(&self, org_id: OrgId) -> StoreFuture<'_, Vec<AuditRecord>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            Ok(guard
+                .orgs
+                .get(&org_id)
+                .map(|o| o.audit.clone())
+                .unwrap_or_default())
         })
     }
 

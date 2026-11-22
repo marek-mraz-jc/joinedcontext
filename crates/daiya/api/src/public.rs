@@ -16,7 +16,7 @@
 use crate::render::{
     datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
 };
-use crate::state::{DaiyaState, error_response, resolve_request_ctx};
+use crate::state::{DaiyaState, audit, error_response, resolve_request_ctx, unit};
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -216,7 +216,23 @@ pub struct PublicDashboardViewDto {
 }
 
 /// Creates or updates a public dashboard opt-in record for `dashboard_uid` (R7: off by default unless `is_enabled` is true).
+/// [`create_or_update_public_dashboard_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn create_or_update_public_dashboard(
+    state: &DaiyaState,
+    req_ctx: &RequestCtx,
+    dashboard_uid: &str,
+    dto: PublicDashboardCreateReq,
+) -> CrResult<PublicDashboardRecord> {
+    unit(create_or_update_public_dashboard_in_unit(
+        state,
+        req_ctx,
+        dashboard_uid,
+        dto,
+    ))
+    .await
+}
+
+async fn create_or_update_public_dashboard_in_unit(
     state: &DaiyaState,
     req_ctx: &RequestCtx,
     dashboard_uid: &str,
@@ -305,13 +321,35 @@ pub async fn create_or_update_public_dashboard(
         };
         state.store.upsert_public_dashboard(new_rec).await?
     };
+    // Named by its dashboard: a generated uid carries the start of the access token.
+    audit(
+        state,
+        req_ctx,
+        "SavePublicDashboard",
+        format!("dashboards/{dashboard_uid}/public"),
+    )
+    .await?;
 
     Ok(record)
 }
 
 /// Rotates the 256-bit access token of a public dashboard (`PublicDashboard/Rotate`, R7).
 /// Immediately revokes the previous token so it answers 404 on subsequent calls.
+/// [`rotate_public_dashboard_token_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn rotate_public_dashboard_token(
+    state: &DaiyaState,
+    req_ctx: &RequestCtx,
+    uid_or_dashboard_uid: &str,
+) -> CrResult<PublicDashboardRecord> {
+    unit(rotate_public_dashboard_token_in_unit(
+        state,
+        req_ctx,
+        uid_or_dashboard_uid,
+    ))
+    .await
+}
+
+async fn rotate_public_dashboard_token_in_unit(
     state: &DaiyaState,
     req_ctx: &RequestCtx,
     uid_or_dashboard_uid: &str,
@@ -352,7 +390,10 @@ pub async fn rotate_public_dashboard_token(
     updated.updated_by = req_ctx.actor_name().to_owned();
     updated.updated_at = TimestampTz::now();
 
-    state.store.upsert_public_dashboard(updated).await
+    let target = format!("dashboards/{}/public", updated.dashboard_uid);
+    let saved = state.store.upsert_public_dashboard(updated).await?;
+    audit(state, req_ctx, "PublicDashboard/Rotate", target).await?;
+    Ok(saved)
 }
 
 /// Dashboard members an anonymous viewer needs to draw the dashboard (R7, "frames only").

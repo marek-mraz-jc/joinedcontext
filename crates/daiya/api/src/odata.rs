@@ -18,7 +18,7 @@ use crate::render::{
     PanelTimeRange, execute_targets_and_expressions, panel_view, parse_time_str_ms,
 };
 use crate::sets;
-use crate::state::{DaiyaState, error_response, resolve_request_ctx};
+use crate::state::{DaiyaState, audit, error_response, resolve_request_ctx, unit};
 use axum::extract::{Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -400,7 +400,16 @@ pub struct ODataImportItem {
     pub folder_uid: Option<String>,
 }
 
+/// [`exec_odata_import_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn exec_odata_import(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    body: ODataImportActionBody,
+) -> CrResult<Value> {
+    unit(exec_odata_import_in_unit(state, ctx, body)).await
+}
+
+async fn exec_odata_import_in_unit(
     state: &DaiyaState,
     ctx: &RequestCtx,
     body: ODataImportActionBody,
@@ -438,6 +447,14 @@ pub async fn exec_odata_import(
         &inputs,
         body.dry_run,
         &state.limits,
+    )
+    .await?;
+    let uids: Vec<&str> = report.dashboards.iter().map(|d| d.uid.as_str()).collect();
+    audit(
+        state,
+        ctx,
+        "Import",
+        format!("dashboards/{}", uids.join(",")),
     )
     .await?;
     Ok(report.to_json())
@@ -491,7 +508,16 @@ async fn check_plan_datasources(
     Ok(())
 }
 
+/// [`exec_odata_plan_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn exec_odata_plan(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    desired: DesiredBundle,
+) -> CrResult<Value> {
+    unit(exec_odata_plan_in_unit(state, ctx, desired)).await
+}
+
+async fn exec_odata_plan_in_unit(
     state: &DaiyaState,
     ctx: &RequestCtx,
     desired: DesiredBundle,
@@ -514,12 +540,22 @@ pub async fn exec_odata_plan(
         &state.limits,
     )
     .await?;
+    audit(state, ctx, "Plan", format!("plans/{}", plan.digest)).await?;
     Ok(serde_json::to_value(plan).unwrap_or(Value::Null))
 }
 
 /// Applies the plan the server holds under `digest` (what `Plan` answered); the approver's own
 /// datasource rights are checked against that stored bundle.
+/// [`exec_odata_apply_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn exec_odata_apply(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    digest: &str,
+) -> CrResult<Value> {
+    unit(exec_odata_apply_in_unit(state, ctx, digest)).await
+}
+
+async fn exec_odata_apply_in_unit(
     state: &DaiyaState,
     ctx: &RequestCtx,
     digest: &str,
@@ -543,6 +579,7 @@ pub async fn exec_odata_apply(
         &state.limits,
     )
     .await?;
+    audit(state, ctx, "Apply", format!("plans/{digest}")).await?;
     Ok(report.to_json())
 }
 

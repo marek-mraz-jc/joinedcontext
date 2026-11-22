@@ -669,3 +669,75 @@ pub fn error_response(err: &CrError) -> Response {
     )
         .into_response()
 }
+
+/// The writes and decisions of daiya with the kind of their audit row (S9-28). The registry's
+/// operations keep their registry names (`PublicDashboard/Rotate`); the Grafana-compatible doors
+/// name theirs here.
+pub const AUDITED_WRITES: &[(&str, &str)] = &[
+    ("CreateOrg", "ORG_CREATE"),
+    ("RetireOrg", "ORG_RETIRE"),
+    ("AddDatasource", "DATASOURCE_CREATE"),
+    ("UpdateDatasource", "DATASOURCE_UPDATE"),
+    ("DeleteDatasource", "DATASOURCE_DELETE"),
+    ("CreateFolder", "FOLDER_CREATE"),
+    ("DeleteFolder", "FOLDER_DELETE"),
+    ("DeleteDashboard", "DASHBOARD_DELETE"),
+    ("SavePublicDashboard", "PUBLIC_DASHBOARD_SAVE"),
+    ("PublicDashboard/Rotate", "PUBLIC_DASHBOARD_ROTATE"),
+    ("Import", "IMPORT"),
+    ("Plan", "PLAN"),
+    ("Apply", "APPLY"),
+];
+
+/// Runs one write or decision as a unit (jc-audit): every store call of it, its audit row
+/// included, commits together when it succeeds and rolls back when it fails (S9-28). Each write
+/// operation runs in one, whatever door called it; reads, a long datasource query included, hold
+/// no transaction.
+///
+/// # Errors
+/// What `write` answered, or an internal error when the commit failed (nothing it wrote stands).
+pub async fn unit<T>(write: impl std::future::Future<Output = CrResult<T>>) -> CrResult<T> {
+    jc_audit::scope(Result::is_ok, write)
+        .await
+        .map_err(|e| daiya_model::CrError::Internal(e.to_string()))?
+}
+
+/// Writes the audit row of a write or decision (S9-28) through the store, inside the write's
+/// [`unit`], so the change stands with its row or not at all: an
+/// error here fails the write. `target` names what was written by ids, never by a secret.
+///
+/// # Errors
+/// `operation` missing from [`AUDITED_WRITES`], or the row not written.
+pub async fn audit(
+    state: &DaiyaState,
+    ctx: &daiya_model::RequestCtx,
+    operation: &str,
+    target: String,
+) -> CrResult<()> {
+    let Some((_, kind)) = AUDITED_WRITES.iter().find(|(name, _)| *name == operation) else {
+        return Err(daiya_model::CrError::Internal(format!(
+            "no audit kind for '{operation}'"
+        )));
+    };
+    state
+        .store
+        .append_audit(daiya_model::AuditRecord {
+            id: uuid::Uuid::now_v7(),
+            org_id: ctx.org_id,
+            instance_id: ctx.instance_id,
+            kind: (*kind).to_owned(),
+            operation: operation.to_owned(),
+            actor_id: ctx
+                .subject
+                .actor_id
+                .as_deref()
+                .unwrap_or_default()
+                .chars()
+                .take(256)
+                .collect(),
+            target: target.chars().take(512).collect(),
+            decision: "allow".into(),
+            created_at: jc_time::TimestampTz::now(),
+        })
+        .await
+}
