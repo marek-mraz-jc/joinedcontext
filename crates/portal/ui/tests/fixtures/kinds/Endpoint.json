@@ -2192,6 +2192,13 @@
               },
               "type": "array"
             },
+            "controls": {
+              "description": "Whether readers get the chart's toolbar (range, granularity, method); absent means `true`. The view's `last`, `aggrMethod` and `aggrPeriod` are the toolbar's defaults.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "last": {
               "description": "An ISO 8601 duration of at most `P31D`.",
               "type": "string"
