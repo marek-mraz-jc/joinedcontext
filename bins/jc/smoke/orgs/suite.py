@@ -69,6 +69,11 @@ Rows of the installation (target the deployment; T-7458), from the snapshot's jc
   have no Organization; the actual names each project and its count of Pipelines. No report in
   the window is a skip. A log the watch could not read fails both rows.
   ci/known.txt refuses a line holding either row, like the delivering rows.
+- database.pool (T-7494): the Portal's database pool handed out a connection within the last 2 min
+  (jc_portal_db_unavailable_seconds, which watch.py reads from Prometheus); unread is a skip.
+- pipelines.recorded (T-7494): some Pipeline's run was recorded in the last 30 min, by the
+  database's own clock. A deployment that recorded none in 7 days is a skip. Neither row may be
+  known-listed.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
 Result lines carry statuses and counts, never a response body or a person's data."""
 
@@ -106,6 +111,8 @@ ASK = {
 }
 TITLE_MAX = 120
 LOG_WINDOW = "30m"  # watch.py LOG_WINDOW
+POOL_FAILING_SECONDS = 120  # T-7494: the pool handed out nothing for minutes
+RECORDED_MINUTES = 30  # T-7494: the deployment recorded no run
 ROLES = {"working": "portal", "opendata": "opendata", "api": "api", "signin": "idm", "apps": "apps"}
 
 
@@ -350,6 +357,29 @@ def named_refusals(rows: list[dict]) -> str:
     return named + (f"; {len(rows) - 12} more" if len(rows) > 12 else "")
 
 
+def pool_available(snap: dict) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of database.pool, from the Portal's own gauge."""
+    got = snap.get("poolUnavailable") if isinstance(snap.get("poolUnavailable"), dict) else {}
+    seconds = got.get("seconds")
+    if not isinstance(seconds, int):
+        why = clean_title(got.get("error"))[:160] or "no gauge in the snapshot (watch.py reads it)"
+        return SKIP, f"the pool's gauge was not read: {why}"
+    if seconds >= POOL_FAILING_SECONDS:
+        return FAIL, f"the Portal's database pool has handed out no connection for {seconds} s"
+    return PASS, f"unavailable for {seconds} s"
+
+
+def runs_recorded(snap: dict) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of pipelines.recorded, by the database's clock."""
+    now, last = parse_time(snap.get("pipelinesAt")), parse_time(snap.get("lastRecorded"))
+    if not now or not last or now - last > dt.timedelta(days=7):
+        return SKIP, "no Pipeline run recorded in 7 days, or none in the snapshot"
+    minutes = int((now - last).total_seconds() // 60)
+    if minutes >= RECORDED_MINUTES:
+        return FAIL, f"no Pipeline run recorded for {minutes} min, since {snap['lastRecorded']}"
+    return PASS, f"a Pipeline run recorded {minutes} min before the snapshot"
+
+
 def refused_writes(snap: dict) -> tuple[str, str]:
     """(pass, fail or skip, the actual) of pipelines.refused. The gateway's counter over 30 min decides
     (T-7467); the jc-server log, which rotates in minutes at jc-prod's volume, can only fail the row
@@ -432,14 +462,18 @@ class Suite:
         for o, e in self.orgs.items():
             self.one(o, e)
         call = f"jc-server log, last {self.snap.get('logWindow', LOG_WINDOW)} (read-only snapshot)"
-        for rid, judge, want in (
-                ("pipelines.refused", refused_writes, "no write of a Pipeline refused by the gateway"),
-                ("pipelines.unplaced", unplaced_projects, "every project with Pipelines has an Organization")):
+        for rid, judge, read, want in (
+                ("database.pool", pool_available, "jc_portal_db_unavailable_seconds (Prometheus)",
+                 "the Portal's database pool hands out connections"),
+                ("pipelines.recorded", runs_recorded, "max(pipeline_runs.last_at) (read-only snapshot)",
+                 f"a Pipeline run recorded in the last {RECORDED_MINUTES} min"),
+                ("pipelines.refused", refused_writes, call, "no write of a Pipeline refused by the gateway"),
+                ("pipelines.unplaced", unplaced_projects, call, "every project with Pipelines has an Organization")):
             result, got = judge(self.snap)
             if result == SKIP:
-                self.r.skip(rid, self.a.deployment, call, want, got)
+                self.r.skip(rid, self.a.deployment, read, want, got)
             else:
-                self.r.check(rid, self.a.deployment, call, want, got, result == PASS)
+                self.r.check(rid, self.a.deployment, read, want, got, result == PASS)
 
     def one(self, o: str, e: dict) -> None:
         hs = e["hosts"]

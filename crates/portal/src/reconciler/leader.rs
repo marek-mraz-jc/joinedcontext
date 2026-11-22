@@ -40,6 +40,7 @@ type Held = Arc<Mutex<Option<PoolConnection<Postgres>>>>;
 
 /// One replica's claim on the reconciler role.
 pub struct Leadership {
+    /// A pool of its own: the lock's session is held for the process's life (`db::session_pool`).
     pool: PgPool,
     key: i64,
     /// The connection holding the lock. `None` means this replica is a follower.
@@ -61,7 +62,7 @@ impl Leadership {
     /// A claim whose lock the server drops `lease` after the leader last spoke.
     pub fn with_lease(pool: PgPool, key: i64, lease: Duration) -> Self {
         Self {
-            pool,
+            pool: crate::db::session_pool(&pool),
             key,
             held: Arc::new(Mutex::new(None)),
             leader: Arc::new(AtomicBool::new(false)),

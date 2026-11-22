@@ -12,7 +12,7 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
     jc_configmap = "jc"              # default; the ConfigMap jc mounts at /etc/jc (key jc.toml)
     jc_workload = "deploy/jc"        # default; whose jc-server log the installation rows read
     jc_container = "jc-server"       # default
-    prometheus_namespace = "prometheus"  # the Prometheus that scrapes jc's admin listener; unset, pipelines.refused never passes
+    prometheus_namespace = "prometheus"  # the Prometheus that scrapes jc's admin listener; unset, pipelines.refused and database.pool never pass
     pg_namespace = "postgres"        # the shared CNPG cluster's namespace
     pg_cluster = "postgres-cluster"  # default
     edge = "203.0.113.10"            # the edge's address
@@ -36,7 +36,9 @@ Each run:
    project, workload account and reason, and the Portal's newest report of projects with Pipelines
    and no Organization; names and counts only. Then the gateway's refused-write counter over the same
    30 min from Prometheus (T-7467), which pipelines.refused reads: the log rotates in minutes at
-   jc-prod's volume, so it can only fail that row or explain a skip.
+   jc-prod's volume, so it can only fail that row or explain a skip. From the same Prometheus the
+   seconds the Portal's database pool has handed out no connection (T-7494, database.pool), and from
+   the Portal's database when a pipeline run was last recorded (pipelines.recorded).
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
@@ -113,6 +115,7 @@ ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_
 # message masked and cut, pipeline_log.rs clean). Counts and the error text only, no record.
 PIPELINES_SQL = """WITH p AS (SELECT DISTINCT project, pipeline FROM pipeline_runs WHERE last_at > now() - interval '7 days')
 SELECT json_build_object('pipelinesAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+  'lastRecorded', (SELECT to_char(max(last_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM pipeline_runs),
   'pipelines', coalesce(json_agg(json_build_object('project', p.project, 'pipeline', p.pipeline,
   'lastDelivered', (SELECT to_char(max(r.last_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM pipeline_runs r
                     WHERE r.project = p.project AND r.pipeline = p.pipeline AND r.last_at > now() - interval '7 days'
@@ -225,6 +228,37 @@ REFUSED_METRIC = 'jc_gateway_writes_refused_total{{namespace="{ns}"}}'
 SCRAPED_QUERY = 'min(min_over_time(up{{namespace="{ns}",endpoint="admin"}}[{w}]))'
 
 
+# T-7494: how long the Portal's database pool has handed out no connection, as it reports itself.
+POOL_QUERY = 'max(jc_portal_db_unavailable_seconds{{namespace="{ns}"}})'
+
+
+def prometheus(cfg: dict):
+    """The instant query of the Prometheus of `prometheus_namespace`, run with promtool in its pod."""
+    ns = cfg["prometheus_namespace"]
+    pods = kubectl(cfg, "-n", ns, "get", "pod", "-o", "name", "-l", "app.kubernetes.io/name=prometheus").split()
+    if not pods:
+        raise RuntimeError(f"no pod app.kubernetes.io/name=prometheus in {ns}")
+
+    def instant(expr: str) -> list:
+        return json.loads(kubectl(cfg, "-n", ns, "exec", pods[0], "-c", "prometheus", "--", "promtool",
+                                  "query", "instant", "-o", "json", "http://localhost:9090", expr))
+
+    return instant
+
+
+def pool_gauge(cfg: dict) -> dict:
+    """{poolUnavailable: {seconds}} of the Portal's database pool; {error} when it cannot be read."""
+    if not cfg.get("prometheus_namespace"):
+        return {"poolUnavailable": {"error": "watch.toml names no prometheus_namespace"}}
+    try:
+        got = prometheus(cfg)(POOL_QUERY.format(ns=cfg["namespace"]))
+        if not got:
+            raise RuntimeError("no jc_portal_db_unavailable_seconds series")
+        return {"poolUnavailable": {"seconds": int(float(got[0]["value"][1]))}}
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError, IndexError, TypeError) as err:
+        return {"poolUnavailable": {"error": str(err)[:200]}}
+
+
 def refused_counter(cfg: dict) -> dict:
     """{refusedCounter: {window, rows: [{project, account, reason, count}]}} of jc's
     jc_gateway_writes_refused_total over the last 30 min, read with promtool inside the Prometheus
@@ -236,14 +270,7 @@ def refused_counter(cfg: dict) -> dict:
     if not ns:
         return {"refusedCounter": {"window": LOG_WINDOW, "error": "watch.toml names no prometheus_namespace"}}
     try:
-        pods = kubectl(cfg, "-n", ns, "get", "pod", "-o", "name", "-l", "app.kubernetes.io/name=prometheus").split()
-        if not pods:
-            raise RuntimeError(f"no pod app.kubernetes.io/name=prometheus in {ns}")
-
-        def instant(expr: str) -> list:
-            return json.loads(kubectl(cfg, "-n", ns, "exec", pods[0], "-c", "prometheus", "--", "promtool",
-                                      "query", "instant", "-o", "json", "http://localhost:9090", expr))
-
+        instant = prometheus(cfg)
         scraped = instant(SCRAPED_QUERY.format(ns=cfg["namespace"], w=LOG_WINDOW))
         if not scraped or float(scraped[0]["value"][1]) < 1:
             raise RuntimeError(f"jc's admin listener in {cfg['namespace']} was not scraped through the last {LOG_WINDOW}")
@@ -312,7 +339,8 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
     snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_portal", PIPELINES_SQL),
-            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg), **refused_counter(cfg)}
+            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg), **refused_counter(cfg),
+            **pool_gauge(cfg)}
     path = run / "snapshot.json"
     path.write_text(json.dumps(snap, indent=1))
     return toml, path

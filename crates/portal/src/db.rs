@@ -8,7 +8,7 @@ use crate::agents::run::{AgentRun, AgentRunEvent};
 // else: no caller value ever reaches the SQL text, every value is a bound parameter. That is
 // what the wrapper asserts.
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::AssertSqlSafe;
+use sqlx::{AssertSqlSafe, Connection};
 use std::str::FromStr;
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -299,12 +299,78 @@ pub async fn enter(
 
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more
 /// often than sqlx's 10 min default, so all five stayed open all day, ~19 MiB of Postgres each.
+///
+/// A released connection is tested here before sqlx tests it (T-7494). A future dropped
+/// mid-statement leaves that statement's error for the test to read, and sqlx 0.9.0 answers a
+/// failed test with `close_hard`, which over TLS first waits for the idle server to send
+/// something: the slot is never given back. `Ok(false)` closes with a Terminate, which the server
+/// answers by hanging up, so the hook must never return `Err`.
+/// ponytail: one extra round trip per release; drop the hook with sqlx-core 0.9.1 (#4450).
 fn pool_options() -> PgPoolOptions {
     PgPoolOptions::new()
         .max_connections(5)
         .min_connections(0)
         .idle_timeout(Duration::from_secs(60))
         .acquire_timeout(Duration::from_secs(5))
+        .after_release(|connection, _| {
+            Box::pin(async move {
+                match connection.ping().await {
+                    Ok(()) => Ok(true),
+                    Err(error) => {
+                        tracing::warn!(%error, "a released database connection is closed, not reused");
+                        Ok(false)
+                    }
+                }
+            })
+        })
+}
+
+/// A pool of one beside `pool` for a session held as long as the process runs (a LISTEN, the
+/// reconciler's lock), so it takes none of the working connections (T-7494). With neither an idle
+/// timeout nor a lifetime it needs no runtime to build.
+pub fn session_pool(pool: &PgPool) -> PgPool {
+    pool.options()
+        .clone()
+        .max_connections(1)
+        .min_connections(0)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_lazy_with((*pool.connect_options()).clone())
+}
+
+/// How often [`watch_pool`] asks the pool for a connection.
+const POOL_WATCH_EVERY: Duration = Duration::from_secs(30);
+
+/// Reports for how long the pool has handed out no connection (`jc_portal_db_unavailable_seconds`,
+/// T-7494): readiness stays with the mirror, since a 503 there would take the whole Portal off the
+/// Service, and the installation's smoke turns red on this gauge instead.
+pub fn watch_pool(pool: PgPool) {
+    tokio::spawn(async move {
+        let mut failing = None;
+        while !pool.is_closed() {
+            let seconds = unavailable_for(&pool, &mut failing).await;
+            crate::telemetry::db_unavailable(seconds);
+            tokio::time::sleep(POOL_WATCH_EVERY).await;
+        }
+    });
+}
+
+/// Seconds since the first failed acquire of the run of failures that `failing` holds; 0 once one
+/// succeeds, at least 1 while it fails.
+async fn unavailable_for(pool: &PgPool, failing: &mut Option<std::time::Instant>) -> u64 {
+    let asked = std::time::Instant::now();
+    match pool.acquire().await {
+        Ok(_) => {
+            *failing = None;
+            0
+        }
+        Err(error) => {
+            let since = *failing.get_or_insert(asked);
+            let seconds = since.elapsed().as_secs().max(1);
+            tracing::warn!(%error, seconds, "the database pool hands out no connection");
+            seconds
+        }
+    }
 }
 
 /// Whether the Organization registry holds no row but `organization`'s (any state): no release
@@ -1193,7 +1259,7 @@ mod rollback_tests {
 
 #[cfg(test)]
 mod pool_tests {
-    use super::pool_options;
+    use super::{pool_options, session_pool, unavailable_for};
     use std::time::Duration;
 
     /// The pool gives idle backends back to Postgres after a minute (T-6201).
@@ -1203,5 +1269,65 @@ mod pool_tests {
         assert_eq!(options.get_idle_timeout(), Some(Duration::from_secs(60)));
         assert_eq!(options.get_min_connections(), 0);
         assert_eq!(options.get_max_connections(), 5);
+    }
+
+    fn database_url() -> Option<String> {
+        std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+    }
+
+    /// The draft LISTEN, the host registry's LISTEN and the leader's lock leave all five working
+    /// connections free (T-7494).
+    #[tokio::test]
+    async fn the_three_process_long_sessions_take_none_of_the_five() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        crate::ops::drafts::DraftHub::new().connect(pool.clone());
+        // The hub listens from a task of its own: give it its session before the pool is drained.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // jc's host registry listens as this does (bins/jc/src/modules/portal.rs).
+        let mut hosts = sqlx::postgres::PgListener::connect_with(&session_pool(&pool))
+            .await
+            .expect("a session");
+        hosts.listen("t7494_hosts").await.expect("listening");
+        let leader = crate::reconciler::Leadership::new(pool.clone(), 0x7494);
+        leader.acquire().await.expect("election");
+        let mut working = Vec::new();
+        for n in 0..5 {
+            working.push(
+                pool.acquire()
+                    .await
+                    .unwrap_or_else(|e| panic!("working connection {n}: {e}")),
+            );
+        }
+        drop(working);
+        leader.resign().await;
+    }
+
+    /// An exhausted pool reads unavailable from its first failed acquire until one succeeds
+    /// (T-7494).
+    #[tokio::test]
+    async fn an_exhausted_pool_reads_unavailable_until_it_hands_out_again() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = pool_options()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(1))
+            .connect(&url)
+            .await
+            .expect("connect");
+        let mut failing = None;
+        let held = pool.acquire().await.expect("the only connection");
+        assert!(unavailable_for(&pool, &mut failing).await >= 1);
+        assert!(unavailable_for(&pool, &mut failing).await >= 2);
+        drop(held);
+        assert_eq!(unavailable_for(&pool, &mut failing).await, 0);
+        assert!(failing.is_none());
     }
 }

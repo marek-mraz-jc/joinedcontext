@@ -83,6 +83,9 @@ const MODEL_KEY_REMAINING: &str = "jc_model_key_remaining";
 /// registry, missing from the forge; `registry`: in the forge, missing from the registry; T-7319).
 const ORGANIZATION_DRIFT: &str = "jc_organization_drift";
 
+/// Seconds the Portal's database pool has handed out no connection, 0 while it does (T-7494).
+const DB_UNAVAILABLE: &str = "jc_portal_db_unavailable_seconds";
+
 /// Run-and-delete pipelines waiting in the run queue, by lane (PL-78).
 const PIPELINE_QUEUE_DEPTH: &str = "jc_pipeline_queue_depth";
 /// Entities a snapshot pipeline wrote that its last complete run no longer read, by project and
@@ -340,6 +343,10 @@ pub fn pipeline_run(outcome: &'static str, seconds: f64) {
 pub fn organization_drift(missing_from_forge: usize, missing_from_registry: usize) {
     metrics::gauge!(ORGANIZATION_DRIFT, "side" => "forge").set(missing_from_forge as f64);
     metrics::gauge!(ORGANIZATION_DRIFT, "side" => "registry").set(missing_from_registry as f64);
+}
+
+pub fn db_unavailable(seconds: u64) {
+    metrics::gauge!(DB_UNAVAILABLE).set(seconds as f64);
 }
 
 pub fn model_key(valid: bool, limit: Option<f64>, remaining: Option<f64>) {
