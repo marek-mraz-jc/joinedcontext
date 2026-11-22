@@ -434,10 +434,14 @@
     copy.mark = Object.assign({}, typeof copy.mark === "string" ? { type: copy.mark } : copy.mark, { invalid: "break-paths-show-domains" });
     if (opts.dense && copy.mark.point) copy.mark.point = false;
     // Daily points sit on their day and the ticks are days; finer data labels each tick with its
-    // time and day, so a zoomed axis still says which day it shows.
+    // time and the first tick and each midnight with the day too, so a zoomed axis says its days.
     var ticks = opts.daily
-      ? { format: "%-d. %-m.", tickMinStep: DAY }
-      : { labelExpr: "[timeFormat(datum.value, '%H:%M'), timeFormat(datum.value, '%-d. %-m.')]" };
+      ? { format: "%-d. %-m.", tickMinStep: DAY, labelFlush: true }
+      : {
+          labelFlush: true,
+          tickCount: Math.max(Math.floor(opts.width / 90), 2),
+          labelExpr: "hours(datum.value) === 0 && minutes(datum.value) === 0 || datum.index === 0 ? [timeFormat(datum.value, '%H:%M'), timeFormat(datum.value, '%-d. %-m.')] : timeFormat(datum.value, '%H:%M')"
+        };
     enc.x.axis = enc.x.axis === null ? null : Object.assign({ labelOverlap: "greedy", labelSeparation: 8 }, ticks, enc.x.axis);
     if (copy.height === undefined) copy.height = 260;
     // A few pixels round the plot keep a point on its edge whole.
