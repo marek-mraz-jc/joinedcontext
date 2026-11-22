@@ -24,8 +24,8 @@ odata-batch = { path = "../odata-batch" }
 odata-csdl = { path = "../odata-csdl" }
 odata-json = { path = "../odata-json" }
 odata-url = { path = "../odata-url", features = ["edm"] }
-serde = { version = "1", default-features = false, features = ["std"] }
-serde_json = { version = "1", default-features = false, features = ["std"] }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["raw_value", "std"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["std", "v4"] }

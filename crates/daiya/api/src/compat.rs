@@ -8,6 +8,7 @@ use crate::odata::{
     exec_odata_datasource_query, exec_odata_datasource_resource, exec_odata_import,
 };
 use crate::render::{PanelTimeRange, panel_view};
+use crate::sets::readable_rows;
 use crate::state::{DaiyaState, error_response, resolve_request_ctx};
 use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -39,7 +40,7 @@ fn can_read_folder(state: &DaiyaState, ctx: &RequestCtx, folder_uid: &str) -> bo
         .allowed
 }
 use daiya_model::{
-    Action, CrError, CrResult, DatasourceRecord, FolderRecord, ObjectTarget, OrgId, OrgKey,
+    Action, CrError, CrResult, DatasourceRecord, FolderRecord, ObjectTarget, OrgId, OrgKey, RowSet,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1006,7 +1007,7 @@ async fn compat_search(
     }
 
     if params.search_type.as_deref() != Some("dash-folder")
-        && let Ok(dashboards) = state.store.list_dashboards(ctx.org_id).await
+        && let Ok(dashboards) = readable_rows(&state, &ctx, RowSet::Dashboards).await
     {
         // Grafana names each hit's folder: only a folder the caller may read gives its title.
         let folder_titles: BTreeMap<String, String> = state
@@ -1019,35 +1020,24 @@ async fn compat_search(
             .map(|f| (f.uid, f.title))
             .collect();
         for d in dashboards {
-            let readable = state
-                .authorizer
-                .check(
-                    &ctx,
-                    Action::Read,
-                    &ObjectTarget::Dashboard {
-                        org_id: ctx.org_id,
-                        dashboard_uid: d.uid.clone(),
-                        folder_uid: d.folder_uid.clone(),
-                    },
-                )
-                .allowed;
-            if !readable {
-                continue;
-            }
-            let q_ok = q_lower.is_empty() || d.title.to_ascii_lowercase().contains(&q_lower);
-            let tag_ok = params
-                .tag
-                .as_ref()
-                .is_none_or(|t| d.tags.iter().any(|dt| dt == t));
+            let text = |member: &str| d[member].as_str().unwrap_or_default();
+            let (uid, title, slug) = (text("uid"), text("title"), text("slug"));
+            let folder_uid = d["folderUid"].as_str();
+            let q_ok = q_lower.is_empty() || title.to_ascii_lowercase().contains(&q_lower);
+            let tag_ok = params.tag.as_ref().is_none_or(|t| {
+                d["tags"]
+                    .as_array()
+                    .is_some_and(|tags| tags.iter().any(|dt| dt.as_str() == Some(t.as_str())))
+            });
             if q_ok && tag_ok {
                 hits.push(json!({
-                    "uid": d.uid,
-                    "title": d.title,
+                    "uid": uid,
+                    "title": title,
                     "type": "dash-db",
-                    "url": format!("/d/{}/{}", d.uid, d.slug),
-                    "tags": d.tags,
-                    "folderTitle": d.folder_uid.as_ref().and_then(|f| folder_titles.get(f)),
-                    "folderUid": d.folder_uid,
+                    "url": format!("/d/{uid}/{slug}"),
+                    "tags": d["tags"],
+                    "folderTitle": folder_uid.and_then(|f| folder_titles.get(f)),
+                    "folderUid": folder_uid,
                 }));
             }
         }

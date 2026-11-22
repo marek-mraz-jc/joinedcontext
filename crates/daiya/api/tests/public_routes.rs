@@ -554,6 +554,26 @@ async fn a_repeated_query_is_served_from_the_public_cache() {
         1,
         "the second answer came from the cache"
     );
+
+    // What the sanitisation depends on and the datasource's settings are in the key.
+    let uid = created["uid"].as_str().unwrap();
+    w.ok(
+        "PATCH",
+        &format!("/api/dashboards/uid/cached/public-dashboards/{uid}"),
+        Some(json!({ "showQueryText": true })),
+    )
+    .await;
+    let (_, shown) = w.call("POST", &uri, None, Some(json!({}))).await;
+    assert_ne!(first, shown, "query text shown is another answer");
+    w.ok(
+        "PUT",
+        "/api/datasources/uid/prom",
+        Some(json!({ "uid": "prom", "name": "Prom renamed", "type": "prometheus", "url": url })),
+    )
+    .await;
+    let (st, _) = w.call("POST", &uri, None, Some(json!({}))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(seen.lock().len(), 2, "a changed datasource is asked again");
 }
 
 #[tokio::test]

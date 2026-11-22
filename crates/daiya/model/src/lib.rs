@@ -13,13 +13,14 @@ pub mod ids;
 pub mod limits;
 pub mod migration;
 pub mod registry;
+pub mod rows;
 pub mod store;
 pub mod validation;
 
 pub use auth::{
     Action, Authorizer, Decision, GrafanaRole, ObjectTarget, PUBLIC_DASHBOARD_ACTOR_PREFIX,
-    PolicyAuthorizer, PublicDashboardAuthorizer, RequestCtx, RoleBinding, SERVER_ADMIN_ACTOR,
-    ServerAdminAuthorizer, Subject,
+    PolicyAuthorizer, PublicDashboardAuthorizer, ReadKind, ReadScope, RequestCtx, RoleBinding,
+    SERVER_ADMIN_ACTOR, ScopeColumn, ServerAdminAuthorizer, Subject,
 };
 pub use dashboard::{
     AnnotationContainer, AnnotationQuery, CanonicalJson, DashboardDocument, DashboardIndex,
@@ -48,6 +49,7 @@ pub use registry::{
     ActionDef, OperationKind, OperationParam, OperationRegistry, daiya_odata_service,
     daiya_registry,
 };
+pub use rows::{RowPage, RowQuery, RowSet, RowWindow};
 pub use store::{DaiyaStore, OrgKey, OrgRow};
 pub use validation::{
     FeatureFinding, ValidationReport, Verdict, classify_and_validate, sanitize_markdown_to_html,

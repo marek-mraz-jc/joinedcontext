@@ -8,7 +8,7 @@
 use daiya_model::{
     ApplyBundle, DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
     InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag, sha256_hex,
+    PublicDashboardRecord, ShareType, org_state_etag, sha256_hex,
 };
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
@@ -639,30 +639,225 @@ async fn contract_public_dashboards(store: &dyn DaiyaStore) {
     );
 }
 
+/// Every filter, order and page of every set answers what the reference evaluator answers over
+/// the set's own rows, so the SQL translation and the memory store cannot drift apart.
+async fn contract_rows(store: &dyn DaiyaStore) {
+    use daiya_model::rows::answer_rows;
+    use daiya_model::{ReadScope, RowQuery, RowSet, ScopeColumn};
+    use odata_table::{Cond, SortKey, TextOp};
+    use odata_url::CompareOp;
+
+    let org = OrgId::new();
+    let mut parent = folder(org, "B", None);
+    parent.title = "ä% folder".into();
+    parent.managed_by = Some("git".into());
+    store.upsert_folder(parent).await.unwrap();
+    for uid in ["a", "Z", "ä", "a_%"] {
+        let parent = (uid != "Z").then_some("B");
+        store.upsert_folder(folder(org, uid, parent)).await.unwrap();
+        let mut board = dashboard(org, uid, parent);
+        board.title = match uid {
+            "a" => "Same".into(),
+            "Z" => "same".into(),
+            _ => "Same".into(),
+        };
+        board.is_provisioned = uid == "ä";
+        board.provisioned_external_id = board.is_provisioned.then(|| "/dir/a.json".into());
+        store
+            .upsert_dashboard(board.clone(), "", true)
+            .await
+            .unwrap();
+        if uid == "a" {
+            store.upsert_dashboard(board, "again", true).await.unwrap();
+        }
+        let mut source = datasource(org, uid, &format!("DS {uid}"), "prometheus");
+        source.is_default = uid == "a";
+        store.upsert_datasource(source).await.unwrap();
+        let now = TimestampTz::now();
+        store
+            .upsert_library_panel(LibraryPanelRecord {
+                installation_id: INST,
+                org_id: org,
+                instance_id: INSTANCE,
+                folder_uid: parent.map(str::to_owned),
+                uid: uid.into(),
+                name: format!("Panel {uid}"),
+                panel_type: "stat".into(),
+                description: String::new(),
+                model: json!({ "type": "stat" }),
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+        let token = format!("token-{}", uuid::Uuid::new_v4());
+        store
+            .upsert_public_dashboard(public_dashboard(org, &format!("p-{uid}"), uid, &token))
+            .await
+            .unwrap();
+        store
+            .insert_import_report(ImportReportRecord {
+                id: uid.into(),
+                org_id: org,
+                instance_id: INSTANCE,
+                dry_run: uid == "Z",
+                status: "ok".into(),
+                dashboard_count: uid.len() as i32,
+                refused_count: 0,
+                mapped_count: 1,
+                summary: json!({}),
+                created_at: now,
+            })
+            .await
+            .unwrap();
+    }
+
+    for set in RowSet::ALL {
+        let read = |query: RowQuery| async move { store.read_rows(org, query).await.unwrap() };
+        let all = read(RowQuery::every(set, ReadScope::All)).await.rows;
+        assert!(all.len() >= 4, "{set:?}");
+        let other = store
+            .read_rows(OrgId::new(), RowQuery::every(set, ReadScope::All))
+            .await
+            .unwrap();
+        assert!(
+            other.rows.is_empty(),
+            "{set:?}: another organization's rows"
+        );
+
+        let members: Vec<(String, serde_json::Value)> = all[0]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| *name != "tags")
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let mut filters = vec![Cond::Const(true), Cond::Const(false)];
+        for (name, _) in &members {
+            let path = vec![name.clone()];
+            let null = Cond::IsNull { path: path.clone() };
+            filters.extend([null.clone(), Cond::Not(Box::new(null.clone()))]);
+            let mut values: Vec<serde_json::Value> =
+                all.iter().map(|row| row[name].clone()).collect();
+            values.extend([json!(1.5), json!(true)]);
+            // A time is compared with a time: the API spells the literal as the rows do.
+            if !name.ends_with("At") {
+                values.push(json!("a"));
+            }
+            values.dedup();
+            for value in values.into_iter().filter(|value| !value.is_null()) {
+                for op in [
+                    CompareOp::Eq,
+                    CompareOp::Ne,
+                    CompareOp::Gt,
+                    CompareOp::Ge,
+                    CompareOp::Lt,
+                    CompareOp::Le,
+                ] {
+                    let one = Cond::Compare {
+                        path: path.clone(),
+                        op,
+                        value: value.clone(),
+                    };
+                    filters.push(Cond::Not(Box::new(one.clone())));
+                    filters.push(Cond::Not(Box::new(Cond::And(
+                        Box::new(one.clone()),
+                        Box::new(null.clone()),
+                    ))));
+                    filters.push(one);
+                }
+            }
+            if !name.ends_with("At") {
+                for needle in ["a", "%", "_", "ä", "", "S"] {
+                    for op in [TextOp::Contains, TextOp::StartsWith, TextOp::EndsWith] {
+                        let one = Cond::Text {
+                            path: path.clone(),
+                            op,
+                            needle: needle.into(),
+                        };
+                        filters.push(Cond::Not(Box::new(one.clone())));
+                        filters.push(one);
+                    }
+                }
+            }
+        }
+        for filter in filters {
+            let mut query = RowQuery::every(set, ReadScope::All);
+            query.window.filter = filter;
+            query.window.count = true;
+            let want = answer_rows(all.clone(), &query);
+            assert_eq!(read(query.clone()).await, want, "{query:?}");
+        }
+
+        for (name, value) in &members {
+            for descending in [false, true] {
+                let mut query = RowQuery::every(set, ReadScope::All);
+                if name != set.key() {
+                    query.window.order.insert(
+                        0,
+                        SortKey {
+                            path: vec![name.clone()],
+                            descending,
+                        },
+                    );
+                } else {
+                    query.window.order[0].descending = descending;
+                }
+                let sorted = answer_rows(all.clone(), &query).rows;
+                let mut walked = Vec::new();
+                query.window.limit = Some(1);
+                loop {
+                    let page = read(query.clone()).await.rows;
+                    let Some(last) = page.last() else { break };
+                    let after = query.window.order.iter();
+                    query.window.after = Some(after.map(|k| last[&k.path[0]].clone()).collect());
+                    walked.extend(page);
+                    assert!(walked.len() <= all.len(), "{set:?} by {name}: no progress");
+                }
+                assert_eq!(
+                    walked, sorted,
+                    "{set:?} by {name} desc={descending}, from {value}"
+                );
+                query.window.after = None;
+                query.window.skip = 1;
+                query.window.limit = Some(2);
+                let want = answer_rows(all.clone(), &query);
+                assert_eq!(read(query).await, want, "{set:?} by {name}: skip");
+            }
+        }
+
+        let mut only = RowQuery::every(set, ReadScope::All);
+        only.window.limit = Some(0);
+        only.window.count = true;
+        let counted = read(only).await;
+        assert_eq!(
+            (counted.rows.len(), counted.count),
+            (0, Some(all.len() as u64))
+        );
+
+        for scope in [
+            ReadScope::Nothing,
+            ReadScope::In {
+                column: ScopeColumn::Object,
+                values: ["a".to_owned(), "nul\0".to_owned()].into(),
+            },
+            ReadScope::In {
+                column: ScopeColumn::Folder,
+                values: ["B".to_owned()].into(),
+            },
+        ] {
+            let mut query = RowQuery::every(set, scope);
+            query.window.count = true;
+            let want = answer_rows(all.clone(), &query);
+            assert!(want.rows.len() < all.len(), "{query:?} narrows");
+            assert_eq!(read(query.clone()).await, want, "{query:?}");
+        }
+    }
+}
+
 async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
     let org = OrgId::new();
-    let mut stat = QueryCacheStatRecord {
-        id: "prom".into(),
-        org_id: org,
-        instance_id: INSTANCE,
-        datasource_uid: "prom".into(),
-        hits: 1,
-        misses: 2,
-        entries: 3,
-        bytes_used: 4,
-    };
-    store.upsert_query_cache_stat(stat.clone()).await.unwrap();
-    stat.hits = 10;
-    store.upsert_query_cache_stat(stat.clone()).await.unwrap();
-    assert_eq!(store.list_query_cache_stats(org).await.unwrap(), vec![stat]);
-    assert!(
-        store
-            .list_query_cache_stats(OrgId::new())
-            .await
-            .unwrap()
-            .is_empty()
-    );
-
     let base = TimestampTz(TimestampTz::now().0 - SignedDuration::from_mins(5));
     for (i, id) in ["older", "newer"].into_iter().enumerate() {
         store
@@ -805,6 +1000,7 @@ async fn run_contract(store: &dyn DaiyaStore) {
     contract_library_panels(store).await;
     contract_public_dashboards(store).await;
     contract_stats_and_reports(store).await;
+    contract_rows(store).await;
     contract_plans_and_apply(store).await;
 }
 
@@ -1314,7 +1510,6 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
             .await
             .unwrap_err(),
         store.delete_public_dashboard(org, "p").await.unwrap_err(),
-        store.list_query_cache_stats(org).await.unwrap_err(),
         store.list_import_reports(org).await.unwrap_err(),
     ];
     let now = TimestampTz::now();
@@ -1333,21 +1528,6 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
                 version: 1,
                 created_at: now,
                 updated_at: now,
-            })
-            .await
-            .unwrap_err(),
-    );
-    errors.push(
-        store
-            .upsert_query_cache_stat(QueryCacheStatRecord {
-                id: "q".into(),
-                org_id: org,
-                instance_id: INSTANCE,
-                datasource_uid: "d".into(),
-                hits: 0,
-                misses: 0,
-                entries: 0,
-                bytes_used: 0,
             })
             .await
             .unwrap_err(),

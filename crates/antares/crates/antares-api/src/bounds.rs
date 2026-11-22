@@ -247,6 +247,17 @@ impl AnswerPool {
     pub fn cap(&self) -> usize {
         self.cap
     }
+    /// An empty share of the pool, for what a surface builds from the answers it
+    /// read ([`AnswerCharge::grow`]).
+    #[must_use]
+    pub fn share(self: &std::sync::Arc<Self>) -> AnswerCharge {
+        AnswerCharge {
+            charge: Charge {
+                pool: std::sync::Arc::clone(self),
+                bytes: 0,
+            },
+        }
+    }
     /// The bytes buffered answers hold now.
     #[must_use]
     pub fn held(&self) -> usize {
@@ -323,7 +334,7 @@ impl HeldAnswer {
         (
             self.bytes,
             AnswerCharge {
-                _charge: self._charge,
+                charge: self._charge,
             },
         )
     }
@@ -333,7 +344,42 @@ impl HeldAnswer {
 /// what a parsed answer keeps charged while it is in use.
 #[derive(Debug)]
 pub struct AnswerCharge {
-    _charge: Charge,
+    charge: Charge,
+}
+
+impl AnswerCharge {
+    /// The bytes this share holds.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.charge.bytes
+    }
+
+    /// Widens the share to `bytes`, waiting for room as a read does; one that
+    /// already holds as many is left as it is.
+    ///
+    /// # Errors
+    /// [`AnswerRefusal::OverBudget`] with no room within the pool's wait; the
+    /// share keeps what it held.
+    pub async fn grow(&mut self, bytes: usize, surface: &'static str) -> Result<(), AnswerRefusal> {
+        let more = bytes.saturating_sub(self.charge.bytes);
+        if more == 0 {
+            return Ok(());
+        }
+        let now = Clock::now();
+        let until = now.checked_add(self.charge.pool.wait).unwrap_or(now);
+        if !self
+            .charge
+            .pool
+            .take_until(more, self.charge.bytes, until)
+            .await
+        {
+            metrics::counter!("antares_answer_pool_refusals_total", "surface" => surface)
+                .increment(1);
+            return Err(AnswerRefusal::OverBudget);
+        }
+        self.charge.bytes = self.charge.bytes.saturating_add(more);
+        Ok(())
+    }
 }
 
 impl std::ops::Deref for HeldAnswer {

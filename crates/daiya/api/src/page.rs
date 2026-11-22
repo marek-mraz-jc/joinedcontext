@@ -12,7 +12,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use daiya_model::{
     Action, Authorizer, CrError, DashboardDocument, Decision, ObjectTarget, OrgId, OrgKey, OrgRow,
-    PanelSpec, RequestCtx, SERVER_ADMIN_ACTOR, Subject, validation::html_escape,
+    PanelSpec, ReadKind, ReadScope, RequestCtx, SERVER_ADMIN_ACTOR, Subject,
+    validation::html_escape,
 };
 use serde::Deserialize;
 
@@ -122,6 +123,18 @@ impl Authorizer for PageReaderAuthorizer {
             Decision::allow("signed-in reader of the organization's dashboards")
         } else {
             self.inner.check(ctx, action, object)
+        }
+    }
+
+    fn read_scope(&self, ctx: &RequestCtx, kind: ReadKind) -> ReadScope {
+        let reader = ctx.subject.read_only
+            && ctx.subject.actor_id.as_deref() == Some(self.actor.as_str())
+            && ctx.org_id == self.org_id
+            && ctx.subject.is_member_of(self.org_id);
+        if reader {
+            ReadScope::All
+        } else {
+            self.inner.read_scope(ctx, kind)
         }
     }
 }

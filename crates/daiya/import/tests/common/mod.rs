@@ -7,7 +7,7 @@ use daiya_model::store::StoreFuture;
 use daiya_model::{
     ApplyBundle, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
     FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord,
+    PublicDashboardRecord,
 };
 use daiya_store_memory::MemoryStore;
 use std::collections::BTreeSet;
@@ -115,8 +115,7 @@ impl DaiyaStore for FailingStore {
     );
     delegate!(upsert_public_dashboard(pubdash: PublicDashboardRecord) -> PublicDashboardRecord);
     delegate!(delete_public_dashboard(org_id: OrgId, uid: &str) -> bool);
-    delegate!(list_query_cache_stats(org_id: OrgId) -> Vec<QueryCacheStatRecord>);
-    delegate!(upsert_query_cache_stat(stat: QueryCacheStatRecord) -> ());
+    delegate!(read_rows(org_id: OrgId, query: daiya_model::RowQuery) -> daiya_model::RowPage);
     delegate!(list_import_reports(org_id: OrgId) -> Vec<ImportReportRecord>);
     delegate!(insert_import_report(report: ImportReportRecord) -> ());
     delegate!(insert_plan(plan: PlanRecord) -> ());

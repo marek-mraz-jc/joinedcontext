@@ -4,11 +4,11 @@
 use crate::entities::{
     ApplyBundle, DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord,
     ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
-    QueryCacheStatRecord,
 };
 use crate::error::CrResult;
 use crate::ids::{InstallationId, OrgId};
 use crate::limits::OrgQuotas;
+use crate::rows::{RowPage, RowQuery};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -139,8 +139,9 @@ pub trait DaiyaStore: Send + Sync {
     fn delete_public_dashboard(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, bool>;
 
     // Query Cache Stats & Import Reports
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>>;
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()>;
+    /// Index rows of one set in `org_id`, never a model: see [`RowQuery`].
+    fn read_rows(&self, org_id: OrgId, query: RowQuery) -> StoreFuture<'_, RowPage>;
+
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>>;
     fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()>;
 

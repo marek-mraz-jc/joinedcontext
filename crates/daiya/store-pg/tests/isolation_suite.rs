@@ -291,6 +291,7 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
         instance,
         &["viewer"],
         "prometheus",
+        "r1",
         &target,
         0,
         60_000,
@@ -301,6 +302,7 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
         instance,
         &["viewer"],
         "prometheus",
+        "r1",
         &target,
         0,
         60_000,
@@ -320,8 +322,6 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
             .iter()
             .all(|s| s.hits == 0)
     );
-    let stats_b = store.list_query_cache_stats(org_b).await.unwrap();
-    assert!(stats_b.iter().all(|s| s.org_id == org_b));
 
     // Test 6 (§5.3): State/history of `b` is invisible to `a`.
     let versions_of_b_in_a = store

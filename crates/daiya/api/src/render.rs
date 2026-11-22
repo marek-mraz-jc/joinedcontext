@@ -8,9 +8,9 @@ use daiya_expr::{
     parse_duration_ms,
 };
 use daiya_model::{
-    Action, Authorizer, CrError, CrResult, DashboardDocument, DataTransformerConfig, FieldType,
-    Frame, FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec, RequestCtx, Subject,
-    sanitize_markdown_to_html, validation::html_escape,
+    Action, Authorizer, CrError, CrResult, DashboardDocument, DataTransformerConfig,
+    DatasourceRecord, FieldType, Frame, FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec,
+    RequestCtx, Subject, sanitize_markdown_to_html, sha256_hex, validation::html_escape,
 };
 use daiya_query::{CacheKey, Query, QueryCtx};
 use jc_time::TimestampTz;
@@ -18,6 +18,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
+
+/// The revision of a datasource in a cache key: its record, hashed. A datasource the host
+/// registers has no record and keeps one revision.
+pub(crate) fn datasource_revision(record: Option<&DatasourceRecord>) -> CrResult<String> {
+    record.map_or_else(
+        || Ok(String::new()),
+        |record| {
+            serde_json::to_vec(record)
+                .map(|bytes| sha256_hex(&bytes))
+                .map_err(|e| CrError::Internal(format!("datasource revision: {e}")))
+        },
+    )
+}
 
 /// Time range and variable parameters for [`panel_view`] and `Dashboard/RenderPanel` (R6, R6b).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +364,7 @@ pub(crate) async fn execute_targets_with_authorizer(
             req_ctx.instance_id,
             &principals,
             &ds_uid,
+            &datasource_revision(ds_meta.as_ref())?,
             &json!({
                 "target": raw_target,
                 "variables": variables,

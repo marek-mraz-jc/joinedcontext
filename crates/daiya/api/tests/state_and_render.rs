@@ -527,6 +527,15 @@ impl daiya_model::Authorizer for HideNamed {
             _ => daiya_model::Decision::deny_hidden("outside"),
         }
     }
+
+    fn read_scope(
+        &self,
+        _ctx: &daiya_model::RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        // "All but one" is no scope: it lists nothing.
+        daiya_model::ReadScope::Nothing
+    }
 }
 
 #[tokio::test]
