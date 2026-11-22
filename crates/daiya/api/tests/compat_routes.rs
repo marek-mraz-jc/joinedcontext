@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{ORG, OTHER_ORG, dashboard, prometheus, world};
+use common::{ORG, dashboard, prometheus, world};
 use http::StatusCode;
 use serde_json::{Value, json};
 
@@ -83,10 +83,11 @@ async fn organizations_are_created_by_the_installation_admin_and_seen_by_members
     assert_eq!(org["name"], "Main Org.");
     let (st, _) = w.call("GET", "/api/org", None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    // A member of an organization the directory does not know reads it as "Main Org." 1.
+    // An organization the store does not hold has no number: it is never "Main Org." 1, whose
+    // number would select the main organization (T-7509).
     let (st, org) = w.call("GET", "/api/org", Some("outsider"), None).await;
-    assert_eq!(st, StatusCode::OK, "{org}");
-    assert_eq!(org["uuid"], json!(OTHER_ORG));
+    assert_eq!(st, StatusCode::NOT_FOUND, "{org}");
+    assert_ne!(org["id"], 1);
 }
 
 #[tokio::test]

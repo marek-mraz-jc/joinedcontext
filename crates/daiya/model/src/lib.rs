@@ -48,7 +48,7 @@ pub use registry::{
     ActionDef, OperationKind, OperationParam, OperationRegistry, daiya_odata_service,
     daiya_registry,
 };
-pub use store::DaiyaStore;
+pub use store::{DaiyaStore, OrgKey, OrgRow};
 pub use validation::{
     FeatureFinding, ValidationReport, Verdict, classify_and_validate, sanitize_markdown_to_html,
 };

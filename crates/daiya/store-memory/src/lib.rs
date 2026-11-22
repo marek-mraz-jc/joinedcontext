@@ -5,9 +5,9 @@
 
 use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
-    OrgQuotas, PlanRecord, PublicDashboardRecord, QueryCacheStatRecord, constant_time_eq,
-    org_state_etag, store::StoreFuture,
+    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, LibraryPanelRecord,
+    MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord,
+    QueryCacheStatRecord, constant_time_eq, org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
@@ -29,6 +29,7 @@ struct OrgState {
 
 #[derive(Debug, Default)]
 struct InnerStore {
+    directory: BTreeMap<InstallationId, Vec<OrgRow>>,
     orgs: BTreeMap<OrgId, OrgState>,
     unguarded_tables: BTreeSet<String>,
     role_has_bypassrls: bool,
@@ -267,6 +268,92 @@ fn etag_of(org: &OrgState) -> String {
 }
 
 impl DaiyaStore for MemoryStore {
+    fn find_org(
+        &self,
+        installation: InstallationId,
+        key: OrgKey,
+    ) -> StoreFuture<'_, Option<OrgRow>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            let mut rows = guard.directory.get(&installation).into_iter().flatten();
+            Ok(rows
+                .find(|row| match &key {
+                    OrgKey::Number(number) => row.number == *number,
+                    OrgKey::Id(id) => row.org_id == *id,
+                    OrgKey::Name(name) => !row.retired && row.name == *name,
+                })
+                .cloned())
+        })
+    }
+
+    fn list_orgs(&self, installation: InstallationId) -> StoreFuture<'_, Vec<OrgRow>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            let mut live: Vec<OrgRow> = guard
+                .directory
+                .get(&installation)
+                .into_iter()
+                .flatten()
+                .filter(|row| !row.retired)
+                .cloned()
+                .collect();
+            live.sort_by_key(|row| row.number);
+            Ok(live)
+        })
+    }
+
+    fn create_org(
+        &self,
+        installation: InstallationId,
+        name: &str,
+        number: Option<i64>,
+        first_id: OrgId,
+    ) -> StoreFuture<'_, OrgRow> {
+        let name = name.to_owned();
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let rows = guard.directory.entry(installation).or_default();
+            let taken = || CrError::Conflict("Organization name taken".into());
+            if let Some(held) = rows.iter().find(|row| Some(row.number) == number) {
+                return if held.name == name && !held.retired {
+                    Ok(held.clone())
+                } else {
+                    Err(taken())
+                };
+            }
+            if rows.iter().any(|row| !row.retired && row.name == name) {
+                return Err(taken());
+            }
+            let last = rows.iter().map(|row| row.number).max().unwrap_or(1);
+            let row = OrgRow {
+                number: number.unwrap_or_else(|| last.max(1).saturating_add(1)),
+                org_id: if rows.iter().any(|row| row.name == name) {
+                    OrgId::new()
+                } else {
+                    first_id
+                },
+                name,
+                retired: false,
+            };
+            if rows.iter().any(|held| held.org_id == row.org_id) {
+                return Err(taken());
+            }
+            rows.push(row.clone());
+            Ok(row)
+        })
+    }
+
+    fn retire_org(&self, installation: InstallationId, number: i64) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let held = guard.directory.get_mut(&installation).and_then(|rows| {
+                rows.iter_mut()
+                    .find(|row| row.number == number && !row.retired)
+            });
+            Ok(held.map(|row| row.retired = true).is_some())
+        })
+    }
+
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let guard = self.inner.read();
