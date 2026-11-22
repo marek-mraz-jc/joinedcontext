@@ -516,7 +516,7 @@ export function VisualizationsSection({
           // In this form the hints, and what to do on a refusal, are read at body size.
           // The Portal's root is 80 %: at phone width the form reads at the title size and what is
           // typed or picked at the display size, 16 px, which iOS does not zoom into.
-          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-display max-sm:[&_:is(p,label,output,[role=alert])]:text-title"
+          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words sm:[&_[role=alert]]:text-body sm:[&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-display max-sm:[&_:is(p,label,output,[role=alert])]:text-title"
         >
           <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}

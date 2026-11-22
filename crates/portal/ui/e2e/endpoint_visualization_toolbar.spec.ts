@@ -195,6 +195,11 @@ for (const width of [1440, 400]) {
     await expect(alert).toContainText("Nothing was proposed. Correct “Chart specification (Vega-Lite)” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
+    if (width === 400) {
+      // What to do about it is no smaller than the hint above it.
+      const size = await section.locator("#viz-spec__error").evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+      expect(size).toBeGreaterThanOrEqual(12.8);
+    }
     await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Press “Use this endpoint's data” below to replace https:\/\/example\.org\/no2\.csv/);
     // The shots show the member that was refused, at the top of the box.
     await spec.evaluate((box) => (box.scrollTop = 0));
