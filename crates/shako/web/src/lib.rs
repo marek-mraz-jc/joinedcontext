@@ -382,7 +382,7 @@ async fn web_repo_list(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, None, "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
@@ -423,7 +423,7 @@ async fn web_repo_home(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -472,7 +472,7 @@ async fn web_file_view(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name, git_ref, path)): Path<(String, String, String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -509,7 +509,7 @@ async fn web_raw_file(
     headers: HeaderMap,
     Path((owner, repo_name, git_ref, path)): Path<(String, String, String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((_repo, disk_path)) =
@@ -560,7 +560,7 @@ async fn web_branches(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -586,7 +586,7 @@ async fn web_tags(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -616,7 +616,7 @@ async fn web_commits(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name, git_ref)): Path<(String, String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -646,7 +646,7 @@ async fn web_commit_diff(
     headers: HeaderMap,
     Path((owner, repo_name, sha)): Path<(String, String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =
@@ -681,7 +681,7 @@ async fn web_pulls_list(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, _)) =
@@ -708,7 +708,7 @@ async fn web_pull_detail(
     headers: HeaderMap,
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
 ) -> Response {
-    let Ok(ctx) = authenticate_request(&state, &headers, Some(&owner), "shako") else {
+    let Ok(ctx) = authenticate_request(&state, &headers, "shako") else {
         return not_found_html();
     };
     let Ok((repo, disk_path)) =

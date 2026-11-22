@@ -230,16 +230,12 @@ impl RefPolicy {
                 authorizer
                     .check(ctx, Action::Write, &target)
                     .into_result("repository not found")?;
-                let principals = ctx.subject.principals();
                 if !tag_rule.whitelist_usernames.is_empty()
-                    && !tag_rule
-                        .whitelist_usernames
-                        .iter()
-                        .any(|u| principals.contains(&u.as_str()))
+                    && !ctx.subject.is_named_in(&tag_rule.whitelist_usernames)
                 {
                     return Err(ShakoError::Forbidden(format!(
                         "tag '{tag_name}' is protected: subject '{}' is not in tag whitelist",
-                        ctx.subject.username
+                        ctx.subject.login()
                     )));
                 }
                 return Ok(());
@@ -267,17 +263,15 @@ impl RefPolicy {
             .check(ctx, Action::Write, &target)
             .into_result("repository not found")?;
 
-        let principals = ctx.subject.principals();
         for rule in rules {
             // A protected branch is deleted only by a subject its rule names to rewrite it: a force
             // push already replaces its whole history, so deleting grants nothing more. That is how
             // the Portal closes the `workspace/*` branches reserved to it (T-6706); `main` is never.
             let may_rewrite = rule.enable_push
                 && rule.enable_force_push
-                && rule
-                    .force_push_allowlist_usernames
-                    .iter()
-                    .any(|u| principals.contains(&u.as_str()));
+                && ctx
+                    .subject
+                    .is_named_in(&rule.force_push_allowlist_usernames);
             if is_delete && !may_rewrite {
                 return Err(ShakoError::Forbidden(format!(
                     "branch '{branch_name}' is protected and cannot be deleted"
@@ -293,15 +287,10 @@ impl RefPolicy {
 
             let whitelist_active =
                 rule.enable_push_whitelist || !rule.push_whitelist_usernames.is_empty();
-            if whitelist_active
-                && !rule
-                    .push_whitelist_usernames
-                    .iter()
-                    .any(|u| principals.contains(&u.as_str()))
-            {
+            if whitelist_active && !ctx.subject.is_named_in(&rule.push_whitelist_usernames) {
                 return Err(ShakoError::Forbidden(format!(
                     "branch '{branch_name}' is protected: subject '{}' is not in push_whitelist_usernames",
-                    ctx.subject.username
+                    ctx.subject.login()
                 )));
             }
 
@@ -314,14 +303,13 @@ impl RefPolicy {
                 let fp_whitelist_active = rule.enable_force_push_allowlist
                     || !rule.force_push_allowlist_usernames.is_empty();
                 if fp_whitelist_active
-                    && !rule
-                        .force_push_allowlist_usernames
-                        .iter()
-                        .any(|u| principals.contains(&u.as_str()))
+                    && !ctx
+                        .subject
+                        .is_named_in(&rule.force_push_allowlist_usernames)
                 {
                     return Err(ShakoError::Forbidden(format!(
                         "branch '{branch_name}' is protected: subject '{}' is not in force_push_allowlist_usernames",
-                        ctx.subject.username
+                        ctx.subject.login()
                     )));
                 }
             }
@@ -367,7 +355,6 @@ impl RefPolicy {
             .check(ctx, Action::Write, &target)
             .into_result("repository not found")?;
 
-        let principals = ctx.subject.principals();
         let is_admin = authorizer.check(ctx, Action::Admin, &target).allowed;
         for rule in self.matching_branch_rules(base_branch) {
             let can_admin_override = is_admin && !rule.block_admin_merge_override;
@@ -377,14 +364,11 @@ impl RefPolicy {
                 rule.enable_merge_whitelist || !rule.merge_whitelist_usernames.is_empty();
             if merge_wl_active
                 && !can_admin_override
-                && !rule
-                    .merge_whitelist_usernames
-                    .iter()
-                    .any(|u| principals.contains(&u.as_str()))
+                && !ctx.subject.is_named_in(&rule.merge_whitelist_usernames)
             {
                 return Err(ShakoError::Forbidden(format!(
                     "branch '{base_branch}' is protected: subject '{}' is not in merge_whitelist_usernames",
-                    ctx.subject.username
+                    ctx.subject.login()
                 )));
             }
 
@@ -463,7 +447,7 @@ impl RefPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{LocalAuthorizer, RoleBinding, Subject};
+    use crate::auth::{LocalAuthorizer, Principal, RoleBinding, Subject};
     use jc_time::TimestampTz;
 
     #[test]
@@ -473,28 +457,28 @@ mod tests {
         let authz = LocalAuthorizer::new(vec![
             RoleBinding {
                 org_id: org,
-                principal: "jc-portal".into(),
+                principal: Principal::User("jc-portal".into()),
                 actions: vec![Action::Write],
                 project_id: None,
                 repo: None,
             },
             RoleBinding {
                 org_id: org,
-                principal: "writer-bob".into(),
+                principal: Principal::User("writer-bob".into()),
                 actions: vec![Action::Write, Action::Approve],
                 project_id: None,
                 repo: None,
             },
             RoleBinding {
                 org_id: org,
-                principal: "admin-root".into(),
+                principal: Principal::User("admin-root".into()),
                 actions: vec![Action::Admin],
                 project_id: None,
                 repo: None,
             },
             RoleBinding {
                 org_id: org,
-                principal: "reader-eve".into(),
+                principal: Principal::User("reader-eve".into()),
                 actions: vec![Action::Read],
                 project_id: None,
                 repo: None,
@@ -545,17 +529,17 @@ mod tests {
         let portal_ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         );
         let bob_ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("writer-bob", "writer-bob", vec![org], vec![]),
+            Subject::authenticated("writer-bob", "writer-bob", vec![org]),
         );
         let admin_ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("admin-root", "admin-root", vec![org], vec![]),
+            Subject::authenticated("admin-root", "admin-root", vec![org]),
         );
 
         // Non-whitelisted writer-bob and even admin-root cannot push directly to main
@@ -752,7 +736,7 @@ mod tests {
                 .into_iter()
                 .map(|principal| RoleBinding {
                     org_id: org,
-                    principal: principal.into(),
+                    principal: Principal::User(principal.into()),
                     actions: vec![Action::Write],
                     project_id: None,
                     repo: None,
@@ -782,13 +766,8 @@ mod tests {
             ],
             tag_rules: vec![],
         };
-        let ctx = |who: &str| {
-            RequestCtx::new(
-                inst,
-                org,
-                Subject::authenticated(who, who, vec![org], vec![]),
-            )
-        };
+        let ctx =
+            |who: &str| RequestCtx::new(inst, org, Subject::authenticated(who, who, vec![org]));
         let update = |who: &str, refname: &str, is_delete: bool, is_fast_forward: bool| {
             policy.check_ref_update(
                 &ctx(who),
@@ -832,7 +811,7 @@ mod tests {
         let org = OrgId::from_u128(1);
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "admin-eve".into(),
+            principal: Principal::User("admin-eve".into()),
             actions: vec![Action::Admin],
             project_id: None,
             repo: None,
@@ -860,7 +839,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("admin-eve", "admin-eve", vec![org], vec![]),
+            Subject::authenticated("admin-eve", "admin-eve", vec![org]),
         );
         let push = policy.check_ref_update(
             &ctx,

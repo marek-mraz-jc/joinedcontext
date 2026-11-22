@@ -561,7 +561,7 @@ impl<'a> PgScopedTable<'a> {
                 .await
                 .map_err(|e| TableError::Source(e.to_string()))?;
         }
-        let mut tx = self.store.pool.begin().await.map_err(failed)?;
+        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(failed)?;
         let rls_realm = if self.info.set == "Realms" {
             "*"
         } else {
@@ -622,7 +622,7 @@ impl<'a> PgScopedTable<'a> {
             None
         };
 
-        tx.commit().await.map_err(failed)?;
+        jc_audit::commit(tx).await.map_err(failed)?;
         let _ = subquery;
         Ok(Fetched {
             rows: rows.into_iter().map(|Json(v)| v).collect(),
@@ -648,7 +648,7 @@ impl<'a> PgScopedTable<'a> {
     /// `ProtocolMappers`) so we never load more than `MAX_FALLBACK_SCAN_ROWS` rows.
     async fn run_keyset_fallback(&self, plan: &Plan, scope: &Scope) -> Result<Fetched, TableError> {
         let failed = |e: sqlx::Error| TableError::Source(e.to_string());
-        let mut tx = self.store.pool.begin().await.map_err(failed)?;
+        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(failed)?;
         set_scope(&mut tx, &self.realm_id, self.allowed_orgs.as_deref())
             .await
             .map_err(|e| TableError::Source(e.to_string()))?;
@@ -760,7 +760,7 @@ impl<'a> PgScopedTable<'a> {
             }
         }
 
-        tx.commit().await.map_err(failed)?;
+        jc_audit::commit(tx).await.map_err(failed)?;
 
         kept.sort_by(|a, b| {
             plan.order
