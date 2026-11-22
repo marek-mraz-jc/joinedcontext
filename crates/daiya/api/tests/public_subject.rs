@@ -23,16 +23,15 @@ use tower::ServiceExt;
 const ORG: OrgId = OrgId::from_u128(77);
 const OTHER_ORG: OrgId = OrgId::from_u128(78);
 
-async fn prometheus_mock() -> String {
+async fn gateway_mock() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         while let Ok((mut sock, _)) = listener.accept().await {
             let mut buf = vec![0u8; 8192];
             let _ = sock.read(&mut buf).await;
-            let body = json!({ "status": "success", "data": { "resultType": "matrix", "result": [
-                { "metric": { "job": "web" }, "values": [[1700000000, "5"]] }
-            ]}})
+            let body = json!([{ "id": "urn:ngsi-ld:Site:web", "type": "Site",
+                "visitors": { "type": "Property", "value": 5 } }])
             .to_string();
             let resp = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -82,8 +81,9 @@ fn dashboard(uid: &str, ds_uid: &str) -> Value {
             "panels": [{
                 "id": 1, "type": "timeseries", "title": "Web",
                 "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
-                "datasource": { "type": "prometheus", "uid": ds_uid },
-                "targets": [{ "refId": "A", "expr": "up", "datasource": { "type": "prometheus", "uid": ds_uid } }]
+                "datasource": { "type": "ngsild-grafana-datasource", "uid": ds_uid },
+                "targets": [{ "refId": "A", "queryType": "entity", "entityType": "Site",
+                              "datasource": { "type": "ngsild-grafana-datasource", "uid": ds_uid } }]
             }]
         },
         "overwrite": true
@@ -92,7 +92,7 @@ fn dashboard(uid: &str, ds_uid: &str) -> Value {
 
 #[tokio::test]
 async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
-    let url = prometheus_mock().await;
+    let url = gateway_mock().await;
     // The host knows one owner. There is no binding for any internal "admin" principal.
     let authz = Arc::new(PolicyAuthorizer::new(vec![RoleBinding::from_grafana_role(
         ORG,
@@ -120,6 +120,8 @@ async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
         )],
         ..OutboundPolicy::default()
     };
+    state.own_reach =
+        vec![daiya_query::OwnReach::endpoints(&format!("{url}/api/endpoint/")).unwrap()];
     let app = api_router(
         state,
         Mount::new("daiya", "https", "x.example", "").unwrap(),
@@ -130,7 +132,8 @@ async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
         "POST",
         "/api/datasources",
         Some("owner-token"),
-        json!({ "uid": "prom", "name": "Prom", "type": "prometheus", "url": url }),
+        json!({ "uid": "site", "name": "Site", "type": "ngsild-grafana-datasource",
+                "url": format!("{url}/api/endpoint/site") }),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{body}");
@@ -140,7 +143,7 @@ async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
             "POST",
             "/api/dashboards/db",
             Some("owner-token"),
-            dashboard(uid, "prom"),
+            dashboard(uid, "site"),
         )
         .await;
         assert_eq!(st, StatusCode::OK, "{body}");
@@ -167,7 +170,7 @@ async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
     assert_eq!(st, StatusCode::OK, "{answer}");
     assert!(answer.to_string().contains('5'), "{answer}");
     assert!(
-        !answer.to_string().contains("prom\""),
+        !answer.to_string().contains("site\""),
         "no datasource uid in the answer: {answer}"
     );
 
@@ -192,7 +195,7 @@ async fn public_queries_work_under_a_host_authorizer_with_no_internal_admin() {
             Action::Read,
             ObjectTarget::Datasource {
                 org_id: ORG,
-                datasource_uid: "prom".into(),
+                datasource_uid: "site".into(),
             },
         ),
         (Action::Propose, ObjectTarget::Organization { org_id: ORG }),
@@ -213,7 +216,7 @@ fn the_public_subject_reads_only_its_dashboard_and_its_datasources() {
     assert_eq!(subject.organizations, vec![ORG]);
     assert_eq!(subject.actor_id.as_deref(), Some("public-dashboard:pub"));
 
-    let authz = PublicDashboardAuthorizer::new(ORG, "pub", ["prom".to_owned()]);
+    let authz = PublicDashboardAuthorizer::new(ORG, "pub", ["site".to_owned()]);
     let ctx = RequestCtx::new(
         InstallationId::from_u128(1),
         ORG,
@@ -244,7 +247,7 @@ fn the_public_subject_reads_only_its_dashboard_and_its_datasources() {
             )
             .allowed
     );
-    assert!(authz.check(&ctx, Action::Read, &ds(ORG, "prom")).allowed);
+    assert!(authz.check(&ctx, Action::Read, &ds(ORG, "site")).allowed);
 
     // Denied, always as a hidden 404: any write, another dashboard, another datasource,
     // another organization, folders, library panels, the organization itself.
@@ -252,10 +255,10 @@ fn the_public_subject_reads_only_its_dashboard_and_its_datasources() {
         (Action::Propose, dash("pub")),
         (Action::Approve, dash("pub")),
         (Action::Delete, dash("pub")),
-        (Action::Admin, ds(ORG, "prom")),
+        (Action::Admin, ds(ORG, "site")),
         (Action::Read, dash("private")),
         (Action::Read, ds(ORG, "secret-ds")),
-        (Action::Read, ds(OTHER_ORG, "prom")),
+        (Action::Read, ds(OTHER_ORG, "site")),
         (
             Action::Read,
             ObjectTarget::Folder {
@@ -296,7 +299,7 @@ fn the_public_subject_reads_only_its_dashboard_and_its_datasources() {
         InstanceId::from_u128(1),
         Subject::authenticated("admin", vec![ORG], vec![]),
     );
-    assert!(!authz.check(&human, Action::Read, &ds(ORG, "prom")).allowed);
+    assert!(!authz.check(&human, Action::Read, &ds(ORG, "site")).allowed);
     let wrong_org = RequestCtx::new(
         InstallationId::from_u128(1),
         OTHER_ORG,
@@ -305,7 +308,7 @@ fn the_public_subject_reads_only_its_dashboard_and_its_datasources() {
     );
     assert!(
         !authz
-            .check(&wrong_org, Action::Read, &ds(OTHER_ORG, "prom"))
+            .check(&wrong_org, Action::Read, &ds(OTHER_ORG, "site"))
             .allowed
     );
 }

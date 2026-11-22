@@ -1065,11 +1065,16 @@ fn assignee(name: &str, project: &str, role: Option<&str>) -> Value {
 }
 
 /// The scope narrowing of a need: its own scope query and its geographic confinement are both
-/// scope strings, so two of them are one conjunction rather than a lost constraint (AP-05).
+/// scope strings, so two of them are one conjunction rather than a lost constraint (AP-05),
+/// written in the scope grammar. Two that do not combine stay as written, which is no scope
+/// query and grants nothing.
 fn scope_query(need: &DataNeed) -> Option<String> {
     let within = need.geo_q.as_ref().map(|geo| geo.within.scope_ref.as_str());
     match (need.scope_q.as_deref(), within) {
-        (Some(declared), Some(confined)) => Some(format!("({declared});({confined})")),
+        (Some(declared), Some(confined)) => Some(
+            antares_ql::scope::intersect_scope_q(declared, confined)
+                .unwrap_or_else(|| format!("({declared});({confined})")),
+        ),
         (Some(only), None) | (None, Some(only)) => Some(only.to_owned()),
         (None, None) => None,
     }

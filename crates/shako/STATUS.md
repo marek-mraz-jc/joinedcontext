@@ -72,9 +72,9 @@ item below is marked **not verified (not compiled)** alongside the implemented c
 - **S20 Import from Gitea (`import-gitea`)**: out of scope, run 2.
 - **S21 Security (Threats T1–T15)**: not verified (not compiled).
   - Implemented & tested: T1 (`shako-core/src/validate.rs::tests`, `e2e.rs`), T2 (`e2e.rs::t2_no_subprocess_command_in_any_shako_src_file`), T3 (`shako-core/src/outbound.rs::tests`), T4 (`shako-core/src/auth.rs::tests`, `e2e.rs`), T5 (`shako-git/src/pktline.rs::tests`, `shako-git/src/lib.rs::tests`), T6 (`isolation.rs`, `e2e.rs`), T7 & T8 (`shako-core/src/policy.rs::tests`, `e2e.rs`), T9 (`shako-git/src/receive_pack.rs`), T10 (`shako-git/src/lib.rs::tests`, `e2e.rs`), T11 (`e2e.rs`), T13 (`e2e.rs`), T14 (`shako-web/src/lib.rs::tests`, `e2e.rs`), T15 (`shako-git/src/lib.rs::tests`). (T12 is S16 runner protocol, out of scope in this run).
-- **S22 Memory, CPU and performance (`shako-core/src/quota.rs::MemoryBudget`)**: partial / not verified (not compiled).
-  - Implemented: 192 MiB memory-weighted semaphore returning `503` with `Retry-After: 5` on saturation, 2 MiB per-handle ODB object cache cap, 64 KiB streaming `mpsc::channel(4)`. Live RSS and k6 benchmarks are not run here.
-  - Tests written: `crates/shako/core/src/quota.rs::tests::memory_budget_returns_503_when_saturated`.
+- **S22 Memory, CPU and performance (`shako-api/src/work.rs::GitWork`)**: partial.
+  - Implemented: spool and memory budgets per Organization, an 8 MiB delta base cache per handle, packs and archives streamed from a spool in 64 KiB chunks (T-7522). k6 benchmarks are not run here.
+  - Tests run: `server/tests/git_memory.rs` (200 MiB push and clone, delta chain), `server/tests/git_jobs.rs` (fairness, mirror delta).
 - **S23 Delivery rules**: not verified (not compiled).
   - Edition 2024, license MIT, `#![forbid(unsafe_code)]` in every crate, `crates/shako/MEMBERS.txt` and workspace `Cargo.toml` updated.
 - **S-later LFS**: out of scope, later run.

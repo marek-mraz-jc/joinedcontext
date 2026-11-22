@@ -683,7 +683,7 @@ fn identifiers_limits_quotas_and_share_types() {
         id
     );
     assert!("not-a-uuid".parse::<InstallationId>().is_err());
-    assert_ne!(InstallationId::default(), InstallationId::default());
+    assert_ne!(InstallationId::generate(), InstallationId::generate());
     assert_eq!(
         serde_json::to_value(OrgId::from_u128(1)).unwrap(),
         json!("00000000-0000-0000-0000-000000000001")
@@ -692,7 +692,7 @@ fn identifiers_limits_quotas_and_share_types() {
         InstallationId::from_u128(5).to_string(),
         "00000000-0000-0000-0000-000000000005"
     );
-    let a = InstallationId::new();
+    let a = InstallationId::generate();
     let b: InstallationId = a.as_uuid().into();
     assert_eq!(a, b);
     assert_eq!(OrgId::from(a.as_uuid()).as_uuid(), a.as_uuid());

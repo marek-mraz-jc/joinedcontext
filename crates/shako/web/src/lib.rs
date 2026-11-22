@@ -7,7 +7,7 @@
 use askama::Template;
 use axum::Router;
 use axum::extract::{Extension, Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
@@ -202,6 +202,7 @@ struct RepoHomeTemplate {
   <p>Ref: <code>{{ git_ref }}</code> | SHA: <code>{{ blob_sha }}</code> | <a href="{{ prefix }}/{{ owner }}/{{ repo }}/raw/{{ git_ref }}/{{ path }}">Raw</a></p>
 </header>
 <main>
+  {% if cut %}<p role="status">This page shows the first MiB of the file. Open Raw for the whole file.</p>{% endif %}
   <pre><code>{{ content }}</code></pre>
 </main>
 </body>
@@ -216,6 +217,7 @@ struct FileViewTemplate {
     path: String,
     blob_sha: String,
     content: String,
+    cut: bool,
 }
 
 #[derive(Template)]
@@ -435,19 +437,24 @@ async fn web_repo_home(
     let def_b = repo.default_branch.clone();
     let disk_c = disk_path.clone();
 
-    let (entries, readme_md) = tokio::task::spawn_blocking(move || {
-        let entries = list_tree_entries(&disk_c, &def_b, false)
-            .map(|(_, e)| e)
-            .unwrap_or_default();
-        let readme = read_file_at_ref(&disk_c, &def_b, "README.md")
-            .ok()
-            .flatten()
-            .map(|(_, b)| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
-        (entries, readme)
-    })
-    .await
-    .unwrap_or_default();
+    let (entries, readme_md) = match state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            let entries = list_tree_entries(&disk_c, &def_b, false)
+                .map(|(_, e)| e)
+                .unwrap_or_default();
+            let readme = read_file_at_ref(&disk_c, &def_b, "README.md", admit)
+                .ok()
+                .flatten()
+                .map(|(_, b)| shown(&b).0)
+                .unwrap_or_default();
+            Ok((entries, readme))
+        })
+        .await
+    {
+        Ok(read) => read,
+        Err(e) => return shako_api::gitea_error_response(&state, &e),
+    };
 
     let readme_html = if readme_md.is_empty() {
         String::new()
@@ -484,10 +491,17 @@ async fn web_file_view(
     let gr = git_ref.clone();
     let fp = path.clone();
 
-    let Ok(Ok(Some((blob_sha, bytes)))) =
-        tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &gr, &fp)).await
-    else {
-        return not_found_html();
+    let read = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            Ok(read_file_at_ref(&disk_path, &gr, &fp, admit)?
+                .map(|(sha, bytes)| (sha, shown(&bytes))))
+        })
+        .await;
+    let (blob_sha, (content, cut)) = match read {
+        Ok(Some(found)) => found,
+        Err(e @ ShakoError::Overloaded(_)) => return shako_api::gitea_error_response(&state, &e),
+        _ => return not_found_html(),
     };
 
     render_template(&FileViewTemplate {
@@ -497,7 +511,8 @@ async fn web_file_view(
         git_ref,
         path,
         blob_sha,
-        content: String::from_utf8_lossy(&bytes).into_owned(),
+        content,
+        cut,
     })
 }
 
@@ -517,13 +532,6 @@ async fn web_raw_file(
     else {
         return not_found_html();
     };
-    let fp = path.clone();
-    let Ok(Ok(Some((_sha, bytes)))) =
-        tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &fp)).await
-    else {
-        return not_found_html();
-    };
-
     let filename: String = path
         .rsplit('/')
         .next()
@@ -537,22 +545,52 @@ async fn web_raw_file(
         || lower.ends_with(".htm")
         || lower.ends_with(".xhtml")
         || lower.ends_with(".xml");
-    let content_type = if is_dangerous_ext || std::str::from_utf8(&bytes).is_err() {
+    // The blob goes to a spool under the job's memory permit and is sent from there (T-7522).
+    let read = state
+        .git_work
+        .produce(ctx.org_id, move |out, admit| {
+            let Some((_sha, bytes)) = read_file_at_ref(&disk_path, &git_ref, &path, admit)? else {
+                return Ok(None);
+            };
+            std::io::Write::write_all(out, &bytes)
+                .map_err(|e| ShakoError::Storage(format!("raw file spool: {e}")))?;
+            Ok(Some(
+                is_dangerous_ext || std::str::from_utf8(&bytes).is_err(),
+            ))
+        })
+        .await;
+    let (spool, binary) = match read {
+        Ok((spool, Some(binary))) => (spool, binary),
+        Err(e @ ShakoError::Overloaded(_)) => return shako_api::gitea_error_response(&state, &e),
+        _ => return not_found_html(),
+    };
+    let content_type = if binary {
         "application/octet-stream"
     } else {
         "text/plain; charset=utf-8"
     };
-    let disposition = format!("attachment; filename=\"{filename}\"");
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-            (header::CONTENT_DISPOSITION, disposition.as_str()),
-        ],
-        bytes,
-    )
-        .into_response()
+    let mut response = match spool.respond(content_type).await {
+        Ok(response) => response,
+        Err(e) => return shako_api::gitea_error_response(&state, &e),
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    // `filename` is sanitized above, so the fallback never shows.
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+        .unwrap_or(HeaderValue::from_static("attachment"));
+    headers.insert(header::CONTENT_DISPOSITION, disposition);
+    response
+}
+
+/// What a page shows of a file: its first MiB as text, and whether that is all of it.
+fn shown(bytes: &[u8]) -> (String, bool) {
+    const SHOWN: usize = 1024 * 1024;
+    let cut = bytes.len() > SHOWN;
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(SHOWN)]).into_owned();
+    (text, cut)
 }
 
 async fn web_branches(

@@ -39,5 +39,8 @@ These were verified by tests in `api/tests/compat_routes.rs`.
 - A datasource or folder created without a uid gets a random 14-character short uid. A given uid over 40 characters or outside `a-zA-Z0-9-_` is refused with 400 (Grafana `IsValidShortUID`).
 - `POST /api/folders` on an existing uid answers 409.
 - `PATCH` of a public dashboard checks the `{uid}` in its path.
+- Difference: every route that works inside an Organization needs `X-Grafana-Org-Id` unless the caller holds exactly one; Grafana falls back to the user's default organization, daiya answers 401. `POST /api/orgs`, `DELETE /api/orgs/{orgId}` and `GET /api/orgs/name/{name}` are installation acts and need none.
+- Difference: a public dashboard reads only NGSI-LD and OData datasources at the host's gateway Endpoints. Enabling one with another source answers 422 naming the datasources; `share: email` answers 422.
+- Difference: any path daiya does not serve answers 401 without a credential and 404 with one.
 - Datasource resource paths accept Grafana's `api/v1/labels`, `api/v1/label/{name}/values` and `api/v1/series` forms as well as the short ones.
 - Difference: the numeric `id` is a constant, or the row position in lists. Records have no numeric id.

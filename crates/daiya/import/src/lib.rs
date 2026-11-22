@@ -334,7 +334,7 @@ pub async fn import_dashboards(
         rep.uid = store.upsert_dashboard(record, "imported", true).await?.uid;
     }
     store
-        .insert_import_report(audit_record(org_id, instance_id, &report))
+        .insert_import_report(installation_id, audit_record(org_id, instance_id, &report))
         .await?;
     Ok(report)
 }
@@ -851,7 +851,7 @@ pub async fn apply_plan(
         rep.uid = record.uid;
     }
     store
-        .insert_import_report(audit_record(org_id, instance_id, &report))
+        .insert_import_report(installation_id, audit_record(org_id, instance_id, &report))
         .await?;
     Ok(report)
 }

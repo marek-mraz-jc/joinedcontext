@@ -95,6 +95,8 @@ linkml-model = { path = "../antares/crates/linkml-model", version = "0.3.0" }
 # sample runs before a proposal (T-4840), and the app-variant matrix asserts (T-2705). Same rev as
 # jc-core.
 context-gateway = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+# the scope grammar the gateway reads (antares_ql::scope), the same crate the gateway links
+antares-ql = { package = "ngsild-ql", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }
 # The operations check an input against the schema they publish (T-1659); already in the tree.
 jsonschema = { version = "0.54", default-features = false }
 # Only to render jc-core's schemas into the OpenAPI document; the Portal's own types use utoipa.

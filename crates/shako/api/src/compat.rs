@@ -7,14 +7,13 @@
 use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, repo_to_gitea_json,
-    resolve_and_authorize_repo, stream_bytes_in_64k_chunks,
+    resolve_and_authorize_repo,
 };
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use jc_router::Mount;
 use jc_time::TimestampTz;
@@ -22,9 +21,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::ObjectTarget;
 use shako_core::{
-    ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
-    PullRequestRecord, RepoRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
-    WebhookId, validate_repo_or_owner_name, validate_tree_path,
+    Action, BranchProtectionRule, CommitStatusRecord, PullRequestRecord, RepoRecord, ReviewVerdict,
+    ShakoError, ShakoResult, WebhookFormat, WebhookId, validate_repo_or_owner_name,
+    validate_tree_path,
 };
 use shako_git::{
     ArchiveFormat, CommitAuthor, FileOpKind, MergeStyle, create_archive, create_single_ref_bundle,
@@ -946,37 +945,51 @@ async fn compat_get_contents(
             Err(e) => return gitea_error_response(&state, &e),
         };
     let git_ref = q.git_ref.unwrap_or(repo.default_branch);
-    let fp = file_path.clone();
+    let fp = file_path;
 
-    let res = tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &fp))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res = state
+        .git_work
+        .produce(ctx.org_id, move |out, admit| {
+            let Some((sha, bytes)) = read_file_at_ref(&disk_path, &git_ref, &fp, admit)? else {
+                return Err(ShakoError::NotFound("file not found".into()));
+            };
+            let name = fp.rsplit('/').next().unwrap_or(&fp);
+            write_file_content(out, name, &fp, &sha, &bytes)
+                .map_err(|e| ShakoError::Storage(format!("contents spool: {e}")))
+        })
+        .await;
+    let sent = match res {
+        Ok((spool, ())) => spool.respond("application/json").await,
+        Err(e) => Err(e),
+    };
+    sent.unwrap_or_else(|e| gitea_error_response(&state, &e))
+}
 
-    match res {
-        Ok(Some((blob_sha, bytes))) => {
-            let name = file_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file_path)
-                .to_owned();
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "name": name,
-                    "path": file_path,
-                    "sha": blob_sha,
-                    "type": "file",
-                    "size": bytes.len(),
-                    "encoding": "base64",
-                    "content": STANDARD.encode(&bytes),
-                })),
-            )
-                .into_response()
-        }
-        Ok(None) => gitea_error_response(&state, &ShakoError::NotFound("file not found".into())),
-        Err(e) => gitea_error_response(&state, &e),
-    }
+/// The contents answer, its base64 written straight to `out` (T-7522).
+fn write_file_content(
+    out: &mut impl std::io::Write,
+    name: &str,
+    path: &str,
+    sha: &str,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let head = json!({
+        "name": name,
+        "path": path,
+        "sha": sha,
+        "type": "file",
+        "size": bytes.len(),
+        "encoding": "base64",
+    })
+    .to_string();
+    out.write_all(head.trim_end_matches('}').as_bytes())?;
+    out.write_all(br#","content":""#)?;
+    let mut encoded = base64::write::EncoderWriter::new(&mut *out, &STANDARD);
+    encoded.write_all(bytes)?;
+    encoded.finish()?;
+    drop(encoded);
+    out.write_all(br#""}"#)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1429,35 +1442,21 @@ async fn compat_get_archive(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
-    let permit = match state
-        .memory_budget
-        .acquire(ARCHIVE_OPERATION_WEIGHT_BYTES)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
+    let org = ctx.org_id;
     let rname = repo.name.clone();
     if let Some(git_ref) = ref_and_ext.strip_suffix(".bundle") {
         let git_ref = git_ref.to_owned();
-        let res = tokio::task::spawn_blocking(move || {
-            let _hold = permit;
-            create_single_ref_bundle(&disk_path, &git_ref)
-        })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
-
-        return match res {
-            Ok(bytes) => (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/octet-stream")],
-                stream_bytes_in_64k_chunks(bytes),
-            )
-                .into_response(),
-            Err(e) => gitea_error_response(&state, &e),
+        let res = state
+            .git_work
+            .produce(org, move |out, admit| {
+                create_single_ref_bundle(&disk_path, &git_ref, out, admit)
+            })
+            .await;
+        let sent = match res {
+            Ok((spool, ())) => spool.respond("application/octet-stream").await,
+            Err(e) => Err(e),
         };
+        return sent.unwrap_or_else(|e| gitea_error_response(&state, &e));
     }
 
     let (git_ref, format, content_type) = if let Some(r) = ref_and_ext.strip_suffix(".tar.gz") {
@@ -1473,23 +1472,17 @@ async fn compat_get_archive(
         );
     };
 
-    let res = tokio::task::spawn_blocking(move || {
-        let _hold = permit;
-        create_archive(&disk_path, &rname, &git_ref, format)
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, content_type)],
-            stream_bytes_in_64k_chunks(bytes),
-        )
-            .into_response(),
-        Err(e) => gitea_error_response(&state, &e),
-    }
+    let res = state
+        .git_work
+        .produce(org, move |out, admit| {
+            create_archive(&disk_path, &rname, &git_ref, format, out, admit)
+        })
+        .await;
+    let sent = match res {
+        Ok((spool, ())) => spool.respond(content_type).await,
+        Err(e) => Err(e),
+    };
+    sent.unwrap_or_else(|e| gitea_error_response(&state, &e))
 }
 
 // =========================================================================

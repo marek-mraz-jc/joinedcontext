@@ -2,13 +2,14 @@
 //! Repository archive generation (`.zip` and `.tar.gz`, Row 32, Contract S11, Threat T1).
 //! Prefix is `{repo}-{ref}/`, modification time is the commit timestamp.
 
+use crate::pack::{Admit, job_bytes};
 use crate::repo::{collect_tree_blobs, open_isolated, resolve_commit_oid};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use gix_object::tree::EntryKind;
 use shako_core::{ShakoError, ShakoResult, validate_repo_or_owner_name, validate_tree_path};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Seek, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
 
@@ -37,7 +38,9 @@ pub fn create_archive(
     repo_name: &str,
     git_ref: &str,
     format: ArchiveFormat,
-) -> ShakoResult<Vec<u8>> {
+    out: impl Write + Seek,
+    admit: Admit<'_>,
+) -> ShakoResult<()> {
     validate_repo_or_owner_name(repo_name, "repository")?;
     let safe_ref = sanitize_archive_prefix_ref(git_ref)?;
     let prefix = format!("{repo_name}-{safe_ref}");
@@ -60,11 +63,19 @@ pub fn create_archive(
     // A submodule's content is in another repository; the archive leaves it out, as git does.
     files.retain(|_, (kind, _)| *kind != EntryKind::Commit);
 
+    let mut largest = 0;
+    for (_, blob_oid) in files.values() {
+        let header = repo
+            .find_header(*blob_oid)
+            .map_err(|e| ShakoError::Git(format!("find blob: {e}")))?;
+        largest = largest.max(header.size());
+    }
+    admit(job_bytes(largest, files.len() as u64))?;
+
     match format {
         ArchiveFormat::Zip => {
-            let mut cursor = std::io::Cursor::new(Vec::new());
             {
-                let mut zip = zip::ZipWriter::new(&mut cursor);
+                let mut zip = zip::ZipWriter::new(out);
                 for (rel_path, (kind, blob_oid)) in &files {
                     validate_tree_path(rel_path)?;
                     let blob = repo
@@ -87,10 +98,10 @@ pub fn create_archive(
                 zip.finish()
                     .map_err(|e| ShakoError::Git(format!("zip finish: {e}")))?;
             }
-            Ok(cursor.into_inner())
+            Ok(())
         }
         ArchiveFormat::TarGz => {
-            let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+            let mut gz = GzEncoder::new(out, Compression::default());
             {
                 let mut builder = tar::Builder::new(&mut gz);
                 for (rel_path, (kind, blob_oid)) in &files {
@@ -117,6 +128,7 @@ pub fn create_archive(
                     .map_err(|e| ShakoError::Git(format!("tar finish: {e}")))?;
             }
             gz.finish()
+                .map(drop)
                 .map_err(|e| ShakoError::Git(format!("gzip finish: {e}")))
         }
     }

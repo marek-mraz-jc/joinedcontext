@@ -391,7 +391,7 @@ pub async fn open_store(cfg: &StoreConfig) -> CrResult<Arc<dyn DaiyaStore>> {
             let store = PgStore::new(app.connect().await?);
             store.verify_rls_enforced().await?;
             // A schema without the organizations (migration 2) stops the start, not each request.
-            store.list_orgs(InstallationId::from_u128(1)).await?;
+            store.list_orgs(InstallationId::SINGLE).await?;
             Ok(Arc::new(store))
         }
     }
@@ -446,7 +446,7 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
         });
     }
     let mut state = DaiyaState::new(
-        InstallationId::from_u128(1),
+        InstallationId::SINGLE,
         org,
         InstanceId::from_u128(1),
         store,

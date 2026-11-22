@@ -515,6 +515,14 @@ fn find_in<'a>(
     })
 }
 
+/// Whether `path` holds a `.` or `..` segment, in any case of `%2e`.
+fn has_dot_segment(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let decoded = segment.to_ascii_lowercase().replace("%2e", ".");
+        decoded == "." || decoded == ".."
+    })
+}
+
 /// Whether a browser asked for a page: a `GET` or `HEAD` that accepts HTML. An API client asks
 /// for JSON or anything, and is served in place (docs/API/15-addresses-v1.md §2).
 fn is_page(req: &Request<Body>) -> bool {
@@ -693,6 +701,11 @@ impl JcRouter {
             );
         }
         let public_path = req.uri().path().to_owned();
+        // A dot-segment, raw or percent-encoded, never reaches a module: past a mount's prefix it
+        // would name another module's path to any module that resolved it (RFC 3986 §5.2.4).
+        if has_dot_segment(&public_path) {
+            return (StatusCode::NOT_FOUND, "unmounted path").into_response();
+        }
         let projects = self.hosts.as_ref().and_then(HostSwap::projects);
         let mut project_address = false;
         // The project door's address when its metadata is asked (MCP-33).
@@ -2020,6 +2033,37 @@ mod tests {
             .unwrap();
         let res3 = jc.dispatch(req3, None).await;
         assert_eq!(res3.status(), StatusCode::NOT_FOUND);
+
+        // A dot-segment under a mount reaches no module, whatever its case or encoding; a dot
+        // inside a segment is an ordinary name.
+        for path in [
+            "/portal/../login/realms/dev",
+            "/portal/%2e%2e/login/realms/dev",
+            "/portal/%2E./login/realms/dev",
+            "/login/./realms/dev",
+        ] {
+            let req = Request::builder()
+                .uri(path)
+                .header("host", "city.example")
+                .body(Body::empty())
+                .unwrap();
+            let res = jc.dispatch(req, None).await;
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(
+                &body[..],
+                b"unmounted path",
+                "{path}: refused before the module"
+            );
+        }
+        let req = Request::builder()
+            .uri("/login/realms/dev..x")
+            .header("host", "city.example")
+            .body(Body::empty())
+            .unwrap();
+        let res = jc.dispatch(req, None).await;
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        assert_ne!(&body[..], b"unmounted path", "the module answers it");
     }
 
     #[test]

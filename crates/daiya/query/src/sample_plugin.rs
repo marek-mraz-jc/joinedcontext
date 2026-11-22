@@ -179,8 +179,8 @@ mod tests {
         let plugin = Arc::new(SampleMetricsWasmPlugin::new());
         let pinned_digest = host.register_component(plugin);
 
-        let org = OrgId::new();
-        let inst = InstanceId::new();
+        let org = OrgId::generate();
+        let inst = InstanceId::generate();
         let guard = OutboundGuard::new(GuardConfig::default());
         let secrets = Arc::new(MapSecretResolver::new());
 
