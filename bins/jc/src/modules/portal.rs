@@ -241,9 +241,11 @@ const REGISTRY_REBUILD: std::time::Duration = std::time::Duration::from_secs(60)
 /// Each rebuild is [`apply`]; a write to `organizations` wakes it too (migration 0063, T-7181).
 async fn watch_registry(pool: sqlx::PgPool, run: Run, shutdown: CancellationToken) {
     let mut listener: Option<sqlx::postgres::PgListener> = None;
+    // The LISTEN holds its session for the process's life: not one of the working five (T-7494).
+    let sessions = joinedcontext_portal::db::session_pool(&pool);
     loop {
         if listener.is_none() {
-            listener = listen_registry(&pool).await;
+            listener = listen_registry(&sessions).await;
         }
         let stale = match rebuild_hosts(&pool, &run).await {
             Ok(served) => {

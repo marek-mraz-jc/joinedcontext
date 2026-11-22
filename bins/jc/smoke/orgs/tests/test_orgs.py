@@ -721,6 +721,7 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
     assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG),
+                                            "poolUnavailable": {"error": "watch.toml names no prometheus_namespace"},
                                             "refusedCounter": {"window": "30m", "error": "watch.toml names no prometheus_namespace"}}
     # the log of every jc pod's jc-server container, the last 30 min only
     assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true",
@@ -956,6 +957,51 @@ def test_a_held_check_that_turns_skip_stays_listed_while_another_is_red():
     assert b.updated == [("T-1", ["oidc.alpha"])] and b.closed == []
     block = watch.checks_block([{"id": "mcp.alpha", "result": "skip", "actual": "rotated"}], "t")
     assert "(skip, not yet green) rotated" in block
+
+
+# T-7494: jc-prod recorded no run from 02:23Z to 08:00Z with its pool empty, and no row was red.
+def test_an_exhausted_pool_turns_its_row_red_and_only_a_read_gauge_passes():
+    row = lambda got: orgs.pool_available({"poolUnavailable": got})
+    assert row({"seconds": 20260})[0] == "fail" and "20260 s" in row({"seconds": 20260})[1]
+    assert row({"seconds": 120})[0] == "fail"
+    assert row({"seconds": 119})[0] == row({"seconds": 0})[0] == "pass"
+    assert row({"error": "forbidden"})[0] == orgs.pool_available({})[0] == "skip"
+
+
+def test_no_run_recorded_for_30_min_turns_its_row_red():
+    row = lambda last: orgs.runs_recorded({"pipelinesAt": "2026-11-22T08:03:00Z", "lastRecorded": last})
+    assert row("2026-11-22T02:23:18Z")[0] == "fail"
+    assert row("2026-11-22T07:33:00Z")[0] == "fail"
+    assert row("2026-11-22T07:34:00Z")[0] == "pass"
+    assert row(None)[0] == row("2026-11-01T00:00:00Z")[0] == orgs.runs_recorded({})[0] == "skip"
+
+
+def test_the_pool_gauge_is_read_from_prometheus_and_an_unread_one_says_why(monkeypatch):
+    asked = []
+    answer = ['[{"metric": {}, "value": [1, "240"]}]']
+
+    def kubectl(cfg, *args, timeout=60):
+        if "get" in args:
+            return "pod/prometheus-0\n"
+        asked.append(args[-1])
+        return answer[0]
+
+    monkeypatch.setattr(watch, "kubectl", kubectl)
+    cfg = {"namespace": "jc-prod", "prometheus_namespace": "prometheus"}
+    assert watch.pool_gauge(cfg) == {"poolUnavailable": {"seconds": 240}}
+    assert asked == ['max(jc_portal_db_unavailable_seconds{namespace="jc-prod"})']
+    answer[0] = "[]"
+    assert "no jc_portal_db_unavailable_seconds" in watch.pool_gauge(cfg)["poolUnavailable"]["error"]
+    assert "error" in watch.pool_gauge({"namespace": "jc-prod"})["poolUnavailable"]
+
+
+def test_the_exhausted_pool_rows_belong_to_the_deployment_and_fail_the_run(tmp_path, edge, public_sources):
+    doc = {**snapshot(public_sources), "poolUnavailable": {"seconds": 20260},
+           "pipelinesAt": "2026-11-22T08:03:00Z", "lastRecorded": "2026-11-22T02:23:18Z"}
+    code, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {(r["id"], r["target"], r["result"]) for r in res["checks"]}
+    assert {("database.pool", "t", "fail"), ("pipelines.recorded", "t", "fail")} <= rows
+    assert code == 1
 
 
 COUNTER = {"refusedCounter": {"window": "30m", "rows": [

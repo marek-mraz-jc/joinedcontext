@@ -317,6 +317,9 @@ pub async fn serve(config: Config) -> std::io::Result<()> {
 /// reaper, erasures, kept-answer expiry and the Grafana restore. [`serve`] calls it; a host
 /// process that mounts [`app`] beside other modules (`jc`) calls it too.
 pub fn spawn_background(state: &AppState) {
+    if let Some(pool) = state.db.clone() {
+        crate::db::watch_pool(pool);
+    }
     // A workspace outlives the Portal that made it unless something finishes its TTL: the record
     // hides at expiry, the branch does not go by itself (CC-81, T-1260).
     crate::ops::workspaces::spawn_reaper(state.clone());
