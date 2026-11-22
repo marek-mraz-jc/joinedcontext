@@ -104,12 +104,198 @@ fn is_snapshot(meta: &Value) -> bool {
 /// live in the store (Kind::Snapshot) so restarts keep them on persistent
 /// store modes.
 pub(crate) async fn snap_get(st: &AppState, tenant: &TenantId, id: &str) -> Option<Value> {
-    st.store
+    snap_lookup(st, tenant, id).await.ok().flatten()
+}
+
+/// [`snap_get`] that tells a store error apart from a Snapshot that is gone
+/// (S4-22): the fill reads "gone" as the order to drop its copy, so a read
+/// that failed must never look like one.
+async fn snap_lookup(
+    st: &AppState,
+    tenant: &TenantId,
+    id: &str,
+) -> Result<Option<Value>, NgsiError> {
+    Ok(st
+        .store
         .get(tenant, Kind::Snapshot, id)
-        .await
-        .ok()
-        .flatten()
-        .filter(|meta| is_snapshot(meta) && !expired(meta))
+        .await?
+        .filter(|meta| is_snapshot(meta) && !expired(meta)))
+}
+
+/// The internal member naming the fill that holds a `preparing` Snapshot
+/// and until when (S4-22): `{"owner": <run id>, "until": <time>}`. A fill
+/// renews it before each query; one whose holder died (a killed replica, a
+/// restart) runs out and the sweep starts the fill again under a new owner,
+/// so a Snapshot never stays `preparing` because the task that filled it is
+/// gone. The store's read-modify-write is the claim, so of two replicas one
+/// wins it.
+const LEASE_MEMBER: &str = "__fillLease";
+
+/// The internal member a clone keeps its source's id in, so a clone the
+/// sweep resumes copies its source again rather than running its queries.
+const CLONE_OF_MEMBER: &str = "__cloneOf";
+
+/// How long a fill's lease lasts without a renewal: longer than one query
+/// of a fill takes (every page of it, a hundred at most), short enough that
+/// a fill a restart killed resumes within minutes.
+const FILL_LEASE_SECS: i64 = 600;
+
+/// Fills one process runs at once (S4-22, PRF-04): a burst of creates waits
+/// here instead of running every fill's queries against the store together.
+static FILLS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+fn lease(owner: &str) -> Value {
+    let now = jiff::Timestamp::now();
+    let until = now
+        .checked_add(jiff::SignedDuration::from_secs(FILL_LEASE_SECS))
+        .unwrap_or(now);
+    json!({"owner": owner, "until": crate::state::stamp(until)})
+}
+
+fn leased_to(meta: &Value, owner: &str) -> bool {
+    meta.get(LEASE_MEMBER)
+        .and_then(|l| l.get("owner"))
+        .and_then(Value::as_str)
+        == Some(owner)
+}
+
+/// A `preparing` Snapshot whose fill nobody holds: its lease ran out, or it
+/// has none (written before leases) and is older than one lease.
+fn fill_orphaned(meta: &Value) -> bool {
+    if meta.get("snapshotStatus").and_then(Value::as_str) != Some("preparing") {
+        return false;
+    }
+    let since = match meta.get(LEASE_MEMBER) {
+        Some(l) => l
+            .get("until")
+            .and_then(Value::as_str)
+            .and_then(crate::state::instant),
+        None => meta
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .and_then(crate::state::instant)
+            .and_then(|c| {
+                c.checked_add(jiff::SignedDuration::from_secs(FILL_LEASE_SECS))
+                    .ok()
+            }),
+    };
+    since.is_none_or(|t| t < jiff::Timestamp::now())
+}
+
+/// How often a [`Keeper`] renews: four times a lease.
+const KEEP_MS: u32 = 150_000;
+
+/// Renews a fill's lease every [`KEEP_MS`] while the fill is inside one
+/// query's pages or a clone's copy, between the renewals the fill makes
+/// itself, so a query longer than a lease is not taken for a dead fill.
+/// Stops once dropped, or once the lease is no longer this fill's.
+struct Keeper(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Keeper {
+    fn start(st: &AppState, tenant: &TenantId, id: &str, owner: &str) -> Self {
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (st, tenant, id, owner, stop) = (
+            st.clone(),
+            tenant.clone(),
+            id.to_owned(),
+            owner.to_owned(),
+            done.clone(),
+        );
+        crate::spawn_loop(async move {
+            loop {
+                crate::sleep_ms(KEEP_MS).await;
+                if stop.load(std::sync::atomic::Ordering::Relaxed)
+                    || hold(&st, &tenant, &id, &owner).await != Hold::Held
+                {
+                    return;
+                }
+            }
+        });
+        Self(done)
+    }
+}
+
+impl Drop for Keeper {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// What renewing a fill's lease found.
+#[derive(Debug, PartialEq)]
+enum Hold {
+    /// Still this fill's: go on.
+    Held,
+    /// The Snapshot was deleted or expired: drop the copy.
+    Gone,
+    /// Another fill holds it now: stop and touch nothing.
+    Lost,
+}
+
+/// Renew `owner`'s lease on Snapshot `id`. A store that keeps failing
+/// answers [`Hold::Held`]: the copy stays and the fill goes on, since only a
+/// Snapshot known to be gone may lose its copy; if the fill cannot finish,
+/// its lease runs out and the sweep starts it again.
+async fn hold(st: &AppState, tenant: &TenantId, id: &str, owner: &str) -> Hold {
+    let r = crate::history::with_retry("snapshot lease", || {
+        st.store.mutate(tenant, Kind::Snapshot, id, |d| {
+            if !is_snapshot(d) || expired(d) {
+                return Err(Hold::Gone);
+            }
+            if !leased_to(d, owner) {
+                return Err(Hold::Lost);
+            }
+            if let Some(o) = d.as_object_mut() {
+                o.insert(LEASE_MEMBER.into(), lease(owner));
+            }
+            Ok(())
+        })
+    })
+    .await;
+    match r {
+        Ok(None) => Hold::Gone,
+        Ok(Some(Ok(()))) => Hold::Held,
+        Ok(Some(Err(h))) => h,
+        Err(e) => {
+            tracing::warn!("snapshot {id}: lease not renewed, the fill goes on: {e}");
+            Hold::Held
+        }
+    }
+}
+
+/// Start the fill of every Snapshot of `tenant` nobody holds (S4-22): claim
+/// it under a new owner, drop what the dead fill copied, run it again.
+async fn resume_orphans(st: &AppState, tenant: &TenantId, ids: Vec<String>) {
+    for id in ids {
+        let owner = uuid::Uuid::new_v4().to_string();
+        let claimed = st
+            .store
+            .mutate(tenant, Kind::Snapshot, &id, |d| {
+                if !is_snapshot(d) || expired(d) || !fill_orphaned(d) {
+                    return Err(());
+                }
+                if let Some(o) = d.as_object_mut() {
+                    o.insert(LEASE_MEMBER.into(), lease(&owner));
+                }
+                Ok(d.clone())
+            })
+            .await;
+        let Ok(Some(Ok(meta))) = claimed else {
+            continue;
+        };
+        if let Some(synth) = synth_tenant(&meta) {
+            purge_synth(st, &synth).await;
+        }
+        tracing::info!("snapshot {id}: its fill had no holder, started again");
+        let (st2, t2) = (st.clone(), tenant.clone());
+        match meta.get(CLONE_OF_MEMBER).and_then(Value::as_str) {
+            Some(src) => {
+                let src = src.to_owned();
+                crate::spawn(async move { clone_fill(&st2, &t2, &src, &id, &owner).await });
+            }
+            None => crate::spawn(async move { fill_snapshot(&st2, &t2, &id, &owner).await }),
+        }
+    }
 }
 
 /// 5.16.1.4: "If the NGSI-LD endpoint already knows about this Snapshot …
@@ -151,14 +337,6 @@ async fn snap_insert(
     }
     Ok(())
 }
-
-/// Members `finish` owns (5.2.41 Table 5.2.41-2, output only).
-const FINISH_MEMBERS: &[&str] = &[
-    "snapshotStatus",
-    "modifiedAt",
-    "snapshotQueriesDetails",
-    "snapshotTemporalQueriesDetails",
-];
 
 /// Members an Update Snapshot (5.16.4.4) writes.
 const UPDATE_MEMBERS: &[&str] = &[
@@ -213,10 +391,16 @@ pub(crate) async fn snap_remove(st: &AppState, tenant: &TenantId, id: &str, meta
 /// freed.
 pub(crate) async fn sweep_expired_snapshots(st: &AppState, tenant: &TenantId) -> usize {
     let mut dead: Vec<(String, Value)> = Vec::new();
+    let mut orphans: Vec<String> = Vec::new();
     if crate::csource::walk_docs(st, tenant, Kind::Snapshot, |doc| {
-        if is_snapshot(&doc) && expired(&doc) {
-            if let Some(id) = doc.get("id").and_then(Value::as_str) {
-                dead.push((id.to_owned(), doc));
+        if !is_snapshot(&doc) {
+            return Ok(());
+        }
+        if let Some(id) = doc.get("id").and_then(Value::as_str).map(str::to_owned) {
+            if expired(&doc) {
+                dead.push((id, doc));
+            } else if fill_orphaned(&doc) {
+                orphans.push(id);
             }
         }
         Ok(())
@@ -230,6 +414,7 @@ pub(crate) async fn sweep_expired_snapshots(st: &AppState, tenant: &TenantId) ->
     for (id, meta) in dead {
         snap_remove(st, tenant, &id, &meta).await;
     }
+    resume_orphans(st, tenant, orphans).await;
     n
 }
 
@@ -456,11 +641,14 @@ fn validate(body: &Value, mode: Mode) -> Result<Map<String, Value>, NgsiError> {
 }
 
 /// Fresh metadata for a new snapshot (create or clone) — 5.16.1.4/5.16.2.4:
-/// timestamps now, status "preparing", priority default 5, bounded expiresAt.
+/// timestamps now, status "preparing", priority default 5, bounded expiresAt;
+/// the fill lease of `owner`, and for a clone the source it copies.
 fn new_meta(
     mut o: Map<String, Value>,
     tenant: &TenantId,
     headers: &HeaderMap,
+    owner: &str,
+    clone_of: Option<&str>,
 ) -> Result<(String, Value), NgsiError> {
     let id = match o.get("id").and_then(Value::as_str) {
         Some(id) => {
@@ -488,6 +676,10 @@ fn new_meta(
         "__tenant".into(),
         Value::String(format!("snap-{}", uuid::Uuid::new_v4().simple())),
     );
+    o.insert(LEASE_MEMBER.into(), lease(owner));
+    if let Some(src) = clone_of {
+        o.insert(CLONE_OF_MEMBER.into(), Value::String(src.to_owned()));
+    }
     // Whose snapshot this is. 5.16.1's fill runs after the request has been
     // answered, so the subject it copies under has to be recorded here or it
     // is gone; and 5.16.1/5.16.2/5.16.7 act on everything the tenant holds,
@@ -620,12 +812,13 @@ pub async fn create_snapshot(
             .await?
             .value;
         let o = validate(&v, Mode::Create)?;
-        let (id, meta) = new_meta(o, &tenant, &headers)?;
+        let owner = uuid::Uuid::new_v4().to_string();
+        let (id, meta) = new_meta(o, &tenant, &headers, &owner, None)?;
         snap_insert(&st, &tenant, &id, &meta).await?;
         evict_over_cap(&st, &tenant, &id).await;
         let (st2, t2, id2) = (st.clone(), tenant.clone(), id.clone());
         crate::spawn(async move {
-            fill_snapshot(&st2, &t2, &id2).await;
+            fill_snapshot(&st2, &t2, &id2, &owner).await;
         });
         Ok::<_, ApiError>(created(format!("/ngsi-ld/v1/snapshots/{id}"), &tenant))
     };
@@ -634,7 +827,17 @@ pub async fn create_snapshot(
 
 /// 5.16.1.4 background fill: execute every (temporal) query, store the
 /// results under the synthetic tenant, derive the status, notify.
-async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str) {
+async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str, owner: &str) {
+    let Ok(permit) = FILLS.acquire().await else {
+        return;
+    };
+    // the lease is renewed before every query below and by the keeper in
+    // between; a fill that waited for its permit past it finds another owner
+    // and stops
+    if hold(st, tenant, id, owner).await != Hold::Held {
+        return;
+    }
+    let keeper = Keeper::start(st, tenant, id, owner);
     let Some(meta) = snap_get(st, tenant, id).await else {
         return;
     };
@@ -668,7 +871,7 @@ async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str) {
         .into_iter()
         .flatten()
     {
-        if fill_cancelled(st, tenant, id, &synth).await {
+        if fill_cancelled(st, tenant, id, &synth, owner).await {
             return;
         }
         let r = run_query(st, tenant, &synth, q, &ctx, cap.saturating_sub(copied)).await;
@@ -684,7 +887,7 @@ async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str) {
         .into_iter()
         .flatten()
     {
-        if fill_cancelled(st, tenant, id, &synth).await {
+        if fill_cancelled(st, tenant, id, &synth, owner).await {
             return;
         }
         let r = run_temporal_query(st, tenant, &synth, id, q, cap.saturating_sub(copied)).await;
@@ -693,7 +896,7 @@ async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str) {
         }
         tq_details.push(detail(r));
     }
-    if fill_cancelled(st, tenant, id, &synth).await {
+    if fill_cancelled(st, tenant, id, &synth, owner).await {
         return;
     }
     let status = if n_fail == 0 && n_empty == 0 && n_res > 0 {
@@ -705,7 +908,9 @@ async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str) {
     } else {
         "failure"
     };
-    finish(st, tenant, id, status, Some((q_details, tq_details))).await;
+    // the outcome's notification is an outbound call: it holds no permit
+    drop((keeper, permit));
+    finish(st, tenant, id, owner, status, Some((q_details, tq_details))).await;
 }
 
 /// One 5.2.23 Query executed per the DISTRIBUTED query behaviour
@@ -873,7 +1078,7 @@ async fn run_temporal_query(
     loop {
         // a snapshot deleted (or evicted) mid-fill stops the paging; what is
         // already copied is reaped by the caller
-        if snap_get(st, tenant, id).await.is_none() {
+        if matches!(snap_lookup(st, tenant, id).await, Ok(None)) {
             break;
         }
         vp.insert("limit".into(), st.max_limit.to_string());
@@ -978,30 +1183,46 @@ fn selected(
     doc
 }
 
+/// Write the fill's outcome and release its lease, in one read-modify-write
+/// that only the lease's holder passes: a fill that lost its Snapshot to a
+/// resumed one cannot overwrite the newer outcome. Only the members `finish`
+/// owns are written, so an Update Snapshot beside it keeps its own.
 async fn finish(
     st: &AppState,
     tenant: &TenantId,
     id: &str,
+    owner: &str,
     status: &str,
     details: Option<(Vec<Value>, Vec<Value>)>,
 ) {
-    let Some(mut meta) = snap_get(st, tenant, id).await else {
-        return;
-    };
-    if let Some(o) = meta.as_object_mut() {
-        o.insert("snapshotStatus".into(), Value::String(status.into()));
-        o.insert("modifiedAt".into(), Value::String(now_iso()));
-        if let Some((q, tq)) = details {
-            if !q.is_empty() {
-                o.insert("snapshotQueriesDetails".into(), Value::Array(q));
+    let r = crate::history::with_retry("snapshot finish", || {
+        st.store.mutate(tenant, Kind::Snapshot, id, |d| {
+            if !is_snapshot(d) || expired(d) || !leased_to(d, owner) {
+                return Err(());
             }
-            if !tq.is_empty() {
-                o.insert("snapshotTemporalQueriesDetails".into(), Value::Array(tq));
+            let o = d.as_object_mut().ok_or(())?;
+            o.insert("snapshotStatus".into(), Value::String(status.into()));
+            o.insert("modifiedAt".into(), Value::String(now_iso()));
+            if let Some((q, tq)) = &details {
+                if !q.is_empty() {
+                    o.insert("snapshotQueriesDetails".into(), Value::Array(q.clone()));
+                }
+                if !tq.is_empty() {
+                    o.insert(
+                        "snapshotTemporalQueriesDetails".into(),
+                        Value::Array(tq.clone()),
+                    );
+                }
             }
-        }
-    }
-    if let Some(meta) = snap_put(st, tenant, &meta, FINISH_MEMBERS).await {
-        send_notification(st, &meta).await;
+            o.remove(LEASE_MEMBER);
+            Ok(d.clone())
+        })
+    })
+    .await;
+    match r {
+        Ok(Some(Ok(meta))) => send_notification(st, &meta).await,
+        Ok(_) => {}
+        Err(e) => tracing::warn!("snapshot {id}: outcome not written, the fill resumes: {e}"),
     }
 }
 
@@ -1278,7 +1499,8 @@ pub async fn clone_snapshot(
                 o.insert(k.into(), qv.clone());
             }
         }
-        let (new_id, meta) = new_meta(o, &tenant, &headers)?;
+        let owner = uuid::Uuid::new_v4().to_string();
+        let (new_id, meta) = new_meta(o, &tenant, &headers, &owner, Some(&id))?;
         snap_insert(&st, &tenant, &new_id, &meta).await?;
         // a clone is a new snapshot: 5.5.15 resource pressure applies to it
         // exactly as it does to a create, so cloning cannot grow the
@@ -1286,7 +1508,7 @@ pub async fn clone_snapshot(
         evict_over_cap(&st, &tenant, &new_id).await;
         let (st2, t2, sid, nid) = (st.clone(), tenant.clone(), id.clone(), new_id.clone());
         crate::spawn(async move {
-            clone_fill(&st2, &t2, &sid, &nid).await;
+            clone_fill(&st2, &t2, &sid, &nid, &owner).await;
         });
         Ok::<_, ApiError>(created(format!("/ngsi-ld/v1/snapshots/{new_id}"), &tenant))
     };
@@ -1297,25 +1519,45 @@ pub async fn clone_snapshot(
 /// A source still `preparing` is waited for (its copy is not complete
 /// until its fill finishes), for as long as both snapshots exist; a source
 /// that ends in `failure` or disappears makes the clone a `failure`. The
-/// copy stops at the same ceiling a fill does (5.5.6).
-async fn clone_fill(st: &AppState, tenant: &TenantId, src_id: &str, new_id: &str) {
+/// copy stops at the same ceiling a fill does (5.5.6). The wait renews the
+/// clone's own lease, backs off from 50 ms to 5 s, and gives up as a
+/// `failure` after [`CLONE_WAIT_MS`] (S4-22); a source read that fails is
+/// read again at the next poll, never taken for a deleted source.
+async fn clone_fill(st: &AppState, tenant: &TenantId, src_id: &str, new_id: &str, owner: &str) {
+    let mut pause = CLONE_POLL_MS;
+    let mut waited = 0u32;
     let src = loop {
-        let Some(src) = snap_get(st, tenant, src_id).await else {
-            finish(st, tenant, new_id, "failure", None).await;
-            return;
-        };
-        if src.get("snapshotStatus").and_then(Value::as_str) != Some("preparing") {
-            break src;
+        match snap_lookup(st, tenant, src_id).await {
+            Ok(None) => {
+                finish(st, tenant, new_id, owner, "failure", None).await;
+                return;
+            }
+            Ok(Some(src))
+                if src.get("snapshotStatus").and_then(Value::as_str) != Some("preparing") =>
+            {
+                break src;
+            }
+            Ok(Some(_)) => {}
+            Err(e) => tracing::debug!("snapshot clone {new_id}: source read failed: {e}"),
         }
-        if snap_get(st, tenant, new_id).await.is_none() {
+        if hold(st, tenant, new_id, owner).await != Hold::Held {
             return;
         }
-        // the browser's own timer on wasm32 (tokio time has no reactor there)
-        #[cfg(not(target_arch = "wasm32"))]
-        tokio::time::sleep(std::time::Duration::from_millis(CLONE_POLL_MS.into())).await;
-        #[cfg(target_arch = "wasm32")]
-        gloo_timers::future::TimeoutFuture::new(CLONE_POLL_MS).await;
+        if waited >= CLONE_WAIT_MS {
+            finish(st, tenant, new_id, owner, "failure", None).await;
+            return;
+        }
+        crate::sleep_ms(pause).await;
+        waited = waited.saturating_add(pause);
+        pause = pause.saturating_mul(2).min(CLONE_POLL_MAX_MS);
     };
+    let Ok(permit) = FILLS.acquire().await else {
+        return;
+    };
+    if hold(st, tenant, new_id, owner).await != Hold::Held {
+        return;
+    }
+    let keeper = Keeper::start(st, tenant, new_id, owner);
     let (Some(from), Some(to)) = (
         synth_tenant(&src),
         snap_get(st, tenant, new_id)
@@ -1323,28 +1565,39 @@ async fn clone_fill(st: &AppState, tenant: &TenantId, src_id: &str, new_id: &str
             .as_ref()
             .and_then(synth_tenant),
     ) else {
-        finish(st, tenant, new_id, "failure", None).await;
+        drop((keeper, permit));
+        finish(st, tenant, new_id, owner, "failure", None).await;
         return;
     };
     let failed = src.get("snapshotStatus").and_then(Value::as_str) == Some("failure")
         || copy_snapshot_data(st, &from, &to, fill_cap(st))
             .await
             .is_err();
-    if fill_cancelled(st, tenant, new_id, &to).await {
+    if fill_cancelled(st, tenant, new_id, &to, owner).await {
         return;
     }
+    drop((keeper, permit));
     finish(
         st,
         tenant,
         new_id,
+        owner,
         if failed { "failure" } else { "success" },
         None,
     )
     .await;
 }
 
-/// How often a clone looks whether its source finished preparing.
+/// How soon a clone first looks again whether its source finished preparing.
 const CLONE_POLL_MS: u32 = 50;
+
+/// The longest pause between two of those looks.
+const CLONE_POLL_MAX_MS: u32 = 5_000;
+
+/// How long a clone waits for its source to finish preparing: a source
+/// whose fill died is resumed by the sweep within a lease, so a wait past
+/// three leases is a source that will not finish.
+const CLONE_WAIT_MS: u32 = 1_800_000;
 
 /// Copy every Entity (one `list_page` at a time) and every Temporal
 /// Evolution of `from` into `to`, at most `cap` documents of each. An
@@ -1486,13 +1739,24 @@ fn fill_cap(st: &AppState) -> usize {
 
 /// 5.16.1.4 + 5.5.15: the copied data is reachable only through its snapshot
 /// document, so a fill whose snapshot was deleted (or evicted under resource
-/// pressure) must stop and free what it already copied.
-async fn fill_cancelled(st: &AppState, tenant: &TenantId, id: &str, synth: &TenantId) -> bool {
-    if snap_get(st, tenant, id).await.is_some() {
-        return false;
+/// pressure) must stop and free what it already copied. Renews the fill's
+/// lease on the way; a fill that lost the lease stops and leaves the copy to
+/// its new holder, and a store error never reads as a deletion (S4-22).
+async fn fill_cancelled(
+    st: &AppState,
+    tenant: &TenantId,
+    id: &str,
+    synth: &TenantId,
+    owner: &str,
+) -> bool {
+    match hold(st, tenant, id, owner).await {
+        Hold::Held => false,
+        Hold::Lost => true,
+        Hold::Gone => {
+            purge_synth(st, synth).await;
+            true
+        }
     }
-    purge_synth(st, synth).await;
-    true
 }
 
 /// 5.5.6: "When a query operation is producing so many results that can
@@ -1715,6 +1979,145 @@ mod clause_5_16 {
             .ok()
             .flatten()
             .expect("snapshot document")
+    }
+
+    /// Hand Snapshot `id`'s fill lease to `owner`, as a fill holds it.
+    async fn lease_to(st: &AppState, id: &str, owner: &str) {
+        st.store
+            .mutate(&TenantId::default(), Kind::Snapshot, id, |d| {
+                d[LEASE_MEMBER] = lease(owner);
+                Ok::<_, std::convert::Infallible>(())
+            })
+            .await
+            .expect("lease");
+    }
+
+    /// S4-22: a Snapshot left `preparing` by a fill that died (a restart, a
+    /// killed replica) is claimed by the sweep once its lease ran out, its
+    /// partial copy dropped and its fill run again to the end; a held one
+    /// and a finished one are left alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fill_whose_holder_died_is_resumed_by_the_sweep() {
+        let st = state().await;
+        let t = TenantId::default();
+        let ent = json!({"id": "urn:ngsi-ld:Vehicle:resume1", "type": "Vehicle",
+            "speed": {"type": "Property", "value": 1}});
+        let (status, _, b) = post_json(&st, "/ngsi-ld/v1/entities", &ent).await;
+        assert_eq!(status, StatusCode::CREATED, "{b}");
+        let id = "urn:ngsi-ld:Snapshot:resume";
+        let synth = TenantId::new_internal("snap-resume-test").expect("tenant");
+        let meta = json!({"id": id, "type": "Snapshot", "__tenant": synth.as_str(),
+            "snapshotStatus": "preparing", "createdAt": "2000-01-01T00:00:00Z",
+            "modifiedAt": "2000-01-01T00:00:00Z", "expiresAt": "2999-01-01T00:00:00Z",
+            "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}],
+            LEASE_MEMBER: {"owner": "a-dead-pod", "until": "2000-01-01T00:00:10Z"}});
+        assert!(fill_orphaned(&meta), "a lease that ran out holds nothing");
+        let mut held = meta.clone();
+        held[LEASE_MEMBER] = lease("a-live-pod");
+        assert!(!fill_orphaned(&held), "a live lease holds");
+        let mut unleased = meta.clone();
+        unleased.as_object_mut().map(|o| o.remove(LEASE_MEMBER));
+        assert!(
+            fill_orphaned(&unleased),
+            "written before leases, older than one"
+        );
+        let mut done = meta.clone();
+        done["snapshotStatus"] = json!("success");
+        assert!(!fill_orphaned(&done), "a finished Snapshot has no fill");
+        st.store
+            .create(&t, Kind::Snapshot, id, meta)
+            .await
+            .expect("seed");
+        st.store
+            .create(
+                &synth,
+                Kind::Entity,
+                "urn:ngsi-ld:Vehicle:partial",
+                json!({"id": "urn:ngsi-ld:Vehicle:partial"}),
+            )
+            .await
+            .expect("partial copy");
+        assert_eq!(sweep_expired_snapshots(&st, &t).await, 0, "nothing expired");
+        let mut after = stored(&st, id).await;
+        for _ in 0..200 {
+            if after["snapshotStatus"] != "preparing" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            after = stored(&st, id).await;
+        }
+        assert_eq!(after["snapshotStatus"], "success", "{after}");
+        assert!(
+            after.get(LEASE_MEMBER).is_none(),
+            "the lease is released: {after}"
+        );
+        let copied: Vec<String> = st
+            .store
+            .list(&synth, Kind::Entity)
+            .await
+            .expect("copy")
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(str::to_owned))
+            .collect();
+        assert!(
+            copied.contains(&"urn:ngsi-ld:Vehicle:resume1".to_owned()),
+            "{copied:?}"
+        );
+        assert!(
+            !copied.contains(&"urn:ngsi-ld:Vehicle:partial".to_owned()),
+            "{copied:?}"
+        );
+    }
+
+    /// S4-22: a fill whose Snapshot another fill claimed stops without
+    /// touching the copy, and its outcome does not overwrite the holder's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fill_that_lost_its_lease_writes_nothing() {
+        let st = state().await;
+        let t = TenantId::default();
+        let sid = snapshot_over_vehicles(&st).await;
+        let synth = synth_tenant(&stored(&st, &sid).await).expect("__tenant");
+        lease_to(&st, &sid, "the-new-holder").await;
+        assert!(
+            fill_cancelled(&st, &t, &sid, &synth, "the-old-fill").await,
+            "it stops"
+        );
+        finish(&st, &t, &sid, "the-old-fill", "failure", None).await;
+        let after = stored(&st, &sid).await;
+        assert_ne!(after["snapshotStatus"], "failure", "{after}");
+        assert!(leased_to(&after, "the-new-holder"), "{after}");
+    }
+
+    /// S4-22: a clone renews its own lease while its source prepares, backs
+    /// off, and ends in `failure` once it waited past its bound.
+    #[tokio::test(start_paused = true)]
+    async fn a_clone_stops_waiting_for_a_source_that_never_finishes() {
+        let st = AppState::new("antares-snapshots".into());
+        let t = TenantId::default();
+        let src = "urn:ngsi-ld:Snapshot:stuck";
+        let clone = "urn:ngsi-ld:Snapshot:waiting";
+        for (id, owner) in [(src, "a-source-fill"), (clone, "the-clone")] {
+            st.store
+                .create(
+                    &t,
+                    Kind::Snapshot,
+                    id,
+                    json!({"id": id, "type": "Snapshot",
+                    "__tenant": format!("snap-{}", id.len()), "snapshotStatus": "preparing",
+                    "createdAt": now_iso(), "expiresAt": "2999-01-01T00:00:00Z",
+                    LEASE_MEMBER: lease(owner)}),
+                )
+                .await
+                .expect("seed");
+        }
+        clone_fill(&st, &t, src, clone, "the-clone").await;
+        let after = st
+            .store
+            .get(&t, Kind::Snapshot, clone)
+            .await
+            .expect("get")
+            .expect("clone");
+        assert_eq!(after["snapshotStatus"], "failure", "{after}");
     }
 
     /// 6.3.22: the Snapshot API's own resources are never snapshot-scoped —
@@ -2005,7 +2408,7 @@ mod clause_5_16 {
             )
             .await;
         assert!(
-            fill_cancelled(&st, &tenant, "urn:ngsi-ld:Snapshot:gone", &orphan).await,
+            fill_cancelled(&st, &tenant, "urn:ngsi-ld:Snapshot:gone", &orphan, "fill").await,
             "a fill kept running after its snapshot was deleted"
         );
         assert!(
@@ -2028,8 +2431,9 @@ mod clause_5_16 {
                 json!({"id": "urn:ngsi-ld:Vehicle:r2"}),
             )
             .await;
+        lease_to(&st, &sid, "fill").await;
         assert!(
-            !fill_cancelled(&st, &tenant, &sid, &synth).await,
+            !fill_cancelled(&st, &tenant, &sid, &synth, "fill").await,
             "a live snapshot must not cancel its own fill"
         );
         assert_eq!(
@@ -2366,7 +2770,7 @@ mod clause_5_16 {
         let t = TenantId::default();
         let sid = "urn:ngsi-ld:Snapshot:race";
         seeded_snapshot(&st, sid, "preparing").await;
-        let mut read_by_fill = snap_get(&st, &t, sid).await.expect("meta");
+        lease_to(&st, sid, "fill").await;
         let (status, _, b) = send(
             &st,
             "PATCH",
@@ -2381,8 +2785,7 @@ mod clause_5_16 {
         assert!(status.is_success(), "{status} {b}");
         let updated = stored(&st, sid).await["expiresAt"].clone();
         assert_ne!(updated, json!("2999-01-01T00:00:00Z"));
-        read_by_fill["snapshotStatus"] = json!("success");
-        snap_put(&st, &t, &read_by_fill, FINISH_MEMBERS).await;
+        finish(&st, &t, sid, "fill", "success", None).await;
         let meta = stored(&st, sid).await;
         assert_eq!(
             meta["expiresAt"], updated,
