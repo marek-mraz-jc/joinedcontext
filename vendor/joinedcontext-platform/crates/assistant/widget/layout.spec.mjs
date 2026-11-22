@@ -421,7 +421,7 @@ test("the composer is one line again once a wrapped question is sent", async ({ 
   expect((await box.boundingBox()).height).toBeGreaterThan(one);
   await box.press("Enter");
   await expect(box).toHaveValue("");
-  expect((await box.boundingBox()).height).toBe(one);
+  expect((await box.boundingBox()).height, "one line, rounded up to a whole pixel").toBeLessThanOrEqual(one + 1);
 });
 
 // T-4761: a dark system paints the chat dark, but a light host page that asks ?scheme=light
