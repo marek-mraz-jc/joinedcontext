@@ -249,7 +249,8 @@ const FORGET_BATCHES: usize = 20;
 /// The planner while [`gone_rows`] looks, for that transaction alone. Forced row-level security
 /// puts the key's columns in every condition, and on a guess of few rows Postgres sorts the whole
 /// project by the key's index at each step of the walk: 2.5M pages where the ordered index reads
-/// 500. With no sort and no bitmap that index is the only plan left; compiling it costs 300 ms.
+/// 500. With no sort and no bitmap that index is the only plan left, and JIT off saves the 300 ms it
+/// spends compiling a plan with that disabled cost.
 const IN_INDEX_ORDER: &str = "SELECT set_config('enable_sort', 'off', true), \
      set_config('enable_bitmapscan', 'off', true), set_config('jit', 'off', true)";
 /// The planner while the found rows are deleted, after [`IN_INDEX_ORDER`] in the same transaction:
