@@ -4,7 +4,7 @@
 
 use gix_packetline::{Channel, PacketLineRef, blocking_io::encode};
 use shako_core::{MAX_PKT_LINE_LEN, ShakoError, ShakoResult};
-use std::io::Write;
+use std::io::{Read, Write};
 
 /// Maximum data payload inside one side-band-64k frame (`65520 - 4 - 1 = 65515` bytes).
 pub const MAX_SIDEBAND_64K_DATA: usize = 65_515;
@@ -83,6 +83,28 @@ pub fn read_pkt_line(input: &[u8]) -> ShakoResult<Option<(PktLine, usize)>> {
             }
         }
     }
+}
+
+/// Reads one pkt-line from `input` and nothing past it, with the bytes it took; `None` at the
+/// end of the input.
+pub fn read_pkt_line_from(mut input: impl Read) -> ShakoResult<Option<(PktLine, usize)>> {
+    let unreadable = |e| ShakoError::BadRequest(format!("pkt-line read failed: {e}"));
+    let mut line = Vec::with_capacity(4);
+    (&mut input)
+        .take(4)
+        .read_to_end(&mut line)
+        .map_err(unreadable)?;
+    if let Some(len) = std::str::from_utf8(&line)
+        .ok()
+        .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+        && (5..=MAX_PKT_LINE_LEN).contains(&len)
+    {
+        (&mut input)
+            .take(len as u64 - 4)
+            .read_to_end(&mut line)
+            .map_err(unreadable)?;
+    }
+    read_pkt_line(&line)
 }
 
 /// Reads all pkt-lines from `input` up to the end of the slice (for stateless HTTP requests

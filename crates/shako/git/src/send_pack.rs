@@ -2,9 +2,10 @@
 //! Git Smart HTTP `send-pack` client on `gix` for pushing to push mirrors over HTTPS
 //! through `OutboundGuard` (Contract S15, R§2.1, Threat T3).
 
+use crate::pack::write_pack;
 use crate::pktline::{parse_all_pkt_lines, write_flush, write_text_line};
 use crate::repo::{is_ancestor, open_isolated};
-use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
+use crate::upload_pack::collect_advertised_refs;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use gix_hash::ObjectId;
@@ -239,7 +240,8 @@ fn build_send_pack_payload(
     }
 
     let oid_vec: Vec<ObjectId> = objects.into_iter().collect();
-    let pack = build_pack_bytes(&repo, &oid_vec, false)?;
+    let mut pack = Vec::new();
+    write_pack(&repo, &oid_vec, &mut pack, &mut |_| Ok(()))?;
     Ok((commands, pack, diverged))
 }
 

@@ -78,7 +78,10 @@ impl RepoLocks {
 /// ignoring environment variables, global/system gitconfig, hooks, and fsmonitor (Threat T2).
 pub fn open_isolated(path: &Path) -> ShakoResult<gix::Repository> {
     let mut opts = gix::open::Options::isolated();
-    opts = opts.open_path_as_is(true);
+    // gix keeps 96 MiB of delta bases per handle unless told otherwise (T-7522).
+    opts = opts
+        .open_path_as_is(true)
+        .config_overrides(["core.deltaBaseCacheLimit=8m"]);
     let mut repo = gix::open_opts(path, opts)
         .map_err(|e| ShakoError::Git(format!("failed to open repository: {e}")))?;
     // Cap decoded object cache at 2 MiB per repository handle (S22)
@@ -964,6 +967,7 @@ pub fn read_file_at_ref(
     repo_path: &Path,
     git_ref: &str,
     file_path: &str,
+    admit: crate::pack::Admit<'_>,
 ) -> ShakoResult<Option<(String, Vec<u8>)>> {
     let clean = validate_tree_path(file_path)?;
     let repo = open_isolated(repo_path)?;
@@ -984,10 +988,15 @@ pub fn read_file_at_ref(
     if entry.mode().is_tree() {
         return Ok(None);
     }
-    let blob = repo
-        .find_blob(entry.oid())
-        .map_err(|e| ShakoError::Git(format!("find blob: {e}")))?;
-    Ok(Some((blob.id.to_hex().to_string(), blob.data.clone())))
+    let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("find blob: {e}"));
+    let header = repo.find_header(entry.oid()).map_err(|e| failed(&e))?;
+    // The blob and the encoded form a caller makes of it.
+    admit(header.size().saturating_mul(3))?;
+    let mut blob = repo.find_blob(entry.oid()).map_err(|e| failed(&e))?;
+    Ok(Some((
+        blob.id.to_hex().to_string(),
+        std::mem::take(&mut blob.data),
+    )))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -7092,6 +7092,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-limits"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "jc-manifest"
 version = "0.1.0"
 dependencies = [
@@ -12416,6 +12424,7 @@ dependencies = [
  "gix-ref",
  "hex",
  "hmac 0.12.1",
+ "jc-limits",
  "jc-router",
  "jc-time",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12424,6 +12433,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "serde_urlencoded",

@@ -1612,9 +1612,12 @@ async fn exec_bound_repo_file(
     let path = arg(args, "Path")
         .ok_or_else(|| ShakoError::BadRequest("File function requires Path".into()))?;
     let path = validate_tree_path(&path)?;
-    let found = tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &path))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))??;
+    let found = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            read_file_at_ref(&disk_path, &git_ref, &path, admit)
+        })
+        .await?;
     let Some((sha, bytes)) = found else {
         return Err(ShakoError::NotFound("file not found".into()));
     };

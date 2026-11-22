@@ -2,6 +2,7 @@
 //! Shared state (`ShakoState`), streaming body helpers, and request authentication/authorization
 //! extraction for `shako-api`, `shako-registry`, `shako-mcp`, and `shako-web`.
 
+use crate::work::{GitWork, MEMORY_BYTES, SPOOL_BYTES};
 use axum::body::Body;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -11,7 +12,7 @@ use jc_router::Mount;
 use parking_lot::RwLock;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, Authorizer, InstanceId, InstanceRecord, MemoryBudget, MemorySecretStore, ObjectTarget,
+    Action, Authorizer, InstanceId, InstanceRecord, MemorySecretStore, ObjectTarget,
     OperationRegistry, OrgId, OutboundGuard, ProblemDetails, RefPolicy, RepoRecord, RequestCtx,
     SecretStore, ShakoError, ShakoResult, ShakoSigningKey, StaticTokenBinding, Store, Subject,
     TokenVerifier,
@@ -36,7 +37,8 @@ pub struct ShakoState {
     pub authorizer: Arc<dyn Authorizer>,
     pub token_verifier: TokenVerifier,
     pub outbound_guard: OutboundGuard,
-    pub memory_budget: MemoryBudget,
+    /// The spool and memory budgets of Git work, fair between Organizations (T-7522).
+    pub git_work: GitWork,
     pub repo_locks: RepoLocks,
     /// One outbox dispatch at a time per Organization (keyed by the OrgId's UUID), so two writes
     /// never both deliver the same pending event.
@@ -61,6 +63,7 @@ impl ShakoState {
         outbound_guard: OutboundGuard,
     ) -> Self {
         let (tx, _) = broadcast::channel(256);
+        let git_work = GitWork::new(repo_root.clone(), SPOOL_BYTES, MEMORY_BYTES);
         Self {
             default_instance_id,
             default_org_id,
@@ -70,7 +73,7 @@ impl ShakoState {
             authorizer,
             token_verifier,
             outbound_guard,
-            memory_budget: MemoryBudget::default(),
+            git_work,
             repo_locks: RepoLocks::new(),
             outbox_locks: RepoLocks::new(),
             registry: OperationRegistry::shared(),
@@ -307,8 +310,6 @@ pub async fn read_body_bounded(body: Body, limit_bytes: usize) -> ShakoResult<Ve
     Ok(out)
 }
 
-/// Streams a `Vec<u8>` produced on a blocking task to an axum `Body` in 64 KiB chunks through
-/// a bounded `tokio::sync::mpsc::channel(4)` (00-task.md section 2, S22).
 /// Streams an open file in 64 KiB chunks, so a large blob never sits in memory whole (PRF-04).
 pub fn stream_file_in_64k_chunks(mut file: tokio::fs::File) -> Body {
     use tokio::io::AsyncReadExt as _;
@@ -323,18 +324,6 @@ pub fn stream_file_in_64k_chunks(mut file: tokio::fs::File) -> Body {
             };
             let failed = item.is_err();
             if tx.send(item).await.is_err() || failed {
-                break;
-            }
-        }
-    });
-    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx))
-}
-
-pub fn stream_bytes_in_64k_chunks(bytes: Vec<u8>) -> Body {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
-    tokio::spawn(async move {
-        for chunk in bytes.chunks(64 * 1024) {
-            if tx.send(Ok(Bytes::copy_from_slice(chunk))).await.is_err() {
                 break;
             }
         }

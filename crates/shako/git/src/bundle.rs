@@ -2,27 +2,31 @@
 //! Git bundle v2 writer (`# v2 git bundle\n`) for single-ref export (`archive/{ref}.bundle`,
 //! Row 32, Contract S11) and full-repository backup bundles (Contract S6).
 
+use crate::pack::{Admit, write_pack};
 use crate::repo::{open_isolated, resolve_commit_oid};
-use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
+use crate::upload_pack::collect_advertised_refs;
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::Path;
 
 /// Writes a Git v2 bundle for a single ref `git_ref`, advertising `refs/heads/bundle` and `HEAD`
 /// as `portal:src/git/gitea.rs:2257` (Row 32, Contract S11) expects.
-pub fn create_single_ref_bundle(repo_path: &Path, git_ref: &str) -> ShakoResult<Vec<u8>> {
+pub fn create_single_ref_bundle(
+    repo_path: &Path,
+    git_ref: &str,
+    mut out: impl Write,
+    admit: Admit<'_>,
+) -> ShakoResult<()> {
     let repo = open_isolated(repo_path)?;
     let tip_oid = resolve_commit_oid(&repo, git_ref)?;
     let objects = collect_all_objects_from_tips(&repo, &[tip_oid])?;
-    let pack = build_pack_bytes(&repo, &objects, false)?;
-
-    let mut out = Vec::with_capacity(128 + pack.len());
-    out.extend_from_slice(b"# v2 git bundle\n");
-    out.extend_from_slice(format!("{tip_oid} refs/heads/bundle\n").as_bytes());
-    out.extend_from_slice(format!("{tip_oid} HEAD\n\n").as_bytes());
-    out.extend_from_slice(&pack);
-    Ok(out)
+    out.write_all(
+        format!("# v2 git bundle\n{tip_oid} refs/heads/bundle\n{tip_oid} HEAD\n\n").as_bytes(),
+    )
+    .map_err(|e| ShakoError::Storage(format!("bundle write: {e}")))?;
+    write_pack(&repo, &objects, out, admit)
 }
 
 /// Writes a full backup Git v2 bundle containing every branch and tag of the repository (Contract S6).
@@ -48,9 +52,8 @@ pub fn create_full_backup_bundle(repo_path: &Path) -> ShakoResult<Vec<u8>> {
             objects.push(r.oid);
         }
     }
-    let pack = build_pack_bytes(&repo, &objects, false)?;
     let mut out = header_lines.into_bytes();
-    out.extend_from_slice(&pack);
+    write_pack(&repo, &objects, &mut out, &mut |_| Ok(()))?;
     Ok(out)
 }
 

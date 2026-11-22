@@ -8,9 +8,10 @@
 //! - Protocol v2: `ls-refs=unborn`, `fetch=shallow filter ref-in-want sideband-all wait-for-done`,
 //!   `object-info`, `server-option`, `object-format=sha1`, `agent=shako/0.1.0`.
 //!   `packfile-uris` is explicitly refused (S3).
-//! - Pack generation calls `odb.prevent_pack_unload()` before `gix-pack` counting/encoding
-//!   and streams 64 KiB sideband frames.
+//! - The pack is self-contained and written one object at a time (`crate::pack`) into the
+//!   caller's writer in 64 KiB sideband frames.
 
+use crate::pack::{Admit, Sideband, write_pack};
 use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, parse_all_pkt_lines, write_delim,
     write_flush, write_sideband_chunks, write_text_line,
@@ -18,12 +19,11 @@ use crate::pktline::{
 use crate::repo::open_isolated;
 use bstr::ByteSlice;
 use gix_hash::ObjectId;
-use gix_pack::data::output;
 use gix_packetline::Channel;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 
 pub const V0_UPLOAD_CAPABILITIES: &str = "multi_ack multi_ack_detailed no-done side-band side-band-64k thin-pack ofs-delta shallow deepen-since deepen-not deepen-relative no-progress include-tag allow-tip-sha1-in-want allow-reachable-sha1-in-want filter object-format=sha1 agent=shako/0.1.0";
 
@@ -198,15 +198,42 @@ fn parse_scaled_u64(raw: &str) -> Option<u64> {
     raw.parse::<u64>().ok()
 }
 
-/// Handles `POST {repo}.git/git-upload-pack` for both Protocol v0 and Protocol v2 (S3).
+/// Reads a spooled upload-pack request of at most `limit` bytes. git gzips one over 1 KiB, so
+/// the inflated bytes count too.
+pub fn read_negotiation(mut file: &std::fs::File, gzip: bool, limit: u64) -> ShakoResult<Vec<u8>> {
+    use std::io::{Read as _, Seek as _};
+    file.rewind()
+        .map_err(|e| ShakoError::Storage(format!("negotiation spool: {e}")))?;
+    let mut request = Vec::new();
+    if gzip {
+        flate2::read::GzDecoder::new(file)
+            .take(limit + 1)
+            .read_to_end(&mut request)
+    } else {
+        file.take(limit + 1).read_to_end(&mut request)
+    }
+    .map_err(|e| ShakoError::BadRequest(format!("unreadable upload-pack request: {e}")))?;
+    if request.len() as u64 > limit {
+        return Err(ShakoError::QuotaExceeded {
+            resource: "request_body_bytes".into(),
+            limit,
+        });
+    }
+    Ok(request)
+}
+
+/// Handles `POST {repo}.git/git-upload-pack` for both Protocol v0 and Protocol v2 (S3), writing
+/// the answer to `out`; `admit` is asked before the pack is built.
 pub fn handle_upload_pack(
     repo_path: &Path,
     git_protocol: Option<&str>,
     body: &[u8],
-) -> ShakoResult<Vec<u8>> {
+    mut out: impl Write,
+    admit: Admit<'_>,
+) -> ShakoResult<()> {
     let lines = parse_all_pkt_lines(body)?;
     if lines.is_empty() || lines.iter().all(|l| *l == PktLine::Flush) {
-        return Ok(Vec::new());
+        return Ok(());
     }
 
     let is_v2 = git_protocol.is_some_and(|hdr| hdr.split(':').any(|p| p.trim() == "version=2"))
@@ -215,20 +242,59 @@ pub fn handle_upload_pack(
             .and_then(PktLine::as_text)
             .is_some_and(|t| t.starts_with("command="));
 
-    if is_v2 {
-        handle_upload_pack_v2(repo_path, &lines)
+    let answer = if is_v2 {
+        handle_upload_pack_v2(repo_path, &lines)?
     } else {
-        handle_upload_pack_v0(repo_path, &lines)
+        handle_upload_pack_v0(repo_path, &lines)?
+    };
+    let write = |e: std::io::Error| ShakoError::Storage(format!("upload-pack answer: {e}"));
+    out.write_all(&answer.head).map_err(write)?;
+    if let Some(Pack {
+        repo,
+        objects,
+        band,
+    }) = answer.pack
+    {
+        match band {
+            Some(max) => {
+                let mut framed = Sideband::new(&mut out, max);
+                write_pack(&repo, &objects, &mut framed, admit)?;
+                framed.flush().map_err(write)?;
+                drop(framed);
+                write_flush(&mut out)?;
+            }
+            None => write_pack(&repo, &objects, &mut out, admit)?,
+        }
+    }
+    out.flush().map_err(write)
+}
+
+/// An upload-pack answer: the negotiation's lines and the pack that follows them.
+struct Answer {
+    head: Vec<u8>,
+    pack: Option<Pack>,
+}
+
+struct Pack {
+    repo: gix::Repository,
+    objects: Vec<ObjectId>,
+    /// The side-band payload size, `None` for a raw pack.
+    band: Option<usize>,
+}
+
+impl From<Vec<u8>> for Answer {
+    fn from(head: Vec<u8>) -> Self {
+        Self { head, pack: None }
     }
 }
 
-fn handle_upload_pack_v2(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec<u8>> {
+fn handle_upload_pack_v2(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Answer> {
     let mut idx = 0usize;
     while idx < lines.len() && lines[idx] == PktLine::Flush {
         idx += 1;
     }
     if idx >= lines.len() {
-        return Ok(Vec::new());
+        return Ok(Vec::new().into());
     }
     let first = lines[idx]
         .as_text()
@@ -266,9 +332,9 @@ fn handle_upload_pack_v2(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
     }
 
     match cmd {
-        "ls-refs" => handle_v2_ls_refs(repo_path, &args),
+        "ls-refs" => handle_v2_ls_refs(repo_path, &args).map(Answer::from),
         "fetch" => handle_v2_fetch(repo_path, &args),
-        "object-info" => handle_v2_object_info(repo_path, &args),
+        "object-info" => handle_v2_object_info(repo_path, &args).map(Answer::from),
         other => Err(ShakoError::BadRequest(format!(
             "unsupported protocol v2 command '{other}'"
         ))),
@@ -374,14 +440,13 @@ struct FetchParams {
     deepen_since: Option<i64>,
     deepen_not: Vec<String>,
     filter: ObjectFilter,
-    thin_pack: bool,
     include_tag: bool,
     done: bool,
     wait_for_done: bool,
     sideband_all: bool,
 }
 
-fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
+fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Answer> {
     let repo = open_isolated(repo_path)?;
     let mut params = FetchParams::default();
     let mut seen_want_refs = BTreeSet::new();
@@ -429,8 +494,6 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
             params.deepen_not.push(rev.trim().to_owned());
         } else if let Some(fspec) = arg.strip_prefix("filter ") {
             params.filter = ObjectFilter::parse(fspec)?;
-        } else if arg == "thin-pack" {
-            params.thin_pack = true;
         } else if arg == "include-tag" {
             params.include_tag = true;
         } else if arg == "done" {
@@ -521,7 +584,7 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
             write_delim(&mut out)?;
         } else {
             write_flush(&mut out)?;
-            return Ok(out);
+            return Ok(out.into());
         }
     }
 
@@ -548,13 +611,18 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
     }
 
     write_line(&mut out, "packfile", params.sideband_all)?;
-    let pack_bytes = build_pack_bytes(&repo, &object_set, params.thin_pack)?;
-    write_sideband_chunks(&mut out, Channel::Data, &pack_bytes, MAX_SIDEBAND_64K_DATA)?;
-    write_flush(&mut out)?;
-    Ok(out)
+    let pack = Pack {
+        repo,
+        objects: object_set,
+        band: Some(MAX_SIDEBAND_64K_DATA),
+    };
+    Ok(Answer {
+        head: out,
+        pack: Some(pack),
+    })
 }
 
-fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec<u8>> {
+fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Answer> {
     let repo = open_isolated(repo_path)?;
     let mut params = FetchParams::default();
     let mut caps = BTreeSet::new();
@@ -621,12 +689,11 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
             "client must not request both side-band and side-band-64k".into(),
         ));
     }
-    params.thin_pack = caps.contains("thin-pack");
     params.include_tag = caps.contains("include-tag");
     params.deepen_relative = caps.contains("deepen-relative");
 
     if params.wants.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Vec::new().into());
     }
 
     let reachable_pool = collect_reachable_objects_for_check(&repo, &params.wants)?;
@@ -691,25 +758,25 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
                     write_text_line(&mut out, &format!("ACK {last}"))?;
                 } else {
                     write_text_line(&mut out, "NAK")?;
-                    return Ok(out);
+                    return Ok(out.into());
                 }
             } else {
                 write_text_line(&mut out, "NAK")?;
-                return Ok(out);
+                return Ok(out.into());
             }
         } else if multi_ack {
             for c in &common_haves {
                 write_text_line(&mut out, &format!("ACK {c} continue"))?;
             }
             write_text_line(&mut out, "NAK")?;
-            return Ok(out);
+            return Ok(out.into());
         } else {
             if let Some(first) = common_haves.first() {
                 write_text_line(&mut out, &format!("ACK {first}"))?;
             } else {
                 write_text_line(&mut out, "NAK")?;
             }
-            return Ok(out);
+            return Ok(out.into());
         }
     } else if let Some(last) = common_haves.last() {
         if multi_ack || multi_ack_detailed {
@@ -727,18 +794,22 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
         write_text_line(&mut out, "NAK")?;
     }
 
-    let pack_bytes = build_pack_bytes(&repo, &object_set, params.thin_pack)?;
-    if caps.contains("side-band-64k") {
-        write_sideband_chunks(&mut out, Channel::Data, &pack_bytes, MAX_SIDEBAND_64K_DATA)?;
-        write_flush(&mut out)?;
+    let band = if caps.contains("side-band-64k") {
+        Some(MAX_SIDEBAND_64K_DATA)
     } else if caps.contains("side-band") {
-        write_sideband_chunks(&mut out, Channel::Data, &pack_bytes, MAX_SIDEBAND_1K_DATA)?;
-        write_flush(&mut out)?;
+        Some(MAX_SIDEBAND_1K_DATA)
     } else {
-        out.extend_from_slice(&pack_bytes);
-    }
-
-    Ok(out)
+        None
+    };
+    let pack = Pack {
+        repo,
+        objects: object_set,
+        band,
+    };
+    Ok(Answer {
+        head: out,
+        pack: Some(pack),
+    })
 }
 
 /// Computes the set of reachable objects from all references (`HEAD`, `refs/heads/*`, `refs/tags/*`, `refs/pull/*`)
@@ -960,71 +1031,6 @@ fn collect_filtered_tree_objects(
         }
     }
     Ok(())
-}
-
-/// Generates a packfile from `object_ids` using `gix-pack` `data::output::count::objects`,
-/// `entry::iter_from_counts`, and `bytes::FromEntriesIter` with `prevent_pack_unload()` called first (S3).
-pub fn build_pack_bytes(
-    repo: &gix::Repository,
-    object_ids: &[ObjectId],
-    allow_thin_pack: bool,
-) -> ShakoResult<Vec<u8>> {
-    let mut odb = repo.objects.clone().into_inner();
-    // Critical: prevent pack unload while pack locations are held in `Count` (Contract S3, T-6639)
-    odb.prevent_pack_unload();
-
-    let should_interrupt = AtomicBool::new(false);
-    let progress = gix::progress::Discard;
-    // The counter wants a `'static` iterator, so it owns its copy of the ids.
-    let owned_ids: Vec<ObjectId> = object_ids.to_vec();
-    let oid_iter: Box<dyn Iterator<Item = gix::Result<ObjectId>> + Send> =
-        Box::new(owned_ids.into_iter().map(Ok));
-
-    let (counts, _outcome) = output::count::objects(
-        odb.clone(),
-        oid_iter,
-        &progress,
-        &should_interrupt,
-        output::count::objects::Options {
-            thread_limit: Some(1),
-            chunk_size: 1000,
-            input_object_expansion: output::count::objects::ObjectExpansion::AsIs,
-        },
-    )
-    .map_err(|e| ShakoError::Git(format!("pack object count failed: {e}")))?;
-
-    let num_entries = u32::try_from(counts.len())
-        .map_err(|_| ShakoError::BadRequest("pack object count exceeds u32".into()))?;
-
-    let entries_iter = output::entry::iter_from_counts(
-        counts,
-        odb,
-        Box::new(gix::progress::Discard),
-        output::entry::iter_from_counts::Options {
-            thread_limit: Some(1),
-            mode: output::entry::iter_from_counts::Mode::PackCopyAndBaseObjects,
-            allow_thin_pack,
-            chunk_size: 1000,
-            version: gix_pack::data::Version::V2,
-            compression: gix::zlib::Compression::default(),
-        },
-    )
-    .map_err(|e| ShakoError::Git(format!("pack entry generation failed: {e}")))?;
-    let ordered = gix::parallel::InOrderIter::from(entries_iter);
-
-    let mut pack_bytes = Vec::new();
-    let bytes_iter = output::bytes::FromEntriesIter::new(
-        ordered,
-        &mut pack_bytes,
-        num_entries,
-        gix_pack::data::Version::V2,
-        gix_hash::Kind::Sha1,
-    );
-    for res in bytes_iter {
-        res.map_err(|e| ShakoError::Git(format!("pack byte encoding failed: {e}")))?;
-    }
-
-    Ok(pack_bytes)
 }
 
 #[cfg(test)]

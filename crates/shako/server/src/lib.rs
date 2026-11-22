@@ -369,11 +369,12 @@ pub async fn compact_all_repositories(state: &ShakoState, org_id: OrgId) -> Shak
     for r in repos {
         let _guard = state.repo_locks.lock(r.id).await;
         let path = shako_core::repo_disk_path(state.repo_root(), r.instance_id, r.id)?;
-        tokio::task::spawn_blocking(move || {
-            compact_repository(&path, shako_git::DEFAULT_PRUNE_GRACE)
-        })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))??;
+        state
+            .git_work
+            .run(org_id, move |admit| {
+                compact_repository(&path, shako_git::DEFAULT_PRUNE_GRACE, admit)
+            })
+            .await?;
         compacted += 1;
     }
     Ok(compacted)

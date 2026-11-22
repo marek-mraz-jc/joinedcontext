@@ -9,11 +9,13 @@
 //!    and removes old packs only after the new pack and index are on disk.
 
 use crate::bundle::collect_all_objects_from_tips;
+use crate::pack::{Admit, write_pack};
 use crate::repo::open_isolated;
-use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
+use crate::upload_pack::collect_advertised_refs;
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::BTreeSet;
+use std::io::Seek as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
@@ -64,7 +66,11 @@ fn list_pack_files(pack_dir: &Path) -> Vec<PathBuf> {
 /// Compacts all packfiles in `repo_path` into a single packfile, keeping unreachable objects
 /// from packs modified within `prune_grace` (default 14 days, Contract S6, Threat T15).
 /// Caller MUST hold the repository's write lock (`RepoLocks::lock`).
-pub fn compact_repository(repo_path: &Path, prune_grace: Duration) -> ShakoResult<CompactOutcome> {
+pub fn compact_repository(
+    repo_path: &Path,
+    prune_grace: Duration,
+    admit: Admit<'_>,
+) -> ShakoResult<CompactOutcome> {
     if has_active_quarantine(repo_path) {
         return Ok(CompactOutcome {
             packs_before: 0,
@@ -129,19 +135,24 @@ pub fn compact_repository(repo_path: &Path, prune_grace: Duration) -> ShakoResul
     }
 
     let oid_vec: Vec<ObjectId> = objects_to_keep.into_iter().collect();
-    let pack_bytes = build_pack_bytes(&repo, &oid_vec, false)?;
-
-    let mut cursor = std::io::Cursor::new(pack_bytes);
+    let spooled = |e: std::io::Error| ShakoError::Storage(format!("compact spool: {e}"));
+    let mut spool = tempfile::tempfile_in(&pack_dir).map_err(spooled)?;
+    write_pack(&repo, &oid_vec, &mut spool, admit)?;
+    spool.rewind().map_err(spooled)?;
+    let mut reader = std::io::BufReader::new(spool);
     let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
     let outcome = gix_pack::Bundle::write_to_directory(
-        &mut cursor,
+        &mut reader,
         Some(&pack_dir),
         &mut progress,
         &should_interrupt,
         None::<gix_odb::Handle>,
         gix_hash::Kind::Sha1,
-        gix_pack::bundle::write::Options::default(),
+        gix_pack::bundle::write::Options {
+            thread_limit: Some(1),
+            ..Default::default()
+        },
     )
     .map_err(|e| ShakoError::Git(format!("compact write bundle failed: {e}")))?;
 

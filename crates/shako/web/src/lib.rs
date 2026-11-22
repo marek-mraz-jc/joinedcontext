@@ -435,19 +435,24 @@ async fn web_repo_home(
     let def_b = repo.default_branch.clone();
     let disk_c = disk_path.clone();
 
-    let (entries, readme_md) = tokio::task::spawn_blocking(move || {
-        let entries = list_tree_entries(&disk_c, &def_b, false)
-            .map(|(_, e)| e)
-            .unwrap_or_default();
-        let readme = read_file_at_ref(&disk_c, &def_b, "README.md")
-            .ok()
-            .flatten()
-            .map(|(_, b)| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
-        (entries, readme)
-    })
-    .await
-    .unwrap_or_default();
+    let (entries, readme_md) = match state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            let entries = list_tree_entries(&disk_c, &def_b, false)
+                .map(|(_, e)| e)
+                .unwrap_or_default();
+            let readme = read_file_at_ref(&disk_c, &def_b, "README.md", admit)
+                .ok()
+                .flatten()
+                .map(|(_, b)| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+            Ok((entries, readme))
+        })
+        .await
+    {
+        Ok(read) => read,
+        Err(e) => return shako_api::gitea_error_response(&state, &e),
+    };
 
     let readme_html = if readme_md.is_empty() {
         String::new()
@@ -484,10 +489,16 @@ async fn web_file_view(
     let gr = git_ref.clone();
     let fp = path.clone();
 
-    let Ok(Ok(Some((blob_sha, bytes)))) =
-        tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &gr, &fp)).await
-    else {
-        return not_found_html();
+    let read = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            read_file_at_ref(&disk_path, &gr, &fp, admit)
+        })
+        .await;
+    let (blob_sha, bytes) = match read {
+        Ok(Some(found)) => found,
+        Err(e @ ShakoError::Overloaded(_)) => return shako_api::gitea_error_response(&state, &e),
+        _ => return not_found_html(),
     };
 
     render_template(&FileViewTemplate {
@@ -518,10 +529,16 @@ async fn web_raw_file(
         return not_found_html();
     };
     let fp = path.clone();
-    let Ok(Ok(Some((_sha, bytes)))) =
-        tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &fp)).await
-    else {
-        return not_found_html();
+    let read = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            read_file_at_ref(&disk_path, &git_ref, &fp, admit)
+        })
+        .await;
+    let bytes = match read {
+        Ok(Some((_sha, bytes))) => bytes,
+        Err(e @ ShakoError::Overloaded(_)) => return shako_api::gitea_error_response(&state, &e),
+        _ => return not_found_html(),
     };
 
     let filename: String = path

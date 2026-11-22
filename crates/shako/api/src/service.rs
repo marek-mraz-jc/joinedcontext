@@ -18,13 +18,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use jc_time::TimestampTz;
 use shako_core::{
-    Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MERGE_OPERATION_WEIGHT_BYTES,
-    MergePolicyInput, ObjectTarget, PackageFileRecord, PackageId, PackageRecord,
-    PackageVersionRecord, ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy,
-    RefUpdate, RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError,
-    ShakoResult, WebhookFormat, WebhookId, WebhookRecord, check_repo_count_quota,
-    remaining_storage_allowance, sha256_hex, validate_branch_name, validate_package_segment,
-    validate_repo_or_owner_name, validate_tree_path,
+    Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MergePolicyInput,
+    ObjectTarget, PackageFileRecord, PackageId, PackageRecord, PackageVersionRecord,
+    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId,
+    RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
+    WebhookId, WebhookRecord, check_repo_count_quota, remaining_storage_allowance, sha256_hex,
+    validate_branch_name, validate_package_segment, validate_repo_or_owner_name,
+    validate_tree_path,
 };
 use shako_git::{
     CommitAuthor, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
@@ -33,6 +33,9 @@ use shako_git::{
     execute_pr_merge, init_bare_repo, open_isolated, set_ref_direct, update_pr_branch,
 };
 use std::path::PathBuf;
+
+/// What a merge of two refs holds at its largest.
+const MERGE_OPERATION_BYTES: u64 = 8 * 1024 * 1024;
 
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> ShakoResult<T> + Send + 'static,
@@ -1139,10 +1142,6 @@ pub async fn update_pull_branch(
             "only an open pull request can be updated".into(),
         ));
     }
-    let permit = state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let (b, h) = (pr.base_ref.clone(), pr.head_ref.clone());
     // Updating moves the head branch like a push does: its protection rules decide (S5), with the
@@ -1167,13 +1166,15 @@ pub async fn update_pull_branch(
         },
     )?;
     let author = caller_as_author(ctx);
-    let (new_head, m) = blocking(move || {
-        let _hold = permit;
-        let new_head = update_pr_branch(&disk_path, &b, &h, &author)?;
-        let m = check_mergeability(&disk_path, &b, &h)?;
-        Ok((new_head, m))
-    })
-    .await?;
+    let (new_head, m) = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            admit(MERGE_OPERATION_BYTES)?;
+            let new_head = update_pr_branch(&disk_path, &b, &h, &author)?;
+            let m = check_mergeability(&disk_path, &b, &h)?;
+            Ok((new_head, m))
+        })
+        .await?;
     pr.head_sha = new_head.clone();
     pr.base_sha = m.base_sha;
     pr.merge_base = m.merge_base;
@@ -1214,10 +1215,6 @@ pub async fn merge_pull_request(
             "pull request is already closed or merged".into(),
         ));
     }
-    let permit = state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let (d, b, h) = (disk_path.clone(), pr.base_ref.clone(), pr.head_ref.clone());
     let m = blocking(move || check_mergeability(&d, &b, &h)).await?;
@@ -1270,22 +1267,24 @@ pub async fn merge_pull_request(
         pr.head_ref.clone(),
         req.style,
     );
-    let merge_sha = blocking(move || {
-        let _hold = permit;
-        execute_pr_merge(
-            &d,
-            &b,
-            &h,
-            &MergeOptions {
-                expected_head_sha: expected.as_deref(),
-                style,
-                message: &message,
-                author: &author,
-                committer: &committer,
-            },
-        )
-    })
-    .await?;
+    let merge_sha = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            admit(MERGE_OPERATION_BYTES)?;
+            execute_pr_merge(
+                &d,
+                &b,
+                &h,
+                &MergeOptions {
+                    expected_head_sha: expected.as_deref(),
+                    style,
+                    message: &message,
+                    author: &author,
+                    committer: &committer,
+                },
+            )
+        })
+        .await?;
     if req.delete_branch_after_merge {
         let (d, h) = (disk_path.clone(), pr.head_ref.clone());
         if let Err(e) = blocking(move || git_delete_branch(&d, &h)).await {

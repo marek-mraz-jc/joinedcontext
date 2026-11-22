@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 //! `shako-core`: domain types, UUIDv7 identifiers, RFC 9457 / OData / Gitea error mappings,
 //! `Store` and `Authorizer` traits, `OperationRegistry` (`OperationDef` with `compat_path`),
-//! OData 4.01 `Service` definitions, `RefPolicy` (branch & tag protection), `MemoryBudget`
-//! semaphore and quotas, `OutboundGuard` (SSRF protection), and `TokenVerifier` (JWKS + ES256).
+//! OData 4.01 `Service` definitions, `RefPolicy` (branch & tag protection),
+//! quotas, `OutboundGuard` (SSRF protection), and `TokenVerifier` (JWKS + ES256).
 
 pub mod auth;
 pub mod error;
@@ -34,10 +34,9 @@ pub use ops::{
 pub use outbound::{MAX_OUTBOUND_RESPONSE_BYTES, OUTBOUND_TIMEOUT, OutboundGuard, OutboundPolicy};
 pub use policy::{MergePolicyInput, RefPolicy, RefUpdate};
 pub use quota::{
-    ARCHIVE_OPERATION_WEIGHT_BYTES, DEFAULT_MEMORY_SEMAPHORE_BYTES, MAX_DELTA_CHAIN_DEPTH,
-    MAX_PKT_LINE_LEN, MAX_REFS_PER_PUSH, MAX_REFS_PER_REPO, MAX_SINGLE_OBJECT_BYTES,
-    MAX_SINGLE_PUSH_BYTES, MERGE_OPERATION_WEIGHT_BYTES, MemoryBudget, PACK_OPERATION_WEIGHT_BYTES,
-    check_repo_count_quota, remaining_storage_allowance,
+    MAX_DELTA_CHAIN_DEPTH, MAX_PKT_LINE_LEN, MAX_REFS_PER_PUSH, MAX_REFS_PER_REPO,
+    MAX_SINGLE_OBJECT_BYTES, MAX_SINGLE_PUSH_BYTES, check_repo_count_quota,
+    remaining_storage_allowance,
 };
 pub use store::{MemorySecretStore, SecretStore, Store, StoreFuture};
 pub use validate::{
