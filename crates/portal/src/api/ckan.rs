@@ -500,9 +500,9 @@ mod tests {
             );
         }
         assert!(organization_catalogue(&state, "rt-project").is_none());
-        let token = crate::organization_host::CatalogueToken(std::sync::Arc::new(
-            jcctl::secrets::SecretValue::generate().unwrap(),
-        ));
+        let token = crate::organization_host::PublisherToken(std::sync::Arc::new(|| {
+            Box::pin(async { Ok(jcctl::secrets::SecretValue::minted("eyJ.t.s".to_owned())) })
+        }));
         let entry =
             |organization: &str, url: &str| crate::organization_host::OrganizationCatalogue {
                 organization: organization.into(),

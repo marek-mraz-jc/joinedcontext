@@ -238,11 +238,8 @@ export JC_PORTAL_CKAN_ALLOW_HTTP=true
 # Every imported CkanInstance names this catalogue (rehearsal.py fence_writes); the Portal calls it
 # at the rehearsal's own dataroom.
 export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API_URL=http://127.0.0.1:$port/opendata
-# The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
-# token (Read and Propose on the rehearsal's default catalogue), given to jc as a file: jc holds its
-# own per boot in memory only.
-CKAN_API_TOKEN=$(cat "$(secret catalogue-token)"); export CKAN_API_TOKEN
-export JCBIN_DATAROOM_PORTAL_TOKEN_FILE=$home/secrets/catalogue-token
+# Those CkanInstances publish with a service token jc's Portal mints per publication for its own
+# dataroom (S11-23): no catalogue token exists to hand over.
 # The Portal's shako token likewise: rehearsal.py import and the smoke suites read it from here.
 JCBIN_SHAKO_TOKEN_FILE=$(secret shako-token); export JCBIN_SHAKO_TOKEN_FILE
 # ekiben's admin token too: the pipelines smoke reads streams with it.

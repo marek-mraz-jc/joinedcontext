@@ -172,11 +172,20 @@ pub async fn build(
     }
     let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
+    if let Some(publisher) = &registry.publisher {
+        let _ =
+            joinedcontext_portal::organization_host::INSTALLATION_PUBLISHER.set(publisher.clone());
+    }
+    let configured = configured_catalogues(&registry.catalogues, registry.publisher.as_ref());
+    state.replace_run_time_organizations(configured.clone(), Vec::new(), &[]);
     if follow_catalogues {
         let (portal, scheme) = (state.clone(), mount.scheme.clone());
+        let publisher = registry.publisher.clone();
         super::follow::ORGANIZATIONS.follow("portal", move |set| {
-            let (catalogues, addresses) = run_time_entries(set, &scheme, catalogue_reach);
+            let (catalogues, addresses) =
+                run_time_entries(set, &scheme, catalogue_reach, publisher.as_ref());
             let held = catalogues.len();
+            let catalogues = configured.iter().cloned().chain(catalogues).collect();
             portal.replace_run_time_organizations(catalogues, addresses, &set.removed);
             tracing::info!(
                 catalogues = held,
@@ -230,6 +239,10 @@ pub struct HostRegistry {
     pub hosts: Option<jc_router::HostSwap>,
     /// Whether the router places id addresses (`[portal] project_addresses`, RTE-05).
     pub project_addresses: bool,
+    /// Each `[[organizations]]` catalogue the Portal publishes into ([`organization_catalogues`]).
+    pub catalogues: Vec<serde_json::Value>,
+    /// What mints the service token it publishes there with ([`publisher_token`]).
+    pub publisher: Option<joinedcontext_portal::organization_host::PublisherToken>,
 }
 
 /// How often jc rebuilds its host table from the registry without a notification.
@@ -742,11 +755,9 @@ fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
     serde_json::Value::Array(orgs)
 }
 
-/// The Portal's settings for the `[[organizations]]` of `cfg`, each one's Portal host and own
-/// catalogue: `JC_PORTAL_ORGANIZATION_HOSTS` and, when dataroom runs here,
-/// `JC_PORTAL_ORGANIZATION_CATALOGUES` for every Organization that has a Portal token, called on
-/// this jc's own `listener` under the catalogue's host name. Empty without Organizations; an
-/// environment value still wins.
+/// The Portal's settings for the `[[organizations]]` of `cfg`: `JC_PORTAL_ORGANIZATION_HOSTS`
+/// and their addresses. Their catalogues go in process ([`organization_catalogues`]). Empty
+/// without Organizations; an environment value still wins.
 pub(crate) fn organization_vars(
     cfg: &crate::config::Config,
     listener: std::net::SocketAddr,
@@ -796,31 +807,81 @@ pub(crate) fn organization_vars(
             .portals_max(cfg.organizations.len())
             .to_string(),
     );
-    // Dataroom here: its catalogues on this jc's listener. Dataroom in a Deployment of its own
-    // (`[remote.modules] dataroom`, the role split): the edge routes each working host's `/data`
-    // there, and that jc grants the same token files (T-7470: without these entries jc-dev's
-    // Portal published every Organization's datasets into the shared catalogue).
-    let local = cfg.roles.contains(&Module::Dataroom);
-    if local || cfg.remote_modules.contains_key(&Module::Dataroom) {
-        let reach = local.then(|| crate::siblings::reach(listener));
-        let catalogues: Vec<serde_json::Value> = cfg
-            .organizations
-            .iter()
-            .filter_map(|org| {
-                let token = org.portal_token_file.as_ref()?;
-                let mut entry = catalogue_entry(org, scheme, reach);
-                entry["tokenFile"] = serde_json::json!(token);
-                Some(entry)
-            })
-            .collect();
-        if !catalogues.is_empty() {
-            out.insert(
-                "JC_PORTAL_ORGANIZATION_CATALOGUES".to_owned(),
-                serde_json::Value::Array(catalogues).to_string(),
-            );
-        }
-    }
     out
+}
+
+/// Each `[[organizations]]` catalogue the Portal publishes into, as `OrganizationCatalogue`
+/// JSON without a token: dataroom here, on this jc's own `listener` under the catalogue's host
+/// name; dataroom in a Deployment of its own (`[remote.modules] dataroom`, the role split), on
+/// each working host's `/data` through the edge (T-7470: without these entries jc-dev's Portal
+/// published every Organization's datasets into the shared catalogue). Empty otherwise.
+pub(crate) fn organization_catalogues(
+    cfg: &crate::config::Config,
+    listener: std::net::SocketAddr,
+) -> Vec<serde_json::Value> {
+    let local = cfg.roles.contains(&Module::Dataroom);
+    if !local && !cfg.remote_modules.contains_key(&Module::Dataroom) {
+        return Vec::new();
+    }
+    let reach = local.then(|| crate::siblings::reach(listener));
+    cfg.organizations
+        .iter()
+        .map(|org| catalogue_entry(org, &cfg.scheme, reach))
+        .collect()
+}
+
+/// The source of the service tokens the Portal publishes into a jc catalogue with (S11-23): a
+/// kaisatsu token for dataroom's audience when dataroom runs in another container (the
+/// forwarders' [`crate::door::REMOTE`]), jc's in-process issuer when it runs here. `None` when
+/// neither: no catalogue of jc's is the Portal's target then.
+pub(crate) fn publisher_token(
+    cfg: &crate::config::Config,
+) -> Option<joinedcontext_portal::organization_host::PublisherToken> {
+    use jcctl::secrets::SecretValue;
+    use joinedcontext_portal::organization_host::PublisherToken;
+    if cfg.roles.contains(&Module::Dataroom) {
+        return Some(PublisherToken(std::sync::Arc::new(|| {
+            Box::pin(async {
+                crate::door::local_publisher_token()
+                    .map(|t| SecretValue::minted(t.expose().to_owned()))
+            })
+        })));
+    }
+    if !cfg.remote_modules.contains_key(&Module::Dataroom) {
+        return None;
+    }
+    let remote = crate::door::REMOTE.get()?.clone();
+    Some(PublisherToken(std::sync::Arc::new(move || {
+        let remote = remote.clone();
+        Box::pin(async move {
+            remote
+                .token(Module::Dataroom)
+                .await
+                .map(|t| SecretValue::minted(t.expose().to_owned()))
+        })
+    })))
+}
+
+/// The start-time catalogues of [`organization_catalogues`], each minting with `publisher`; an
+/// entry the Portal cannot read is logged and left out.
+fn configured_catalogues(
+    entries: &[serde_json::Value],
+    publisher: Option<&joinedcontext_portal::organization_host::PublisherToken>,
+) -> Vec<joinedcontext_portal::organization_host::OrganizationCatalogue> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            serde_json::from_value::<joinedcontext_portal::organization_host::OrganizationCatalogue>(
+                entry.clone(),
+            )
+            .map(|mut c| {
+                c.token = publisher.cloned();
+                c
+            })
+            .inspect_err(|e| tracing::warn!(error = %e, "portal: an Organization catalogue left out"))
+            .ok()
+        })
+        .collect()
 }
 
 /// One Organization's catalogue as the Portal publishes into it (`OrganizationCatalogue`, without
@@ -857,18 +918,17 @@ fn catalogue_entry(
 
 /// The Portal's catalogues and addresses of the registry's run-time Organizations (T-7185):
 /// each with a catalogue in this process's dataroom (`reach` set, its row naming one) publishes
-/// there with the token jc minted for it ([`super::follow::catalogue_token`]), never a file.
+/// there with a token `publisher` mints per publication, never a file.
 fn run_time_entries(
     set: &super::follow::Organizations,
     scheme: &str,
     reach: Option<std::net::SocketAddr>,
+    publisher: Option<&joinedcontext_portal::organization_host::PublisherToken>,
 ) -> (
     Vec<joinedcontext_portal::organization_host::OrganizationCatalogue>,
     Vec<joinedcontext_portal::organization_host::OrganizationAddresses>,
 ) {
-    use joinedcontext_portal::organization_host::{
-        CatalogueToken, OrganizationAddresses, OrganizationCatalogue,
-    };
+    use joinedcontext_portal::organization_host::{OrganizationAddresses, OrganizationCatalogue};
     let mut catalogues = Vec::new();
     let mut addresses = Vec::new();
     for org in &set.run_time {
@@ -892,10 +952,9 @@ fn run_time_entries(
             scheme,
             Some(reach),
         ))
-        .map_err(|e| e.to_string())
-        .and_then(|mut c| {
-            c.token = Some(CatalogueToken(super::follow::catalogue_token(&org.name)?));
-            Ok(c)
+        .map(|mut c| {
+            c.token = publisher.cloned();
+            c
         });
         match entry {
             Ok(c) => catalogues.push(c),
@@ -1212,8 +1271,8 @@ mod tests {
     }
 
     /// jc-multiorg-portal: every Organization's Portal host reaches the Portal, and with
-    /// dataroom here its own catalogue, called on this jc under the catalogue's name, with the
-    /// Organization's token file; an Organization without a token publishes nowhere.
+    /// dataroom here its own catalogue, called on this jc under the catalogue's name, with a
+    /// service token minted per publication and no token file (S11-23).
     #[test]
     fn each_organization_gets_its_portal_host_and_its_own_catalogue() {
         use clap::Parser as _;
@@ -1225,7 +1284,6 @@ mod tests {
         let listener: std::net::SocketAddr = "0.0.0.0:42301".parse().unwrap();
         let mut cfg =
             crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
-        cfg.organizations[0].portal_token_file = Some("/run/alpha-token".into());
         let vars = organization_vars(&cfg, listener);
         assert_eq!(
             vars["JC_PORTAL_ORGANIZATION_HOSTS"],
@@ -1234,25 +1292,23 @@ mod tests {
                 cfg.scheme
             )
         );
-        let catalogues: serde_json::Value =
-            serde_json::from_str(&vars["JC_PORTAL_ORGANIZATION_CATALOGUES"]).expect("json");
-        let parsed = joinedcontext_portal::organization_host::parse_catalogues(
-            &vars["JC_PORTAL_ORGANIZATION_CATALOGUES"],
-        )
-        .expect("the Portal reads it");
-        assert_eq!(parsed.len(), 1, "beta has no token: {catalogues}");
+        // S11-23: every Organization's catalogue, in process, none with a token file; the
+        // Portal mints a service token per publication.
+        assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_CATALOGUES"));
+        let publisher = publisher_token(&cfg).expect("dataroom here: the in-process issuer");
+        let parsed =
+            configured_catalogues(&organization_catalogues(&cfg, listener), Some(&publisher));
+        assert_eq!(parsed.len(), 2, "{parsed:?}");
         assert_eq!(parsed[0].organization, "alpha");
+        assert_eq!(parsed[1].organization, "beta");
+        assert!(parsed.iter().all(|c| c.token.as_ref() == Some(&publisher)));
         assert_eq!(
             parsed[0].api.as_ref().map(url::Url::as_str),
             Some("http://portal.alpha.test/data"),
             "the open data host takes no write: the Portal publishes on the working host"
         );
         assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
-        assert_eq!(
-            parsed[0].token_file,
-            Some(std::path::PathBuf::from("/run/alpha-token"))
-        );
-        assert!(!vars["JC_PORTAL_ORGANIZATION_CATALOGUES"].contains("beta"));
+        assert_eq!(parsed[0].token_file, None);
         // T-7013: every address the Portal lists under Addresses, read back by its own parser.
         let addresses = joinedcontext_portal::organization_host::parse_addresses(
             &vars["JC_PORTAL_ORGANIZATION_ADDRESSES"],
@@ -1333,9 +1389,8 @@ mod tests {
         );
         // Without dataroom here, the hosts alone; without Organizations, nothing.
         let mut portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
-        portal_only.organizations[0].portal_token_file = Some("/run/alpha-token".into());
-        let vars = organization_vars(&portal_only, listener);
-        assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_CATALOGUES"));
+        assert!(organization_catalogues(&portal_only, listener).is_empty());
+        assert!(publisher_token(&portal_only).is_none());
         // T-7470: dataroom in a Deployment of its own (the role split, jc-dev): each
         // Organization's catalogue is still the Portal's target, written on its working host's
         // `/data` through the edge, which routes it to that Deployment.
@@ -1343,11 +1398,8 @@ mod tests {
         split
             .remote_modules
             .insert(Module::Dataroom, "https://jc.base.test/opendata".into());
-        let parsed = joinedcontext_portal::organization_host::parse_catalogues(
-            &organization_vars(&split, listener)["JC_PORTAL_ORGANIZATION_CATALOGUES"],
-        )
-        .expect("the Portal reads it");
-        assert_eq!(parsed.len(), 1, "beta has no token: {parsed:?}");
+        let parsed = configured_catalogues(&organization_catalogues(&split, listener), None);
+        assert_eq!(parsed.len(), 2, "{parsed:?}");
         assert_eq!(
             parsed[0].api.as_ref().map(url::Url::as_str),
             Some(format!("{s}://portal.alpha.test/data").as_str())
@@ -1565,7 +1617,21 @@ mod tests {
             removed: vec!["gone".into()],
         };
         let reach = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
-        let (catalogues, addresses) = run_time_entries(&set, "https", Some(reach));
+        let publisher = publisher_token(
+            &crate::config::Config::merge(
+                <crate::config::Cli as clap::Parser>::try_parse_from([
+                    "jc",
+                    "--role",
+                    "portal,dataroom",
+                ])
+                .expect("cli"),
+                crate::config::FileConfig::default(),
+            )
+            .expect("config"),
+        )
+        .expect("dataroom here: the in-process issuer");
+        let (catalogues, addresses) =
+            run_time_entries(&set, "https", Some(reach), Some(&publisher));
         assert_eq!(catalogues.len(), 1);
         let c = &catalogues[0];
         assert_eq!(
@@ -1581,12 +1647,7 @@ mod tests {
             c.api.as_ref().map(url::Url::as_str),
             Some("http://smartcity.rt7185.sk/data")
         );
-        let minted = super::super::follow::catalogue_token("rt7185").unwrap();
-        assert!(
-            c.token
-                .as_ref()
-                .is_some_and(|t| std::sync::Arc::ptr_eq(&t.0, &minted))
-        );
+        assert_eq!(c.token.as_ref(), Some(&publisher));
         let names: Vec<&str> = addresses.iter().map(|a| a.organization.as_str()).collect();
         assert_eq!(names, ["rt7185", "bare"]);
         assert!(
@@ -1595,7 +1656,7 @@ mod tests {
                 .iter()
                 .any(|a| a.url.as_str() == "https://data.rt7185.sk/")
         );
-        let (catalogues, addresses) = run_time_entries(&set, "https", None);
+        let (catalogues, addresses) = run_time_entries(&set, "https", None, Some(&publisher));
         assert!(catalogues.is_empty(), "no dataroom here, no catalogue");
         assert_eq!(addresses.len(), 2);
     }

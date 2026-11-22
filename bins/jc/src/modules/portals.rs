@@ -197,9 +197,9 @@ pub(crate) fn catalogue_of(
             created: now,
             modified: now,
         },
-        // The Portal publishes Endpoints into an Organization's `default` with the token jc
-        // bound at start; a further portal's datasets come from its sources (ODP-10).
-        publish_token: None,
+        // The Portal publishes Endpoints into an Organization's `default`, admitted at start; a
+        // further portal's datasets come from its sources (ODP-10).
+        publishes: false,
         portal: route,
     })
 }
@@ -983,7 +983,7 @@ mod tests {
         assert_eq!(spec.host, "data.city.test");
         assert_eq!(spec.base.as_deref(), Some("https://data.city.test"));
         assert_eq!(spec.organization.as_deref(), Some("city"));
-        assert!(spec.portal.is_none() && spec.publish_token.is_none());
+        assert!(spec.portal.is_none() && !spec.publishes);
     }
 
     #[test]

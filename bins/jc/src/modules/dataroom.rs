@@ -3,10 +3,10 @@
 //! refusing a role with SUPERUSER or BYPASSRLS and any `dataroom` table without forced RLS; with
 //! a migration role, `jc` first migrates under dataroom's advisory lock and grants the request
 //! role its table rights), else in memory; the policy authorizer of the standalone `dataroom
-//! serve`, URLs under the mount prefix. When the
-//! Portal runs beside it, first-start setup holds a CKAN API token for the Portal: the subject
-//! `portal-ckan`, Read and Propose on the default catalogue only
-//! (`dataroom_api::portal_publisher`).
+//! serve`, URLs under the mount prefix. The Portal publishes with a short-lived service token
+//! (S11-23): kaisatsu's, verified against `[door]`, in a role split; jc's in-process issuer's
+//! beside the Portal. Its subject is `portal-ckan`, Read and Propose on the default catalogue
+//! (`dataroom_api::portal_publisher`) and `portal-ckan:{id}` on each Organization's own.
 
 use crate::app::StartError;
 use crate::config::{DataroomSection, OrganizationSection};
@@ -209,7 +209,7 @@ pub async fn build_with_writer(
     shutdown: &tokio_util::sync::CancellationToken,
     tasks: &tokio_util::task::TaskTracker,
 ) -> Result<(Router, dataroom_server::CatalogueWriter), StartError> {
-    let (tokens, setup, siblings) = (&ctx.secrets.organization_tokens, ctx.setup, ctx.siblings);
+    let (setup, siblings) = (ctx.setup, ctx.siblings);
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     dataroom_api::check_aliases(&cfg.aliases)
         .map_err(|e| err(&format!("[dataroom.aliases] {e}")))?;
@@ -244,14 +244,14 @@ pub async fn build_with_writer(
             .await
             .map_err(|e| err(&format!("[dataroom.hidden] {e}")))?;
     }
-    let (mut grants, mut bindings) = match setup.value(Secret::CatalogueToken) {
-        None => (Vec::new(), Vec::new()),
-        Some(token) => {
-            let (binding, grant) =
-                dataroom_api::portal_publisher(token, org_id, catalogue_id).map_err(|e| err(&e))?;
-            (vec![grant], vec![binding])
-        }
-    };
+    let verifier = publisher_verifier(ctx.door, siblings).map_err(|e| err(&e))?;
+    let mut grants = Vec::new();
+    let mut publishers = dataroom_api::Publishers::new();
+    if verifier.is_some() {
+        let (subject, grant) = dataroom_api::portal_publisher(org_id, catalogue_id);
+        publishers.insert((org_id, catalogue_id), subject);
+        grants.push(grant);
+    }
     let own = configured_branding(cfg).map_err(|e| err(&e))?;
     let live = crate::siblings::live_addresses(&cfg.addresses, siblings);
     let mut by_catalogue = BTreeMap::new();
@@ -266,20 +266,9 @@ pub async fn build_with_writer(
         ensure_publisher(store.as_ref(), tenant, id, org, &mount.scheme)
             .await
             .map_err(|e| err(&e))?;
-        if let Some(token) = tokens.get(&org.name) {
-            let token = token.secret.expose();
-            if bindings
-                .iter()
-                .any(|b: &dataroom_api::TokenBinding| b.token == token.trim())
-            {
-                return Err(err(&format!(
-                    "[[organizations]] {}: its Portal token is another catalogue's",
-                    org.name
-                )));
-            }
-            let (binding, grant) = dataroom_api::portal_publisher_on(token, tenant, id, &org.name)
-                .map_err(|e| err(&e))?;
-            bindings.push(binding);
+        if verifier.is_some() {
+            let (subject, grant) = dataroom_api::portal_publisher_on(tenant, id, &org.name);
+            publishers.insert((tenant, id), subject);
             grants.push(grant);
         }
         by_catalogue.insert(
@@ -334,11 +323,15 @@ pub async fn build_with_writer(
         &mount,
         own_gateway.as_ref().map(|(public, _)| public.clone()),
     );
-    let state = DataroomState::new(store, authorizer.clone(), org_id, catalogue_id)
+    let mut state = DataroomState::new(store, authorizer.clone(), org_id, catalogue_id);
+    if let Some(verifier) = verifier.clone() {
+        state = state.with_verifier(verifier);
+    }
+    let state = state
         .with_harvester(engine)
         .with_organization_catalogues(by_organization)
         .with_catalogue_bases(bases)
-        .with_tokens(bindings)
+        .with_publishers(publishers)
         .with_installation_branding(installation_branding(&own, &live, assistant_widget.clone()))
         .with_catalogue_branding(by_catalogue)
         // Several catalogues by host: a loopback name names none of them.
@@ -379,6 +372,7 @@ pub async fn build_with_writer(
             live,
             scheme: mount.scheme.clone(),
             assistant_widget,
+            publishes: verifier.is_some(),
             applied: BTreeMap::new(),
         },
         shutdown,
@@ -388,6 +382,25 @@ pub async fn build_with_writer(
         dataroom_api::with_dataset_aliases(dataroom_api::router(state), cfg.aliases.clone()),
         writer,
     ))
+}
+
+/// Who verifies the service tokens the Portal publishes with (S11-23): `[door]`'s issuer in a
+/// role split, jc's in-process issuer beside the Portal (all in one). Neither: no catalogue here
+/// admits a publisher (logged), and a static bearer is refused everywhere.
+fn publisher_verifier(
+    door: Option<&Arc<crate::door::Door>>,
+    siblings: &crate::siblings::Siblings,
+) -> Result<Option<Arc<jc_door::Verifier>>, String> {
+    if let Some(door) = door {
+        return Ok(Some(door.verifier()));
+    }
+    if siblings.get(Module::Portal).is_some() {
+        return crate::door::local_verifier().map(|v| Some(Arc::new(v)));
+    }
+    tracing::warn!(
+        "dataroom: no issuer of service tokens ([door], or the Portal beside it): nothing publishes into its catalogues"
+    );
+    Ok(None)
 }
 
 /// What the Portal reconciler serves: each `[[organizations]]` entry, or without any the
@@ -544,6 +557,8 @@ struct RunTime {
     live: crate::siblings::LiveAddresses,
     scheme: String,
     assistant_widget: Option<String>,
+    /// Whether a service token issuer is known, so the Portal's publisher writes here.
+    publishes: bool,
     /// The run-time Organizations served now, as they were set up.
     applied: BTreeMap<String, (OrgId, CatalogueId, OrganizationSection)>,
 }
@@ -578,7 +593,7 @@ fn follow_organizations(
 #[cfg(feature = "portal")]
 impl RunTime {
     /// Serves each run-time Organization's catalogue under its own OrgId (ODP-12) at its open
-    /// data host, its Portal granted in process ([`super::follow::catalogue_token`]), and stops
+    /// data host, the Portal's publisher admitted when a service token issuer is (`publishes`), and stops
     /// serving the catalogue of a removed Organization or of one that left the set; the store
     /// keeps its datasets. A row whose catalogue is missing, not a UUID, the default catalogue
     /// or another Organization's gets none (logged), as jc.toml's check refuses it at start.
@@ -643,7 +658,6 @@ impl RunTime {
             ));
         }
         let tenant = OrgId::of_organization(self.installation, &org.name);
-        let token = super::follow::catalogue_token(&org.name)?;
         self.writer
             .upsert(dataroom_server::CatalogueSpec {
                 org_id: tenant,
@@ -653,7 +667,7 @@ impl RunTime {
                 base: Some(format!("{}://{}", self.scheme, org.opendata_base())),
                 organization: Some(org.name.clone()),
                 publisher: publisher_of(tenant, id, org, &self.scheme),
-                publish_token: Some(token.expose().to_owned()),
+                publishes: self.publishes,
                 portal: None,
             })
             .await
@@ -1287,13 +1301,21 @@ mod tests {
         .unwrap();
     }
 
-    /// A memory-store dataroom as jc builds it with no `[[organizations]]`, and its writer.
+    /// The Portal's publisher token as jc's in-process issuer signs it, as a bearer.
+    fn bearer() -> String {
+        let token = crate::door::local_publisher_token().expect("signed");
+        format!("Bearer {}", token.expose())
+    }
+
+    /// A memory-store dataroom as jc builds it with no `[[organizations]]` beside the Portal
+    /// (all in one: its in-process issuer verifies the publisher), and its writer.
     async fn runtime_dataroom() -> (Router, dataroom_server::CatalogueWriter) {
         let (setup, secrets) = (
             crate::setup::Setup::default(),
             crate::config::Secrets::default(),
         );
-        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let mut siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        siblings.insert_loopback(Module::Portal, "127.0.0.1:1".parse().unwrap());
         let ctx = crate::modules::BuildCtx {
             setup: &setup,
             siblings: &siblings,
@@ -1318,7 +1340,7 @@ mod tests {
         built
     }
 
-    /// The catalogue of a Portal `name` of one Organization, with its own publish token.
+    /// The catalogue of a Portal `name` of one Organization, its publisher admitted.
     fn portal_spec(org: u128, cat: u128, name: &str) -> dataroom_server::CatalogueSpec {
         let uuid = |n: u128| format!("00000000-0000-7000-8000-{n:012x}");
         let (org_id, id) = (
@@ -1339,7 +1361,7 @@ mod tests {
                 "created": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
             }))
             .unwrap(),
-            publish_token: Some(format!("publish-token-of-{name}-0123456789abcdef")),
+            publishes: true,
             portal: None,
         }
     }
@@ -1392,7 +1414,8 @@ mod tests {
             axum::http::StatusCode::OK,
             "served by the same router"
         );
-        let token = spec.publish_token.as_deref();
+        let token = bearer();
+        let token = Some(token.as_str());
         let made = action(
             &router,
             &host,
@@ -1432,6 +1455,7 @@ mod tests {
             live: crate::siblings::LiveAddresses::default(),
             scheme: "https".into(),
             assistant_widget: None,
+            publishes: true,
             applied: BTreeMap::new(),
         };
         let org = OrganizationSection {
@@ -1493,12 +1517,11 @@ mod tests {
             decided("rt7186", "package_list", None).await,
             axum::http::StatusCode::OK
         );
-        let token = super::super::follow::catalogue_token("rt7186").unwrap();
-        let token = token.expose().to_owned();
+        let token = bearer();
         assert_eq!(
             decided("rt7186", "package_create", Some(&token)).await,
             axum::http::StatusCode::OK,
-            "the Portal publishes with its in-process token"
+            "the Portal publishes with a token of jc's in-process issuer"
         );
         let stranger = decided(
             "rt7186",
@@ -1565,7 +1588,7 @@ mod tests {
         use crate::modules::portals::{self, EndpointRow, OrganizationPortals};
         let (router, writer) = runtime_dataroom().await;
         let default = portal_spec(0xA3, 0xC3, "city");
-        let (host, token) = (default.host.clone(), default.publish_token.clone());
+        let (host, token) = (default.host.clone(), Some(bearer()));
         let orgs = vec![OrganizationPortals {
             name: "city".into(),
             org_id: default.org_id,
@@ -1655,7 +1678,7 @@ mod tests {
     async fn a_deleted_catalogues_dataset_answers_410() {
         let (router, writer) = runtime_dataroom().await;
         let spec = portal_spec(0xA2, 0xC2, "mobility");
-        let (host, token) = (spec.host.clone(), spec.publish_token.clone());
+        let (host, token) = (spec.host.clone(), Some(bearer()));
         let (org, id) = (spec.org_id, spec.id);
         writer.upsert(spec).await.unwrap();
         let made = action(
@@ -1685,10 +1708,9 @@ mod tests {
             axum::http::StatusCode::GONE,
             "nothing is written into it"
         );
-        // Its principal went with it: the token binds to no catalogue any more.
-        let mut next = portal_spec(0xA2, 0xC9, "schools");
-        next.publish_token = token.clone();
-        writer.upsert(next).await.expect("the token is free again");
+        // Another catalogue still admits the publisher.
+        let next = portal_spec(0xA2, 0xC9, "schools");
+        writer.upsert(next).await.expect("another catalogue");
         assert!(
             !writer
                 .delete(
@@ -1757,7 +1779,7 @@ mod tests {
             let made = action(
                 &router,
                 &spec.host,
-                spec.publish_token.as_deref(),
+                Some(bearer().as_str()),
                 "package_create",
                 Some(package("air")),
             )
@@ -1820,7 +1842,7 @@ mod tests {
     #[tokio::test]
     async fn slug_keep_serves_both_and_names_the_domain_canonical() {
         let (router, writer, mobility) = city_with_portal("mobility").await;
-        let token = mobility.publish_token.clone();
+        let token = Some(bearer());
         writer
             .upsert(on_host(mobility, "mobility.city.test", false))
             .await
@@ -1907,52 +1929,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_publish_principal_of_one_catalogue_cannot_write_another() {
+    async fn a_catalogue_that_admits_no_publisher_refuses_its_token() {
         let (router, writer) = runtime_dataroom().await;
-        let (x, y) = (
+        let (x, mut y) = (
             portal_spec(0xA3, 0xC3, "mobility"),
             portal_spec(0xA3, 0xC4, "schools"),
         );
+        y.publishes = false;
         writer.upsert(x.clone()).await.unwrap();
         writer.upsert(y.clone()).await.unwrap();
         let foreign = action(
             &router,
             &y.host,
-            x.publish_token.as_deref(),
+            Some(bearer().as_str()),
             "package_create",
             Some(package("evil")),
         )
         .await;
-        assert!(
-            matches!(foreign.as_u16(), 403 | 404),
-            "X's principal on Y's catalogue: {foreign}"
-        );
+        assert_eq!(foreign.as_u16(), 401, "Y admits no publisher: {foreign}");
         let shown = action(&router, &y.host, None, "package_show?id=evil", None).await;
         assert_eq!(shown, axum::http::StatusCode::NOT_FOUND);
         let own = action(
             &router,
-            &y.host,
-            y.publish_token.as_deref(),
+            &x.host,
+            Some(bearer().as_str()),
             "package_create",
             Some(package("air")),
         )
         .await;
         assert!(own.is_success(), "{own}");
-        // One token cannot become a second catalogue's principal.
-        let mut z = portal_spec(0xA3, 0xC5, "culture");
-        z.publish_token = x.publish_token.clone();
-        assert!(matches!(
-            writer.upsert(z).await,
-            Err(DataroomError::Conflict(_))
-        ));
     }
 
     #[tokio::test]
     async fn a_catalogue_id_stays_with_its_organization_after_a_delete_and_under_a_race() {
         let (router, writer) = runtime_dataroom().await;
         let a = portal_spec(0xA6, 0xC6, "mobility");
-        let mut b = portal_spec(0xB6, 0xC6, "schools");
-        b.publish_token = Some("publish-token-of-b-0123456789abcdef".into());
+        let b = portal_spec(0xB6, 0xC6, "schools");
         writer.upsert(a.clone()).await.unwrap();
         assert!(writer.delete(a.org_id, a.id).await.unwrap());
         assert!(
@@ -1969,11 +1981,10 @@ mod tests {
             "B's host serves nothing"
         );
 
-        let (c, mut d) = (
+        let (c, d) = (
             portal_spec(0xA7, 0xC7, "culture"),
             portal_spec(0xB7, 0xC7, "sport"),
         );
-        d.publish_token = Some("publish-token-of-d-0123456789abcdef".into());
         let (rc, rd) = tokio::join!(writer.upsert(c.clone()), writer.upsert(d.clone()));
         assert!(
             rc.is_ok() != rd.is_ok(),
@@ -1983,7 +1994,7 @@ mod tests {
         let made = action(
             &router,
             &won.host,
-            won.publish_token.as_deref(),
+            Some(bearer().as_str()),
             "package_create",
             Some(package("air")),
         )
