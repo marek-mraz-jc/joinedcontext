@@ -26,10 +26,15 @@ use std::path::{Path, PathBuf};
 /// entry is a fragment that appears in exactly one literal.
 const EXEMPT: &[(&str, &str)] = &[
     (
-        "WHERE try_timestamptz(data->>'expiresAt') < now()",
-        "the 4.22 expired-instance reap (both history parents): cross-tenant \
-         work under the service role, which is what lets it collect every tenant's expired rows in \
-         one statement",
+        "DELETE FROM ONLY {t} WHERE ctid",
+        "the 4.22 expired-instance reap of one history leaf (T-7517): cross-tenant work under \
+         the service role, which is what lets it collect every tenant's expired rows in expiry \
+         order through the leaf's index",
+    ),
+    (
+        "public.history_expires_at(data) < now() FROM ONLY {t}",
+        "the reap's probe of one leaf: whether the earliest expiry of any tenant has passed, \
+         which reads no row out",
     ),
     (
         "DELETE FROM attr_instances_default\n         WHERE observed_at < now()",
@@ -165,6 +170,8 @@ fn touches_rows(lit: &str) -> bool {
         "FROM attr_rows",
         "INTO attr_rows",
         "UPDATE attr_rows",
+        // a statement per history leaf, the leaf filled in at runtime
+        "FROM ONLY {t}",
     ]
     .iter()
     .any(|k| lit.contains(k))

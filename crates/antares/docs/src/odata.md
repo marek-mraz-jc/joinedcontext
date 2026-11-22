@@ -208,6 +208,13 @@ SimpleIdentifier character (CSDL XML 17.2), so the name takes `_`.
   other than `id, observedAt` read the whole answer, at most 10 000 rows
   kept and 1 000 Entities read, so a `$filter` keeping no row still stops
   there (`400 TooManyResults` past either: narrow by `id` or `observedAt`).
+- One page judges at most 10 000 rows by `$filter` and holds at most 8 MiB
+  of rows (half of the answer limit if that is lower), for every caller. Past
+  either it ends short, possibly empty, with a next link that resumes at that
+  row. Each page reads its Entities' windows again and builds only its own
+  rows; the answers read and the rows built are charged to the answer pool
+  until the page is written (`503` with no room). A `$count` or a sort that
+  would hold more than one answer's bytes is `400 TooManyResults`.
 - `$select` takes members; `$expand`, `$search`, `$apply` and `$compute` are
   `501`, an `ngsild.` option `400`, every write `405`.
 - Unlike the OGC history, a GeoProperty written without `observedAt` is in
