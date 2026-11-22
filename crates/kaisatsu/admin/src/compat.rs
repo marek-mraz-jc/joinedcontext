@@ -665,7 +665,12 @@ async fn guard_client_write(
     if added.is_empty() {
         return Ok(());
     }
-    let scopes = state.oidc.store.list_client_scopes(&ctx.realm_id).await?;
+    let names: Vec<String> = added.iter().map(|name| name.to_string()).collect();
+    let scopes = state
+        .oidc
+        .store
+        .get_client_scopes(&ctx.realm_id, &names)
+        .await?;
     for name in added {
         ensure_scope_linkable(state, ctx, scopes.iter().find(|s| &s.name == name), name)?;
     }
@@ -707,21 +712,17 @@ async fn linkable_scope_name(
     ctx: &RequestCtx,
     scope_id: &str,
 ) -> Result<String> {
-    let scope = match state
+    let key = [scope_id.to_owned()];
+    let found = state
         .oidc
         .store
-        .get_client_scope(&ctx.realm_id, scope_id)
-        .await?
-    {
-        Some(s) => Some(s),
-        None => state
-            .oidc
-            .store
-            .list_client_scopes(&ctx.realm_id)
-            .await?
-            .into_iter()
-            .find(|s| s.name == scope_id),
-    };
+        .get_client_scopes(&ctx.realm_id, &key)
+        .await?;
+    let scope = found
+        .iter()
+        .find(|s| s.id == scope_id)
+        .or_else(|| found.iter().find(|s| s.name == scope_id))
+        .cloned();
     ensure_scope_linkable(state, ctx, scope.as_ref(), scope_id)?;
     Ok(scope.map_or_else(|| scope_id.to_owned(), |s| s.name))
 }
@@ -1079,35 +1080,23 @@ async fn compat_list_users(
         },
     ))?;
     let allowed = ctx.allowed_orgs();
-    let (first, max) = (q.first.unwrap_or(0), q.max.unwrap_or(100));
-    let page = |first, max| {
-        state.oidc.store.list_users(
+    // The store counts `first` and `max` over what matches, people only when `search` is given,
+    // and answers at most MAX_PAGE.
+    let users = state
+        .oidc
+        .store
+        .list_users(
             &realm,
             allowed.as_deref(),
             q.search.as_deref(),
             q.email.as_deref(),
             q.username.as_deref(),
             q.exact.unwrap_or(false),
-            first,
-            max,
+            q.first.unwrap_or(0),
+            q.max.unwrap_or(100),
         )
-    };
-    // Keycloak's `search` leaves service accounts out (UsersResource includeServiceAccounts
-    // false), so the Portal's People page never lists `service-account-*`; `first`/`max` count
-    // people only, so the matches are read once (each store page is a
-    // full read, P-4-03) and paged here.
-    if q.search.is_none() || max == 0 {
-        return Ok(Json(page(first, max).await?));
-    }
-    let users = page(0, usize::MAX).await?;
-    Ok(Json(
-        users
-            .into_iter()
-            .filter(|u| u.service_account_client_id.is_none())
-            .skip(first)
-            .take(max)
-            .collect(),
-    ))
+        .await?;
+    Ok(Json(users))
 }
 
 async fn compat_create_user(
@@ -1915,20 +1904,6 @@ struct PageQuery {
     pub max: Option<usize>,
 }
 
-/// The group `id` in a tree `list_groups` answered.
-fn find_in_tree<'a>(
-    groups: &'a [GroupRepresentation],
-    id: &str,
-) -> Option<&'a GroupRepresentation> {
-    groups.iter().find_map(|g| {
-        if g.id == id {
-            Some(g)
-        } else {
-            find_in_tree(&g.sub_groups, id)
-        }
-    })
-}
-
 /// The direct subgroups of `id`, as Keycloak's `GET /groups/{id}/children`: the parent is read
 /// within the caller's realm and organizations first, so another realm's or organization's group
 /// is 404 as on `GET /groups/{id}`.
@@ -1958,14 +1933,11 @@ async fn compat_list_group_children(
             managed_by: parent.managed_by.clone(),
         },
     ))?;
-    let tree = state
+    let children = state
         .oidc
         .store
-        .list_groups(&realm, allowed.as_deref(), None, false)
+        .list_child_groups(allowed.as_deref(), &parent)
         .await?;
-    let children = find_in_tree(&tree, &parent.id)
-        .map(|g| g.sub_groups.clone())
-        .unwrap_or_default();
     Ok(Json(
         children
             .into_iter()
@@ -2175,16 +2147,10 @@ async fn compat_delete_group(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct MaxQuery {
-    #[serde(default)]
-    pub max: Option<usize>,
-}
-
 async fn compat_list_group_members(
     State(state): State<AdminState>,
     Path((realm, id)): Path<(String, String)>,
-    Query(q): Query<MaxQuery>,
+    Query(q): Query<PageQuery>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Vec<UserRepresentation>>> {
@@ -2210,7 +2176,13 @@ async fn compat_list_group_members(
     let members = state
         .oidc
         .store
-        .list_group_members(&realm, allowed.as_deref(), &id, q.max.unwrap_or(1000))
+        .list_group_members(
+            &realm,
+            allowed.as_deref(),
+            &id,
+            q.first.unwrap_or(0),
+            q.max.unwrap_or(MAX_PAGE),
+        )
         .await?;
     Ok(Json(members))
 }
@@ -3265,7 +3237,7 @@ async fn resolve_scope_objects(
     realm: &str,
     names: &[String],
 ) -> Result<Vec<ClientScopeRepresentation>> {
-    let all = store.list_client_scopes(realm).await?;
+    let all = store.get_client_scopes(realm, names).await?;
     Ok(names
         .iter()
         .map(|name| {
@@ -3396,9 +3368,20 @@ async fn compat_list_client_optional_scopes(
     let mut scopes =
         resolve_scope_objects(&state.oidc.store, &realm, &client.optional_client_scopes).await?;
     // The scopes the client takes by its prefix (T-6857), as Keycloak would list a link.
-    for scope in state.oidc.store.list_client_scopes(&realm).await? {
-        if client.has_optional_scope(&scope) && !scopes.iter().any(|s| s.name == scope.name) {
-            scopes.push(scope);
+    if let Some(prefix) = client
+        .attributes
+        .get(LINKED_SCOPE_PREFIX)
+        .filter(|p| !p.is_empty())
+    {
+        let candidates = state
+            .oidc
+            .store
+            .list_client_scopes_with_prefix(&realm, prefix)
+            .await?;
+        for scope in candidates {
+            if client.has_optional_scope(&scope) && !scopes.iter().any(|s| s.name == scope.name) {
+                scopes.push(scope);
+            }
         }
     }
     Ok(Json(scopes))
@@ -3499,7 +3482,7 @@ async fn scope_name_free(
     let taken = state
         .oidc
         .store
-        .list_client_scopes(realm)
+        .get_client_scopes(realm, &[name.to_owned()])
         .await?
         .into_iter()
         .any(|s| s.name == name && Some(s.id.as_str()) != except);

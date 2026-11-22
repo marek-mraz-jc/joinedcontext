@@ -35,6 +35,21 @@ async fn read(app: &axum::Router, request: Request<Body>) -> Value {
     serde_json::from_slice(&body).expect("JSON")
 }
 
+/// The access token's claims without the ones each issue draws anew.
+fn stable_claims(answer: &Value) -> Value {
+    let token = answer["access_token"].as_str().expect("access token");
+    let part = token.split('.').nth(1).expect("payload");
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(part)
+        .expect("base64");
+    let mut claims: Value = serde_json::from_slice(&bytes).expect("claims");
+    let map = claims.as_object_mut().expect("object");
+    for drawn in ["iat", "exp", "jti", "nbf", "auth_time", "sid", "sub"] {
+        map.remove(drawn);
+    }
+    claims
+}
+
 fn token_request() -> Request<Body> {
     // The fixture's client and its secret (common/mod.rs).
     let (client, word) = ("apisix-gateway", "apisix");
@@ -71,7 +86,7 @@ async fn a_token_and_a_people_search_do_not_read_the_realm() {
 
     read(&app, token_request()).await;
     meter.take();
-    read(&app, token_request()).await;
+    let before = stable_claims(&read(&app, token_request()).await);
     let small = meter.take();
 
     let root = db.superuser_pool().await;
@@ -99,10 +114,30 @@ async fn a_token_and_a_people_search_do_not_read_the_realm() {
     .await
     .expect("people");
     root.close().await;
+    // As the Portal does for each Endpoint: every new scope is optional on the client.
+    let mut client = store
+        .get_client_by_client_id("dev", "apisix-gateway")
+        .await
+        .expect("client")
+        .expect("fixture client");
+    client
+        .optional_client_scopes
+        .extend((1..=SCOPES).map(|n| format!("scale-{n}")));
+    store.upsert_client(client).await.expect("linked scopes");
 
     meter.take();
-    read(&app, token_request()).await;
+    let after = stable_claims(&read(&app, token_request()).await);
     let large = meter.take();
+    assert_eq!(before, after, "the realm's size changes no claim");
+    // Recorded on the resolution that read every scope of the realm.
+    let recorded = json!({
+        "acr": "0", "amr": [], "aud": "portal-api", "azp": "apisix-gateway",
+        "email_verified": false, "groups": [], "iss": format!("{HOST}/realms/dev"),
+        "preferred_username": "service-account-apisix-gateway",
+        "scope": "openid basic email profile roles", "sub_kind": "serviceAccount",
+        "typ": "Bearer",
+    });
+    assert_eq!(after, recorded, "claim for claim");
 
     let keys = store.list_signing_keys("dev").await.expect("keys");
     let key = keys
@@ -123,6 +158,7 @@ async fn a_token_and_a_people_search_do_not_read_the_realm() {
     for query in [
         "search=person&first=100&max=50",
         "max=50",
+        "max=1000000",
         "email=person-4321%40city.example&exact=true",
     ] {
         meter.take();
@@ -136,6 +172,7 @@ async fn a_token_and_a_people_search_do_not_read_the_realm() {
         .await;
         let found = page.as_array().expect("people").len() as u64;
         assert!(found > 0, "{query} finds people");
+        assert!(found <= 1000, "{query} answers more than a page");
         searches.push((query, found, meter.take()));
     }
     println!(
@@ -152,6 +189,12 @@ async fn a_token_and_a_people_search_do_not_read_the_realm() {
         "a token reads {} rows, was {}",
         large.0,
         small.0
+    );
+    assert!(
+        large.1 <= small.1 + 128 * 1024,
+        "a token reads {} bytes, was {}",
+        large.1,
+        small.1
     );
     for (query, found, (rows, _)) in searches {
         assert!(

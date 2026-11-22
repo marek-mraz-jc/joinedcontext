@@ -624,3 +624,56 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
         .await;
     assert_eq!(st_g404, StatusCode::NOT_FOUND);
 }
+
+/// RFC 7644 section 3.4.2.4: a list is a page and says which one.
+#[tokio::test]
+async fn scim_lists_page_by_start_index_and_count() {
+    let api = Api::new().await;
+    let admin = api
+        .token(
+            "admin-1",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    for n in 1..=3 {
+        for (set, body) in [
+            (
+                "Users",
+                json!({ "userName": format!("paged-{n}@city.example") }),
+            ),
+            ("Groups", json!({ "displayName": format!("paged-{n}") })),
+        ] {
+            let (st, body) = api
+                .call(Method::POST, &format!("{SCIM}/{set}"), &admin, Some(body))
+                .await;
+            assert_eq!(st, StatusCode::CREATED, "{body}");
+        }
+    }
+    for (set, attr, name) in [
+        ("Users", "userName", "userName"),
+        ("Groups", "displayName", "displayName"),
+    ] {
+        let filter = format!("filter={attr}%20sw%20%22paged-%22");
+        let uri = format!("{SCIM}/{set}?{filter}&startIndex=2&count=1");
+        let (st, page) = api.call(Method::GET, &uri, &admin, None).await;
+        assert_eq!(st, StatusCode::OK, "{page}");
+        assert_eq!(page["totalResults"], 3, "{page}");
+        assert_eq!(page["startIndex"], 2);
+        assert_eq!(page["itemsPerPage"], 1);
+        assert!(
+            page["Resources"][0][name]
+                .as_str()
+                .is_some_and(|v| v.starts_with("paged-2")),
+            "{page}"
+        );
+        let uri = format!("{SCIM}/{set}?{filter}&startIndex=0&count=-1");
+        let (st, count) = api.call(Method::GET, &uri, &admin, None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(count["totalResults"], 3);
+        assert_eq!(count["startIndex"], 1);
+        assert_eq!(count["itemsPerPage"], 0);
+        let uri = format!("{SCIM}/{set}?count=many");
+        let (st, _) = api.call(Method::GET, &uri, &admin, None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+    }
+}
