@@ -72,6 +72,10 @@
   var DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
   var TIMEOUT_MS = 15000;
   var MAP_LIMIT = 1000;
+  // ponytail: an extent takes a read each time it widens; past these the first view is the world,
+  // a store's extent of a query when that shows on a real dataset.
+  var WIDEN_READS = 12;
+  var WORLD = [[-180, -85], [180, 85]];
   // Room round a fitted view for the widest badge, the zoom buttons (right) and the attribution (bottom).
   var BADGE_ROOM = { top: 32, left: 24, right: 72, bottom: 48 };
   var MVT = "application/vnd.mapbox-vector-tile";
@@ -236,6 +240,15 @@
   }
 
   // The collection's tileset address under the Endpoint (T-5189, Antares antares-ogc tiles).
+  // The world with the box cut out: what meets it reaches past the box, a line or an area that only
+  // partly does too. The cut is a little wider, so a point on the box's own edge is not outside it.
+  function outsideQuery(box) {
+    var c = function (v, lim) { return Math.max(1e-5 - lim, Math.min(lim - 1e-5, Math.round(v * 1e6) / 1e6)); };
+    var w = c(box[0][0] - 1e-5, 180), s = c(box[0][1] - 1e-5, 90), e = c(box[1][0] + 1e-5, 180), n = c(box[1][1] + 1e-5, 90);
+    var world = [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]];
+    return { georel: "intersects", geometry: "Polygon", coordinates: JSON.stringify([world, [[w, s], [w, n], [e, n], [e, s], [w, s]]]) };
+  }
+
   function tilesetUrl(api, type) {
     return api + "ogc/features/collections/" + encodeURIComponent(type) + "/tiles/WebMercatorQuad";
   }
@@ -575,6 +588,16 @@
     if (url === lastUrl) return { skip: true };
     return { read: url };
   }
+
+  // Up to `limit` rows of several reads, one of each in turn: no place read is left without a marker.
+  function spread(reads, limit) {
+    var most = Math.max.apply(null, reads.map(function (r) { return r.length; })), out = [];
+    for (var i = 0; i < most; i++) reads.forEach(function (r) { if (i < r.length && out.length < limit) out.push(r[i]); });
+    return out;
+  }
+
+  // The query and one clause more.
+  function narrowed(q, clause) { return (q ? "(" + q + ");" : "") + clause; }
 
   function number(t, v) { return new Intl.NumberFormat(t.locale).format(v); }
 
@@ -1008,7 +1031,8 @@
       }, function () { mapTrouble("start"); });
     }
 
-    // The query's rows for the map, up to MAP_LIMIT, wherever they are: the first view fits them all.
+    // The query's rows for the map, up to MAP_LIMIT, and the box around all its located ones, the rows
+    // past that read included: the first view fits that box.
     function firstRead() {
       var query = Object.assign({ type: state.type, q: state.rows, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, ownGeo());
       var key = viewKey();
@@ -1019,17 +1043,49 @@
         var rows = ((answer.body && answer.body.features) || []).length;
         // Every row of the query came back: the map holds them and counts each view itself.
         var whole = rows < MAP_LIMIT && (answer.count === null || +answer.count <= rows);
-        return { key: key, features: features, rows: rows, whole: whole, total: answer.count === null ? null : +answer.count };
-      }, function (e) { if (state.first && state.first.key === key) state.first = null; return { key: key, error: e }; }));
+        var got = { key: key, features: features, rows: rows, whole: whole, total: answer.count === null ? null : +answer.count, box: boundsOf(features) };
+        return whole ? got : widen(query, got);
+      }).catch(function (e) { if (state.first && state.first.key === key) state.first = null; return { key: key, error: e }; }));
+    }
+
+    // A read that stopped short: the rows that reach past its box are read until none does, and each
+    // read has its share of what is drawn (T-7516, EP-162). With no box yet, the located rows alone say whether one exists.
+    // An extent that cannot be read through opens on the world, which holds every point.
+    function widen(query, got) {
+      var reads = [got.features];
+      var read = function (more) {
+        return get(entitiesUrl(api, Object.assign({}, query, more)), "application/geo+json").then(function (answer) {
+          var found = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
+          reads.push(found);
+          got.features = spread(reads, got.rows);
+          return { features: found, all: answer.count !== null && +answer.count <= found.length };
+        });
+      };
+      var grow = function (box, left) {
+        if (!left) return WORLD;
+        return read(outsideQuery(box)).then(function (out) {
+          if (!out.features.length) return box;
+          var wider = boundsOf(out.features.concat({ geometry: { coordinates: box } }));
+          if (out.all) return wider;
+          return String(wider) === String(box) ? WORLD : grow(wider, left - 1);
+        }, function () { return WORLD; });
+      };
+      var boxed = got.box ? grow(got.box, WIDEN_READS) : read({ q: narrowed(query.q, query.geoproperty || "location") }).then(function (located) {
+        var box = boundsOf(located.features);
+        return box && !located.all ? grow(box, WIDEN_READS) : box;
+      });
+      return Promise.resolve(boxed).then(function (box) { got.box = box; return got; });
     }
 
     // The first view of a query: its rows drawn, the map fitted to every located one. A read that
     // stopped at MAP_LIMIT draws what it has; panning then reads each view (or the type's tiles).
     function firstView(first) {
       var asked = ++state.mapAsk;
+      state.opening = true; // the map's own moves until then read no view and cancel none
       return first.then(function (got) {
         var map = state.map;
         if (asked !== state.mapAsk) return;
+        state.opening = false;
         // The query moved while MapLibre loaded: read the one now shown.
         if (got.key !== viewKey()) return firstView(firstRead());
         loading(false);
@@ -1042,9 +1098,9 @@
         state.held = got.whole ? got.features : null;
         state.viewUrl = null;
         paint(got.features);
-        var box = boundsOf(got.features);
-        // Every row read and none with a place: the reason stands where the map would.
-        state.empty = got.whole && !box;
+        var box = got.box;
+        // No row of the query with a place: the reason stands where the map would.
+        state.empty = !box;
         state.fitting = true;
         try {
           $("map-section").classList.toggle("map-empty", state.empty);
@@ -1064,7 +1120,10 @@
         state.viewUrl = entitiesUrl(api, Object.assign({ type: state.type, q: state.rows, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, bboxQuery(bb), ownGeo()));
         $("map-note").textContent = capLine(t, got.rows);
         get(entitiesUrl(api, Object.assign({ type: state.type, q: state.rows, limit: 0, count: "true" }, bboxQuery(bb), ownGeo()))).then(function (a) {
-          if (asked === state.mapAsk && a.count !== null) { state.inView = +a.count; showCount(); }
+          if (asked !== state.mapAsk || a.count === null) return;
+          state.inView = +a.count;
+          if (state.inView <= got.features.length) $("map-note").textContent = t.mapHint; // all of them are drawn
+          showCount();
         }, function () {});
         if (!state.rows) tile(state.type).then(function (on) { if (on && asked === state.mapAsk) $("map-note").textContent = t.mapHint; });
       });
@@ -1115,7 +1174,7 @@
       state.countKey = key;
       state.total = state.none = null;
       var ask = function (q) { return get(entitiesUrl(api, { type: state.type, q: q, limit: 0, count: "true" })).then(function (a) { return a.count === null ? null : +a.count; }); };
-      Promise.all([ask(state.rows), ask((state.rows ? "(" + state.rows + ");" : "") + "!" + geo)]).then(function (c) {
+      Promise.all([ask(state.rows), ask(narrowed(state.rows, "!" + geo))]).then(function (c) {
         if (state.countKey !== key) return;
         state.total = c[0];
         state.none = c[1];
@@ -1195,7 +1254,7 @@
 
     function mapMoved() {
       var map = state.map;
-      if (!map || !map.getSource("jc") || !state.mapping || state.fitting || state.empty) return;
+      if (!map || !map.getSource("jc") || !state.mapping || state.fitting || state.opening || state.empty) return;
       if (state.tiled && (state.tiled !== state.type || state.rows || geoOf() !== "location")) untile();
       counts();
       var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
@@ -1486,7 +1545,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, badges: badges, matchLine: matchLine, capLine: capLine, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, outsideQuery: outsideQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, badges: badges, matchLine: matchLine, capLine: capLine, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);

@@ -11,6 +11,7 @@ const file = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../vendo
 type Feature = { type: "Feature"; geometry: { type: string; coordinates: unknown } | null; properties?: object };
 interface Explore {
   boundsOf(features: Feature[]): [[number, number], [number, number]] | null;
+  outsideQuery(box: [[number, number], [number, number]]): { georel: string; geometry: string; coordinates: string };
   inBox(features: Feature[], box: number[]): number;
   viewPlan(held: Feature[] | null, lastUrl: string | null, url: string, box: number[]): { local?: number; skip?: boolean; read?: string };
   countLine(t: object, c: { inView: number; total: number; none: number; drawn?: number; tiled?: boolean }): string;
@@ -63,6 +64,21 @@ describe("explore.js map view", () => {
     expect(X.boundsOf([point(17.1, 48.14)])).toEqual([[17.1, 48.14], [17.1, 48.14]]);
     expect(X.boundsOf([none, none])).toBeNull();
     expect(X.boundsOf([])).toBeNull();
+  });
+
+  it("asks for what reaches outside a box as the world with that box cut out, within range", () => {
+    const { coordinates, ...rest } = X.outsideQuery([[17.1, 48.14], [17.14, 48.14]]);
+    expect(rest).toEqual({ georel: "intersects", geometry: "Polygon" });
+    const [world, cut] = JSON.parse(coordinates) as [[number, number][], [number, number][]];
+    expect(world).toEqual([[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]]);
+    expect(cut[0]).toEqual(cut[4]);
+    // A point or a line as the box still cuts a hole with an area, its own edge inside it.
+    expect(cut[0]![0]).toBeLessThan(17.1);
+    expect(cut[2]![0]).toBeGreaterThan(17.14);
+    expect(cut[0]![1]).toBeLessThan(48.14);
+    expect(cut[1]![1]).toBeGreaterThan(48.14);
+    const whole = (JSON.parse(X.outsideQuery([[-180, -90], [180, 90]]).coordinates) as [number, number][][])[1]!;
+    for (const [x, y] of whole) expect(Math.abs(x) < 180 && Math.abs(y) < 90).toBe(true);
   });
 
   it("counts within the view as the broker's within does", () => {
