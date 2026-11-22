@@ -15,4 +15,7 @@ exclude_re = [
   'crates/kaisatsu/crypto/src/totp\.rs:.*replace \| with \^ in compute_hotp_at',
   # kaisatsu-crypto: AUTH_DATA_FLAG_UP is `1 << 0`, and `1 >> 0` is the same 1.
   'crates/kaisatsu/crypto/src/webauthn\.rs:35:.*replace << with >>',
+  # kaisatsu-crypto: decode_cbor refuses an input over 64 KiB before decoding, so no byte or text string of
+  # exactly 64 KiB (head included) reaches the per-string cap, where `>` and `>=` differ only at that length.
+  'crates/kaisatsu/crypto/src/webauthn\.rs:(200|212):.*replace > with >= in CborReader',
 ]
