@@ -1,0 +1,16 @@
+[package]
+name = "jc-audit"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Audit rows commit with the change: one request, one Postgres transaction for every store call of it (AUD-02)"
+
+[dependencies]
+axum = { version = "0.8", default-features = false }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio"] }
+tokio = { version = "1.54", features = ["sync", "rt"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

@@ -737,6 +737,15 @@ pub async fn execute(
                     temporary: false,
                 })
                 .await?;
+            record_admin_write(
+                state,
+                ctx,
+                "CREATE",
+                "CREDENTIAL",
+                &format!("users/{}/credentials/recovery-authn-codes", user.id),
+                None,
+            )
+            .await?;
             Ok(Some(json!(plain)))
         }
         "totp_enrol" => {
@@ -794,6 +803,15 @@ pub async fn execute(
                 return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
             }
             store.upsert_credential(cred.clone()).await?;
+            record_admin_write(
+                state,
+                ctx,
+                "CREATE",
+                "CREDENTIAL",
+                &format!("users/{}/credentials/{}", user.id, cred.id),
+                None,
+            )
+            .await?;
             Ok(Some(json!({ "credentialId": cred.id })))
         }
         "passkey_register" => {
@@ -952,6 +970,15 @@ pub async fn execute(
                 last_used_at: None,
             };
             let inserted = store.insert_webauthn_credential(rec).await?;
+            record_admin_write(
+                state,
+                ctx,
+                "CREATE",
+                "WEBAUTHN_CREDENTIAL",
+                &format!("users/{}/webauthn-credentials/{}", user.id, inserted.id),
+                None,
+            )
+            .await?;
             Ok(Some(kaisatsu_core::odata_defs::webauthn_credential_to_row(
                 &inserted,
             )))
@@ -990,6 +1017,15 @@ pub async fn execute(
             if !deleted {
                 return Err(KaisatsuError::NotFound("passkey not found".into()));
             }
+            record_admin_write(
+                state,
+                ctx,
+                "DELETE",
+                "WEBAUTHN_CREDENTIAL",
+                &format!("webauthn-credentials/{cred_id}"),
+                None,
+            )
+            .await?;
             Ok(None)
         }
         "outbox_retry" => {
@@ -1008,6 +1044,15 @@ pub async fn execute(
                 .retry_outbox_row(realm, allowed.as_deref(), id)
                 .await?
                 .ok_or_else(|| KaisatsuError::NotFound("outbox item not found".into()))?;
+            record_admin_write(
+                state,
+                ctx,
+                "ACTION",
+                "EMAIL_OUTBOX",
+                &format!("email-outbox/{id}/retry"),
+                None,
+            )
+            .await?;
             Ok(Some(kaisatsu_core::odata_defs::email_outbox_to_row(&row)))
         }
         "domain_request_verification" => {
