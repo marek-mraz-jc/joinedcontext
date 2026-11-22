@@ -11,7 +11,7 @@ use shako_server::{
 };
 use shako_store_memory::MemoryStore;
 use shako_store_pg::PgStore;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgConnectOptions;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -173,7 +173,7 @@ async fn main() -> ExitCode {
                 };
                 opts = opts.password(pw.trim());
             }
-            let pool = match PgPoolOptions::new()
+            let pool = match jc_pool::options::<sqlx::Postgres>()
                 .max_connections(2)
                 .connect_with(opts)
                 .await

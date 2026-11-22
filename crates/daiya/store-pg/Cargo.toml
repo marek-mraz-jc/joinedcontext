@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+jc-pool = { path = "../../shared/jc-pool" }
 jc-time = { path = "../../shared/jc-time", features = ["sqlx"] }
 daiya-model = { path = "../model" }
 serde = { version = "1", features = ["derive"] }

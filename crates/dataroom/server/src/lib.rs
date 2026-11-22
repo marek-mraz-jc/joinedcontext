@@ -410,7 +410,8 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
 
     let store: Arc<dyn Store> = match &cli.database_url {
         Some(url) => {
-            let pool = sqlx::PgPool::connect(url)
+            let pool = jc_pool::options::<sqlx::Postgres>()
+                .connect(url)
                 .await
                 .map_err(|e| DataroomError::Storage(format!("connect postgres: {e}")))?;
             if matches!(cli.command, Command::Migrate) {

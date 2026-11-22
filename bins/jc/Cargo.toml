@@ -64,6 +64,7 @@ viz = ["dep:flate2", "dep:sha2"]
 
 [dependencies]
 jc-router = { path = "../../crates/shared/jc-router" }
+jc-pool = { path = "../../crates/shared/jc-pool" }
 jc-secret = { path = "../../crates/shared/jc-secret" }
 jc-door = { path = "../../crates/shared/jc-door" }
 axum = "0.8"
