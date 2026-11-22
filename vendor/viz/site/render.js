@@ -69,6 +69,12 @@
       downloadFileName: "chart"
     }).then(function (result) {
       shown = result && result.view ? result.view : null;
+      // The host's interactive chart (T-7490) offers a reset button only while its brush zooms.
+      try {
+        if (shown) shown.addSignalListener("brush", function (name, value) {
+          tell({ type: "jc-viz-zoom", zoomed: !!value && typeof value === "object" && Object.keys(value).length > 0 });
+        });
+      } catch (e) { /* a chart without a brush */ }
       return result;
     });
   }

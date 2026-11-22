@@ -201,6 +201,8 @@ for (const width of [1440, 400]) {
     expect(box).not.toBeNull();
     const firstLabel = () => chart.locator("g.concat_0_group g.role-axis-label text, g[class*='concat_0'] .role-axis-label text").first().textContent();
     const unzoomed = await firstLabel();
+    const reset = host.getByRole("button", { name: "Zobraziť celé obdobie" });
+    await expect(reset).toBeHidden();
     await page.mouse.move(box!.x + box!.width * 0.55, box!.y + box!.height / 2);
     await page.mouse.down();
     await page.mouse.move(box!.x + box!.width * 0.85, box!.y + box!.height / 2, { steps: 8 });
@@ -208,8 +210,9 @@ for (const width of [1440, 400]) {
     await expect.poll(firstLabel).not.toBe(unzoomed);
     await shot(page, "zoomed", width);
     // The reset button draws the whole range again.
-    await host.getByRole("button", { name: "Zobraziť celé obdobie" }).click();
+    await reset.click();
     await expect.poll(firstLabel).toBe(unzoomed);
+    await expect(reset).toBeHidden();
     expect(errors).toEqual([]);
   });
 
@@ -231,6 +234,7 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
+    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14.\u00a011.\u00a02026");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 21\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
     await shot(page, "cut", width);
 

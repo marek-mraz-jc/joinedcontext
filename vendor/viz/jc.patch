@@ -958,10 +958,10 @@
 -    cs: "Graf je neúplný: ukazuje data do {at}, zbytek přesahuje limity stránky.",
 -    fi: "Kaavio on vajaa: se näyttää tiedot {at} asti, loput ylittävät sivun rajat.",
 -    en: "Partial chart: it shows data up to {at}; the rest is over the page's limits."
-+    sk: "Graf je neúplný: zobrazuje iba údaje od {from} do {to}, zvyšok vybraného obdobia presahuje limity stránky.",
-+    cs: "Graf je neúplný: ukazuje jen data od {from} do {to}, zbytek vybraného období přesahuje limity stránky.",
-+    fi: "Kaavio on vajaa: se näyttää vain tiedot {from}–{to}, muu osa valitusta aikavälistä ylittää sivun rajat.",
-+    en: "Partial chart: it shows only data from {from} to {to}; the rest of the range picked is over the page's limits."
++    sk: "Graf je neúplný: zobrazuje iba údaje od {from} do {to}, novšie údaje alebo ďalšie stanice presahujú limity stránky.",
++    cs: "Graf je neúplný: ukazuje jen data od {from} do {to}, novější data nebo další stanice přesahují limity stránky.",
++    fi: "Kaavio on vajaa: se näyttää vain tiedot {from}–{to}, uudemmat tiedot tai muut asemat ylittävät sivun rajat.",
++    en: "Partial chart: it shows only data from {from} to {to}; newer data or more stations are over the page's limits."
 +  };
 +
 +  // T-7490: the toolbar of a temporal chart. Its state lives in the fragment after the view id, so
@@ -1508,8 +1508,11 @@
      var ready = new Promise(function (resolve) {
        window.addEventListener("message", function (event) {
          // The renderer runs in an opaque origin, so its messages come from "null"; the source
-@@ -504,6 +908,11 @@
+@@ -502,8 +906,14 @@
+           resize();
+         }
          if (data.type === "jc-viz-error") fail(String(data.message || "The chart could not be drawn."));
++        if (data.type === "jc-viz-zoom") document.dispatchEvent(new CustomEvent("jc-viz-zoom", { detail: data.zoomed === true }));
        });
      });
 +    var failed = function (error) {
@@ -1520,7 +1523,7 @@
      fetcher(h.data + "/api/3/action/resource_view_show?" + query({ id: where.id }), { credentials: "omit", referrerPolicy: "no-referrer" })
        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("The chart is not published.")); })
        .then(function (body) {
-@@ -521,23 +930,309 @@
+@@ -521,23 +931,314 @@
          var table = document.getElementById("table");
          table.textContent = LINK[lang] || LINK.en;
          table.href = h.data + "/dataset/" + encodeURIComponent(view.package_id || "");
@@ -1584,6 +1587,8 @@
 +      reset.type = "button";
 +      reset.className = "retry";
 +      reset.textContent = t.resetZoom;
++      reset.hidden = true;
++      document.addEventListener("jc-viz-zoom", function (event) { reset.hidden = !event.detail; });
 +      reset.addEventListener("click", function () {
 +        drawn = null;
 +        draw();
@@ -1626,13 +1631,15 @@
 +        var key = [attr, m && m.title, dense, daily, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
 +        // An empty answer keeps the last station list, so the reader can still change it.
 +        if (bar && all.length) bar.stations(all, state.stations);
-+        frame.hidden = zoom.hidden = reset.hidden = !rows.length;
++        frame.hidden = zoom.hidden = !rows.length;
++        if (!rows.length) reset.hidden = true;
 +        if (!rows.length) return say(t.empty, "note");
 +        if (drawn === key) {
 +          frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
 +          return;
 +        }
 +        drawn = key;
++        reset.hidden = true; // a new drawing starts unzoomed
 +        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
 +        frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
 +        if (shown.vconcat && !zoom.parentNode) {
@@ -1670,14 +1677,15 @@
 +          }
 +          var late = "";
 +          var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
-+          // A cut answer has its own note: what is missing there is the page's limit, not the source.
-+          if (!data.partial && first !== Infinity && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
++          // An answer is read oldest first, so a cut one misses its end: a late first reading is
++          // still where the source starts, and both notes hold.
++          if (first !== Infinity && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
 +            late = t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })));
 +          }
 +          if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
 +          note.textContent = notes.join(" ");
-+          say(data.partial || late, "note");
-+          frame.hidden = zoom.hidden = reset.hidden = false;
++          say([data.partial, late].filter(Boolean).join(" "), "note");
++          frame.hidden = zoom.hidden = false;
 +          return ready.then(draw);
 +        }).catch(function (error) {
 +          if (mine !== controller) return null;
@@ -1839,7 +1847,7 @@
    }
  
    // `#show`: the assistant's widget hands one spec and its rows by message (ADR-N-053 §2.9). A
-@@ -572,6 +1267,9 @@
+@@ -572,6 +1273,9 @@
          if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
          parent = event.origin;
          var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
@@ -1849,7 +1857,7 @@
          document.documentElement.lang = lang;
          map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
          var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
-@@ -579,8 +1277,8 @@
+@@ -579,8 +1283,8 @@
          var title = map ? data.spec.title : null;
          document.getElementById("title").textContent = typeof title === "string" ? title : "";
          pending = map
@@ -1860,7 +1868,7 @@
          if (map) {
            // The renderer frame stays empty; the map page takes its place.
            mapFrame = document.createElement("iframe");
-@@ -618,6 +1316,13 @@
+@@ -618,6 +1322,13 @@
      firstRequest: firstRequest,
      rowsFromTemporal: rowsFromTemporal,
      nextWindow: nextWindow,
@@ -1924,7 +1932,7 @@
    }
  
    function height() {
-@@ -23,34 +24,92 @@
+@@ -23,34 +24,98 @@
    };
    var loader = { load: refused, sanitize: refused, http: refused, file: refused };
  
@@ -1975,6 +1983,12 @@
        downloadFileName: "chart"
 +    }).then(function (result) {
 +      shown = result && result.view ? result.view : null;
++      // The host's interactive chart (T-7490) offers a reset button only while its brush zooms.
++      try {
++        if (shown) shown.addSignalListener("brush", function (name, value) {
++          tell({ type: "jc-viz-zoom", zoomed: !!value && typeof value === "object" && Object.keys(value).length > 0 });
++        });
++      } catch (e) { /* a chart without a brush */ }
 +      return result;
      });
    }
@@ -2022,7 +2036,7 @@
        }
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
-@@ -61,12 +120,14 @@
+@@ -61,12 +126,14 @@
    }
  
    window.addEventListener("message", function (event) {

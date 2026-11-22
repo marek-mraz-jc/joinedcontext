@@ -30,10 +30,10 @@
   };
   // T-5414: a temporal chart cut at a limit says so instead of passing for the whole window.
   var PARTIAL = {
-    sk: "Graf je neúplný: zobrazuje iba údaje od {from} do {to}, zvyšok vybraného obdobia presahuje limity stránky.",
-    cs: "Graf je neúplný: ukazuje jen data od {from} do {to}, zbytek vybraného období přesahuje limity stránky.",
-    fi: "Kaavio on vajaa: se näyttää vain tiedot {from}–{to}, muu osa valitusta aikavälistä ylittää sivun rajat.",
-    en: "Partial chart: it shows only data from {from} to {to}; the rest of the range picked is over the page's limits."
+    sk: "Graf je neúplný: zobrazuje iba údaje od {from} do {to}, novšie údaje alebo ďalšie stanice presahujú limity stránky.",
+    cs: "Graf je neúplný: ukazuje jen data od {from} do {to}, novější data nebo další stanice přesahují limity stránky.",
+    fi: "Kaavio on vajaa: se näyttää vain tiedot {from}–{to}, uudemmat tiedot tai muut asemat ylittävät sivun rajat.",
+    en: "Partial chart: it shows only data from {from} to {to}; newer data or more stations are over the page's limits."
   };
 
   // T-7490: the toolbar of a temporal chart. Its state lives in the fragment after the view id, so
@@ -906,6 +906,7 @@
           resize();
         }
         if (data.type === "jc-viz-error") fail(String(data.message || "The chart could not be drawn."));
+        if (data.type === "jc-viz-zoom") document.dispatchEvent(new CustomEvent("jc-viz-zoom", { detail: data.zoomed === true }));
       });
     });
     var failed = function (error) {
@@ -981,6 +982,8 @@
       reset.type = "button";
       reset.className = "retry";
       reset.textContent = t.resetZoom;
+      reset.hidden = true;
+      document.addEventListener("jc-viz-zoom", function (event) { reset.hidden = !event.detail; });
       reset.addEventListener("click", function () {
         drawn = null;
         draw();
@@ -1023,13 +1026,15 @@
         var key = [attr, m && m.title, dense, daily, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
         // An empty answer keeps the last station list, so the reader can still change it.
         if (bar && all.length) bar.stations(all, state.stations);
-        frame.hidden = zoom.hidden = reset.hidden = !rows.length;
+        frame.hidden = zoom.hidden = !rows.length;
+        if (!rows.length) reset.hidden = true;
         if (!rows.length) return say(t.empty, "note");
         if (drawn === key) {
           frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
           return;
         }
         drawn = key;
+        reset.hidden = true; // a new drawing starts unzoomed
         var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
         frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
         if (shown.vconcat && !zoom.parentNode) {
@@ -1067,14 +1072,15 @@
           }
           var late = "";
           var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
-          // A cut answer has its own note: what is missing there is the page's limit, not the source.
-          if (!data.partial && first !== Infinity && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
+          // An answer is read oldest first, so a cut one misses its end: a late first reading is
+          // still where the source starts, and both notes hold.
+          if (first !== Infinity && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
             late = t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })));
           }
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
           note.textContent = notes.join(" ");
-          say(data.partial || late, "note");
-          frame.hidden = zoom.hidden = reset.hidden = false;
+          say([data.partial, late].filter(Boolean).join(" "), "note");
+          frame.hidden = zoom.hidden = false;
           return ready.then(draw);
         }).catch(function (error) {
           if (mine !== controller) return null;
