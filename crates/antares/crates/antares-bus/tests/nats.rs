@@ -530,30 +530,37 @@ async fn topology_and_tenant_checks_refuse_what_does_not_match() {
 }
 
 /// `next_delta` acks and skips a registry message that is not JSON and
-/// returns the next one that is.
+/// returns the next one that is (other tests' deltas on the broadcast are passed over).
 #[tokio::test(flavor = "multi_thread")]
 async fn next_delta_skips_a_message_that_is_not_json() {
     let url = require_nats!();
     let bus = NatsBus::connect(&url).await.expect("connect");
     let consumer = bus.consume_registry_broadcast().await.expect("consumer");
     let mut stream = consumer.messages().await.expect("messages");
-    let tenant = TenantId::new(&format!("nd{}", nonce())).expect("tenant");
+    let n = nonce();
+    let tenant = TenantId::new(&format!("nd{n}")).expect("tenant");
     let subject = antares_bus::subjects::registry_subject(&tenant);
     let js = async_nats::jetstream::new(async_nats::connect(&url).await.expect("raw client"));
-    for body in ["not json", r#"{"delta":1}"#] {
+    let want = serde_json::json!({ "delta": n.to_string() });
+    for body in ["not json".to_string(), want.to_string()] {
         js.publish(subject.clone(), body.into())
             .await
             .expect("publish")
             .await
             .expect("stored");
     }
-    let next = tokio::time::timeout(
-        Duration::from_secs(10),
-        antares_bus::nats::next_delta(&mut stream),
-    )
+    let found = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match antares_bus::nats::next_delta(&mut stream).await {
+                Some(v) if v == want => break true,
+                Some(_) => continue,
+                None => break false,
+            }
+        }
+    })
     .await
     .expect("a delta within 10 s");
-    assert_eq!(next, Some(serde_json::json!({"delta": 1})));
+    assert!(found, "the stream ended before the JSON delta");
 }
 
 /// A TCP hop between the bus and NATS that the test can cut and hold shut.
