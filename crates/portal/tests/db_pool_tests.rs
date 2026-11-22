@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use joinedcontext_portal::pipeline_log::{LogStore, NewLine, Outcome, LINES_KEPT};
+use joinedcontext_portal::pipeline_outcomes::{Reason, RejectedStore};
 use p256::pkcs8::EncodePrivateKey;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::rustls;
@@ -199,6 +200,79 @@ async fn a_trim_that_times_out_after_the_caller_left_leaves_the_pool_at_full_siz
             "held-{n} lost its history row to the failed trim"
         );
     }
+}
+
+/// One project's failed delete rolls that project back and the pass goes on to the next one, in
+/// the run logs and in the refused records alike (T-7497).
+#[tokio::test]
+async fn one_projects_failed_cleanup_leaves_the_projects_after_it_cleaned() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: cleanup's database half is not run");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let id = unique::unique();
+    // A pass takes the projects by name: the one that fails comes first.
+    let (failing, next) = (format!("a-{id}"), format!("b-{id}"));
+    let mirror = common::keyed_mirror(&pool, &[&failing, &next]).await;
+    let log = LogStore::new(Some(pool.clone()), mirror.clone());
+    let rejected = RejectedStore::new(Some(pool.clone()), mirror.clone());
+    for project in [&failing, &next] {
+        log.append(project, "gone", "r", &[line()])
+            .await
+            .expect("kept");
+        rejected
+            .reject(project, "gone", &serde_json::json!({}), &Reason::default())
+            .await
+            .expect("kept");
+    }
+    let trigger = format!("refuse_{id}");
+    let refuse = format!(
+        "CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'cleanup refused by the test'; END $$; \
+         CREATE TRIGGER {trigger} BEFORE DELETE ON pipeline_runs FOR EACH ROW \
+         WHEN (OLD.project = '{failing}') EXECUTE FUNCTION {trigger}(); \
+         CREATE TRIGGER {trigger} BEFORE DELETE ON pipeline_rejected FOR EACH ROW \
+         WHEN (OLD.project = '{failing}') EXECUTE FUNCTION {trigger}();"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(refuse))
+        .execute(&pool)
+        .await
+        .expect("the failure is set");
+
+    let loaded = std::collections::BTreeMap::from([
+        (failing.clone(), Default::default()),
+        (next.clone(), Default::default()),
+    ]);
+    let logs_forgotten = log.forget_gone(&loaded).await;
+    let rejected_forgotten = rejected.forget_gone(&loaded).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP FUNCTION {trigger}() CASCADE"
+    )))
+    .execute(&pool)
+    .await
+    .expect("the failure is lifted");
+
+    assert!(logs_forgotten.is_err(), "the failure is still reported");
+    assert!(rejected_forgotten.is_err(), "the failure is still reported");
+    let kept = log.lines(&failing, "gone", "r", 10, None).await;
+    assert_eq!(kept.expect("lines").len(), 1);
+    let cleaned = log.lines(&next, "gone", "r", 10, None).await;
+    assert!(
+        cleaned.expect("lines").is_empty(),
+        "the next project's log was not cleaned"
+    );
+    assert_eq!(rejected.count(&failing, "gone").await.expect("count"), 1);
+    assert_eq!(
+        rejected.count(&next, "gone").await.expect("count"),
+        0,
+        "the next project's refused records were not cleaned"
+    );
 }
 
 /// `forget_gone` drops exactly the pipelines a project no longer holds, whichever table still has
