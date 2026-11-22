@@ -56,10 +56,36 @@ async fn tls_url(url: &str) -> String {
                 let mut request = [0; 8];
                 client.read_exact(&mut request).await?;
                 client.write_all(b"S").await?;
-                let mut client = acceptor.accept(client).await?;
-                let mut server = tokio::net::TcpStream::connect(server).await?;
-                tokio::io::copy_bidirectional(&mut client, &mut server).await?;
-                std::io::Result::Ok(())
+                let client = acceptor.accept(client).await?;
+                let server = tokio::net::TcpStream::connect(server).await?;
+                let (mut from_client, mut to_client) = tokio::io::split(client);
+                let (mut from_server, mut to_server) = server.into_split();
+                let up = async {
+                    tokio::io::copy(&mut from_client, &mut to_server).await?;
+                    to_server.shutdown().await
+                };
+                let down = async {
+                    let mut answer = [0; 16384];
+                    loop {
+                        let mut read = from_server.read(&mut answer).await?;
+                        if read == 0 {
+                            return to_client.shutdown().await;
+                        }
+                        // An error and the answers queued behind it go out as one record: the
+                        // client has then read all there is, which is when the close hung.
+                        if answer[0] == b'E' {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            read += from_server.try_read(&mut answer[read..]).unwrap_or(0);
+                        }
+                        to_client.write_all(&answer[..read]).await?;
+                        to_client.flush().await?;
+                    }
+                };
+                // Either side hanging up ends the connection, as a real server's exit does.
+                tokio::select! {
+                    done = up => done,
+                    done = down => done,
+                }
             });
         }
     });
