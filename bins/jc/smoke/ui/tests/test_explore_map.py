@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, quote, unquote
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from phone_check import phone_hits
+from phone_check import phone_hits, write_phone_report
 
 ROOT = Path(__file__).resolve().parents[5]
 VIZ = ROOT / "vendor" / "viz"
@@ -43,25 +43,30 @@ PODUJATIA = [
 
 
 def matching(events, q):
-    """The stub broker's q: the tests ask `upcoming==true` or a search, the map's counts add `!location`."""
+    """The stub broker's q: the tests ask `upcoming==true` or a search, the map's reads add `location` or `!location`."""
     if word := re.search(r'~="\(\?i\)([^"]*)"', q):
         events = [e for e in events if word[1].lower() in str(e["properties"]["name"]).lower()]
     if "!location" in q:
         events = [e for e in events if not e["geometry"]]
+    elif re.search(r"(^|;)location$", q):
+        events = [e for e in events if e["geometry"]]
     if "upcoming" in q:
         events = [e for e in events if e["properties"].get("upcoming")]
     return events
 
 
 def in_view(events, asked):
+    """The stub broker's geo query: a box, less the box a second ring cuts out of it."""
     if "coordinates" not in asked:
         return events
-    ring = json.loads(asked["coordinates"][0])[0]
-    (w, s), (e, n) = ring[0], ring[2]
-    return [f for f in events if f["geometry"] and w <= f["geometry"]["coordinates"][0] <= e and s <= f["geometry"]["coordinates"][1] <= n]
+    rings = json.loads(asked["coordinates"][0])
+    boxes = [(min(xs), min(ys), max(xs), max(ys)) for xs, ys in (zip(*ring) for ring in rings)]
+    within = lambda at, b: b[0] <= at[0] <= b[2] and b[1] <= at[1] <= b[3]
+    return [f for f in events if f["geometry"] and within(f["geometry"]["coordinates"], boxes[0])
+            and not any(within(f["geometry"]["coordinates"], hole) for hole in boxes[1:])]
 
 
-def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True, fields=()):
+def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True, fields=(), extent_ok=True):
     # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
     missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
     if missing:
@@ -132,7 +137,7 @@ def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True, fields=()):
                 start = int(asked.get("offset", ["0"])[0])
                 page = found[start : start + min(cap, int(asked.get("limit", ["1000"])[0]))]
                 if "application/geo+json" in (self.headers.get("Accept") or ""):
-                    if not points_ok():
+                    if not points_ok() or (not extent_ok and "intersects" in asked.get("georel", [])):
                         return self.send(503, "application/json", b"{}")
                     return self.send(200, "application/geo+json", json.dumps({"type": "FeatureCollection", "features": page}).encode(), count)
                 rows = [{"id": e["id"], "type": "Event", **e["properties"], **({"location": e["geometry"]} if e["geometry"] else {})} for e in page]
@@ -359,6 +364,96 @@ def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
         drawn = sum(1 for e in PODUJATIA[:200] if e["geometry"])
         tail = f"{drawn} of 231 with a location drawn · 3 without"
         page.wait_for_function("(tail) => document.getElementById('map-count').textContent.endsWith(tail)", arg=tail, timeout=10_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def capped(case, size):
+    """A query the map's first read of 1 000 rows cannot hold; what the case is about lies past that read."""
+    def at(n):
+        if case == "late":
+            return [19.1 + n % 7 / 100, 48.7] if n >= 1000 else None
+        if n >= 1000:
+            if case == "far":
+                return [30.0, 59.9]
+            if case == "apart":  # two reads past the first: the box widens twice
+                return [30.0, 59.9] if n < 2000 else [-8.6, 41.1]
+        return [17.1 + n % 40 / 1000, 48.14]
+    return [{"type": "Feature", "id": f"urn:ngsi-ld:Event:x{n}", "properties": {"type": "Event", "name": f"Event {n}"},
+             "geometry": None if case == "none" else (place := at(n)) and {"type": "Point", "coordinates": place}}
+            for n in range(size)]
+
+
+@pytest.mark.parametrize("width, lang", [(1440, "en"), (400, "sk")])
+@pytest.mark.parametrize("case, size", [("near", 1100), ("far", 1100), ("apart", 2100), ("late", 1100)])
+def test_a_capped_query_opens_on_every_point(pw, width, lang, case, size):
+    """T-7516, EP-162: the view was fitted to the first 1 000 rows, so it ended at 17.14 E with points at 30 E."""
+    events = capped(case, size)
+    points = [e["geometry"]["coordinates"] for e in events if e["geometry"]]
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, events)
+    try:
+        page, errors = open_explorer(browser, srv, width, lang, touch=width < 640)
+        wait_drawn(page)
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        assert all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
+        drawn = min(1000, len(points))
+        assert sum(b["n"] for b in view["badges"]) == drawn
+        # A marker stands at each far place, not only room for it.
+        assert len(view["badges"]) >= {"far": 2, "apart": 2}.get(case, 1), view
+        said = {"en": f"{drawn:,} of", "sk": f"Nakreslených: {drawn:,} z".replace(",", "\u00a0")} if drawn < len(points) else {"en": f"{drawn} in view", "sk": f"Vo výreze: {drawn}"}
+        assert page.locator("#map-count").inner_text().startswith(said[lang])
+        if drawn == len(points):  # nothing is left to zoom in for
+            note = page.locator("#map-note").inner_text()
+            assert "zoom in for the rest" not in note and "ostatné" not in note, note
+        page.wait_for_timeout(800)
+        shot(page, f"map-capped-{case}-{width}")
+        if SHOTS and width < 640:
+            write_phone_report(page, f"{SHOTS}/map-capped-{case}-{width}.png")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [1440, 400])
+def test_a_capped_query_whose_extent_cannot_be_read_opens_on_the_world(pw, width):
+    browser = pw.chromium.launch(args=WEBGL)
+    events = capped("far", 1100)
+    srv = serve(lambda: True, events, extent_ok=False)
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        wait_drawn(page)
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        assert east >= 30.0 and north >= 59.9 and west <= -100 and south <= 0, view["bounds"]
+        assert sum(b["n"] for b in view["badges"]) == 1000
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width, lang", [(1440, "en"), (400, "sk")])
+@pytest.mark.parametrize("size", [999, 1000, 1100])
+def test_a_capped_query_without_a_location_says_so_in_place_of_the_map(pw, width, lang, size):
+    """T-7516, EP-162: from 1 000 rows on the empty map stood there, "zoom in for the rest" under it."""
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, capped("none", size))
+    try:
+        page, errors = open_explorer(browser, srv, width, lang, touch=width < 640)
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+        total = f"{size:,}" if lang == "en" else f"{size:,}".replace(",", "\u00a0")
+        said = {"en": f"None of the {total} records", "sk": f"Žiadny zo záznamov tohto dopytu ({total}) nemá polohu"}[lang]
+        assert page.locator("#map-note").inner_text().startswith(said)
+        assert page.locator("#map").is_hidden() and page.locator("#map-count").is_hidden()
+        page.wait_for_timeout(500)
+        shot(page, f"map-capped-none-{size}-{width}")
+        if SHOTS and width < 640:
+            write_phone_report(page, f"{SHOTS}/map-capped-none-{size}-{width}.png")
         assert errors == []
     finally:
         browser.close()
