@@ -637,7 +637,8 @@ async fn a_temporal_chart_default_outside_its_list_is_a_422_naming_the_member() 
 async fn the_check_of_a_refused_chart_default_leads_each_finding_with_the_pointer() {
     let (state, _gitea) = portal(EVENTS).await;
     for (member, value) in [("last", json!("P32D")), ("controls", json!("no"))] {
-        let mut data = json!({ "source": "temporal", "type": "Event", "attrs": ["startDate"], "last": "P7D" });
+        let mut data =
+            json!({ "source": "temporal", "type": "Event", "attrs": ["startDate"], "last": "P7D" });
         data[member] = value;
         let answer = common::send(
             &state,
@@ -650,7 +651,11 @@ async fn the_check_of_a_refused_chart_default_leads_each_finding_with_the_pointe
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
         let body: Value = serde_json::from_str(&answer.text).expect("a verdict");
         let finding = &body["verdict"]["findings"][0];
-        assert_eq!(finding["path"].as_str().unwrap_or_default(), "", "{finding}");
+        assert_eq!(
+            finding["path"].as_str().unwrap_or_default(),
+            "",
+            "{finding}"
+        );
         let message = finding["message"].as_str().expect("a sentence");
         let pointer = format!("/spec/catalog/visualizations/0/data/{member}");
         assert!(
