@@ -267,7 +267,7 @@ async fn public_feed_datasets(
     state: &DataroomState,
     ctx: &RequestCtx,
     cat: &Catalogue,
-    stack: &Stack,
+    stack: &Arc<Stack>,
     publisher_filter: Option<&str>,
 ) -> Result<(Vec<Dataset>, BTreeMap<String, Publisher>)> {
     let all_ds = state.store.list_datasets(ctx).await?;
@@ -277,8 +277,7 @@ async fn public_feed_datasets(
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
         .collect();
 
-    let mut visible = Vec::new();
-    let mut gaps = BTreeSet::new();
+    let mut public = Vec::new();
     for ds in all_ds {
         if ds.state != RecordState::Active
             || ds.visibility != Visibility::Public
@@ -297,29 +296,44 @@ async fn public_feed_datasets(
                 continue;
             }
         }
-        let missing = dataset_gaps(state, cat, &ds, pub_rec, stack);
-        if !missing.is_empty() {
-            // C17: Violations in a profile hide the record from that profile's feed.
-            gaps.extend(missing.iter().cloned());
-            continue;
-        }
-        visible.push(ds);
+        let publisher = pub_rec.cloned();
+        public.push((ds, publisher));
     }
+    // SHACL is CPU work on an anonymous route: off the async worker.
+    let (visible, gaps) = tokio::task::spawn_blocking({
+        let (state, cat, stack) = (state.clone(), cat.clone(), stack.clone());
+        move || {
+            let mut visible = Vec::new();
+            let mut gaps = BTreeSet::new();
+            for (ds, publisher) in public {
+                let missing = dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack);
+                if missing.is_empty() {
+                    visible.push(ds);
+                } else {
+                    // C17: Violations in a profile hide the record from that profile's feed.
+                    gaps.extend(missing.iter().cloned());
+                }
+            }
+            (visible, gaps)
+        }
+    })
+    .await
+    .map_err(|e| DataroomError::Storage(format!("feed conformance: {e}")))?;
 
     let (profile, id) = (stack.renderer, &stack.record.id);
-    if !profile.is_base() {
-        if profile.requires_publisher() && cat.declared_publisher_uri().is_none() {
-            return Err(DataroomError::FeedUnavailable(format!(
-                "missing publisher: the {id} feed needs the catalogue's publisher IRI; declare \
-                 spec.catalog.publisher.uri on the Organization"
-            )));
-        }
-        if visible.is_empty() && !gaps.is_empty() {
-            return Err(DataroomError::FeedUnavailable(format!(
-                "no dataset declares what {id} requires; missing or not valid: {}",
-                gaps.into_iter().collect::<Vec<_>>().join(", ")
-            )));
-        }
+    if !profile.is_base() && profile.requires_publisher() && cat.declared_publisher_uri().is_none()
+    {
+        return Err(DataroomError::FeedUnavailable(format!(
+            "missing publisher: the {id} feed needs the catalogue's publisher IRI; declare \
+             spec.catalog.publisher.uri on the Organization"
+        )));
+    }
+    // The base feed too: a harvester reads an empty 200 as "withdraw everything" (C9).
+    if visible.is_empty() && !gaps.is_empty() {
+        return Err(DataroomError::FeedUnavailable(format!(
+            "no dataset declares what {id} requires; missing or not valid: {}",
+            gaps.into_iter().collect::<Vec<_>>().join(", ")
+        )));
     }
 
     Ok((visible, pub_map))

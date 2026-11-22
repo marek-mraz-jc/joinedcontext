@@ -383,29 +383,46 @@ impl ProfileRegistry {
         let key = (Some(scope), record.id.clone(), record.version.clone());
 
         // Register in memory, under the uploading catalogue only, so stacked_shapes resolves it.
-        {
+        let replaced = {
             let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            guard.insert(key.clone(), (record.clone(), sg));
-        }
+            guard.insert(key.clone(), (record.clone(), sg))
+        };
         self.forget_stacks();
 
-        let stack = self.stack(scope, &record.id, Some(&record.version))?;
-        record.form_fields = derive_form_layout(&stack.shapes, "http://www.w3.org/ns/dcat#Dataset");
-        {
-            let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            if let Some((stored_rec, _)) = guard.get_mut(&key) {
-                stored_rec.form_fields.clone_from(&record.form_fields);
+        let checked = self
+            .stack(scope, &record.id, Some(&record.version))
+            .and_then(|stack| {
+                record.form_fields =
+                    derive_form_layout(&stack.shapes, "http://www.w3.org/ns/dcat#Dataset");
+                {
+                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    if let Some((stored_rec, _)) = guard.get_mut(&key) {
+                        stored_rec.form_fields.clone_from(&record.form_fields);
+                    }
+                }
+                self.dry_run(
+                    &record.id,
+                    &record.version,
+                    catalogue,
+                    existing_datasets,
+                    publishers,
+                )
+            });
+        match checked {
+            Ok(dry_run) => Ok((record, dry_run)),
+            Err(e) => {
+                // A refused upload is stored nowhere, so it is not resolvable either.
+                {
+                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    match replaced {
+                        Some(before) => guard.insert(key, before),
+                        None => guard.remove(&key),
+                    };
+                }
+                self.forget_stacks();
+                Err(e)
             }
         }
-
-        let dry_run = self.dry_run(
-            &record.id,
-            &record.version,
-            catalogue,
-            existing_datasets,
-            publishers,
-        )?;
-        Ok((record, dry_run))
     }
 
     /// Evaluates all `existing_datasets` against `(profile_id, version)` without modifying them,
@@ -1465,6 +1482,14 @@ mod tests {
         assert!(
             registry.get(test_ids(), "broken", None).is_none(),
             "a refused upload is not registered"
+        );
+        let orphan = profile("orphan", "1", Some("no-such-base"), "");
+        assert!(registry
+            .upload_and_dry_run(orphan, &cat, &[], &BTreeMap::new())
+            .is_err());
+        assert!(
+            registry.get(test_ids(), "orphan", None).is_none(),
+            "an upload whose base does not resolve is not registered"
         );
     }
 

@@ -299,6 +299,22 @@ async fn a_profile_choice_is_the_admins_and_is_checked_again() {
 }
 
 #[tokio::test]
+async fn a_catalogue_names_its_publisher_and_an_existing_portal_stays_editable() {
+    let state = world();
+    let mirror = state.mirror.clone();
+    let mut org = mirror
+        .get(ORG_NAMESPACE, "Organization", "bbsk")
+        .expect("the organization");
+    org.metadata.title = Default::default();
+    mirror.upsert(org);
+    let new = put(&state, "bbadmin", manifest("bbsk", "kultura", None)).await;
+    let why = refusal(&new).expect("a catalogue without a publisher name is refused");
+    assert!(why.contains("spec.organizationRef"), "{why}");
+    let held = put(&state, "bbadmin", manifest("bbsk", "default", None)).await;
+    assert_eq!(refusal(&held), None, "an existing Portal stays editable");
+}
+
+#[tokio::test]
 async fn deleting_the_default_portal_is_refused_and_a_further_one_is_not() {
     let state = world();
     let refused = http(

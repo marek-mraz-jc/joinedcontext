@@ -336,7 +336,7 @@ impl Publisher {
 #[serde(rename_all = "camelCase")]
 pub struct CatalogueDeclaration {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub publisher_uri: Option<String>,
+    pub publisher_uri: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher_name: Option<Texts>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,7 +358,14 @@ impl CatalogueDeclaration {
             }
             changed
         }
-        let uri = set(&mut catalogue.publisher_uri, &self.publisher_uri);
+        // Declared as none clears it; not declared keeps it.
+        let uri = match &self.publisher_uri {
+            Some(declared) if *declared != catalogue.publisher_uri => {
+                catalogue.publisher_uri.clone_from(declared);
+                true
+            }
+            _ => false,
+        };
         let name = set(&mut catalogue.publisher_name, &self.publisher_name);
         let contact = set(&mut catalogue.contact_point, &self.contact_point);
         let mut changed = uri || name || contact;

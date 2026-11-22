@@ -160,6 +160,10 @@ pub(crate) fn declarations_in(
 
 /// The publisher is `spec.catalog.publisher`, named by the Organization's own title where none
 /// is declared; the IRI only when one is declared.
+///
+/// The Organization owns these members while its Portal is declared: each round writes its
+/// publisher IRI (none clears it), and its publisher name and contact desk when it has them, over
+/// what an administrator typed in the catalogue.
 fn declaration_of(spec: &OrganizationSpec, title: serde_json::Value) -> CatalogueDeclaration {
     let lang = spec.default_locale.to_string();
     let titled = || match title {
@@ -172,9 +176,11 @@ fn declaration_of(spec: &OrganizationSpec, title: serde_json::Value) -> Catalogu
         .filter(|names| !names.is_empty())
         .unwrap_or_else(titled);
     CatalogueDeclaration {
-        publisher_uri: catalog
-            .and_then(|c| c.publisher.uri.clone())
-            .filter(|uri| dataroom_core::is_declared_iri(uri)),
+        publisher_uri: Some(
+            catalog
+                .and_then(|c| c.publisher.uri.clone())
+                .filter(|uri| dataroom_core::is_declared_iri(uri)),
+        ),
         publisher_name: (!names.is_empty()).then_some(names),
         contact_point: catalog.and_then(|c| c.contact_point.as_ref()).map(|desk| {
             dataroom_core::ContactPoint {
@@ -1125,7 +1131,7 @@ mod tests {
         });
         put(base.clone());
         let bare = &declarations_in(&mirror, &orgs)["city"];
-        assert_eq!(bare.publisher_uri, None, "no IRI is made up");
+        assert_eq!(bare.publisher_uri, Some(None), "no IRI is made up");
         assert_eq!(bare.publisher_name.as_ref().unwrap()["en"], "City");
         assert_eq!(bare.contact_point, None);
 
@@ -1140,7 +1146,7 @@ mod tests {
         };
         let uri = "https://data.gov.sk/id/legal-subject/00691135";
         let declared = with(uri);
-        assert_eq!(declared.publisher_uri.as_deref(), Some(uri));
+        assert_eq!(declared.publisher_uri, Some(Some(uri.to_owned())));
         assert_eq!(declared.publisher_name.unwrap()["sk"], "Mesto Košice");
         assert_eq!(
             declared.contact_point.unwrap().name["sk"],
@@ -1148,7 +1154,8 @@ mod tests {
         );
         let placeholder = with("https://data.gov.sk/id/legal-subject/00000000");
         assert_eq!(
-            placeholder.publisher_uri, None,
+            placeholder.publisher_uri,
+            Some(None),
             "a placeholder is no publisher"
         );
     }

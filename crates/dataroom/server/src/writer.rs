@@ -236,7 +236,14 @@ impl CatalogueWriter {
             return Ok(false);
         }
         let mut declared = declared.clone();
-        if let Some(chosen) = chosen {
+        // A manifest may name a profile by its alias; the pins hold ids.
+        let chosen: Option<Vec<String>> = chosen.map(|names| {
+            names
+                .iter()
+                .map(|name| dataroom_api::installed_id(name).unwrap_or_else(|| name.clone()))
+                .collect()
+        });
+        if let Some(chosen) = chosen.as_deref() {
             let mut pins: Vec<ProfilePin> = Vec::new();
             for name in
                 std::iter::once(dataroom_api::BASE_PROFILE).chain(chosen.iter().map(String::as_str))
@@ -707,6 +714,37 @@ mod tests {
 
     /// T-7520: a catalogue stored before its Organization declared a publisher gets it.
     #[tokio::test]
+    async fn a_declaration_clears_a_publisher_declared_as_none_and_resolves_aliases() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        writer.upsert(spec.clone()).await.expect("served");
+        for uri in [Some("https://data.gov.sk/id/legal-subject/00691135"), None] {
+            let declared = CatalogueDeclaration {
+                publisher_uri: Some(uri.map(str::to_owned)),
+                ..CatalogueDeclaration::default()
+            };
+            let chosen = ["dcat-ap-sk".to_owned()];
+            writer
+                .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+                .await
+                .unwrap();
+            let got = store
+                .get_catalogue(spec.org_id, spec.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(got.publisher_uri.as_deref(), uri);
+            let pins: Vec<&str> = got
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.as_str())
+                .collect();
+            assert_eq!(pins, [dataroom_api::BASE_PROFILE, "dcat-ap-sk-2.0"]);
+        }
+    }
+
+    #[tokio::test]
     async fn a_declaration_is_written_once_and_clears_nothing() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let (_, writer) = started(store.clone());
@@ -714,7 +752,7 @@ mod tests {
         let held = writer.upsert(spec.clone()).await.expect("served");
         assert_eq!(held.publisher_uri, None);
         let declared = CatalogueDeclaration {
-            publisher_uri: Some("https://data.gov.sk/id/legal-subject/00691135".into()),
+            publisher_uri: Some(Some("https://data.gov.sk/id/legal-subject/00691135".into())),
             ..CatalogueDeclaration::default()
         };
         assert!(writer
@@ -735,7 +773,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(got.publisher_uri, declared.publisher_uri);
+        assert_eq!(Some(got.publisher_uri), declared.publisher_uri);
         assert_eq!(got.hidden_datasets, held.hidden_datasets);
 
         // T-7521: the Portal's choice becomes the pins, and an empty one keeps them.

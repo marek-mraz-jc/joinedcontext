@@ -333,6 +333,30 @@ spec:
         sk: "Úradný názov, ktorý katalóg uvádza ako poskytovateľa, podľa jazyka. Napríklad Mesto Košice."
         cs: "Úřední název, který katalog uvádí jako poskytovatele, podle jazyka. Například Hlavní město Praha."
         de: "Der amtliche Name, den der Katalog als Herausgeber nennt, je Sprache. Zum Beispiel Stadt Helsinki."
+    catalog.publisher.name.sk:
+      help:
+        en: The body's official name in Slovak; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v slovenčine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v slovenštině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Slowakisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisher.name.cs:
+      help:
+        en: The body's official name in Czech; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v češtine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v češtině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Tschechisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisher.name.en:
+      help:
+        en: The body's official name in English; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v angličtine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v angličtině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Englisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisher.name.de:
+      help:
+        en: The body's official name in German; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v nemčine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v němčině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Deutsch; der Katalog braucht ihn in mindestens einer Sprache.
     projects.creation:
       help:
         en: Who may open a project - anyone signed in (anyone), only an organization administrator (org-admin), or the members of one group (group:<name>).

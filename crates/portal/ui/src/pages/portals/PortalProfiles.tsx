@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { InlineError } from "../../components/ui/InlineError";
 import { door } from "../../api/odata";
 import type { RestAnswer } from "../../api/odata";
 import { localized } from "../../api/manifest";
@@ -85,12 +86,12 @@ export function PortalProfilesField({
   const refusedOption = profiles.find((p) => p.id === refusedId);
   const forPublisher = Boolean(error?.includes("spec.catalog.publisher.uri"));
   const refusal = error ? (
-    <p id="portal-profiles-error" role="alert" className="break-words text-body text-danger">
+    <InlineError id="portal-profiles-error">
       {refusedOption && forPublisher
         ? t("portals.profiles.refused", { profile: profileLabel(profiles, refusedOption.id, locale), reason: needs(refusedOption) })
         : error}{" "}
       {forPublisher ? settings : null}
-    </p>
+    </InlineError>
   ) : null;
   const toggle = (id: string, on: boolean) => {
     const held = (checked ?? []).filter((p) => p !== id && options.includes(p));

@@ -46,6 +46,10 @@ fn records() -> (Catalogue, Vec<(&'static str, Dataset)>) {
     (catalogue, out)
 }
 
+fn json_of(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(text).ok()
+}
+
 #[test]
 fn feeds_match_their_golden_files() {
     let (catalogue, datasets) = records();
@@ -80,7 +84,14 @@ fn feeds_match_their_golden_files() {
                 serialize_catalogue(&catalogue, &all, &BTreeMap::new(), format, profile, None),
             ));
             for (file, actual) in feeds {
-                if fs::read_to_string(dir.join(&file)).ok().as_ref() != Some(&actual) {
+                let golden = fs::read_to_string(dir.join(&file)).ok();
+                // A JSON object's key order follows serde_json's unified `preserve_order`.
+                let same = if extension == "jsonld" {
+                    golden.as_deref().and_then(json_of) == json_of(&actual)
+                } else {
+                    golden.as_ref() == Some(&actual)
+                };
+                if !same {
                     fs::write(actual_dir.join(&file), &actual).expect("write the differing feed");
                     differs.push(file);
                 }

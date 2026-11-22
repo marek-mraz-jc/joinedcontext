@@ -717,7 +717,7 @@ fn check_declarations(
     let proposed = iri(ds);
     if proposed.is_some()
         && proposed != existing.and_then(iri)
-        && req_ctx.actor_name() != crate::auth::PORTAL_PUBLISHER
+        && !is_portal_publisher(req_ctx)
         && !authorizer.check(req_ctx, Action::Admin, target).allowed
     {
         return Err(DataroomError::Forbidden(
@@ -726,6 +726,12 @@ fn check_declarations(
         ));
     }
     Ok(())
+}
+
+/// The Portal's publisher: the bare principal, or the one bound to this context's catalogue.
+fn is_portal_publisher(req_ctx: &RequestCtx) -> bool {
+    let (actor, portal) = (req_ctx.actor_name(), crate::auth::PORTAL_PUBLISHER);
+    actor == portal || actor == format!("{portal}:{}", req_ctx.catalogue_id)
 }
 
 /// The stored publisher a proposal addresses: by its id when it carries one, else by name,
@@ -1783,13 +1789,11 @@ pub async fn execute_operation(
                 .await?
                 .iter()
                 .any(|held| {
-                    held.id == profile.id
-                        && held.version == profile.version
-                        && held.shapes_turtle != profile.shapes_turtle
+                    held.id == profile.id && held.version == profile.version && *held != profile
                 })
             {
                 return Err(DataroomError::Conflict(format!(
-                    "profile {} {} exists; give changed shapes a new version",
+                    "profile {} {} exists; give a changed profile a new version",
                     profile.id, profile.version
                 )));
             }

@@ -67,6 +67,11 @@ pub fn installed_pin(id: &str) -> Option<dataroom_core::ProfilePin> {
     })
 }
 
+/// The id of the installed profile a manifest names by id, URI or alias.
+pub fn installed_id(name: &str) -> Option<String> {
+    dataroom_rdf::DcatProfile::from_token(name).map(|profile| profile.id.clone())
+}
+
 /// Whether the feed of installed profile `id` needs the catalogue's publisher IRI.
 pub fn requires_publisher(id: &str) -> bool {
     dataroom_rdf::DcatProfile::by_id(id).is_some_and(dataroom_rdf::DcatProfile::requires_publisher)
@@ -2176,8 +2181,19 @@ async fn dispatch_ui_route(
                         Err(e) => return problem_response(e),
                     };
                 if q_prof.is_some() && !selected.stack.renderer.is_base() {
-                    let missing =
-                        feeds::dataset_gaps(&state, &cat, &ds, pub_rec.as_ref(), &selected.stack);
+                    let checked = tokio::task::spawn_blocking({
+                        let (state, cat, ds) = (state.clone(), cat.clone(), ds.clone());
+                        let (publisher, stack) = (pub_rec.clone(), selected.stack.clone());
+                        move || feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack)
+                    });
+                    let missing = match checked.await {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            return problem_response(DataroomError::Storage(format!(
+                                "feed conformance: {e}"
+                            )))
+                        }
+                    };
                     if !missing.is_empty() {
                         return problem_response(DataroomError::NotFound(format!(
                             "dataset '{ds_name}' is not in the {} feed; missing or not valid: {}",

@@ -671,7 +671,7 @@ impl Store for PgStore {
             sqlx::query(
                 "UPDATE dataroom.cat_catalogue
                  SET doc = doc || $3 || jsonb_build_object('modified', $5::jsonb), modified = $4
-                 WHERE org_id = $1 AND id = $2 AND (doc || $3) <> doc",
+                 WHERE org_id = $1 AND id = $2 AND jsonb_strip_nulls(doc || $3) <> jsonb_strip_nulls(doc)",
             )
             .bind(org_id.as_uuid())
             .bind(id.as_uuid())

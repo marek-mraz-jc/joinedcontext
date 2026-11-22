@@ -54,7 +54,7 @@ pub async fn catalogues(store: &dyn Store) {
             .collect::<dataroom_core::Texts>()
     };
     let declared = |langs: &[&str]| dataroom_core::CatalogueDeclaration {
-        publisher_uri: Some("https://example.sk/id/legal-subject/37828100".into()),
+        publisher_uri: Some(Some("https://example.sk/id/legal-subject/37828100".into())),
         publisher_name: Some(names_in(langs)),
         ..Default::default()
     };
@@ -64,7 +64,7 @@ pub async fn catalogues(store: &dyn Store) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(written.publisher_uri, wide.publisher_uri);
+    assert_eq!(Some(written.publisher_uri), wide.publisher_uri);
     assert_eq!(written.title["en"], "Renamed");
     let again = store
         .declare_catalogue(org, cat, &wide)
@@ -72,6 +72,22 @@ pub async fn catalogues(store: &dyn Store) {
         .unwrap()
         .unwrap();
     assert_eq!(again.modified, written.modified, "no difference, no write");
+    let none = dataroom_core::CatalogueDeclaration {
+        publisher_uri: Some(None),
+        ..Default::default()
+    };
+    let cleared = store
+        .declare_catalogue(org, cat, &none)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleared.publisher_uri, None, "declared as none clears");
+    let same = store
+        .declare_catalogue(org, cat, &none)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(same.modified, cleared.modified, "no IRI twice, no write");
     let narrow = declared(&["sk"]);
     let narrowed = store
         .declare_catalogue(org, cat, &narrow)

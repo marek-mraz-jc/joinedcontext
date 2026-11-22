@@ -1343,6 +1343,58 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
 
 /// T-7521 C6: the operations refuse what the profile routes refuse.
 #[tokio::test]
+async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let other = CatalogueId::from_uuid(Uuid::now_v7());
+    let token = "x".repeat(48);
+    let token = token.as_str();
+    let (binding, grant) = dataroom_api::portal_publisher_on(token, org, id, "city").unwrap();
+    let (stranger, _) = dataroom_api::portal_publisher_on(token, org, other, "city").unwrap();
+    let mut strangers_grant = grant.clone();
+    strangers_grant.principal = format!("{}:{other}", dataroom_api::PORTAL_PUBLISHER);
+    let admin = GrantRule {
+        org_id: org,
+        catalogue_id: Some(id),
+        principal: "admin".into(),
+        actions: vec![Action::Admin],
+        publisher_id: None,
+    };
+    let store = Arc::new(MemoryStore::new());
+    store
+        .upsert_catalogue(make_catalogue(org, id, "city", "city.example.org"))
+        .await
+        .unwrap();
+    let authz = Arc::new(PolicyAuthorizer::new(vec![admin, grant, strangers_grant]));
+    let state = DataroomState::new(store, authz, org, id);
+    let ops = state.op_context();
+    let as_subject = |subject| RequestCtx::new(org, id, subject);
+    let root = as_subject(Subject::authenticated("admin", vec![org], Vec::new()));
+    let city = json!({"publisher": {"name": "city", "title": {"en": "City"}, "description": {},
+                                    "state": "active"}});
+    execute_operation(&ops, &root, "publisher.propose", city)
+        .await
+        .expect("a publisher");
+    let package = |name: &str| {
+        json!({"name": name, "title": "Air", "owner_org": "city", "private": true,
+               "extras": [{"key": "publisher_uri",
+                           "value": "https://data.gov.sk/id/legal-subject/00151866"}]})
+    };
+    let own = as_subject(binding.subject);
+    execute_operation(&ops, &own, "dataset.propose", package("air"))
+        .await
+        .expect("this catalogue's Portal declares it");
+    let foreign = as_subject(stranger.subject);
+    let refused = execute_operation(&ops, &foreign, "dataset.propose", package("water")).await;
+    assert!(
+        matches!(refused, Err(dataroom_core::DataroomError::Forbidden(_))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
 async fn profile_operations_refuse_a_built_in_id_bad_shapes_and_an_uninstalled_choice() {
     let (org, id) = (
         OrgId::from_uuid(Uuid::now_v7()),
@@ -1385,6 +1437,17 @@ async fn profile_operations_refuse_a_built_in_id_bad_shapes_and_an_uninstalled_c
     refused("profile.propose", built_in, "profile.id").await;
     let broken = upload("own-rules", "this is not turtle");
     refused("profile.propose", broken, "profile.shapesTurtle").await;
+    let pinned = upload("own-fixed", "");
+    execute_operation(&state.op_context(), &ctx, "profile.propose", pinned.clone())
+        .await
+        .expect("a first version");
+    let mut rebased = pinned;
+    rebased["profile"]["baseProfile"] = json!("dcat-ap-sk-2.0");
+    let changed = execute_operation(&state.op_context(), &ctx, "profile.propose", rebased).await;
+    assert!(
+        matches!(changed, Err(dataroom_core::DataroomError::Conflict(_))),
+        "a pinned version changed under it: {changed:?}"
+    );
     cat.active_profiles.push(ProfilePin {
         profile_id: "dcat-ap-zz".into(),
         version: String::new(),
