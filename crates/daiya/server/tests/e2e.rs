@@ -217,6 +217,24 @@ async fn send_req(app: &Router, mut req: Request<Body>) -> (StatusCode, HeaderMa
     (status, headers, json_val)
 }
 
+/// The panels reading the Endpoint datasource `public-endpoint`, their query text kept.
+fn on_the_endpoint(panels: &mut Value) {
+    let source = json!({ "type": "ngsild-grafana-datasource", "uid": "public-endpoint" });
+    for panel in panels.as_array_mut().into_iter().flatten() {
+        if let Some(nested) = panel.get_mut("panels") {
+            on_the_endpoint(nested);
+        }
+        if panel.get("datasource").is_some() {
+            panel["datasource"] = source.clone();
+        }
+        let targets = panel.get_mut("targets").and_then(Value::as_array_mut);
+        for target in targets.into_iter().flatten() {
+            *target = json!({ "refId": target["refId"], "queryType": "entity",
+                "entityType": "Probe", "customQuery": target["expr"], "datasource": source });
+        }
+    }
+}
+
 async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
     let inst = InstallationId::from_u128(1);
     let instance = InstanceId::from_u128(1);
@@ -319,6 +337,33 @@ async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
             .with_secret_ref("prom-token-ref"),
     );
     state.register_datasource_driver(org_a, "prometheus", prom_driver);
+
+    // The Endpoint a public dashboard may read: a stored record, with no driver of the host's.
+    state.own_reach =
+        vec![daiya_query::OwnReach::endpoints(&format!("{upstream_url}/api/endpoint/")).unwrap()];
+    store
+        .upsert_datasource(DatasourceRecord {
+            installation_id: inst,
+            org_id: org_a,
+            instance_id: instance,
+            project_id: None,
+            uid: "public-endpoint".into(),
+            name: "Public Endpoint".into(),
+            kind: "ngsild-grafana-datasource".into(),
+            access: "proxy".into(),
+            url: format!("{upstream_url}/api/endpoint/publicprobe"),
+            is_default: false,
+            read_only: true,
+            json_data: json!({}),
+            secret_refs: BTreeMap::new(),
+            allow_hosts: Vec::new(),
+            wasm_digest: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
 
     for (uid, slug) in [
         ("bbsk-kpi", "qfhhh5no5wz4lk3rfjisdtx3chiyfig3"),
@@ -712,6 +757,8 @@ async fn e2e_public_dashboard_rules_of_r7() {
 
     // Import `slo.json` into org_a
     let slo_json: Value = serde_json::from_str(NINE_DASHBOARDS[6].1).unwrap();
+    let mut on_endpoint = slo_json.clone();
+    on_the_endpoint(&mut on_endpoint["panels"]);
     let (st, _, _) = send_req(
         &app,
         Request::builder()
@@ -758,8 +805,31 @@ async fn e2e_public_dashboard_rules_of_r7() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // 2. Enable the public dashboard
+    // 2. Enable the public dashboard: refused while it reads Prometheus with its stored
+    // credential (WRK-04), allowed once its panels read an Endpoint.
     let pub_uid = created_default["uid"].as_str().unwrap().to_owned();
+    let enable = || {
+        req(
+            "PATCH",
+            &format!("/api/dashboards/uid/jc-slo/public-dashboards/{pub_uid}"),
+            Some("admin-a-token"),
+            Some(json!({ "isEnabled": true })),
+        )
+    };
+    let (st, _, refused) = send_req(&app, enable()).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("prometheus"), "{refused}");
+    let (st, _, saved) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/db",
+            Some("admin-a-token"),
+            Some(json!({ "dashboard": on_endpoint, "overwrite": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{saved}");
     let (st, _, _) = send_req(
         &app,
         Request::builder()

@@ -356,6 +356,17 @@ pub(crate) async fn execute_targets_with_authorizer(
             },
         );
         decision.into_result(format!("Data source '{ds_uid}' not found"))?;
+        // WRK-04: nobody in particular reads an Endpoint by its public Policy, never a source that
+        // holds a credential or a driver of the host's. Judged on the record the driver is built
+        // from, before the cache.
+        if req_ctx.subject.is_public_dashboard()
+            && (registered.is_some()
+                || !ds_meta
+                    .as_ref()
+                    .is_some_and(|record| state.reads_endpoint(record)))
+        {
+            return Err(CrError::Forbidden(crate::public::SOURCE_REFUSED.into()));
+        }
 
         // The answer depends on the target, the variable values interpolated into it and the
         // point budget: all three are in the key, so one caller's variables never serve another's.

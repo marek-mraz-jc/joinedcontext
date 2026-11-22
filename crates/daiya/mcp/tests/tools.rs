@@ -34,6 +34,9 @@ async fn prometheus_mock() -> String {
             let head = String::from_utf8_lossy(&buf[..n]).to_string();
             let body = if head.contains("/api/v1/labels") {
                 json!({ "status": "success", "data": ["job", "instance"] })
+            } else if head.contains("/api/endpoint/site/") {
+                json!([{ "id": "urn:ngsi-ld:Site:web", "type": "Site",
+                         "visitors": { "type": "Property", "value": 7 } }])
             } else {
                 json!({ "status": "success", "data": { "resultType": "matrix", "result": [
                     { "metric": { "job": "web" }, "values": [[1700000000, "7"]] }
@@ -66,6 +69,7 @@ fn dashboard(uid: &str, title: &str) -> Value {
 }
 
 struct Fixture {
+    url: String,
     state: DaiyaState,
     app: Router,
     admin: RequestCtx,
@@ -125,6 +129,8 @@ async fn fixture() -> Fixture {
         )],
         ..OutboundPolicy::default()
     };
+    state.own_reach =
+        vec![daiya_query::OwnReach::endpoints(&format!("{url}/api/endpoint/")).unwrap()];
     let app = api_router(
         state.clone(),
         Mount::new("daiya", "https", "x.example", "").unwrap(),
@@ -133,7 +139,7 @@ async fn fixture() -> Fixture {
         &app,
         "POST",
         "/api/datasources",
-        json!({ "uid": "prom", "name": "Prom", "type": "prometheus", "url": url }),
+        json!({ "uid": "prom", "name": "Prom", "type": "prometheus", "url": url.clone() }),
     )
     .await;
     assert_eq!(st, 200, "{body}");
@@ -148,6 +154,7 @@ async fn fixture() -> Fixture {
         assert_eq!(st, 200, "{body}");
     }
     Fixture {
+        url,
         state,
         app,
         admin: ctx(Subject::authenticated("admin", vec![ORG], vec![])),
@@ -444,10 +451,30 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
 #[tokio::test]
 async fn public_dashboard_tools_rotate_query_and_decide() {
     let f = fixture().await;
+    // A public dashboard reads only an Endpoint (WRK-04).
+    let source = json!({ "type": "ngsild-grafana-datasource", "uid": "site" });
+    let mut board = dashboard("published", "Published");
+    board["panels"][0]["datasource"] = source.clone();
+    board["panels"][0]["targets"] = json!([{ "refId": "A", "queryType": "entity",
+        "entityType": "Site", "datasource": source }]);
+    for (uri, body) in [
+        (
+            "/api/datasources",
+            json!({ "uid": "site", "name": "Site", "type": "ngsild-grafana-datasource",
+                    "url": format!("{}/api/endpoint/site", f.url) }),
+        ),
+        (
+            "/api/dashboards/db",
+            json!({ "dashboard": board, "overwrite": true }),
+        ),
+    ] {
+        let (st, saved) = http(&f.app, "POST", uri, body).await;
+        assert_eq!(st, 200, "{saved}");
+    }
     let (st, created) = http(
         &f.app,
         "POST",
-        "/api/dashboards/uid/web/public-dashboards",
+        "/api/dashboards/uid/published/public-dashboards",
         json!({ "isEnabled": true }),
     )
     .await;
@@ -468,7 +495,7 @@ async fn public_dashboard_tools_rotate_query_and_decide() {
         &f.state,
         &f.admin,
         "daiya_rotate_public_dashboard",
-        json!({ "uid": "web" }),
+        json!({ "uid": "published" }),
     )
     .await
     .unwrap();
@@ -489,7 +516,7 @@ async fn public_dashboard_tools_rotate_query_and_decide() {
         &f.state,
         &f.viewer,
         "daiya_rotate_public_dashboard",
-        json!({ "uid": "web" }),
+        json!({ "uid": "published" }),
     )
     .await
     .unwrap_err();

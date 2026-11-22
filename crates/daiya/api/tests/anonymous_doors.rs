@@ -47,12 +47,22 @@ async fn with_gateway() -> (World, String, Arc<Mutex<Vec<String>>>) {
     (w, url, seen)
 }
 
-/// Publishes dashboard `uid` with one panel reading `ds`, and answers its token.
-async fn publish(w: &World, uid: &str, ds: &str, target: Value) -> String {
+/// Saves dashboard `uid` with `targets` on its first panel.
+async fn save(w: &World, uid: &str, ds: &str, targets: Value) {
     let mut board = dashboard(uid, ds);
     board["panels"][0]["datasource"] = json!({ "uid": ds });
-    board["panels"][0]["targets"] = json!([target]);
+    board["panels"][0]["targets"] = targets;
     w.add_dashboard(board, None).await;
+}
+
+/// Publishes dashboard `uid` with one panel reading `ds`, and answers its token.
+async fn publish(w: &World, uid: &str, ds: &str, target: Value) -> String {
+    let targets = if target.is_null() {
+        json!([])
+    } else {
+        json!([target])
+    };
+    save(w, uid, ds, targets).await;
     let made = w
         .ok(
             "POST",
@@ -82,8 +92,10 @@ async fn add_ngsild(w: &World, uid: &str, url: &str) {
     w.ok(
         "POST",
         "/api/datasources",
-        Some(json!({ "uid": uid, "name": uid, "type": "ngsild-grafana-datasource",
-                     "url": url, "jsonData": { "oauthPassThru": true } })),
+        Some(
+            json!({ "uid": uid, "name": uid, "type": "ngsild-grafana-datasource",
+                     "url": url, "jsonData": { "oauthPassThru": true } }),
+        ),
     )
     .await;
 }
@@ -98,7 +110,10 @@ async fn a_public_panel_shows_what_the_endpoints_public_policy_allows_and_nothin
 
     let (st, body) = read_panel(&w, &open).await;
     assert_eq!(st, StatusCode::OK, "{body}");
-    assert!(body.to_string().contains("urn:ngsi-ld:Park:shown"), "{body}");
+    assert!(
+        body.to_string().contains("urn:ngsi-ld:Park:shown"),
+        "{body}"
+    );
 
     // The gateway has no public answer for the closed Endpoint, so the panel has none.
     let (st, body) = read_panel(&w, &closed).await;
@@ -123,11 +138,17 @@ async fn a_public_panel_reads_no_source_that_is_not_an_endpoint() {
     add_ngsild(&w, "elsewhere", &format!("{elsewhere}/api/endpoint/open")).await;
     add_ngsild(&w, "beside", &format!("{gateway}/api/admin")).await;
     for (uid, target) in [
-        ("prom", json!({ "refId": "A", "expr": "up", "datasource": { "uid": "prom" } })),
+        (
+            "prom",
+            json!({ "refId": "A", "expr": "up", "datasource": { "uid": "prom" } }),
+        ),
         ("elsewhere", entities("elsewhere")),
         ("beside", entities("beside")),
     ] {
-        let token = publish(&w, &format!("{uid}-board"), uid, target).await;
+        // Published while it had no queries: the dashboard changed afterwards.
+        let board = format!("{uid}-board");
+        let token = publish(&w, &board, uid, json!(null)).await;
+        save(&w, &board, uid, json!([target])).await;
         let (st, body) = read_panel(&w, &token).await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{uid}: {body}");
         let text = body.to_string();
@@ -140,14 +161,49 @@ async fn a_public_panel_reads_no_source_that_is_not_an_endpoint() {
 }
 
 #[tokio::test]
+async fn publishing_names_the_sources_that_are_not_endpoints() {
+    let (w, url, _) = with_gateway().await;
+    add_ngsild(&w, "open", &format!("{url}/api/endpoint/open")).await;
+    let mut board = dashboard("mixed", "prom");
+    board["panels"].as_array_mut().unwrap().push(json!({
+        "id": 9, "type": "row", "gridPos": { "x": 0, "y": 8, "w": 24, "h": 1 },
+        "panels": [{ "id": 10, "type": "table", "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+                     "targets": [entities("open"), { "refId": "B", "datasource": { "uid": "sql" } },
+                                 { "refId": "C", "type": "math", "expression": "1",
+                                   "datasource": { "type": "__expr__", "uid": "__expr__" } }] }]
+    }));
+    w.add_dashboard(board, None).await;
+    let path = "/api/dashboards/uid/mixed/public-dashboards";
+    let (st, body) = w
+        .call(
+            "POST",
+            path,
+            Some("admin"),
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let text = body.to_string();
+    assert!(
+        text.contains("isEnabled") && text.contains("prom, sql"),
+        "{text}"
+    );
+    let (st, _) = w.call("GET", path, Some("admin"), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "nothing was published");
+    // A draft that is not enabled reads nothing for anyone and may be saved.
+    w.ok("POST", path, Some(json!({ "isEnabled": false })))
+        .await;
+}
+
+#[tokio::test]
 async fn a_driver_the_host_registers_is_not_a_public_source() {
     let (w, url, seen) = with_gateway().await;
     let endpoint = format!("{url}/api/endpoint/open");
     add_ngsild(&w, "open", &endpoint).await;
     let record = w.store.get_datasource(ORG, "open").await.unwrap().unwrap();
     let driver = w.state.driver_for_record(&record).await.unwrap();
-    w.state.register_datasource_driver(ORG, "open", driver);
     let token = publish(&w, "board", "open", entities("open")).await;
+    w.state.register_datasource_driver(ORG, "open", driver);
     let (st, body) = read_panel(&w, &token).await;
     assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
     assert!(seen.lock().is_empty());
@@ -179,7 +235,12 @@ async fn a_share_by_email_is_refused_and_never_served_as_public() {
     let (st, _) = read_panel(&w, &token).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _) = w
-        .call("GET", &format!("/api/public/dashboards/{token}"), None, None)
+        .call(
+            "GET",
+            &format!("/api/public/dashboards/{token}"),
+            None,
+            None,
+        )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
@@ -250,7 +311,9 @@ async fn a_request_without_an_organization_is_refused_on_every_route_of_one() {
         }
     }
     // Named, the same caller is served.
-    let (st, body) = w.send(request("GET", "/api/org", Some(&admin), Some("1"))).await;
+    let (st, body) = w
+        .send(request("GET", "/api/org", Some(&admin), Some("1")))
+        .await;
     assert_eq!(st, StatusCode::OK, "{body}");
     assert_eq!(body["name"], "Main Org.");
 }
@@ -259,9 +322,9 @@ async fn a_request_without_an_organization_is_refused_on_every_route_of_one() {
 async fn the_only_organization_of_a_verified_caller_is_theirs_and_several_must_be_named() {
     let w = mounted(world(), |state| {
         state.with_subject_resolver(|headers| {
-            headers.contains_key("x-test-both").then(|| {
-                Subject::authenticated("viewer", vec![ORG, OTHER_ORG], Vec::new())
-            })
+            headers
+                .contains_key("x-test-both")
+                .then(|| Subject::authenticated("viewer", vec![ORG, OTHER_ORG], Vec::new()))
         })
     });
     let (st, body) = w.call("GET", "/api/org", Some("viewer"), None).await;
@@ -269,7 +332,8 @@ async fn the_only_organization_of_a_verified_caller_is_theirs_and_several_must_b
 
     let both = |org: Option<&str>| {
         let mut req = request("GET", "/api/org", None, org);
-        req.headers_mut().insert("x-test-both", "1".parse().unwrap());
+        req.headers_mut()
+            .insert("x-test-both", "1".parse().unwrap());
         req
     };
     let (st, body) = w.send(both(None)).await;
@@ -300,7 +364,9 @@ async fn the_installation_routes_and_the_dashboard_link_name_their_own_organizat
     assert_eq!(st, StatusCode::OK, "{body}");
 
     w.add_dashboard(dashboard("linked", "prom"), None).await;
-    let (st, _) = w.send(request("GET", "/d/linked", Some(&admin), None)).await;
+    let (st, _) = w
+        .send(request("GET", "/d/linked", Some(&admin), None))
+        .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _) = w
         .send(request("GET", "/d/linked?orgId=1", Some(&admin), None))
@@ -311,7 +377,11 @@ async fn the_installation_routes_and_the_dashboard_link_name_their_own_organizat
 #[tokio::test]
 async fn an_unsigned_call_to_a_path_daiya_does_not_serve_is_401() {
     let w = world();
-    for (method, uri) in [("POST", "/mcp"), ("GET", "/mcp/tools"), ("POST", "/mcp/call")] {
+    for (method, uri) in [
+        ("POST", "/mcp"),
+        ("GET", "/mcp/tools"),
+        ("POST", "/mcp/call"),
+    ] {
         let (st, _) = w.call(method, uri, None, None).await;
         assert_eq!(st, StatusCode::UNAUTHORIZED, "{method} {uri}");
         let (st, _) = w.call(method, uri, Some("viewer"), None).await;

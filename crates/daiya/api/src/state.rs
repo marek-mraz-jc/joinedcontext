@@ -324,6 +324,22 @@ impl DaiyaState {
         self.driver_for_record(&record).await.map(Some)
     }
 
+    /// The outbound settings a driver of a stored record is built with.
+    fn driver_policy(&self) -> OutboundPolicy {
+        let mut policy = self.outbound_policy.clone();
+        policy.own_reach.clone_from(&self.own_reach);
+        policy.endpoint_bases.clone_from(&self.endpoint_bases);
+        policy
+    }
+
+    /// Whether `record` reads one of the host's own gateway Endpoints: an NGSI-LD or OData
+    /// datasource at such a URL ([`daiya_query::OutboundGuard::token_endpoint`]), which, read with
+    /// no token, answers what the Endpoint's public Policy allows.
+    pub(crate) fn reads_endpoint(&self, record: &DatasourceRecord) -> bool {
+        guard_for(record, &self.driver_policy(), 443)
+            .is_ok_and(|guard| guard.token_endpoint(&record.url).is_some())
+    }
+
     /// The URL of `record` checked before it is stored, as the guard its driver gets checks it
     /// before any lookup (scheme, allow-list, address literal): 422 naming `url`. A Postgres
     /// datasource names `host:port`, which its pool checks when it resolves and connects.
@@ -337,10 +353,7 @@ impl DaiyaState {
         {
             return Ok(());
         }
-        let mut policy = self.outbound_policy.clone();
-        policy.own_reach.clone_from(&self.own_reach);
-        policy.endpoint_bases.clone_from(&self.endpoint_bases);
-        guard_for(record, &policy, 443)
+        guard_for(record, &self.driver_policy(), 443)
             .and_then(|guard| guard.validate_url(&record.url))
             .map(|_| ())
             .map_err(|e| {
@@ -368,13 +381,10 @@ impl DaiyaState {
         {
             return Ok(driver.clone());
         }
-        let mut policy = self.outbound_policy.clone();
-        policy.own_reach.clone_from(&self.own_reach);
-        policy.endpoint_bases.clone_from(&self.endpoint_bases);
         let deps = DriverDeps {
             secrets: self.secret_resolver.clone(),
             token_exchanger: self.token_exchanger.clone(),
-            policy,
+            policy: self.driver_policy(),
         };
         let driver = build_driver(record, &deps).await?;
         self.built_drivers

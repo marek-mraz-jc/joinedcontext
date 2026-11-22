@@ -12,7 +12,7 @@ use daiya_model::{
     LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord, PolicyAuthorizer, PublicDashboardRecord,
     RoleBinding, Subject,
 };
-use daiya_query::{OpenedNetwork, OutboundPolicy};
+use daiya_query::{OpenedNetwork, OutboundPolicy, OwnReach};
 use daiya_store_memory::MemoryStore;
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -335,6 +335,14 @@ impl DaiyaStore for FlakyStore {
 /// Raw-TCP HTTP upstream answering `routes` by path prefix (404 `{}` otherwise), logging each
 /// request head.
 pub async fn upstream(routes: Vec<(&'static str, Value)>) -> (String, Arc<Mutex<Vec<String>>>) {
+    upstream_or(routes, "{}").await
+}
+
+/// [`upstream`] answering `unknown` with its 404.
+pub async fn upstream_or(
+    routes: Vec<(&'static str, Value)>,
+    unknown: &'static str,
+) -> (String, Arc<Mutex<Vec<String>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -349,7 +357,9 @@ pub async fn upstream(routes: Vec<(&'static str, Value)>) -> (String, Arc<Mutex<
             let (status, body) = routes
                 .iter()
                 .find(|(prefix, _)| path.starts_with(prefix))
-                .map_or((404, "{}".to_owned()), |(_, body)| (200, body.to_string()));
+                .map_or((404, unknown.to_owned()), |(_, body)| {
+                    (200, body.to_string())
+                });
             let resp = format!(
                 "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
@@ -358,6 +368,50 @@ pub async fn upstream(routes: Vec<(&'static str, Value)>) -> (String, Arc<Mutex<
         }
     });
     (format!("http://127.0.0.1:{}", addr.port()), seen)
+}
+
+/// A gateway whose public Endpoint `air` answers every entity read with two readings of one entity.
+pub async fn gateway() -> (String, Arc<Mutex<Vec<String>>>) {
+    upstream(vec![(
+        "/api/endpoint/air/ngsi-ld/v1/",
+        json!([{ "id": "urn:ngsi-ld:AirQualityObserved:edge", "type": "AirQualityObserved",
+                 "pm10": [
+                     { "type": "Property", "value": 41, "observedAt": "2023-11-14T22:13:20Z" },
+                     { "type": "Property", "value": 42, "observedAt": "2023-11-14T22:14:20Z" }
+                 ] }]),
+    )])
+    .await
+}
+
+/// A world beside the gateway at `gateway`, holding its Endpoint `air` as datasource `air`: what
+/// a public dashboard may read (WRK-04).
+pub async fn world_beside(gateway: &str) -> World {
+    let mut w = world();
+    w.state.own_reach = vec![OwnReach::endpoints(&format!("{gateway}/api/endpoint/")).unwrap()];
+    w.app = api_router(
+        w.state.clone(),
+        Mount::new("daiya", "https", "x.example", "").unwrap(),
+    );
+    w.ok(
+        "POST",
+        "/api/datasources",
+        Some(
+            json!({ "uid": "air", "name": "Air", "type": "ngsild-grafana-datasource",
+                     "url": format!("{gateway}/api/endpoint/air") }),
+        ),
+    )
+    .await;
+    w
+}
+
+/// [`dashboard`] with its panel reading the Endpoint datasource `air`.
+pub fn endpoint_dashboard(uid: &str) -> Value {
+    let mut d = dashboard(uid, "air");
+    let source = json!({ "type": "ngsild-grafana-datasource", "uid": "air" });
+    d["panels"][0]["datasource"] = source.clone();
+    d["panels"][0]["targets"] = json!([{ "refId": "A", "queryType": "temporal",
+        "entityType": "AirQualityObserved", "customQuery": "level==1", "datasource": source }]);
+    d
 }
 
 /// A Prometheus answering every range query with two points of `job=edge`.
