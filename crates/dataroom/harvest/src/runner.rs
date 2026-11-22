@@ -314,14 +314,16 @@ fn incomplete(what: String) -> DataroomError {
 const NKOD_QUERY: &str = "PREFIX dcat: <http://www.w3.org/ns/dcat#>
 PREFIX dct: <http://purl.org/dc/terms/>
 PREFIX l: <https://data.gov.sk/def/ontology/legislation/>
-SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword
-       ?dist ?distTitle ?url ?format ?work ?database ?special WHERE {
+SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword ?theme ?frequency
+       ?dist ?distTitle ?url ?format ?work ?database ?special ?personal WHERE {
   ?ds a dcat:Dataset ; dct:publisher <%s> ; dct:title ?title .
   OPTIONAL { ?ds dct:description ?description }
   OPTIONAL { ?ds dct:modified ?modified }
   OPTIONAL { ?ds dct:issued ?issued }
   OPTIONAL { ?ds dcat:landingPage ?landing }
   OPTIONAL { ?ds dcat:keyword ?keyword }
+  OPTIONAL { ?ds dcat:theme ?theme }
+  OPTIONAL { ?ds dct:accrualPeriodicity ?frequency }
   OPTIONAL {
     ?ds dcat:distribution ?dist .
     OPTIONAL { ?dist dct:title ?distTitle }
@@ -330,7 +332,8 @@ SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword
     OPTIONAL { ?dist l:termsOfUse ?terms .
                OPTIONAL { ?terms l:authorsWorkType ?work }
                OPTIONAL { ?terms l:originalDatabaseType ?database }
-               OPTIONAL { ?terms l:databaseProtectedBySpecialRightsType ?special } }
+               OPTIONAL { ?terms l:databaseProtectedBySpecialRightsType ?special }
+               OPTIONAL { ?terms l:personalDataContainmentType ?personal } }
   }
 }
 ";

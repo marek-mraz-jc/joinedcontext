@@ -362,7 +362,16 @@ fn nkod_folds_rows_and_keeps_only_open_licences_on_allowed_hosts() {
     assert_eq!(ds.name, "cz-ovzdusie");
     assert_eq!(ds.licence_id.as_deref(), Some("cc-by-sa"));
     assert_eq!(ds.tags, ["kvalita", "ovzdušie"]);
-    assert_eq!(ds.description["cs"], "Zdroj: https://d/air");
+    assert!(ds.description.is_empty(), "none is invented");
+    assert!(ds.themes.is_empty(), "no GOVE: the source names no theme");
+    assert_eq!(
+        ds.frequency, None,
+        "no IRREG: the source names no frequency"
+    );
+    for dist in &ds.distributions {
+        let terms = dist.terms_of_use.as_ref().expect("the source's terms");
+        assert_eq!(terms.personal_data, None, "never asserted for the source");
+    }
     assert_eq!(ds.landing_page.as_deref(), Some("https://brno.cz/air"));
     let urls: Vec<_> = ds
         .distributions
@@ -382,7 +391,11 @@ fn nkod_folds_rows_and_keeps_only_open_licences_on_allowed_hosts() {
         .iter()
         .map(|d| d.format.as_deref())
         .collect();
-    assert_eq!(formats, [Some("CSV"), Some("JSON")]);
+    assert_eq!(
+        formats,
+        [Some("CSV"), None],
+        "a row without a format states none"
+    );
     assert_eq!(ds.distributions[1].title["cs"], "JSON");
     assert_eq!(ds.distributions[0].title["cs"], "Ovzdušie");
 }
@@ -597,4 +610,38 @@ fn a_hub_item_without_a_title_and_a_feed_dataset_without_an_iri_still_get_names(
         ds.id,
         Uuid::new_v5(&Uuid::NAMESPACE_URL, item.as_bytes()).to_string()
     );
+}
+
+#[test]
+fn an_nkod_row_keeps_the_theme_frequency_and_personal_data_its_publisher_declared() {
+    let cell = |v: &str| json!({"value": v});
+    let personal = "https://data.gov.sk/def/personal-data-occurence-type/1";
+    let (org, cat) = ids();
+    let src = source(
+        "nkod-sparql",
+        "nkod",
+        "https://data.gov.sk/sparql",
+        &["files.city.example"],
+    );
+    let rows = json!({"results": {"bindings": [{
+        "ds": cell("https://d/one"), "title": cell("Jeden"),
+        "theme": cell("http://publications.europa.eu/resource/authority/data-theme/TRAN"),
+        "frequency": cell("http://publications.europa.eu/resource/authority/frequency/DAILY"),
+        "dist": cell("https://d/one/csv"), "url": cell("https://files.city.example/one.csv"),
+        "work": cell("https://creativecommons.org/licenses/by/4.0/"),
+        "personal": cell(personal),
+    }]}});
+    let (kept, skipped) = parse_nkod_sparql_bindings(org, cat, &src, &[], &rows, "sk");
+    assert_eq!(kept.len(), 1, "{skipped:?}");
+    let found = &kept[0].1;
+    assert!(found.themes[0].ends_with("TRAN"));
+    assert!(found
+        .frequency
+        .as_deref()
+        .is_some_and(|f| f.ends_with("DAILY")));
+    let dist = &found.distributions[0];
+    assert_eq!(dist.format, None, "no format is invented");
+    assert_eq!(dist.licence.as_deref(), Some("cc-by"));
+    let terms = dist.terms_of_use.as_ref().expect("terms");
+    assert_eq!(terms.personal_data.as_deref(), Some(personal));
 }
