@@ -1470,6 +1470,7 @@
     var time = when(askedAt);
     if (time) mine.appendChild(time);
     input.value = "";
+    grow();
     var item = turn("jc-bot", "assistant");
     item.question = question;
     item.askedAt = askedAt;

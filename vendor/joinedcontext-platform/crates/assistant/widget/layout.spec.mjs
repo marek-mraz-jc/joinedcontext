@@ -412,6 +412,18 @@ test("the full page that names ?lang= does not ask", async ({ page }) => {
   await expect(page.locator(".jc-langs button[aria-pressed=true]")).toHaveText("EN");
 });
 
+test("the composer is one line again once a wrapped question is sent", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 844 });
+  await page.goto(`${base}/d/bb?lang=en`);
+  const box = page.locator("#jc-question");
+  const one = (await box.boundingBox()).height;
+  await box.fill("Which bridge of the whole region has the longest bridged length of them all?");
+  expect((await box.boundingBox()).height).toBeGreaterThan(one);
+  await box.press("Enter");
+  await expect(box).toHaveValue("");
+  expect((await box.boundingBox()).height).toBe(one);
+});
+
 // T-4761: a dark system paints the chat dark, but a light host page that asks ?scheme=light
 // keeps it light: a cross-origin frame never inherits the host's colours.
 test("a light host page keeps the embedded chat light on a dark system", async ({ page }) => {
