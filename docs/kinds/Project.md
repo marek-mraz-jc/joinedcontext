@@ -23,6 +23,7 @@ Desired specification of a `Project` resource (PF-05, PF-17).
 | `quotas` | [Quotas](#quotas) | no | Optional resource quotas for this Project (PF-17); the project file's, never a registry entry's. |
 | `ref` | string | no | The tag, branch or commit of `repository` this deployment runs; a registry entry only. |
 | `repository` | [ProjectRepository](#projectrepository) | no | Where the project's configuration lives. Its presence makes this manifest a registry entry, `projects/{slug}.yaml` of the organization repository (PF-86). |
+| `urnOwner` | string | no | The domain the project's Pipelines and indicators keep minting as the owner of entity ids while its stored ids carry it, so a project that changes Organization upserts what it stored; absent, its Organization's. Removed once the ids are re-minted. It grants nothing and the gateway's owner check does not read it (PF-44, ADR-N-068). |
 | `version` | [SemVer](#semver) | no | The project's version, released as the tag `v{version}`; the project file only (CC-88). |
 | `visibility` | [ProjectVisibility](#projectvisibility) | no | Who reads the project through an organization-scope binding that only reads: absent is the Organization's `projects.visibility`; `members` keeps it to the people a binding of the project or of one of its context spaces names, so departments stay apart (PF-61). |
 
