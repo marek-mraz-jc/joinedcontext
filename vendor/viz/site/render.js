@@ -24,6 +24,27 @@
   };
   var loader = { load: refused, sanitize: refused, http: refused, file: refused };
 
+  // The view drawn last: a toolbar change of the host (T-7490) swaps its rows without a redraw.
+  var shown = null;
+
+  // T-7490: dates and times on an axis or in a tooltip in the page's language, 24-hour clock.
+  var TIME = {
+    sk: { days: ["nedeľa", "pondelok", "utorok", "streda", "štvrtok", "piatok", "sobota"], shortDays: ["ne", "po", "ut", "st", "št", "pi", "so"],
+      months: ["január", "február", "marec", "apríl", "máj", "jún", "júl", "august", "september", "október", "november", "december"],
+      shortMonths: ["jan", "feb", "mar", "apr", "máj", "jún", "júl", "aug", "sep", "okt", "nov", "dec"] },
+    cs: { days: ["neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"], shortDays: ["ne", "po", "út", "st", "čt", "pá", "so"],
+      months: ["leden", "únor", "březen", "duben", "květen", "červen", "červenec", "srpen", "září", "říjen", "listopad", "prosinec"],
+      shortMonths: ["led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"] },
+    fi: { days: ["sunnuntai", "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai"], shortDays: ["su", "ma", "ti", "ke", "to", "pe", "la"],
+      months: ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu", "kesäkuu", "heinäkuu", "elokuu", "syyskuu", "lokakuu", "marraskuu", "joulukuu"],
+      shortMonths: ["tammi", "helmi", "maalis", "huhti", "touko", "kesä", "heinä", "elo", "syys", "loka", "marras", "joulu"] }
+  };
+  function timeLocale(lang) {
+    var names = TIME[lang];
+    if (!names) return undefined;
+    return Object.assign({ dateTime: "%-d. %-m. %Y %H:%M:%S", date: "%-d. %-m. %Y", time: "%H:%M:%S", periods: ["", ""] }, names);
+  }
+
   function draw(message) {
     // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
     var mode = message.theme === "dark" ? "dark" : "light";
@@ -35,16 +56,33 @@
     // A CSV is read by csv.js and typed from its records: vega's own CSV reader runs `new
     // Function`, which this page's CSP refuses (T-6865).
     var rows = data.format === "csv" ? vega.read(self.jcCsv(String(data.text || "")), { type: "json", parse: "auto" }) : data.rows || [];
+    shown = null;
     return vegaEmbed(chart, withRows(message.spec, rows, self.jcTheme[mode]), {
       ast: true,
       expr: vega.expressionInterpreter,
       loader: loader,
       renderer: "svg",
+      timeFormatLocale: timeLocale(document.documentElement.lang),
       // Export only: no source, no compiled spec, no "open in the editor" (which posts the spec
       // to another site).
       actions: { export: true, source: false, compiled: false, editor: false },
       downloadFileName: "chart"
+    }).then(function (result) {
+      shown = result && result.view ? result.view : null;
+      // The host's interactive chart (T-7490) offers a reset button only while its brush zooms.
+      try {
+        if (shown) shown.addSignalListener("brush", function (name, value) {
+          tell({ type: "jc-viz-zoom", zoomed: !!value && typeof value === "object" && Object.keys(value).length > 0 });
+        });
+      } catch (e) { /* a chart without a brush */ }
+      return result;
     });
+  }
+
+  // New rows for the data set `source` of the view drawn last; the spec is the one already checked.
+  function swap(message) {
+    if (!shown) throw new Error("The chart could not be drawn.");
+    return shown.data("source", Array.isArray(message.rows) ? message.rows : []).runAsync();
   }
 
   // The rows go in as the named data set `source` before the first draw, so the chart never
@@ -92,10 +130,10 @@
     // Portal `null`, as the host runs sandboxed there too. The spec is checked again below.
     if (event.source !== window.parent || (event.origin !== location.origin && event.origin !== "null")) return;
     var message = event.data || {};
-    if (message.type !== "jc-viz-render") return;
-    document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
+    if (message.type !== "jc-viz-render" && message.type !== "jc-viz-rows") return;
+    if (message.type === "jc-viz-render") document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
     Promise.resolve()
-      .then(function () { return draw(message); })
+      .then(function () { return message.type === "jc-viz-rows" ? swap(message) : draw(message); })
       .then(height, function (error) {
         tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
       });
