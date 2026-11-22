@@ -79,7 +79,13 @@ fn without_a_config_it_stops_and_says_how_to_name_one() {
     );
     assert!(log.contains("jc-embedder stopped"), "{log}");
     // `--config` with nothing after it names no file either.
-    let (ok, log) = stopped(&embedder().arg("--config").output().expect("run"));
+    let (ok, log) = stopped(
+        &embedder()
+            .arg("--config")
+            .env_remove("RUST_LOG")
+            .output()
+            .expect("run"),
+    );
     assert!(!ok && log.contains("name the config file"), "{log}");
 }
 

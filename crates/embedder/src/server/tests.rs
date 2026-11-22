@@ -557,4 +557,25 @@ fn the_kind_reads_lowercase() {
         Kind::Query
     );
     assert!(serde_json::from_str::<Kind>("\"Query\"").is_err());
+    // Metrics and logs name the kind as the request does.
+    for kind in [Kind::Query, Kind::Passage] {
+        assert_eq!(
+            serde_json::to_value(kind).expect("kind"),
+            Value::from(kind.as_str())
+        );
+    }
+}
+
+/// The default cap is 8 KiB a text (`MAX_TEXT_BYTES`): a text of exactly that is embedded, one
+/// byte more is refused.
+#[tokio::test]
+async fn the_default_text_cap_is_8_kib() {
+    let w = world(Limits::default(), 10, 0).await;
+    let a = w.a.token("assistant-a", AUDIENCE, 300);
+    let at_cap = "x".repeat(8 * 1024);
+    let (status, answer, _) = call(&w.service, request(Some(&a), body("passage", &[&at_cap]))).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let over = "x".repeat(8 * 1024 + 1);
+    let (status, answer, _) = call(&w.service, request(Some(&a), body("passage", &[&over]))).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{answer}");
 }
