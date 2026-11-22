@@ -136,7 +136,26 @@ pub fn dataset_to_graph(
 ) -> RdfGraph {
     let mut g = RdfGraph::new();
     add_dataset_triples(&mut g, dataset, catalogue, publisher, profile);
+    type_values(&mut g, profile);
     g
+}
+
+/// States the classes the profile wants on the values of some predicates.
+fn type_values(g: &mut RdfGraph, profile: DcatProfile) {
+    let Some(classes) = &profile.render.value_classes else {
+        return;
+    };
+    let typed: Vec<(String, String)> = g
+        .triples
+        .iter()
+        .filter_map(|t| match (&t.object, classes.get(&t.predicate)) {
+            (Term::Iri(value), Some(class)) => Some((value.clone(), class.clone())),
+            _ => None,
+        })
+        .collect();
+    for (value, class) in typed {
+        g.insert(SubjectNode::Named(value), ns::RDF_TYPE, Term::Iri(class));
+    }
 }
 
 pub fn add_dataset_triples(
@@ -798,8 +817,17 @@ fn insert_properties(
             let object = match property.kind {
                 ValueKind::Literal => Term::Literal(LiteralValue::plain(value)),
                 ValueKind::Iri => {
-                    if !is_declared_iri(value) {
+                    let labels = property.values.get(value);
+                    if !is_declared_iri(value) || (labels.is_none() && !property.values.is_empty())
+                    {
                         continue;
+                    }
+                    for (lang, label) in labels.into_iter().flatten() {
+                        g.insert(
+                            SubjectNode::Named(value.to_owned()),
+                            format!("{}prefLabel", ns::SKOS),
+                            Term::Literal(LiteralValue::lang(label.clone(), lang.clone())),
+                        );
                     }
                     if let Some(class) = &property.class {
                         g.insert(
@@ -988,6 +1016,7 @@ pub fn catalogue_to_graph(
         }
     }
 
+    type_values(&mut g, profile);
     g
 }
 

@@ -7,7 +7,7 @@
 use crate::dcat::RdfFormat;
 use dataroom_core::{DataroomError, Result, Texts};
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 include!(concat!(env!("OUT_DIR"), "/profiles.rs"));
@@ -84,6 +84,9 @@ pub struct Property {
     pub kind: ValueKind,
     /// The class of an IRI value.
     pub class: Option<String>,
+    /// The code list: when given, only its IRIs are written, each with its published label.
+    #[serde(default)]
+    pub values: BTreeMap<String, Texts>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -188,6 +191,8 @@ pub struct Render {
     pub inherit_legislation: Option<bool>,
     pub terms: Option<Terms>,
     pub personal_data: Option<PersonalData>,
+    /// The class the shapes want stated on every IRI value of a predicate, by predicate.
+    pub value_classes: Option<BTreeMap<String, String>>,
     /// The only checksum algorithms the shapes admit; another leaves no checksum node.
     pub checksum_algorithms: Option<Vec<String>>,
     pub json_ld: Option<Compact>,
@@ -291,6 +296,7 @@ impl Profile {
             inherit_legislation,
             terms,
             personal_data,
+            value_classes,
             checksum_algorithms,
             json_ld
         );
@@ -361,6 +367,7 @@ fn load(sources: &[Embedded]) -> std::result::Result<Vec<Profile>, String> {
         for property in &profile.properties {
             iris.push(&property.predicate);
             iris.extend(&property.class);
+            iris.extend(property.values.keys());
         }
         if let Some(wrong) = iris.into_iter().find(|iri| !is_iri(iri)) {
             return Err(bad(&format!("'{wrong}' is not an IRI")));
