@@ -11,7 +11,6 @@
 use crate::app::StartError;
 use crate::config::{DataroomSection, OrganizationSection};
 use crate::module::Module;
-use crate::setup::Secret;
 use crate::siblings::Siblings;
 use axum::Router;
 use dataroom_api::DataroomState;

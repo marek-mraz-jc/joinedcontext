@@ -29,9 +29,9 @@ impl std::fmt::Debug for LocalIssuer {
 }
 
 impl LocalIssuer {
-    /// A fresh key named `kid`, its JWKS served on a free loopback port for as long as the
-    /// runtime runs; `issuer` empty names the issuer by that listener's address. Call it inside
-    /// a Tokio runtime.
+    /// A fresh key named `kid`, its JWKS served on a free loopback port by a thread of its own
+    /// for the life of the process (no caller's runtime holds it); `issuer` empty names the
+    /// issuer by that listener's address.
     pub fn start(issuer: &str, kid: &str) -> Result<Self, String> {
         let rng = aws_lc_rs::rand::SystemRandom::new();
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).map_err(|e| format!("no key: {e}"))?;
@@ -47,8 +47,10 @@ impl LocalIssuer {
         let addr = listener
             .local_addr()
             .map_err(|e| format!("no loopback listener for its keys: {e}"))?;
-        let listener = tokio::net::TcpListener::from_std(listener)
-            .map_err(|e| format!("no loopback listener for its keys: {e}"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| format!("no runtime for its keys: {e}"))?;
         let app = axum::Router::new().route(
             "/certs",
             axum::routing::get(move || {
@@ -56,7 +58,23 @@ impl LocalIssuer {
                 async move { axum::Json(jwks) }
             }),
         );
-        tokio::spawn(async move { axum::serve(listener, app).await });
+        std::thread::Builder::new()
+            .name("jc-door-issuer".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    match tokio::net::TcpListener::from_std(listener) {
+                        Ok(listener) => {
+                            if let Err(e) = axum::serve(listener, app).await {
+                                tracing::error!(error = %e, "jc-door issuer: its keys are no longer served");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "jc-door issuer: no listener for its keys");
+                        }
+                    }
+                });
+            })
+            .map_err(|e| format!("no thread for its keys: {e}"))?;
         let base = format!("http://{addr}");
         Ok(Self {
             issuer: if issuer.is_empty() {

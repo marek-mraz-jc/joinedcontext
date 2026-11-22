@@ -1432,7 +1432,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         } else {
             std::collections::BTreeMap::new()
         };
-        vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
+        vars.extend(modules::portal::organization_vars(cfg));
         vars.extend(modules::portal::apps_vars(cfg));
         vars.extend(modules::portal::ingest_vars(cfg));
         vars.extend(modules::portal::limits_vars(cfg));
@@ -1604,7 +1604,7 @@ async fn portal_attempt(
                 ctx,
                 cfg.portal_siblings,
                 &cfg.organizations,
-                modules::portal::organization_vars(&cfg, shared.siblings.listener)
+                modules::portal::organization_vars(&cfg)
                     .into_iter()
                     .chain(modules::portal::apps_vars(&cfg))
                     .chain(modules::portal::ingest_vars(&cfg))

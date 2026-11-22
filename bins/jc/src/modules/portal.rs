@@ -758,10 +758,7 @@ fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
 /// The Portal's settings for the `[[organizations]]` of `cfg`: `JC_PORTAL_ORGANIZATION_HOSTS`
 /// and their addresses. Their catalogues go in process ([`organization_catalogues`]). Empty
 /// without Organizations; an environment value still wins.
-pub(crate) fn organization_vars(
-    cfg: &crate::config::Config,
-    listener: std::net::SocketAddr,
-) -> BTreeMap<String, String> {
+pub(crate) fn organization_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     if cfg.organizations.is_empty() {
         return out;
@@ -1282,9 +1279,9 @@ mod tests {
         let cli =
             |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
         let listener: std::net::SocketAddr = "0.0.0.0:42301".parse().unwrap();
-        let mut cfg =
+        let cfg =
             crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
-        let vars = organization_vars(&cfg, listener);
+        let vars = organization_vars(&cfg);
         assert_eq!(
             vars["JC_PORTAL_ORGANIZATION_HOSTS"],
             format!(
@@ -1410,7 +1407,7 @@ mod tests {
             format!("{s}://opendata.alpha.test/")
         );
         portal_only.organizations.clear();
-        assert!(organization_vars(&portal_only, listener).is_empty());
+        assert!(organization_vars(&portal_only).is_empty());
     }
 
     /// T-7133: an Organization with `hosts.idm` gets its realm in the Portal's settings, its
