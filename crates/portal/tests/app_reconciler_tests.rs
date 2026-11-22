@@ -426,6 +426,31 @@ fn the_network_policy_admits_the_portal_that_jc_me_url_names() {
     assert!(admitted, "{me} is outside {}", workload.network_policy);
 }
 
+/// AP-05, S2-17: a declared and a confining scope are one scope query, both holding.
+#[test]
+fn a_declared_and_a_confining_scope_are_one_scope_query() {
+    let rendered = render(
+        &app(json!({
+            "dataNeeds": [{
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" },
+                "types": ["AirQualityObserved"],
+                "operations": ["queryEntity"],
+                "scopeQ": "/org/city|/org/region",
+                "geoQ": { "within": { "scopeRef": "/geo/SK/BB" } },
+                "representations": ["ngsi-ld"]
+            }]
+        })),
+        Some(APP_IMAGE),
+        &generate_slug(),
+        &settings(),
+    )
+    .expect("the app renders");
+    assert_eq!(
+        rendered.policies[0].spec["scopeQ"],
+        "(/org/city;/geo/SK/BB),(/org/region;/geo/SK/BB)"
+    );
+}
+
 #[test]
 fn every_data_need_becomes_one_policy_that_grants_no_more_than_it_asked() {
     let rendered = render(
