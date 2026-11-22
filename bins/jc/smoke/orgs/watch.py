@@ -320,10 +320,17 @@ def kubectl(cfg: dict, *args: str, timeout: int = 60) -> str:
     return p.stdout
 
 
+# The assistant's snapshot reads every site's chunks: 31 s on jc-dev at rest, past kubectl's 60 s
+# under a smoke run (T-7506). The server ends the statement before kubectl gives up, so a cut
+# read leaves no query running in Postgres.
+QUERY_SECONDS = 150
+
+
 def query(cfg: dict, pod: str, db: str, sql: str) -> dict:
     out = kubectl(cfg, "-n", cfg["pg_namespace"], "exec", pod, "-c", "postgres", "--",
                   "psql", "-d", db, "-At", "-X", "-v", "ON_ERROR_STOP=1",
-                  "-c", "SET default_transaction_read_only = on", "-c", sql)
+                  "-c", "SET default_transaction_read_only = on",
+                  "-c", f"SET statement_timeout = '{QUERY_SECONDS}s'", "-c", sql, timeout=QUERY_SECONDS + 30)
     lines = [ln for ln in out.splitlines() if ln.strip() and ln.strip() != "SET"]
     return json.loads(lines[-1])
 
