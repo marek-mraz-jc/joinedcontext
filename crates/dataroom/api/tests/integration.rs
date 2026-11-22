@@ -1372,7 +1372,7 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
     let ops = state.op_context();
     let as_subject = |subject| RequestCtx::new(org, id, subject);
     let root = as_subject(Subject::authenticated("admin", vec![org], Vec::new()));
-    let city = json!({"publisher": {"name": "city", "title": {"en": "City"}, "description": {},
+    let city = json!({"publisher": {"name": "city", "title": {"en": "City"}, "description": {}, "uri": "https://example.sk/id/city",
                                     "state": "active"}});
     execute_operation(&ops, &root, "publisher.propose", city)
         .await
