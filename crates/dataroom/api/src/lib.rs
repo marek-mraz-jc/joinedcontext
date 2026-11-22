@@ -27,7 +27,6 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
     validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock, Catalogue,
@@ -54,57 +53,23 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-/// Token entry mapping a bearer/API token to a verified [`Subject`].
-#[derive(Clone)]
-pub struct TokenBinding {
-    pub token: String,
-    pub subject: Subject,
-}
-
-/// The token never prints: a binding lands in panics and logs.
-impl std::fmt::Debug for TokenBinding {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenBinding")
-            .field("token", &"<redacted>")
-            .field("subject", &self.subject)
-            .finish()
-    }
-}
+/// The audience of a token that may write here: the module's name, as kaisatsu's scope maps it.
+pub const AUDIENCE: &str = "dataroom";
 
 /// The principal the Portal's CKAN publisher acts as (PORTAL-CALLS.md).
 pub const PORTAL_PUBLISHER: &str = "portal-ckan";
 
-/// The shortest Portal publisher token accepted: a guessable token would let anyone publish.
-pub const MIN_PORTAL_TOKEN_LEN: usize = 32;
-
-/// The Portal's CKAN publisher on one catalogue: `token` bound to [`PORTAL_PUBLISHER`] and the
-/// one grant its calls need. `Read` and `Propose` are all of it: `package_delete` is a
-/// withdrawal (`dataset.withdraw`), and `organization_*`/`package_*`/`resource_view_*` are
-/// proposals; `Delete` (purge) and `Admin` stay out. Errors never repeat the token.
-pub fn portal_publisher(
-    token: &str,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
-) -> Result<(TokenBinding, GrantRule)> {
-    let token = token.trim();
-    if token.len() < MIN_PORTAL_TOKEN_LEN || !token.bytes().all(|b| b.is_ascii_graphic()) {
-        return Err(DataroomError::field_error(
-            "portalToken",
-            format!(
-                "the Portal publisher token must be at least {MIN_PORTAL_TOKEN_LEN} printable \
-                 ASCII characters without spaces"
-            ),
-        ));
-    }
-    let binding = TokenBinding {
-        token: token.to_owned(),
-        subject: Subject {
-            actor_id: Some(PORTAL_PUBLISHER.into()),
-            organizations: vec![org_id],
-            groups: Vec::new(),
-            client_id: Some("joinedcontext-portal".into()),
-            read_only: false,
-        },
+/// The Portal's CKAN publisher on one catalogue: who a caller with a verified service token
+/// ([`DataroomState::with_verifier`]) is there, and the one grant its calls need. `Read` and
+/// `Propose` are all of it: `package_delete` is a withdrawal (`dataset.withdraw`), and
+/// `organization_*`/`package_*`/`resource_view_*` are proposals; `Delete` and `Admin` stay out.
+pub fn portal_publisher(org_id: OrgId, catalogue_id: CatalogueId) -> (Subject, GrantRule) {
+    let subject = Subject {
+        actor_id: Some(PORTAL_PUBLISHER.into()),
+        organizations: vec![org_id],
+        groups: Vec::new(),
+        client_id: Some("joinedcontext-portal".into()),
+        read_only: false,
     };
     let grant = GrantRule {
         org_id,
@@ -113,7 +78,7 @@ pub fn portal_publisher(
         actions: vec![Action::Read, Action::Propose],
         publisher_id: None,
     };
-    Ok((binding, grant))
+    (subject, grant)
 }
 
 /// The Portal's CKAN publisher on one Organization's catalogue of a deployment with several:
@@ -121,36 +86,23 @@ pub fn portal_publisher(
 /// no other catalogue's grant names it, and with the grant scoped to `publisher`, the CKAN
 /// organisation of the JC Organization: the Portal publishes there and creates no other.
 pub fn portal_publisher_on(
-    token: &str,
     org_id: OrgId,
     catalogue_id: CatalogueId,
     publisher: &str,
-) -> Result<(TokenBinding, GrantRule)> {
-    let (mut binding, mut grant) = portal_publisher(token, org_id, catalogue_id)?;
+) -> (Subject, GrantRule) {
+    let (mut subject, mut grant) = portal_publisher(org_id, catalogue_id);
     let principal = format!("{PORTAL_PUBLISHER}:{catalogue_id}");
-    binding.subject.actor_id = Some(principal.clone());
+    subject.actor_id = Some(principal.clone());
     grant.principal = principal;
     grant.publisher_id = Some(publisher.to_owned());
-    Ok((binding, grant))
+    (subject, grant)
 }
 
-/// [`portal_publisher`] with the token read from `path`, the secret file the host mounts.
-pub fn portal_publisher_from_file(
-    path: &std::path::Path,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
-) -> Result<(TokenBinding, GrantRule)> {
-    let token = std::fs::read_to_string(path).map_err(|e| {
-        DataroomError::Storage(format!(
-            "the Portal publisher token file {} could not be read: {}",
-            path.display(),
-            e.kind()
-        ))
-    })?;
-    portal_publisher(&token, org_id, catalogue_id)
-}
+/// The catalogues that admit the Portal's publisher, each with who it is there.
+pub type Publishers = BTreeMap<(OrgId, CatalogueId), Subject>;
 
-/// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).
+/// The caller as a host that mounts the router verified it (G1): its `None` leaves the request
+/// to the service token.
 pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
 /// The public Dashboards a catalogue's home shows, in the page's language (UIX-16, T-6780):
@@ -169,7 +121,9 @@ pub struct DataroomState {
     pub default_org_id: OrgId,
     pub default_catalogue_id: CatalogueId,
     /// Swapped at runtime by the catalogue writer (ODP-11), like the two maps below.
-    pub tokens: Arc<std::sync::RwLock<Vec<TokenBinding>>>,
+    pub publishers: Arc<std::sync::RwLock<Publishers>>,
+    /// Verifies a service's token; without one every presented credential is refused.
+    pub verifier: Option<Arc<jc_door::Verifier>>,
     pub installation_branding: Arc<BrandingBlock>,
     pub mount_prefix: String,
     /// The default catalogue's public URL (scheme, host, mount prefix), when the installation
@@ -277,7 +231,8 @@ impl DataroomState {
             harvester,
             default_org_id,
             default_catalogue_id,
-            tokens: Arc::default(),
+            publishers: Arc::default(),
+            verifier: None,
             installation_branding: Arc::new(BrandingBlock::default()),
             mount_prefix: String::new(),
             public_base: None,
@@ -344,8 +299,15 @@ impl DataroomState {
         request_origin().map_or_else(|| self.mount_prefix.clone(), |o| o.path_prefix)
     }
 
-    pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
-        self.tokens = Arc::new(std::sync::RwLock::new(tokens));
+    /// The catalogues that admit the Portal's publisher.
+    pub fn with_publishers(mut self, publishers: Publishers) -> Self {
+        self.publishers = Arc::new(std::sync::RwLock::new(publishers));
+        self
+    }
+
+    /// Admits the tokens `verifier` verifies for [`AUDIENCE`].
+    pub fn with_verifier(mut self, verifier: Arc<jc_door::Verifier>) -> Self {
+        self.verifier = Some(verifier);
         self
     }
 
@@ -413,7 +375,7 @@ impl DataroomState {
     }
 
     /// Resolves the [`RequestCtx`] from the `Host` header (or verified default) and `Authorization`
-    /// token (using constant-time token comparison). Never trusts client `x-jc-*` headers.
+    /// token. Never trusts client `x-jc-*` headers.
     pub async fn resolve_context(&self, headers: &HeaderMap) -> Result<(RequestCtx, Catalogue)> {
         // Behind a host router the host is the one it resolved (a trusted proxy's), never the
         // raw header; standalone, the `Host` header.
@@ -477,7 +439,18 @@ impl DataroomState {
             None => origin.as_ref().map(RequestOrigin::base),
         };
 
-        let raw_token = headers
+        let subject = self.caller(headers, &cat).await?;
+        let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
+        Ok((ctx, cat))
+    }
+
+    /// Who calls `cat`: the subject the host verified, the publisher of `cat` for a service
+    /// token of [`AUDIENCE`], nobody without a credential. Any other credential is refused.
+    async fn caller(&self, headers: &HeaderMap, cat: &Catalogue) -> Result<Subject> {
+        if let Some(subject) = self.subject_resolver.as_ref().and_then(|r| r(headers)) {
+            return Ok(subject);
+        }
+        let presented = headers
             .get(header::AUTHORIZATION)
             .or_else(|| headers.get("X-CKAN-API-Key"))
             .and_then(|v| v.to_str().ok())
@@ -486,52 +459,20 @@ impl DataroomState {
             .map(|t| match t.get(..7) {
                 Some(scheme) if scheme.eq_ignore_ascii_case("bearer ") => t[7..].trim(),
                 _ => t,
-            });
-
-        let subject = if let Some(ref resolver) = self.subject_resolver {
-            if let Some(s) = resolver(headers) {
-                s
-            } else {
-                match raw_token.filter(|t| !t.is_empty()) {
-                    Some(tok) => {
-                        let matched = read(&self.tokens)
-                            .iter()
-                            .find(|b| constant_time_eq(&b.token, tok))
-                            .cloned();
-                        match matched {
-                            Some(binding) => binding.subject,
-                            None => {
-                                return Err(DataroomError::Unauthorized(
-                                    "invalid or unknown API token".into(),
-                                ));
-                            }
-                        }
-                    }
-                    None => Subject::anonymous(),
-                }
-            }
-        } else {
-            match raw_token.filter(|t| !t.is_empty()) {
-                Some(tok) => {
-                    let matched = read(&self.tokens)
-                        .iter()
-                        .find(|b| constant_time_eq(&b.token, tok))
-                        .cloned();
-                    match matched {
-                        Some(binding) => binding.subject,
-                        None => {
-                            return Err(DataroomError::Unauthorized(
-                                "invalid or unknown API token".into(),
-                            ));
-                        }
-                    }
-                }
-                None => Subject::anonymous(),
-            }
+            })
+            .filter(|t| !t.is_empty());
+        let Some(token) = presented else {
+            return Ok(Subject::anonymous());
         };
-
-        let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
-        Ok((ctx, cat))
+        let refused = || DataroomError::Unauthorized("invalid or unknown API token".into());
+        let verifier = self.verifier.as_ref().ok_or_else(refused)?;
+        verifier.prepare(token).await;
+        verifier.client(token, AUDIENCE).ok_or_else(refused)?;
+        // A verified token is nobody on a catalogue that admits no publisher.
+        read(&self.publishers)
+            .get(&(cat.org_id, cat.id))
+            .cloned()
+            .ok_or_else(refused)
     }
 }
 

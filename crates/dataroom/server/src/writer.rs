@@ -4,7 +4,6 @@
 //! the next request on; each catalogue gets a publish principal of its own.
 
 use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
-use dataroom_core::auth::constant_time_eq;
 use dataroom_core::files::{FileEntry, FileStore, FileUsage};
 use dataroom_core::{
     ActivityRow, Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer,
@@ -27,8 +26,9 @@ pub struct CatalogueSpec {
     pub organization: Option<String>,
     /// The CKAN organisation the publish principal writes into, made when missing.
     pub publisher: Publisher,
-    /// The publish principal's token; `None` leaves the catalogue without a publisher grant.
-    pub publish_token: Option<String>,
+    /// Whether the Portal's publisher writes here (with its service token); without it the
+    /// catalogue has no publisher grant.
+    pub publishes: bool,
     /// A further portal's routes (ODP-08); `None` for an Organization's `default`.
     pub portal: Option<PortalRoute>,
 }
@@ -54,10 +54,7 @@ impl std::fmt::Debug for CatalogueSpec {
             .field("name", &self.name)
             .field("host", &self.host)
             .field("portal", &self.portal)
-            .field(
-                "publish_token",
-                &self.publish_token.as_ref().map(|_| "<set>"),
-            )
+            .field("publishes", &self.publishes)
             .finish_non_exhaustive()
     }
 }
@@ -91,26 +88,13 @@ impl CatalogueWriter {
 
     /// Creates or updates the catalogue of `spec`, its publisher, its grants and its routes.
     /// Refused: a catalogue id another Organization holds in the store (a deleted one's
-    /// tombstone too), a token another catalogue holds.
+    /// tombstone too).
     pub async fn upsert(&self, spec: CatalogueSpec) -> Result<Catalogue> {
         let _serial = self.serial.lock().await;
         let (org, id) = (spec.org_id, spec.id);
         let publish = spec
-            .publish_token
-            .as_deref()
-            .map(|t| portal_publisher_on(t, org, id, &spec.publisher.name))
-            .transpose()?;
-        if let Some((binding, _)) = &publish {
-            let taken = read(&self.state.tokens).iter().any(|b| {
-                constant_time_eq(&b.token, &binding.token)
-                    && b.subject.actor_id != binding.subject.actor_id
-            });
-            if taken {
-                return Err(DataroomError::Conflict(format!(
-                    "the publish token of catalogue {id} is another catalogue's"
-                )));
-            }
-        }
+            .publishes
+            .then(|| portal_publisher_on(org, id, &spec.publisher.name));
         let store = self.state.store.as_ref();
         let held = store.get_catalogue(org, id).await?;
         let mut cat = crate::ensure_catalogue(store, org, id, &spec.name, &spec.host).await?;
@@ -158,14 +142,13 @@ impl CatalogueWriter {
         }
 
         let mut grants = vec![harvest_principal(org, id).1];
-        let principal = principal_of(id);
-        let mut tokens = write(&self.state.tokens);
-        tokens.retain(|b| b.subject.actor_id.as_deref() != Some(principal.as_str()));
-        if let Some((binding, grant)) = publish {
-            tokens.push(binding);
+        let mut publishers = write(&self.state.publishers);
+        publishers.remove(&(org, id));
+        if let Some((subject, grant)) = publish {
+            publishers.insert((org, id), subject);
             grants.push(grant);
         }
-        drop(tokens);
+        drop(publishers);
         self.authorizer.replace_catalogue(org, id, grants);
         let mut bases = write(&self.state.catalogue_bases);
         match spec.base.clone() {
@@ -219,9 +202,7 @@ impl CatalogueWriter {
     }
 
     fn forget(&self, org: OrgId, id: CatalogueId) {
-        let principal = principal_of(id);
-        write(&self.state.tokens)
-            .retain(|b| b.subject.actor_id.as_deref() != Some(principal.as_str()));
+        write(&self.state.publishers).remove(&(org, id));
         self.authorizer.replace_catalogue(org, id, Vec::new());
         write(&self.state.catalogue_bases).remove(&id);
         self.state.portals.unroute(id);
@@ -470,11 +451,6 @@ async fn keep_dataset_iris(
     Ok(())
 }
 
-/// The publish principal of one catalogue (as [`portal_publisher_on`] names it).
-fn principal_of(id: CatalogueId) -> String {
-    format!("{}:{id}", dataroom_api::PORTAL_PUBLISHER)
-}
-
 fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(PoisonError::into_inner)
 }
@@ -548,7 +524,7 @@ mod tests {
                 "created": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
             }))
             .expect("a publisher"),
-            publish_token: None,
+            publishes: false,
             portal: Some(PortalRoute {
                 organization: "city".into(),
                 path: "mobility".into(),

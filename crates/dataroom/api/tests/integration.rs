@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
-use dataroom_api::{router, DataroomState, TokenBinding};
+use dataroom_api::{router, DataroomState};
 use dataroom_core::ops::{all_operations, execute_operation};
 use dataroom_core::{
     Action, Catalogue, CatalogueId, ContactKind, ContactPoint, Dataset, Distribution, GrantRule,
@@ -152,11 +154,13 @@ async fn ckan_action_api_answers_all_19_calls_with_jcctl_field_set() {
         publisher_id: None,
     }]));
 
-    let state =
-        DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![common::Caller {
             token: "secret-jcctl-token".into(),
             subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
-        }]);
+        }],
+    );
     let app = router(state);
     let host = "opendata.city.example";
     let tok = Some("secret-jcctl-token");
@@ -669,16 +673,19 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
         .unwrap();
 
     let authz = Arc::new(PolicyAuthorizer::default());
-    let state = DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![
-        TokenBinding {
-            token: "tok-mesto".into(),
-            subject: Subject::authenticated("editor_mesto", vec![org_id], Vec::new()),
-        },
-        TokenBinding {
-            token: "tok-dp".into(),
-            subject: Subject::authenticated("editor_dp", vec![org_id], Vec::new()),
-        },
-    ]);
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![
+            common::Caller {
+                token: "tok-mesto".into(),
+                subject: Subject::authenticated("editor_mesto", vec![org_id], Vec::new()),
+            },
+            common::Caller {
+                token: "tok-dp".into(),
+                subject: Subject::authenticated("editor_dp", vec![org_id], Vec::new()),
+            },
+        ],
+    );
     let app = router(state);
 
     // 1. editor_mesto can publish under mesto-bb
@@ -1258,12 +1265,13 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
 
     let fetcher = MapFetcher::new();
     let engine = Arc::new(HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false));
-    let state = DataroomState::new(store.clone(), authz, org_a, cat_a)
-        .with_harvester(engine)
-        .with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_a, cat_a).with_harvester(engine),
+        vec![common::Caller {
             token: "tok-alice".into(),
             subject: ctx_a.subject.clone(),
-        }]);
+        }],
+    );
     let op_ctx = state.op_context();
 
     // Walk every registered operation in the operation registry as org A (`ctx_a`) and verify:
@@ -1631,12 +1639,14 @@ async fn t6790_dashboards_are_listed_drawn_kept_out_of_dataset_search_and_linked
     let branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
         "../../core/tests/fixtures/branding/dev-branding.yaml"
     ));
-    let state = DataroomState::new(store.clone(), authz, org_id, cat_id)
-        .with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![common::Caller {
             token: "secret-jcctl-token".into(),
             subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
-        }])
-        .with_installation_branding(branding);
+        }],
+    )
+    .with_installation_branding(branding);
     let app = router(state);
     let tok = Some("secret-jcctl-token");
     let slug = "scsd2eehkx42n53z2zyd6vshfh7s7irf";
@@ -2395,11 +2405,13 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
         publisher_id: None,
     }]));
 
-    let state =
-        DataroomState::new(store.clone(), authz, org_a, cat_a).with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_a, cat_a),
+        vec![common::Caller {
             token: "tok-alice".into(),
             subject: Subject::authenticated("alice-admin", vec![org_a], Vec::new()),
-        }]);
+        }],
+    );
     let app = router(state.clone());
     let host = "f1a.example.org";
 
@@ -2588,11 +2600,12 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     ));
 
     // G1: Mount `dataroom_api::router(state)` under `/catalogue` beside another router in one Axum app
-    let dr_state = DataroomState::new(store.clone(), authz.clone(), org_id, cat_id)
-        .with_installation_branding(portal_branding.clone())
-        .with_mount_prefix("/catalogue")
-        .with_tokens(vec![
-            TokenBinding {
+    let dr_state = common::with_callers(
+        DataroomState::new(store.clone(), authz.clone(), org_id, cat_id)
+            .with_installation_branding(portal_branding.clone())
+            .with_mount_prefix("/catalogue"),
+        vec![
+            common::Caller {
                 token: "tok-inst-1".into(),
                 subject: Subject {
                     actor_id: Some("portal-sync".into()),
@@ -2602,7 +2615,7 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
                     read_only: false,
                 },
             },
-            TokenBinding {
+            common::Caller {
                 token: "tok-inst-2".into(),
                 subject: Subject {
                     actor_id: Some("portal-sync".into()),
@@ -2612,7 +2625,8 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
                     read_only: false,
                 },
             },
-        ]);
+        ],
+    );
 
     let host_app = axum::Router::new()
         .route(
@@ -2887,10 +2901,13 @@ async fn b3_logo_upload_refuses_scripted_svg_and_serves_content_hashed_asset() {
         actions: vec![Action::Admin],
         publisher_id: None,
     }]));
-    let state = DataroomState::new(store, authz, org, cat).with_tokens(vec![TokenBinding {
-        token: "tok-brand".into(),
-        subject: Subject::authenticated("brand-admin", vec![org], Vec::new()),
-    }]);
+    let state = common::with_callers(
+        DataroomState::new(store, authz, org, cat),
+        vec![common::Caller {
+            token: "tok-brand".into(),
+            subject: Subject::authenticated("brand-admin", vec![org], Vec::new()),
+        }],
+    );
     let app = router(state);
 
     let upload = |svg: &'static str, token: Option<&'static str>| {
