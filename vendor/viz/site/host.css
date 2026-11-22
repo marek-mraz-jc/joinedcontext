@@ -39,7 +39,7 @@ a { color: #1d4ed8; }
 #controls-note:empty { display: none; }
 /* Laid over the chart it replaces, so nothing under it moves. */
 #status.loading { position: absolute; z-index: 1; left: 50%; transform: translateX(-50%); margin-top: 180px; white-space: nowrap; background: #eff6ff; color: #1e3a8a; }
-iframe[aria-busy="true"] { opacity: 0.4; }
+iframe[aria-busy="true"] { opacity: 0.2; }
 #status.blank { box-sizing: border-box; min-height: 420px; display: flex; align-items: center; justify-content: center; text-align: center; }
 #status.note:not(.blank) { margin: 6px 0; padding: 5px 10px; border-left: 3px solid #d97706; border-radius: 0; font-size: 0.85rem; }
 #status.note.blank { background: #f8fafc; color: #334155; }
@@ -54,7 +54,10 @@ html[data-theme="dark"] .control select, html[data-theme="dark"] .control input,
 html[data-theme="dark"] .hint { color: #a0a8b3; }
 @media (max-width: 480px) {
   .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin-bottom: 6px; }
-  .control { min-width: 0; }
+  .control { min-width: 0; gap: 1px; }
+  .control select, .control input, .control summary { min-height: 2rem; height: 2rem; }
+  .control select[multiple] { height: auto; }
+  .control summary { line-height: 1.4rem; padding-block: 3px; }
   .control.first { grid-column: 1; }
   .hint { font-size: 0.75rem; }
   #data-note.carried, #status.note:not(.blank) { padding: 4px 8px; font-size: 0.76rem; line-height: 1.35; }

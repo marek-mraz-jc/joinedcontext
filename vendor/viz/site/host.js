@@ -31,13 +31,13 @@
   // T-5414: a temporal chart cut at a limit says so instead of passing for the whole window, and
   // names what was cut: newer data, more stations, or both.
   var PARTIAL = {
-    sk: { note: "Graf je neúplný, chýbajú {what}. Zobrazuje údaje od {from} do {to}.",
+    sk: { note: "Graf je neúplný, nenačítali sa {what}. Zobrazuje údaje od {from} do {to}; skúste kratšie obdobie.",
       newer: "novšie údaje", more: "ďalšie stanice", both: "novšie údaje a ďalšie stanice" },
-    cs: { note: "Graf je neúplný, chybí {what}. Ukazuje data od {from} do {to}.",
-      newer: "novější data", more: "další stanice", both: "novější data a další stanice" },
-    fi: { note: "Kaavio on vajaa, siitä puuttuu {what}. Se näyttää tiedot {from}–{to}.",
+    cs: { note: "Graf je neúplný, nenačetla se {what}. Ukazuje data od {from} do {to}; zkuste kratší období.",
+      newer: "novější data", more: "data dalších stanic", both: "novější data a data dalších stanic" },
+    fi: { note: "Kaavio on vajaa, lataamatta jäi {what}. Se näyttää tiedot {from}–{to}; kokeile lyhyempää aikaväliä.",
       newer: "uudempia tietoja", more: "muita asemia", both: "uudempia tietoja ja muita asemia" },
-    en: { note: "Partial chart, missing {what}. It shows data from {from} to {to}.",
+    en: { note: "Partial chart, not loaded: {what}. It shows data from {from} to {to}; try a shorter range.",
       newer: "newer data", more: "more stations", both: "newer data and more stations" }
   };
 
@@ -64,10 +64,10 @@
   var ENTITY = /^urn:[A-Za-z0-9][A-Za-z0-9:._~%+-]{0,254}$/;
   var TEXT = {
     sk: {
-      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Zobrazený čas, napr. 7 dní.",
+      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Časový rozsah, napr. 7 dní.",
       PT24H: "24 hodín", P7D: "7 dní", P31D: "31 dní", custom: "Vlastné", from: "Od", to: "Do", dateHint: "Napr. 1. nov. 2026 (UTC).",
-      gran: "Podrobnosť", granHint: "Ako často, napr. denne.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
-      method: "Výpočet", methodHint: "Z meraní, napr. maximum.", avg: "Priemer", min: "Minimum", max: "Maximum",
+      gran: "Podrobnosť", granHint: "Interval, napr. denne.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
+      method: "Výpočet", methodHint: "Za interval, napr. maximum.", avg: "Priemer", min: "Minimum", max: "Maximum",
       stations: "Stanice", stationsHint: "Pre viac staníc podržte Ctrl alebo Cmd.",
       attr: "Veličina", attrHint: "Napr. Teplota: graf ukáže iba ju.", all: "Všetky",
       loading: "Načítavam údaje…", empty: "Za toto obdobie nie sú žiadne údaje. Skúste dlhšie obdobie alebo inú podrobnosť.",
@@ -76,17 +76,18 @@
       zoom: "Potiahnutím v páse priblížite časť obdobia",
       time: "Čas", station: "Stanica", retry: "Skúsiť znova", resetZoom: "Zobraziť celé obdobie", firstData: "Pred {d} v tomto období nie sú uložené údaje.",
       stationsTouch: "Pre viac staníc ťuknite na každú.", allStations: "Všetky stanice", slow: "Údaje sa nenačítali do 15 sekúnd.",
-      held: "Ak sa nemeralo, môže sa opakovať posledná hodnota.", measured: "Časy meraní ukážu „Merania“", local: "Časy na osi sú v miestnom čase ({tz}).", utcDays: "Dni sú v UTC, krajný deň môže byť neúplný.",
+      held: "Bod či rovná čiara nemusí byť meranie: bez meraní sa môže opakovať posledná hodnota.", measured: "Zobraziť časy meraní („Merania“)", local: "Časy na osi sú v miestnom čase ({tz}).", utcDays: "Dni sú v UTC, krajný deň môže byť neúplný.",
       gap: "Medzera v čiare: v tom čase nie sú merania.", legend: "Kliknutím alebo ťuknutím na stanicu v legende ju zvýrazníte.",
       utcAxis: "Deň (UTC)", dateHintTo: "Napr. 20. nov. 2026 (UTC).",
       stationsExample: "Napr. {names}.", twoStations: "dve stanice", missing: "nenačítané",
-      measuredWeek: " za 7 dní", noReadings: "bez meraní", stored: "Údaje: "
+      measuredWeek: " za posledných 7 dní", noReadings: "bez meraní", stored: "Údaje: ",
+      storedFrom: "Údaje až od {from} (do {to})"
     },
     cs: {
-      controls: "Nastavení grafu", range: "Období", rangeHint: "Zobrazený čas, např. 7 dní.",
+      controls: "Nastavení grafu", range: "Období", rangeHint: "Časový rozsah, např. 7 dní.",
       PT24H: "24 hodin", P7D: "7 dní", P31D: "31 dní", custom: "Vlastní", from: "Od", to: "Do", dateHint: "Např. 1. lis. 2026 (UTC).",
-      gran: "Podrobnost", granHint: "Jak často, např. po dnech.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
-      method: "Výpočet", methodHint: "Z měření, např. maximum.", avg: "Průměr", min: "Minimum", max: "Maximum",
+      gran: "Podrobnost", granHint: "Interval, např. po dnech.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
+      method: "Výpočet", methodHint: "Za interval, např. maximum.", avg: "Průměr", min: "Minimum", max: "Maximum",
       stations: "Stanice", stationsHint: "Pro více stanic podržte Ctrl nebo Cmd.",
       attr: "Veličina", attrHint: "Např. Teplota: graf ukáže jen ji.", all: "Všechny",
       loading: "Načítám data…", empty: "Za toto období nejsou žádná data. Zkuste delší období nebo jinou podrobnost.",
@@ -95,17 +96,18 @@
       zoom: "Tažením v pásu přiblížíte část období",
       time: "Čas", station: "Stanice", retry: "Zkusit znovu", resetZoom: "Zobrazit celé období", firstData: "Před {d} v tomto období nejsou uložena data.",
       stationsTouch: "Pro více stanic klepněte na každou.", allStations: "Všechny stanice", slow: "Data se nenačetla do 15 sekund.",
-      held: "Pokud se neměřilo, může se opakovat poslední hodnota.", measured: "Časy měření ukážou „Měření“", local: "Časy na ose jsou v místním čase ({tz}).", utcDays: "Dny jsou v UTC, krajní den může být neúplný.",
+      held: "Bod či rovná čára nemusí být měření: bez měření se může opakovat poslední hodnota.", measured: "Zobrazit časy měření („Měření“)", local: "Časy na ose jsou v místním čase ({tz}).", utcDays: "Dny jsou v UTC, krajní den může být neúplný.",
       gap: "Mezera v čáře: v tu dobu nejsou měření.", legend: "Kliknutím nebo klepnutím na stanici v legendě ji zvýrazníte.",
       utcAxis: "Den (UTC)", dateHintTo: "Např. 20. lis. 2026 (UTC).",
       stationsExample: "Např. {names}.", twoStations: "dvě stanice", missing: "nenačteno",
-      measuredWeek: " za 7 dní", noReadings: "bez měření", stored: "Data: "
+      measuredWeek: " za posledních 7 dní", noReadings: "bez měření", stored: "Data: ",
+      storedFrom: "Data až od {from} (do {to})"
     },
     fi: {
       controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Miltä ajalta, esim. 7 päivää.",
       PT24H: "24 tuntia", P7D: "7 päivää", P31D: "31 päivää", custom: "Oma", from: "Alkaen", to: "Asti", dateHint: "Esim. 1.11.2026 (UTC).",
-      gran: "Tarkkuus", granHint: "Kuinka usein, esim. päivittäin.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
-      method: "Laskenta", methodHint: "Mittauksista, esim. maksimi.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
+      gran: "Tarkkuus", granHint: "Väli, esim. päivittäin.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
+      method: "Laskenta", methodHint: "Väliltä, esim. maksimi.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
       stations: "Asemat", stationsHint: "Useampi asema: pidä Ctrl tai Cmd.",
       attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
       loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista tarkkuutta.",
@@ -114,17 +116,18 @@
       zoom: "Vedä kaistassa lähentääksesi",
       time: "Aika", station: "Asema", retry: "Yritä uudelleen", resetZoom: "Näytä koko aikaväli", firstData: "Ennen päivää {d} tältä aikaväliltä ei ole tallennettuja tietoja.",
       stationsTouch: "Useampi asema: napauta kutakin.", allStations: "Kaikki asemat", slow: "Tietoja ei saatu 15 sekunnissa.",
-      held: "Jos ei mitattu, edellinen arvo voi toistua.", measured: "Mittausajat näyttää ”Mittaukset”", local: "Akselin ajat ovat paikallista aikaa ({tz}).", utcDays: "Päivät ovat UTC-ajassa, reunimmainen päivä voi olla vajaa.",
+      held: "Piste tai suora viiva ei aina ole mittaus: ilman mittauksia edellinen arvo voi toistua.", measured: "Näytä mittausajat (”Mittaukset”)", local: "Akselin ajat ovat paikallista aikaa ({tz}).", utcDays: "Päivät ovat UTC-ajassa, reunimmainen päivä voi olla vajaa.",
       gap: "Aukko viivassa: ajalta ei ole mittauksia.", legend: "Napsauta tai napauta asemaa selitteessä korostaaksesi sen.",
       utcAxis: "Päivä (UTC)", dateHintTo: "Esim. 20.11.2026 (UTC).",
       stationsExample: "Esim. {names}.", twoStations: "kaksi asemaa", missing: "ei ladattu",
-      measuredWeek: " 7 päivältä", noReadings: "ei mittauksia", stored: "Tiedot: "
+      measuredWeek: " viimeisiltä 7 päivältä", noReadings: "ei mittauksia", stored: "Tiedot: ",
+      storedFrom: "Tietoja vasta {from} alkaen ({to} asti)"
     },
     en: {
       controls: "Chart settings", range: "Range", rangeHint: "How long, e.g. 7 days.",
       PT24H: "24 hours", P7D: "7 days", P31D: "31 days", custom: "Custom", from: "From", to: "To", dateHint: "E.g. 1 Nov 2026 (UTC).",
-      gran: "Granularity", granHint: "How often, e.g. daily.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
-      method: "Method", methodHint: "Of readings, e.g. maximum.", avg: "Average", min: "Minimum", max: "Maximum",
+      gran: "Granularity", granHint: "Interval, e.g. daily.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
+      method: "Method", methodHint: "Per interval, e.g. maximum.", avg: "Average", min: "Minimum", max: "Maximum",
       stations: "Stations", stationsHint: "For more stations hold Ctrl or Cmd.",
       attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
       loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another granularity.",
@@ -133,11 +136,12 @@
       zoom: "Drag in the strip to zoom into part of the range",
       time: "Time", station: "Station", retry: "Try again", resetZoom: "Show the whole range", firstData: "No readings before {d} are stored in this range.",
       stationsTouch: "For more stations tap each.", allStations: "All stations", slow: "The data did not load within 15 seconds.",
-      held: "Without measurements, the last value may be repeated.", measured: "\"Readings\" shows the measured times", local: "Times on the axis are local ({tz}).", utcDays: "Days are in UTC, the first or last may be incomplete.",
+      held: "A point or a flat line may be no measurement: without measurements the last value may be repeated.", measured: "Show measured times (\"Readings\")", local: "Times on the axis are local ({tz}).", utcDays: "Days are in UTC, the first or last may be incomplete.",
       gap: "A gap in a line: no readings at that time.", legend: "Click or tap a station in the legend to highlight it.",
       utcAxis: "Day (UTC)", dateHintTo: "E.g. 20 Nov 2026 (UTC).",
       stationsExample: "E.g. {names}.", twoStations: "two stations", missing: "not loaded",
-      measuredWeek: " for 7 days", noReadings: "no readings", stored: "Data: "
+      measuredWeek: " of the last 7 days", noReadings: "no readings", stored: "Data: ",
+      storedFrom: "Data only from {from} (to {to})"
     }
   };
   // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
@@ -530,7 +534,7 @@
         enc.color.legend = null;
       }
       delete copy.title;
-      copy.width = Math.floor((width - (columns - 1) * 70) / columns);
+      copy.width = Math.floor((width - (columns - 1) * 24) / columns);
       copy.height = columns === 1 && count > 4 ? 60 : 84;
       if (enc.y) {
         enc.y.title = null;
@@ -546,12 +550,14 @@
     }
     if (Array.isArray(opts.bands) && opts.bands.length) {
       // Time the chart has no value for is shaded and named: a cut, or no readings.
-      var bands = { values: opts.bands };
+      // A band narrower than its name carries it in two lines.
+      var narrow = opts.width < 480;
+      var bands = { values: opts.bands.map(function (b) { return narrow ? Object.assign({}, b, { text: String(b.text).replace(" ", "\n") }) : b; }) };
       var main = { mark: copy.mark, encoding: copy.encoding };
       if (copy.params) main.params = copy.params;
       copy.layer = [
         { data: bands, mark: { type: "rect", color: "#94a3b8", opacity: 0.15, clip: true }, encoding: { x: { field: "from", type: "temporal", title: null }, x2: { field: "to" } } },
-        { data: bands, mark: { type: "text", baseline: "top", color: "#64748b", fontSize: 11, clip: true }, encoding: { x: { field: "middle", type: "temporal", title: null }, y: { value: 6 }, text: { field: "text", type: "nominal" } } },
+        { data: bands, mark: { type: "text", baseline: "top", lineBreak: "\n", color: "#64748b", fontSize: narrow ? 10 : 11, clip: true }, encoding: { x: { field: "middle", type: "temporal", title: null }, y: { value: 6 }, text: { field: "text", type: "nominal" } } },
         main
       ];
       delete copy.mark;
@@ -561,6 +567,8 @@
     if (rows) {
       var header = { title: null, labelOrient: "top", labelAnchor: "start", labelPadding: 2, labelFontSize: 12 };
       var plots = { title: head, facet: { field: color, type: "nominal", header: header }, columns: columns, spacing: { row: 8, column: 24 }, spec: copy };
+      // Each plot of two columns has its own dates, so none hangs under the empty cell of an odd count.
+      if (columns > 1) plots.resolve = { axis: { x: "independent" } };
       outer.vconcat = [plots, strip];
       return outer;
     }
@@ -1085,6 +1093,7 @@
       var units = {};
       var plan = null;
       var drawn = null; // the key of the spec in the frame
+      var late = false; // the stored readings start inside the range picked
       var notes = []; // what the line under the chart says of the rows read
       var short = false; // the answer was cut before the end of the range
       var listed = false; // the stations of an answer are in the list
@@ -1170,14 +1179,14 @@
         // The chart names what it draws: a cropped shot of maxima does not pass for readings.
         var times = rows.filter(function (row) { return attr && row[attr] !== null; }).map(function (row) { return Date.parse(row.observedAt); }).sort(function (a, b) { return a - b; });
         var date = function (ms) { return nb(new Date(ms).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })); };
-        var span = times.length ? t.stored + date(times[0]) + " – " + date(times[times.length - 1]) : "";
+        var ends = times.length ? [date(times[0]), date(times[times.length - 1])] : null;
+        var span = !ends ? "" : late ? t.storedFrom.replace("{from}", ends[0]).replace("{to}", ends[1]) : t.stored + ends[0] + " – " + ends[1];
         var bands = [];
         var band = function (from, to, text) {
           bands.push({ from: iso(from), middle: iso((from + to) / 2), to: iso(to), text: text });
         };
         if (short && times.length) {
-          var after = Math.min(times[times.length - 1] + (plan.method ? duration(plan.gran) : 0), plan.end);
-          band(after, plan.end, t.missing);
+          band(times[times.length - 1], plan.end, t.missing);
         }
         if (!plan.method && times.length) {
           // Where no station drawn has a reading for a twentieth of the span or longer.
@@ -1242,6 +1251,8 @@
         if (!plan) frame.hidden = true;
         if (frame.hidden) caveat.hidden = true;
         skeleton.hidden = !frame.hidden;
+        // The place of the chart drawn before, else the skeleton's own height.
+        if (frame.style.height) skeleton.style.height = frame.style.height;
         var p;
         try {
           p = load(view, h.api, lang, fetcher, Date.now(), null, state, function (map) {
@@ -1268,17 +1279,17 @@
             if (bar) bar.gran(plan.gran);
             remember();
           }
-          var late = "";
+          late = false;
           var span = plan.end - plan.start;
           var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
           // An answer is read oldest first, so a cut one misses its end: a late first reading is
           // still where the source starts, and both notes hold.
           if (first !== Infinity && !data.moreStations && first - plan.start > Math.max(span > DAY ? DAY / 2 : DAY, span / 20)) {
-            late = t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: plan.gran === "P1D" ? "UTC" : undefined })));
+            late = true;
+            notes.push(t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: plan.gran === "P1D" ? "UTC" : undefined }))));
           }
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
           // The line under the chart says what is drawn; the notice is left to what is missing.
-          if (late) notes.push(late);
           short = !!data.newer;
           note.textContent = notes.join(" ");
           say(data.partial || "", "note");
