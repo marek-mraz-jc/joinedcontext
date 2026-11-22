@@ -1852,7 +1852,7 @@
         "title": "Diagramme am Datensatz",
         "lead": "Die Diagramme, die der Open-Data-Katalog am Datensatz dieses Endpoints zeigt, aus den eigenen Daten des Endpoints.",
         "none": "Noch keine Diagramme.",
-        "awaiting": "Wartet auf Genehmigung",
+        "awaiting": "„{chart}“ wartet auf Genehmigung",
         "overTime": "Zeitverlauf",
         "add": "Diagramm hinzufügen",
         "name": "Kurz-ID",
@@ -1893,7 +1893,8 @@
           "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
           "spec": "Das ist kein gültiges Vega-Lite-Diagramm. Korrigieren Sie es oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt.",
-          "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt."
+          "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt.",
+          "address": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie {address} oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt."
         },
         "range": "Standardzeitraum",
         "ranges": {
@@ -1925,17 +1926,17 @@
           "name": "Kleinbuchstaben, Ziffern und Bindestriche, an diesem Endpoint eindeutig, z. B. no2-week.",
           "title": "Die Überschrift, die Lesende über dem Diagramm sehen, z. B. NO2 diese Woche.",
           "description": "Ein Satz dazu, was das Diagramm zeigt, z. B. Der Tageshöchstwert von NO2 je Station.",
-          "template": "Die Form des Diagramms, z. B. Verlauf über die Zeit für Messungen einer Woche.",
+          "template": "Die Form des Diagramms, z. B. {example}.",
           "type": "Was das Diagramm liest, z. B. {example}.",
           "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. einen Typ für Luftmessungen.",
           "noColumns": "Das Datenmodell hat hier keine Spalte. Fügen Sie dem Typ zuerst ein Attribut hinzu, z. B. no2.",
-          "time": "Wann gemessen wurde, z. B. 14:00. Bei jedem Zeitverlauf ist sie schon gesetzt.",
+          "time": "Wann gemessen wurde, z. B. 14:00. Diese Achse ist bei einem Zeitverlauf schon gesetzt.",
           "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
           "bars": "Die Spalte, die jeden Balken benennt, z. B. name für einen Balken je Station.",
           "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
           "color": "Optional. Eine Farbe je Wert, z. B. „name“ für eine Farbe je Station.",
           "facet": "Ein kleines Diagramm je Wert, z. B. „name“ für ein Feld je Station.",
-          "spec": "Optional. Was Sie hier schreiben, wird statt des Diagramms aus den Feldern oben gezeichnet, z. B. {example} liest diesen Endpoint.",
+          "spec": "Optional. Leer lassen, um die Felder oben zu nutzen. Eine Änderung darf nur Daten dieses Endpoints lesen, z. B. {example}.",
           "gridX": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
           "gridY": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
           "gridColor": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
@@ -1960,7 +1961,8 @@
         "readingTime": "Zeit der Messung (observedAt)",
         "chooseColumn": "Spalte wählen",
         "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",
-        "setRange": "„{chart}“ auf {range} setzen"
+        "setRange": "{range} für „{chart}“ vorschlagen",
+        "edited": "Das Diagramm wird aus dem gezeichnet, was Sie unter Erweitert geschrieben haben. Die Felder für Diagramm und Spalten ändern es nicht. Leeren Sie das Feld, um sie wieder zu nutzen."
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

@@ -163,7 +163,7 @@ for (const width of [1440, 400]) {
     await expect.poll(() => s.puts.length).toBe(2);
     expect(s.puts[1].body).toMatchObject({ spec: { catalog: { visualizations: [CHART] } } });
     await expect(page.getByText("chg-1").first()).toBeVisible();
-    await expect(section.getByText("Waiting for approval")).toBeVisible();
+    await expect(section.getByText("“NO2 this week” is waiting for approval")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-proposed-${width}.png`) });
   });
@@ -190,7 +190,7 @@ for (const width of [1440, 400]) {
     await expect(alert).toContainText("Nothing was proposed. Correct “Vega-Lite specification” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
-    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data/);
+    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Remove https:\/\/example\.org\/no2\.csv/);
     // The shots show the member that was refused, at the top of the box.
     await spec.evaluate((box) => (box.scrollTop = 0));
     await alert.scrollIntoViewIfNeeded();
@@ -208,7 +208,7 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
     await expect(section.getByRole("button", { name: "Remove “NO2 this quarter”" })).toBeVisible();
-    await expect(section.getByRole("button", { name: "Set “NO2 this quarter” to 31 days" })).toBeVisible();
+    await expect(section.getByRole("button", { name: "Propose 31 days for “NO2 this quarter”" })).toBeVisible();
     await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
     await expect(section.getByText("Range: 90 days · Granularity: Daily · Method: Maximum")).toBeVisible();
     await expect(section.getByText("90 days is not an allowed range")).toBeVisible();
@@ -237,7 +237,7 @@ for (const width of [1440, 400]) {
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await section.getByText("Add a chart").click();
-    await page.getByLabel("Chart", { exact: true }).selectOption("bar");
+    await page.getByRole("combobox", { name: "Chart", exact: true }).selectOption("bar");
     await expect(section.getByTestId("viz-temporal")).toHaveCount(0);
     await shootForm(page, `toolbar-bar-${width}.png`, width);
   });

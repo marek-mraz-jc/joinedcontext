@@ -1852,7 +1852,7 @@
         "title": "Charts on the dataset",
         "lead": "The charts the open-data catalogue shows on this endpoint's dataset, drawn from the endpoint's own data.",
         "none": "No charts yet.",
-        "awaiting": "Waiting for approval",
+        "awaiting": "“{chart}” is waiting for approval",
         "overTime": "Over time",
         "add": "Add a chart",
         "name": "Short ID",
@@ -1893,7 +1893,8 @@
           "method": "The server did not accept {value} as the method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again.",
           "spec": "This is not a valid Vega-Lite chart. Correct it, or press “Fill from the chart”, which replaces your edits.",
-          "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Fill from the chart”, which replaces your edits."
+          "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Fill from the chart”, which replaces your edits.",
+          "address": "A chart may use only this endpoint's data. Remove {address}, or press “Fill from the chart”, which replaces your edits."
         },
         "range": "Default range",
         "ranges": {
@@ -1925,7 +1926,7 @@
           "name": "Lower-case letters, digits and hyphens, unique on this endpoint, e.g. no2-week.",
           "title": "The heading readers see above the chart, e.g. NO2 this week.",
           "description": "One sentence on what the chart shows, e.g. The daily peak of NO2 at each station.",
-          "template": "The shape of the chart, e.g. Line over time for readings through a week.",
+          "template": "The shape of the chart, e.g. {example}.",
           "type": "What the chart reads, e.g. {example}.",
           "noTypes": "The data model lists no type yet. Add one to the model first, e.g. a type for air quality readings.",
           "noColumns": "The data model lists no column here. Add an attribute to the type first, e.g. no2.",
@@ -1935,7 +1936,7 @@
           "y": "The number the chart draws, e.g. no2.",
           "color": "Optional. A colour for each value, e.g. “name” for one colour per station.",
           "facet": "A small chart for each value, e.g. “name” for one panel per station.",
-          "spec": "Optional. What you write here is used for drawing in place of the chart built from the fields above, e.g. {example} reads this endpoint.",
+          "spec": "Optional. Leave it empty to use the fields above. An edit may read only this endpoint's data, e.g. {example}.",
           "gridX": "The columns of the grid, e.g. dateObserved for one column per time.",
           "gridY": "The rows of the grid, e.g. name for one row per station.",
           "gridColor": "The number that sets the colour of each cell, e.g. no2."
@@ -1960,7 +1961,8 @@
         "readingTime": "Time of the reading (observedAt)",
         "chooseColumn": "Choose a column",
         "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",
-        "setRange": "Set “{chart}” to {range}"
+        "setRange": "Propose {range} for “{chart}”",
+        "edited": "The chart is drawn from what you wrote under Advanced. The chart and column fields do not change it. Empty that box to use them again."
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",

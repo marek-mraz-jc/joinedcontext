@@ -327,7 +327,7 @@ describe("VisualizationsSection", () => {
     async (template) => {
       mount(endpoint(), true);
       await userEvent.click(screen.getByText(V.add));
-      await userEvent.selectOptions(screen.getByLabelText(V.template), template);
+      await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), template);
       const fields = [...document.querySelectorAll("details input, details select, details textarea")];
       expect(fields.length).toBeGreaterThan(6);
       for (const field of fields) expect(field, field.id).toHaveAccessibleDescription(/e\.g\./);
@@ -350,10 +350,10 @@ describe("VisualizationsSection", () => {
     expect(offered(marked(V.roles.x))).toEqual(["observedAt"]);
     expect(offered(V.roles.color)).toEqual(["", "name", "id"]);
     expect(offered(marked(V.roles.y))).toEqual(["", "dateObserved", "no2", "name"]);
-    await userEvent.selectOptions(screen.getByLabelText(V.template), "bar");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "bar");
     expect(offered(marked(V.roles.x))).toEqual(["", "dateObserved", "no2", "name"]);
     await userEvent.selectOptions(screen.getByLabelText(V.roles.color), "dateObserved");
-    await userEvent.selectOptions(screen.getByLabelText(V.template), "line");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "line");
     await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
     doorsAsRest();
     await userEvent.click(screen.getByRole("button", { name: V.fill }));
@@ -452,13 +452,34 @@ describe("VisualizationsSection", () => {
     expect(JSON.parse(sent.filter((one) => one.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([BAR]);
   });
 
+  it("names the address a refused specification links to, selects it, and says the edit replaces the fields (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    expect(screen.queryByText(V.edited)).toBeNull();
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-new");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "New");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "New.");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByText(V.advanced));
+    const spec = screen.getByLabelText(V.spec) as HTMLTextAreaElement;
+    await userEvent.click(spec);
+    await userEvent.paste(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }));
+    expect(screen.getByText(V.edited)).toBeVisible();
+    refusal = ["spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: never a URL"];
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+    await userEvent.click(await screen.findByRole("button", { name: V.showField }));
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining("Remove https://example.org/no2.csv,"));
+    expect(spec.value.slice(spec.selectionStart, spec.selectionEnd)).toBe("https://example.org/no2.csv");
+  });
+
   it("sets a blocking chart's range to one that is allowed, and leaves the rest of it (T-7491)", async () => {
     const long = { ...WEEK, data: { ...WEEK.data, last: "P90D" } };
     mount(endpoint({ visualizations: [BAR, long] }), true);
     doorsAsRest();
     refusal = ["invalid /spec/catalog/visualizations/0/data/last: source: `P90D` is not an ISO 8601 duration up to P31D"];
     await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
-    const set = await screen.findByRole("button", { name: "Set “NO2 week” to 31 days" });
+    const set = await screen.findByRole("button", { name: "Propose 31 days for “NO2 week”" });
     refusal = undefined;
     sent.length = 0;
     await userEvent.click(set);
@@ -491,14 +512,14 @@ describe("VisualizationsSection", () => {
     expect(screen.getByLabelText(V.controls)).toBeChecked();
     expect(screen.getByLabelText(V.range)).toHaveValue("day");
     expect(screen.getByText(V.add).closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText(V.awaiting).parentElement).toHaveTextContent("New");
+    expect(screen.getByText(V.awaiting.replace("{chart}", "New"))).toBeVisible();
     expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("offers no toolbar defaults for a chart that does not read the history", async () => {
     mount(endpoint(), true);
     await userEvent.click(screen.getByText(V.add));
-    await userEvent.selectOptions(screen.getByLabelText(V.template), "bar");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "bar");
     expect(screen.queryByTestId("viz-temporal")).toBeNull();
   });
 

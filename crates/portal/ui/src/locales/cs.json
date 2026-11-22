@@ -1852,7 +1852,7 @@
         "title": "Grafy u datové sady",
         "lead": "Grafy, které katalog otevřených dat ukazuje u datové sady tohoto endpointu, z vlastních dat endpointu.",
         "none": "Zatím žádné grafy.",
-        "awaiting": "Čeká na schválení",
+        "awaiting": "„{chart}“ čeká na schválení",
         "overTime": "V čase",
         "add": "Přidat graf",
         "name": "Identifikátor",
@@ -1865,7 +1865,7 @@
         "spec": "Specifikace Vega-Lite",
         "badJson": "Specifikace není platný JSON.",
         "noSource": "Tento endpoint neposkytuje žádný ze zdrojů, které graf čte.",
-        "incomplete": "Pro návrh grafu vyplňte: {fields}.",
+        "incomplete": "Chcete-li navrhnout graf, vyplňte: {fields}.",
         "propose": "Navrhnout graf",
         "remove": "Odebrat",
         "toolbar": "Co uvidí čtenáři",
@@ -1893,7 +1893,8 @@
           "method": "Server nepřijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu.",
           "spec": "Toto není platný graf Vega-Lite. Opravte jej, nebo stiskněte „Vyplnit podle grafu“, čímž se vaše úpravy přepíšou.",
-          "outside": "Graf smí používat jen data tohoto endpointu. Odeberte odkaz na jinou adresu, nebo stiskněte „Vyplnit podle grafu“, čímž se vaše úpravy přepíšou."
+          "outside": "Graf smí používat jen data tohoto endpointu. Odeberte odkaz na jinou adresu, nebo stiskněte „Vyplnit podle grafu“, čímž se vaše úpravy přepíšou.",
+          "address": "Graf smí používat jen data tohoto endpointu. Odeberte {address}, nebo stiskněte „Vyplnit podle grafu“, čímž se vaše úpravy přepíšou."
         },
         "range": "Výchozí období",
         "ranges": {
@@ -1925,17 +1926,17 @@
           "name": "Malá písmena, číslice a pomlčky, jedinečné v tomto endpointu, např. no2-week.",
           "title": "Nadpis, který čtenáři vidí nad grafem, např. NO2 tento týden.",
           "description": "Jedna věta o tom, co graf ukazuje, např. Denní maximum NO2 na každé stanici.",
-          "template": "Tvar grafu, např. Průběh v čase pro měření za týden.",
+          "template": "Tvar grafu, např. {example}.",
           "type": "Co graf čte, např. {example}.",
           "noTypes": "Datový model zatím nemá žádný typ. Nejdřív ho do něj přidejte, např. typ pro měření kvality ovzduší.",
           "noColumns": "Datový model tu nemá žádný sloupec. Nejdřív přidejte typu atribut, např. no2.",
-          "time": "Kdy bylo měření zapsáno, např. 14:00. V každém grafu v čase je už nastaven.",
+          "time": "Kdy bylo měření zapsáno, např. 14:00. Tato osa je v grafu v čase už nastavena.",
           "x": "Sloupec podél spodku grafu, např. dateObserved pro čas.",
           "bars": "Sloupec, který pojmenuje každý pruh, např. name pro jeden pruh na stanici.",
           "y": "Číslo, které graf kreslí, např. no2.",
           "color": "Nepovinné. Barva pro každou hodnotu, např. „name“ pro jednu barvu na stanici.",
           "facet": "Malý graf pro každou hodnotu, např. „name“ pro jeden panel na stanici.",
-          "spec": "Nepovinné. Co sem napíšete, nakreslí se místo grafu z polí výše, např. {example} čte tento endpoint.",
+          "spec": "Nepovinné. Nechte prázdné a použijí se pole výše. Úprava smí číst jen data tohoto endpointu, např. {example}.",
           "gridX": "Sloupce mřížky, např. dateObserved pro jeden sloupec na čas.",
           "gridY": "Řádky mřížky, např. name pro jeden řádek na stanici.",
           "gridColor": "Číslo, které určuje barvu políčka, např. no2."
@@ -1960,7 +1961,8 @@
         "readingTime": "Čas měření (observedAt)",
         "chooseColumn": "Vyberte sloupec",
         "removeThenRemove": "Nejdřív opravte nebo odeberte „{chart}“. Po schválení této změny znovu odeberte „{removed}“.",
-        "setRange": "Nastavit „{chart}“ na {range}"
+        "setRange": "Navrhnout {range} pro „{chart}“",
+        "edited": "Graf se kreslí z toho, co jste napsali v části Pokročilé. Pole grafu a sloupců jej nemění. Chcete-li je znovu použít, vyprázdněte ten rámeček."
       },
       "firstCall": "První volání",
       "firstCallOpen": "Otevřít v prohlížeči",

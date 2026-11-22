@@ -29,6 +29,7 @@ import {
   refusedSettings,
   refusedSpec,
   sourceOf,
+  textAt,
   visualizationsOf,
   withVisualizations,
 } from "./visualizations";
@@ -229,6 +230,16 @@ export function VisualizationsSection({
   // An edited specification the check refused, said on its box.
   const badSpec = proposal.error ? refusedSpec(proposal.error) : undefined;
   const ownSpec = badSpec && badSpec.index === sent.added ? badSpec : undefined;
+  const address =
+    ownSpec && /^(url|href)$/.test(ownSpec.path.at(-1) ?? "")
+      ? textAt(sent.charts[ownSpec.index]?.spec, ownSpec.path)
+      : undefined;
+  const showRefused = () => {
+    const field = document.getElementById(`viz-${refusedField}`);
+    field?.focus();
+    const at = address && field instanceof HTMLTextAreaElement ? field.value.indexOf(address) : -1;
+    if (address && at >= 0) (field as HTMLTextAreaElement).setSelectionRange(at, at + address.length);
+  };
   const blocking = other ? sent.charts[other.index] : undefined;
   const blocked = blocking && {
     chart: titleOf(blocking),
@@ -302,7 +313,7 @@ export function VisualizationsSection({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => document.getElementById(`viz-${refusedField}`)?.focus()}
+              onClick={showRefused}
             >
               {t("endpoints.page.visualizations.showField")}
             </Button>
@@ -391,16 +402,17 @@ export function VisualizationsSection({
   });
 
   return (
-    <div className="space-y-3" data-testid="visualizations">
+    <div className="space-y-3 max-sm:[&_button]:text-body" data-testid="visualizations">
       {awaiting ? (
         <>
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
-            <span className="text-sm font-medium text-fg">{titleOf(awaiting)}</span>
+            <span className="text-sm font-medium text-fg">
+              {t("endpoints.page.visualizations.awaiting", { chart: titleOf(awaiting) })}
+            </span>
             <Badge mono>{awaiting.name}</Badge>
             {awaiting.data.source === "temporal" ? (
               <Badge>{t("endpoints.page.visualizations.overTime")}</Badge>
             ) : null}
-            <Badge>{t("endpoints.page.visualizations.awaiting")}</Badge>
             {awaiting.data.source === "temporal" ? readersGet(awaiting.data) : null}
           </div>
           {change ? <ChangeNotice change={change} project={project} /> : null}
@@ -464,11 +476,17 @@ export function VisualizationsSection({
         <details
           ref={editor}
           // In this form the hints, and what to do on a refusal, are read at body size.
-          className="rounded-lg border border-border p-3 [&_[role=alert]]:text-body [&_p]:text-body"
+          // At phone width what is typed or picked is 16 px, which iOS does not zoom into.
+          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-title"
         >
           <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
           </summary>
+          {specText.trim() && specText !== filled ? (
+            <Alert tone="info" className="mt-3">
+              {t("endpoints.page.visualizations.edited")}
+            </Alert>
+          ) : null}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field
               id="viz-name"
@@ -510,8 +528,11 @@ export function VisualizationsSection({
             </Field>
             <Field
               id="viz-template"
+              required
               label={t("endpoints.page.visualizations.template")}
-              help={t("endpoints.page.visualizations.hint.template")}
+              help={t("endpoints.page.visualizations.hint.template", {
+                example: t(`endpoints.page.visualizations.templates.${template}`),
+              })}
             >
               <Select
                 id="viz-template"
@@ -530,6 +551,7 @@ export function VisualizationsSection({
             </Field>
             <Field
               id="viz-type"
+              required
               label={t("endpoints.page.visualizations.type")}
               help={t(
                 types.length
@@ -738,7 +760,11 @@ export function VisualizationsSection({
               help={t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
               errors={
                 ownSpec
-                  ? [t(`endpoints.page.visualizations.fix.${ownSpec.why}`)]
+                  ? [
+                    address
+                      ? t("endpoints.page.visualizations.fix.address", { address })
+                      : t(`endpoints.page.visualizations.fix.${ownSpec.why}`),
+                  ]
                   : undefined
               }
               className="mt-3"

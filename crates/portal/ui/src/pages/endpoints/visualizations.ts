@@ -129,6 +129,8 @@ export function refusedSettings(lines: readonly string[]): RefusedSetting[] {
 export interface RefusedSpec {
   index: number;
   why: "outside" | "spec";
+  /** The members down to the refused one. */
+  path: string[];
 }
 
 /** The rules of `check_spec` that refuse reaching outside the Endpoint. */
@@ -137,8 +139,17 @@ const OUTSIDE = ["data-source", "url", "href", "loader"];
 /** The specification a refusal names (jc-core's `check_spec`), so the page says it on that field. */
 export function refusedSpec(sentence: string): RefusedSpec | undefined {
   const at =
-    /^(?:spec is not a valid Endpoint: )?(?:invalid )?\/spec\/catalog\/visualizations\/(\d+)\/spec(?:\/\S*?)?: ([a-z-]+): /.exec(sentence);
-  return at ? { index: Number(at[1]), why: OUTSIDE.includes(at[2]) ? "outside" : "spec" } : undefined;
+    /^(?:spec is not a valid Endpoint: )?(?:invalid )?\/spec\/catalog\/visualizations\/(\d+)\/spec((?:\/\S*?)?): ([a-z-]+): /.exec(sentence);
+  return at
+    ? { index: Number(at[1]), why: OUTSIDE.includes(at[3]) ? "outside" : "spec", path: at[2].split("/").slice(1) }
+    : undefined;
+}
+
+/** The text at a refused member of a specification, such as the address it links to. */
+export function textAt(spec: unknown, path: string[]): string | undefined {
+  let at = spec;
+  for (const key of path) at = (at as Record<string, unknown> | null | undefined)?.[key];
+  return typeof at === "string" && at !== "" ? at : undefined;
 }
 
 /** Whether every role the template needs has a column. */
