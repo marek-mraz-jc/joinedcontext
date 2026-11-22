@@ -860,8 +860,9 @@ fn limits_note(tool: &str) -> Option<String> {
 
 /// A history read for a model (owner, T-4800): raw instances up to one day;
 /// a longer window, unless the call asks raw (`format`, `lastN`) or names
-/// its own aggregation, answers hourly averages (a week is 168 per
-/// Attribute), daily past 31 days, so one answer stays a few thousand tokens.
+/// its own aggregation, answers averages by the period of
+/// [`jc_time::granularity`] (a week is 168 hours per Attribute, 10 years 120
+/// months), so one answer stays a few thousand tokens.
 /// The caller sends these arguments only when the raw read came back cut
 /// (T-5028): a history that fits one answer stays raw, as over REST.
 /// Only a window with two ends is measured: `before` has no start. The note
@@ -893,13 +894,15 @@ fn default_aggregation(
         Some(Checked::One(rel)) if rel == "after" => now.duration_since(instant("timeAt")?),
         _ => return None,
     };
-    // 31 days, 1 day
-    let (period, note) = if span > jiff::SignedDuration::from_hours(744) {
-        ("P1D", "daily averages over this window of more than 31 days; ask format temporalValues for raw values")
-    } else if span > jiff::SignedDuration::from_hours(24) {
-        ("PT1H", "hourly averages over this window of more than a day; ask format temporalValues for raw values")
-    } else {
+    if span <= jiff::SignedDuration::from_hours(24) {
         return None;
+    }
+    let period = jc_time::granularity::aggregated(span);
+    let note = match period {
+        "P1D" => "daily averages over this window of more than 31 days; ask format temporalValues for raw values",
+        "P1M" => "monthly averages over this window of more than two years; ask format temporalValues for raw values",
+        "P1Y" => "yearly averages over this window of more than 40 years; ask format temporalValues for raw values",
+        _ => "hourly averages over this window of more than a day; ask format temporalValues for raw values",
     };
     for (key, value) in [
         ("aggrMethods", "avg"),
@@ -1582,7 +1585,7 @@ mod tests {
     }
 
     /// T-4800: a history window over a day answers hourly averages, over 31
-    /// days daily ones; a day or less, `before`, or a call naming its own
+    /// days daily ones (T-7526: over two years monthly, over 40 yearly); a day or less, `before`, or a call naming its own
     /// format, lastN or aggregation stays as asked.
     #[test]
     fn a_long_history_window_answers_aggregates_unless_raw_is_asked() {
@@ -1603,6 +1606,17 @@ mod tests {
             default_aggregation(retrieve, &mut months, now).is_some_and(|n| n.contains("daily"))
         );
         assert_eq!(months.get("aggrPeriodDuration"), Some(&one("P1D")));
+        for (from, period) in [
+            ("2016-10-20T00:00:00Z", "P1M"),
+            ("1926-10-20T00:00:00Z", "P1Y"),
+        ] {
+            let mut long = window("after", from);
+            assert!(
+                default_aggregation(retrieve, &mut long, now).is_some(),
+                "{from}"
+            );
+            assert_eq!(long.get("aggrPeriodDuration"), Some(&one(period)), "{from}");
+        }
 
         let mut day = window("after", "2026-10-19T12:00:00Z");
         assert_eq!(default_aggregation(retrieve, &mut day, now), None);
