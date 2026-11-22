@@ -71,9 +71,9 @@ async fn tls_url(url: &str) -> String {
                         if read == 0 {
                             return to_client.shutdown().await;
                         }
-                        // An error and the answers queued behind it go out as one record: the
-                        // client has then read all there is, which is when the close hung.
-                        if answer[0] == b'E' {
+                        // The cancel (SQLSTATE 57014) and the answers queued behind it go out as
+                        // one record: the client has then read all there is, and the close hung.
+                        if answer[..read].windows(5).any(|code| code == b"57014") {
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             read += from_server.try_read(&mut answer[read..]).unwrap_or(0);
                         }
