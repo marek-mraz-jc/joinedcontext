@@ -130,9 +130,8 @@ pub async fn temporal_maintenance(
     // escape in 0001_init.sql)
     crate::store::pg::set_service(&mut tx).await?;
     let mut done: Vec<String> = Vec::new();
-    // The 4.22 reaps run in their own transactions AFTER this one commits: both
-    // DELETEs grow with stored volume and can exceed the connection's
-    // statement_timeout, and a reap that times out must not abort the partition
+    // The 4.22 reaps run in their own transactions AFTER this one commits: a
+    // reap that times out or deadlocks must not abort the partition
     // pre-creation that keeps ingest writable.
     if backend == TemporalBackend::Hypertable {
         // ponytail: drop_chunks takes a chunk's audit rows along with it
@@ -166,6 +165,12 @@ pub async fn temporal_maintenance(
             let (suffix, lo, hi): (String, String, String) =
                 (row.get("suffix"), row.get("lo"), row.get("hi"));
             let keyed: bool = row.get("keyed");
+            if default_is_building(&mut tx, keyed, &suffix).await? {
+                done.push(format!(
+                    "partition {suffix}: waits for the DEFAULT partition's index"
+                ));
+                continue;
+            }
             // The failure below is EXPECTED (see module docs), and in
             // PostgreSQL a failed statement aborts the whole transaction —
             // every later one then returns 25P02. Tolerating an error means
@@ -291,15 +296,33 @@ pub async fn temporal_maintenance(
         }
         Err(e) => done.push(format!("entity reap skipped ({e})")),
     }
+    match history_expiry_index(pool, backend).await {
+        Ok(Some(line)) => done.push(line),
+        Ok(None) => {}
+        Err(e) => done.push(format!("expiry index build deferred ({e})")),
+    }
     // 4.22 also names Properties/Relationships: an attribute instance whose
-    // expiresAt has passed "should be deleted from an NGSI-LD system". This
-    // DELETE additionally contends with concurrent ingest on the same rows, and
+    // expiresAt has passed "should be deleted from an NGSI-LD system". Each
+    // DELETE contends with concurrent ingest on the same rows, and
     // a deadlock must cost only the reap (observed under ~1.2k msg/s ingest).
-    match reap_expired_instances(pool).await {
-        Ok(0) => {}
-        Ok(n) => {
-            tracing::info!(reaped = n, "4.22 reap: expired attribute instances pruned");
-            done.push(format!("reaped {n} expired attribute instances (4.22)"));
+    match reap_expired_instances(pool, backend).await {
+        Ok(None) => {}
+        Ok(Some(reap)) => {
+            let n = reap.pruned.saturating_add(reap.deleted);
+            if n > 0 {
+                tracing::info!(
+                    reaped = n,
+                    pruned = reap.pruned,
+                    rows = reap.deleted,
+                    ms = u64::try_from(reap.took.as_millis()).unwrap_or(u64::MAX),
+                    "4.22 reap: expired attribute instances pruned"
+                );
+                done.push(format!("reaped {n} expired attribute instances (4.22)"));
+            }
+            for (leaf, e) in reap.failed {
+                tracing::warn!("4.22 reap of {leaf} left for the next tick: {e}");
+                done.push(format!("instance reap skipped on {leaf} ({e})"));
+            }
         }
         Err(e) => done.push(format!("instance reap skipped ({e})")),
     }
@@ -1367,31 +1390,402 @@ fn adopt_default_rows_sql(keyed: bool, suffix: &str, lo: &str, hi: &str) -> [Str
 /// wait for the next tick, earliest expiry first.
 const PRUNE_BATCH: i64 = 1000;
 
-/// The 4.22 expired-instance reap: the current state's expired instances
-/// (pruned from `entities.entity`), then the history rows. Isolated so a
-/// deadlock with concurrent ingest never poisons the main maintenance
-/// transaction. Service role: the reap is cross-tenant work (RLS would hide
+/// The rows of a history table an `{leaf}_expiry` index holds. A statement
+/// that reads by the index spells this predicate the same way, or the
+/// planner cannot prove the partial index fits. Audit rows are no part of
+/// it: they would hold the index's front for as long as they live.
+macro_rules! expiring {
+    () => {
+        "data ? 'expiresAt' AND NOT coalesce(provenance @> '{\"audit\": true}', false)"
+    };
+}
+
+/// History rows one reap transaction deletes at most.
+const INSTANCE_REAP_BATCH: i64 = 1000;
+/// How long one tick deletes expired history rows for; the leaf it stopped
+/// at opens the next one.
+const INSTANCE_REAP_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+/// The leaf the last batch ran on.
+static REAP_CURSOR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// What one [`reap_expired_instances`] pass did.
+#[derive(Debug, Default)]
+pub struct InstanceReap {
+    /// Current documents rewritten without their expired instances.
+    pub pruned: u64,
+    /// History rows deleted.
+    pub deleted: u64,
+    /// How long the pass took.
+    pub took: std::time::Duration,
+    /// The leaves whose batch failed, each with why; the next tick retries.
+    pub failed: Vec<(String, sqlx::Error)>,
+}
+
+/// The 4.22 expired-instance reap (T-7517): the current state's expired
+/// instances first, committed on their own, then the history leaf by leaf
+/// through its `{leaf}_expiry` index, `INSTANCE_REAP_BATCH` rows a
+/// transaction, round after round until no leaf has more or
+/// `INSTANCE_REAP_BUDGET` is spent. A leaf that times out or deadlocks with
+/// ingest costs that batch alone. One reaper per database: `None` while
+/// another process holds the advisory lock. A leaf without its index yet is
+/// not read ([`history_expiry_index`] builds it); reads hide what expired
+/// either way. Service role: the reap is cross-tenant work (RLS would hide
 /// other tenants' rows).
-async fn reap_expired_instances(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    let mut tx = pool.begin().await?;
+pub async fn reap_expired_instances(
+    pool: &PgPool,
+    backend: TemporalBackend,
+) -> Result<Option<InstanceReap>, sqlx::Error> {
+    // A session lock over many transactions: a connection of its own, so the
+    // lock ends with it also when this future is dropped half way.
+    let mut conn = pool.acquire().await?.detach();
+    let held: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_reap'))")
+            .fetch_one(&mut conn)
+            .await?;
+    let reap = if held {
+        reap_pass(&mut conn, backend).await.map(Some)
+    } else {
+        Ok(None)
+    };
+    end_session(conn).await?;
+    reap
+}
+
+/// End the detached connection of a step under a session advisory lock:
+/// release the lock, then close. The close alone does not wait for the
+/// backend's exit, so the next call could read the lock as held and skip.
+/// When the release fails, or the step is dropped before it, the socket's
+/// close ends the session and the lock with it.
+async fn end_session(mut conn: sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut conn)
+        .await?;
+    sqlx::Connection::close(conn).await
+}
+
+async fn reap_pass(
+    conn: &mut sqlx::PgConnection,
+    backend: TemporalBackend,
+) -> Result<InstanceReap, sqlx::Error> {
+    let started = std::time::Instant::now();
+    let mut reap = InstanceReap::default();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await?;
     crate::store::pg::set_service(&mut tx).await?;
-    // The current state first, then the history rows, in one transaction.
-    let mut n = super::entity::prune_expired_current(&mut tx, PRUNE_BATCH).await?;
-    // try_timestamptz (0001_init.sql), not a bare cast: `expiresAt` is
-    // jsonb TEXT and a stamp PostgreSQL cannot parse would abort this
-    // DELETE for the whole deployment, every tick, forever.
-    for sql in [
-        "DELETE FROM attr_instances WHERE try_timestamptz(data->>'expiresAt') < now()
-           AND NOT coalesce(provenance @> '{\"audit\": true}', false)",
-        "DELETE FROM attr_rows WHERE try_timestamptz(data->>'expiresAt') < now()
-           AND NOT coalesce(provenance @> '{\"audit\": true}', false)",
-        "DELETE FROM attr_versions WHERE try_timestamptz(data->>'expiresAt') < now()
-           AND NOT coalesce(provenance @> '{\"audit\": true}', false)",
-    ] {
-        n = n.saturating_add(sqlx::query(sql).execute(&mut *tx).await?.rows_affected());
+    reap.pruned = super::entity::prune_expired_current(&mut tx, PRUNE_BATCH).await?;
+    tx.commit().await?;
+
+    let mut due: Vec<Leaf> = expiry_leaves(&mut *conn, backend).await?;
+    due.retain(|leaf| leaf.indexed == Some(true));
+    due.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    let mut cursor = REAP_CURSOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let after = due.partition_point(|leaf| leaf.name <= cursor);
+    due.rotate_left(after);
+    'rounds: while !due.is_empty() {
+        let mut more = Vec::new();
+        for leaf in due {
+            if started.elapsed() >= INSTANCE_REAP_BUDGET {
+                break 'rounds;
+            }
+            cursor.clone_from(&leaf.name);
+            match reap_batch(&mut *conn, &leaf).await {
+                Ok(n) => {
+                    reap.deleted = reap.deleted.saturating_add(n);
+                    if i64::try_from(n).unwrap_or(i64::MAX) >= INSTANCE_REAP_BATCH {
+                        more.push(leaf);
+                    }
+                }
+                Err(e) => reap.failed.push((leaf.name, e)),
+            }
+        }
+        due = more;
     }
+    *REAP_CURSOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = cursor;
+    reap.took = started.elapsed();
+    Ok(reap)
+}
+
+/// Whether the earliest expiry of leaf `{t}` has passed: one index entry.
+pub const REAP_DUE: &str = concat!(
+    "SELECT coalesce((SELECT public.history_expires_at(data) < now() FROM ONLY {t}
+       WHERE ",
+    expiring!(),
+    "
+       ORDER BY public.history_expires_at(data) LIMIT 1), false)"
+);
+
+/// At most `$1` expired rows of leaf `{t}`. Under forced RLS neither `?` nor
+/// the key's function is leakproof, so no range condition reaches the
+/// index; its order does, and `ctid = ANY` (leakproof) fetches what that
+/// picked. The expiry and audit tests repeat on the row deleted, which a
+/// writer may have replaced since it was picked. Public for tests/pg_reap.rs.
+pub const REAP_ROWS: &str = concat!(
+    "DELETE FROM ONLY {t} WHERE ctid = ANY(ARRAY(
+       SELECT picked.pos FROM (
+         SELECT ctid AS pos, public.history_expires_at(data) AS expires FROM ONLY {t}
+          WHERE ",
+    expiring!(),
+    "
+          ORDER BY public.history_expires_at(data) LIMIT $1) picked
+        WHERE picked.expires < now()))
+       AND NOT coalesce(provenance @> '{\"audit\": true}', false)
+       AND public.history_expires_at(data) < now()"
+);
+
+/// The plan both reap statements need: the expiry index read in its order.
+/// The planner guesses `?` at a share of the table and would sort all of the
+/// index's rows for the LIMIT.
+pub const REAP_PLAN: &str = "SELECT set_config('enable_seqscan', 'off', true),
+            set_config('enable_bitmapscan', 'off', true),
+            set_config('enable_sort', 'off', true)";
+
+/// One transaction of the history reap on one leaf. The rows deleted.
+async fn reap_batch(conn: &mut sqlx::PgConnection, leaf: &Leaf) -> Result<u64, sqlx::Error> {
+    let table = leaf.table();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+    crate::store::pg::set_service(&mut tx).await?;
+    sqlx::query(REAP_PLAN).execute(&mut *tx).await?;
+    let due: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(REAP_DUE.replace("{t}", &table)))
+        .persistent(false)
+        .fetch_one(&mut *tx)
+        .await?;
+    let n = if due {
+        sqlx::query(sqlx::AssertSqlSafe(REAP_ROWS.replace("{t}", &table)))
+            .persistent(false)
+            .bind(INSTANCE_REAP_BATCH)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+    } else {
+        0
+    };
     tx.commit().await?;
     Ok(n)
+}
+
+/// A table that holds history rows itself.
+#[derive(Debug, sqlx::FromRow)]
+struct Leaf {
+    schema: String,
+    name: String,
+    /// Whether its `{name}_expiry` index is valid; `None` without one.
+    indexed: Option<bool>,
+    /// A DEFAULT partition.
+    fallback: bool,
+}
+
+impl Leaf {
+    /// The leaf, quoted and qualified as the catalog spells it.
+    fn table(&self) -> String {
+        format!("{}.{}", quoted(&self.schema), quoted(&self.name))
+    }
+
+    /// Its expiry index, quoted bare and qualified.
+    fn expiry_index(&self) -> (String, String) {
+        let index = quoted(&format!("{}_expiry", self.name));
+        let qualified = format!("{}.{index}", quoted(&self.schema));
+        (index, qualified)
+    }
+}
+
+fn quoted(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Every table under the two history parents that holds rows (partitions of
+/// any depth, DEFAULT and timescale chunks included) and `attr_versions`,
+/// smallest first by `relpages`, a catalog read that takes no lock.
+const EXPIRY_LEAVES: &str = "WITH RECURSIVE below(oid) AS (
+       SELECT inhrelid FROM pg_inherits
+        WHERE inhparent IN ('public.attr_instances'::regclass, 'public.attr_rows'::regclass)
+       UNION ALL
+       SELECT i.inhrelid FROM pg_inherits i JOIN below b ON i.inhparent = b.oid)
+     SELECT n.nspname AS schema, c.relname AS name, x.indisvalid AS indexed,
+            coalesce(pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT', false) AS fallback
+       FROM (SELECT oid FROM below
+             UNION ALL SELECT 'public.attr_versions'::regclass::oid) l
+       JOIN pg_class c ON c.oid = l.oid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       LEFT JOIN pg_class ic ON ic.relname = c.relname || '_expiry'
+                            AND ic.relnamespace = c.relnamespace
+       LEFT JOIN pg_index x ON x.indexrelid = ic.oid
+      WHERE c.relkind = 'r'";
+
+/// The compressed chunks, which the reap leaves out.
+///
+/// ponytail: an instance that expires after its chunk was compressed stays
+/// stored (reads hide it) until retention drops the chunk: timescale
+/// decompresses every row of a chunk for a DELETE by ctid and refuses past
+/// 100 000. Reap them when timescale can index a compressed expression.
+const NOT_COMPRESSED: &str = " AND NOT EXISTS (
+         SELECT 1 FROM timescaledb_information.chunks k
+          WHERE k.chunk_schema = n.nspname AND k.chunk_name = c.relname AND k.is_compressed)";
+
+async fn expiry_leaves(
+    conn: &mut sqlx::PgConnection,
+    backend: TemporalBackend,
+) -> Result<Vec<Leaf>, sqlx::Error> {
+    let uncompressed = match backend {
+        TemporalBackend::Hypertable => NOT_COMPRESSED,
+        TemporalBackend::Partitioned => "",
+    };
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{EXPIRY_LEAVES}{uncompressed} ORDER BY c.relpages"
+    )))
+    .fetch_all(conn)
+    .await
+}
+
+/// Held shared by a pass that creates a week and alone by an index build on
+/// a DEFAULT partition: `CREATE TABLE .. PARTITION OF` holds the parent
+/// against every write while it waits for that build's lock on DEFAULT.
+const DEFAULT_BUILD_LOCK: &str = "antares.history_default_index";
+
+/// Whether the week `suffix` is still to be created and a DEFAULT index
+/// build is in the way; otherwise the build waits until this pass commits.
+async fn default_is_building(
+    conn: &mut sqlx::PgConnection,
+    keyed: bool,
+    suffix: &str,
+) -> Result<bool, sqlx::Error> {
+    let parent = if keyed {
+        "public.attr_rows"
+    } else {
+        "public.attr_instances"
+    };
+    sqlx::query_scalar(
+        "SELECT CASE WHEN to_regclass($1) IS NULL
+                THEN NOT pg_try_advisory_xact_lock_shared(hashtext($2))
+                ELSE false END",
+    )
+    .bind(format!("{parent}_{suffix}"))
+    .bind(DEFAULT_BUILD_LOCK)
+    .fetch_one(conn)
+    .await
+}
+
+/// How long one maintenance pass builds expiry indexes for.
+const EXPIRY_INDEX_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Give every history leaf its `{leaf}_expiry` index (T-7517) as
+/// [`history_audit_index`] gives the audit one: `CREATE INDEX CONCURRENTLY`,
+/// smallest first, for up to `EXPIRY_INDEX_BUDGET`, one pod at a time. The
+/// build indexes the rows already stored, so no backfill rewrites history. A
+/// leaf created since gets its own on the next pass. One leaf's failure
+/// leaves the others their turn; a second ends the pass, and a build left
+/// invalid is retried after the leaves never tried. `None` when nothing was
+/// missing or another pod holds the step.
+pub async fn history_expiry_index(
+    pool: &PgPool,
+    backend: TemporalBackend,
+) -> Result<Option<String>, sqlx::Error> {
+    let mut missing = expiry_leaves(&mut *pool.acquire().await?, backend).await?;
+    missing.retain(|leaf| leaf.indexed != Some(true));
+    if missing.is_empty() {
+        return Ok(None);
+    }
+    // As in history_one_index: a concurrent build runs outside a transaction
+    // on a connection of its own, whose end releases the advisory locks.
+    let mut conn = pool.acquire().await?.detach();
+    let held: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_expiry_index'))")
+            .fetch_one(&mut conn)
+            .await?;
+    let line = if held {
+        expiry_index_step(&mut conn, backend).await.map(Some)
+    } else {
+        Ok(None)
+    };
+    end_session(conn).await?;
+    line
+}
+
+async fn expiry_index_step(
+    conn: &mut sqlx::PgConnection,
+    backend: TemporalBackend,
+) -> Result<String, sqlx::Error> {
+    use sqlx::Executor;
+    // Read again under the lock: another pod may have built some meanwhile.
+    let mut missing = expiry_leaves(&mut *conn, backend).await?;
+    missing.retain(|leaf| leaf.indexed != Some(true));
+    missing.sort_by_key(|leaf| leaf.indexed.is_some());
+    conn.execute(sqlx::AssertSqlSafe(format!(
+        "SET statement_timeout = 0; SET lock_timeout = '{INDEX_BUILD_WAIT}'"
+    )))
+    .await?;
+    let started = std::time::Instant::now();
+    let (mut built, mut first_error) = (0usize, None);
+    for leaf in &missing {
+        if started.elapsed() >= EXPIRY_INDEX_BUDGET {
+            break;
+        }
+        match expiry_index_build(&mut *conn, leaf).await {
+            Ok(true) => built = built.saturating_add(1),
+            Ok(false) => {}
+            Err(e) => {
+                // an old snapshot fails every build alike, each after INDEX_BUILD_WAIT
+                if first_error.is_some() {
+                    break;
+                }
+                first_error = Some((leaf.name.as_str(), e));
+            }
+        }
+    }
+    let mut line = format!("expiry index built on {built} of {} leaves", missing.len());
+    if let Some((leaf, e)) = first_error {
+        tracing::warn!("expiry index on {leaf} not built: {e}");
+        line.push_str(&format!("; {leaf} deferred ({e})"));
+    }
+    Ok(line)
+}
+
+/// Build one leaf's index. `false`: a DEFAULT partition that waits while a
+/// pass creates a week.
+async fn expiry_index_build(
+    conn: &mut sqlx::PgConnection,
+    leaf: &Leaf,
+) -> Result<bool, sqlx::Error> {
+    use sqlx::Executor;
+    if leaf.fallback {
+        let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
+            .bind(DEFAULT_BUILD_LOCK)
+            .fetch_one(&mut *conn)
+            .await?;
+        if !free {
+            return Ok(false);
+        }
+    }
+    let (index, qualified) = leaf.expiry_index();
+    let mut result = Ok(());
+    if leaf.indexed == Some(false) {
+        result = conn
+            .execute(sqlx::AssertSqlSafe(format!(
+                "DROP INDEX CONCURRENTLY IF EXISTS {qualified}"
+            )))
+            .await
+            .map(|_| ());
+    }
+    if result.is_ok() {
+        result = conn
+            .execute(sqlx::AssertSqlSafe(format!(
+                "CREATE INDEX CONCURRENTLY {index} ON {} (public.history_expires_at(data)) WHERE {}",
+                leaf.table(),
+                expiring!()
+            )))
+            .await
+            .map(|_| ());
+    }
+    if leaf.fallback {
+        sqlx::query("SELECT pg_advisory_unlock(hashtext($1))")
+            .bind(DEFAULT_BUILD_LOCK)
+            .execute(&mut *conn)
+            .await?;
+    }
+    result.map(|()| true)
 }
 
 /// The columns of the one history btree (migration 0017, T-5057).
@@ -1457,9 +1851,7 @@ pub async fn history_one_index(pool: &PgPool) -> Result<Option<String>, sqlx::Er
         return Ok(None);
     }
     let line = one_index_step(&mut conn).await;
-    use sqlx::Connection;
-    // Closing the session releases the advisory lock with it.
-    conn.close().await?;
+    end_session(conn).await?;
     line.map(Some)
 }
 
@@ -1594,15 +1986,16 @@ async fn audit_free(conn: &mut sqlx::PgConnection, name: &str) -> Result<bool, s
 
 /// How long one maintenance pass builds audit indexes for.
 const AUDIT_INDEX_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
-/// How long one audit index build waits for a lock or an older snapshot.
-const AUDIT_INDEX_WAIT: &str = "10s";
+/// How long one audit or expiry index build waits for a lock or an older
+/// snapshot.
+const INDEX_BUILD_WAIT: &str = "10s";
 
 /// Give every history partition its `{partition}_audit` index (T-6337) with
 /// `CREATE INDEX CONCURRENTLY`, so writes go on, smallest first, for up to
 /// `AUDIT_INDEX_BUDGET`; a week created since gets its own on the next
 /// pass. Until a partition has one, no partition drop takes it unless it is
 /// empty. A concurrent build waits for every transaction with an older
-/// snapshot, so one that waits `AUDIT_INDEX_WAIT` gives up, leaving an
+/// snapshot, so one that waits `INDEX_BUILD_WAIT` gives up, leaving an
 /// invalid index the next pass drops and builds again. `None` when nothing
 /// was missing or another pod holds the step.
 pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::Error> {
@@ -1614,7 +2007,7 @@ pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::
         return Ok(None);
     }
     // As in history_one_index: a concurrent build runs outside a transaction
-    // on a connection of its own, and closing it releases the advisory lock.
+    // on a connection of its own, whose end releases the advisory lock.
     let mut conn = pool.acquire().await?.detach();
     let held: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_audit_index'))")
@@ -1627,7 +2020,7 @@ pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::
     let mut built = 0usize;
     let mut result = conn
         .execute(sqlx::AssertSqlSafe(format!(
-            "SET statement_timeout = 0; SET lock_timeout = '{AUDIT_INDEX_WAIT}'"
+            "SET statement_timeout = 0; SET lock_timeout = '{INDEX_BUILD_WAIT}'"
         )))
         .await
         .map(|_| ());
@@ -1657,8 +2050,7 @@ pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::
             built = built.saturating_add(1);
         }
     }
-    use sqlx::Connection;
-    conn.close().await?;
+    end_session(conn).await?;
     result?;
     Ok(Some(format!(
         "audit index built on {built} of {} partitions",

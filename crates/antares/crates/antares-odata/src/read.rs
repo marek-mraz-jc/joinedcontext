@@ -712,7 +712,7 @@ pub(crate) fn paged<T>(
 
 /// The link after a page of `served` items of a whole answer of `total`, as [`paged`] serves
 /// it.
-fn next_page(
+pub(crate) fn next_page(
     served: u64,
     total: u64,
     (cursor, skip, top, _): (u64, u64, Option<u64>, u64),
@@ -1248,7 +1248,7 @@ fn read_token(text: &str, digest: u64) -> Option<(u64, u64, Option<u64>)> {
     Some((cursor.parse().ok()?, skip.parse().ok()?, top))
 }
 
-fn bad_token(version: ODataVersion) -> ODataErrorResponse {
+pub(crate) fn bad_token(version: ODataVersion) -> ODataErrorResponse {
     ODataErrorResponse::new(
         StatusCode::BAD_REQUEST,
         "BadRequest",
@@ -1406,7 +1406,7 @@ pub(crate) async fn run(
 }
 
 /// A GET of `target` under the filter's terms.
-fn get(target: String, filter: &Translated) -> OpsRequest {
+pub(crate) fn get(target: String, filter: &Translated) -> OpsRequest {
     let req = OpsRequest::new(Method::GET, target);
     if filter.context.is_empty() {
         req
@@ -1431,7 +1431,7 @@ pub(crate) async fn run_request(
 
 /// [`run_request`] with the answer left as its bytes, `None` for the empty one a Tenant
 /// that holds nothing answers.
-async fn answered(
+pub(crate) async fn answered(
     reads: &Reads,
     caller: &Caller,
     op: OperationId,

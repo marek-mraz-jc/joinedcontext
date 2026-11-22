@@ -50,7 +50,8 @@ async fn maintenance_winning(
             retention_days,
         )
         .await?;
-        if !msg.starts_with("skipped") {
+        // a neighbour's index build on DEFAULT leaves a new week to the next pass
+        if !msg.starts_with("skipped") && !msg.contains("waits for the DEFAULT partition's index") {
             return Ok(msg);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -193,9 +194,12 @@ async fn attr_instances_decomposition_and_maintenance() {
     let msg = maintenance_winning(&pool, None).await.expect("maintenance");
     if ts {
         // no partition/chunk work without a retention horizon — but the 4.22
-        // expired-instance reap legitimately runs on every pass
+        // expired-instance reap legitimately runs on every pass, and builds
+        // the indexes it reads first
         assert!(
-            msg.contains("nothing to do") || msg.contains("(4.22)"),
+            msg.contains("nothing to do")
+                || msg.contains("(4.22)")
+                || msg.starts_with("expiry index built"),
             "timescale, no retention: {msg}"
         );
         assert!(

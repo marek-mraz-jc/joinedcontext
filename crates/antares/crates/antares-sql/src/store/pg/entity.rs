@@ -629,7 +629,7 @@ fn count_sql(wheres: &[String], split: Option<&TypeSplit>) -> String {
 /// The planner settings under which a deep idPattern page's skip streams
 /// its arms' ids (T-7484): only index paths, which hand each arm back in
 /// id order, so the arms merge without a sort. Transaction-local, and
-/// [`ID_ORDER_UNPINNED`] puts them back before the page statement.
+/// `ID_ORDER_UNPINNED` puts them back before the page statement.
 pub const ID_ORDER_PINNED: &str = "SET LOCAL enable_seqscan = off; \
      SET LOCAL enable_bitmapscan = off; SET LOCAL enable_sort = off";
 /// [`ID_ORDER_PINNED`] undone: the session's own values again.
