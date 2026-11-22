@@ -37,7 +37,40 @@ use dataroom_core::{
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_mcp::handle_mcp_jsonrpc;
 use dataroom_rdf::negotiate_rdf_format;
-pub use dataroom_rdf::profile::check as check_profiles;
+pub use dataroom_rdf::profile::{check as check_profiles, BASE_PROFILE};
+
+/// The profiles an Organization may choose for a catalogue, as the Portal is told of them
+/// (`JC_PORTAL_PROFILES`): the Portal does not link this crate.
+pub fn installed_profiles() -> Vec<serde_json::Value> {
+    dataroom_rdf::DcatProfile::installed()
+        .filter(|profile| profile.selectable)
+        .map(|profile| {
+            let rules = profile.catalogue.as_ref();
+            serde_json::json!({
+                "id": profile.id,
+                "title": profile.title,
+                "country": profile.country,
+                "publisher": rules.is_some_and(|rules| rules.publisher),
+                "publisherIriPrefixes": rules
+                    .map(|rules| rules.publisher_iri_prefixes.clone())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// The installed profile `id` pinned at the release this build ships.
+pub fn installed_pin(id: &str) -> Option<dataroom_core::ProfilePin> {
+    dataroom_rdf::DcatProfile::by_id(id).map(|profile| dataroom_core::ProfilePin {
+        profile_id: profile.id.clone(),
+        version: profile.version.clone(),
+    })
+}
+
+/// Whether the feed of installed profile `id` needs the catalogue's publisher IRI.
+pub fn requires_publisher(id: &str) -> bool {
+    dataroom_rdf::DcatProfile::by_id(id).is_some_and(dataroom_rdf::DcatProfile::requires_publisher)
+}
 use dataroom_search::search_datasets;
 use dataroom_shacl::ProfileRegistry;
 use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};

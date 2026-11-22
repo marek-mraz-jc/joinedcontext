@@ -200,6 +200,54 @@ pub(crate) fn dataset_gaps(
     state.feed_conformance.missing(stack, &graph, cat, &ds.id)
 }
 
+/// The admin report (T-7520): for each of `datasets`, the profiles of the catalogue whose feed
+/// it is absent from, each with the fields that keep it out. CPU work: call it off the async
+/// workers, with the catalogue's uploads loaded.
+pub fn profile_gaps(
+    state: &DataroomState,
+    cat: &Catalogue,
+    datasets: &[Dataset],
+    publishers: &BTreeMap<String, Publisher>,
+) -> Vec<Vec<(String, Arc<[String]>)>> {
+    let mut profiles = vec![(dataroom_rdf::profile::BASE_PROFILE, None)];
+    for pin in &cat.active_profiles {
+        if profiles.iter().all(|(id, _)| *id != pin.profile_id) {
+            let version = (!pin.version.is_empty()).then_some(pin.version.as_str());
+            profiles.push((pin.profile_id.as_str(), version));
+        }
+    }
+    if profiles.iter().all(|(id, _)| *id != cat.main_profile) {
+        profiles.push((cat.main_profile.as_str(), None));
+    }
+    let stacks: Vec<(&str, Option<Arc<Stack>>)> = profiles
+        .into_iter()
+        .map(|(id, version)| {
+            let stack = state.profiles.stack((cat.org_id, cat.id), id, version);
+            (id, stack.ok())
+        })
+        .collect();
+    datasets
+        .iter()
+        .map(|ds| {
+            if ds.state != RecordState::Active || ds.visibility != Visibility::Public {
+                return Vec::new(); // In no public feed whatever it declares.
+            }
+            stacks
+                .iter()
+                .filter_map(|(id, stack)| {
+                    let missing = match stack {
+                        Some(stack) => {
+                            dataset_gaps(state, cat, ds, publishers.get(&ds.publisher_id), stack)
+                        }
+                        None => Arc::from([format!("profile {id} is not installed")]),
+                    };
+                    (!missing.is_empty()).then(|| ((*id).to_owned(), missing))
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct FeedQuery {
     pub page: Option<usize>,

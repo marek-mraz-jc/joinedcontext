@@ -79,6 +79,82 @@ impl Sites {
 /// The registry role of a host a further portal answers on.
 pub const SITE_ROLE: &str = "portal-site";
 
+/// The profile every catalogue serves beside the ones its Portal chooses.
+pub const BASE_PROFILE: &str = "dcat-ap-3.0.1";
+
+/// A publication profile the catalogue of this installation ships (`JC_PORTAL_PROFILES`, the
+/// manifests of dataroom's profile directories as jc passes them on; T-7521).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstalledProfile {
+    pub id: String,
+    pub title: BTreeMap<String, String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    /// Its feed needs the catalogue's publisher IRI.
+    #[serde(default)]
+    pub publisher: bool,
+    /// The national register's prefixes of that IRI.
+    #[serde(default)]
+    pub publisher_iri_prefixes: Vec<String>,
+}
+
+/// `JC_PORTAL_PROFILES`: a JSON array of [`InstalledProfile`]; absent, no catalogue is here.
+pub fn parse_profiles(text: &str) -> Result<Vec<InstalledProfile>, String> {
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(text).map_err(|e| format!("not a list of profiles: {e}"))
+}
+
+/// Why Organization `org` cannot choose `profile` for a catalogue, `None` when it can.
+pub fn profile_refusal(mirror: &Mirror, org: &str, profile: &InstalledProfile) -> Option<String> {
+    if !profile.publisher {
+        return None;
+    }
+    let prefixes = &profile.publisher_iri_prefixes;
+    let example = prefixes
+        .first()
+        .map_or("https://www.helsinki.fi/", String::as_str);
+    let uri = mirror
+        .get(ORG_NAMESPACE, "Organization", org)
+        .and_then(|held| {
+            let uri = held.spec.pointer("/catalog/publisher/uri")?.as_str()?;
+            jc_core::kinds::is_declared_iri(uri).then(|| uri.to_owned())
+        });
+    let Some(uri) = uri else {
+        return Some(format!(
+            "{} needs the publisher's IRI: set spec.catalog.publisher.uri on Organization {org}, \
+             e.g. {example}…",
+            profile.id
+        ));
+    };
+    let registered = prefixes.is_empty()
+        || prefixes
+            .iter()
+            .any(|prefix| uri.len() > prefix.len() && uri.starts_with(prefix.as_str()));
+    (!registered).then(|| {
+        format!(
+            "{} needs a publisher IRI of its register, {example}…; Organization {org} declares \
+             {uri} in spec.catalog.publisher.uri",
+            profile.id
+        )
+    })
+}
+
+/// Whether Organization `org` names a publisher: `spec.catalog.publisher.name`, else its title.
+fn names_publisher(mirror: &Mirror, org: &str) -> bool {
+    let Some(held) = mirror.get(ORG_NAMESPACE, "Organization", org) else {
+        return false;
+    };
+    let named = held
+        .spec
+        .pointer("/catalog/publisher/name")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|names| !names.is_empty());
+    named || held.metadata.title.is_some()
+}
+
 /// The deployment's word on portals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PortalSettings {
@@ -97,6 +173,8 @@ pub struct PortalSettings {
     pub addresses: crate::organization_host::OrganizationAddressList,
     /// The host of the Portal's own public base (`JC_PORTAL_PUBLIC_URL`).
     pub own_host: Option<String>,
+    /// The profiles a catalogue here may choose.
+    pub profiles: Vec<InstalledProfile>,
 }
 
 /// `JC_PORTAL_PORTAL_HOSTS` and `JC_PORTAL_PORTALS_MAX`, checked: a plain host each, no host
@@ -183,8 +261,10 @@ pub fn check(
         ));
     }
     let name = &envelope.metadata.name;
+    let mut existing = None;
     if let Some(held) = mirror.get(ORG_NAMESPACE, "Portal", name) {
         let held = serde_json::from_value::<PortalSpec>(held.spec).ok();
+        existing = Some(held.clone().map(|h| h.profiles).unwrap_or_default());
         if held.as_ref().is_some_and(|h| &h.organization_ref != org) {
             return Err(refused(
                 "spec.organizationRef",
@@ -305,6 +385,41 @@ pub fn check(
                      add it"
                 ),
             ));
+        }
+    }
+    if existing.is_none() && !names_publisher(mirror, org) {
+        return Err(refused(
+            "spec.organizationRef",
+            format!(
+                "a catalogue names its publisher: set spec.catalog.publisher.name (or the title) \
+                 on Organization {org} first"
+            ),
+        ));
+    }
+    // Judged where it is chosen: what the portal serves already never blocks another edit.
+    let chosen_already = existing.unwrap_or_default();
+    for (i, id) in spec.profiles.iter().enumerate() {
+        if id == BASE_PROFILE || chosen_already.contains(id) {
+            continue;
+        }
+        let field = format!("spec.profiles[{i}]");
+        let Some(profile) = settings.profiles.iter().find(|p| &p.id == id) else {
+            let all: Vec<&str> = std::iter::once(BASE_PROFILE)
+                .chain(settings.profiles.iter().map(|p| p.id.as_str()))
+                .filter(|p| *p != id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            return Err(refused(
+                &field,
+                format!(
+                    "{id} is not installed here; choose one of {}",
+                    all.join(", ")
+                ),
+            ));
+        };
+        if let Some(line) = profile_refusal(mirror, org, profile) {
+            return Err(refused(&field, line));
         }
     }
     if let Some(max) = settings.max {
@@ -439,7 +554,10 @@ mod tests {
             mirror.upsert(envelope(
                 "Organization",
                 org,
-                json!({ "domain": format!("{org}.sk") }),
+                json!({
+                    "domain": format!("{org}.sk"),
+                    "catalog": { "publisher": { "name": { "sk": org } } },
+                }),
             ));
         }
         mirror
@@ -459,6 +577,68 @@ mod tests {
             ApiError::Unprocessable { detail, .. } => detail,
             other => panic!("not a 422: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_profile_is_installed_and_has_the_publisher_it_needs() {
+        let mirror = mirror();
+        let mut s = settings(10);
+        s.profiles = parse_profiles(
+            r#"[{"id": "dcat-ap-3.0.1", "title": {"en": "EU"}},
+                {"id": "geo", "title": {"en": "Geo"}},
+                {"id": "dcat-ap-sk-2.0", "title": {"en": "SK"}, "publisher": true,
+                 "publisherIriPrefixes": ["https://data.gov.sk/id/legal-subject/"]}]"#,
+        )
+        .expect("profiles");
+        let choosing = |id: &str| {
+            let mut manifest = portal("ba-skoly", "ba", "skoly", None);
+            manifest.spec["profiles"] = json!(["dcat-ap-3.0.1", id]);
+            manifest
+        };
+        check(&mirror, Some(&s), &choosing("geo")).expect("needs no publisher IRI");
+        let line = field(check(&mirror, Some(&s), &choosing("dcat-ap-zz")).expect_err("unknown"));
+        assert!(line.starts_with("spec.profiles[1]: "), "{line}");
+        assert!(line.contains("not installed"), "{line}");
+
+        let declare = |uri: &str| {
+            mirror.upsert(envelope(
+                "Organization",
+                "ba",
+                json!({
+                    "domain": "ba.sk",
+                    "catalog": { "publisher": { "name": { "sk": "BA" }, "uri": uri } },
+                }),
+            ));
+        };
+        for uri in [
+            "",
+            "https://ba.sk/urad",
+            "https://data.gov.sk/id/legal-subject/00000000",
+        ] {
+            declare(uri);
+            let line = field(
+                check(&mirror, Some(&s), &choosing("dcat-ap-sk-2.0")).expect_err("no publisher"),
+            );
+            assert!(line.starts_with("spec.profiles[1]: "), "{line}");
+            assert!(line.contains("spec.catalog.publisher.uri"), "{line}");
+        }
+        declare("https://data.gov.sk/id/legal-subject/00603481");
+        check(&mirror, Some(&s), &choosing("dcat-ap-sk-2.0")).expect("declared");
+
+        // What it serves already never blocks another edit.
+        mirror.upsert(choosing("dcat-ap-sk-2.0"));
+        declare("");
+        check(&mirror, Some(&s), &choosing("dcat-ap-sk-2.0")).expect("chosen before");
+    }
+
+    #[test]
+    fn a_new_portal_needs_a_publisher_name() {
+        let mirror = mirror();
+        mirror.upsert(envelope("Organization", "ba", json!({ "domain": "ba.sk" })));
+        let new = portal("ba-skoly", "ba", "skoly", None);
+        let line = field(check(&mirror, Some(&settings(10)), &new).expect_err("no publisher"));
+        assert!(line.starts_with("spec.organizationRef: "), "{line}");
+        assert!(line.contains("spec.catalog.publisher.name"), "{line}");
     }
 
     #[test]

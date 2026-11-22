@@ -341,6 +341,11 @@ pub struct CatalogueDeclaration {
     pub publisher_name: Option<Texts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_point: Option<ContactPoint>,
+    /// The pins of `Portal.spec.profiles`, the catalogue's own uploads beside them (T-7521).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_profiles: Option<Vec<ProfilePin>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_profile: Option<String>,
 }
 
 impl CatalogueDeclaration {
@@ -356,7 +361,16 @@ impl CatalogueDeclaration {
         let uri = set(&mut catalogue.publisher_uri, &self.publisher_uri);
         let name = set(&mut catalogue.publisher_name, &self.publisher_name);
         let contact = set(&mut catalogue.contact_point, &self.contact_point);
-        uri || name || contact
+        let mut changed = uri || name || contact;
+        if let Some(pins) = &self.active_profiles {
+            changed |= catalogue.active_profiles != *pins;
+            catalogue.active_profiles.clone_from(pins);
+        }
+        if let Some(main) = &self.main_profile {
+            changed |= catalogue.main_profile != *main;
+            catalogue.main_profile.clone_from(main);
+        }
+        changed
     }
 }
 

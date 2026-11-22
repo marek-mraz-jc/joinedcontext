@@ -56,7 +56,7 @@ pub async fn catalogues(store: &dyn Store) {
     let declared = |langs: &[&str]| dataroom_core::CatalogueDeclaration {
         publisher_uri: Some("https://example.sk/id/legal-subject/37828100".into()),
         publisher_name: Some(names_in(langs)),
-        contact_point: None,
+        ..Default::default()
     };
     let wide = declared(&["en", "sk"]);
     let written = store

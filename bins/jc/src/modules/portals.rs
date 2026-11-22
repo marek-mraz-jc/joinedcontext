@@ -11,7 +11,8 @@
 //! listed in `hosts.portals`.
 //!
 //! Each catalogue's publisher and contact are the ones the Organization's manifest declares
-//! (`spec.catalog`, T-7520), written every round and only on a difference.
+//! (`spec.catalog`, T-7520) and its profiles the ones the Portal's `spec.profiles` chooses
+//! (T-7521), written every round and only on a difference.
 //!
 //! ponytail: polled every [`super::appearance::FOLLOW_EVERY`] from the one Portal of this
 //! process, as the appearance is; upgrade path: the Portal's reconciler calls the writer.
@@ -19,7 +20,6 @@
 use dataroom_core::files::FileEntry;
 use dataroom_core::{
     CatalogueDeclaration, CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher,
-    RecordState,
 };
 use dataroom_server::{CatalogueSpec, CatalogueWriter, FileWrite, PortalRoute};
 use jc_core::kinds::{OrganizationSpec, PortalSource, PortalSourceType, PortalSpec, http_url_host};
@@ -27,7 +27,7 @@ use joinedcontext_portal::api::portal_files::{
     FileDesk, FileFuture, FileLimits, FileRefusal, PortalFile,
 };
 use joinedcontext_portal::api::portal_sources::{
-    DeskDataset, DeskError, DeskFuture, SourceDesk, SourceTestAnswer,
+    DeskCatalogue, DeskDataset, DeskError, DeskFuture, FeedGap, SourceDesk, SourceTestAnswer,
 };
 use joinedcontext_portal::store::{ListOptions, Mirror};
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,7 +188,8 @@ fn declaration_of(spec: &OrganizationSpec, title: serde_json::Value) -> Catalogu
     }
 }
 
-/// Writes `declared` into each served catalogue of its Organization, `default` included.
+/// Writes `declared` into each served catalogue of its Organization, `default` included, with
+/// the profiles its Portal chooses (`spec.profiles`, the one declaration of them).
 pub(crate) async fn declare(
     writer: &CatalogueWriter,
     orgs: &[OrganizationPortals],
@@ -199,16 +200,19 @@ pub(crate) async fn declare(
         let Some(declaration) = declared.get(&org.name) else {
             continue;
         };
-        let further = served
-            .values()
-            .filter(|portal| portal.organization_ref == org.name)
-            .filter_map(|portal| further_catalogue(portal, orgs));
-        for (org_id, id) in std::iter::once((org.org_id, org.catalogue_id)).chain(further) {
-            match writer.declare(org_id, id, declaration).await {
-                Ok(true) => tracing::info!(catalogue = %id, "catalogue publisher declared"),
+        let mut catalogues = vec![((org.org_id, org.catalogue_id), &[][..])];
+        for portal in served.values().filter(|p| p.organization_ref == org.name) {
+            match further_catalogue(portal, orgs) {
+                Some(key) => catalogues.push((key, &portal.profiles[..])),
+                None => catalogues[0].1 = &portal.profiles[..],
+            }
+        }
+        for ((org_id, id), chosen) in catalogues {
+            match writer.declare(org_id, id, declaration, chosen).await {
+                Ok(true) => tracing::info!(catalogue = %id, "catalogue declaration written"),
                 Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(catalogue = %id, error = %e, "publisher not written; next round");
+                    tracing::warn!(catalogue = %id, error = %e, "declaration not written; next round");
                 }
             }
         }
@@ -654,21 +658,41 @@ impl SourceDesk for Desk {
         })
     }
 
-    fn datasets<'a>(&'a self, portal: &'a PortalSpec) -> DeskFuture<'a, Vec<DeskDataset>> {
+    fn datasets<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        offset: usize,
+        limit: usize,
+    ) -> DeskFuture<'a, DeskCatalogue> {
         Box::pin(async move {
             let (org, id) = self.key(portal)?;
-            let all = self.writer.datasets(org, id).await.map_err(desk_error)?;
-            Ok(all
-                .into_iter()
-                .filter(|d| d.state == RecordState::Active)
-                .map(|d| DeskDataset {
-                    title: dataroom_core::model::text_in_lang(&d.title, None)
-                        .unwrap_or(&d.name)
-                        .to_owned(),
-                    source: d.harvest_source_id,
-                    name: d.name,
-                })
-                .collect())
+            let report = self
+                .writer
+                .report(org, id, offset, limit)
+                .await
+                .map_err(desk_error)?;
+            Ok(DeskCatalogue {
+                total: report.total,
+                missing_publisher: report.missing_publisher,
+                datasets: report
+                    .datasets
+                    .into_iter()
+                    .map(|(d, gaps)| DeskDataset {
+                        title: dataroom_core::model::text_in_lang(&d.title, None)
+                            .unwrap_or(&d.name)
+                            .to_owned(),
+                        source: d.harvest_source_id,
+                        name: d.name,
+                        missing: gaps
+                            .into_iter()
+                            .map(|(profile, fields)| FeedGap {
+                                profile,
+                                fields: fields.to_vec(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
         })
     }
 }
