@@ -551,6 +551,13 @@ pub fn project_org_domain(state: &AppState, project: &str) -> String {
         .unwrap_or_else(|| org_domain(state, project))
 }
 
+/// The domain an indicator's id in `project` is minted under, as its Pipelines mint
+/// ([`crate::permissions::urn_owner`]), so it stays the stored entity across a move.
+pub fn project_urn_owner(state: &AppState, project: &str) -> String {
+    crate::permissions::urn_owner(&state.mirror, project)
+        .unwrap_or_else(|| org_domain(state, project))
+}
+
 /// [`org_domain`] over `mirror`, with the deployment's domain `configured` when no Organization
 /// names one.
 pub fn org_domain_in(

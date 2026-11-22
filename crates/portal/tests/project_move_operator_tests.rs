@@ -51,12 +51,18 @@ async fn serving_role() -> (String, String) {
 /// of these tests. Two tests of this binary boot at once with no lock of their own: the grants
 /// take the catalog lock (T-7476).
 async fn world() -> AppState {
+    installed(None).await
+}
+
+/// [`world`] of an installation whose runner mints `domain` for a project of no Organization.
+async fn installed(domain: Option<&str>) -> AppState {
     let (owner_url, serving_url) = serving_role().await;
     let pool = joinedcontext_portal::db::connect_as(&serving_url, Some(&owner_url))
         .await
         .expect("serve as the serving role");
     let mut config = Config::for_tests();
     config.decisions_need_second_factor = false;
+    config.org_domain = domain.map(str::to_owned);
     AppState::new(config, None).with_db(pool)
 }
 
@@ -73,6 +79,18 @@ fn operator(state: &AppState, name: &str) -> Identity {
 
 fn body(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_default()
+}
+
+/// What the Project door and a Change's approval answer to `spec` as `project`'s manifest.
+async fn project_change(state: &AppState, project: &str, spec: Value) -> Result<(), String> {
+    use joinedcontext_portal::error::ApiError;
+    match joinedcontext_portal::project_move::placed(state, project, &spec, ApiError::Conflict)
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(ApiError::Conflict(line)) => Err(line),
+        Err(other) => panic!("the registry answers: {other:?}"),
+    }
 }
 
 fn run(test: &str) -> String {
@@ -877,6 +895,205 @@ async fn a_move_waits_for_endpoints_whose_policy_refs_name_the_old_domain() {
             .contains(&format!("{to}.example")),
         "the gateway binds the Endpoint's second URN"
     );
+}
+
+/// T-7500: a move to an Organization of another domain does not change the owner a Pipeline
+/// mints by itself. The plan waits for the decision, the Project Change is refused without it or
+/// with a third domain, and is accepted with the owner minted today (kept until the re-mint) or
+/// the target's (nothing stored carries another).
+#[tokio::test]
+async fn a_move_waits_until_the_manifest_says_which_owner_its_ids_keep() {
+    let state = world().await;
+    let from = run("hel");
+    let to = run("ctlb");
+    let project = run("ids");
+    people(&state, &from, &to);
+    placed(&state, &project, &from, &to).await;
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let (today, then) = (format!("{from}.example"), format!("{to}.example"));
+    let check = |spec: Value| project_change(&state, &project, spec);
+    let moved = json!({ "organizationRef": to });
+    assert_eq!(check(moved.clone()).await, Ok(()), "no Pipeline mints");
+
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "statistics",
+        &project,
+        json!({ "class": "scheduled" }),
+    ));
+    let refused = check(moved.clone()).await.expect_err("a second id each");
+    assert!(
+        refused.starts_with("spec.urnOwner:")
+            && refused.contains(&today)
+            && refused.contains(&then),
+        "{refused}"
+    );
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        planned["waits"].to_string().contains("spec.urnOwner"),
+        "{planned}"
+    );
+
+    for (owner, accepted) in [
+        (&today, true),
+        (&then, true),
+        (&"other.example".to_owned(), false),
+    ] {
+        let pinned = json!({ "organizationRef": to, "urnOwner": owner });
+        assert_eq!(check(pinned).await.is_ok(), accepted, "{owner}");
+    }
+
+    state.mirror.upsert(envelope(
+        "Project",
+        &project,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": to, "urnOwner": today }),
+    ));
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        !planned["waits"].to_string().contains("urnOwner"),
+        "{planned}"
+    );
+}
+
+/// T-7500: the pin is the owner minted today or the named Organization's on every Project
+/// Change, so no first Change plants a third domain for a later move to keep. Taking it out is
+/// always allowed, and a project's indicator space holds ids as its Pipelines do.
+#[tokio::test]
+async fn a_pin_is_only_ever_the_owner_minted_today_or_the_named_organizations() {
+    let state = world().await;
+    let (from, to) = (run("hel"), run("ctlb"));
+    let (project, unfiled) = (run("pin"), run("unfiled"));
+    people(&state, &from, &to);
+    placed(&state, &project, &from, &to).await;
+    // `unfiled` is a Project the registry files under no Organization yet.
+    manifest(&state, &unfiled, &from);
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let today = format!("{from}.example");
+
+    for name in [&project, &unfiled] {
+        let third = json!({ "organizationRef": from, "urnOwner": "other.example" });
+        let refused = project_change(&state, name, third)
+            .await
+            .expect_err("a third domain, no Pipeline, no change of Organization");
+        assert!(refused.starts_with("spec.urnOwner:"), "{name}: {refused}");
+        let own = json!({ "organizationRef": from, "urnOwner": today });
+        assert_eq!(project_change(&state, name, own).await, Ok(()), "{name}");
+    }
+
+    // The two steps: plant a third domain, then move and keep it as today's.
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        &format!("{project}-kpi"),
+        &project,
+        json!({}),
+    ));
+    let step = |organization: &str| json!({ "organizationRef": organization, "urnOwner": "other.example" });
+    assert!(project_change(&state, &project, step(&from)).await.is_err());
+    assert!(project_change(&state, &project, step(&to)).await.is_err());
+    let unsaid = project_change(&state, &project, json!({ "organizationRef": to }))
+        .await
+        .expect_err("the indicators would be minted a second time");
+    assert!(unsaid.starts_with("spec.urnOwner:"), "{unsaid}");
+
+    // Pinned before the move: changing it is judged, keeping or removing it is not.
+    state.mirror.upsert(envelope(
+        "Project",
+        &project,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": from, "urnOwner": today }),
+    ));
+    assert!(project_change(&state, &project, step(&from)).await.is_err());
+    let kept = json!({ "organizationRef": to, "urnOwner": today });
+    assert_eq!(project_change(&state, &project, kept).await, Ok(()));
+    let removed = json!({ "organizationRef": from });
+    assert_eq!(project_change(&state, &project, removed).await, Ok(()));
+
+    // A Portal without a registry judges the pin the same.
+    let bare = AppState::new(Config::for_tests(), None);
+    people(&bare, &from, &to);
+    manifest(&bare, &unfiled, &from);
+    assert!(project_change(&bare, &unfiled, step(&from)).await.is_err());
+}
+
+/// T-7500, jc-prod's shape: the project names no Organization, so it mints the installation's
+/// domain, and the registry knows the installation by another name than the forge's manifest
+/// (`smartcity`, `hel`). Its move waits like any other, and waits too while an owner on either
+/// side cannot be told.
+#[tokio::test]
+async fn a_move_of_a_project_of_the_installation_waits_for_its_owner_too() {
+    let today = "installation.example";
+    let state = installed(Some(today)).await;
+    let (filed, claim, to) = (run("smartcity"), run("hel"), run("bcn"));
+    let project = run("installed");
+    state.mirror.set_configured_installation(&filed);
+    people(&state, &claim, &to);
+    placed(&state, &project, &filed, &to).await;
+    state.mirror.upsert(envelope(
+        "Organization",
+        &claim,
+        ORG_NAMESPACE,
+        json!({ "domain": today, "installation": true }),
+    ));
+    state
+        .mirror
+        .upsert(envelope("Project", &project, ORG_NAMESPACE, json!({})));
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "statistics",
+        &project,
+        json!({ "class": "scheduled" }),
+    ));
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+
+    let moved = json!({ "organizationRef": to });
+    let refused = project_change(&state, &project, moved.clone())
+        .await
+        .expect_err("a second id for every stored entity");
+    assert!(
+        refused.starts_with("spec.urnOwner:") && refused.contains(today),
+        "{refused}"
+    );
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        planned["waits"].to_string().contains("spec.urnOwner"),
+        "{planned}"
+    );
+    let pinned = |owner: &str| json!({ "organizationRef": to, "urnOwner": owner });
+    for (owner, accepted) in [(today, true), ("other.example", false)] {
+        let answer = project_change(&state, &project, pinned(owner)).await;
+        assert_eq!(answer.is_ok(), accepted, "{owner}: {answer:?}");
+    }
+    let same = json!({ "organizationRef": claim });
+    assert_eq!(
+        project_change(&state, &project, same).await,
+        Ok(()),
+        "naming the installation's manifest switches no id"
+    );
+
+    // Today's owner cannot be told: the runner's domain is not configured.
+    let mut unknown = state.clone();
+    let mut config = (*state.config).clone();
+    config.org_domain = None;
+    unknown.config = std::sync::Arc::new(config);
+    assert!(project_change(&unknown, &project, moved.clone())
+        .await
+        .is_err());
+
+    // The target's cannot be told.
+    state
+        .mirror
+        .upsert(envelope("Organization", &to, ORG_NAMESPACE, json!({})));
+    let refused = project_change(&state, &project, moved)
+        .await
+        .expect_err("the target declares no domain");
+    assert!(refused.contains("declares no domain"), "{refused}");
 }
 
 /// A forge holding one open Change of `project`, #5, which adds the Context Space `air`.

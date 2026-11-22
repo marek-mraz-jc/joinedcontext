@@ -1548,6 +1548,8 @@ fn remount_manifests(text: &str, remount: &Remount<'_>) -> Option<String> {
         }
         let spec = manifest.get_mut("spec").and_then(Value::as_object_mut);
         match (kind.as_deref(), spec) {
+            // A copy or an import is a new project: no stored id of its carries another owner.
+            (Some("Project"), Some(spec)) => changed |= spec.remove("urnOwner").is_some(),
             (Some("Endpoint"), Some(spec)) => {
                 let fresh = spec
                     .get("slug")
@@ -1919,6 +1921,25 @@ mod tests {
             metadata: ObjectMeta::new(name, ORG_NAMESPACE),
             spec,
             status: None,
+        }
+    }
+
+    /// T-7500: a copy or an import is a new project, so it takes over no pin of stored ids.
+    #[test]
+    fn a_remounted_project_drops_the_owner_pin_of_the_one_it_came_from() {
+        let text = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: zilina\nspec:\n  organizationRef: zilina\n  urnOwner: hel.fi\n";
+        for name in ["zilina", "zilina-copy"] {
+            let remount = Remount {
+                origin: "zilina",
+                name,
+                fresh_slug: &|_| false,
+                applications: &Default::default(),
+                keep_secrets: false,
+                message: String::new(),
+            };
+            let remounted = remount_manifests(text, &remount).expect("a changed manifest");
+            assert!(!remounted.contains("urnOwner"), "{name}: {remounted}");
+            assert!(remounted.contains("organizationRef"), "{name}: {remounted}");
         }
     }
 

@@ -780,6 +780,11 @@ async fn move_plan(
     else {
         return Ok(None);
     };
+    if !plan.done {
+        // What the Change naming the target holds beside the organizationRef (T-7500).
+        plan.waits
+            .extend(crate::project_move::owner_wait(state, project, to));
+    }
     if state.shako.is_some() && !plan.done {
         let open: Vec<String> = crate::api::changes::list_changes_for(state, project)
             .await?

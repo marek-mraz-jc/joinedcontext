@@ -257,6 +257,128 @@ pub fn stray_policy_refs(
     lines
 }
 
+/// The Organization a Project `spec` names.
+fn named_in(spec: &serde_json::Value) -> Option<&str> {
+    spec.get("organizationRef")
+        .and_then(crate::resource::reference_name)
+}
+
+/// The owner a Project `spec` pins (`spec.urnOwner`).
+fn pin_in(spec: &serde_json::Value) -> Option<&str> {
+    spec.get("urnOwner")
+        .and_then(serde_json::Value::as_str)
+        .filter(|owner| !owner.is_empty())
+}
+
+/// Whether `project` has the space its indicators are written into.
+fn holds_indicators(mirror: &Mirror, project: &str) -> bool {
+    mirror
+        .get(project, "ContextSpace", &jc_core::kpi::kpi_space(project))
+        .is_some()
+}
+
+/// The domain `project` mints while it names no Organization: the installation's, as the runner
+/// has it (`JC_PORTAL_ORG_DOMAIN`). `None` when it cannot be told: that is unset, or the project
+/// holds indicators and those mint another ([`crate::api::assistant::org_domain`]).
+fn installation_owner(state: &crate::state::AppState, project: &str) -> Option<String> {
+    let runner = state.config.org_domain.clone()?;
+    let told = !holds_indicators(&state.mirror, project)
+        || crate::api::assistant::org_domain(state, project) == runner;
+    told.then_some(runner)
+}
+
+/// Why `spec` may not become `project`'s manifest for the owner its ids carry (T-7500), on every
+/// Project Change:
+/// - a `urnOwner` that is new or changed is only the owner minted today or the domain of the
+///   Organization `spec` names, so no Change plants a third one for a later move to keep;
+/// - a project with Pipelines or indicators changes Organization only when that leaves the owner
+///   as it is or `spec` says which owner its ids keep, and waits while one cannot be told: its
+///   next run would write every entity a second time and find none it references.
+///
+/// Removing the pin is allowed.
+fn owner_refusal(
+    state: &crate::state::AppState,
+    project: &str,
+    spec: &serde_json::Value,
+) -> Option<String> {
+    let mirror = &state.mirror;
+    // In layout 2 the registry entry renders nothing: the project's own project.yaml does, and
+    // jc-core takes no urnOwner in an entry.
+    if mirror.layout() == 2 && spec.get("repository").is_some_and(|r| !r.is_null()) {
+        return None;
+    }
+    let held = mirror.get(ORG_NAMESPACE, "Project", project);
+    let held_spec = held.as_ref().map(|env| &env.spec);
+    let (named, pinned) = (named_in(spec), pin_in(spec));
+    let minting = holds_indicators(mirror, project)
+        || !mirror
+            .list(project, "Pipeline", &ListOptions::default())
+            .items
+            .is_empty();
+    let switching = minting && named != held_spec.and_then(named_in);
+    let repinned = pinned.is_some() && pinned != held_spec.and_then(pin_in);
+    if !switching && !repinned {
+        return None;
+    }
+    let installation = installation_owner(state, project);
+    // A project that is neither filed nor minting has no owner of today to keep.
+    let today = (held.is_some() || minting)
+        .then(|| crate::permissions::urn_owner(mirror, project).or_else(|| installation.clone()))
+        .flatten();
+    let (under, then) = match named {
+        Some(name) => (
+            format!("Organization '{name}'"),
+            domain_of(mirror, "Organization", name).or_else(|| {
+                // The registry's name of the installation, which needs no manifest of that name.
+                installation.filter(|_| mirror.configured_installation() == Some(name))
+            }),
+        ),
+        None => ("the installation".to_owned(), installation),
+    };
+    if switching && then.is_none() {
+        return Some(format!(
+            "spec.urnOwner: {under} declares no domain, so the owner project '{project}' would mint under it cannot be told; give it its domain first (an Organization's spec.domain, the installation's JC_PORTAL_ORG_DOMAIN), then send this Project Change again"
+        ));
+    }
+    let known = |domain: &Option<String>| domain.clone().unwrap_or_else(|| "not known".to_owned());
+    if let Some(pin) = pinned {
+        let allowed = today.as_deref() == Some(pin) || then.as_deref() == Some(pin);
+        return (!allowed).then(|| {
+            format!(
+                "spec.urnOwner: {pin} is neither the owner project '{project}' mints today ({}) nor the domain of {under} ({}); write one of those two, or leave urnOwner out",
+                known(&today),
+                known(&then)
+            )
+        });
+    }
+    let then = then?;
+    match today {
+        Some(today) if today == then => None,
+        Some(today) => Some(format!(
+            "spec.urnOwner: the Pipelines and indicators of project '{project}' mint {today} in their ids and would mint {then} under {under}, a second id for every stored entity; in the same Project Change write urnOwner: {today}, re-mint the stored ids to {then} (antares_remint) and remove it then (an enforcing gateway refuses their creates and upserts until that re-mint), or write urnOwner: {then} when no stored id carries {today}"
+        )),
+        None => Some(format!(
+            "spec.urnOwner: the owner project '{project}' mints today cannot be told (JC_PORTAL_ORG_DOMAIN is unset, or the installation's Organization declares another domain); an operator sets both to the domain the runner mints, or this Project Change writes urnOwner: {then} when no stored id carries another"
+        )),
+    }
+}
+
+/// What a `ProjectMove` of `project` to `to` waits on for the owner of its ids: what
+/// [`owner_refusal`] would say to the Project Change naming `to` as the manifest stands.
+pub(crate) fn owner_wait(
+    state: &crate::state::AppState,
+    project: &str,
+    to: &str,
+) -> Option<String> {
+    let mut spec = state.mirror.get(ORG_NAMESPACE, "Project", project)?.spec;
+    if organization_of(&state.mirror, project).as_deref() == Some(to) {
+        return None;
+    }
+    spec.as_object_mut()?
+        .insert("organizationRef".to_owned(), to.into());
+    owner_refusal(state, project, &spec)
+}
+
 /// The domains of the Organizations a proposed `ProjectMove` takes `project` to, for [`MOVING`];
 /// empty without a database or a proposal.
 pub async fn moving_domains(
@@ -531,25 +653,25 @@ pub async fn apply(
     })
 }
 
-/// [`check_manifest`] as a door asks it, for a Portal with a database: `refusal` makes the line
-/// its answer (a form error on a door, a conflict at approval); a registry that does not answer
-/// is 503.
+/// [`check_manifest`], for a Portal with a database, and `owner_refusal` as a door asks them:
+/// `refusal` makes the line its answer (a form error on a door, a conflict at approval); a
+/// registry that does not answer is 503.
 pub async fn placed(
     state: &crate::state::AppState,
     project: &str,
     spec: &serde_json::Value,
     refusal: fn(String) -> crate::error::ApiError,
 ) -> Result<(), crate::error::ApiError> {
-    let Some(pool) = state.db.as_ref() else {
-        return Ok(());
-    };
-    check_manifest(pool, &state.mirror, project, spec)
-        .await
-        .map_err(|err| {
-            tracing::warn!(error = %err, %project, "the project registry could not be read");
-            crate::error::ApiError::Unavailable(
-                "the project registry could not be read; try again".into(),
-            )
-        })?
-        .map_err(refusal)
+    if let Some(pool) = state.db.as_ref() {
+        check_manifest(pool, &state.mirror, project, spec)
+            .await
+            .map_err(|err| {
+                tracing::warn!(error = %err, %project, "the project registry could not be read");
+                crate::error::ApiError::Unavailable(
+                    "the project registry could not be read; try again".into(),
+                )
+            })?
+            .map_err(refusal)?;
+    }
+    owner_refusal(state, project, spec).map_or(Ok(()), |line| Err(refusal(line)))
 }

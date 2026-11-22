@@ -21,6 +21,14 @@ pub struct ProjectSpec {
     /// `JC_ORG_DOMAIN` (PF-44).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// The domain the project's Pipelines, and the ids of its indicators, keep minting as the
+    /// owner while its stored ids carry it (for example `hel.fi`), so a project that changes
+    /// Organization upserts what it stored; absent, its Organization's. A Change sets it only to
+    /// the owner minted today or the named Organization's domain, and removes it once the ids
+    /// are re-minted. The project file's, never a registry entry's. It grants nothing and the
+    /// gateway's owner check does not read it (PF-44, ADR-N-068).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urn_owner: Option<String>,
     /// The body that publishes the project's data in a national catalogue: the project's own
     /// catalogue names it, and so does every record whose Endpoint names none (EP-127).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113,6 +121,12 @@ impl ProjectSpec {
                 reason: e.to_string(),
             })?;
         }
+        if let Some(owner) = &self.urn_owner {
+            names::validate_org_domain(owner).map_err(|e| Error::Invalid {
+                field: "spec.urnOwner".to_owned(),
+                reason: e.to_string(),
+            })?;
+        }
         if let Some(catalog) = &self.catalog {
             catalog.validate()?;
         }
@@ -145,6 +159,9 @@ impl ProjectSpec {
         }
         if entry && self.quotas.is_some() {
             return Err(belongs("spec.quotas", "the project's own project.yaml"));
+        }
+        if entry && self.urn_owner.is_some() {
+            return Err(belongs("spec.urnOwner", "the project's own project.yaml"));
         }
         if entry && self.catalog.is_some() {
             return Err(belongs("spec.catalog", "the project's own project.yaml"));
@@ -928,5 +945,37 @@ impl ContextSpaceSpec {
             }
             (None, None) => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod urn_owner_tests {
+    use crate::kinds::Project;
+
+    /// T-7500, PF-44: a project may pin the owner its stored ids carry; what is no domain is
+    /// refused, naming the field.
+    #[test]
+    fn a_project_may_pin_the_owner_of_its_stored_ids() {
+        let pinned = |owner: &str| {
+            Project::from_yaml(&format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: zilina, namespace: org }}\n\
+                 spec:\n  organizationRef: {{ kind: Organization, name: zilina }}\n  urnOwner: {owner}\n"
+            ))
+            .expect("the manifest parses")
+        };
+        let kept = pinned("hel.fi");
+        kept.validate().expect("a domain is valid");
+        assert_eq!(kept.spec.urn_owner.as_deref(), Some("hel.fi"));
+        for bad in ["hel", "\"hel.fi:helsinki\"", "\"\""] {
+            let error = pinned(bad).validate().expect_err(bad).to_string();
+            assert!(error.contains("spec.urnOwner"), "{bad}: {error}");
+        }
+        let mut entry = pinned("hel.fi");
+        entry.spec.repository = Some(
+            serde_json::from_value(serde_json::json!({ "name": "zilina" })).expect("a repository"),
+        );
+        entry.spec.git_ref = Some("main".to_owned());
+        let error = entry.validate().expect_err("a registry entry").to_string();
+        assert!(error.contains("spec.urnOwner"), "{error}");
     }
 }

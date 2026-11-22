@@ -791,6 +791,21 @@ pub fn organization_domain(mirror: &Mirror, project: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The domain `project`'s entity ids are minted under: its Project's `spec.urnOwner` while the
+/// stored ids still carry that one, else [`organization_domain`] (ADR-N-068, T-7500). Only what
+/// mints reads it: no right, space or Organization follows from it.
+pub fn urn_owner(mirror: &Mirror, project: &str) -> Option<String> {
+    mirror
+        .get(ORG_NAMESPACE, "Project", project)
+        .and_then(|env| {
+            env.spec["urnOwner"]
+                .as_str()
+                .filter(|domain| !domain.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| organization_domain(mirror, project))
+}
+
 /// The domains `project` publishes under, as the gateway binds Policy URNs on them (PF-122,
 /// `store.rs` `policy_ref_domains`): its Project's `spec.domain` and the domain of the
 /// Organization its `spec.organizationRef` names. Empty when it names neither.

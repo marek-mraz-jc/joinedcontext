@@ -132,7 +132,10 @@ pub fn formula(params: &ComputeKpi) -> String {
 
 /// What the run knows about where the sources came from and who computed the value.
 pub struct Provenance<'a> {
+    /// The domain of the project's Organization, which the Endpoint and the run are named under.
     pub org_domain: &'a str,
+    /// The owner the indicator's id is minted under: the project's pin while it has one (T-7500).
+    pub urn_owner: &'a str,
     pub project: &'a str,
     /// The Endpoint the entities were read through: its space and its name.
     pub endpoint_space: &'a str,
@@ -148,7 +151,7 @@ pub fn entity(
     value: f64,
     provenance: &Provenance,
 ) -> Result<KeyPerformanceIndicator, String> {
-    let urn = indicator_urn(provenance.org_domain, provenance.project, &params.name)
+    let urn = indicator_urn(provenance.urn_owner, provenance.project, &params.name)
         .map_err(|e| format!("the indicator name does not make a URN: {e}"))?;
     let source = jc_core::Urn::new(
         "Endpoint",
@@ -265,6 +268,7 @@ mod tests {
         assert_eq!(formula(&params(Agg::Count)), "count(AirQualityObserved)");
         let provenance = Provenance {
             org_domain: "hel.fi",
+            urn_owner: "hel.fi",
             project: "helsinki",
             endpoint_space: "helsinki",
             endpoint_name: "helsinki-all",
