@@ -8,8 +8,8 @@ use jc_router::{JcRouterBuilder, Mount, MountSpec};
 use joinedcontext_portal::forge::config_mirror::ConfigMirror;
 use joinedcontext_portal::forge::shako::{Author, FileWrite, MergeStyle, ShakoClient};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -39,7 +39,7 @@ impl World {
         let org = OrgId::from_u128(10);
         let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![
                 Action::Admin,
                 Action::Write,
@@ -52,7 +52,7 @@ impl World {
         let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
             .with_static_tokens(vec![StaticTokenBinding::new(
                 token,
-                Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+                Subject::authenticated("jc-portal", "jc-portal", vec![org]),
             )]);
         let guard = OutboundGuard::new(OutboundPolicy {
             allowed_hosts: Some(vec!["127.0.0.1".into()]),
@@ -61,14 +61,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
         let host = listener.local_addr().unwrap().to_string();
         let git_mount = Mount::new("shako", "http", host.clone(), "/git").unwrap();
         let jc = JcRouterBuilder::new("http", host.clone())

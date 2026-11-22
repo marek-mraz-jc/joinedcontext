@@ -14,19 +14,17 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::ckan_compat::{
-    ckan_license_list, dataset_to_ckan, distribution_from_ckan, distribution_to_ckan,
-    resource_view_to_ckan,
+    ckan_license_list, dataset_to_ckan, distribution_to_ckan, resource_view_to_ckan,
 };
 use dataroom_core::{
     text_in_lang, Action, Catalogue, DataroomError, DatasetFilter, ObjectTarget, Publisher,
-    RecordState, RequestCtx, ResourceView, Visibility,
+    RecordState, RequestCtx, Visibility,
 };
 use dataroom_plugin::validate_view_payload;
 use dataroom_search::{apply_fq_to_filter, search_datasets};
 use jc_time::TimestampTz;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use uuid::Uuid;
 
 fn help_url(base: &str, action: &str) -> String {
     format!("{base}/api/3/action/help_show?name={action}")
@@ -667,35 +665,9 @@ async fn answer_ckan_action(
             }
         }
         "dataset_purge" => {
-            let Some(ident) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some(ds) = (match state.store.get_dataset(&ctx, ident).await {
-                Ok(d) => d,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            // A purge cannot be undone: it needs Admin, while Delete (a withdrawal) is an editor's.
-            let dec = state.authorizer.check(&ctx, Action::Admin, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            if let Err(e) = state.store.purge_dataset(&ctx, &ds.id).await {
-                return ckan_err(&base, &action, e);
-            }
-            ckan_ok(&base, &action, json!({}), false)
+            let mapped =
+                required(&payload, "id").map(|id| ("dataset.purge", json!({ "name": id })));
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_show" => {
             let Some(id) = payload.get("id").and_then(Value::as_str) else {
@@ -733,163 +705,23 @@ async fn answer_ckan_action(
             ckan_ok(&base, &action, res_dict, is_anon_get)
         }
         "resource_create" => {
-            let Some(package_id) = payload.get("package_id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("package_id", "Missing value"),
-                );
-            };
-            let Some(mut ds) = (match state.store.get_dataset(&ctx, package_id).await {
-                Ok(d) => d,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            let pos = ds.distributions.len();
-            let fallback_id = format!("res-{}-{pos}", ds.name);
-            let dist =
-                distribution_from_ckan(&payload, &ds.id, &fallback_id, &cat.default_language);
-            // A create never takes over a stored resource id: its views and updates would
-            // resolve to this dataset, decided on its editors instead of the owner's.
-            match state.store.get_distribution(&ctx, &dist.id).await {
-                Ok(None) => {}
-                Ok(Some(_)) => {
-                    return ckan_err(
-                        &base,
-                        &action,
-                        DataroomError::Conflict(format!(
-                            "a resource with id '{}' exists: use resource_update",
-                            dist.id
-                        )),
-                    )
-                }
-                Err(e) => return ckan_err(&base, &action, e),
-            }
-            ds.distributions.push(dist.clone());
-            ds.modified = TimestampTz::now();
-            if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
-                return ckan_err(&base, &action, e);
-            }
-            let res_dict = distribution_to_ckan(&dist, &ds.id, pos, &[], &cat.default_language);
-            ckan_ok(&base, &action, res_dict, false)
+            let mapped = required(&payload, "package_id").map(|dataset| {
+                (
+                    "resource.propose",
+                    json!({ "dataset": dataset, "resource": payload }),
+                )
+            });
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_update" | "resource_patch" => {
-            let Some(id) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some((mut ds, existing_dist)) = (match state.store.get_distribution(&ctx, id).await
-            {
-                Ok(r) => r,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            let pos = ds
-                .distributions
-                .iter()
-                .position(|r| r.id == existing_dist.id)
-                .unwrap_or(0);
-            let mut merged_json =
-                distribution_to_ckan(&existing_dist, &ds.id, pos, &[], &cat.default_language);
-            if let (Some(target_obj), Some(patch_obj)) =
-                (merged_json.as_object_mut(), payload.as_object())
-            {
-                for (k, v) in patch_obj {
-                    target_obj.insert(k.clone(), v.clone());
-                }
-                // A plain `name` / `description` names the default language's text; the stored
-                // per-language map would otherwise win over it and the change would be lost.
-                for (plain, translated) in [
-                    ("name", "name_translated"),
-                    ("description", "description_translated"),
-                ] {
-                    if patch_obj.contains_key(translated) {
-                        continue;
-                    }
-                    if let Some(text) = patch_obj.get(plain).and_then(Value::as_str) {
-                        let mut texts = target_obj
-                            .get(translated)
-                            .and_then(Value::as_object)
-                            .cloned()
-                            .unwrap_or_default();
-                        texts.insert(cat.default_language.clone(), json!(text));
-                        target_obj.insert(translated.to_owned(), Value::Object(texts));
-                    }
-                }
-            }
-            let updated_dist = distribution_from_ckan(
-                &merged_json,
-                &ds.id,
-                &existing_dist.id,
-                &cat.default_language,
-            );
-            ds.distributions[pos] = updated_dist.clone();
-            ds.modified = TimestampTz::now();
-            if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
-                return ckan_err(&base, &action, e);
-            }
-            let res_dict =
-                distribution_to_ckan(&updated_dist, &ds.id, pos, &[], &cat.default_language);
-            ckan_ok(&base, &action, res_dict, false)
+            let mapped = required(&payload, "id")
+                .map(|id| ("resource.propose", json!({ "id": id, "resource": payload })));
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_delete" => {
-            let Some(id) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some((mut ds, _)) = (match state.store.get_distribution(&ctx, id).await {
-                Ok(r) => r,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Delete, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            ds.distributions.retain(|r| r.id != id);
-            ds.modified = TimestampTz::now();
-            if let Err(e) = state.store.upsert_dataset(&ctx, ds).await {
-                return ckan_err(&base, &action, e);
-            }
-            ckan_ok(&base, &action, json!({}), false)
+            let mapped =
+                required(&payload, "id").map(|id| ("resource.delete", json!({ "id": id })));
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_view_list" => {
             let Some(id) = payload.get("id").and_then(Value::as_str) else {
@@ -952,163 +784,31 @@ async fn answer_ckan_action(
             ckan_ok(&base, &action, resource_view_to_ckan(&view), is_anon_get)
         }
         "resource_view_create" => {
-            if let Err(e) = validate_view_payload(&payload) {
-                return ckan_err(&base, &action, e);
-            }
-            let Some(resource_id) = payload.get("resource_id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("resource_id", "Missing value"),
-                );
-            };
-            let Some(view_type) = payload.get("view_type").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("view_type", "Missing value"),
-                );
-            };
-            let Some((ds, _)) = (match state.store.get_distribution(&ctx, resource_id).await {
-                Ok(r) => r,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            if let Some(id) = payload
-                .get("id")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-            {
-                // The id lands in links and embed snippets: a slug, as CKAN's generated ids are.
-                if let Err(e) = dataroom_core::validate_slug("id", id) {
-                    return ckan_err(&base, &action, e);
-                }
-            }
-            let view = parse_resource_view(&payload, "", resource_id, view_type);
-            // A create never takes over a stored view: that one is changed by resource_view_update,
-            // decided on its own dataset.
-            match state.store.get_resource_view(&ctx, &view.id).await {
-                Ok(None) => {}
-                Ok(Some(_)) => {
-                    return ckan_err(
-                        &base,
-                        &action,
-                        DataroomError::Conflict(format!(
-                            "a view with id '{}' exists: use resource_view_update",
-                            view.id
-                        )),
+            let mapped = validate_view_payload(&payload)
+                .and_then(|()| required(&payload, "resource_id"))
+                .map(|resource| {
+                    (
+                        "resource_view.propose",
+                        json!({ "resource": resource, "view": payload }),
                     )
-                }
-                Err(e) => return ckan_err(&base, &action, e),
-            }
-            match state.store.upsert_resource_view(&ctx, view).await {
-                Ok(saved) => ckan_ok(&base, &action, resource_view_to_ckan(&saved), false),
-                Err(e) => ckan_err(&base, &action, e),
-            }
+                });
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_view_update" => {
-            if let Err(e) = validate_view_payload(&payload) {
-                return ckan_err(&base, &action, e);
-            }
-            let Some(id) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some(existing) = (match state.store.get_resource_view(&ctx, id).await {
-                Ok(v) => v,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let Some((ds, _)) = (match state
-                .store
-                .get_distribution(&ctx, &existing.resource_id)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            let view_type = payload
-                .get("view_type")
-                .and_then(Value::as_str)
-                .unwrap_or(&existing.view_type);
-            let view =
-                parse_resource_view(&payload, &existing.id, &existing.resource_id, view_type);
-            match state.store.upsert_resource_view(&ctx, view).await {
-                Ok(saved) => ckan_ok(&base, &action, resource_view_to_ckan(&saved), false),
-                Err(e) => ckan_err(&base, &action, e),
-            }
+            let mapped = validate_view_payload(&payload)
+                .and_then(|()| required(&payload, "id"))
+                .map(|id| {
+                    (
+                        "resource_view.propose",
+                        json!({ "id": id, "view": payload }),
+                    )
+                });
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "resource_view_delete" => {
-            let Some(id) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some(existing) = (match state.store.get_resource_view(&ctx, id).await {
-                Ok(v) => v,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            // Decided on the view's dataset; a view whose resource is gone is decided on the
-            // catalogue. A failed lookup refuses rather than skipping the check.
-            let target = match state
-                .store
-                .get_distribution(&ctx, &existing.resource_id)
-                .await
-            {
-                Ok(Some((ds, _))) => {
-                    let pub_rec = match state.store.get_publisher(&ctx, &ds.publisher_id).await {
-                        Ok(p) => p,
-                        Err(e) => return ckan_err(&base, &action, e),
-                    };
-                    ObjectTarget::from_dataset(&ds, pub_rec.as_ref())
-                }
-                Ok(None) => ObjectTarget::Catalogue {
-                    org_id: ctx.org_id,
-                    catalogue_id: ctx.catalogue_id,
-                },
-                Err(e) => return ckan_err(&base, &action, e),
-            };
-            let dec = state.authorizer.check(&ctx, Action::Delete, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            if let Err(e) = state.store.delete_resource_view(&ctx, id).await {
-                return ckan_err(&base, &action, e);
-            }
-            ckan_ok(&base, &action, json!({}), false)
+            let mapped =
+                required(&payload, "id").map(|id| ("resource_view.delete", json!({ "id": id })));
+            run_op(&state, &ctx, &base, &action, mapped).await
         }
         "organization_list" => {
             let publishers = match state.store.list_publishers(&ctx).await {
@@ -1279,15 +979,7 @@ async fn answer_ckan_action(
                 modified: now,
             };
             // Decided without the grants the caller sends: naming oneself an editor grants nothing.
-            if let Err(e) = dataroom_core::ops::authorize_publisher_write(
-                state.authorizer.as_ref(),
-                &ctx,
-                None,
-                &pub_rec,
-            ) {
-                return ckan_err(&base, &action, e);
-            }
-            match state.store.upsert_publisher(&ctx, pub_rec).await {
+            match propose_publisher(&state, &ctx, &pub_rec).await {
                 Ok(saved) => ckan_ok(
                     &base,
                     &action,
@@ -1353,7 +1045,7 @@ async fn answer_ckan_action(
                 existing.logo_url = Some(img.to_owned());
             }
             existing.modified = TimestampTz::now();
-            match state.store.upsert_publisher(&ctx, existing).await {
+            match propose_publisher(&state, &ctx, &existing).await {
                 Ok(saved) => ckan_ok(
                     &base,
                     &action,
@@ -1364,35 +1056,10 @@ async fn answer_ckan_action(
             }
         }
         "organization_delete" => {
-            let Some(ident) = payload.get("id").and_then(Value::as_str) else {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error("id", "Missing value"),
-                );
-            };
-            let Some(existing) = (match state.store.get_publisher(&ctx, ident).await {
-                Ok(p) => p,
-                Err(e) => return ckan_err(&base, &action, e),
-            }) else {
-                return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
-            };
-            let target = ObjectTarget::from_publisher(&existing);
-            let dec = state.authorizer.check(&ctx, Action::Delete, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, decision_error(dec));
-            }
-            if !existing.named_by(ident) {
-                return ckan_err(
-                    &base,
-                    &action,
-                    DataroomError::field_error(
-                        "id",
-                        format!("'{ident}' was merged into '{}'", existing.name),
-                    ),
-                );
-            }
-            match state.store.withdraw_publisher(&ctx, &existing.id).await {
+            let mapped =
+                required(&payload, "id").map(|id| ("publisher.withdraw", json!({ "id": id })));
+            // CKAN answers an empty result.
+            match execute_mapped(&state, &ctx, mapped).await {
                 Ok(_) => ckan_ok(&base, &action, json!({}), false),
                 Err(e) => ckan_err(&base, &action, e),
             }
@@ -1403,6 +1070,54 @@ async fn answer_ckan_action(
             DataroomError::NotFound(format!("Action name not known: {unknown}")),
         ),
     }
+}
+
+/// A required field of a CKAN payload.
+fn required<'a>(payload: &'a Value, key: &str) -> dataroom_core::Result<&'a str> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| DataroomError::field_error(key, "Missing value"))
+}
+
+/// Runs the registry operation a write action maps to (MOD-09): the decision, the validation and
+/// the activity row are the operation's.
+async fn execute_mapped(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    mapped: dataroom_core::Result<(&str, Value)>,
+) -> dataroom_core::Result<Value> {
+    let (operation, input) = mapped?;
+    dataroom_core::ops::execute_operation(&state.op_context(), ctx, operation, input).await
+}
+
+/// [`execute_mapped`], its result as the action's answer.
+async fn run_op(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    base: &str,
+    action: &str,
+    mapped: dataroom_core::Result<(&str, Value)>,
+) -> Response {
+    match execute_mapped(state, ctx, mapped).await {
+        Ok(result) => ckan_ok(base, action, result, false),
+        Err(e) => ckan_err(base, action, e),
+    }
+}
+
+/// `record` stored by `publisher.propose`.
+async fn propose_publisher(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    record: &Publisher,
+) -> dataroom_core::Result<Publisher> {
+    let saved = execute_mapped(
+        state,
+        ctx,
+        Ok(("publisher.propose", json!({ "publisher": record }))),
+    )
+    .await?;
+    serde_json::from_value(saved).map_err(|e| DataroomError::Storage(format!("publisher: {e}")))
 }
 
 fn publisher_to_ckan(p: &Publisher, default_lang: &str, package_count: usize) -> Value {
@@ -1423,55 +1138,4 @@ fn publisher_to_ckan(p: &Publisher, default_lang: &str, package_count: usize) ->
         "package_count": package_count,
         "uri": p.uri,
     })
-}
-
-fn parse_resource_view(
-    payload: &Value,
-    existing_id: &str,
-    resource_id: &str,
-    view_type: &str,
-) -> ResourceView {
-    let id = payload
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(existing_id)
-        .to_owned();
-    let title = payload
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("View")
-        .to_owned();
-    let description = payload
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let order = payload.get("order").and_then(Value::as_i64).unwrap_or(0) as i32;
-
-    let mut config = BTreeMap::new();
-    if let Some(obj) = payload.as_object() {
-        for (k, v) in obj {
-            if !matches!(
-                k.as_str(),
-                "id" | "resource_id" | "view_type" | "title" | "description" | "order"
-            ) {
-                config.insert(k.clone(), v.clone());
-            }
-        }
-    }
-
-    ResourceView {
-        id: if id.is_empty() {
-            format!("view-{}", Uuid::now_v7())
-        } else {
-            id
-        },
-        resource_id: resource_id.to_owned(),
-        view_type: view_type.to_owned(),
-        title,
-        description,
-        order,
-        config,
-    }
 }
