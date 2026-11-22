@@ -409,6 +409,52 @@ async fn the_size_and_rate_caps_drop_samples() {
     assert!(samples(&ch, "written") <= 4, "{ch}");
 }
 
+/// S4-16 (T-7547): a Tenant binds a bounded number of Channels, and the
+/// refusal names the cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tenant_past_the_channel_cap_is_refused_naming_it() {
+    let (st, _lo) = broker(false).await;
+    for i in 0..=100 {
+        let (status, body) = send(
+            &st,
+            "PUT",
+            &format!("/x/channels/c{i}"),
+            Some(channel("speed", &format!("bus/{i}/speed"), "mirror")),
+        )
+        .await;
+        if i < 100 {
+            assert_eq!(status, StatusCode::CREATED, "channel {i}: {body}");
+        } else {
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            assert!(
+                body.to_string().contains("ANTARES_CHANNELS_PER_TENANT"),
+                "{body}"
+            );
+        }
+    }
+}
+
+/// S4-16 (T-7547): no Channel document lives in a Tenant that others share.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_channel_document_is_not_in_a_shared_tenant() {
+    let (st, _lo) = broker(false).await;
+    let (status, body) = send(
+        &st,
+        "PUT",
+        "/x/channels/own",
+        Some(channel("speed", "bus/own/speed", "mirror")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let shared = antares_model::TenantId::new_internal("antares-channels").expect("tenant");
+    let held = st
+        .store
+        .list(&shared, antares_store::Kind::View)
+        .await
+        .expect("list");
+    assert!(held.is_empty(), "{held:?}");
+}
+
 /// The bind is not a licence: each sample is decided again as the binder,
 /// so a grant withdrawn after the bind stops the samples.
 #[tokio::test(flavor = "multi_thread")]

@@ -840,3 +840,30 @@ async fn ts104175_13_4_4_core_answers_the_user_and_core_urls() {
     let (status, _, _) = get(&st, "/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:none?core=1.9").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// S4-15 (T-7547): a Tenant hosts a bounded number of @contexts, and the
+/// refusal names the cap.
+#[tokio::test]
+async fn a_tenant_past_the_hosted_context_cap_is_refused_naming_it() {
+    let st = state();
+    for i in 0..=1_000 {
+        let body = json!({"@context": {"t": format!("https://example.org/t{i}")}}).to_string();
+        let req = Request::builder()
+            .method("POST")
+            .uri("/ngsi-ld/v1/jsonldContexts")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .body(Body::from(body))
+            .expect("request");
+        let (status, _, answer) = send(&st, req).await;
+        if i < 1_000 {
+            assert_eq!(status, StatusCode::CREATED, "@context {i}: {answer}");
+        } else {
+            assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+            assert!(
+                answer.to_string().contains("ANTARES_CONTEXTS_PER_TENANT"),
+                "{answer}"
+            );
+        }
+    }
+}
