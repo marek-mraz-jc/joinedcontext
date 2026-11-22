@@ -2,6 +2,7 @@
 //! Authorizer decisions (R9), Problem Details / OData error envelopes (R10a, R12), the
 //! `FrameSet` model (§3.2), identifiers, limits and quotas.
 
+use daiya_model::rows::RowSet;
 use daiya_model::{
     Action, Authorizer, ColumnValues, CrError, Decision, FieldColumn, FieldType, Frame, FrameMeta,
     FrameSet, GrafanaRole, InputLimits, InstallationId, InstanceId, Notice, NoticeSeverity,
@@ -104,6 +105,77 @@ fn subjects_expose_principals_and_membership() {
     let a = ctx(Subject::anonymous());
     let b = ctx(Subject::anonymous());
     assert_ne!(a.request_id, b.request_id, "each request gets its own id");
+}
+
+#[test]
+fn a_subject_debug_print_redacts_the_bearer_token() {
+    let mut s = Subject::authenticated("alice", vec![ORG], vec!["/ops".into()])
+        .with_bearer_token("s3cr3t-token");
+    s.on_behalf_of = Some("public".into());
+    let printed = format!("{s:?}");
+    assert!(!printed.contains("s3cr3t-token"), "{printed}");
+    assert!(
+        printed.contains(r#"bearer_token: Some("[redacted]")"#),
+        "{printed}"
+    );
+    for shown in [
+        "alice",
+        "/ops",
+        "read_only: false",
+        r#"on_behalf_of: Some("public")"#,
+    ] {
+        assert!(printed.contains(shown), "{shown} missing from {printed}");
+    }
+    let anon = format!("{:?}", Subject::anonymous());
+    assert!(anon.contains("bearer_token: None"), "{anon}");
+}
+
+#[test]
+fn each_row_set_reads_its_target_from_the_row_and_refuses_a_row_without_uid() {
+    let row = json!({"uid": "u", "folderUid": "f", "dashboardUid": "d"});
+    let cases = [
+        (RowSet::Dashboards, Some(dash("u", Some("f")))),
+        (RowSet::DashboardVersions, Some(dash("d", Some("f")))),
+        (
+            RowSet::Folders,
+            Some(ObjectTarget::Folder {
+                org_id: ORG,
+                folder_uid: "u".into(),
+            }),
+        ),
+        (RowSet::Datasources, Some(ds("u"))),
+        (
+            RowSet::LibraryPanels,
+            Some(ObjectTarget::LibraryPanel {
+                org_id: ORG,
+                panel_uid: "u".into(),
+                folder_uid: Some("f".into()),
+            }),
+        ),
+        (
+            RowSet::PublicDashboards,
+            Some(ObjectTarget::PublicDashboard {
+                org_id: ORG,
+                dashboard_uid: "d".into(),
+            }),
+        ),
+        (
+            RowSet::ImportReports,
+            Some(ObjectTarget::Organization { org_id: ORG }),
+        ),
+    ];
+    for (set, want) in cases {
+        assert_eq!(set.target(ORG, &row), want, "{set:?}");
+    }
+    // A row missing its object member shows nothing; an import report needs none.
+    for set in RowSet::ALL {
+        let got = set.target(ORG, &json!({"folderUid": "f"}));
+        assert_eq!(
+            got.is_some(),
+            set == RowSet::ImportReports,
+            "{set:?}: {got:?}"
+        );
+    }
 }
 
 #[test]

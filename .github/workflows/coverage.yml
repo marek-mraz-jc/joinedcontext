@@ -1,0 +1,324 @@
+name: coverage
+# The per-crate coverage table and ratchet (T-7529). Every night `cargo llvm-cov` measures each Cargo
+# workspace of the monorepo; the table job folds the exports per crate (lines, functions), publishes
+# the table as the job summary and the `coverage-table` artifact, and fails when a crate measures
+# below its floor in .github/coverage-ratchet.toml. A branch that raises a crate commits the raised
+# floor (`.github/scripts/coverage-ratchet.py update <export>`). A failing test does not stop the
+# measurement (ci.yml is the test gate): its lost coverage shows in the table and the ratchet.
+# The mutation run takes one workspace per night by weekday, in four shards; its missed mutants
+# per crate join the table. Runs on the default branch's schedule, on dispatch, and on a push to
+# coverage/** (a branch's proof run before it merges).
+on:
+  schedule: [{ cron: "37 0 * * *" }]
+  push:
+    branches: ["coverage/**"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "coverage-${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # One Postgres serves every workspace's database tests (databases created below).
+  KAISATSU_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/kaisatsu
+  DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
+  DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
+  SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
+  JC_TIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/antares
+  JC_PORTAL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/portal
+  JC_APPS_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  JC_WASM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+jobs:
+  coverage:
+    name: coverage-${{ matrix.ws }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # root and antares under nextest, as ci.yml runs them (a process per test)
+          - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
+          - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
+          - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
+          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins" }
+    defaults: { run: { working-directory: "${{ matrix.dir }}" } }
+    services:
+      postgres:
+        # PostGIS: Antares' and the Portal's migrations create the extension.
+        image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          for db in kaisatsu dataroom daiya shako antares portal; do
+            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+          done
+      # The assistant's PDFium, model and ONNX Runtime and its pgvector server, as ci.yml root-test.
+      - if: matrix.ws == 'root'
+        working-directory: .
+        run: |
+          sh vendor/joinedcontext-platform/scripts/ci/pdfium.sh "$RUNNER_TEMP/pdfium"
+          sh vendor/joinedcontext-platform/scripts/ci/e5-small.sh "$RUNNER_TEMP/e5-small"
+          sh vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh "$RUNNER_TEMP/onnxruntime"
+          {
+            echo "KREUZBERG_PDFIUM_PREBUILT=$RUNNER_TEMP/pdfium"
+            echo "JC_ASSISTANT_TEST_MODEL_DIR=$RUNNER_TEMP/e5-small"
+            echo "ORT_DYLIB_PATH=$RUNNER_TEMP/onnxruntime/libonnxruntime.so"
+            echo "JC_ASSISTANT_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5433/postgres"
+          } >> "$GITHUB_ENV"
+          docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash \
+            ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765 \
+            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
+            && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
+            && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+      # The Portal's instrumented lib test binary outgrows the runner's memory without swap (ci.yml portal-test).
+      - if: matrix.ws == 'portal'
+        run: |
+          sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
+          sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
+      # The platform's lockfile repeats the root one's versions (ci.yml platform-test).
+      - if: matrix.ws == 'platform'
+        run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+      - uses: ./.github/actions/rust
+        with: { workspace: "${{ matrix.dir }}", key: "coverage-${{ matrix.ws }}", components: llvm-tools-preview }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: "cargo-llvm-cov@0.9.1,cargo-nextest" }
+      # A green run's export is `coverage-<ws>.json.gz`, which the ratchet judges. When a test fails
+      # the export is `tests-failed-<ws>.json.gz`: the table shows it, the ratchet does not judge it
+      # (a failing test is ci.yml's red, not a coverage drop).
+      - name: measure
+        timeout-minutes: 300
+        run: |
+          start=$(date +%s); out=coverage
+          # shellcheck disable=SC2086
+          cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
+            out=tests-failed
+            echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
+          }
+          # the full export: the ratchet merges each function's instances from its records
+          cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
+          gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
+          echo "${{ matrix.ws }}: measured in $(( $(date +%s) - start )) s ($out)" | tee "$RUNNER_TEMP/time-${{ matrix.ws }}.txt"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: "coverage-${{ matrix.ws }}"
+          path: "${{ runner.temp }}/*-${{ matrix.ws }}.*"
+          retention-days: 35
+  # ekiben's own job: its integration tests need the services ci.yml's ekiben job starts.
+  coverage-ekiben:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    defaults: { run: { working-directory: crates/ekiben } }
+    services:
+      postgres:
+        image: postgres@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+        env: { POSTGRES_USER: testuser, POSTGRES_PASSWORD: testpass, POSTGRES_DB: testdb }
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U testuser" --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql@sha256:3819b2b23835c4a73c8b022fafc33c8095c0f81c929a8b7a84613d2fba6c52f5
+        env: { MYSQL_ROOT_PASSWORD: testpass, MYSQL_DATABASE: testdb }
+        ports: ["33069:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ptestpass" --health-interval 5s --health-timeout 5s --health-retries 30
+      rabbitmq:
+        image: rabbitmq@sha256:cd4009416f83d7e5895020cd71b0963f3b8a4dfc3de74bbb6fb3bfe5f81f01e0
+        env: { RABBITMQ_DEFAULT_USER: ekiben, RABBITMQ_DEFAULT_PASS: testpass }
+        ports: ["56729:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 5s --health-timeout 10s --health-retries 30
+      sftp:
+        image: atmoz/sftp@sha256:c5fb9e4beb8b7054a4c0b65c5e11df47cc20da95ad6002e88aecff62bab06372
+        env: { SFTP_USERS: "city:testpass:::upload" }
+        ports: ["22229:22"]
+      redis:
+        image: redis@sha256:a9cc41d6d01da2aa26c219e4f99ecbeead955a7b656c1c499cce8922311b2514 # 7.4.6
+        ports: ["63790:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PG_DSN: postgres://testuser:testpass@127.0.0.1:54329/testdb?sslmode=disable
+      MY_DSN: root:testpass@tcp(127.0.0.1:33069)/testdb
+      AMQP_TEST_URL: amqp://ekiben:testpass@127.0.0.1:56729/%2f
+      SFTP_TEST_ADDRESS: 127.0.0.1:22229
+      SFTP_TEST_USER: city
+      SFTP_TEST_PASSWORD: testpass
+      PG_RESET: PGPASSWORD=testpass psql -h 127.0.0.1 -p 54329 -U testuser -d testdb -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
+      MY_RESET: mysql -h 127.0.0.1 -P 33069 -uroot -ptestpass -e 'DROP DATABASE testdb; CREATE DATABASE testdb'
+      S3_TEST_ENDPOINT: http://127.0.0.1:7070
+      S3_TEST_ID: ekibentest
+      S3_TEST_SECRET: ekibentestsecret
+      S3_TEST_BUCKET: raw
+      REDIS_TEST_URL: redis://127.0.0.1:63790/0
+      KAFKA_TEST_BROKERS: 127.0.0.1:19092
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/ekiben, key: coverage-ekiben, components: llvm-tools-preview }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-llvm-cov@0.9.1 }
+      - run: >-
+          docker run -d --name versitygw -p 7070:7070 -e "ROOT_ACCESS_KEY=$S3_TEST_ID" -e "ROOT_SECRET_KEY=$S3_TEST_SECRET"
+          versity/versitygw@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797 --port :7070 posix /tmp
+          && sleep 2 && docker exec versitygw mkdir -p "/tmp/$S3_TEST_BUCKET"
+      - run: >-
+          docker run -d --name redpanda -p 19092:19092
+          redpandadata/redpanda@sha256:8f9e1e944ba5ba21c5bd60877d0d267d8ac6e4d07e12509424197deb43c0ada5
+          redpanda start --mode dev-container --smp 1 --kafka-addr 0.0.0.0:19092 --advertise-kafka-addr 127.0.0.1:19092
+          && for _ in $(seq 30); do docker exec redpanda rpk cluster health --exit-when-healthy --watch=false >/dev/null 2>&1 && break; sleep 2; done
+      - name: measure
+        timeout-minutes: 300
+        run: |
+          start=$(date +%s); out=coverage
+          cargo llvm-cov --locked --no-report --no-fail-fast --workspace || {
+            out=tests-failed
+            echo "::warning::tests failed in ekiben: its crates are not judged by the ratchet tonight"
+          }
+          cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-ekiben.json"
+          gzip "$RUNNER_TEMP/$out-ekiben.json"
+          echo "ekiben: measured in $(( $(date +%s) - start )) s ($out)" | tee "$RUNNER_TEMP/time-ekiben.txt"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: coverage-ekiben, path: "${{ runner.temp }}/*-ekiben.*", retention-days: 35 }
+  # The Portal UI: vitest's v8 coverage against the thresholds in crates/portal/ui/vite.config.ts,
+  # the UI's own ratchet (they used to run in the Portal repository's ci-full and were lost in the
+  # move into this monorepo). Red when a threshold is missed; the summary lands in the job summary.
+  coverage-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd ui && pnpm install --frozen-lockfile
+      - run: cd ui && pnpm vitest run --coverage
+      - if: always()
+        run: |
+          python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["total"]; print("## Portal UI coverage\n\n| metric | % | covered/total |\n|---|---:|---:|"); [print(f"| {k} | {v[\"pct\"]} | {v[\"covered\"]}/{v[\"total\"]} |") for k, v in t.items()]' \
+            ui/coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY" || echo "no coverage summary written" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: coverage-ui, path: crates/portal/ui/coverage/coverage-summary.json, if-no-files-found: ignore, retention-days: 35 }
+  # One workspace a night (Monday root, Tuesday antares, Wednesday portal, Thursday platform; no
+  # run Friday to Sunday), four shards of its mutants, each bounded so the shard still uploads what
+  # it finished (a partial outcomes.json counts what ran). ekiben is not in the rotation: its
+  # baseline needs the six services of coverage-ekiben; its mutants run per crate in T-7531.
+  mutants-plan:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    outputs: { ws: "${{ steps.pick.outputs.ws }}", dir: "${{ steps.pick.outputs.dir }}" }
+    steps:
+      - id: pick
+        run: |
+          case "$(date -u +%u)" in
+            1) ws=root dir=. ;; 2) ws=antares dir=crates/antares ;; 3) ws=portal dir=crates/portal ;;
+            4) ws=platform dir=vendor/joinedcontext-platform ;; *) ws='' dir='' ;;
+          esac
+          echo "ws=$ws" >> "$GITHUB_OUTPUT"; echo "dir=$dir" >> "$GITHUB_OUTPUT"
+  mutants:
+    needs: mutants-plan
+    if: needs.mutants-plan.outputs.ws != ''
+    name: mutants-${{ needs.mutants-plan.outputs.ws }}-${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix: { shard: [0, 1, 2, 3] }
+    defaults: { run: { working-directory: "${{ needs.mutants-plan.outputs.dir }}" } }
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          for db in kaisatsu dataroom daiya shako antares portal; do
+            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+          done
+      - if: needs.mutants-plan.outputs.ws == 'root'
+        working-directory: .
+        run: |
+          sh vendor/joinedcontext-platform/scripts/ci/pdfium.sh "$RUNNER_TEMP/pdfium"
+          sh vendor/joinedcontext-platform/scripts/ci/e5-small.sh "$RUNNER_TEMP/e5-small"
+          sh vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh "$RUNNER_TEMP/onnxruntime"
+          {
+            echo "KREUZBERG_PDFIUM_PREBUILT=$RUNNER_TEMP/pdfium"
+            echo "JC_ASSISTANT_TEST_MODEL_DIR=$RUNNER_TEMP/e5-small"
+            echo "ORT_DYLIB_PATH=$RUNNER_TEMP/onnxruntime/libonnxruntime.so"
+            echo "JC_ASSISTANT_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5433/postgres"
+          } >> "$GITHUB_ENV"
+          docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash \
+            ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765 \
+            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
+            && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
+            && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+      - if: needs.mutants-plan.outputs.ws == 'portal'
+        run: |
+          sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
+          sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
+          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
+      - if: needs.mutants-plan.outputs.ws == 'platform'
+        run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+      - uses: ./.github/actions/rust
+        with: { workspace: "${{ needs.mutants-plan.outputs.dir }}", key: "mutants-${{ needs.mutants-plan.outputs.ws }}" }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-mutants@27.1.0 }
+      - name: mutate
+        timeout-minutes: 300
+        continue-on-error: true
+        run: >-
+          cargo mutants --workspace --no-shuffle --shard ${{ matrix.shard }}/4 --output "$RUNNER_TEMP"
+          --config "$GITHUB_WORKSPACE/.github/mutants.toml"
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: "mutants-${{ needs.mutants-plan.outputs.ws }}-${{ matrix.shard }}"
+          path: "${{ runner.temp }}/mutants.out/outcomes.json"
+          if-no-files-found: ignore
+          retention-days: 35
+  table:
+    needs: [coverage, coverage-ekiben, mutants]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with: { path: "${{ runner.temp }}/in" }
+      - run: |
+          for ws in root antares portal platform ekiben; do
+            ls "$RUNNER_TEMP"/in/coverage-$ws/*-$ws.json.gz >/dev/null 2>&1 || echo "::warning::no export from $ws: its crates are not judged tonight"
+          done
+          set -- "$RUNNER_TEMP"/in/coverage-*/*.json.gz
+          mutants=""
+          for o in "$RUNNER_TEMP"/in/mutants-*/outcomes.json; do [ -f "$o" ] && mutants="$mutants --mutants $o"; done
+          mkdir -p "$RUNNER_TEMP/table"
+          # shellcheck disable=SC2086
+          python3 .github/scripts/coverage-ratchet.py table $mutants \
+            --md "$RUNNER_TEMP/table/coverage.md" --json "$RUNNER_TEMP/table/coverage.json" "$@"
+          { echo "## Coverage per crate"; cat "$RUNNER_TEMP/table/coverage.md"; cat "$RUNNER_TEMP"/in/coverage-*/time-*.txt; } >> "$GITHUB_STEP_SUMMARY"
+          # the raised floors, ready to commit (coverage-ratchet.toml in the artifact)
+          cp .github/coverage-ratchet.toml "$RUNNER_TEMP/table/coverage-ratchet.toml"
+          python3 .github/scripts/coverage-ratchet.py update --ratchet "$RUNNER_TEMP/table/coverage-ratchet.toml" "$@"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: coverage-table, path: "${{ runner.temp }}/table", retention-days: 90 }
+      - name: ratchet
+        run: |
+          set -- "$RUNNER_TEMP"/in/coverage-*/coverage-*.json.gz
+          [ -f "$1" ] || { echo "::error::no green export to judge"; exit 1; }
+          python3 .github/scripts/coverage-ratchet.py check "$@"
