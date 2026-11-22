@@ -17,6 +17,7 @@ members = [
   "crates/shared/jc-router",
   "crates/shared/jc-secret",
   "crates/shared/jc-types",
+  "crates/shared/jc-http",
   "crates/shared/jc-time",
   "crates/shared/jc-pool",
   "crates/shared/jc-door",

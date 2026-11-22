@@ -2758,6 +2758,7 @@ dependencies = [
  "hex",
  "indexmap 2.14.2",
  "ipnet",
+ "jc-http",
  "jc-pool",
  "jc-time",
  "jc-types",
@@ -7076,6 +7077,16 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jc-http"
+version = "0.1.0"
+dependencies = [
+ "ipnet",
+ "reqwest 0.12.28",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
