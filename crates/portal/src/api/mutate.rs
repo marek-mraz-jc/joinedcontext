@@ -1188,7 +1188,12 @@ async fn propose_engine(
     plan.fields.extend(grants.review.iter().cloned());
 
     // 6. Risk-classified approval lane
-    let lane = change::classify_manifest(&envelope, operation);
+    // An object the mirror holds is changed, whichever route proposes it (T-7541).
+    let judged_as = match operation {
+        Operation::Create if current.is_some() => Operation::Update,
+        operation => operation,
+    };
+    let lane = change::classify_manifest(&envelope, judged_as);
     // OPS-16: the one series no other component can produce. A rise in red proposals is a
     // change in what people are asking the platform to do.
     crate::telemetry::proposed(lane, kind_info.kind);

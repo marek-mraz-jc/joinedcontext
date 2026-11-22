@@ -2173,7 +2173,7 @@ async fn changed_files(
         let lane = match (&envelope, operation) {
             // A delete is red whatever it removes, which is what the approval decides too.
             (_, Operation::Delete) => Lane::Red,
-            (Some(envelope), _) => change::classify_manifest(envelope, Operation::Create),
+            (Some(envelope), _) => change::classify_manifest(envelope, operation),
             // A native file beside a manifest carries no spec to classify; the manifest it
             // belongs to is in the same merge request and carries the lane.
             (None, _) => Lane::Green,
@@ -2352,8 +2352,8 @@ async fn approve_every_file(
         let namespace = envelope.metadata.namespace.as_deref().unwrap_or(&home);
         let was_public = state
             .mirror
-            .get(namespace, "App", &envelope.metadata.name)
-            .is_some_and(|stored| app_is_public(&stored.kind, &stored.spec));
+            .get(namespace, &envelope.kind, &envelope.metadata.name)
+            .is_some_and(|stored| opens_to_anyone(&stored.kind, &stored.spec));
         let public = public_publication(identity, file, envelope, was_public)?;
         publishes |= public;
         // A public publication is held for a second person like an access change (EP-142).
@@ -2402,10 +2402,13 @@ async fn approve_every_file(
         let mut judged_one = envelope.clone();
         judged_one.metadata.namespace = Some(namespace.to_owned());
         judged.push(judged_one);
-        lane = crate::api::import::riskiest(
-            lane,
-            change::classify_manifest(envelope, Operation::Create),
-        );
+        // The forge's diff says whether the file creates its object, never the manifest (T-7541).
+        let operation = if file.added {
+            Operation::Create
+        } else {
+            Operation::Update
+        };
+        lane = crate::api::import::riskiest(lane, change::classify_manifest(envelope, operation));
     }
     Ok((
         lane,
@@ -2448,9 +2451,9 @@ fn judge_at_approval(
     })
 }
 
-/// Whether this file of a change publishes in the public catalogue (EP-142) or makes an App
-/// public (AP-175; `was_public` says whether the stored App already is). Making data or an App
-/// public is a person's decision, taken by a second person: never its proposer, a service
+/// Whether this file of a change publishes in the public catalogue (EP-142) or makes an App or a
+/// Dashboard public (AP-175, T-7541; `was_public` says whether the stored one already is). Making
+/// data, an App or a Dashboard public is a person's decision, taken by a second person: never its proposer, a service
 /// account, the assistant or MCP, so a service account approving such a file is refused here.
 fn public_publication(
     identity: &crate::auth::session::Identity,
@@ -2458,13 +2461,15 @@ fn public_publication(
     envelope: &ResourceEnvelope,
     was_public: bool,
 ) -> Result<bool, ApiError> {
-    let app = !was_public && app_is_public(&envelope.kind, &envelope.spec);
-    let public = !file.deleted && (publishes_publicly(envelope) || app);
+    let opened = !was_public && opens_to_anyone(&envelope.kind, &envelope.spec);
+    let public = !file.deleted && (publishes_publicly(envelope) || opened);
     if public && identity.client.is_some() {
-        let what = if app {
+        let what = if !opened {
+            "publishes an Endpoint in the public catalogue (EP-142)"
+        } else if envelope.kind == "App" {
             "makes an App public (AP-175)"
         } else {
-            "publishes an Endpoint in the public catalogue (EP-142)"
+            "makes a Dashboard public (CC-63)"
         };
         return Err(ApiError::Denied(format!(
             "'{}' {what}, which a person approves in the Portal, never a service account",
@@ -2477,6 +2482,12 @@ fn public_publication(
 /// An App anyone opens without a login (AP-120).
 fn app_is_public(kind: &str, spec: &serde_json::Value) -> bool {
     kind == "App" && spec.get("visibility").and_then(|v| v.as_str()) == Some("public")
+}
+
+/// An App or a Dashboard anyone opens without a login.
+fn opens_to_anyone(kind: &str, spec: &serde_json::Value) -> bool {
+    app_is_public(kind, spec)
+        || (kind == "Dashboard" && crate::dashboards::is_public_dashboard(spec))
 }
 
 /// A public publication (EP-142): an Endpoint whose audience is `public` and that declares
@@ -3168,11 +3179,12 @@ pub(crate) async fn approve_build(
          checked against the App's repository and published (AP-73, AP-104)",
         change.metadata.name, pr.title
     );
-    merge_if_only(state, shako, pr, &[manifest_path], &message, change).await
+    merge_if_only(state, shako, pr, &[manifest_path], &[], &message, change).await
 }
 
 /// Merges `pr` now, pinned to the commit the Portal wrote, when every file it changes is one of
-/// `paths` and none is deleted: the build lane's `status.build` (AP-104) and a green blueprint
+/// `paths`, each of `created` is one the forge says it adds (the mirror that judged it a create
+/// can trail a merge, T-7541) and none is deleted: the build lane's `status.build` (AP-104) and a green blueprint
 /// flow (CC-63, CC-65, AG-14) are merged by the Portal only while the merge request holds exactly
 /// what the Portal checked. A merge request with any other file, one whose files cannot be read,
 /// or one the forge will not merge comes back as the pending Change it was, waiting for a person.
@@ -3181,6 +3193,7 @@ pub(crate) async fn merge_if_only(
     shako: &ShakoClient,
     pr: &PullRequest,
     paths: &[&str],
+    created: &[&str],
     message: &str,
     change: Change,
 ) -> Change {
@@ -3188,9 +3201,12 @@ pub(crate) async fn merge_if_only(
     let only_these = match shako.pull_request_files(pr.number).await {
         Ok(files) => {
             !files.is_empty()
-                && files
-                    .iter()
-                    .all(|file| !file.deleted && paths.contains(&file.path.as_str()))
+                && files.iter().all(|file| {
+                    let path = file.path.as_str();
+                    !file.deleted
+                        && paths.contains(&path)
+                        && (file.added || !created.contains(&path))
+                })
         }
         Err(err) => {
             tracing::warn!(change = %id, error = %err, "the change waits for a person: its files could not be read");
@@ -3257,7 +3273,7 @@ pub(crate) async fn merge_if_narrowing(
         return change;
     };
     let path = file.path.clone();
-    merge_if_only(state, &shako, &pr, &[path.as_str()], message, change).await
+    merge_if_only(state, &shako, &pr, &[path.as_str()], &[], message, change).await
 }
 
 /// A person decides a Change with their own Portal session; a bearer token is a workload's or an
@@ -3708,6 +3724,29 @@ mod tests {
         assert!(public_publication(&robot, &file, &app, true).is_ok());
         let refused = public_publication(&robot, &file, &app, false).unwrap_err();
         assert!(matches!(refused, ApiError::Denied(m) if m.contains("AP-175")));
+    }
+
+    /// T-7541 (S1-15): publishing a Dashboard is a person's decision as publishing an App is.
+    #[test]
+    fn making_a_dashboard_public_is_a_public_publication_and_keeping_it_public_is_not() {
+        let dashboard: ResourceEnvelope = serde_json::from_value(json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "Dashboard",
+            "metadata": {"name": "air"}, "spec": {"visibility": "public"}
+        }))
+        .unwrap();
+        let file = crate::forge::shako::ChangedFile {
+            path: "projects/p/dashboards/air.yaml".into(),
+            deleted: false,
+            added: false,
+        };
+        let person = test_user("jana@example.org", vec![]).0.identity;
+        let robot = Identity {
+            client: Some("svc-ingest".into()),
+            ..person.clone()
+        };
+        assert!(public_publication(&person, &file, &dashboard, false).unwrap());
+        assert!(!public_publication(&person, &file, &dashboard, true).unwrap());
+        assert!(public_publication(&robot, &file, &dashboard, false).is_err());
     }
 
     #[test]

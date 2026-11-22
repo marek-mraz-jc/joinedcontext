@@ -314,7 +314,9 @@ pub async fn start_flow(
              (CC-63, CC-65, AG-14)",
             change.metadata.name, pr.title, request.blueprint, request.version
         );
-        crate::api::changes::merge_if_only(&state, shako, &pr, &paths, &message, change).await
+        let created: Vec<&str> = planned.created.iter().map(String::as_str).collect();
+        crate::api::changes::merge_if_only(&state, shako, &pr, &paths, &created, &message, change)
+            .await
     } else {
         change
     };
@@ -328,6 +330,8 @@ pub(crate) struct PlannedFlow {
     summary: PlanSummary,
     /// Each rendered manifest: its path in the repository and its YAML.
     files: Vec<(String, String)>,
+    /// The paths judged a create, which may make the lane Green (CC-67).
+    created: Vec<String>,
 }
 
 /// Every check a flow makes before it writes: the blueprint the caller may run, its version, the
@@ -476,6 +480,7 @@ pub(crate) fn plan_flow(
     let mut lane = declared_lane(blueprint.spec.risk_class);
     let mut summary = PlanSummary::default();
     let mut files = Vec::with_capacity(rendered.len());
+    let mut created = Vec::new();
     let mut judged = Vec::with_capacity(rendered.len());
     let effective = crate::permissions::for_request(state, identity, project);
     for expanded in &rendered {
@@ -508,6 +513,9 @@ pub(crate) fn plan_flow(
         manifest.strip_status();
         let yaml = serde_norway::to_string(&manifest)
             .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+        if operation == Operation::Create {
+            created.push(repo_path.clone());
+        }
         files.push((repo_path, yaml));
         judged.push(manifest);
     }
@@ -518,6 +526,7 @@ pub(crate) fn plan_flow(
         lane,
         summary,
         files,
+        created,
     })
 }
 

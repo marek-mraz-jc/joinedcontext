@@ -403,8 +403,10 @@ pub fn classify_manifest(manifest: &crate::resource::ResourceEnvelope, op: Opera
 ///   every workload runs and where a `secretRef` is resolved, for a whole environment at once.
 /// - `AssistantDeployment` on the `public`, `ckan` or `iframe` channel is `Red`: it answers anyone
 ///   and spends the installation's model budget (MF-52, Architecture/06 §4).
-/// - `ContextSpace` with `spec.isSandbox == true` is `Green` (ephemeral sandbox, CC-67).
-/// - `Dashboard` and `Layer` are `Green`.
+/// - Creating a `ContextSpace` with `spec.isSandbox == true` is `Green` (ephemeral sandbox,
+///   CC-67); changing a space that exists is reviewed, whatever it declares (T-7541).
+/// - `Dashboard` with `spec.visibility == "public"` is `Red` (public exposure, T-7541); any other
+///   `Dashboard`, and `Layer`, are `Green`.
 /// - Everything else defaults to `Yellow`.
 pub fn classify(kind: &str, op: Operation, spec: &serde_json::Value) -> Lane {
     if op == Operation::Delete {
@@ -425,6 +427,11 @@ pub fn classify(kind: &str, op: Operation, spec: &serde_json::Value) -> Lane {
                 .and_then(|v| v.as_array())
                 .is_some_and(|egress| !egress.is_empty()))
     {
+        return Lane::Red;
+    }
+
+    // A Dashboard anyone opens without a login is public exposure as an App is (CC-63).
+    if kind == "Dashboard" && crate::dashboards::is_public_dashboard(spec) {
         return Lane::Red;
     }
 
@@ -469,7 +476,10 @@ pub fn classify(kind: &str, op: Operation, spec: &serde_json::Value) -> Lane {
         // Code the runner executes inside every pipeline that pins it (PL-121).
         | "Script" => Lane::Red,
 
-        "ContextSpace" if spec.get("isSandbox").and_then(|v| v.as_bool()) == Some(true) => {
+        "ContextSpace"
+            if op == Operation::Create
+                && spec.get("isSandbox").and_then(|v| v.as_bool()) == Some(true) =>
+        {
             Lane::Green
         }
 
@@ -740,7 +750,7 @@ mod tests {
         );
         assert_eq!(
             classify("ContextSpace", Operation::Update, &sandbox),
-            Lane::Green
+            Lane::Yellow
         );
 
         let regular = json!({ "isSandbox": false });
@@ -767,6 +777,24 @@ mod tests {
         assert_eq!(classify("Dashboard", Operation::Update, &spec), Lane::Green);
         assert_eq!(classify("Layer", Operation::Create, &spec), Lane::Green);
         assert_eq!(classify("Layer", Operation::Update, &spec), Lane::Green);
+    }
+
+    // T-7541 (S1-15): what a manifest says of itself lowers no lane of an object that exists, and
+    // a public Dashboard is public exposure as a public App is.
+    #[test]
+    fn a_space_turned_sandbox_is_reviewed() {
+        let spec = json!({ "isSandbox": true });
+        assert_eq!(classify("ContextSpace", Operation::Update, &spec), Lane::Yellow);
+        assert_eq!(classify("ContextSpace", Operation::Create, &spec), Lane::Green);
+    }
+
+    #[test]
+    fn a_public_dashboard_is_red_and_a_project_one_green() {
+        for op in [Operation::Create, Operation::Update] {
+            let of = |visibility: &str| classify("Dashboard", op, &json!({ "visibility": visibility }));
+            assert_eq!(of("public"), Lane::Red);
+            assert_eq!(of("project"), Lane::Green);
+        }
     }
 
     // DM-75, DM-77: an organization's data model is red wherever it is classified; a project's
