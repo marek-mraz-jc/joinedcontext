@@ -64,8 +64,9 @@ async fn a_write_commits_with_its_audit_row_or_neither_stands() {
                 serde_json::json!({ "uid": uid, "title": uid }).to_string(),
             ))
             .expect("request");
-        req.extensions_mut()
-            .insert(jc_router::ClientAddr("203.0.113.9".parse().expect("ip")));
+        req.extensions_mut().insert(jc_router::ClientAddr(
+            std::net::Ipv4Addr::new(203, 0, 113, 9).into(),
+        ));
         let app = app.clone();
         async move {
             tower::ServiceExt::oneshot(app, req)
