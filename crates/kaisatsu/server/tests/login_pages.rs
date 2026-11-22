@@ -1271,6 +1271,15 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .await;
     assert_eq!(st_pk_reg_page, StatusCode::OK);
     assert_eq!(page_id(&html_pk_reg), "webauthn-register");
+    // The page carries what the browser's ceremony needs: the person's stored handle and the rp id.
+    let handle = user(&store, MEMBER).await.attributes["webauthn.user.handle"][0].clone();
+    for hidden in [
+        format!(r#"name="webauthn_user_handle" value="{handle}""#),
+        format!(r#"name="webauthn_user_name" value="{MEMBER}""#),
+        r#"name="webauthn_rp_id" value="idm.dev.example.test""#.to_owned(),
+    ] {
+        assert!(html_pk_reg.contains(&hidden), "{hidden}");
+    }
 
     let reg_session = store
         .get_auth_session_by_id("dev", &pk_attempt.session)
@@ -1397,6 +1406,19 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .post(&app, &[("webauthn_assertion_response", &assertion_json)])
         .await;
     assert!(is_code(st_pk_ok, &h_pk_ok));
+
+    // S3-26: the registered passkey is this person's second factor after a password.
+    let second = start(&app, "").await;
+    let (_, _, html_second) = second.password(&app, MEMBER, "ResetByLinkPass789!").await;
+    assert_eq!(
+        page_id(&html_second),
+        "webauthn-authenticate",
+        "{html_second}"
+    );
+    // Also where a second factor is required: the passkey answers it, no TOTP enrolment.
+    let required = start(&app, "&acr_values=mfa").await;
+    let (_, _, html_req) = required.password(&app, MEMBER, "ResetByLinkPass789!").await;
+    assert_eq!(page_id(&html_req), "webauthn-authenticate", "{html_req}");
 }
 
 #[tokio::test]
