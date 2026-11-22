@@ -55,7 +55,8 @@ status=0
 # shellcheck disable=SC2016 # $$ and $@ are the inner shell's
 sh -c 'echo $$ | sudo tee "$0/cgroup.procs" >/dev/null && exec "$@"' "$cg" "$@" || status=$?
 kill "$watch"
-echo "watched.sh: peak $(($(cat "$cg/memory.peak") / 1048576)) MB of $MAX, exit $status"
+echo "watched.sh: exit $status, peak $(($(cat "$cg/memory.peak") / 1048576)) MB of $MAX with file cache," \
+  "swap peak $(($(cat "$cg/memory.swap.peak") / 1048576)) MB of $SWAP"
 killed=$(oom_kills "$cg/memory.events")
 if [ "$killed" != 0 ]; then
   echo "::error::out of memory: the kernel killed $killed process(es) of '$1' at $MAX + $SWAP swap; the 'largest:' lines above name them"

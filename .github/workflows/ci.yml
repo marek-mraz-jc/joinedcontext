@@ -695,7 +695,8 @@ jobs:
       # watched.sh: the build in a memory cgroup, so an overrun kills rustc and not the runner (a
       # lost runner writes no log), and memory, disk and the largest processes every 20 s. The
       # step's bound is well under the job's: a timed-out step still uploads its log.
-      - timeout-minutes: 30
+      - name: cargo test (part ${{ matrix.part }})
+        timeout-minutes: 30
         run: |
           # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
           # CARGO_BUILD_JOBS, which is part of the rust-cache key
