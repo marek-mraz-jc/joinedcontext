@@ -6,7 +6,7 @@
 
 use clap::Parser;
 use dataroom_core::{CatalogueId, DataroomError, OrgId, RequestCtx, Store, Subject};
-use dataroom_server::{ensure_default_catalogue, import_ckan_json, run_cli, Cli};
+use dataroom_server::{ensure_catalogue, ensure_default_catalogue, import_ckan_json, run_cli, Cli};
 use dataroom_store_memory::MemoryStore;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -188,6 +188,46 @@ async fn serve_answers_on_its_host_and_reports_a_taken_port() {
 }
 
 #[tokio::test]
+async fn ensure_catalogue_creates_keeps_renames_and_moves() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xc21));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc22));
+    let store = MemoryStore::new();
+    let made = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        (made.name.as_str(), made.host.as_str()),
+        ("mesto", "data.mesto.test")
+    );
+    let pause = || tokio::time::sleep(std::time::Duration::from_millis(5));
+    pause().await;
+    let kept = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.modified, made.modified,
+        "the same name and host write nothing"
+    );
+    for (name, host) in [
+        ("mesto", "opendata.mesto.test"),
+        ("kraj", "opendata.mesto.test"),
+    ] {
+        pause().await;
+        let before = store
+            .get_catalogue(org, cat)
+            .await
+            .unwrap()
+            .unwrap()
+            .modified;
+        let moved = ensure_catalogue(&store, org, cat, name, host)
+            .await
+            .unwrap();
+        assert_eq!((moved.name.as_str(), moved.host.as_str()), (name, host));
+        assert_ne!(moved.modified, before, "{name} on {host} is written");
+    }
+}
+
+#[tokio::test]
 async fn import_ckan_json_reads_every_dump_shape() {
     let org = OrgId::from_uuid(Uuid::from_u128(0xc11));
     let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc12));
@@ -230,7 +270,7 @@ async fn import_ckan_json_reads_every_dump_shape() {
         .await
         .unwrap();
     let dump = json!({
-        "organizations": ["mesto", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
+        "organizations": ["mesto", "obec", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
                           {"name": ""}, {"title": "no name"}, 42],
         "hidden": ["skryty"],
         "result": {"results": [{"name": "bez-org", "title": "Bez organizácie"}, package("skryty", "mesto")]}
@@ -238,7 +278,12 @@ async fn import_ckan_json_reads_every_dump_shape() {
     let (pubs, dss) = import_ckan_json(&store, &ctx, &dump.to_string(), "sk")
         .await
         .unwrap();
-    assert_eq!((pubs, dss), (3, 2));
+    assert_eq!((pubs, dss), (4, 2));
+    let obec = store.get_publisher(&ctx, "obec").await.unwrap().unwrap();
+    assert_eq!(
+        obec.title["sk"], "obec",
+        "a bare name is a publisher no package names"
+    );
     let kraj = store.get_publisher(&ctx, "kraj").await.unwrap().unwrap();
     assert_eq!(
         kraj.logo_url.as_deref(),
