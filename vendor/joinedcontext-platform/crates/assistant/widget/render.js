@@ -481,6 +481,10 @@ var JCRender = (function () {
     } else if (typeof days[0] === "number" && typeof days[1] === "number") {
       said += part(days[0], days[1]) + " " + DAYS[lang];
     }
+    var years = Array.isArray(made.years) ? made.years : [];
+    if (typeof years[0] === "number" && typeof years[1] === "number") {
+      said += " · " + years[0] + (years[1] === years[0] ? "" : "-" + years[1]);
+    }
     return made.partial === true ? said + " · " + PART[lang] : said;
   }
 
