@@ -107,11 +107,25 @@ pub fn read_pkt_line_from(mut input: impl Read) -> ShakoResult<Option<(PktLine, 
     read_pkt_line(&line)
 }
 
+/// Lines of fewer than 40 payload bytes one message may carry: a `have` or a ref is longer, so
+/// only a few capability, flush and status lines are short. A list of short lines costs some
+/// times its bytes; this keeps a parsed message within twice and a bit of its size.
+pub const MAX_SHORT_PKT_LINES: usize = 4096;
+
 /// Reads all pkt-lines from `input` up to the end of the slice (for stateless HTTP requests
 /// that contain no trailing raw packfile).
 pub fn parse_all_pkt_lines(mut input: &[u8]) -> ShakoResult<Vec<PktLine>> {
     let mut out = Vec::new();
+    let mut short = 0;
     while let Some((line, used)) = read_pkt_line(input)? {
+        if !matches!(&line, PktLine::Data(d) if d.len() >= 40) {
+            short += 1;
+            if short > MAX_SHORT_PKT_LINES {
+                return Err(ShakoError::BadRequest(format!(
+                    "more than {MAX_SHORT_PKT_LINES} short pkt-lines"
+                )));
+            }
+        }
         out.push(line);
         input = &input[used..];
     }

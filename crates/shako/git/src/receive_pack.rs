@@ -3,7 +3,7 @@
 //! thin-pack completion, object size and delta-depth limits, connectivity check,
 //! secret scanning, ref policy evaluation, and `report-status` / `report-status-v2` (Contract S4, S5, T5, T7, T9).
 
-use crate::pack::{Admit, job_bytes};
+use crate::pack::{Admit, BYTES_PER_OBJECT};
 use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line_from, write_flush,
     write_sideband_chunks, write_text_line,
@@ -395,11 +395,11 @@ pub fn handle_receive_pack(
             return format_unpack_error("missing PACK header", &commands, &caps);
         }
         body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
-        let (largest, count) = match scan_pack(body) {
+        let (held, count) = match scan_pack(body, pack_start) {
             Ok(scanned) => scanned,
             Err(reason) => return format_unpack_error(&reason, &commands, &caps),
         };
-        admit(job_bytes(largest, count))?;
+        admit(held.saturating_add(count.saturating_mul(BYTES_PER_OBJECT)))?;
         body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
         if let Err(reason) = index_pack_in_quarantine(
             repo_path,
@@ -557,11 +557,11 @@ pub fn handle_receive_pack(
     })
 }
 
-/// Streaming pre-scan of pack entries with `BytesToEntriesIter`, enforcing
-/// `decompressed_size <= MAX_SINGLE_OBJECT_BYTES` (100 MiB) and
-/// `delta_chain_depth <= MAX_DELTA_CHAIN_DEPTH` (50) (Threat T5). Answers the largest inflated
-/// entry and the number of entries.
-fn scan_pack(pack: &File) -> Result<(u64, u64), String> {
+/// Streaming pre-scan of pack entries with `BytesToEntriesIter`, enforcing an object size
+/// (a delta's result included) `<= MAX_SINGLE_OBJECT_BYTES` (100 MiB) and
+/// `delta_chain_depth <= MAX_DELTA_CHAIN_DEPTH` (50) (Threat T5). Answers what indexing holds at
+/// its largest and the number of entries. `pack_start` is the pack's offset in `pack`.
+fn scan_pack(pack: &File, pack_start: u64) -> Result<(u64, u64), String> {
     let entries_iter = BytesToEntriesIter::new_from_header(
         BufReader::new(pack),
         InputMode::Verify,
@@ -570,15 +570,14 @@ fn scan_pack(pack: &File) -> Result<(u64, u64), String> {
     )
     .map_err(|e| format!("invalid pack header: {e}"))?;
 
+    let too_large =
+        |size: u64| format!("object size {size} exceeds limit {MAX_SINGLE_OBJECT_BYTES}");
     let mut depth_by_offset: BTreeMap<u64, usize> = BTreeMap::new();
-    let mut largest = 0;
+    let mut held = 0;
     for entry_res in entries_iter {
         let entry = entry_res.map_err(|e| format!("corrupt pack entry: {e}"))?;
         if entry.decompressed_size > MAX_SINGLE_OBJECT_BYTES {
-            return Err(format!(
-                "object size {} exceeds limit {MAX_SINGLE_OBJECT_BYTES}",
-                entry.decompressed_size
-            ));
+            return Err(too_large(entry.decompressed_size));
         }
         let depth = match entry.header {
             gix_pack::data::entry::Header::OfsDelta { base_distance } => {
@@ -594,9 +593,60 @@ fn scan_pack(pack: &File) -> Result<(u64, u64), String> {
             ));
         }
         depth_by_offset.insert(entry.pack_offset, depth);
-        largest = largest.max(entry.decompressed_size);
+        // A whole object is held inflated and compressed. A delta's size is the delta's: its
+        // base, its result and the result's compressed form (a thin pack's base is appended)
+        // are held while it is resolved, measured at 3 x 80 MiB for one appended line.
+        let cost = if depth == 0 {
+            entry.decompressed_size.saturating_mul(2)
+        } else {
+            let at = pack_start + entry.pack_offset + u64::from(entry.header_size);
+            let (base, result) = delta_sizes(pack, at)?;
+            if base.max(result) > MAX_SINGLE_OBJECT_BYTES {
+                return Err(too_large(base.max(result)));
+            }
+            base.saturating_add(result.saturating_mul(2))
+                .saturating_add(entry.decompressed_size)
+        };
+        held = held.max(cost);
     }
-    Ok((largest, depth_by_offset.len() as u64))
+    Ok((held, depth_by_offset.len() as u64))
+}
+
+/// The base and result sizes a delta's data starts with (two little-endian base-128 numbers),
+/// read from its zlib stream at `at` in `pack` without moving the file's position.
+fn delta_sizes(pack: &File, at: u64) -> Result<(u64, u64), String> {
+    use std::os::unix::fs::FileExt as _;
+    let unreadable = |e: &dyn std::fmt::Display| format!("unreadable delta at {at}: {e}");
+    let mut compressed = [0u8; 64];
+    let got = pack
+        .read_at(&mut compressed, at)
+        .map_err(|e| unreadable(&e))?;
+    let mut header = [0u8; 20];
+    let mut inflate = flate2::Decompress::new(true);
+    inflate
+        .decompress(
+            &compressed[..got],
+            &mut header,
+            flate2::FlushDecompress::Sync,
+        )
+        .map_err(|e| unreadable(&e))?;
+    let header = &header[..usize::try_from(inflate.total_out()).unwrap_or(0)];
+    let mut sizes = header.iter().copied();
+    let mut size = || {
+        let mut value = 0u64;
+        for shift in (0..64).step_by(7) {
+            let byte = sizes.next()?;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Some(value);
+            }
+        }
+        None
+    };
+    match (size(), size()) {
+        (Some(base), Some(result)) => Ok((base, result)),
+        _ => Err(unreadable(&"truncated delta header")),
+    }
 }
 
 /// Indexes and thickens a thin pack in `quarantine_dir` using `Bundle::write_to_directory`.

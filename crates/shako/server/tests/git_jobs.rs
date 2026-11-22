@@ -65,11 +65,16 @@ async fn a_clone_with_a_gzipped_negotiation_is_served() {
 struct Remote {
     tip: Option<String>,
     pushes: Vec<usize>,
+    /// How long the remote takes to answer a push.
+    delay: Duration,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_mirror_follows_the_push_and_sends_only_the_new_objects() {
-    let remote = Arc::new(Mutex::new(Remote::default()));
+    let remote = Arc::new(Mutex::new(Remote {
+        delay: Duration::from_secs(3),
+        ..Remote::default()
+    }));
     let seen = Arc::clone(&remote);
     let world = World::start(OutboundPolicy {
         allowed_hosts: Some(vec!["github.com".into()]),
@@ -85,7 +90,8 @@ async fn a_mirror_follows_the_push_and_sends_only_the_new_objects() {
                 shako_git::write_flush(&mut out).ok()?;
                 return Some((200, out));
             }
-            std::thread::sleep(Duration::from_secs(3));
+            let delay = seen.lock().expect("remote").delay;
+            std::thread::sleep(delay);
             let mut remote = seen.lock().expect("remote");
             remote.tip = Some(String::from_utf8_lossy(body.get(45..85)?).into_owned());
             remote.pushes.push(body.len());
@@ -151,6 +157,17 @@ async fn a_mirror_follows_the_push_and_sends_only_the_new_objects() {
         3,
         "sync now answered before the sync it waits for ended"
     );
+
+    // A sync longer than "sync now" waits answers 503: the Portal reads an empty last error
+    // after a success as a pushed mirror.
+    remote.lock().expect("remote").delay = Duration::from_secs(12);
+    git(work.path(), &["commit", "-q", "--allow-empty", "-m", "4"]).await;
+    git(work.path(), &["push", "-q", "origin", "main"]).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let status = world
+        .post_status("city", "repos/city/mirrored/push_mirrors-sync", json!({}))
+        .await;
+    assert_eq!(status, 503, "a sync without its result is not a success");
 }
 
 /// Every object git wants for the new refs is in the delta: a merge of an older branch, content

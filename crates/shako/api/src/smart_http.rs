@@ -161,7 +161,7 @@ async fn handle_post_upload_pack(
     let res = state
         .git_work
         .produce(ctx.org_id, move |out, admit| {
-            let request = read_negotiation(spool.file(), gzip, MAX_NEGOTIATION_BYTES)?;
+            let request = read_negotiation(spool.file(), gzip, MAX_NEGOTIATION_BYTES, admit)?;
             handle_upload_pack(&disk_path, git_protocol.as_deref(), &request, out, admit)
         })
         .await;

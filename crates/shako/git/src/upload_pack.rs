@@ -198,28 +198,47 @@ fn parse_scaled_u64(raw: &str) -> Option<u64> {
     raw.parse::<u64>().ok()
 }
 
-/// Reads a spooled upload-pack request of at most `limit` bytes. git gzips one over 1 KiB, so
-/// the inflated bytes count too.
-pub fn read_negotiation(mut file: &std::fs::File, gzip: bool, limit: u64) -> ShakoResult<Vec<u8>> {
+/// What a parsed negotiation holds per byte of request: the request, a line's own buffer and
+/// its place in the list (`parse_all_pkt_lines` refuses many short lines), and the wants and haves.
+pub const NEGOTIATION_BYTES_PER_BYTE: u64 = 4;
+
+/// Reads a spooled upload-pack request of at most `limit` bytes, asking `admit` before each
+/// MiB of it is held. git gzips one over 1 KiB, so the inflated bytes count too.
+pub fn read_negotiation(
+    mut file: &std::fs::File,
+    gzip: bool,
+    limit: u64,
+    admit: Admit<'_>,
+) -> ShakoResult<Vec<u8>> {
     use std::io::{Read as _, Seek as _};
+    const STEP: usize = 1024 * 1024;
     file.rewind()
         .map_err(|e| ShakoError::Storage(format!("negotiation spool: {e}")))?;
-    let mut request = Vec::new();
-    if gzip {
-        flate2::read::GzDecoder::new(file)
-            .take(limit + 1)
-            .read_to_end(&mut request)
+    let mut reader: Box<dyn std::io::Read + '_> = if gzip {
+        Box::new(flate2::read::GzDecoder::new(file))
     } else {
-        file.take(limit + 1).read_to_end(&mut request)
+        Box::new(file)
+    };
+    let mut request = Vec::new();
+    loop {
+        let at = request.len();
+        if at as u64 > limit {
+            return Err(ShakoError::QuotaExceeded {
+                resource: "request_body_bytes".into(),
+                limit,
+            });
+        }
+        admit(((at + STEP) as u64).saturating_mul(NEGOTIATION_BYTES_PER_BYTE))?;
+        request.reserve_exact(STEP);
+        let read = reader
+            .by_ref()
+            .take(STEP as u64)
+            .read_to_end(&mut request)
+            .map_err(|e| ShakoError::BadRequest(format!("unreadable upload-pack request: {e}")))?;
+        if read == 0 {
+            return Ok(request);
+        }
     }
-    .map_err(|e| ShakoError::BadRequest(format!("unreadable upload-pack request: {e}")))?;
-    if request.len() as u64 > limit {
-        return Err(ShakoError::QuotaExceeded {
-            resource: "request_body_bytes".into(),
-            limit,
-        });
-    }
-    Ok(request)
 }
 
 /// Handles `POST {repo}.git/git-upload-pack` for both Protocol v0 and Protocol v2 (S3), writing

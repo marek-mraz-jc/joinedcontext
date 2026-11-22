@@ -68,15 +68,25 @@ impl World {
     }
 
     pub async fn post(&self, owner: &str, path: &str, body: serde_json::Value) {
-        let answer = self
-            .http
+        let status = self.post_status(owner, path, body).await;
+        assert!(status.is_success(), "{path}: {status}");
+    }
+
+    /// The status of an API `POST` as `owner`.
+    pub async fn post_status(
+        &self,
+        owner: &str,
+        path: &str,
+        body: serde_json::Value,
+    ) -> reqwest::StatusCode {
+        self.http
             .post(format!("http://{}/api/v1/{path}", self.addr))
             .header("authorization", format!("token {owner}-token"))
             .json(&body)
             .send()
             .await
-            .expect("request");
-        assert!(answer.status().is_success(), "{path}: {}", answer.status());
+            .expect("request")
+            .status()
     }
 
     /// An empty repository and the address `git` uses for it.

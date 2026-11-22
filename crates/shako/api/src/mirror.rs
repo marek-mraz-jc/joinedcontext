@@ -67,7 +67,8 @@ pub fn drain_mirrors(state: &ShakoState, instance: InstanceId, org: OrgId) {
     });
 }
 
-/// Syncs `repo` now and waits a little for the result; a longer sync ends in the background.
+/// Syncs `repo` now and waits a little for the result; a longer sync ends in the background and
+/// answers [`still_running`].
 pub(crate) async fn sync_now(state: &ShakoState, repo: &RepoRecord) -> ShakoResult<()> {
     let (instance, org, id) = (repo.instance_id, repo.org_id, repo.id);
     let Some(wanted) = mark_due(state, repo).await else {
@@ -80,10 +81,11 @@ pub(crate) async fn sync_now(state: &ShakoState, repo: &RepoRecord) -> ShakoResu
             break mark;
         }
         // A sync of it runs elsewhere; the mark makes it run again, and that result answers.
-        if tokio::time::Instant::now() >= deadline
-            || store.mirror_synced(instance, org, id, wanted).await?
-        {
+        if store.mirror_synced(instance, org, id, wanted).await? {
             return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(still_running());
         }
         tokio::time::sleep(SYNC_NOW_POLL).await;
     };
@@ -91,10 +93,20 @@ pub(crate) async fn sync_now(state: &ShakoState, repo: &RepoRecord) -> ShakoResu
         let state = state.clone();
         async move { sync_claimed(&state, instance, org, id, mark).await }
     });
-    if let Ok(Err(e)) = tokio::time::timeout_at(deadline, job).await {
-        return Err(ShakoError::Internal(e.to_string()));
+    match tokio::time::timeout_at(deadline, job).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(ShakoError::Internal(e.to_string())),
+        Err(_) => Err(still_running()),
     }
-    Ok(())
+}
+
+/// A sync that has no result yet: not a success, so a caller reading the mirror's last error
+/// next does not take an empty one for a pushed mirror.
+fn still_running() -> ShakoError {
+    ShakoError::Overloaded(format!(
+        "the push mirror sync runs longer than {} s; its result shows in the mirror's last error",
+        SYNC_NOW_WAIT.as_secs()
+    ))
 }
 
 async fn sync_claimed(
