@@ -142,10 +142,6 @@ describe("VisualizationsSection", () => {
     await userEvent.click(screen.getByText(V.add));
     const fill = screen.getByRole("button", { name: V.fill });
     expect(fill).toHaveAttribute("aria-disabled", "true");
-    await userEvent.selectOptions(
-      screen.getByLabelText(marked(V.roles.x)),
-      "observedAt",
-    );
     await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
     await userEvent.click(fill);
     const get = sent.find((r) => r.method === "GET")!;
@@ -219,7 +215,6 @@ describe("VisualizationsSection", () => {
     await userEvent.selectOptions(screen.getByLabelText(V.method), "max");
     await userEvent.click(screen.getByLabelText(V.controls));
 
-    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.x)), "observedAt");
     await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
     await userEvent.click(screen.getByRole("button", { name: V.fill }));
     await waitFor(() =>
@@ -347,7 +342,10 @@ describe("VisualizationsSection", () => {
     await userEvent.click(screen.getByText(V.add));
     const offered = (label: string | RegExp) =>
       [...(screen.getByLabelText(label) as HTMLSelectElement).options].map((option) => option.value);
-    expect(offered(marked(V.roles.x))).toEqual(["observedAt"]);
+    // Nothing to pick, so it is text under its label, read with its hint.
+    expect(screen.getByLabelText(V.roles.x).tagName).toBe("OUTPUT");
+    expect(screen.getByLabelText(V.roles.x)).toHaveTextContent(V.readingTime);
+    expect(screen.getByLabelText(V.roles.x)).toHaveAccessibleDescription(V.hint.time);
     expect(offered(V.roles.color)).toEqual(["", "name", "id"]);
     expect(offered(marked(V.roles.y))).toEqual(["", "dateObserved", "no2", "name"]);
     await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "bar");

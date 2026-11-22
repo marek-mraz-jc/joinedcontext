@@ -41,6 +41,14 @@ import type {
   Visualization,
 } from "./visualizations";
 
+/** When each shape is the one to pick. */
+const SHAPE_HINT: Record<TemplateName, string> = {
+  bar: "barShape",
+  line: "lineShape",
+  heatmap: "gridShape",
+  "small-multiples": "panelsShape",
+  "linked-brush": "detailShape",
+};
 /** What the specification's hint shows as an example. */
 const SPEC_EXAMPLE = '"data": {"name": "source"}';
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -279,7 +287,7 @@ export function VisualizationsSection({
               {tooLong ? (
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="primary"
                   disabled={proposal.mutation.isPending}
                   disabledReason={t("app.busyReason")}
                   onClick={() =>
@@ -371,6 +379,8 @@ export function VisualizationsSection({
     </p>
   );
 
+  /** The history's time axis: there is nothing to pick. */
+  const fixedAxis = (role: Role) => source === "temporal" && role === "x";
   /** What a role's column is for, in the chart picked, or what to do when there is none. */
   const roleHint = (role: Role) => {
     if (offered(role).length === 0) return t("endpoints.page.visualizations.hint.noColumns");
@@ -530,9 +540,7 @@ export function VisualizationsSection({
               id="viz-template"
               required
               label={t("endpoints.page.visualizations.template")}
-              help={t("endpoints.page.visualizations.hint.template", {
-                example: t(`endpoints.page.visualizations.templates.${template}`),
-              })}
+              help={t(`endpoints.page.visualizations.hint.${SHAPE_HINT[template]}`)}
             >
               <Select
                 id="viz-template"
@@ -579,18 +587,22 @@ export function VisualizationsSection({
               <Field
                 key={role}
                 id={`viz-${role}`}
-                required={required.includes(role)}
+                required={required.includes(role) && !fixedAxis(role)}
                 label={t(`endpoints.page.visualizations.roles.${role}`)}
                 help={roleHint(role)}
               >
-                <Select
-                  id={`viz-${role}`}
-                  value={columns[role] ?? ""}
-                  onChange={(event) =>
-                    repick({ ...picks, [role]: event.target.value })
-                  }
-                >
-                  {source === "temporal" && role === "x" ? null : (
+                {fixedAxis(role) ? (
+                  <output id={`viz-${role}`} className="py-1.5 text-body text-fg">
+                    {t("endpoints.page.visualizations.readingTime")}
+                  </output>
+                ) : (
+                  <Select
+                    id={`viz-${role}`}
+                    value={columns[role] ?? ""}
+                    onChange={(event) =>
+                      repick({ ...picks, [role]: event.target.value })
+                    }
+                  >
                     <option value="">
                       {t(
                         required.includes(role)
@@ -598,15 +610,13 @@ export function VisualizationsSection({
                           : "endpoints.page.visualizations.noColumn",
                       )}
                     </option>
-                  )}
-                  {offered(role).map((column) => (
-                    <option key={column} value={column}>
-                      {column === "observedAt" && source === "temporal"
-                        ? t("endpoints.page.visualizations.readingTime")
-                        : column}
-                    </option>
-                  ))}
-                </Select>
+                    {offered(role).map((column) => (
+                      <option key={column} value={column}>
+                        {column}
+                      </option>
+                    ))}
+                  </Select>
+                )}
               </Field>
             ))}
           </div>

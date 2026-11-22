@@ -150,10 +150,10 @@ for (const width of [1440, 400]) {
     await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
     await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/always see the settings below/);
 
-    await expect(page.getByLabel("Horizontal axis")).toHaveValue("observedAt");
+    await expect(page.getByLabel("Horizontal axis")).toHaveText("Time of the reading (observedAt)");
     await page.getByLabel("Measure").selectOption("no2");
     // Nobody has to open the JSON: proposing writes it.
-    await expect(page.getByLabel("Vega-Lite specification")).toBeHidden();
+    await expect(page.getByLabel("Chart specification (Vega-Lite)")).toBeHidden();
     await page.getByRole("textbox", { name: "Short ID", exact: true }).fill("no2-week");
     await page.getByRole("textbox", { name: "Title", exact: true }).fill("NO2 this week");
     await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
@@ -177,8 +177,8 @@ for (const width of [1440, 400]) {
     await section.getByText("Add a chart").click();
     await page.getByLabel("Measure").selectOption("no2");
     await section.getByText("Advanced: edit the chart's specification").click();
-    await page.getByRole("button", { name: "Fill from the chart" }).click();
-    const spec = page.getByLabel("Vega-Lite specification");
+    await page.getByRole("button", { name: "Write it from the fields above" }).click();
+    const spec = page.getByLabel("Chart specification (Vega-Lite)");
     await expect(spec).toHaveValue(/observedAt/);
     // Edited by hand to read another server: the one refusal this form can get for a new chart.
     await spec.fill(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }, null, 2));
@@ -187,7 +187,7 @@ for (const width of [1440, 400]) {
     await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
-    await expect(alert).toContainText("Nothing was proposed. Correct “Vega-Lite specification” above");
+    await expect(alert).toContainText("Nothing was proposed. Correct “Chart specification (Vega-Lite)” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
     await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Remove https:\/\/example\.org\/no2\.csv/);
