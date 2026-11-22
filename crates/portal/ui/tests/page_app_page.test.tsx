@@ -6,7 +6,7 @@
  * asserted here is that each state is a page: named in the heading and in the tab, with the way
  * back, a reason that can be acted on when the request fails, and axe clean in each.
  */
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -53,6 +53,13 @@ const PUBLISHED = {
 /** The same App built without a description, as a generated App can be (T-6527). */
 const UNDESCRIBED = { ...PUBLISHED, metadata: { name: APP, namespace: PROJECT, title: { en: "Air today" } } };
 
+/** The rules of a person who may propose an App, as the Portal door answers them. */
+const PROPOSER = {
+  project: PROJECT,
+  bootstrap: false,
+  grants: [{ role: "app-editor", binding: "editors", rule: { kinds: ["App"], verbs: ["read", "propose"] } }],
+};
+
 interface World {
   app?: unknown;
   runs?: number;
@@ -66,6 +73,8 @@ function renderApp(world: World = {}) {
     path: `/projects/${PROJECT}/apps/${APP}`,
     answer: (url, request) => {
       if (url.pathname.endsWith("/blueprints")) return json(list([BLUEPRINT]));
+      if (url.pathname.endsWith("/permissions/me")) return json(PROPOSER);
+      if (url.pathname.endsWith("/audience")) return json({ project: 4, organization: 30, roles: [] });
       if (app && url.pathname.endsWith(`/apps/${APP}`)) return json(app);
       if (!url.pathname.endsWith("/agent-runs") || request.method !== "GET") return undefined;
       if (pending) return new Promise<Response>(() => undefined);
@@ -231,5 +240,30 @@ describe("a published App with no run of its own (T-4264, T-4160 #35)", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 2, name: en.apps.generate.title, hidden: true })).toBeInTheDocument();
   });
-});
 
+  it("opens the share dialog, copies the App's address and says when the copy failed", async () => {
+    renderApp({ app: PUBLISHED });
+    await userEvent.click(await screen.findByRole("button", { name: en.apps.share.action }));
+    // userEvent brings its own clipboard; this one answers once and then refuses.
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const dialog = await screen.findByRole("dialog", { name: en.apps.share.title.replace("{name}", "Air today") });
+    const copy = within(dialog).getByRole("button", { name: en.apps.share.copy });
+    fireEvent.click(copy);
+    expect(await within(dialog).findByText(en.apps.share.copied)).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`/apps/`));
+    fireEvent.click(copy);
+    expect(await within(dialog).findByText(en.apps.share.copyFailed)).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("loads the dashboard editor only when its section is opened", async () => {
+    renderApp({ app: PUBLISHED });
+    const summary = await screen.findByText(en.apps.dashboard.section);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    await userEvent.click(summary);
+    expect(summary.closest("details")).toHaveAttribute("open");
+    await waitFor(() => expect(summary.closest("details")?.querySelector("div.mt-3")).not.toBeNull());
+  });
+});
