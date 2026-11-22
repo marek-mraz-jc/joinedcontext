@@ -1852,6 +1852,7 @@
         "title": "Diagramme am Datensatz",
         "lead": "Die Diagramme, die der Open-Data-Katalog am Datensatz dieses Endpoints zeigt, aus den eigenen Daten des Endpoints.",
         "none": "Noch keine Diagramme.",
+        "awaiting": "Noch keine Diagramme. Das vorgeschlagene Diagramm erscheint hier nach der Genehmigung der Änderung.",
         "add": "Diagramm hinzufügen",
         "name": "Name",
         "nameHint": "Kleinbuchstaben, Ziffern und Bindestriche; eindeutig an diesem Endpoint.",
@@ -1869,12 +1870,12 @@
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Diagrammeinstellungen für Lesende",
-        "toolbarHidden": "Fest",
+        "toolbarHidden": "Fest für Lesende",
         "startsWith": "Lesende beginnen mit: {settings}",
         "lockedTo": "Lesende sehen nur: {settings}",
         "refusedOwn": "Es wurde nichts vorgeschlagen. Korrigieren Sie „{fields}“ oben und schlagen Sie erneut vor.",
-        "refusedOther": "Es wurde nichts vorgeschlagen: „{chart}“ an diesem Endpoint hat eine unzulässige Einstellung. Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
-        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat. Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
+        "refusedOther": "Es wurde nichts vorgeschlagen: „{chart}“ an diesem Endpoint hat eine unzulässige Einstellung ({fields}). Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
+        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat ({fields}). Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
         "days": "{count, plural, one {# Tag} other {# Tage}}",
         "fixed": {
           "range": "Zeitraum",
@@ -1882,16 +1883,16 @@
           "method": "Berechnung"
         },
         "invalid": {
-          "range": "Dieser Zeitraum ist nicht zulässig. Er umfasst höchstens 31 Tage.",
+          "range": "Der Zeitraum „{value}“ ist nicht zulässig: höchstens 31 Tage. Zum Ändern das Diagramm entfernen und neu hinzufügen.",
           "granularity": "Diese Auflösung ist nicht zulässig. Sie braucht eine Periode und eine Berechnung.",
           "method": "Diese Berechnung ist nicht zulässig. Fügen Sie das Diagramm mit Mittelwert, Minimum oder Maximum neu hinzu.",
           "controls": "Dieser Schalter der Leiste ist nicht zulässig. Er ist entweder an oder aus."
         },
         "showField": "Zum Feld",
         "fix": {
-          "range": "Der Zeitraum „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
-          "granularity": "Die Auflösung „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
-          "method": "Die Berechnung „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
+          "range": "Die Prüfung erlaubt „{value}“ nicht als Zeitraum. Wählen Sie {choices}.",
+          "granularity": "Die Prüfung erlaubt „{value}“ nicht als Auflösung. Wählen Sie {choices}.",
+          "method": "Die Prüfung erlaubt „{value}“ nicht als Berechnung. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
         },
         "range": "Standardzeitraum",
@@ -1917,9 +1918,10 @@
           "range": "Was Lesende beim Öffnen des Diagramms sehen, z. B. 7 Tage: die letzte Woche bis jetzt.",
           "granularity": "Rohwerte zeichnen jede Messung; stündlich und täglich einen Punkt pro Stunde oder Tag, z. B. täglich für 31 Tage.",
           "method": "Wie die Messungen einer Stunde oder eines Tages zu einem Punkt werden, z. B. Maximum für die Tagesspitze.",
-          "controls": "Lesende können Zeitraum, Auflösung und Berechnung selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm.",
+          "controls": "Lesende können diese Einstellungen selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm.",
           "locked": "Lesende können das Diagramm nicht ändern. Sie sehen immer: {settings}. Aktivieren, damit sie selbst wählen, z. B. einen anderen Zeitraum.",
-          "raw": "Jede Messung wird gezeichnet, daher gibt es keine Berechnung zu wählen, z. B. für die letzten 24 Stunden."
+          "raw": "Jede Messung wird gezeichnet, z. B. jeder Fünf-Minuten-Wert, daher ist keine Berechnung nötig.",
+          "fixedRange": "Der Zeitraum, den Lesende immer sehen, z. B. 7 Tage: die letzte Woche bis jetzt."
         },
         "templates": {
           "bar": "Balkendiagramm",

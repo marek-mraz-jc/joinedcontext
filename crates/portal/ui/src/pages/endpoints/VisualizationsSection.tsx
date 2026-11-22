@@ -82,11 +82,16 @@ export function VisualizationsSection({
   const proposal = useProposal(project, "endpoints", (proposed) => {
     setChange(proposed);
     if (sent.added === undefined) return;
-    // The chart is proposed: an emptied form does not offer to propose it a second time.
+    // The chart is proposed: the form starts over, so it is not proposed a second time and the
+    // next chart takes none of this one's settings unseen.
     setName("");
     setTitle("");
     setDescription("");
+    setTemplate("line");
+    setType("");
+    setColumns({});
     setSpecText("");
+    setTemporal(DEFAULT_TEMPORAL);
   });
   const propose = (next: Visualization[], at: { added?: number; removed?: Visualization }) => {
     setFailed(null);
@@ -183,13 +188,22 @@ export function VisualizationsSection({
   const fieldsOf = (settings: RefusedSetting[]) =>
     [...new Set(settings.map((one) => (one.field === "controls" ? t("endpoints.page.visualizations.controls") : label(one.field))))].join(", ");
   const blocking = other ? sent.charts[other.index] : undefined;
-  const refusal = blocking
+  const blocked = blocking && {
+    chart: titleOf(blocking),
+    fields: refused
+      .filter((one) => one.index === other?.index)
+      .map((one) =>
+        t(`endpoints.page.visualizations.${one.field === "controls" ? "controls" : `fixed.${one.field}`}`),
+      )
+      .join(", "),
+  };
+  const refusal = blocked
     ? sent.removed
       ? t("endpoints.page.visualizations.refusedRemoval", {
           removed: titleOf(sent.removed),
-          chart: titleOf(blocking),
+          ...blocked,
         })
-      : t("endpoints.page.visualizations.refusedOther", { chart: titleOf(blocking) })
+      : t("endpoints.page.visualizations.refusedOther", blocked)
     : own.length > 0
       ? t("endpoints.page.visualizations.refusedOwn", { fields: fieldsOf(own) })
       : proposal.error;
@@ -253,7 +267,7 @@ export function VisualizationsSection({
     <div className="space-y-3" data-testid="visualizations">
       {list.length === 0 ? (
         <p className="text-body text-fg-muted">
-          {t("endpoints.page.visualizations.none")}
+          {t(change ? "endpoints.page.visualizations.awaiting" : "endpoints.page.visualizations.none")}
         </p>
       ) : (
         <ul className="space-y-2">
@@ -301,7 +315,9 @@ export function VisualizationsSection({
                     .filter((at) => at.index === other?.index)
                     .map(({ field }) => (
                       <InlineError key={field} className="w-full">
-                        {t(`endpoints.page.visualizations.invalid.${field}`)}
+                        {t(`endpoints.page.visualizations.invalid.${field}`, {
+                          value: word("ranges", RANGES, one.data.last),
+                        })}
                       </InlineError>
                     ))
                 : null}
@@ -423,10 +439,35 @@ export function VisualizationsSection({
                 {t("endpoints.page.visualizations.toolbar")}
               </legend>
               <Field
+                id="viz-controls"
+                errors={errorsOf("controls")}
+                hideLabel
+                help={
+                  temporal.controls
+                    ? t("endpoints.page.visualizations.hint.controls")
+                    : t("endpoints.page.visualizations.hint.locked", { settings: lockedTo })
+                }
+                className="sm:col-span-3"
+              >
+                <Checkbox
+                  id="viz-controls"
+                  className="touch-size"
+                  label={t("endpoints.page.visualizations.controls")}
+                  checked={temporal.controls}
+                  onChange={(event) =>
+                    setTemporal({ ...temporal, controls: event.target.checked })
+                  }
+                />
+              </Field>
+              <Field
                 id="viz-range"
                 errors={errorsOf("range")}
                 label={label("range")}
-                help={t("endpoints.page.visualizations.hint.range")}
+                help={t(
+                  temporal.controls
+                    ? "endpoints.page.visualizations.hint.range"
+                    : "endpoints.page.visualizations.hint.fixedRange",
+                )}
               >
                 <Select
                   id="viz-range"
@@ -502,26 +543,6 @@ export function VisualizationsSection({
                   </Select>
                 </Field>
               )}
-              <Field
-                id="viz-controls"
-                errors={errorsOf("controls")}
-                hideLabel
-                help={
-                  temporal.controls
-                    ? t("endpoints.page.visualizations.hint.controls")
-                    : t("endpoints.page.visualizations.hint.locked", { settings: lockedTo })
-                }
-                className="sm:col-span-3"
-              >
-                <Checkbox
-                  id="viz-controls"
-                  label={t("endpoints.page.visualizations.controls")}
-                  checked={temporal.controls}
-                  onChange={(event) =>
-                    setTemporal({ ...temporal, controls: event.target.checked })
-                  }
-                />
-              </Field>
             </fieldset>
           ) : null}
           <Button
@@ -549,6 +570,11 @@ export function VisualizationsSection({
             />
           </Field>
           {removing ? null : alert}
+          {ready ? null : (
+            <p className="mt-3 text-caption text-fg-muted">
+              {t("endpoints.page.visualizations.incomplete")}
+            </p>
+          )}
           <Button
             className="mt-3"
             disabled={!ready || proposal.mutation.isPending}

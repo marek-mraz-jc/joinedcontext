@@ -1852,6 +1852,7 @@
         "title": "Grafy u datové sady",
         "lead": "Grafy, které katalog otevřených dat ukazuje u datové sady tohoto endpointu, z vlastních dat endpointu.",
         "none": "Zatím žádné grafy.",
+        "awaiting": "Zatím žádné grafy. Navržený graf se tu zobrazí po schválení změny.",
         "add": "Přidat graf",
         "name": "Název",
         "nameHint": "Malá písmena, číslice a pomlčky; jedinečný v tomto endpointu.",
@@ -1869,12 +1870,12 @@
         "propose": "Navrhnout graf",
         "remove": "Odebrat",
         "toolbar": "Nastavení grafu pro čtenáře",
-        "toolbarHidden": "Pevný",
+        "toolbarHidden": "Pevný pro čtenáře",
         "startsWith": "Čtenáři začínají s: {settings}",
         "lockedTo": "Čtenáři vidí pouze: {settings}",
         "refusedOwn": "Nic se nenavrhlo. Opravte „{fields}“ výše a navrhněte znovu.",
-        "refusedOther": "Nic se nenavrhlo: graf „{chart}“, který už je na tomto endpointu, má nepovolené nastavení. Nejdřív odeberte „{chart}“ a zkuste to znovu.",
-        "refusedRemoval": "Graf „{removed}“ se neodebral, protože „{chart}“ má nepovolené nastavení. Nejdřív odeberte „{chart}“ a zkuste to znovu.",
+        "refusedOther": "Nic se nenavrhlo: graf „{chart}“, který už je na tomto endpointu, má nepovolené nastavení ({fields}). Nejdřív odeberte „{chart}“ a zkuste to znovu.",
+        "refusedRemoval": "Graf „{removed}“ se neodebral, protože „{chart}“ má nepovolené nastavení ({fields}). Nejdřív odeberte „{chart}“ a zkuste to znovu.",
         "days": "{count, plural, one {# den} few {# dny} other {# dní}}",
         "fixed": {
           "range": "Období",
@@ -1882,16 +1883,16 @@
           "method": "Výpočet"
         },
         "invalid": {
-          "range": "Toto období není povoleno. Může mít nejvýše 31 dní.",
+          "range": "Období „{value}“ není povoleno: maximum je 31 dní. Pro změnu graf odeberte a přidejte znovu.",
           "granularity": "Tato podrobnost není povolena. Potřebuje periodu a výpočet.",
           "method": "Tento výpočet není povolen. Přidejte graf znovu s průměrem, minimem nebo maximem.",
           "controls": "Tento přepínač panelu není povolen. Může být jen zapnutý nebo vypnutý."
         },
         "showField": "Přejít na pole",
         "fix": {
-          "range": "Období „{value}“ nebylo přijato. Vyberte {choices}.",
-          "granularity": "Podrobnost „{value}“ nebyla přijata. Vyberte {choices}.",
-          "method": "Výpočet „{value}“ nebyl přijat. Vyberte {choices}.",
+          "range": "Kontrola nepovolila období „{value}“. Vyberte {choices}.",
+          "granularity": "Kontrola nepovolila podrobnost „{value}“. Vyberte {choices}.",
+          "method": "Kontrola nepovolila výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu."
         },
         "range": "Výchozí období",
@@ -1917,9 +1918,10 @@
           "range": "Co čtenář uvidí po otevření grafu, např. 7 dní: poslední týden do teď.",
           "granularity": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
           "method": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
-          "controls": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
+          "controls": "Čtenáři si mohou tato nastavení sami změnit, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
           "locked": "Čtenáři graf nemohou měnit. Vždy vidí: {settings}. Zaškrtněte, pokud si mají sami vybrat např. jiné období.",
-          "raw": "Kreslí se každé měření, proto se výpočet nevybírá, např. za posledních 24 hodin."
+          "raw": "Kreslí se každé měření, např. každá pětiminutová hodnota, proto výpočet není potřeba.",
+          "fixedRange": "Období, které čtenáři vždy vidí, např. 7 dní: poslední týden do teď."
         },
         "templates": {
           "bar": "Sloupcový graf",

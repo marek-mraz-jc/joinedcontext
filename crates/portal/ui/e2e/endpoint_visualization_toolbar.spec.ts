@@ -87,7 +87,7 @@ async function stub(page: Page, s: Stub) {
       s.puts.push({ url, body: JSON.parse(request.postData() ?? "{}") });
       if (s.refuse !== undefined) {
         // As the Portal's check answers: a verdict, the pointer in the sentence, no path.
-        const message = `invalid /spec/catalog/visualizations/${s.refuse}/data/last: source: \`P32D\` is not an ISO 8601 duration up to P31D`;
+        const message = `invalid /spec/catalog/visualizations/${s.refuse}/data/last: source: \`P31D\` is not an ISO 8601 duration up to P31D`;
         return json({ valid: false, verdict: { ok: false, findings: [{ level: "error", path: "", message }] } });
       }
       if (url.searchParams.get("dryRun")) return json({ valid: true });
@@ -106,6 +106,9 @@ const DIR = join("test-results", "T-7491");
 mkdirSync(DIR, { recursive: true });
 
 for (const width of [1440, 400]) {
+  test.describe(`${width} px`, () => {
+  // A phone has a finger: the controls grow to 44 px only under a coarse pointer.
+  test.use(width === 400 ? { hasTouch: true, isMobile: true } : {});
   test(`an editor sets the reader's toolbar defaults of a temporal chart and proposes it at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     const s: Stub = { verbs: ["read", "propose", "approve"], charts: [], puts: [] };
@@ -161,13 +164,14 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Name", { exact: true }).fill("no2-week");
     await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
     await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
+    await page.getByLabel("Default range").selectOption("month");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
     await expect(alert).toContainText("Nothing was proposed. Correct “Default range” above");
     await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/24 hours was not accepted as the range. Pick 7 days or 31 days/);
+    await expect(range).toHaveAccessibleDescription(/The check did not allow 31 days as the range. Pick 24 hours or 7 days/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
@@ -184,10 +188,22 @@ for (const width of [1440, 400]) {
     await section.getByRole("button", { name: "Remove" }).first().click();
     await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
     await expect(section.getByText("Readers see only: 90 days · Daily · Maximum")).toBeVisible();
-    await expect(section.getByText("This range is not allowed.")).toBeVisible();
+    await expect(section.getByText("90 days is not an allowed range")).toBeVisible();
     await expect(section).not.toContainText("/spec/catalog");
     await section.getByRole("alert").filter({ hasText: "was not removed" }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-other-${width}.png`) });
+  });
+
+  test(`a refusal is said in the person's language at ${width} px (T-7491)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: 0 });
+    await page.goto("/projects/ovzdusie/endpoints/air?lang=sk");
+    const section = page.getByTestId("visualizations");
+    await section.getByRole("button", { name: "Odstrániť" }).first().click();
+    await expect(section.getByText("Obdobie „90 dní“ nie je povolené")).toBeVisible();
+    await expect(section).not.toContainText("/spec/catalog");
+    await section.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(DIR, `toolbar-refused-sk-${width}.png`) });
   });
 
   test(`a chart that does not read the history has no toolbar settings at ${width} px (T-7491)`, async ({ page }) => {
@@ -209,11 +225,12 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
-    await expect(section.getByText("Fixed", { exact: true })).toHaveCount(2);
+    await expect(section.getByText("Fixed for readers", { exact: true })).toHaveCount(2);
     await expect(section.getByText("Readers start with: 24 hours · Hourly · Average")).toBeVisible();
     await expect(section.getByText("Readers see only: 7 days · Daily · Maximum")).toBeVisible();
     await expect(section.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-reader-${width}.png`) });
+  });
   });
 }

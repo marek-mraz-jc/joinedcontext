@@ -251,9 +251,9 @@ describe("VisualizationsSection", () => {
   }
 
   it.each([
-    ["last", "range", "24 hours was not accepted as the range. Pick 7 days or 31 days."],
-    ["aggrPeriod", "granularity", "Hourly was not accepted as the granularity. Pick Raw readings or Daily."],
-    ["aggrMethod", "method", "Average was not accepted as the method. Pick Minimum or Maximum."],
+    ["last", "range", "The check did not allow 24 hours as the range. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "The check did not allow Hourly as the granularity. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "The check did not allow Average as the method. Pick Minimum or Maximum."],
     ["controls", "controls", V.fix.controls],
   ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
     mount(endpoint({ visualizations: [BAR] }), true);
@@ -275,7 +275,7 @@ describe("VisualizationsSection", () => {
     refusal = ["/spec/catalog/visualizations/1/data/last: source: not allowed"];
     await proposeLine();
     expect(await screen.findByText(/Nothing was proposed.*NO2 week/)).toBeVisible();
-    expect(screen.getByText(V.invalid.range)).toBeVisible();
+    expect(screen.getByText(/^7 days is not an allowed range/)).toBeVisible();
     expect(screen.getByLabelText(V.range)).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByRole("button", { name: V.showField })).toBeNull();
   });
@@ -286,7 +286,7 @@ describe("VisualizationsSection", () => {
     refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
     await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
     const alert = await screen.findByText(/“NO2 now” was not removed, because “NO2 week”/);
-    expect(screen.getByText(V.invalid.range).closest("li")).toHaveTextContent("no2-week");
+    expect(screen.getByText(/^7 days is not an allowed range/).closest("li")).toHaveTextContent("no2-week");
     expect(alert).toBeVisible();
     expect(alert.closest("details")).toBeNull();
     expect(screen.getByLabelText(V.range, { selector: "select" })).not.toHaveAttribute("aria-invalid");
@@ -339,8 +339,14 @@ describe("VisualizationsSection", () => {
   it("empties the form once the chart is proposed, so it is not proposed twice (T-7491)", async () => {
     mount(endpoint(), true);
     doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.click(screen.getByLabelText(V.controls));
+    await userEvent.selectOptions(screen.getByLabelText(V.fixed.range), "week");
+    await userEvent.click(screen.getByText(V.add));
     await proposeLine();
     await waitFor(() => expect(screen.getByLabelText(V.name)).toHaveValue(""));
+    expect(screen.getByLabelText(V.controls)).toBeChecked();
+    expect(screen.getByLabelText(V.range)).toHaveValue("day");
     expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
   });
 
