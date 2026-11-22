@@ -2049,6 +2049,12 @@ mod tests {
                 .unwrap();
             let res = jc.dispatch(req, None).await;
             assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(
+                &body[..],
+                b"unmounted path",
+                "{path}: refused before the module"
+            );
         }
         let req = Request::builder()
             .uri("/login/realms/dev..x")
