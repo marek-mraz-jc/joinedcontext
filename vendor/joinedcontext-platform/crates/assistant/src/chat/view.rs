@@ -77,6 +77,9 @@ pub struct Aggregation {
     /// Only part of the period asked is in it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// The days with a value and the days of the window asked, of one daily series.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days: Option<(u64, u64)>,
 }
 
 /// Whether the question itself asks for the most or the least of something, for a router reply
@@ -603,6 +606,7 @@ pub fn show_split(table: &mut Table, attribute: &str, split: &Split, counted: u6
         shown: counted,
         total: table.total.unwrap_or(counted).max(counted),
         partial: false,
+        days: None,
     });
 }
 
@@ -665,6 +669,21 @@ pub fn history_arguments(schema: &Value, arguments: &Value, now: OffsetDateTime)
         sent["aggrPeriodDuration"] = json!("P1D");
     }
     sent
+}
+
+/// The UTC days a `between` window touches; the moment it ends at is outside it.
+fn window_days(arguments: &Value) -> Option<u64> {
+    if arguments.get("timerel").and_then(Value::as_str) != Some("between") {
+        return None;
+    }
+    let at = |key: &str| {
+        let text = arguments.get(key).and_then(Value::as_str)?;
+        let at = OffsetDateTime::parse(text, &Rfc3339).ok()?;
+        Some(at.to_offset(UtcOffset::UTC))
+    };
+    let last = at("endTimeAt")?.checked_sub(time::Duration::SECOND)?;
+    let days = last.date().to_julian_day() - at("timeAt")?.date().to_julian_day() + 1;
+    u64::try_from(days).ok()
 }
 
 /// One attribute's history of one entity: its numbers by instant.
@@ -827,6 +846,10 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
             rows.push((at, moment, (value * 1e4).round() / 1e4));
         }
     }
+    let days = (daily && series.len() == 1)
+        .then(|| window_days(arguments))
+        .flatten()
+        .map(|asked| (rows.len() as u64, asked.max(rows.len() as u64)));
     Some(History {
         ids: series.into_iter().map(|s| s.id).collect(),
         rows,
@@ -837,6 +860,7 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
             shown: all.min(SERIES) as u64,
             total,
             partial,
+            days,
         },
     })
 }
@@ -1227,6 +1251,18 @@ mod tests {
             ("avg", "day")
         );
         assert_eq!(history.rows[0], (0, "2026-10-01".to_owned(), 11.5));
+        assert_eq!(
+            history.made.days, None,
+            "no window, no total of days to state"
+        );
+        let october = json!({"attrs": ["pm10"], "timerel": "between",
+            "timeAt": "2026-10-01T00:00:00Z", "endTimeAt": "2026-11-01T00:00:00Z"});
+        let asked = super::history(&text.to_string(), &october).expect("a history");
+        assert_eq!(
+            asked.made.days,
+            Some((30, 31)),
+            "a day without a reading shows"
+        );
 
         let current = json!({"entities": [{"id": history.ids[0], "name": {"type": "Property", "value": "Štadlerovo nábrežie"}, "pm10": {"value": 9, "unitCode": "GQ"}}]});
         let table = history_table(

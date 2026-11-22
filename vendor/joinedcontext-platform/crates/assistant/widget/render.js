@@ -384,6 +384,7 @@ var JCRender = (function () {
   };
   var YES_NO = { sk: ["Áno", "Nie"], cs: ["Ano", "Ne"], en: ["Yes", "No"], de: ["Ja", "Nein"] };
   var OF = { sk: "z", cs: "z", en: "of", de: "von" };
+  var DAYS = { sk: "dní", cs: "dní", en: "days", de: "Tagen" };
   var FIRST = { sk: "prvých", cs: "prvních", en: "first", de: "die ersten" };
   // A long address in a cell reads as this word, a link (T-4682).
   var LINK = { sk: "Zdroj", cs: "Zdroj", en: "Source", de: "Quelle" };
@@ -472,8 +473,13 @@ var JCRender = (function () {
     var own = labels && typeof labels === "object" ? entry(labels, lang) || entry(labels, "en") : "";
     var said = METHODS[made.method][lang] + " " + PER[made.per][lang].replace("{of}", own || word(LABELS, of, lang));
     var numbers = new Intl.NumberFormat(lang);
-    if (typeof made.shown === "number" && typeof made.total === "number" && made.shown < made.total) {
-      said += " · " + numbers.format(made.shown) + " " + OF[lang] + " " + numbers.format(made.total);
+    var part = function (shown, total) { return " · " + numbers.format(shown) + " " + OF[lang] + " " + numbers.format(total); };
+    var days = Array.isArray(made.days) ? made.days : [];
+    // A count says of how many (T-7504 part 2 item 3); a history how many days of its window.
+    if (typeof made.shown === "number" && typeof made.total === "number" && (made.shown < made.total || made.method === "count")) {
+      said += part(made.shown, made.total);
+    } else if (typeof days[0] === "number" && typeof days[1] === "number") {
+      said += part(days[0], days[1]) + " " + DAYS[lang];
     }
     return made.partial === true ? said + " · " + PART[lang] : said;
   }

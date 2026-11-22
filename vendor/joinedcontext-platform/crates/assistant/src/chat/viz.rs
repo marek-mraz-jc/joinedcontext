@@ -1039,6 +1039,7 @@ mod tests {
             shown: 508,
             total: 1651,
             partial: false,
+            days: None,
         });
         let event = aggregated(&table).expect("a chart");
         assert_eq!(event["spec"]["layer"][0]["mark"]["type"], "bar");
