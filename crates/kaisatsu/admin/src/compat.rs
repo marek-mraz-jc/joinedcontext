@@ -1505,13 +1505,26 @@ async fn compat_list_user_credentials(
         },
     ))?;
     let creds = state.oidc.store.list_credentials(&realm, &user.id).await?;
-    Ok(Json(
-        creds
-            .iter()
-            .filter(|c| c.credential_type != "password-history")
-            .map(CredentialMetadata::from)
-            .collect(),
-    ))
+    let mut out: Vec<CredentialMetadata> = creds
+        .iter()
+        .filter(|c| c.credential_type != "password-history")
+        .map(CredentialMetadata::from)
+        .collect();
+    // Passkeys live in their own table; an administrator resets a lost one from this list.
+    let passkeys = state
+        .oidc
+        .store
+        .list_webauthn_credentials(&realm, &user.id)
+        .await?;
+    out.extend(passkeys.into_iter().map(|p| CredentialMetadata {
+        id: p.id,
+        realm_id: p.realm_id,
+        user_id: p.user_id,
+        credential_type: "webauthn-passwordless".into(),
+        user_label: p.user_label,
+        created_date: p.created_at.as_millis(),
+    }));
+    Ok(Json(out))
 }
 
 async fn compat_delete_user_credential(
@@ -1539,11 +1552,27 @@ async fn compat_delete_user_credential(
         },
     ))?;
     crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
-    let deleted = state
+    let mut deleted = state
         .oidc
         .store
         .delete_credential(&realm, &user.id, &cred_id)
         .await?;
+    // A passkey of this person (the id alone could name another person's).
+    if !deleted
+        && state
+            .oidc
+            .store
+            .list_webauthn_credentials(&realm, &user.id)
+            .await?
+            .iter()
+            .any(|p| p.id == cred_id)
+    {
+        deleted = state
+            .oidc
+            .store
+            .delete_webauthn_credential(&realm, allowed.as_deref(), &cred_id)
+            .await?;
+    }
     if !deleted {
         return Err(KaisatsuError::NotFound("credential not found".into()));
     }
