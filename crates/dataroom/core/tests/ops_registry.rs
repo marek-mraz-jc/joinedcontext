@@ -209,7 +209,7 @@ fn field(r: &Result<Value>, name: &str) -> bool {
 #[tokio::test]
 async fn registry_lookup_by_name_tool_and_command() {
     let ops = all_operations();
-    assert_eq!(ops.len(), 27);
+    assert_eq!(ops.len(), 33);
     for op in &ops {
         for key in [op.name, op.mcp_tool, op.cli_command] {
             assert_eq!(find_operation(key).map(|d| d.name), Some(op.name), "{key}");

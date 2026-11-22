@@ -29,8 +29,13 @@ async fn a_static_bearer_is_refused() {
     store.upsert_catalogue(catalogue).await.unwrap();
     let secret = Uuid::now_v7().simple().to_string().repeat(2);
     let (binding, grant) = portal_publisher(&secret, org, cat).unwrap();
-    let state = DataroomState::new(store, Arc::new(PolicyAuthorizer::new(vec![grant])), org, cat)
-        .with_tokens(vec![binding]);
+    let state = DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        org,
+        cat,
+    )
+    .with_tokens(vec![binding]);
     for header_name in [header::AUTHORIZATION.as_str(), "x-ckan-api-key"] {
         let req = Request::post("/api/3/action/organization_create")
             .header(header::HOST, "data.city.test")
