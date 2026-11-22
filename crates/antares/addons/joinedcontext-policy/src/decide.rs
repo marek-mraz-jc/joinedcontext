@@ -964,6 +964,28 @@ mod tests {
             "another type is not prohibited, nor granted"
         );
         // a subscription is neither a read nor a write: the prohibition covers its types whole
+        // a write by id on two types that each hold only a condition cannot require both
+        let both = compile(&json!({"policies": [
+            {"id": "c", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.6.3"],
+             "q": "speed<100", "information": [{"entities": [{"type": "Car"}]}]},
+            {"id": "b", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.6.3"],
+             "q": "seats>1", "information": [{"entities": [{"type": "Bus"}]}]}
+        ]}))?;
+        assert_eq!(
+            with(&both, "5.6.3", &[iri("Car"), iri("Bus")], &[], None, false),
+            Decision::Deny(NOT_GRANTED.into())
+        );
+        assert!(matches!(
+            with(&both, "5.6.3", &car(), &[], None, false),
+            Decision::AllowIf(_)
+        ));
+        // a probe without a table, or for a caller that is no platform caller, is the decision
+        let read = Operation::new("5.7.2");
+        let now = Timestamp::now();
+        assert_eq!(
+            probe(None, &caller(), &read, now),
+            decide(None, &caller(), &read, now)
+        );
         let subscribing = table(&json!({"effect": "prohibit", "operations": ["5.8.1"]}))?;
         assert_eq!(
             with(&subscribing, "5.8.1", &car(), &[], None, false),

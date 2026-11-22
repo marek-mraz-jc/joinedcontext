@@ -589,12 +589,14 @@ mod tests {
         );
         assert!(ttl.contains("a geojson:Polygon ; geojson:coordinates 0, 0, 1, 0"));
         assert!(ttl.trim_end().ends_with(" ."));
-        let hand = turtle(&json!({"uid": "urn:p", "permission": [{
+        let hand = turtle(
+            &json!({"uid": "urn:p", "prohibition": [{}, {"target": {}}], "permission": [{
             "target": {"@type": "odrl:AssetCollection", "uid": "urn:t",
                        "refinement": [{"leftOperand": "ngsi-ld:q", "operator": "eq"}]},
             "assigner": "city",
             "constraint": [{"leftOperand": "x:y", "operator": "ex:near",
-                            "rightOperand": [true, 2, null, {"type": "Point"}]}]}]}));
+                            "rightOperand": [true, 2, null, {"type": "Point"}]}]}]}),
+        );
         for part in [
             "a odrl:AssetCollection ; odrl:uid \"urn:t\"",
             "odrl:refinement [ odrl:leftOperand ngsi-ld:q ; odrl:operator odrl:eq ; odrl:rightOperand \"\" ]",
@@ -603,6 +605,38 @@ mod tests {
         ] {
             assert!(hand.contains(part), "{part}: {hand}");
         }
+        assert!(
+            hand.contains(
+                "odrl:prohibition [\n    \n  ] ;\n  odrl:prohibition [\n    odrl:target [  ]\n  ]"
+            ),
+            "{hand}"
+        );
+        let at = "2026-01-01T00:00:00Z";
+        for (q, want) in [
+            (
+                format!("timerel=after;timeAt={at}"),
+                vec![constraint("dateTime", "gteq", json!(at))],
+            ),
+            (
+                format!("timerel=before;timeAt={at}"),
+                vec![constraint("dateTime", "lteq", json!(at))],
+            ),
+            (
+                "timerel=after".to_owned(),
+                vec![constraint(
+                    "ngsi-ld:temporalQ",
+                    "eq",
+                    json!("timerel=after"),
+                )],
+            ),
+        ] {
+            assert_eq!(temporal_constraints(&q), want, "{q}");
+        }
+        let service = Caller::Platform(Platform {
+            client: Some("svc-reporting".into()),
+            ..Platform::default()
+        });
+        assert_eq!(assignee(&service), "svc-reporting");
         assert_eq!(literal("a\tb\nc\r"), "\"a\\tb\\nc\\r\"");
         assert_eq!(party_term("did:web:x y"), "\"did:web:x y\"");
         assert_eq!(party_term("did:web:x>"), "\"did:web:x>\"");

@@ -526,6 +526,27 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_of_one_entity_names_its_id() -> Result<(), String> {
+        let t = compile(&json!({"policies": [
+            {"id": "one", "assignee": {"kind": "role", "id": "public"}, "operations": ["5.7.1"],
+             "information": [{"entities": [{"id": "urn:ngsi-ld:Air:1", "type": "Air"}]}]}
+        ]}))?;
+        let public = caller(&[("x-jc-roles", "")]);
+        let doc = authzen(
+            &public,
+            "air",
+            &Grants::of(Some(&t), &public, Timestamp::now()),
+            &every,
+        );
+        assert_eq!(
+            at(&doc, "/permissions/0/resource/id"),
+            "urn:ngsi-ld:Air:1",
+            "{doc}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn the_document_lists_the_callers_grants_and_nothing_of_anyone_else() -> Result<(), String> {
         let t = table()?;
         let public = caller(&[("x-jc-roles", "")]);
