@@ -402,8 +402,8 @@ def test_a_capped_query_opens_on_every_point(pw, width, lang, case, size):
         assert all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
         drawn = min(1000, len(points))
         assert sum(b["n"] for b in view["badges"]) == drawn
-        # A marker stands at each far place, not only room for it.
-        assert len(view["badges"]) >= {"far": 2, "apart": 2}.get(case, 1), view
+        # A marker stands at each place: room for a far one is not enough, and it displaces no other.
+        assert len(view["badges"]) >= {"far": 2, "apart": 3}.get(case, 1), view
         said = {"en": f"{drawn:,} of", "sk": f"Nakreslených: {drawn:,} z".replace(",", "\u00a0")} if drawn < len(points) else {"en": f"{drawn} in view", "sk": f"Vo výreze: {drawn}"}
         assert page.locator("#map-count").inner_text().startswith(said[lang])
         if drawn == len(points):  # nothing is left to zoom in for

@@ -589,6 +589,13 @@
     return { read: url };
   }
 
+  // Up to `limit` rows of several reads, one of each in turn: no place read is left without a marker.
+  function spread(reads, limit) {
+    var most = Math.max.apply(null, reads.map(function (r) { return r.length; })), out = [];
+    for (var i = 0; i < most; i++) reads.forEach(function (r) { if (i < r.length && out.length < limit) out.push(r[i]); });
+    return out;
+  }
+
   // The query and one clause more.
   function narrowed(q, clause) { return (q ? "(" + q + ");" : "") + clause; }
 
@@ -1041,14 +1048,16 @@
       }).catch(function (e) { if (state.first && state.first.key === key) state.first = null; return { key: key, error: e }; }));
     }
 
-    // A read that stopped short: the rows that reach past its box are read until none does, and those
-    // are drawn first (T-7516, EP-162). With no box yet, the located rows alone say whether one exists.
+    // A read that stopped short: the rows that reach past its box are read until none does, and each
+    // read has its share of what is drawn (T-7516, EP-162). With no box yet, the located rows alone say whether one exists.
     // An extent that cannot be read through opens on the world, which holds every point.
     function widen(query, got) {
+      var reads = [got.features];
       var read = function (more) {
         return get(entitiesUrl(api, Object.assign({}, query, more)), "application/geo+json").then(function (answer) {
           var found = ((answer.body && answer.body.features) || []).filter(function (f) { return f && f.geometry && typeof f.geometry.type === "string"; });
-          got.features = found.concat(got.features).slice(0, got.rows);
+          reads.push(found);
+          got.features = spread(reads, got.rows);
           return { features: found, all: answer.count !== null && +answer.count <= found.length };
         });
       };
