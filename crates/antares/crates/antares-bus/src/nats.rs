@@ -209,42 +209,13 @@ impl NatsBus {
         // running replicas=1 on a 3-node cluster is a durability downgrade
         // nobody chose.
         let replicas = replicas_from(std::env::var("ANTARES_NATS_REPLICAS").ok().as_deref())?;
-        self.js
-            .get_or_create_stream(stream::Config {
-                name: CHANGES_STREAM.into(),
-                subjects: vec!["changes.>".into()],
-                // Interest retention: each durable sees every message; a
-                // message dies once every interested consumer acked it.
-                // (WorkQueue would forbid multiple consumer groups.)
-                retention: stream::RetentionPolicy::Interest,
-                duplicate_window: std::time::Duration::from_secs(120),
-                num_replicas: replicas,
-                ..Default::default()
-            })
-            .await
-            .map_err(err)?;
-        self.js
-            .get_or_create_stream(stream::Config {
-                name: REGISTRY_STREAM.into(),
-                subjects: vec!["registry.>".into()],
-                // Broadcast deltas for per-instance mirrors: ephemeral
-                // consumers carry no interest, so bound by age instead.
-                retention: stream::RetentionPolicy::Limits,
-                max_age: std::time::Duration::from_secs(600),
-                num_replicas: replicas,
-                ..Default::default()
-            })
-            .await
-            .map_err(err)?;
+        let [changes, registry] = stream_configs(replicas);
+        self.js.get_or_create_stream(changes).await.map_err(err)?;
+        self.js.get_or_create_stream(registry).await.map_err(err)?;
         // create_or_update: a bucket made before SUBS_MAX_AGE existed takes
         // the bound on the next start instead of refusing the new config.
         self.js
-            .create_or_update_key_value(async_nats::jetstream::kv::Config {
-                bucket: SUBS_BUCKET.into(),
-                max_age: SUBS_MAX_AGE,
-                num_replicas: replicas,
-                ..Default::default()
-            })
+            .create_or_update_key_value(subs_config(replicas))
             .await
             .map_err(err)?;
         Ok(())
@@ -436,6 +407,44 @@ impl NatsBus {
 /// the event body — consumers re-verify so a subject-mapping bug can never
 /// route one tenant's change into another tenant's processing.
 /// `ANTARES_NATS_REPLICAS`: absent = 1; present must be a positive integer.
+/// The change and registry streams as made on first start (`get_or_create` keeps an existing
+/// stream's config, so tests against a running server see only what the first start made).
+fn stream_configs(replicas: usize) -> [stream::Config; 2] {
+    [
+        stream::Config {
+            name: CHANGES_STREAM.into(),
+            subjects: vec!["changes.>".into()],
+            // Interest retention: each durable sees every message; a
+            // message dies once every interested consumer acked it.
+            // (WorkQueue would forbid multiple consumer groups.)
+            retention: stream::RetentionPolicy::Interest,
+            duplicate_window: std::time::Duration::from_secs(120),
+            num_replicas: replicas,
+            ..Default::default()
+        },
+        stream::Config {
+            name: REGISTRY_STREAM.into(),
+            subjects: vec!["registry.>".into()],
+            // Broadcast deltas for per-instance mirrors: ephemeral
+            // consumers carry no interest, so bound by age instead.
+            retention: stream::RetentionPolicy::Limits,
+            max_age: std::time::Duration::from_secs(600),
+            num_replicas: replicas,
+            ..Default::default()
+        },
+    ]
+}
+
+/// The subscription registry bucket, age-bounded.
+fn subs_config(replicas: usize) -> async_nats::jetstream::kv::Config {
+    async_nats::jetstream::kv::Config {
+        bucket: SUBS_BUCKET.into(),
+        max_age: SUBS_MAX_AGE,
+        num_replicas: replicas,
+        ..Default::default()
+    }
+}
+
 fn replicas_from(v: Option<&str>) -> Result<usize, BusError> {
     match v {
         None => Ok(1),
@@ -623,6 +632,29 @@ mod tests {
         );
         let e = url_credentials("nats://u:%fe@127.0.0.1:4222").expect_err("refused");
         assert!(!e.to_string().contains("127.0.0.1"), "{e}");
+    }
+
+    /// The streams and the bucket carry the replica count and their retention contract.
+    #[test]
+    fn streams_and_bucket_carry_their_contract() {
+        let [changes, registry] = stream_configs(3);
+        assert_eq!(changes.name, CHANGES_STREAM);
+        assert_eq!(changes.subjects, ["changes.>"]);
+        assert_eq!(changes.retention, stream::RetentionPolicy::Interest);
+        assert_eq!(
+            changes.duplicate_window,
+            std::time::Duration::from_secs(120)
+        );
+        assert_eq!(changes.num_replicas, 3);
+        assert_eq!(registry.name, REGISTRY_STREAM);
+        assert_eq!(registry.subjects, ["registry.>"]);
+        assert_eq!(registry.retention, stream::RetentionPolicy::Limits);
+        assert_eq!(registry.max_age, std::time::Duration::from_secs(600));
+        assert_eq!(registry.num_replicas, 3);
+        let subs = subs_config(3);
+        assert_eq!(subs.bucket, SUBS_BUCKET);
+        assert_eq!(subs.max_age, SUBS_MAX_AGE);
+        assert_eq!(subs.num_replicas, 3);
     }
 
     #[test]
