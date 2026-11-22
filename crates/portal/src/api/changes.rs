@@ -2899,7 +2899,16 @@ pub async fn approve_change_as(
         Some((&merger_name, &merger_email)),
     )
     .await?;
-    say_merged(state, project, id, &data, &identity.subject, connector, alone).await;
+    say_merged(
+        state,
+        project,
+        id,
+        &data,
+        &identity.subject,
+        connector,
+        alone,
+    )
+    .await;
 
     // A published application's own repository merges once its Change has (AP-77).
     crate::api::agent_runs::merge_published_application(
@@ -3465,7 +3474,16 @@ pub async fn reject_change_for(
             .await;
     }
 
-    say_rejected(state, project, id, &data, &identity.subject, reason, withdrawn).await;
+    say_rejected(
+        state,
+        project,
+        id,
+        &data,
+        &identity.subject,
+        reason,
+        withdrawn,
+    )
+    .await;
 
     let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
     let lane = if data.operation == Operation::Delete {
@@ -4919,6 +4937,38 @@ mod tests {
             .mount(&server)
             .await;
         (server, state)
+    }
+
+    /// T-7541 (S1-15): a create the forge calls a change waits for a person; one it adds merges.
+    #[tokio::test]
+    async fn a_planned_create_merges_only_when_the_forge_adds_it() {
+        let file = "projects/p/spaces/trial/space.yaml";
+        for (status, phase) in [
+            ("modified", ChangePhase::Pending),
+            ("added", ChangePhase::Deploying),
+        ] {
+            let (server, state) = secret_forge_with(file, "", status).await;
+            Mock::given(method("POST"))
+                .and(path(
+                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(9)/Shako.Merge",
+                ))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .mount(&server)
+                .await;
+            let shako = state.forge_for("p").unwrap();
+            let pr = PullRequest {
+                number: 9,
+                head_sha: "head-9".into(),
+                mergeable: Some(true),
+                ..PullRequest::default()
+            };
+            let change = Change::new(
+                ChangeMeta::new("chg-00000009", "p"),
+                ChangeStatus::new(Lane::Green, ChangePhase::Pending, PlanSummary::new(1, 0, 0)),
+            );
+            let merged = merge_if_only(&state, &shako, &pr, &[file], &[file], "m", change).await;
+            assert_eq!(merged.status.phase, phase, "{status}");
+        }
     }
 
     const SEALED: &str = "github-token:\n  token: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]\nsops:\n  version: 3.9.0\n";

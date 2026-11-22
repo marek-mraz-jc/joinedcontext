@@ -398,7 +398,11 @@ pub(crate) async fn on_record(
     }
     let (response, verdict) = call.await;
     let elapsed = i32::try_from(began.elapsed().as_millis()).unwrap_or(i32::MAX);
-    if let Err(err) = state.connectors.keep(&audit.trail, row(verdict, elapsed)).await {
+    if let Err(err) = state
+        .connectors
+        .keep(&audit.trail, row(verdict, elapsed))
+        .await
+    {
         tracing::error!(error = %err, "an MCP call ran and its outcome is not in the audit");
         return ApiError::Internal(
             "the call may have run, and its outcome could not be written to the audit; read the current state before sending it again".into(),
@@ -462,9 +466,7 @@ pub(crate) fn audited(message: &Value) -> (String, Option<String>) {
         other => other,
     };
     let is_word = |s: &str| {
-        !s.is_empty()
-            && s.len() <= 63
-            && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        !s.is_empty() && s.len() <= 63 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
     };
     let word = |v: &Value| v.as_str().filter(|s| is_word(s)).map(str::to_owned);
     let args = &params["arguments"];
@@ -2073,6 +2075,22 @@ mod tests {
         let svg =
             call_result(&json!({ "image": { "mimeType": "image/svg+xml", "data": "PHN2Zz4=" } }));
         assert_eq!(svg["content"][0]["type"], "text");
+    }
+
+    /// T-7542 (AG-147): the audit's target is identifiers: no query, no value, no free text.
+    #[test]
+    fn the_audit_names_a_calls_target_in_identifiers_alone() {
+        let read = json!({ "method": "resources/read",
+            "params": { "uri": "jc://mesto/endpoints/air?q=jana@hel.fi" } });
+        let (tool, target) = audited(&read);
+        assert_eq!(tool, "resources/read");
+        let target = target.expect("a target");
+        assert!(
+            target.contains("air") && !target.contains("jana"),
+            "{target}"
+        );
+        let prompt = json!({ "method": "prompts/get", "params": { "name": "jana@hel.fi says" } });
+        assert_eq!(audited(&prompt), ("prompts/get".to_owned(), None));
     }
 
     #[test]

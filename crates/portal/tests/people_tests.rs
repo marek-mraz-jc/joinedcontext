@@ -2245,7 +2245,7 @@ async fn disabling_a_person_revokes_their_connectors_on_the_feed() {
     ] {
         state
             .connectors
-            .create(owner, new(name), Vec::new(), "")
+            .create(owner, new(name), Default::default(), "")
             .await
             .expect("created");
     }

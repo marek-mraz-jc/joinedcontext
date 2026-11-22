@@ -373,10 +373,16 @@ async fn every_mcp_method_leaves_an_audit_row() {
     for (method, params) in [
         ("tools/list", json!({ "project": "mesto" })),
         ("resources/list", json!({ "project": "mesto" })),
-        ("resources/read", json!({ "uri": "jc://mesto/endpoints/air" })),
+        (
+            "resources/read",
+            json!({ "uri": "jc://mesto/endpoints/air" }),
+        ),
         ("prompts/get", json!({ "name": "no-such-prompt" })),
         ("tasks/list", json!({})),
-        ("tools/call", json!({ "name": "no_such_tool", "arguments": {} })),
+        (
+            "tools/call",
+            json!({ "name": "no_such_tool", "arguments": {} }),
+        ),
     ] {
         let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
         assert_eq!(mcp(&state, &who, message).await, StatusCode::OK, "{method}");
@@ -459,17 +465,17 @@ async fn only_live_data_reading_connectors_reach_the_gateway() {
     let base = "https://portal.test";
     state
         .connectors
-        .create(&sub, new("reads", "data-read"), Vec::new(), base)
+        .create(&sub, new("reads", "data-read"), Default::default(), base)
         .await
         .expect("created");
     state
         .connectors
-        .create(&sub, new("models", "context"), Vec::new(), base)
+        .create(&sub, new("models", "context"), Default::default(), base)
         .await
         .expect("created");
     let gone = state
         .connectors
-        .create(&sub, new("gone", "data-read"), Vec::new(), base)
+        .create(&sub, new("gone", "data-read"), Default::default(), base)
         .await
         .expect("created");
     assert!(state

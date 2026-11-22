@@ -601,11 +601,7 @@ pub enum Outside {
 }
 
 /// The answer to a person [`admission`] refused, with the line that names it.
-fn refused(
-    outside: Outside,
-    endpoint: &Endpoint,
-    claims: &Claims,
-) -> Box<ProblemDetails> {
+fn refused(outside: Outside, endpoint: &Endpoint, claims: &Claims) -> Box<ProblemDetails> {
     let azp = claims.azp.as_deref().unwrap_or_default();
     match outside {
         Outside::Organization => {

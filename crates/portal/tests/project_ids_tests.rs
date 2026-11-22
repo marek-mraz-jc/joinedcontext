@@ -1121,7 +1121,7 @@ async fn the_installation_claim_without_a_registry_row_keys_under_the_configured
         .create(
             &run_name("f:1:city-admin"),
             ask,
-            vec![],
+            Default::default(),
             "https://portal.test",
         )
         .await
@@ -1196,7 +1196,7 @@ async fn a_shared_hosts_connector_takes_the_mirrors_installation_organization() 
     };
     let (owner, base) = (run_name("f:1:hel-admin"), "https://portal.test");
 
-    let refused = store.create(&owner, ask(), vec![], base).await;
+    let refused = store.create(&owner, ask(), Default::default(), base).await;
     assert!(
         matches!(&refused, Err(joinedcontext_portal::error::ApiError::Conflict(m)) if m.contains("installation Organization")),
         "an installation Organization the registry lacks keys nothing: {refused:?}"
@@ -1209,7 +1209,7 @@ async fn a_shared_hosts_connector_takes_the_mirrors_installation_organization() 
     .await
     .expect("the registry holds ops");
     let made = store
-        .create(&owner, ask(), vec![], base)
+        .create(&owner, ask(), Default::default(), base)
         .await
         .expect("created on the shared host");
     let ops_key = project_ids::reserved(&pool, &ops)
@@ -1282,9 +1282,12 @@ async fn a_persons_rows_answer_only_in_their_organization() {
     let store = ConnectorStore::new(Some((pool.clone(), std::sync::Arc::clone(&mirror))), None);
     let base = "https://portal.test";
 
-    let made = scope(host(&a), store.create(&owner, ask(), vec![], base))
-        .await
-        .expect("created in a");
+    let made = scope(
+        host(&a),
+        store.create(&owner, ask(), Default::default(), base),
+    )
+    .await
+    .expect("created in a");
     let call: Call = serde_json::from_value(json!({
         "at": "2026-11-19T00:00:00Z", "subject": owner, "client": null, "tool": "query",
         "target": null, "verdict": "allowed", "durationMs": 3
@@ -1327,13 +1330,16 @@ async fn a_persons_rows_answer_only_in_their_organization() {
         .expect("overview")
         .is_empty());
     // The same name in b is b's own connector.
-    scope(host(&b), store.create(&owner, ask(), vec![], base))
-        .await
-        .expect("the same name in b");
+    scope(
+        host(&b),
+        store.create(&owner, ask(), Default::default(), base),
+    )
+    .await
+    .expect("the same name in b");
     // Off any Organization host, with no installation Organization, nothing is read or kept.
     assert!(store.of_owner(&owner, base).await.expect("list").is_empty());
     assert!(matches!(
-        store.create(&owner, ask(), vec![], base).await,
+        store.create(&owner, ask(), Default::default(), base).await,
         Err(joinedcontext_portal::error::ApiError::Conflict(_))
     ));
     // The configured installation Organization places the deployment host's requests.
@@ -1345,6 +1351,43 @@ async fn a_persons_rows_answer_only_in_their_organization() {
     assert_eq!(
         mine.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
         [made.id.as_str()]
+    );
+
+    // T-7542: a run's audit lands in the Organization it names, whatever host served it, and the
+    // retention job deletes what is older than the installation keeps, each in its own key.
+    let trail =
+        joinedcontext_portal::connectors::Trail::new(Some(made.id.clone()), Some(a.clone()));
+    for at in ["2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z"] {
+        let call: Call = serde_json::from_value(json!({
+            "at": at, "subject": owner, "client": null, "tool": "tools/list",
+            "target": null, "verdict": "allowed", "durationMs": 1
+        }))
+        .expect("a call");
+        scope(host(&b), store.keep(&trail, call))
+            .await
+            .expect("kept in a");
+    }
+    assert!(scope(host(&b), store.calls(&made.id))
+        .await
+        .expect("calls")
+        .is_empty());
+    assert_eq!(
+        scope(host(&a), store.calls(&made.id))
+            .await
+            .expect("calls")
+            .len(),
+        3
+    );
+    store
+        .trim_audit(jc_time::TimestampTz::now(), 3650)
+        .await
+        .expect("trimmed");
+    assert_eq!(
+        scope(host(&a), store.calls(&made.id))
+            .await
+            .expect("calls")
+            .len(),
+        2
     );
 
     // Preferences: one document per Organization, an upsert in b never meets a's.

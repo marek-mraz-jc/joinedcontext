@@ -2743,6 +2743,22 @@ mod tests {
         move |name: &str| (name == var).then(|| value.to_owned())
     }
 
+    /// T-7542: the audit is kept 400 days unless the installation says 30 to 3650 (AUD-04).
+    #[test]
+    fn the_audit_retention_is_the_installations() {
+        let var = "JC_PORTAL_AUDIT_RETENTION_DAYS";
+        let days = |value: &'static str| Config::from_vars(one(var, value));
+        let unset = Config::from_vars(|_| None).expect("defaults parse");
+        assert_eq!(unset.audit_retention_days, 400);
+        assert_eq!(days("30").expect("30").audit_retention_days, 30);
+        for refused in ["29", "3651", "a month"] {
+            assert!(
+                matches!(days(refused), Err(ConfigError::Invalid { var: named, .. }) if named == var),
+                "{refused}"
+            );
+        }
+    }
+
     /// A host value fills a forge variable the environment leaves unset; `from_vars` starts with
     /// none, so the standalone Portal reads its environment alone.
     #[test]

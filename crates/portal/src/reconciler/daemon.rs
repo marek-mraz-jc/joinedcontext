@@ -643,11 +643,7 @@ impl Syncer {
         self
     }
 
-    pub fn with_audit(
-        mut self,
-        audit: Arc<crate::connectors::ConnectorStore>,
-        days: u32,
-    ) -> Self {
+    pub fn with_audit(mut self, audit: Arc<crate::connectors::ConnectorStore>, days: u32) -> Self {
         self.audit = Some((audit, days));
         self
     }
@@ -3500,7 +3496,10 @@ impl Syncer {
         // 12. Audit retention (AUD-04): the same hour and the same way.
         if let Some((audit, days)) = self.audit.clone() {
             tokio::spawn(async move {
-                match audit.trim_audit_if_due(jc_time::TimestampTz::now(), days).await {
+                match audit
+                    .trim_audit_if_due(jc_time::TimestampTz::now(), days)
+                    .await
+                {
                     Some(Ok(rows)) => tracing::info!(rows, "audit trimmed"),
                     Some(Err(err)) => tracing::warn!(error = %err, "the audit trim failed"),
                     None => {}

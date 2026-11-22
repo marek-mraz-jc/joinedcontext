@@ -784,14 +784,21 @@ mod tests {
     #[test]
     fn a_space_turned_sandbox_is_reviewed() {
         let spec = json!({ "isSandbox": true });
-        assert_eq!(classify("ContextSpace", Operation::Update, &spec), Lane::Yellow);
-        assert_eq!(classify("ContextSpace", Operation::Create, &spec), Lane::Green);
+        assert_eq!(
+            classify("ContextSpace", Operation::Update, &spec),
+            Lane::Yellow
+        );
+        assert_eq!(
+            classify("ContextSpace", Operation::Create, &spec),
+            Lane::Green
+        );
     }
 
     #[test]
     fn a_public_dashboard_is_red_and_a_project_one_green() {
         for op in [Operation::Create, Operation::Update] {
-            let of = |visibility: &str| classify("Dashboard", op, &json!({ "visibility": visibility }));
+            let of =
+                |visibility: &str| classify("Dashboard", op, &json!({ "visibility": visibility }));
             assert_eq!(of("public"), Lane::Red);
             assert_eq!(of("project"), Lane::Green);
         }

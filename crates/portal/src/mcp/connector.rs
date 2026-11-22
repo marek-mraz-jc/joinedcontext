@@ -8,7 +8,6 @@
 //! call. Every call past the token writes one audit row (connector, person, client, tool, target,
 //! verdict, duration) and never a token, a header or an input value.
 
-
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -18,8 +17,9 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use super::{
-    audited,     call_result, dispatch, elicitation, error, failure_result, json_response, result, too_large,
-    tool_definition, GROUNDING_META, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, WITHHELD_META,
+    audited, call_result, dispatch, elicitation, error, failure_result, json_response, result,
+    too_large, tool_definition, GROUNDING_META, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    WITHHELD_META,
 };
 use crate::agents::oneshot::ui_actions::{self, UI_TOOLS};
 use crate::connectors::{self, Connector};
@@ -803,8 +803,7 @@ pub(crate) async fn admits_read(
     let Some(connector) = caller.access.as_ref().and_then(|a| a.connector()) else {
         return Ok(());
     };
-    let ceiling =
-        connectors::Ceiling::of(&state.mirror, &caller.identity).with_approved(connector);
+    let ceiling = connectors::Ceiling::of(&state.mirror, &caller.identity).with_approved(connector);
     checks(
         state,
         connector,

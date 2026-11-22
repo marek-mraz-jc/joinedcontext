@@ -717,6 +717,8 @@ pub async fn edit_connector(
     let identity = &user.0.identity;
     in_the_portal(&state, identity)?;
     let current = own(&state, identity, &id).await?;
+    // What the approval judged: the patch is compared with it.
+    let held = current.clone();
     let Json(patch) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     let new = NewConnector {
         name: current.name,
@@ -739,7 +741,7 @@ pub async fn edit_connector(
     )?;
     reachable(&state, &user.0, &headers, &new).await?;
     may_be_autonomous(&state, identity, &new)?;
-    let covered = current.approval_covers(&new, &above);
+    let covered = held.approval_covers(&new, &above);
     let approval = current.approval.filter(|_| covered);
     if !state
         .connectors
@@ -789,7 +791,7 @@ pub async fn revoke_connector(
     get,
     path = "/api/v1/connectors/{id}/activity",
     summary = "My Connector's Calls",
-    description = "Every call through the connector, newest first, at most 200 of the last 30 days: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).",
+    description = "Every call through the connector, newest first, the latest 200 the installation still keeps: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).",
     tag = "connectors",
     params(("id" = String, Path, description = "The connector id")),
     responses(
@@ -1460,7 +1462,7 @@ mod tests {
             .create(
                 "sub-jana@hel.fi",
                 new,
-                vec!["writes: above".into()],
+                above_writes(),
                 "https://portal.test",
             )
             .await
@@ -1488,6 +1490,35 @@ mod tests {
         // Nobody holds anything in a project no binding names.
         let nobody = person("eva@hel.fi");
         assert!(within_own_rights(&state, &nobody, &reads).is_err());
+    }
+
+    /// T-7541 (S1-14): a connector that approves its own changes is approved by who holds
+    /// `approve` there.
+    #[tokio::test]
+    async fn an_approver_without_approve_does_not_approve_an_autonomous_connector() {
+        let state = world();
+        let grant = |verbs: Value| {
+            manifest(
+                "Role",
+                "reader",
+                json!({ "rules": [{ "kinds": ["Endpoint", "ContextSpace", "DataModel"], "verbs": verbs }] }),
+            )
+        };
+        state
+            .mirror
+            .upsert(grant(json!(["read", "propose", "delete"])));
+        let mut connector = asked(&state, "write", true).await;
+        connector.autonomous = true;
+        let petra = person("petra@hel.fi");
+        match within_own_rights(&state, &petra, &connector) {
+            Err(ApiError::Denied(why)) => assert!(why.contains("Approve"), "{why}"),
+            other => panic!("approved autonomous without approve: {other:?}"),
+        }
+        state
+            .mirror
+            .upsert(grant(json!(["read", "propose", "delete", "approve"])));
+        let ok = within_own_rights(&state, &petra, &connector);
+        assert!(ok.is_ok(), "{ok:?}");
     }
 
     /// JC2-17: a write item whose connector may delete a kind needs `delete` from the approver;
@@ -1522,7 +1553,7 @@ mod tests {
                     .create(
                         "sub-jana@hel.fi",
                         new,
-                        vec!["writes: above".into()],
+                        above_writes(),
                         "https://portal.test",
                     )
                     .await
@@ -2087,7 +2118,12 @@ mod tests {
         .expect("new");
         let created = state
             .connectors
-            .create("f:1:reader@hel.fi", new, Default::default(), "https://portal.test")
+            .create(
+                "f:1:reader@hel.fi",
+                new,
+                Default::default(),
+                "https://portal.test",
+            )
             .await
             .expect("created");
         let edit = |body| {
@@ -2103,6 +2139,12 @@ mod tests {
         let Json(longer) = edit(json!({ "expiresAt": twenty })).await.expect("kept");
         assert_eq!(longer.state, "pending");
         assert_eq!(longer.above_ceiling.len(), 1, "{:?}", longer.above_ceiling);
+        // An approval judged on the grant as it was before this edit takes nothing.
+        assert!(!state
+            .connectors
+            .approve(&created.id, "sub-admin", created.granted_at)
+            .await
+            .expect("judged before the edit"));
         assert!(state
             .connectors
             .approve(&created.id, "sub-admin", longer.granted_at)
@@ -2181,7 +2223,7 @@ mod tests {
         };
         let pending = mine(state.clone()).await;
         assert_eq!(pending.state, "pending");
-        approve_connector(
+        let _ = approve_connector(
             administrator_user(),
             State(state.clone()),
             Path(pending.id.clone()),

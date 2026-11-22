@@ -428,7 +428,7 @@ fn each_verb(verb: ConnectorVerb) -> Vec<ConnectorVerb> {
 
 /// Gives `policy` one approved value and changes no other field of it.
 fn widen(policy: &mut DelegationPolicySpec, over: &Over) {
-    let mut grant = |policy: &mut DelegationPolicySpec, kind: &str, verb: ConnectorVerb| {
+    let grant = |policy: &mut DelegationPolicySpec, kind: &str, verb: ConnectorVerb| {
         let Some(kinds) = policy.kinds.as_mut() else {
             return;
         };
@@ -802,13 +802,14 @@ impl Ceiling {
                 let mut endpoints = Some(listed.clone());
                 for over in &connector.over {
                     match over {
-                        Over::Endpoint { project: of, endpoint } if of == project => {
-                            match (endpoint.as_deref(), endpoints.as_mut()) {
-                                (None | Some("*"), _) => endpoints = None,
-                                (Some(one), Some(list)) => list.push(one.to_owned()),
-                                (Some(_), None) => {}
-                            }
-                        }
+                        Over::Endpoint {
+                            project: of,
+                            endpoint,
+                        } if of == project => match (endpoint.as_deref(), endpoints.as_mut()) {
+                            (None | Some("*"), _) => endpoints = None,
+                            (Some(one), Some(list)) => list.push(one.to_owned()),
+                            (Some(_), None) => {}
+                        },
                         _ => {}
                     }
                 }
@@ -1834,7 +1835,11 @@ pub fn validate(
 
 /// What a well-formed request asks above the ceiling, field by field, in field order: the values
 /// an approval of the field covers, the field and the sentence naming what was asked.
-fn above(new: &NewConnector, ceiling: &Ceiling, now: TimestampTz) -> Vec<(Vec<Over>, String, String)> {
+fn above(
+    new: &NewConnector,
+    ceiling: &Ceiling,
+    now: TimestampTz,
+) -> Vec<(Vec<Over>, String, String)> {
     let named = ceiling.named();
     let mut above = Vec::new();
     for (i, segment) in new.segments.iter().enumerate() {
@@ -2573,12 +2578,9 @@ impl ConnectorStore {
             }
             Inner::Memory(rows) => {
                 let mut rows = Self::memory(rows);
-                let found = rows
-                    .0
-                    .iter_mut()
-                    .find(|r| {
-                        r.id == id && r.revoked_at.is_none() && r.grant.pending && unmoved(&r.grant)
-                    });
+                let found = rows.0.iter_mut().find(|r| {
+                    r.id == id && r.revoked_at.is_none() && r.grant.pending && unmoved(&r.grant)
+                });
                 Ok(found
                     .map(|r| {
                         r.grant.pending = false;
@@ -2661,7 +2663,13 @@ impl ConnectorStore {
                     .into_iter()
                     .take(usize::try_from(OVERVIEW_PAGE).unwrap_or(500))
                     .map(|r| {
-                        let day = || rows.1.iter().filter(|(id, c)| *id == r.id && c.at > since);
+                        let day = || {
+                            rows.1.iter().filter(|(trail, c)| {
+                                trail.connector.as_deref() == Some(r.id.as_str())
+                                    && c.verdict != STARTED
+                                    && c.at > since
+                            })
+                        };
                         let calls = i64::try_from(day().count()).unwrap_or(i64::MAX);
                         let denials = day().filter(|(_, c)| refused(&c.verdict)).count();
                         Overview::of(
@@ -2719,7 +2727,10 @@ impl ConnectorStore {
     /// Appends one audit row of `trail`; an allowed call also marks its connector used, in the
     /// same transaction. An `Err` is the caller's to answer with: the call is not on record.
     pub async fn keep(&self, trail: &Trail, call: Call) -> Result<(), ApiError> {
-        let used = trail.connector.as_ref().filter(|_| call.verdict == "allowed");
+        let used = trail
+            .connector
+            .as_ref()
+            .filter(|_| call.verdict == "allowed");
         match &self.inner {
             Inner::Postgres(db) => {
                 let mut tx = db.audit(trail.organization.as_deref()).await?;
@@ -2782,7 +2793,9 @@ impl ConnectorStore {
                         continue;
                     };
                     loop {
-                        let mut tx = crate::db::tenant_tx(&db.pool, key).await.map_err(db_error)?;
+                        let mut tx = crate::db::tenant_tx(&db.pool, key)
+                            .await
+                            .map_err(db_error)?;
                         let deleted = sqlx::query(
                             "DELETE FROM connector_calls WHERE id IN \
                              (SELECT id FROM connector_calls WHERE at < $1 LIMIT $2)",
@@ -2945,6 +2958,7 @@ pub(crate) mod tests {
                 allowed_clients: vec![],
                 pending: false,
                 above: vec![],
+                asked: vec![],
                 approval: None,
                 granted_at: None,
             },
@@ -3892,6 +3906,7 @@ pub(crate) mod tests {
                 allowed_clients: vec![],
                 pending: false,
                 above: vec![],
+                asked: vec![],
                 approval: None,
                 granted_at: None,
             },
@@ -3932,7 +3947,10 @@ pub(crate) mod tests {
         // Another person has their own twenty; a revoke frees a place and keeps the record.
         let mut ask = new(&["data-read"], false, 1);
         ask.name = "c0".into();
-        assert!(store.create("petra", ask, Default::default(), base).await.is_ok());
+        assert!(store
+            .create("petra", ask, Default::default(), base)
+            .await
+            .is_ok());
         let first = first.expect("one made");
         assert!(
             !store.revoke(&first, "petra").await.expect("revoke"),
@@ -3943,7 +3961,10 @@ pub(crate) mod tests {
         let mut ask = new(&["data-read"], false, 1);
         ask.name = "c0".into();
         assert!(
-            store.create("jana", ask, Default::default(), base).await.is_ok(),
+            store
+                .create("jana", ask, Default::default(), base)
+                .await
+                .is_ok(),
             "the name of a revoked one is free"
         );
         assert_eq!(
@@ -4337,7 +4358,8 @@ pub(crate) mod tests {
         assert!(validate(&ask, &ceiling, TimestampTz::now()).is_ok());
         ask.autonomous = true;
         match validate(&ask, &ceiling, TimestampTz::now()) {
-            Err(err) => assert!(format!("{err:?}").contains("autonomous"), "{err:?}"),
+            Err(ApiError::Denied(why)) => assert!(why.starts_with("autonomous:"), "{why}"),
+            Err(err) => panic!("not a 403: {err:?}"),
             Ok(above) => panic!("autonomous passed the ceiling: {above:?}"),
         }
         let allowing = |projects: &[&str]| {
@@ -4351,13 +4373,20 @@ pub(crate) mod tests {
             )])
         };
         let allowed = allowing(&["doprava"]);
-        assert!(matches!(validate(&ask, &allowed, TimestampTz::now()), Ok(above) if above.is_empty()));
+        assert!(
+            matches!(validate(&ask, &allowed, TimestampTz::now()), Ok(above) if above.is_empty())
+        );
         assert!(allowed.allows_autonomous("doprava") && !allowed.allows_autonomous("zdravie"));
         let mut held = connector(&["context"], vec![item("doprava", None)]);
         held.writes = true;
         held.autonomous = true;
-        assert!(!allowed.narrowing(&held).iter().any(|m| m.starts_with("autonomous")));
-        assert!(ceiling.narrowing(&held).contains(&"autonomous in project doprava".to_owned()));
+        assert!(!allowed
+            .narrowing(&held)
+            .iter()
+            .any(|m| m.starts_with("autonomous")));
+        assert!(ceiling
+            .narrowing(&held)
+            .contains(&"autonomous in project doprava".to_owned()));
     }
 
     /// An approval of `autonomous` holds in the project it named, while that is reached.
@@ -4472,6 +4501,35 @@ pub(crate) mod tests {
         assert!(open(&ceiling.with_approved(&approved)).is_empty());
     }
 
+    /// T-7541 (S1-13): an approved project opens that project's tools and lists, and no other
+    /// project's; every other part of the policy still binds the approved connector.
+    #[test]
+    fn an_approved_project_opens_that_project_at_the_door_alone() {
+        let mut policy = default_policy();
+        policy.projects = vec!["doprava".into()];
+        policy.segments = Some(vec![Segment::Context]);
+        policy.above_ceiling = AboveCeiling::Queue;
+        let scope = ["doprava", "zdravie", "skoly"].map(|project| item(project, None));
+        let mut approved = connector(&["context", "access"], scope.to_vec());
+        approved.approval = Some(Approval {
+            by: "sub-admin".into(),
+            at: TimestampTz::now(),
+        });
+        approved.over = vec![Over::Project("zdravie".into())];
+        let ceiling =
+            Ceiling::of_policies(vec![("listed".into(), policy)]).with_approved(&approved);
+        let (get, args) = (
+            op("jc_resource_get"),
+            json!({ "kind": "DataModel", "name": "air" }),
+        );
+        assert_eq!(ceiling.admits(&approved, get, "zdravie", &args), Ok(()));
+        assert!(ceiling.lists(&approved, get, "zdravie"));
+        assert!(ceiling.admits(&approved, get, "skoly", &args).is_err());
+        assert!(!ceiling.lists(&approved, get, "skoly"));
+        let binding = json!({ "kind": "RoleBinding", "name": "x" });
+        assert!(ceiling.admits(&approved, get, "zdravie", &binding).is_err());
+    }
+
     /// An edit keeps an approval inside what was approved; another value waits again.
     #[test]
     fn an_approval_covers_no_swapped_value() {
@@ -4516,13 +4574,15 @@ pub(crate) mod tests {
             vec![made.id.as_str()]
         );
         let judged = made.granted_at;
-        let moved = judged + jiff::SignedDuration::from_secs(1);
         assert!(store
             .approve(&made.id, "sub-admin", judged)
             .await
             .expect("approve"));
         assert!(
-            !store.approve(&made.id, "sub-other", moved).await.expect("twice"),
+            !store
+                .approve(&made.id, "sub-other", judged)
+                .await
+                .expect("twice"),
             "approved once"
         );
         let now = store
@@ -4728,6 +4788,8 @@ pub(crate) mod tests {
             assert_ne!(line(&first), line(&later), "{field}");
         }
         ask.kinds = Some(vec![grant("Endpoint", &[ConnectorVerb::Read])]);
-        assert!(!above(&ask, &ceiling, now).iter().any(|(_, f, _)| f == "kinds"));
+        assert!(!above(&ask, &ceiling, now)
+            .iter()
+            .any(|(_, f, _)| f == "kinds"));
     }
 }
