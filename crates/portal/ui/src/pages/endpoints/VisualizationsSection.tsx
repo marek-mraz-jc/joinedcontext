@@ -24,11 +24,13 @@ import {
   TEMPLATES,
   complete,
   defaultData,
+  refusedSettings,
   sourceOf,
   visualizationsOf,
   withVisualizations,
 } from "./visualizations";
 import type {
+  RefusedSetting,
   Role,
   TemplateName,
   TemporalDefaults,
@@ -74,12 +76,17 @@ export function VisualizationsSection({
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
   const [failed, setFailed] = useState<string | null>(null);
+  // A refusal names a chart by its place in the list that was sent; `added` is the new one's.
+  const [sent, setSent] = useState<{ charts: Visualization[]; added?: number }>({ charts: [] });
 
-  const propose = (next: Visualization[]) =>
+  const propose = (next: Visualization[], added?: number) => {
+    setFailed(null);
+    setSent({ charts: next, added });
     proposal.mutation.mutate({
       body: withVisualizations(manifest, next) as unknown as ResourceProposal,
       create: false,
     });
+  };
 
   const fill = async () => {
     setFailed(null);
@@ -112,24 +119,90 @@ export function VisualizationsSection({
       setFailed(t("endpoints.page.visualizations.noSource"));
       return;
     }
-    propose([
-      ...list,
-      {
-        name,
-        title: { [language]: title },
-        description: { [language]: description },
-        data,
-        spec,
-      },
-    ]);
+    propose(
+      [
+        ...list,
+        {
+          name,
+          title: { [language]: title },
+          description: { [language]: description },
+          data,
+          spec,
+        },
+      ],
+      list.length,
+    );
   };
 
-  // A refusal naming one toolbar default marks that field, beside the alert under the form.
-  const refused = /\/data\/(last|aggrPeriod|aggrMethod|controls)\b/.exec(
-    proposal.error ?? "",
-  )?.[1];
-  const errorsOf = (member: string) =>
-    refused === member && proposal.error ? [proposal.error] : undefined;
+  const titleOf = (chart: Visualization) =>
+    chart.title[language] ?? Object.values(chart.title)[0] ?? chart.name;
+
+  // A refused setting of the chart being added is said on its field; one of a chart already on
+  // the endpoint is said by that chart's title. The pointer stays in the API's answer.
+  const problem = proposal.mutation.error;
+  // The check's findings carry no path: proposeChecked joins their sentences with "; " then.
+  const lines = problem instanceof ApiError ? problem.problem?.errors : undefined;
+  const refused = proposal.error
+    ? refusedSettings(lines?.length ? lines : proposal.error.split(/\n|; /))
+    : [];
+  const own = refused.filter((one) => one.index === sent.added);
+  const other = refused.find((one) => one.index !== sent.added);
+  const errorsOf = (field: RefusedSetting["field"]) =>
+    own.some((one) => one.field === field)
+      ? [t(`endpoints.page.visualizations.fix.${field}`)]
+      : undefined;
+  const fieldsOf = (settings: RefusedSetting[]) =>
+    [...new Set(settings.map((one) => t(`endpoints.page.visualizations.${one.field}`)))].join(", ");
+  const blocking = other ? sent.charts[other.index] : undefined;
+  const refusal = blocking
+    ? t("endpoints.page.visualizations.refusedOther", {
+        chart: titleOf(blocking),
+        fields: fieldsOf(refused.filter((one) => one.index === other?.index)),
+      })
+    : own.length > 0
+      ? t("endpoints.page.visualizations.refusedOwn", { fields: fieldsOf(own) })
+      : proposal.error;
+  const alert =
+    failed || refusal ? (
+      <Alert
+        role="alert"
+        tone="danger"
+        className="mt-3"
+        actions={
+          !failed && !blocking && own.length > 0 ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => document.getElementById(`viz-${own[0].field}`)?.focus()}
+            >
+              {t("endpoints.page.visualizations.showField")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {failed ?? refusal}
+      </Alert>
+    ) : null;
+  // A refused removal is said under the list: the editor is closed then.
+  const removing = !failed && proposal.error !== null && sent.added === undefined;
+
+  /** A temporal source's defaults in words; a value from outside the lists shows as written. */
+  const settingsOf = (data: Visualization["data"]) => {
+    const word = (group: string, values: Record<string, string | undefined>, value: unknown) => {
+      const key = Object.keys(values).find((one) => values[one] === value);
+      return key ? t(`endpoints.page.visualizations.${group}.${key}`) : String(value);
+    };
+    const aggregated = Boolean(data.aggrMethod && data.aggrPeriod);
+    return [
+      word("ranges", RANGES, data.last),
+      word("granularities", GRANULARITIES, aggregated ? data.aggrPeriod : undefined),
+      ...(aggregated
+        ? [word("methods", Object.fromEntries(METHODS.map((one) => [one, one])), data.aggrMethod)]
+        : []),
+    ].join(" · ");
+  };
+  const unsaved = defaultData(template, type, "", served, temporal);
+  const lockedTo = unsaved ? settingsOf(unsaved) : "";
 
   const roles = [
     ...TEMPLATES[template].required,
@@ -156,7 +229,7 @@ export function VisualizationsSection({
               className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3"
             >
               <span className="text-sm font-medium text-fg">
-                {one.title[language] ?? Object.values(one.title)[0] ?? one.name}
+                {titleOf(one)}
               </span>
               <Badge mono>{one.name}</Badge>
               <Badge>{one.data.source}</Badge>
@@ -177,10 +250,21 @@ export function VisualizationsSection({
                   {t("endpoints.page.visualizations.remove")}
                 </Button>
               ) : null}
+              {one.data.source === "temporal" ? (
+                <p className="w-full text-caption text-fg-muted">
+                  {t(
+                    one.data.controls === false
+                      ? "endpoints.page.visualizations.lockedTo"
+                      : "endpoints.page.visualizations.startsWith",
+                    { settings: settingsOf(one.data) },
+                  )}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>
       )}
+      {removing ? alert : null}
 
       {canEdit ? (
         <details className="rounded-lg border border-border p-3">
@@ -295,7 +379,7 @@ export function VisualizationsSection({
               </legend>
               <Field
                 id="viz-range"
-                errors={errorsOf("last")}
+                errors={errorsOf("range")}
                 label={t("endpoints.page.visualizations.range")}
                 help={t("endpoints.page.visualizations.hint.range")}
               >
@@ -320,7 +404,7 @@ export function VisualizationsSection({
               </Field>
               <Field
                 id="viz-granularity"
-                errors={errorsOf("aggrPeriod")}
+                errors={errorsOf("granularity")}
                 label={t("endpoints.page.visualizations.granularity")}
                 help={t("endpoints.page.visualizations.hint.granularity")}
               >
@@ -347,7 +431,7 @@ export function VisualizationsSection({
               {temporal.granularity === "raw" ? null : (
                 <Field
                   id="viz-method"
-                  errors={errorsOf("aggrMethod")}
+                  errors={errorsOf("method")}
                   label={t("endpoints.page.visualizations.method")}
                   help={t("endpoints.page.visualizations.hint.method")}
                 >
@@ -373,7 +457,11 @@ export function VisualizationsSection({
                 id="viz-controls"
                 errors={errorsOf("controls")}
                 hideLabel
-                help={t("endpoints.page.visualizations.hint.controls")}
+                help={
+                  temporal.controls
+                    ? t("endpoints.page.visualizations.hint.controls")
+                    : t("endpoints.page.visualizations.hint.locked", { settings: lockedTo })
+                }
                 className="sm:col-span-3"
               >
                 <Checkbox
@@ -411,11 +499,7 @@ export function VisualizationsSection({
               onChange={(event) => setSpecText(event.target.value)}
             />
           </Field>
-          {failed || proposal.error ? (
-            <Alert role="alert" tone="danger" className="mt-3">
-              {failed ?? proposal.error}
-            </Alert>
-          ) : null}
+          {removing ? null : alert}
           <Button
             className="mt-3"
             disabled={!ready || proposal.mutation.isPending}

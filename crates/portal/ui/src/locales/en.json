@@ -1870,6 +1870,17 @@
         "remove": "Remove",
         "toolbar": "Reader's chart settings",
         "toolbarHidden": "Toolbar hidden from readers",
+        "startsWith": "Readers start with: {settings}",
+        "lockedTo": "Readers see only: {settings}",
+        "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
+        "refusedOther": "Nothing was proposed: the chart “{chart}” already on this endpoint has a setting that is not allowed ({fields}). Remove that chart or correct it in the endpoint's YAML, then try again.",
+        "showField": "Go to the field",
+        "fix": {
+          "range": "This range was not accepted. Pick another: 24 hours, 7 days or 31 days.",
+          "granularity": "This granularity was not accepted. Pick another: raw readings, hourly or daily.",
+          "method": "This method was not accepted. Pick another: average, minimum or maximum.",
+          "controls": "This setting was not accepted. Tick or untick the box, then propose again."
+        },
         "range": "Default range",
         "ranges": {
           "day": "24 hours",
@@ -1893,7 +1904,8 @@
           "range": "What a reader sees on opening the chart, e.g. 7 days: the last week up to now.",
           "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for 31 days.",
           "method": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
-          "controls": "Readers can change the range, granularity and method themselves, e.g. switch to 31 days. Untick it for a fixed chart."
+          "controls": "Readers can change the range, granularity and method themselves, e.g. switch to 31 days. Untick it for a fixed chart.",
+          "locked": "Readers get a fixed chart and cannot change it, e.g. it always opens on {settings}. Tick it to let them choose."
         },
         "templates": {
           "bar": "Bar chart",

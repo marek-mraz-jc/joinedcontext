@@ -41,6 +41,14 @@ const BAR = {
   spec: { data: { name: "source" }, mark: "bar" },
 };
 
+const WEEK = {
+  name: "no2-week",
+  title: { en: "NO2 week" },
+  description: { en: "Daily peak." },
+  data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "P7D", aggrMethod: "max", aggrPeriod: "P1D" },
+  spec: LINE,
+};
+
 function endpoint(catalog?: Record<string, unknown>): Manifest {
   return {
     apiVersion: "joinedcontext.com/v1alpha1",
@@ -66,8 +74,13 @@ function respond(body: unknown, status = 200): Response {
 describe("VisualizationsSection", () => {
   let sent: { method: string; url: URL; body: string }[];
 
+  let refusal: string[] | undefined;
+  let passesCheck: boolean;
+
   beforeEach(async () => {
     sent = [];
+    refusal = undefined;
+    passesCheck = false;
     await i18n.changeLanguage("en");
   });
   afterEach(() => {
@@ -87,6 +100,11 @@ describe("VisualizationsSection", () => {
           url,
           body: request.method === "GET" ? "" : await request.clone().text(),
         });
+        // The check answers a verdict whose findings carry the pointer in the sentence, no path.
+        if (request.method === "PUT" && refusal && !passesCheck && url.searchParams.get("dryRun"))
+          return respond({ valid: false, verdict: { ok: false, findings: refusal.map((message) => ({ path: "", message })) } });
+        if (request.method === "PUT" && refusal && !url.searchParams.get("dryRun"))
+          return respond({ title: "Not valid", status: 422, detail: refusal.join("\n"), errors: refusal }, 422);
         if (url.pathname.startsWith("/api/v1/visualization-templates/"))
           return respond(LINE);
         if (url.searchParams.get("dryRun")) return respond({ valid: true });
@@ -220,6 +238,97 @@ describe("VisualizationsSection", () => {
       aggrPeriod: "P1D",
       controls: false,
     });
+  });
+
+  async function proposeLine() {
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.type(screen.getByLabelText(V.name), "no2-new");
+    await userEvent.type(screen.getByLabelText(V.chartTitle), "New");
+    await userEvent.type(screen.getByLabelText(V.description), "New.");
+    await userEvent.click(screen.getByLabelText(V.spec));
+    await userEvent.paste(JSON.stringify(LINE));
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+  }
+
+  it.each([
+    ["last", "range"],
+    ["aggrPeriod", "granularity"],
+    ["aggrMethod", "method"],
+    ["controls", "controls"],
+  ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field) => {
+    mount(endpoint({ visualizations: [BAR] }), true);
+    doorsAsRest();
+    refusal = [`invalid /spec/catalog/visualizations/1/data/${member}: source: not allowed`];
+    await proposeLine();
+    const control = screen.getByLabelText(V[field]);
+    await waitFor(() => expect(control).toHaveAttribute("aria-invalid", "true"));
+    expect(control).toHaveAccessibleDescription(expect.stringContaining(V.fix[field]));
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+    expect(screen.getAllByText(new RegExp(`Nothing was proposed.*${V[field]}`))).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: V.showField }));
+    expect(control).toHaveFocus();
+  });
+
+  it("leaves the new chart's fields alone when another chart is the one refused (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/1/data/last: source: not allowed"];
+    await proposeLine();
+    expect(await screen.findByText(/Nothing was proposed.*NO2 week.*Default range/)).toBeVisible();
+    expect(screen.getByLabelText(V.range)).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByRole("button", { name: V.showField })).toBeNull();
+  });
+
+  it("names the chart that blocks a removal, by its place in what was sent, outside the closed editor (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const alert = await screen.findByText(/Nothing was proposed.*NO2 week.*Default range/);
+    expect(alert).toBeVisible();
+    expect(alert.closest("details")).toBeNull();
+    expect(screen.getByLabelText(V.range, { selector: "select" })).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("reads the proposal's own 422 as it reads the check's verdict (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    passesCheck = true;
+    refusal = [
+      "/spec/catalog/visualizations/0/data/last: source: not allowed",
+      "/spec/catalog/visualizations/0/data/aggrMethod: not allowed",
+    ];
+    await proposeLine();
+    await waitFor(() => expect(screen.getByLabelText(V.range)).toHaveAttribute("aria-invalid", "true"));
+    expect(screen.getByLabelText(V.method)).toHaveAttribute("aria-invalid", "true");
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+  });
+
+  it("keeps the server's sentence for a refusal it has no words for (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    refusal = [
+      "/spec/catalog/visualizations/0/data/last: source: not allowed",
+      "/spec/catalog/visualizations/0/spec/data: spec: a URL is not allowed",
+    ];
+    await proposeLine();
+    expect(await screen.findByText(/a URL is not allowed/)).toBeVisible();
+  });
+
+  it("lists what readers start from, and what they are locked to without the toolbar (T-7491)", () => {
+    const raw = { ...WEEK, name: "no2-raw", data: { source: "temporal", type: "T", attrs: ["no2"], last: "PT24H", controls: false } };
+    mount(endpoint({ visualizations: [WEEK, raw] }), false);
+    expect(screen.getByText("Readers start with: 7 days · Daily · Maximum")).toBeVisible();
+    expect(screen.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
+  });
+
+  it("tells the editor what an unticked toolbar means for readers (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.click(screen.getByLabelText(V.controls));
+    const box = screen.getByLabelText(V.controls);
+    expect(box).toHaveAccessibleDescription(/cannot change.*24 hours · Hourly · Average/);
+    expect(box).not.toHaveAccessibleDescription(/Readers can change/);
   });
 
   it("offers no toolbar defaults for a chart that does not read the history", async () => {

@@ -257,9 +257,11 @@
 
   // The fragment's toolbar state over the view's defaults. A part that is not one of the allowed
   // values is dropped, never repaired, so a link cannot put a value of its own into a URL.
+  // A view whose author hid the toolbar takes nothing from the link: its settings are fixed (T-7491).
   function parseState(hash, source) {
     var state = defaults(source);
     var own = defaults(source);
+    if (source && source.controls === false) return state;
     var attrs = Array.isArray(source && source.attrs) ? source.attrs : [];
     String(hash || "").replace(/^#/, "").split("&").slice(1).forEach(function (part) {
       var at = part.indexOf("=");

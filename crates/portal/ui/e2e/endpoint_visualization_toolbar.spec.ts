@@ -30,6 +30,19 @@ const CHART = {
   spec: LINE,
 };
 
+const SHOWN = {
+  ...CHART,
+  name: "no2-day",
+  title: { en: "NO2 today" },
+  data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "PT24H", aggrMethod: "avg", aggrPeriod: "PT1H" },
+};
+const FIXED = {
+  ...CHART,
+  name: "no2-raw",
+  title: { en: "NO2 readings" },
+  data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "PT24H", controls: false },
+};
+
 function endpoint(visualizations: unknown[]) {
   return {
     apiVersion: API,
@@ -50,7 +63,8 @@ const MODEL = { apiVersion: API, kind: "DataModel", metadata: { name: "air", nam
 interface Stub {
   verbs: string[];
   charts: unknown[];
-  refuse?: boolean;
+  /** The place in the list of the chart whose range the check refuses. */
+  refuse?: number;
   puts: { url: URL; body: Record<string, unknown> }[];
 }
 
@@ -68,17 +82,11 @@ async function stub(page: Page, s: Stub) {
     if (path.startsWith("/api/v1/visualization-templates/")) return json(LINE);
     if (path === "/api/v1/projects/ovzdusie/endpoints/air" && request.method() === "PUT") {
       s.puts.push({ url, body: JSON.parse(request.postData() ?? "{}") });
-      if (s.refuse)
-        return json(
-          {
-            type: "about:blank",
-            title: "The manifest is not valid",
-            status: 422,
-            detail: "/spec/catalog/visualizations/0/data/last: source: `P32D` is not an ISO 8601 duration up to P31D",
-            errors: ["invalid /spec/catalog/visualizations/0/data/last: source: `P32D` is not an ISO 8601 duration up to P31D"],
-          },
-          422,
-        );
+      if (s.refuse !== undefined) {
+        // As the Portal's check answers: a verdict, the pointer in the sentence, no path.
+        const message = `invalid /spec/catalog/visualizations/${s.refuse}/data/last: source: \`P32D\` is not an ISO 8601 duration up to P31D`;
+        return json({ valid: false, verdict: { ok: false, findings: [{ level: "error", path: "", message }] } });
+      }
       if (url.searchParams.get("dryRun")) return json({ valid: true });
       return json({ metadata: { name: "chg-1" }, status: { phase: "Proposed" } }, 202);
     }
@@ -110,10 +118,12 @@ for (const width of [1440, 400]) {
     // Raw readings take no method.
     await page.getByLabel("Default granularity").selectOption("raw");
     await expect(page.getByLabel("Default method")).toHaveCount(0);
+    await toolbar.screenshot({ path: join(DIR, `toolbar-raw-${width}.png`) });
     await page.getByLabel("Default granularity").selectOption("daily");
     await page.getByLabel("Default range").selectOption("week");
     await page.getByLabel("Default method").selectOption("max");
     await page.getByLabel("Show the toolbar to readers").uncheck();
+    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change.*7 days · Daily · Maximum/);
     await expect(page.getByLabel("Default range")).toHaveAccessibleDescription(/e\.g\. 7 days/);
 
     await page.getByLabel("Horizontal axis").selectOption("dateObserved");
@@ -133,9 +143,9 @@ for (const width of [1440, 400]) {
     await page.screenshot({ path: join(DIR, `toolbar-proposed-${width}.png`) });
   });
 
-  test(`a refused default names the member at ${width} px (T-7491)`, async ({ page }) => {
+  test(`a refused default says what to pick on its field at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    const s: Stub = { verbs: ["read", "propose", "approve"], charts: [], puts: [], refuse: true };
+    const s: Stub = { verbs: ["read", "propose", "approve"], charts: [], puts: [], refuse: 0 };
     await stub(page, s);
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
@@ -149,23 +159,54 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
-    await expect(alert).toContainText("visualizations/0/data/last");
-    // The field the refusal names is marked, with the server's sentence under it.
+    await expect(alert).toContainText("Nothing was proposed. Correct “Default range” above");
+    await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/P32D/);
+    await expect(range).toHaveAccessibleDescription(/Pick another: 24 hours, 7 days or 31 days/);
+    await alert.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
+    await section.getByRole("button", { name: "Go to the field" }).click();
+    await expect(range).toBeFocused();
     await section.getByTestId("viz-temporal").scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-${width}.png`) });
   });
 
+  test(`a saved chart that blocks a removal is named at ${width} px (T-7491)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, CHART], puts: [], refuse: 0 });
+    await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
+    const section = page.getByTestId("visualizations");
+    await section.getByRole("button", { name: "Remove" }).first().click();
+    await expect(section.getByRole("alert")).toContainText("“NO2 this week”");
+    await expect(section).not.toContainText("/spec/catalog");
+    await section.getByRole("alert").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(DIR, `toolbar-refused-other-${width}.png`) });
+  });
+
+  test(`a chart that does not read the history has no toolbar settings at ${width} px (T-7491)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [], puts: [] });
+    await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
+    const section = page.getByTestId("visualizations");
+    await section.getByText("Add a chart").click();
+    await page.getByLabel("Chart", { exact: true }).selectOption("bar");
+    await expect(section.getByTestId("viz-temporal")).toHaveCount(0);
+    await section.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(DIR, `toolbar-bar-${width}.png`) });
+  });
+
   test(`a reader without the propose right sees the charts and no editor at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await stub(page, { verbs: ["read"], charts: [CHART], puts: [] });
+    await stub(page, { verbs: ["read"], charts: [SHOWN, CHART, FIXED], puts: [] });
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
-    await expect(section.getByText("Toolbar hidden from readers")).toBeVisible();
+    await expect(section.getByText("Toolbar hidden from readers")).toHaveCount(2);
+    await expect(section.getByText("Readers start with: 24 hours · Hourly · Average")).toBeVisible();
+    await expect(section.getByText("Readers see only: 7 days · Daily · Maximum")).toBeVisible();
+    await expect(section.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-reader-${width}.png`) });
   });

@@ -1870,6 +1870,17 @@
         "remove": "Odebrat",
         "toolbar": "Nastavení grafu pro čtenáře",
         "toolbarHidden": "Panel nastavení je čtenářům skrytý",
+        "startsWith": "Čtenáři začínají s: {settings}",
+        "lockedTo": "Čtenáři vidí pouze: {settings}",
+        "refusedOwn": "Nic se nenavrhlo. Opravte „{fields}“ výše a navrhněte znovu.",
+        "refusedOther": "Nic se nenavrhlo: graf „{chart}“, který už je na tomto endpointu, má nepovolené nastavení ({fields}). Odeberte ho nebo ho opravte v YAML endpointu a zkuste to znovu.",
+        "showField": "Přejít na pole",
+        "fix": {
+          "range": "Toto období nebylo přijato. Vyberte jiné: 24 hodin, 7 dní nebo 31 dní.",
+          "granularity": "Tato podrobnost nebyla přijata. Vyberte jinou: surové hodnoty, po hodinách nebo po dnech.",
+          "method": "Tento výpočet nebyl přijat. Vyberte jiný: průměr, minimum nebo maximum.",
+          "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu."
+        },
         "range": "Výchozí období",
         "ranges": {
           "day": "24 hodin",
@@ -1893,7 +1904,8 @@
           "range": "Co čtenář uvidí po otevření grafu, např. 7 dní: poslední týden do teď.",
           "granularity": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
           "method": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
-          "controls": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf."
+          "controls": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
+          "locked": "Čtenáři dostanou pevný graf a nemohou ho měnit, např. se vždy otevře s: {settings}. Zaškrtněte, pokud si mají vybírat sami."
         },
         "templates": {
           "bar": "Sloupcový graf",

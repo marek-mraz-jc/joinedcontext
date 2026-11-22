@@ -140,6 +140,12 @@ describe("the fragment", () => {
     expect(host.parseState(`#${id}&r=custom&from=2026-11-01`, SOURCE).range).toBe("P7D");
   });
 
+  it("takes nothing from the link when the author hid the toolbar (T-7491)", () => {
+    const source = { ...SOURCE, controls: false };
+    const hash = `#${id}&r=P31D&g=P1D&m=max&s=urn:ngsi-ld:A:1`;
+    expect(host.parseState(hash, source)).toEqual(host.defaults(source));
+  });
+
   it("keeps an authored range, period and method the toolbar does not list", () => {
     const source = { ...SOURCE, last: "P2D", aggrMethod: "sum", aggrPeriod: "PT6H" };
     expect(host.defaults(source)).toMatchObject({ range: "P2D", gran: "PT6H", method: "sum" });

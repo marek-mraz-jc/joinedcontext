@@ -91,6 +91,29 @@ export function defaultData(
   }
 }
 
+/** The toolbar setting each member of a temporal source is, as the editor names its field. */
+const SETTINGS = { last: "range", aggrPeriod: "granularity", aggrMethod: "method", controls: "controls" } as const;
+
+/** One toolbar setting a refusal names: the chart's place in the list that was sent, and the field. */
+export interface RefusedSetting {
+  index: number;
+  field: (typeof SETTINGS)[keyof typeof SETTINGS];
+}
+
+/**
+ * The toolbar settings a refusal names, when that is all it names (T-7491): the page then says it
+ * in its own words. `[]` for any other refusal, whose sentence is shown as the server wrote it.
+ */
+export function refusedSettings(lines: readonly string[]): RefusedSetting[] {
+  const out: RefusedSetting[] = [];
+  for (const line of lines) {
+    const at = /^(?:invalid )?\/spec\/catalog\/visualizations\/(\d+)\/data\/(last|aggrPeriod|aggrMethod|controls)\b/.exec(line);
+    if (!at) return [];
+    out.push({ index: Number(at[1]), field: SETTINGS[at[2] as keyof typeof SETTINGS] });
+  }
+  return out;
+}
+
 /** Whether every role the template needs has a column. */
 export function complete(template: TemplateName, columns: Partial<Record<Role, string>>): boolean {
   return TEMPLATES[template].required.every((role) => Boolean(columns[role]));

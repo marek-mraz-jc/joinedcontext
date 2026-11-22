@@ -1870,6 +1870,17 @@
         "remove": "Entfernen",
         "toolbar": "Diagrammeinstellungen für Lesende",
         "toolbarHidden": "Einstellungsleiste für Lesende ausgeblendet",
+        "startsWith": "Lesende beginnen mit: {settings}",
+        "lockedTo": "Lesende sehen nur: {settings}",
+        "refusedOwn": "Es wurde nichts vorgeschlagen. Korrigieren Sie „{fields}“ oben und schlagen Sie erneut vor.",
+        "refusedOther": "Es wurde nichts vorgeschlagen: Das Diagramm „{chart}“ an diesem Endpoint hat eine unzulässige Einstellung ({fields}). Entfernen Sie es oder korrigieren Sie es im YAML des Endpoints und versuchen Sie es erneut.",
+        "showField": "Zum Feld",
+        "fix": {
+          "range": "Dieser Zeitraum wurde nicht angenommen. Wählen Sie einen anderen: 24 Stunden, 7 Tage oder 31 Tage.",
+          "granularity": "Diese Auflösung wurde nicht angenommen. Wählen Sie eine andere: Rohwerte, stündlich oder täglich.",
+          "method": "Diese Berechnung wurde nicht angenommen. Wählen Sie eine andere: Mittelwert, Minimum oder Maximum.",
+          "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
+        },
         "range": "Standardzeitraum",
         "ranges": {
           "day": "24 Stunden",
@@ -1893,7 +1904,8 @@
           "range": "Was Lesende beim Öffnen des Diagramms sehen, z. B. 7 Tage: die letzte Woche bis jetzt.",
           "granularity": "Rohwerte zeichnen jede Messung; stündlich und täglich einen Punkt pro Stunde oder Tag, z. B. täglich für 31 Tage.",
           "method": "Wie die Messungen einer Stunde oder eines Tages zu einem Punkt werden, z. B. Maximum für die Tagesspitze.",
-          "controls": "Lesende können Zeitraum, Auflösung und Berechnung selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm."
+          "controls": "Lesende können Zeitraum, Auflösung und Berechnung selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm.",
+          "locked": "Lesende erhalten ein festes Diagramm und können es nicht ändern, z. B. öffnet es immer mit: {settings}. Aktivieren, damit sie selbst wählen können."
         },
         "templates": {
           "bar": "Balkendiagramm",
