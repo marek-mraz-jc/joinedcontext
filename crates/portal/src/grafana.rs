@@ -1156,6 +1156,12 @@ mod tests {
         assert!(uid.ends_with("-ssssssss"));
     }
 
+    /// A server of the test's own, never one from wiremock's pool: `HTTP` keeps connections, and
+    /// one to a pooled server's port dies with the runtime of the test before.
+    async fn server() -> wiremock::MockServer {
+        wiremock::MockServer::builder().start().await
+    }
+
     fn config(server: &wiremock::MockServer) -> GrafanaConfig {
         GrafanaConfig {
             url: server.uri(),
@@ -1201,7 +1207,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_opened_project_gets_its_organization_and_folder() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         daiya_health(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/orgs/name/doprava"))
@@ -1243,7 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_organization_that_exists_is_found_by_name() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
         Mock::given(method("POST"))
             .and(path("/api/folders"))
@@ -1259,7 +1265,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_organizations_id_is_the_one_daiya_stores() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         let stored = "0190a000-0000-7000-8000-000000000009";
         answer_with(
             &server,
@@ -1321,7 +1327,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_grafana_that_is_not_daiya_gets_no_organization() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/health", json!({ "commit": "abc123" })).await;
         let config = config(&server);
         provision_projects(&project_state(), &Client::new(&config)).await;
@@ -1331,7 +1337,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_daiya_that_is_away_leaves_the_project_for_the_next_pass() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         daiya_health(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/orgs/name/doprava"))
@@ -1354,7 +1360,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_answer_past_the_cap_is_refused_unread() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         Mock::given(method("GET"))
             .and(path("/api/datasources"))
             .respond_with(
@@ -1372,7 +1378,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_datasources_of_an_organization_are_those_reading_an_endpoint() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(
             &server,
             "GET",
@@ -1397,7 +1403,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_push_makes_a_public_datasource_and_stops_at_a_closed_endpoint() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/datasources", json!([])).await;
         answer_with(&server, "POST", "/api/datasources", json!({})).await;
         answer_with(&server, "POST", "/api/dashboards/db", json!({})).await;
