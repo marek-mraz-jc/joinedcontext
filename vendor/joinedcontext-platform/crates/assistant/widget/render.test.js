@@ -1195,6 +1195,12 @@ test("a list pages twenty rows with the total, a superlative is one of all (T-75
 test("an aggregation names its method and says when it is part of the data (T-7504)", () => {
   const count = { method: "count", per: "decade", of: "yearBuilt", shown: 1651, total: 1651 };
   assert.equal(aggregated(count, "en"), "Count per decade");
+  const held = (filter) => table({ type: "Bridge", columns: ["name", "districtName"], total: 151, filter,
+    rows: Array.from({ length: 50 }, (_, i) => ["B" + i, "Zvolen"]) }, "en");
+  assert.deepEqual([held('districtName=="Zvolen"').columns.length, held('districtName=="Zvolen"').caption], [1, "Bridges · Zvolen — 1–20 of 151"]);
+  // Fifty rows that share a word say nothing of the other 101.
+  assert.equal(held(undefined).columns.length, 2);
+  assert.equal(held('districtName=="Zvolen"|yearBuilt<1900').columns.length, 2);
   const days = table({ type: "Air", columns: ["name", "date", "pm10"], aggregation: { method: "avg", per: "day", of: "pm10" },
     rows: Array.from({ length: 31 }, (_, d) => ["BB", "2026-10-" + String(d + 1).padStart(2, "0") + "T00:00:00Z", d]) }, "en");
   assert.deepEqual([days.pages, days.rows.length, days.rows[0][0]], [1, 31, "1 Oct 2026"]);

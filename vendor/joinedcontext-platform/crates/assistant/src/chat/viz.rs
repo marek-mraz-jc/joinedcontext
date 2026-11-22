@@ -475,6 +475,15 @@ pub fn aggregated(table: &Table) -> Option<Value> {
              "encoding": {"x": {"value": 0}, "text": {"field": "label", "type": "nominal"}}},
         ]);
         spec["height"] = json!(table.rows.len() * 40);
+    } else if made.per == "decade" {
+        // A decade is a range of nine characters: the bars lie, so each is read level at 400 px.
+        spec["encoding"] = json!({
+            "y": {"field": "label", "type": "nominal", "sort": null, "title": null},
+            "x": spec["encoding"]["x"].clone(),
+        });
+        spec["mark"] = json!({"type": "bar", "tooltip": true});
+        spec["height"] = json!(table.rows.len() * 18);
+        spec.as_object_mut()?.remove("layer");
     } else {
         // Periods read left to right, in time.
         spec["encoding"] = json!({
@@ -498,15 +507,6 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     }
     if let Some(Some(words)) = table.enums.first() {
         event["enums"] = json!(words);
-    }
-    // A decade's bar carries the year it starts with, as the note says "per decade"; the table
-    // under the chart has the whole range.
-    if made.per == "decade" {
-        for key in table.rows.iter().filter_map(|row| row.first()?.as_str()) {
-            if let Some((start, _)) = key.split_once('–') {
-                event["enums"][key] = json!({"en": start});
-            }
-        }
     }
     Some(event)
 }

@@ -567,10 +567,13 @@ var JCRender = (function () {
     // A word every row repeats is said once, over the rows: the one place of a history, whose
     // rows are then headed by their day, or the district of a district's list.
     var same = [];
-    if (raw.length > 1 && (made ? made.method !== "count" : pages > 1)) {
+    // In a list only what its filter holds all of them to: the rest is true of these rows alone.
+    var held = !made && typeof data.filter === "string" && data.filter.indexOf("|") < 0 ? data.filter.split(";") : [];
+    if (raw.length > 1 && (made ? made.method !== "count" : held.length > 0)) {
       keep = keep.filter(function (i) {
         var v = raw[0][i];
         if ((made ? i !== 0 : i === 0 || same.length > 1) || typeof v !== "string" || !v || v.length > 80 || TIME.test(v) || safeUrl(v)) return true;
+        if (!made && held.indexOf(data.columns[i] + '=="' + v + '"') < 0) return true;
         if (!raw.every(function (row) { return row[i] === v; })) return true;
         same.push(i);
         return false;
@@ -626,6 +629,8 @@ var JCRender = (function () {
     });
     var named = typeof data.type === "string" && data.type ? word(TYPES, data.type, lang) : "";
     var caption = "";
+    var repeated = same.map(function (i) { return cell(raw[0][i], data.columns[i], i); }).join(", ");
+    if (named && repeated && !made) named += " · " + repeated;
     var total = typeof data.total === "number" ? Math.max(data.total, raw.length) : raw.length;
     if (made && aggregated(made, lang, modelled[0] && typeof modelled[0] === "object" ? modelled[0] : null)) {
       caption = (named ? named + " — " : "") + aggregated(made, lang, modelled[0] && typeof modelled[0] === "object" ? modelled[0] : null);
@@ -640,12 +645,11 @@ var JCRender = (function () {
     } else if (named) {
       caption = named + " (" + numbers.format(rows.length) + ")";
     }
-    var repeated = same.map(function (i) { return cell(raw[0][i], data.columns[i], i); }).join(", ");
-    if (caption && repeated) caption += " · " + repeated;
+    if (made && caption && repeated) caption += " · " + repeated;
     return {
       caption: caption,
       // Over the map, which draws what is listed and says so on itself, the caption names them all.
-      mapCaption: named && pages > 1 ? named + " — " + numbers.format(raw.length) + " " + OF[lang] + " " + numbers.format(total) + (repeated ? " · " + repeated : "") : caption,
+      mapCaption: named && pages > 1 ? named + " — " + numbers.format(raw.length) + " " + OF[lang] + " " + numbers.format(total) : caption,
       columns: columns,
       numeric: numeric,
       rows: rows,

@@ -262,7 +262,8 @@ pub struct Table {
     pub profile: Option<String>,
     /// The `q` the read kept its rows by, when it had one: the answer call reads it beside the
     /// table, so a filtered `total` is told from the type's whole count (T-5784).
-    #[serde(skip)]
+    /// The chat says a word it holds every row to once, over them (T-7504); its step shows it too.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     /// How many rows answer a question for the most or the least, ties included; `total` is then
     /// how many they were ranked among (T-7504).

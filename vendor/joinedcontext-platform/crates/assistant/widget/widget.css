@@ -159,7 +159,7 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-data { --cell-y: 8px; --cell-x: 12px; margin: 0 0 10px; }
 .jc-data > summary::before { content: "▸"; flex: none; margin-inline-end: 6px; }
 .jc-data[open] > summary::before { content: "▾"; }
-@media (min-width: 600px) { .jc-data:not(.jc-record) td:first-child { min-width: 24ch; } }
+@media (min-width: 600px) { .jc-data:not(.jc-record) td:first-child { min-width: 20ch; } .jc-data th.jc-num { white-space: normal; } }
 .jc-data > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--muted); font-size: 13px; }
 .jc-data-scroll { position: relative; overflow: auto; max-height: 60vh; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg);
   background-image: linear-gradient(to left, var(--bg), transparent), linear-gradient(to left, rgb(0 0 0 / 12%), transparent);
@@ -190,9 +190,9 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
   .jc-data td:first-child::before { content: none; }
   .jc-data .jc-num { white-space: normal; }
 }
-/* T-7504: a listed row's values stand two abreast, label over value, so a card is half as tall. */
+/* T-7504: a listed row's values stand three abreast, label over value, so a card is half as tall. */
 @media (max-width: 599px) {
-  .jc-data:not(.jc-record):not(.jc-fallback) tbody tr { display: grid; grid-template-columns: 1fr 1fr; }
+  .jc-data:not(.jc-record):not(.jc-fallback) tbody tr { display: grid; grid-template-columns: repeat(3, 1fr); }
   .jc-data:not(.jc-record):not(.jc-fallback) td { display: block; text-align: left; overflow-wrap: anywhere; }
   .jc-data:not(.jc-record):not(.jc-fallback) td::before { display: block; }
   .jc-data:not(.jc-record):not(.jc-fallback) td:first-child { grid-column: 1 / -1; }
