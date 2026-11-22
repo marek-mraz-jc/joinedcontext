@@ -50,6 +50,10 @@ async fn forward(client: TcpStream, host: String, port: u16, read: Arc<Read>) {
     let server = TcpStream::connect((host.as_str(), port))
         .await
         .expect("server");
+    // A message is passed on in two writes: without this each waits for the other side's ack.
+    for socket in [&client, &server] {
+        socket.set_nodelay(true).expect("nodelay");
+    }
     let (mut from_client, mut to_client) = client.into_split();
     let (mut from_server, mut to_server) = server.into_split();
     let mut first = [0u8; 8];

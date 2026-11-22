@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
+mod manifests;
 mod projection;
 mod tables;
 
@@ -959,7 +960,14 @@ impl Store for PgStore {
         &self,
         ver: PackageVersionRecord,
     ) -> StoreFuture<'_, PackageVersionRecord> {
-        self.logged(ver.instance_id, ver.org_id, Op::UpsertPackageVersion(ver))
+        self.logged(
+            ver.instance_id,
+            ver.org_id,
+            Op::UpsertPackageVersion(LoggedVersion {
+                record: ver,
+                manifest_bytes: Vec::new(),
+            }),
+        )
     }
 
     fn get_package_version(
@@ -1009,6 +1017,68 @@ impl Store for PgStore {
         })
     }
 
+    fn list_package_tags(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> StoreFuture<'_, Vec<String>> {
+        let (owner, image) = (owner.to_owned(), image.to_owned());
+        let after = after.map(str::to_owned);
+        Box::pin(async move {
+            // Postgres holds no NUL in text, so nothing stored has such a name.
+            if [Some(&owner), Some(&image), after.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|v| v.contains('\0'))
+            {
+                return Ok(Vec::new());
+            }
+            let mut tx = self.read_tx((instance_id, org_id)).await?;
+            let tags: Vec<String> = sqlx::query_scalar(
+                "SELECT version FROM shako.package_version
+                 WHERE instance_id = $1 AND org_id = $2 AND owner = $3
+                   AND package_type = 'container' AND package_name = $4
+                   AND version > $5 AND left(version, 7) <> 'sha256:'
+                 ORDER BY version LIMIT $6",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(owner)
+            .bind(image)
+            .bind(after.unwrap_or_default())
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            tx.commit().await.map_err(tables::failed)?;
+            Ok(tags)
+        })
+    }
+
+    fn list_referrers(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        subject_digest: &str,
+    ) -> StoreFuture<'_, Vec<PackageVersionRecord>> {
+        let binds = [owner, image, subject_digest].map(|v| Some(v.to_owned()));
+        Box::pin(async move {
+            self.rows(
+                (instance_id, org_id),
+                &tables::PACKAGE_VERSION,
+                "AND t.owner = $3 AND t.package_type = 'container' AND t.package_name = $4 AND t.subject_digest = $5 ORDER BY t.version",
+                &binds,
+            )
+            .await
+        })
+    }
+
     fn insert_package_file(&self, file: PackageFileRecord) -> StoreFuture<'_, PackageFileRecord> {
         self.logged(file.instance_id, file.org_id, Op::InsertPackageFile(file))
     }
@@ -1055,6 +1125,14 @@ impl Store for PgStore {
 
     fn upsert_blob(&self, blob: BlobRecord) -> StoreFuture<'_, BlobRecord> {
         self.logged(blob.instance_id, blob.org_id, Op::UpsertBlob(blob))
+    }
+
+    fn store_blob(
+        &self,
+        blob: BlobRecord,
+        storage_limit: Option<u64>,
+    ) -> StoreFuture<'_, BlobRecord> {
+        Box::pin(self.put_blob_counted(blob, storage_limit))
     }
 
     fn get_blob(
@@ -1200,7 +1278,7 @@ pub enum Op {
         remote_name: String,
     },
     UpsertPackage(PackageRecord),
-    UpsertPackageVersion(#[serde(with = "hidden::package_version")] PackageVersionRecord),
+    UpsertPackageVersion(LoggedVersion),
     InsertPackageFile(PackageFileRecord),
     UpsertBlob(BlobRecord),
     AppendOutbox(OutboxEvent),
@@ -1212,6 +1290,18 @@ pub enum Op {
 /// The fields a record keeps out of every API answer (`skip_serializing` in shako-core) are state
 /// all the same: the store log writes them beside the rest, or a replay loses them (a package
 /// version without `manifestBytes` stopped the store from starting).
+/// A version as the log holds it. A release before T-7523 logged the manifest's bytes with it:
+/// replay still puts those in the column, for `copy_manifests` and for that release after a
+/// rollback. A new entry has none.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggedVersion {
+    #[serde(flatten)]
+    pub(crate) record: PackageVersionRecord,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) manifest_bytes: Vec<u8>,
+}
+
 pub(crate) mod hidden {
     use serde::{Serialize, Serializer, ser::Error as _};
     use serde_json::{Value, json};
@@ -1245,11 +1335,6 @@ pub(crate) mod hidden {
         };
     }
 
-    hidden!(
-        package_version,
-        shako_core::PackageVersionRecord,
-        |r| json!({"manifestBytes": r.manifest_bytes})
-    );
     hidden!(
         webhook,
         shako_core::WebhookRecord,
@@ -1286,6 +1371,62 @@ impl PgStore {
             self.ready_tenants().insert(tenant);
             Ok(answer)
         })
+    }
+
+    /// `store_blob`: the look-up, the limit, the row and the count under the tenant's lock.
+    async fn put_blob_counted(
+        &self,
+        blob: BlobRecord,
+        storage_limit: Option<u64>,
+    ) -> ShakoResult<BlobRecord> {
+        let tenant = (blob.instance_id, blob.org_id);
+        let key = [&blob.owner, &blob.repo_name, &blob.digest].map(|v| Some(v.clone()));
+        let mut tx = self.begin_tenant_tx(tenant.0, tenant.1).await?;
+        projection::lock(&mut tx, tenant).await?;
+        projection::catch_up(&mut tx, tenant).await?;
+        let held: Option<BlobRecord> = tables::select(
+            &mut tx,
+            tenant,
+            &tables::BLOB,
+            "AND t.owner = $3 AND t.repo_name = $4 AND t.digest = $5",
+            &key,
+        )
+        .await?
+        .pop();
+        if let Some(held) = held {
+            tx.commit().await.map_err(tables::failed)?;
+            return Ok(held);
+        }
+        if let Some(limit) = storage_limit {
+            let usage: Option<QuotaUsageRecord> =
+                tables::select(&mut tx, tenant, &tables::QUOTA_USAGE, "", &[])
+                    .await?
+                    .pop();
+            let used = usage.map_or(0, |u| u.total_bytes());
+            if used.saturating_add(blob.size_bytes) > limit {
+                return Err(ShakoError::QuotaExceeded {
+                    resource: "package storage".into(),
+                    limit,
+                });
+            }
+        }
+        let package_bytes_delta = i64::try_from(blob.size_bytes).unwrap_or(i64::MAX);
+        let ops = [
+            Op::UpsertBlob(blob.clone()),
+            Op::AdjustQuotaUsage {
+                repo_delta: 0,
+                git_bytes_delta: 0,
+                package_bytes_delta,
+            },
+        ];
+        for op in ops {
+            let at = projection::append(&mut tx, tenant, &op).await?;
+            projection::apply(&mut tx, tenant, op, &at).await?;
+            projection::projected(&mut tx, tenant, at.seq()).await?;
+        }
+        tx.commit().await.map_err(tables::failed)?;
+        self.ready_tenants().insert(tenant);
+        Ok(blob)
     }
 }
 
@@ -1333,6 +1474,9 @@ mod store_log_tests {
         for op in &ops {
             assert_eq!(format!("{:?}", replayed(op)), format!("{op:?}"));
         }
+        // An earlier release's bytes are kept for the column; a new entry has none.
+        let logged = serde_json::to_value(&ops[0]).expect("log entry");
+        assert_eq!(logged["args"]["manifestBytes"], json!([123, 125]));
         // A version logged before the bytes were kept still reads, so the store starts.
         let mut old = serde_json::to_value(&ops[0]).expect("log entry");
         old["args"]
