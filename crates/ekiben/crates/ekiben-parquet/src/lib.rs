@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ekiben_bloblang::Value;
 use ekiben_core::{Batch, ComponentConfig, CoreError, ProcContext, Processor, Registry};
-use parquet::basic::{ConvertedType, LogicalType, Repetition, Type as PhysicalType};
+use parquet::basic::{ConvertedType, LogicalType, Repetition};
 use parquet::column::reader::{ColumnReader, ColumnReaderImpl};
 use parquet::data_type::DataType;
 use parquet::file::reader::{FileReader, SerializedFileReader};
@@ -241,28 +241,20 @@ fn cells<T: DataType>(
     conv: impl Fn(&T::T) -> Result<Value, String>,
 ) -> Result<Vec<Cell>, String> {
     let max_def = desc.max_def_level();
-    let max_rep = desc.max_rep_level();
     let mut defs = Vec::new();
     let mut reps = Vec::new();
     let mut values = Vec::new();
     loop {
+        // Level buffers of a column without levels stay empty.
         let (records, _, _) = r
-            .read_records(
-                8192,
-                (max_def > 0).then_some(&mut defs),
-                (max_rep > 0).then_some(&mut reps),
-                &mut values,
-            )
+            .read_records(8192, Some(&mut defs), Some(&mut reps), &mut values)
             .map_err(text)?;
         if records == 0 {
             break;
         }
     }
-    let n = if max_def > 0 {
-        defs.len()
-    } else {
-        values.len()
-    };
+    // A level per cell, or a value per cell where the column has no levels.
+    let n = defs.len().max(values.len());
     let mut out = Vec::with_capacity(n);
     let mut vi = values.iter();
     for i in 0..n {
@@ -279,37 +271,24 @@ fn cells<T: DataType>(
     Ok(out)
 }
 
-fn logical(desc: &ColumnDescPtr) -> Option<&LogicalType> {
-    desc.self_type().get_basic_info().logical_type_ref()
-}
-
+// The converted type alone decides: parquet's schema builder fills it from the logical type and
+// refuses a column whose two disagree (decimal scale included), so a logical type adds nothing here.
 fn is_unsigned(desc: &ColumnDescPtr) -> bool {
-    match logical(desc) {
-        Some(LogicalType::Integer(t)) => !t.is_signed,
-        Some(_) => false,
-        None => matches!(
-            desc.converted_type(),
-            ConvertedType::UINT_8
-                | ConvertedType::UINT_16
-                | ConvertedType::UINT_32
-                | ConvertedType::UINT_64
-        ),
-    }
+    matches!(
+        desc.converted_type(),
+        ConvertedType::UINT_8
+            | ConvertedType::UINT_16
+            | ConvertedType::UINT_32
+            | ConvertedType::UINT_64
+    )
 }
 
 fn decimal_scale(desc: &ColumnDescPtr) -> Option<i32> {
-    match logical(desc) {
-        Some(LogicalType::Decimal(d)) => Some(d.scale),
-        Some(_) => None,
-        None => (desc.converted_type() == ConvertedType::DECIMAL).then(|| desc.type_scale()),
-    }
+    (desc.converted_type() == ConvertedType::DECIMAL).then(|| desc.type_scale())
 }
 
 fn is_json(desc: &ColumnDescPtr) -> bool {
-    match logical(desc) {
-        Some(l) => matches!(l, LogicalType::Json),
-        None => desc.converted_type() == ConvertedType::JSON,
-    }
+    desc.converted_type() == ConvertedType::JSON
 }
 
 fn int32(desc: &ColumnDescPtr, v: i32) -> Value {
@@ -347,7 +326,8 @@ fn bytes(desc: &ColumnDescPtr, data: &[u8], fixed: bool) -> Result<Value, String
         let doc: JsonValue = serde_json::from_slice(data).map_err(text)?;
         return Ok(Value::from_json_value(doc));
     }
-    if fixed && desc.physical_type() == PhysicalType::FIXED_LEN_BYTE_ARRAY {
+    // Only a FIXED_LEN_BYTE_ARRAY column reader passes `fixed`.
+    if fixed {
         return Ok(Value::Bytes(data.to_vec()));
     }
     Ok(Value::String(String::from_utf8_lossy(data).into_owned()))
@@ -394,7 +374,7 @@ pub fn decimal_text(data: &[u8], scale: i32) -> String {
             out.extend(digits[1..].iter().map(|d| char::from(*d)));
         }
         out.push('e');
-        out.push(if e < 0 { '-' } else { '+' });
+        out.push(if e.is_negative() { '-' } else { '+' });
         let a = e.unsigned_abs();
         if a < 10 {
             out.push('0');
@@ -743,6 +723,25 @@ mod tests {
             .collect()
     }
 
+    /// A column longer than one read of 8192 records is read to its end.
+    #[test]
+    fn columns_past_one_read_are_read_whole() {
+        let n = 10_000;
+        let even: Vec<i32> = (0..n).step_by(2).collect();
+        let defs = (0..n).map(|i| i16::from(i % 2 == 0)).collect();
+        let f = file(
+            "message m { required int32 n; optional int32 o; }",
+            vec![
+                Col::I32((0..n).collect(), vec![0; 10_000], vec![0; 10_000]),
+                Col::I32(even, defs, vec![0; 10_000]),
+            ],
+        );
+        let rows = rows(f, false);
+        assert_eq!(rows.len(), 10_000);
+        assert_eq!(rows[9998], json!({"n": 9998, "o": 9998}));
+        assert_eq!(rows[9999], json!({"n": 9999, "o": null}));
+    }
+
     #[test]
     fn a_repeated_field_outside_a_list_is_an_array_per_row() {
         let f = file(
@@ -929,6 +928,9 @@ mod tests {
         );
         assert_eq!(decimal_text(&be(100_000_000_000_000_000_000), 18), "100");
         assert_eq!(decimal_text(&[0x00, 0x7b], 0), "123");
+        // Two exponent digits at least, never three for a two-digit exponent.
+        assert_eq!(decimal_text(&be(12_345_678_901), 0), "1.2345678901e+10");
+        assert_eq!(decimal_text(&be(1), 10), "1e-10");
     }
 
     #[test]

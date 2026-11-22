@@ -601,7 +601,7 @@ pub fn go_float(n: f64, is32: bool) -> String {
         return "\"NaN\"".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 {
+        return if n.is_sign_positive() {
             "\"Infinity\"".into()
         } else {
             "\"-Infinity\"".into()
@@ -618,13 +618,12 @@ pub fn go_float(n: f64, is32: bool) -> String {
     let (mant, e) = sci.split_once('e').unwrap_or((&sci, "0"));
     let e: i32 = e.parse().unwrap_or(0);
     if exp {
-        let sign = if e < 0 { '-' } else { '+' };
         let a = e.unsigned_abs();
         // Go writes at least two exponent digits, then encoding/json drops the leading zero of e-0X.
-        return if e < 0 && a < 10 {
-            format!("{mant}e{sign}{a}")
+        return if e.is_negative() {
+            format!("{mant}e-{a}")
         } else {
-            format!("{mant}e{sign}{a:02}")
+            format!("{mant}e+{a:02}")
         };
     }
     let neg = mant.starts_with('-');
@@ -658,7 +657,7 @@ fn base64_std(data: &[u8]) -> String {
             *chunk.get(1).unwrap_or(&0),
             *chunk.get(2).unwrap_or(&0),
         ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
         s.push(char::from(T[(n >> 18) as usize & 63]));
         s.push(char::from(T[(n >> 12) as usize & 63]));
         s.push(if chunk.len() > 1 {
@@ -705,10 +704,6 @@ fn write_well_known(
         return Some(write_singular(out, &fd.kind(), &m.get_field(&fd), o, depth));
     }
     let r = match name {
-        "google.protobuf.Empty" => {
-            out.extend_from_slice(b"{}");
-            Ok(())
-        }
         "google.protobuf.Timestamp" => timestamp(m).map(|s| out.extend_from_slice(s.as_bytes())),
         "google.protobuf.Duration" => duration(m).map(|s| out.extend_from_slice(s.as_bytes())),
         "google.protobuf.FieldMask" => {
@@ -1433,6 +1428,10 @@ message All {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let big = std::fs::File::create(dir.path().join("a.proto")).expect("creates");
+        // Exactly the cap is read (and fails as a schema, not on its size).
+        big.set_len(MAX_SCHEMA_BYTES).expect("sparse file");
+        let err = load_descriptors(&[dir.path().to_path_buf()], None).unwrap_err();
+        assert!(!err.contains("exceed"), "{err}");
         big.set_len(MAX_SCHEMA_BYTES + 1).expect("sparse file");
         assert_eq!(
             load_descriptors(&[dir.path().to_path_buf()], None).err(),
@@ -1440,6 +1439,31 @@ message All {
                 "the .proto files under the import paths exceed {MAX_SCHEMA_BYTES} bytes"
             ))
         );
+    }
+
+    /// Every day from 1600 to 2400 against a day-by-day proleptic Gregorian count.
+    #[test]
+    fn civil_from_days_walks_the_calendar() {
+        let leap = |y: i64| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let (mut y, mut m, mut d) = (1600, 1, 1);
+        let mut z = -135_140; // 1600-01-01
+        while y < 2400 {
+            assert_eq!(civil_from_days(z), (y, m, d), "day {z}");
+            let last = match m {
+                2 if leap(y) => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            d += 1;
+            if d > last {
+                (d, m) = (1, m + 1);
+                if m > 12 {
+                    (m, y) = (1, y + 1);
+                }
+            }
+            z += 1;
+        }
     }
 
     #[test]

@@ -239,7 +239,7 @@ async fn scripts_take_turns_for_a_quarter_of_the_cores() {
     // Twice the slots plus one spins of 50 ms each: run all at once they end in about 50 ms,
     // in turns of `slots` they need three turns.
     // Other tests may hold slots right now: count them from the cores, not what is free.
-    let slots = slots_for(cores());
+    let slots = slots_for(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
     let p = Arc::new(processor(
         json!({ "code": "while (true) {}", "timeout_ms": 50 }),
     ));
@@ -471,4 +471,44 @@ fn lint_names_what_ekiben_refuses() {
     assert!(all.contains("code"), "{all}");
     assert!(lint(&json!({"code": "1", "timeout_ms": 10, "memory_mb": 64})).is_empty());
     assert!(!lint(&json!({"code": "1", "memory_mb": 65})).is_empty());
+}
+
+/// Console lines reach the stream's log at the level the script chose.
+#[tokio::test]
+async fn console_lines_are_logged_at_their_level() {
+    #[derive(Clone)]
+    struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let buf = Buf(Arc::default());
+    let writer = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    run(
+        "console.error('red'); console.warn('amber'); console.log('plain');",
+        vec![Part::from_str("x")],
+    )
+    .await;
+    let logged = String::from_utf8(buf.0.lock().expect("lock").clone()).expect("utf-8");
+    let level = |text: &str| {
+        logged
+            .lines()
+            .find(|l| l.contains(text))
+            .and_then(|l| l.split_whitespace().next())
+            .map(str::to_owned)
+    };
+    assert_eq!(level("red").as_deref(), Some("ERROR"), "{logged}");
+    assert_eq!(level("amber").as_deref(), Some("WARN"), "{logged}");
+    assert_eq!(level("plain").as_deref(), Some("INFO"), "{logged}");
 }

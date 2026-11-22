@@ -194,15 +194,12 @@ pub fn interpolate_postgres_macros(
         .replace("$__interval", &format!("'{interval_str}'"))
         .replace("${__interval}", &format!("'{interval_str}'"));
 
-    // A constant pattern: the error arm is never taken.
-    let re = match Regex::new(r"\$(__[_a-zA-Z0-9]+)\(([^)]*)\)") {
-        Ok(re) => re,
-        Err(e) => {
-            return Err(DsError::InvalidQuery {
-                ref_id: "sql".into(),
-                reason: e.to_string(),
-            });
-        }
+    // A constant pattern: the else arm is never taken.
+    let Ok(re) = Regex::new(r"\$(__[_a-zA-Z0-9]+)\(([^)]*)\)") else {
+        return Err(DsError::InvalidQuery {
+            ref_id: "sql".into(),
+            reason: "the macro pattern does not compile".into(),
+        });
     };
 
     let from_iso = TimestampTz::from_millis(from_ms)

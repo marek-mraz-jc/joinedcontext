@@ -368,11 +368,10 @@ fn budget_spent(budget: Duration) -> String {
 /// going from 1.2 ms to 9-13 ms with eight spinning on eight workers (T-7082).
 fn script_slots() -> &'static tokio::sync::Semaphore {
     static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(slots_for(cores())))
-}
-
-fn cores() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+    SLOTS.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        tokio::sync::Semaphore::new(slots_for(cores))
+    })
 }
 
 /// A quarter of the cores, at least one.
@@ -412,12 +411,14 @@ fn run_batch(
             errors.push((i, budget_spent(budget)));
             continue;
         }
-        deadline.set(Instant::now() + limits.timeout.min(left));
+        let run_for = limits.timeout.min(left);
+        deadline.set(Instant::now() + run_for);
         let (run, outcome) = run_one(runtime, code, std::mem::take(slot), limits);
         *slot = run.part;
         logs.extend(run.logs);
         if let Err(mut e) = outcome {
-            if e.contains("ran past") && left < limits.timeout && started.elapsed() >= budget {
+            // Cut short by the run's budget, not by the script's own timeout.
+            if e.contains("ran past") && run_for != limits.timeout {
                 e = budget_spent(budget);
             }
             // A runtime that ran out of memory is not trusted with the next message.

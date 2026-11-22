@@ -4,4 +4,7 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
+  # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
+  'ekiben-js/src/lib\.rs:.*in fuzzing::run$',
 ]
