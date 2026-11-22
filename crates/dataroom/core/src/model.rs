@@ -304,7 +304,37 @@ fn default_true() -> bool {
     true
 }
 
+impl Publisher {
+    /// Whether the record's IRI is the publisher's own: declared, and not the page `catalogue`
+    /// mints for the record (`{base}/publisher/{name}` on one of its hosts or on the
+    /// Organization's `/opendata` address), which only identifies it here.
+    pub fn has_own_iri(&self, catalogue: &Catalogue) -> bool {
+        if !jc_core::kinds::is_declared_iri(&self.uri) {
+            return false;
+        }
+        let uri = self.uri.trim_end_matches('/');
+        let page = format!("/publisher/{}", self.name);
+        let Some(at) = uri.strip_suffix(&page) else {
+            return true;
+        };
+        let host = jc_core::kinds::http_url_host(at);
+        let here = host == jc_core::kinds::http_url_host(&catalogue.base_url())
+            || host.as_deref().is_some_and(|h| {
+                h == catalogue.host || catalogue.left_hosts.iter().any(|left| left == h)
+            })
+            || at.ends_with("/opendata");
+        !here
+    }
+}
+
 impl Catalogue {
+    /// The publisher's IRI when one is declared; a registry placeholder is none.
+    pub fn declared_publisher_uri(&self) -> Option<&str> {
+        self.publisher_uri
+            .as_deref()
+            .filter(|uri| jc_core::kinds::is_declared_iri(uri))
+    }
+
     /// Base URL for this catalogue: the configured public URL, else `https://{host}`.
     pub fn base_url(&self) -> String {
         if let Some(base) = &self.public_base {
@@ -457,6 +487,14 @@ pub struct TemporalPeriod {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<Date>,
 }
+
+/// The dataset extra holding the publisher's personal-data statement (`spec.catalog.personalData`,
+/// API/08 section 5): [`PERSONAL_DATA_CONTAINS`] or [`PERSONAL_DATA_NONE`].
+pub const PERSONAL_DATA: &str = "personal_data";
+/// The data holds personal data.
+pub const PERSONAL_DATA_CONTAINS: &str = "contains";
+/// The data holds no personal data.
+pub const PERSONAL_DATA_NONE: &str = "does-not-contain";
 
 /// National terms-of-use specification (`pu:Specifikace` in DCAT-AP-CZ, `leg:TermsOfUse` in DCAT-AP-SK).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]

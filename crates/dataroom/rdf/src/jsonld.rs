@@ -9,9 +9,8 @@
 //! - Billion-laughs / recursive `@context` term expansion or excessive context size is refused.
 //! - Byte, triple, nesting-depth and literal-length caps are enforced while parsing.
 
-use crate::dcat::{distribution_licence, terms_of_use, DcatProfileKind};
+use crate::dcat::{dataset_publisher, terms_of_use, DcatProfileKind};
 use crate::graph::{iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
-use dataroom_core::vocab::find_licence;
 use dataroom_core::{Catalogue, ContactKind, DataroomError, Dataset, Publisher, Result};
 use oxjsonld::JsonLdParser;
 use serde_json::{json, Map, Value};
@@ -542,22 +541,23 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
     format!("{:#}", doc)
 }
 
+/// A compact terms-of-use node of the members the record states.
+fn terms_node(class: &str, members: [(&str, &Option<String>); 4]) -> Value {
+    let mut node = Map::new();
+    node.insert("typ".into(), json!(class));
+    for (key, value) in members {
+        if let Some(value) = value {
+            node.insert(key.into(), json!(iri_text(value)));
+        }
+    }
+    Value::Object(node)
+}
+
 /// Serializes a [`Catalogue`] and its dataset IRIs in the Czech OFN LKOD JSON-LD format
 /// (`specs/dcat-ap-cz/spec-dcat-ap-cz-rozhrani-katalogu.txt` & `priklady-katalog/katalog.jsonld`).
-pub fn serialize_cz_catalogue_jsonld(
-    catalogue: &Catalogue,
-    datasets: &[Dataset],
-    publishers: &BTreeMap<String, Publisher>,
-) -> String {
+pub fn serialize_cz_catalogue_jsonld(catalogue: &Catalogue, datasets: &[Dataset]) -> String {
     let base = catalogue.base_url();
     let cat_iri = format!("{base}/catalog");
-    let publisher_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| {
-            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
-        });
 
     let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
 
@@ -589,7 +589,9 @@ pub fn serialize_cz_catalogue_jsonld(
         "domovská_stránka".into(),
         json!(catalogue.homepage.as_deref().unwrap_or(&base)),
     );
-    doc.insert("poskytovatel".into(), json!(publisher_iri));
+    if let Some(iri) = catalogue.declared_publisher_uri() {
+        doc.insert("poskytovatel".into(), json!(iri));
+    }
     doc.insert("přístupový_bod".into(), json!(cat_iri));
     doc.insert("datová_sada".into(), json!(ds_iris));
 
@@ -598,18 +600,9 @@ pub fn serialize_cz_catalogue_jsonld(
 
 /// Serializes a [`Catalogue`] and its dataset IRIs in the Slovak DCAT-AP-SK 2.0 JSON-LD format
 /// (`specs/dcat-ap-sk/schémy/katalóg.json` & `príklady/katalóg.jsonld`).
-pub fn serialize_sk_catalogue_jsonld(
-    catalogue: &Catalogue,
-    datasets: &[Dataset],
-    publishers: &BTreeMap<String, Publisher>,
-) -> String {
+pub fn serialize_sk_catalogue_jsonld(catalogue: &Catalogue, datasets: &[Dataset]) -> String {
     let base = catalogue.base_url();
     let cat_iri = format!("{base}/catalog");
-    let publisher_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| "https://data.gov.sk/id/legal-subject/00000000".into());
 
     let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
 
@@ -638,7 +631,9 @@ pub fn serialize_sk_catalogue_jsonld(
         "domovská_stránka".into(),
         json!(catalogue.homepage.as_deref().unwrap_or(&base)),
     );
-    doc.insert("poskytovateľ".into(), json!(publisher_iri));
+    if let Some(iri) = catalogue.declared_publisher_uri() {
+        doc.insert("poskytovateľ".into(), json!(iri));
+    }
     doc.insert("dataset".into(), json!(ds_iris));
 
     format!("{:#}", Value::Object(doc))
@@ -653,28 +648,13 @@ pub fn serialize_sk_dataset_jsonld(
 ) -> String {
     let base = catalogue.base_url();
     let ds_iri = dataset.canonical_uri(&base);
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/{}", dataset.publisher_id));
+    let pub_iri = dataset_publisher(dataset, catalogue, publisher).and_then(|(iri, _)| iri);
 
-    let themes: Vec<String> = if dataset.themes.is_empty() {
-        vec!["http://publications.europa.eu/resource/authority/data-theme/GOVE".into()]
-    } else {
-        dataset
-            .themes
-            .iter()
-            .map(|t| dataroom_core::vocab::theme_to_iri(t))
-            .collect()
-    };
-
-    let freq = dataset
-        .frequency
-        .as_deref()
-        .map(dataroom_core::vocab::frequency_to_eu_iri)
-        .unwrap_or_else(|| {
-            "http://publications.europa.eu/resource/authority/frequency/IRREG".into()
-        });
+    let themes: Vec<String> = dataset
+        .themes
+        .iter()
+        .map(|t| dataroom_core::vocab::theme_to_iri(t))
+        .collect();
 
     let mut kw = dataset.keywords.clone();
     if kw.is_empty() && !dataset.tags.is_empty() {
@@ -689,21 +669,26 @@ pub fn serialize_sk_dataset_jsonld(
                 .uri
                 .clone()
                 .unwrap_or_else(|| format!("{ds_iri}/resource/{}", d.id));
-            let licence = distribution_licence(dataset, d).and_then(find_licence);
-            let tou = terms_of_use(d, licence.as_ref(), DcatProfileKind::Sk20);
             let mut dist_obj = Map::new();
             dist_obj.insert("iri".into(), json!(iri_text(&dist_iri)));
             dist_obj.insert("typ".into(), json!("Distribúcia"));
-            dist_obj.insert(
-                "podmienky_použitia".into(),
-                json!({
-                    "typ": "Špecifikácia podmienok použitia",
-                    "autorské_dielo": tou.authors_work.as_deref().map(iri_text),
-                    "databáza_ako_autorské_dielo": tou.database_as_work.as_deref().map(iri_text),
-                    "databáza_chránená_zvláštnými_právami": tou.sui_generis_database.as_deref().map(iri_text),
-                    "osobné_údaje": tou.personal_data.as_deref().map(iri_text),
-                }),
-            );
+            if let Some(tou) = terms_of_use(dataset, d, DcatProfileKind::Sk20) {
+                dist_obj.insert(
+                    "podmienky_použitia".into(),
+                    terms_node(
+                        "Špecifikácia podmienok použitia",
+                        [
+                            ("autorské_dielo", &tou.authors_work),
+                            ("databáza_ako_autorské_dielo", &tou.database_as_work),
+                            (
+                                "databáza_chránená_zvláštnými_právami",
+                                &tou.sui_generis_database,
+                            ),
+                            ("osobné_údaje", &tou.personal_data),
+                        ],
+                    ),
+                );
+            }
             dist_obj.insert("prístupové_url".into(), json!(iri_text(&d.access_url)));
             if let Some(dl) = &d.download_url {
                 dist_obj.insert("súbor_na_stiahnutie".into(), json!(iri_text(dl)));
@@ -733,9 +718,18 @@ pub fn serialize_sk_dataset_jsonld(
     doc.insert("typ".into(), json!("Dataset"));
     doc.insert("názov".into(), json!(dataset.title));
     doc.insert("popis".into(), json!(dataset.description));
-    doc.insert("poskytovateľ".into(), json!(iri_text(&pub_iri)));
-    doc.insert("téma".into(), json!(themes));
-    doc.insert("periodicita_aktualizácie".into(), json!(freq));
+    if let Some(iri) = &pub_iri {
+        doc.insert("poskytovateľ".into(), json!(iri_text(iri)));
+    }
+    if !themes.is_empty() {
+        doc.insert("téma".into(), json!(themes));
+    }
+    if let Some(freq) = &dataset.frequency {
+        doc.insert(
+            "periodicita_aktualizácie".into(),
+            json!(dataroom_core::vocab::frequency_to_eu_iri(freq)),
+        );
+    }
     doc.insert("kľúčové_slovo".into(), json!(kw));
     if !dataset.spatial.is_empty() {
         doc.insert(
@@ -776,12 +770,7 @@ pub fn serialize_cz_dataset_jsonld(
 ) -> String {
     let base = catalogue.base_url();
     let ds_iri = dataset.canonical_uri(&base);
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| {
-            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
-        });
+    let pub_iri = dataset_publisher(dataset, catalogue, publisher).and_then(|(iri, _)| iri);
 
     let mut doc = Map::new();
     doc.insert("@context".into(), json!(CZ_DATASET_CONTEXT_IRI));
@@ -789,7 +778,9 @@ pub fn serialize_cz_dataset_jsonld(
     doc.insert("typ".into(), json!("Datová sada"));
     doc.insert("název".into(), json!(dataset.title));
     doc.insert("popis".into(), json!(dataset.description));
-    doc.insert("poskytovatel".into(), json!(iri_text(&pub_iri)));
+    if let Some(iri) = &pub_iri {
+        doc.insert("poskytovatel".into(), json!(iri_text(iri)));
+    }
     if !dataset.themes.is_empty() {
         let themes: Vec<String> = dataset
             .themes
@@ -801,14 +792,12 @@ pub fn serialize_cz_dataset_jsonld(
     if !dataset.keywords.is_empty() {
         doc.insert("klíčové_slovo".into(), json!(dataset.keywords));
     }
-    let freq = dataset
-        .frequency
-        .as_deref()
-        .map(dataroom_core::vocab::frequency_to_eu_iri)
-        .unwrap_or_else(|| {
-            "http://publications.europa.eu/resource/authority/frequency/IRREG".into()
-        });
-    doc.insert("periodicita_aktualizace".into(), json!(freq));
+    if let Some(freq) = &dataset.frequency {
+        doc.insert(
+            "periodicita_aktualizace".into(),
+            json!(dataroom_core::vocab::frequency_to_eu_iri(freq)),
+        );
+    }
     if !dataset.spatial.is_empty() {
         doc.insert(
             "geografické_území".into(),
@@ -844,8 +833,6 @@ pub fn serialize_cz_dataset_jsonld(
         .distributions
         .iter()
         .map(|d| {
-            let licence = distribution_licence(dataset, d).and_then(find_licence);
-            let tou = terms_of_use(d, licence.as_ref(), DcatProfileKind::Cz);
             let mut dist = Map::new();
             let iri = d
                 .uri
@@ -853,16 +840,23 @@ pub fn serialize_cz_dataset_jsonld(
                 .unwrap_or_else(|| format!("{ds_iri}/resource/{}", d.id));
             dist.insert("iri".into(), json!(iri_text(&iri)));
             dist.insert("typ".into(), json!("Distribuce"));
-            dist.insert(
-                "podmínky_užití".into(),
-                json!({
-                    "typ": "Podmínky užití",
-                    "autorské_dílo": tou.authors_work.as_deref().map(iri_text),
-                    "databáze_jako_autorské_dílo": tou.database_as_work.as_deref().map(iri_text),
-                    "databáze_chráněná_zvláštními_právy": tou.sui_generis_database.as_deref().map(iri_text),
-                    "osobní_údaje": tou.personal_data.as_deref().map(iri_text),
-                }),
-            );
+            if let Some(tou) = terms_of_use(dataset, d, DcatProfileKind::Cz) {
+                dist.insert(
+                    "podmínky_užití".into(),
+                    terms_node(
+                        "Podmínky užití",
+                        [
+                            ("autorské_dílo", &tou.authors_work),
+                            ("databáze_jako_autorské_dílo", &tou.database_as_work),
+                            (
+                                "databáze_chráněná_zvláštními_právy",
+                                &tou.sui_generis_database,
+                            ),
+                            ("osobní_údaje", &tou.personal_data),
+                        ],
+                    ),
+                );
+            }
             dist.insert("přístupové_url".into(), json!(iri_text(&d.access_url)));
             if let Some(dl) = &d.download_url {
                 dist.insert("soubor_ke_stažení".into(), json!(iri_text(dl)));
@@ -1089,7 +1083,7 @@ mod tests {
         ));
         let mut ds = dataset();
         ds.uri = Some("https://data.example.org/ds/air".into());
-        let text = serialize_cz_catalogue_jsonld(&cat, &[ds], &publisher_map());
+        let text = serialize_cz_catalogue_jsonld(&cat, &[ds]);
         let doc: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(doc["@context"], CZ_CATALOG_CONTEXT_IRI);
         assert_eq!(doc["kontaktní_bod"]["typ"], "Jednotlivec");
@@ -1108,10 +1102,9 @@ mod tests {
             objects(&g, cat_iri, &format!("{DCAT}dataset")),
             ["https://data.example.org/ds/air"]
         );
-        assert_eq!(
-            objects(&g, cat_iri, &format!("{DCT}publisher")),
-            ["https://data.gov.sk/id/legal-subject/00313271"],
-            "without a catalogue publisher IRI the first publisher's is used"
+        assert!(
+            objects(&g, cat_iri, &format!("{DCT}publisher")).is_empty(),
+            "a dataset's publisher is not the catalogue's"
         );
         assert_eq!(
             objects(&g, cat_iri, &format!("{DCT}title")),
@@ -1135,14 +1128,11 @@ mod tests {
             3
         );
 
-        // Without contact point, publishers or homepage the defaults apply.
-        let bare = serialize_cz_catalogue_jsonld(&catalogue(None), &[], &BTreeMap::new());
+        // Without contact point or publisher neither is stated; the homepage is the catalogue's own.
+        let bare = serialize_cz_catalogue_jsonld(&catalogue(None), &[]);
         let doc: Value = serde_json::from_str(&bare).unwrap();
         assert!(doc.get("kontaktní_bod").is_none());
-        assert!(doc["poskytovatel"]
-            .as_str()
-            .unwrap()
-            .contains("orgán-veřejné-moci"));
+        assert!(doc.get("poskytovatel").is_none());
         assert_eq!(doc["domovská_stránka"], "https://opendata.example.org");
     }
 
@@ -1153,7 +1143,7 @@ mod tests {
         ));
         cat.publisher_uri = Some("https://data.gov.sk/id/legal-subject/1".into());
         cat.homepage = Some("https://city.example".into());
-        let text = serialize_sk_catalogue_jsonld(&cat, &[dataset()], &publisher_map());
+        let text = serialize_sk_catalogue_jsonld(&cat, &[dataset()]);
         let g = parse_jsonld(&text, &RdfLimits::default()).expect("SK catalogue parses offline");
         let cat_iri = "https://opendata.example.org/catalog";
         assert_eq!(
@@ -1177,12 +1167,9 @@ mod tests {
             .iter()
             .any(|t| t.object == Term::Iri("mailto:data@city.example".into())));
 
-        let bare = serialize_sk_catalogue_jsonld(&catalogue(None), &[], &BTreeMap::new());
+        let bare = serialize_sk_catalogue_jsonld(&catalogue(None), &[]);
         let doc: Value = serde_json::from_str(&bare).unwrap();
-        assert_eq!(
-            doc["poskytovateľ"],
-            "https://data.gov.sk/id/legal-subject/00000000"
-        );
+        assert!(doc.get("poskytovateľ").is_none());
         assert!(doc.get("kontaktný_bod").is_none());
     }
 
@@ -1227,8 +1214,8 @@ mod tests {
             Some("data@city.example")
         );
 
-        // A dataset without themes, frequency or keywords gets SK's required defaults, its tags
-        // become keywords in the catalogue language, and the publisher IRI falls back.
+        // A dataset without themes, frequency or publisher states none of them; its tags become
+        // keywords in the catalogue language.
         let mut bare = dataset();
         bare.themes.clear();
         bare.frequency = None;
@@ -1238,19 +1225,10 @@ mod tests {
         bare.spatial.clear();
         let doc: Value =
             serde_json::from_str(&serialize_sk_dataset_jsonld(&bare, &cat, None)).unwrap();
-        assert_eq!(
-            doc["téma"][0],
-            "http://publications.europa.eu/resource/authority/data-theme/GOVE"
-        );
-        assert_eq!(
-            doc["periodicita_aktualizácie"],
-            "http://publications.europa.eu/resource/authority/frequency/IRREG"
-        );
+        assert!(doc.get("téma").is_none());
+        assert!(doc.get("periodicita_aktualizácie").is_none());
         assert_eq!(doc["kľúčové_slovo"]["sk"][0], "ovzdusie");
-        assert_eq!(
-            doc["poskytovateľ"],
-            "https://opendata.example.org/publisher/city"
-        );
+        assert!(doc.get("poskytovateľ").is_none());
         assert!(doc.get("geografické_územie").is_none());
         assert_eq!(
             doc["distribúcia"][1]["iri"],
@@ -1293,9 +1271,8 @@ mod tests {
             "the distribution's own field is kept"
         );
         assert_eq!(
-            tou.personal_data.as_deref(),
-            Some("https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/"),
-            "a missing field gets the CZ default"
+            tou.personal_data, None,
+            "never asserted without a declaration"
         );
         assert_eq!(ds.spatial, ["http://data.europa.eu/nuts/code/SK032"]);
         assert!(
@@ -1315,10 +1292,31 @@ mod tests {
             serde_json::from_str(&serialize_cz_dataset_jsonld(&bare, &catalogue(None), None))
                 .unwrap();
         assert!(doc.get("téma").is_none() && doc.get("klíčové_slovo").is_none());
-        assert!(doc["poskytovatel"]
-            .as_str()
-            .unwrap()
-            .contains("orgán-veřejné-moci"));
+        assert!(doc.get("poskytovatel").is_none());
+
+        // A declaration is stated in the profile's own code list, whichever list it came in.
+        let mut declared = dataset();
+        declared
+            .extras
+            .insert("personal_data".into(), "contains".into());
+        declared.distributions[1].terms_of_use = Some(dataroom_core::TermsOfUse {
+            personal_data: Some("https://data.gov.sk/def/personal-data-occurence-type/2".into()),
+            ..Default::default()
+        });
+        let doc: Value = serde_json::from_str(&serialize_cz_dataset_jsonld(
+            &declared,
+            &catalogue(None),
+            None,
+        ))
+        .unwrap();
+        let stated = |i: usize| doc["distribuce"][i]["podmínky_užití"]["osobní_údaje"].clone();
+        assert_eq!(
+            [stated(0), stated(1)],
+            [
+                "https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/",
+                "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/"
+            ]
+        );
     }
 
     #[test]

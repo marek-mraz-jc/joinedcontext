@@ -105,11 +105,11 @@ _:b3 a leg:TermsOfUse ;
   leg:databaseProtectedBySpecialRightsType <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
   leg:originalDatabaseAuthorName "Ministerstvo dopravy, Odbor veřejné dopravy"@cs ;
   leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:personalDataContainmentType <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
+  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 
 _:b4 a leg:TermsOfUse ;
   leg:authorsWorkType <https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/> ;
   leg:databaseProtectedBySpecialRightsType <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
   leg:originalDatabaseType <https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/> ;
-  leg:personalDataContainmentType <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
+  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 

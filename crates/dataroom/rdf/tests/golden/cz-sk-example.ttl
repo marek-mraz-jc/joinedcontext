@@ -64,8 +64,7 @@
   pu:specifikace _:b3 .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dcat:accessURL <> ;
-  pu:specifikace _:b4 .
+  dcat:accessURL <> .
 
 <https://opendata.middop.sk/schemy/json-schema.json> a dct:Standard .
 
@@ -85,11 +84,5 @@ _:b3 a pu:Specifikace ;
   pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
   pu:databáze-chráněná-zvláštními-právy <https://creativecommons.org/publicdomain/zero/1.0/> ;
   pu:databáze-jako-autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
-  pu:osobní-údaje <https://data.gov.sk/def/personal-data-occurence-type/2> .
-
-_:b4 a pu:Specifikace ;
-  pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
-  pu:databáze-chráněná-zvláštními-právy <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
-  pu:databáze-jako-autorské-dílo <https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/> ;
   pu:osobní-údaje <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
 

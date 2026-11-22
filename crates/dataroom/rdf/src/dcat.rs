@@ -16,8 +16,9 @@ use dataroom_core::vocab::{
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
 };
 use dataroom_core::{
-    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService, Dataset,
-    Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
+    is_declared_iri, AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService,
+    Dataset, Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Texts,
+    Visibility, PERSONAL_DATA, PERSONAL_DATA_CONTAINS, PERSONAL_DATA_NONE,
 };
 use jc_time::{parse_date, parse_rfc3339, Date, TimestampTz};
 use std::collections::BTreeMap;
@@ -246,43 +247,8 @@ pub fn add_dataset_triples(
     }
 
     // Publisher (`dct:publisher`)
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/{}", dataset.publisher_id));
-    let pub_subj = SubjectNode::Named(pub_iri.clone());
-    g.insert(
-        ds_subj.clone(),
-        format!("{}publisher", ns::DCT),
-        Term::Iri(pub_iri),
-    );
-    g.insert(
-        pub_subj.clone(),
-        ns::RDF_TYPE,
-        Term::Iri(format!("{}Agent", ns::FOAF)),
-    );
-    let pub_names = publisher
-        .map(|p| &p.title)
-        .or_else(|| dataset.publisher.as_ref().map(|a| &a.name));
-    if let Some(names) = pub_names {
-        for (lang, name) in names {
-            if !name.is_empty() {
-                g.insert(
-                    pub_subj.clone(),
-                    format!("{}name", ns::FOAF),
-                    Term::Literal(LiteralValue::lang(name.clone(), lang.clone())),
-                );
-            }
-        }
-    } else {
-        g.insert(
-            pub_subj.clone(),
-            format!("{}name", ns::FOAF),
-            Term::Literal(LiteralValue::lang(
-                dataset.publisher_id.clone(),
-                catalogue.default_language.clone(),
-            )),
-        );
+    if let Some((iri, names)) = dataset_publisher(dataset, catalogue, publisher) {
+        insert_agent(g, &ds_subj, iri, &names);
     }
 
     // Contact point (`dcat:contactPoint`)
@@ -675,7 +641,8 @@ pub fn add_dataset_triples(
                 )),
             );
         }
-        if let Some(hash) = &dist.hash {
+        // A checksum without its algorithm cannot be checked, and no shape admits the node.
+        if let (Some(hash), Some(algo_iri)) = (&dist.hash, checksum_algorithm(dist)) {
             if !hash.is_empty() {
                 let cs_node = g.fresh_blank_node();
                 g.insert(
@@ -693,14 +660,13 @@ pub fn add_dataset_triples(
                     format!("{}checksumValue", ns::SPDX),
                     Term::Literal(LiteralValue::typed(hash.clone(), ns::XSD_HEX_BINARY)),
                 );
-                let algo_iri = "http://spdx.org/rdf/terms#checksumAlgorithm_sha256";
                 g.insert(
                     cs_node,
                     format!("{}algorithm", ns::SPDX),
-                    Term::Iri(algo_iri.to_owned()),
+                    Term::Iri(algo_iri.clone()),
                 );
                 g.insert(
-                    SubjectNode::Named(algo_iri.to_owned()),
+                    SubjectNode::Named(algo_iri),
                     ns::RDF_TYPE,
                     Term::Iri(format!("{}ChecksumAlgorithm", ns::SPDX)),
                 );
@@ -718,7 +684,12 @@ pub fn add_dataset_triples(
                 Term::Iri(format!("{}Standard", ns::DCT)),
             );
         }
-        for law in &dist.applicable_legislation {
+        // DCAT-AP-CZ repeats the dataset's legislation on each distribution and service.
+        let inherited_laws: &[String] = match profile {
+            DcatProfileKind::Cz => &dataset.applicable_legislation,
+            _ => &[],
+        };
+        for law in dist.applicable_legislation.iter().chain(inherited_laws) {
             g.insert(
                 dist_subj.clone(),
                 format!("{}applicableLegislation", ns::DCATAP),
@@ -735,142 +706,148 @@ pub fn add_dataset_triples(
         let dist_lic = distribution_licence(dataset, dist);
         let resolved_lic = dist_lic.and_then(find_licence);
 
-        match profile {
-            DcatProfileKind::Eu301 => {
-                if let Some(lic) = resolved_lic {
+        'licence: {
+            match profile {
+                DcatProfileKind::Eu301 => {
+                    if let Some(lic) = resolved_lic {
+                        g.insert(
+                            dist_subj.clone(),
+                            format!("{}license", ns::DCT),
+                            Term::Iri(lic.eu_iri.clone()),
+                        );
+                        g.insert(
+                            SubjectNode::Named(lic.eu_iri),
+                            ns::RDF_TYPE,
+                            Term::Iri(format!("{}LicenseDocument", ns::DCT)),
+                        );
+                    } else if let Some(raw_lic) = dist_lic.filter(|s| s.contains("://")) {
+                        g.insert(
+                            dist_subj.clone(),
+                            format!("{}license", ns::DCT),
+                            Term::Iri(raw_lic.to_owned()),
+                        );
+                        g.insert(
+                            SubjectNode::Named(raw_lic.to_owned()),
+                            ns::RDF_TYPE,
+                            Term::Iri(format!("{}LicenseDocument", ns::DCT)),
+                        );
+                    }
+                }
+                DcatProfileKind::Cz => {
+                    let Some(tou) = terms_of_use(dataset, dist, DcatProfileKind::Cz) else {
+                        break 'licence;
+                    };
+                    let spec_node = g.fresh_blank_node();
                     g.insert(
                         dist_subj.clone(),
-                        format!("{}license", ns::DCT),
-                        Term::Iri(lic.eu_iri.clone()),
+                        format!("{}specifikace", ns::CZ_PU),
+                        spec_node.to_term(),
                     );
                     g.insert(
-                        SubjectNode::Named(lic.eu_iri),
+                        spec_node.clone(),
                         ns::RDF_TYPE,
-                        Term::Iri(format!("{}LicenseDocument", ns::DCT)),
+                        Term::Iri(format!("{}Specifikace", ns::CZ_PU)),
                     );
-                } else if let Some(raw_lic) = dist_lic.filter(|s| s.contains("://")) {
+                    if let Some(aw) = &tou.authors_work {
+                        g.insert(
+                            spec_node.clone(),
+                            format!("{}autorské-dílo", ns::CZ_PU),
+                            Term::Iri(aw.clone()),
+                        );
+                    }
+                    for (lang, author) in &tou.author_name {
+                        g.insert(
+                            spec_node.clone(),
+                            format!("{}autor", ns::CZ_PU),
+                            Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
+                        );
+                    }
+                    if let Some(db) = &tou.database_as_work {
+                        g.insert(
+                            spec_node.clone(),
+                            format!("{}databáze-jako-autorské-dílo", ns::CZ_PU),
+                            Term::Iri(db.clone()),
+                        );
+                    }
+                    for (lang, db_author) in &tou.database_author_name {
+                        g.insert(
+                            spec_node.clone(),
+                            format!("{}autor-databáze", ns::CZ_PU),
+                            Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
+                        );
+                    }
+                    if let Some(sg) = &tou.sui_generis_database {
+                        g.insert(
+                            spec_node.clone(),
+                            format!("{}databáze-chráněná-zvláštními-právy", ns::CZ_PU),
+                            Term::Iri(sg.clone()),
+                        );
+                    }
+                    if let Some(pd) = &tou.personal_data {
+                        g.insert(
+                            spec_node,
+                            format!("{}osobní-údaje", ns::CZ_PU),
+                            Term::Iri(pd.clone()),
+                        );
+                    }
+                }
+                DcatProfileKind::Sk20 => {
+                    let Some(tou) = terms_of_use(dataset, dist, DcatProfileKind::Sk20) else {
+                        break 'licence;
+                    };
+                    let tou_node = g.fresh_blank_node();
                     g.insert(
                         dist_subj.clone(),
-                        format!("{}license", ns::DCT),
-                        Term::Iri(raw_lic.to_owned()),
+                        format!("{}termsOfUse", ns::SK_LEG),
+                        tou_node.to_term(),
                     );
                     g.insert(
-                        SubjectNode::Named(raw_lic.to_owned()),
+                        tou_node.clone(),
                         ns::RDF_TYPE,
-                        Term::Iri(format!("{}LicenseDocument", ns::DCT)),
+                        Term::Iri(format!("{}TermsOfUse", ns::SK_LEG)),
                     );
-                }
-            }
-            DcatProfileKind::Cz => {
-                let spec_node = g.fresh_blank_node();
-                g.insert(
-                    dist_subj.clone(),
-                    format!("{}specifikace", ns::CZ_PU),
-                    spec_node.to_term(),
-                );
-                g.insert(
-                    spec_node.clone(),
-                    ns::RDF_TYPE,
-                    Term::Iri(format!("{}Specifikace", ns::CZ_PU)),
-                );
-                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Cz);
-                if let Some(aw) = &tou.authors_work {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autorské-dílo", ns::CZ_PU),
-                        Term::Iri(aw.clone()),
-                    );
-                }
-                for (lang, author) in &tou.author_name {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autor", ns::CZ_PU),
-                        Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(db) = &tou.database_as_work {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}databáze-jako-autorské-dílo", ns::CZ_PU),
-                        Term::Iri(db.clone()),
-                    );
-                }
-                for (lang, db_author) in &tou.database_author_name {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autor-databáze", ns::CZ_PU),
-                        Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(sg) = &tou.sui_generis_database {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}databáze-chráněná-zvláštními-právy", ns::CZ_PU),
-                        Term::Iri(sg.clone()),
-                    );
-                }
-                if let Some(pd) = &tou.personal_data {
-                    g.insert(
-                        spec_node,
-                        format!("{}osobní-údaje", ns::CZ_PU),
-                        Term::Iri(pd.clone()),
-                    );
-                }
-            }
-            DcatProfileKind::Sk20 => {
-                let tou_node = g.fresh_blank_node();
-                g.insert(
-                    dist_subj.clone(),
-                    format!("{}termsOfUse", ns::SK_LEG),
-                    tou_node.to_term(),
-                );
-                g.insert(
-                    tou_node.clone(),
-                    ns::RDF_TYPE,
-                    Term::Iri(format!("{}TermsOfUse", ns::SK_LEG)),
-                );
-                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Sk20);
-                if let Some(aw) = &tou.authors_work {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}authorsWorkType", ns::SK_LEG),
-                        Term::Iri(aw.clone()),
-                    );
-                }
-                for (lang, author) in &tou.author_name {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}authorName", ns::SK_LEG),
-                        Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(db) = &tou.database_as_work {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}originalDatabaseType", ns::SK_LEG),
-                        Term::Iri(db.clone()),
-                    );
-                }
-                for (lang, db_author) in &tou.database_author_name {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}originalDatabaseAuthorName", ns::SK_LEG),
-                        Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(sg) = &tou.sui_generis_database {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}databaseProtectedBySpecialRightsType", ns::SK_LEG),
-                        Term::Iri(sg.clone()),
-                    );
-                }
-                if let Some(pd) = &tou.personal_data {
-                    g.insert(
-                        tou_node,
-                        format!("{}personalDataContainmentType", ns::SK_LEG),
-                        Term::Iri(pd.clone()),
-                    );
+                    if let Some(aw) = &tou.authors_work {
+                        g.insert(
+                            tou_node.clone(),
+                            format!("{}authorsWorkType", ns::SK_LEG),
+                            Term::Iri(aw.clone()),
+                        );
+                    }
+                    for (lang, author) in &tou.author_name {
+                        g.insert(
+                            tou_node.clone(),
+                            format!("{}authorName", ns::SK_LEG),
+                            Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
+                        );
+                    }
+                    if let Some(db) = &tou.database_as_work {
+                        g.insert(
+                            tou_node.clone(),
+                            format!("{}originalDatabaseType", ns::SK_LEG),
+                            Term::Iri(db.clone()),
+                        );
+                    }
+                    for (lang, db_author) in &tou.database_author_name {
+                        g.insert(
+                            tou_node.clone(),
+                            format!("{}originalDatabaseAuthorName", ns::SK_LEG),
+                            Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
+                        );
+                    }
+                    if let Some(sg) = &tou.sui_generis_database {
+                        g.insert(
+                            tou_node.clone(),
+                            format!("{}databaseProtectedBySpecialRightsType", ns::SK_LEG),
+                            Term::Iri(sg.clone()),
+                        );
+                    }
+                    if let Some(pd) = &tou.personal_data {
+                        g.insert(
+                            tou_node,
+                            format!("{}personalDataContainmentType", ns::SK_LEG),
+                            Term::Iri(pd.clone()),
+                        );
+                    }
                 }
             }
         }
@@ -927,7 +904,7 @@ pub fn add_dataset_triples(
                     Term::Iri(format!("{}Standard", ns::DCT)),
                 );
             }
-            for law in &svc.applicable_legislation {
+            for law in svc.applicable_legislation.iter().chain(inherited_laws) {
                 g.insert(
                     svc_subj.clone(),
                     format!("{}applicableLegislation", ns::DCATAP),
@@ -983,41 +960,8 @@ pub fn catalogue_to_graph(
         }
     }
 
-    let pub_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/default"));
-    let pub_subj = SubjectNode::Named(pub_iri.clone());
-    g.insert(
-        cat_subj.clone(),
-        format!("{}publisher", ns::DCT),
-        Term::Iri(pub_iri),
-    );
-    g.insert(
-        pub_subj.clone(),
-        ns::RDF_TYPE,
-        Term::Iri(format!("{}Agent", ns::FOAF)),
-    );
-    if let Some(names) = &catalogue.publisher_name {
-        for (lang, n) in names {
-            if !n.is_empty() {
-                g.insert(
-                    pub_subj.clone(),
-                    format!("{}name", ns::FOAF),
-                    Term::Literal(LiteralValue::lang(n.clone(), lang.clone())),
-                );
-            }
-        }
-    } else {
-        g.insert(
-            pub_subj,
-            format!("{}name", ns::FOAF),
-            Term::Literal(LiteralValue::lang(
-                catalogue.theme.organisation.clone(),
-                catalogue.default_language.clone(),
-            )),
-        );
+    if let Some((iri, names)) = catalogue_publisher(catalogue) {
+        insert_agent(&mut g, &cat_subj, iri, &names);
     }
 
     let homepage = catalogue.homepage.clone().unwrap_or_else(|| base.clone());
@@ -1153,49 +1097,164 @@ pub fn catalogue_to_graph(
     g
 }
 
-/// The licence a distribution is published under: its own, else the dataset's.
+/// The licence a distribution is published under: its own, else the dataset's. CKAN's
+/// `notspecified` declares none.
 pub(crate) fn distribution_licence<'a>(
     dataset: &'a Dataset,
     dist: &'a Distribution,
 ) -> Option<&'a str> {
-    dist.licence
-        .as_deref()
-        .or(dataset.licence_id.as_deref())
-        .or(dataset.licence_url.as_deref())
+    [&dist.licence, &dataset.licence_id, &dataset.licence_url]
+        .into_iter()
+        .filter_map(|l| l.as_deref())
+        .find(|l| !l.trim().is_empty() && !l.eq_ignore_ascii_case("notspecified"))
 }
 
-/// The CZ or SK terms of use of a distribution: the ones it carries, each missing field filled
-/// with the profile's default (the resolved licence's URL for the copyright fields). Both
-/// profiles' shapes require all four fields, and the JSON-LD and graph renderings share this.
-pub(crate) fn terms_of_use(
+/// The personal-data code lists (API/08 section 5), as `(contains, does-not-contain)`.
+const CZ_PERSONAL_DATA: (&str, &str) = (
+    "https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/",
+    "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
+);
+const SK_PERSONAL_DATA: (&str, &str) = (
+    "https://data.gov.sk/def/personal-data-occurence-type/1",
+    "https://data.gov.sk/def/personal-data-occurence-type/2",
+);
+
+/// Whether the record declares that the data holds personal data: the dataset's own statement,
+/// or the national code a harvested distribution carries. Another value is the record's own IRI.
+fn personal_data(
+    dataset: &Dataset,
     dist: &Distribution,
-    licence: Option<&dataroom_core::vocab::LicenceEntry>,
     profile: DcatProfileKind,
-) -> TermsOfUse {
-    let licence_url = licence.map(|l| l.url.clone()).filter(|u| !u.is_empty());
-    let (authors, database, sui_generis, personal) = match profile {
-        DcatProfileKind::Sk20 => {
-            let cc = licence_url.unwrap_or_else(|| "https://creativecommons.org/licenses/by/4.0/".into());
-            (
-                cc.clone(),
-                cc,
-                "https://creativecommons.org/publicdomain/zero/1.0/".to_owned(),
-                "https://data.gov.sk/def/personal-data-occurence-type/2".to_owned(),
-            )
-        }
-        _ => (
-            licence_url.unwrap_or_else(|| "https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/".into()),
-            "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/".to_owned(),
-            "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/".to_owned(),
-            "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/".to_owned(),
-        ),
+) -> Option<String> {
+    let own = dist
+        .terms_of_use
+        .as_ref()
+        .and_then(|t| t.personal_data.as_deref());
+    let stated = own.or_else(|| dataset.extras.get(PERSONAL_DATA).map(String::as_str))?;
+    let holds = [
+        (PERSONAL_DATA_CONTAINS, PERSONAL_DATA_NONE),
+        CZ_PERSONAL_DATA,
+        SK_PERSONAL_DATA,
+    ]
+    .into_iter()
+    .find_map(|(yes, no)| {
+        (stated == yes)
+            .then_some(true)
+            .or_else(|| (stated == no).then_some(false))
+    });
+    let (yes, no) = match profile {
+        DcatProfileKind::Eu301 => return None,
+        DcatProfileKind::Cz => CZ_PERSONAL_DATA,
+        DcatProfileKind::Sk20 => SK_PERSONAL_DATA,
     };
+    match holds {
+        Some(true) => Some(yes.to_owned()),
+        Some(false) => Some(no.to_owned()),
+        None => stated.contains("://").then(|| stated.to_owned()),
+    }
+}
+
+/// The CZ or SK terms of use a distribution declares: its own, the three rights it leaves out
+/// from the declared licence (API/08 section 6), and personal data only as declared (CMP-08).
+/// `None` when nothing is known. Both the graph and the JSON-LD serializers state these.
+pub(crate) fn terms_of_use(
+    dataset: &Dataset,
+    dist: &Distribution,
+    profile: DcatProfileKind,
+) -> Option<TermsOfUse> {
     let mut tou = dist.terms_of_use.clone().unwrap_or_default();
-    tou.authors_work.get_or_insert(authors);
-    tou.database_as_work.get_or_insert(database);
-    tou.sui_generis_database.get_or_insert(sui_generis);
-    tou.personal_data.get_or_insert(personal);
-    tou
+    let licence = distribution_licence(dataset, dist).and_then(|l| match find_licence(l) {
+        Some(known) => (!known.url.is_empty()).then_some(known.url),
+        None => l.contains("://").then(|| l.to_owned()),
+    });
+    for right in [
+        &mut tou.authors_work,
+        &mut tou.database_as_work,
+        &mut tou.sui_generis_database,
+    ] {
+        if right.is_none() {
+            right.clone_from(&licence);
+        }
+    }
+    tou.personal_data = personal_data(dataset, dist, profile);
+    (tou != TermsOfUse::default()).then_some(tou)
+}
+
+/// The SPDX IRI of the checksum algorithm the record names.
+fn checksum_algorithm(dist: &Distribution) -> Option<String> {
+    let named = dist.hash_algorithm.as_deref()?.trim();
+    if named.contains("://") {
+        return Some(named.to_owned());
+    }
+    let name = named.to_ascii_lowercase().replace('-', "");
+    ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"]
+        .contains(&name.as_str())
+        .then(|| format!("http://spdx.org/rdf/terms#checksumAlgorithm_{name}"))
+}
+
+/// A dataset's publisher as declared, `(IRI, names)`: the Publisher record's own IRI, else the
+/// IRI the dataset names, else the record's page in this catalogue, else the dataset's name of
+/// it alone. A bare `publisher_id` is no declaration.
+pub(crate) fn dataset_publisher(
+    dataset: &Dataset,
+    catalogue: &Catalogue,
+    publisher: Option<&Publisher>,
+) -> Option<(Option<String>, Texts)> {
+    let named = dataset.publisher.as_ref();
+    let names = named.map(|a| a.name.clone()).unwrap_or_default();
+    if let Some(record) = publisher.filter(|p| p.has_own_iri(catalogue)) {
+        return Some((Some(record.uri.clone()), record.title.clone()));
+    }
+    if let Some(uri) = named
+        .and_then(|a| a.uri.as_deref())
+        .filter(|uri| is_declared_iri(uri))
+    {
+        let names = match publisher {
+            Some(record) if names.is_empty() => record.title.clone(),
+            _ => names,
+        };
+        return Some((Some(uri.to_owned()), names));
+    }
+    match publisher {
+        Some(record) if is_declared_iri(&record.uri) => {
+            Some((Some(record.uri.clone()), record.title.clone()))
+        }
+        _ => (!names.is_empty()).then_some((None, names)),
+    }
+}
+
+/// The catalogue's publisher as declared: its IRI, or its name alone.
+fn catalogue_publisher(catalogue: &Catalogue) -> Option<(Option<String>, Texts)> {
+    let iri = catalogue.declared_publisher_uri().map(str::to_owned);
+    let names = catalogue.publisher_name.clone().unwrap_or_default();
+    (iri.is_some() || !names.is_empty()).then_some((iri, names))
+}
+
+/// `dct:publisher`: the agent's IRI, or a blank node carrying the declared names.
+fn insert_agent(g: &mut RdfGraph, subject: &SubjectNode, iri: Option<String>, names: &Texts) {
+    let agent = match iri {
+        Some(iri) => SubjectNode::Named(iri),
+        None => g.fresh_blank_node(),
+    };
+    g.insert(
+        subject.clone(),
+        format!("{}publisher", ns::DCT),
+        agent.to_term(),
+    );
+    g.insert(
+        agent.clone(),
+        ns::RDF_TYPE,
+        Term::Iri(format!("{}Agent", ns::FOAF)),
+    );
+    for (lang, name) in names {
+        if !name.is_empty() {
+            g.insert(
+                agent.clone(),
+                format!("{}name", ns::FOAF),
+                Term::Literal(LiteralValue::lang(name.clone(), lang.clone())),
+            );
+        }
+    }
 }
 
 /// Serializes one [`Dataset`] in the requested [`RdfFormat`] and [`DcatProfileKind`] (C7, C17).
@@ -1237,12 +1296,8 @@ pub fn serialize_catalogue(
 ) -> String {
     if format == RdfFormat::JsonLd && hydra.is_none() {
         match profile {
-            DcatProfileKind::Cz => {
-                return serialize_cz_catalogue_jsonld(catalogue, datasets, publishers)
-            }
-            DcatProfileKind::Sk20 => {
-                return serialize_sk_catalogue_jsonld(catalogue, datasets, publishers)
-            }
+            DcatProfileKind::Cz => return serialize_cz_catalogue_jsonld(catalogue, datasets),
+            DcatProfileKind::Sk20 => return serialize_sk_catalogue_jsonld(catalogue, datasets),
             DcatProfileKind::Eu301 => {}
         }
     }
@@ -1474,8 +1529,7 @@ pub fn graph_to_datasets(
             .map(|t| t.string_value().to_owned());
 
         let mut distributions = Vec::new();
-        let mut derived_licence_id = None;
-        let mut derived_licence_url = None;
+        let mut stated_licences: Vec<Option<String>> = Vec::new();
 
         for (idx, dist_term) in graph
             .objects_of(&ds_subj, "http://www.w3.org/ns/dcat#distribution")
@@ -1546,14 +1600,7 @@ pub fn graph_to_datasets(
             let dist_licence = graph
                 .first_object(&dist_subj, "http://purl.org/dc/terms/license")
                 .map(|t| t.string_value().to_owned());
-            if let Some(ref dl) = dist_licence {
-                if let Some(lic_entry) = find_licence(dl) {
-                    derived_licence_id = Some(lic_entry.id);
-                    derived_licence_url = Some(lic_entry.url);
-                } else {
-                    derived_licence_url = Some(dl.clone());
-                }
-            }
+            stated_licences.push(dist_licence.clone());
 
             // Terms of use (`pu:specifikace` in CZ or `leg:termsOfUse` in SK)
             let terms_of_use = graph
@@ -1581,10 +1628,9 @@ pub fn graph_to_datasets(
                             )
                         })
                         .map(|t| t.string_value().to_owned());
-                    if let Some(ref aw) = authors_work {
-                        if let Some(lic_entry) = find_licence(aw) {
-                            derived_licence_id.get_or_insert(lic_entry.id);
-                            derived_licence_url.get_or_insert(lic_entry.url);
+                    if let (Some(aw), Some(stated)) = (&authors_work, stated_licences.last_mut()) {
+                        if stated.is_none() && find_licence(aw).is_some() {
+                            *stated = Some(aw.clone());
                         }
                     }
                     let author_name = {
@@ -1739,7 +1785,7 @@ pub fn graph_to_datasets(
                 byte_size,
                 hash,
                 hash_algorithm,
-                licence: dist_licence,
+                licence: stated_licences.last().cloned().flatten(),
                 rights: BTreeMap::new(),
                 status: None,
                 availability: None,
@@ -1756,6 +1802,21 @@ pub fn graph_to_datasets(
                 modified: None,
                 extras: BTreeMap::new(),
             });
+        }
+
+        // The dataset is under a licence only when all its distributions state that one; a
+        // sibling's licence is no statement about a distribution without one.
+        let (mut derived_licence_id, mut derived_licence_url) = (None, None);
+        if let Some(Some(first)) = stated_licences.first() {
+            if stated_licences.iter().all(|l| l.as_ref() == Some(first)) {
+                match find_licence(first) {
+                    Some(entry) => {
+                        derived_licence_id = Some(entry.id);
+                        derived_licence_url = Some(entry.url);
+                    }
+                    None => derived_licence_url = Some(first.clone()),
+                }
+            }
         }
 
         let now = TimestampTz::now();
@@ -2739,28 +2800,31 @@ mod tests {
         );
         assert!(text.contains("https://e.org/publisher/city"));
 
-        // A catalogue without publisher IRI or homepage takes the first publisher, then a default.
+        // A catalogue's publisher is the one it declares, never the first of its datasets'.
         cat.publisher_uri = None;
+        cat.publisher_name = None;
         cat.homepage = None;
         let pubs = BTreeMap::from([("city".to_owned(), publisher)]);
         let cat_subj = SubjectNode::Named("https://opendata.example.org/catalog".into());
         let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, None);
         assert_eq!(
             g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
-            Some(Term::Iri("https://e.org/publisher/city".into()))
+            None
         );
         assert_eq!(
             g.first_object(&cat_subj, &format!("{}homepage", ns::FOAF)),
             Some(Term::Iri("https://opendata.example.org".into()))
         );
-        let g = catalogue_to_graph(&cat, &[], &BTreeMap::new(), DcatProfileKind::Eu301, None);
-        assert_eq!(
-            g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
-            Some(Term::Iri(
-                "https://opendata.example.org/publisher/default".into()
-            ))
+        let sk = crate::jsonld::serialize_sk_catalogue_jsonld(&cat, &[]);
+        assert!(!sk.contains("poskytovateľ"));
+
+        cat.publisher_uri = Some("https://data.gov.sk/id/legal-subject/00000000".into());
+        cat.publisher_name = Some(BTreeMap::from([("sk".into(), "Mesto".into())]));
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, None);
+        let agent = g.first_object(&cat_subj, &format!("{}publisher", ns::DCT));
+        assert!(
+            matches!(&agent, Some(term) if term.as_iri().is_none()),
+            "a placeholder is no IRI, the declared name stays: {agent:?}"
         );
-        let sk = crate::jsonld::serialize_sk_catalogue_jsonld(&cat, &[], &pubs);
-        assert!(sk.contains("https://e.org/publisher/city"));
     }
 }

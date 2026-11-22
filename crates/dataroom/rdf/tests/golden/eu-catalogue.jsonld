@@ -231,9 +231,6 @@
       "http://data.europa.eu/r5r/applicableLegislation": {
         "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
       },
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://purl.org/dc/terms/title": [
         {
           "@language": "en",
@@ -434,9 +431,6 @@
     {
       "@id": "https://data.gov.sk/set/vld/resource/sparql",
       "@type": "http://www.w3.org/ns/dcat#Distribution",
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://www.w3.org/ns/dcat#accessURL": {
         "@id": ""
       }
@@ -970,9 +964,6 @@
       "http://data.europa.eu/r5r/applicableLegislation": {
         "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
       },
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://purl.org/dc/terms/title": [
         {
           "@language": "en",
@@ -1173,9 +1164,6 @@
     {
       "@id": "https://data.gov.sk/set/vld/resource/sparql",
       "@type": "http://www.w3.org/ns/dcat#Distribution",
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://www.w3.org/ns/dcat#accessURL": {
         "@id": ""
       }

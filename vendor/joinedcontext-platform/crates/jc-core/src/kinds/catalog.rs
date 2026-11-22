@@ -113,6 +113,20 @@ pub struct ProjectCatalog {
     pub contact_point: Option<ContactPoint>,
 }
 
+/// Whether `value` is an IRI a publisher can be declared by: absolute http(s), without spaces, and
+/// no registry placeholder whose last segment is all zeros, such as `.../legal-subject/00000000`.
+pub fn is_declared_iri(value: &str) -> bool {
+    let value = value.trim();
+    let last = value
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    crate::kinds::http_url_host(value).is_some()
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+        && !(!last.is_empty() && last.bytes().all(|b| b == b'0'))
+}
+
 impl ProjectCatalog {
     /// Validates as an Endpoint's block does, and refuses a publisher without its IRI.
     pub fn validate(&self) -> Result<()> {

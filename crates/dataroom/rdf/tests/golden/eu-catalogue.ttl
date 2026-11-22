@@ -81,7 +81,6 @@
 
 <https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql> a dcat:Distribution ;
   dcatap:applicableLegislation <https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> ;
-  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
   dct:title "SPARQL endpoint for timetables"@en, "SPARQL endpoint pro jízdní řády"@cs ;
   dcat:accessService <https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql> ;
   dcat:accessURL <https://portal.cisjr.cz/sparql> .
@@ -130,7 +129,6 @@
   dcat:packageFormat <http://www.iana.org/assignments/media-types/application/zip> .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
   dcat:accessURL <> .
 
 <https://linked.cuzk.cz/resource/ruian/stat/1> a dct:Location .

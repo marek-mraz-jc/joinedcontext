@@ -74,8 +74,8 @@ pub use assistant::{
 };
 pub use blueprint::{BlueprintSpec, BlueprintTemplate, RiskClass};
 pub use catalog::{
-    Catalog, ContactPoint, DataTheme, Duty, Frequency, Licence, PersonalData, ProjectCatalog,
-    Publisher, Source, Temporal,
+    is_declared_iri, Catalog, ContactPoint, DataTheme, Duty, Frequency, Licence, PersonalData,
+    ProjectCatalog, Publisher, Source, Temporal,
 };
 pub use ckan::{CkanInstanceSpec, CkanPublication, Publication};
 pub use context_broker::{

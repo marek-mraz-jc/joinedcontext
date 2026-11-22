@@ -66,8 +66,7 @@
   leg:termsOfUse _:b3 .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dcat:accessURL <> ;
-  leg:termsOfUse _:b4 .
+  dcat:accessURL <> .
 
 <https://opendata.middop.sk/schemy/json-schema.json> a dct:Standard .
 
@@ -86,12 +85,6 @@ _:b3 a leg:TermsOfUse ;
   leg:authorsWorkType <https://creativecommons.org/licenses/by/4.0/> ;
   leg:databaseProtectedBySpecialRightsType <https://creativecommons.org/publicdomain/zero/1.0/> ;
   leg:originalDatabaseAuthorName "Ministerstvo dopravy, Odbor verejnej dopravy"@sk ;
-  leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
-
-_:b4 a leg:TermsOfUse ;
-  leg:authorsWorkType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:databaseProtectedBySpecialRightsType <https://creativecommons.org/publicdomain/zero/1.0/> ;
   leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
   leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 

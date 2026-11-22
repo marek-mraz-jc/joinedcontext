@@ -122,8 +122,7 @@
   pu:specifikace _:b10 .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dcat:accessURL <> ;
-  pu:specifikace _:b11 .
+  dcat:accessURL <> .
 
 <https://linked.cuzk.cz/resource/ruian/stat/1> a dct:Location .
 
@@ -187,12 +186,6 @@ _:b10 a pu:Specifikace ;
   pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
   pu:databáze-chráněná-zvláštními-právy <https://creativecommons.org/publicdomain/zero/1.0/> ;
   pu:databáze-jako-autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
-  pu:osobní-údaje <https://data.gov.sk/def/personal-data-occurence-type/2> .
-
-_:b11 a pu:Specifikace ;
-  pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
-  pu:databáze-chráněná-zvláštními-právy <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
-  pu:databáze-jako-autorské-dílo <https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/> ;
   pu:osobní-údaje <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
 
 _:b2 a vcard:Kind, vcard:Organization ;

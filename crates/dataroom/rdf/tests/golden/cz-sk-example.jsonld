@@ -12,7 +12,7 @@
         "autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
         "databáze_chráněná_zvláštními_právy": "https://creativecommons.org/publicdomain/zero/1.0/",
         "databáze_jako_autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
-        "osobní_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
+        "osobní_údaje": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
         "typ": "Podmínky užití"
       },
       "přístupové_url": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip",
@@ -22,13 +22,6 @@
     },
     {
       "iri": "https://data.gov.sk/set/vld/resource/sparql",
-      "podmínky_užití": {
-        "autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
-        "databáze_chráněná_zvláštními_právy": "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/",
-        "databáze_jako_autorské_dílo": "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/",
-        "osobní_údaje": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
-        "typ": "Podmínky užití"
-      },
       "přístupové_url": "",
       "typ": "Distribuce"
     }

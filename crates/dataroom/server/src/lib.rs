@@ -164,22 +164,13 @@ fn new_catalogue(org_id: OrgId, catalogue_id: CatalogueId, name: &str, host: &st
         default_language: "sk".into(),
         languages: vec!["sk".into(), "cs".into(), "en".into()],
         main_profile: "dcat-ap-3.0.1".into(),
-        active_profiles: vec![
-            ProfilePin {
-                profile_id: "dcat-ap-3.0.1".into(),
-                version: "3.0.1".into(),
-            },
-            ProfilePin {
-                profile_id: "dcat-ap-cz".into(),
-                version: "2026-09-23".into(),
-            },
-            ProfilePin {
-                profile_id: "dcat-ap-sk-2.0".into(),
-                version: "2.0.1".into(),
-            },
-        ],
-        default_licence: Some("cc-by".into()),
-        publisher_uri: Some("https://data.gov.sk/id/legal-subject/00000000".into()),
+        // A country's profile is the Organization's choice (T-7521).
+        active_profiles: vec![ProfilePin {
+            profile_id: "dcat-ap-3.0.1".into(),
+            version: "3.0.1".into(),
+        }],
+        default_licence: None,
+        publisher_uri: None,
         publisher_name: None,
         contact_point: None,
         theme: ThemeTokens::default(),

@@ -69,7 +69,6 @@
   dcat:packageFormat <http://www.iana.org/assignments/media-types/application/zip> .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
   dcat:accessURL <> .
 
 <https://opendata.middop.sk/schemy/json-schema.json> a dct:Standard .

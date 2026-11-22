@@ -12,7 +12,7 @@
         "autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
         "databáza_ako_autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
         "databáza_chránená_zvláštnými_právami": "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/",
-        "osobné_údaje": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
+        "osobné_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
         "typ": "Špecifikácia podmienok použitia"
       },
       "prístupové_url": "https://portal.cisjr.cz/pub/draha/mestske/JDF.zip",
@@ -30,7 +30,7 @@
         "autorské_dielo": "https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/",
         "databáza_ako_autorské_dielo": "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/",
         "databáza_chránená_zvláštnými_právami": "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/",
-        "osobné_údaje": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
+        "osobné_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
         "typ": "Špecifikácia podmienok použitia"
       },
       "prístupové_url": "https://portal.cisjr.cz/sparql",

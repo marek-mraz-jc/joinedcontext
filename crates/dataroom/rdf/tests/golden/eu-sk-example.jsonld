@@ -197,9 +197,6 @@
     {
       "@id": "https://data.gov.sk/set/vld/resource/sparql",
       "@type": "http://www.w3.org/ns/dcat#Distribution",
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://www.w3.org/ns/dcat#accessURL": {
         "@id": ""
       }
@@ -431,9 +428,6 @@
     {
       "@id": "https://data.gov.sk/set/vld/resource/sparql",
       "@type": "http://www.w3.org/ns/dcat#Distribution",
-      "http://purl.org/dc/terms/license": {
-        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
-      },
       "http://www.w3.org/ns/dcat#accessURL": {
         "@id": ""
       }

@@ -126,8 +126,7 @@
   leg:termsOfUse _:b10 .
 
 <https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
-  dcat:accessURL <> ;
-  leg:termsOfUse _:b11 .
+  dcat:accessURL <> .
 
 <https://linked.cuzk.cz/resource/ruian/stat/1> a dct:Location .
 
@@ -195,12 +194,6 @@ _:b10 a leg:TermsOfUse ;
   leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
   leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 
-_:b11 a leg:TermsOfUse ;
-  leg:authorsWorkType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:databaseProtectedBySpecialRightsType <https://creativecommons.org/publicdomain/zero/1.0/> ;
-  leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
-
 _:b2 a vcard:Kind, vcard:Organization ;
   vcard:fn "Oddelenie"@sk ;
   vcard:hasEmail <mailto:data@city.example> .
@@ -227,13 +220,13 @@ _:b6 a leg:TermsOfUse ;
   leg:databaseProtectedBySpecialRightsType <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
   leg:originalDatabaseAuthorName "Ministerstvo dopravy, Odbor veřejné dopravy"@cs ;
   leg:originalDatabaseType <https://creativecommons.org/licenses/by/4.0/> ;
-  leg:personalDataContainmentType <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
+  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 
 _:b7 a leg:TermsOfUse ;
   leg:authorsWorkType <https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/> ;
   leg:databaseProtectedBySpecialRightsType <https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/> ;
   leg:originalDatabaseType <https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/> ;
-  leg:personalDataContainmentType <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
+  leg:personalDataContainmentType <https://data.gov.sk/def/personal-data-occurence-type/2> .
 
 _:b8 a vcard:Kind, vcard:Organization ;
   vcard:fn "Ministerstvo dopravy, Odbor verejnej dopravy"@sk, "Ministry of Transport"@en ;

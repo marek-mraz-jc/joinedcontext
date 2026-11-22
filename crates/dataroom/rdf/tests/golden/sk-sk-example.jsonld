@@ -22,13 +22,6 @@
     },
     {
       "iri": "https://data.gov.sk/set/vld/resource/sparql",
-      "podmienky_použitia": {
-        "autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
-        "databáza_ako_autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
-        "databáza_chránená_zvláštnými_právami": "https://creativecommons.org/publicdomain/zero/1.0/",
-        "osobné_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
-        "typ": "Špecifikácia podmienok použitia"
-      },
       "prístupové_url": "",
       "typ": "Distribúcia"
     }
