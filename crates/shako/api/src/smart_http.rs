@@ -62,7 +62,7 @@ async fn handle_info_refs(
     Path((owner, repo_seg)): Path<(String, String)>,
     Query(q): Query<InfoRefsQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -132,7 +132,7 @@ async fn handle_post_upload_pack(
     Path((owner, repo_seg)): Path<(String, String)>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -174,7 +174,7 @@ async fn handle_post_receive_pack(
     Path((owner, repo_seg)): Path<(String, String)>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -309,7 +309,7 @@ async fn receive_push(
                 &cmd.refname,
                 &cmd.old_oid.to_string(),
                 &cmd.new_oid.to_string(),
-                &ctx.subject.username,
+                ctx.subject.login(),
             );
             // Each ref move is one event: a branch can return to a commit it held before.
             let idem = format!(

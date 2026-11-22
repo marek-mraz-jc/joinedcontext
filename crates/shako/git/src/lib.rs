@@ -46,8 +46,8 @@ pub use upload_pack::{
 mod tests {
     use super::*;
     use shako_core::{
-        Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, RefPolicy, RepoId,
-        RequestCtx, RoleBinding, Subject,
+        Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, Principal, RefPolicy,
+        RepoId, RequestCtx, RoleBinding, Subject,
     };
     use std::time::{Duration, SystemTime};
 
@@ -97,7 +97,7 @@ mod tests {
         body.extend_from_slice(&bundle[pack..]);
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![Action::Write],
             project_id: None,
             repo: None,
@@ -105,7 +105,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         );
         let guard = PushGuard {
             ctx: &ctx,
@@ -537,7 +537,7 @@ mod tests {
 
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![Action::Write],
             project_id: None,
             repo: None,
@@ -545,7 +545,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         );
         let rp_out = handle_receive_pack(
             &dest_path,

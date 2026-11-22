@@ -897,7 +897,7 @@ async fn odata_single_get(
     Path(segment): Path<String>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -967,7 +967,7 @@ async fn odata_single_delete(
     headers: HeaderMap,
     Path(segment): Path<String>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1125,7 +1125,7 @@ async fn odata_two_segment_get(
     Path((seg1, seg2)): Path<(String, String)>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1291,7 +1291,7 @@ async fn odata_deep_get(
     headers: HeaderMap,
     Path((seg1, seg2, rest)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1323,7 +1323,7 @@ async fn odata_single_post(
     Path(segment): Path<String>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1357,7 +1357,7 @@ async fn odata_two_segment_post(
     Path((seg1, seg2)): Path<(String, String)>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1389,7 +1389,7 @@ async fn odata_deep_post(
     Path((seg1, seg2, rest)): Path<(String, String, String)>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -1421,7 +1421,7 @@ async fn odata_deep_post(
 // =========================================================================
 
 async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return odata_error_response(&e);
     }
     let sets: Vec<Value> = state
@@ -1456,7 +1456,7 @@ async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) 
 }
 
 async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return odata_error_response(&e);
     }
     match state.registry.csdl_xml() {
@@ -1480,7 +1480,7 @@ async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> 
 /// What `Me()` answers: the login the caller signs in as, the name a branch rule's allow-lists
 /// take, so a client names itself without guessing (T-6706).
 fn me_row(ctx: &RequestCtx) -> Value {
-    json!({ "Login": ctx.subject.username })
+    json!({ "Login": ctx.subject.login() })
 }
 
 pub async fn evaluate_allowed_query(
@@ -1791,7 +1791,7 @@ pub async fn exec_odata_operation(
             let new = service::NewRepository {
                 owner: text(&body, "Owner")
                     .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| ctx.subject.username.clone()),
+                    .unwrap_or_else(|| ctx.subject.login().to_owned()),
                 name: required(&body, "Name")?,
                 description: text(&body, "Description").unwrap_or_default(),
                 private: flag(&body, "Private").unwrap_or(true),
@@ -2088,7 +2088,7 @@ pub async fn exec_odata_operation(
         "PublishPackage" | "jc_forge_publish_package" | "publish-package" => {
             let owner = text(&body, "Owner")
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| ctx.subject.username.clone());
+                .unwrap_or_else(|| ctx.subject.login().to_owned());
             let content = required(&body, "ContentBase64")?;
             let stripped: String = content.chars().filter(|c| !c.is_whitespace()).collect();
             let bytes = STANDARD
