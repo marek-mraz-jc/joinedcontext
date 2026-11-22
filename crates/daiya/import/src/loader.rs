@@ -77,11 +77,14 @@ pub struct ProvisioningLoadReport {
     pub datasources: Vec<DatasourceRecord>,
 }
 
-fn io_err(path: &Path, e: &std::io::Error) -> CrError {
-    CrError::BadRequest(format!(
-        "provisioning: cannot read '{}': {e}",
-        path.display()
-    ))
+/// A filesystem error on `path` as a refusal naming the path.
+fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CrError + '_ {
+    move |e| {
+        CrError::BadRequest(format!(
+            "provisioning: cannot read '{}': {e}",
+            path.display()
+        ))
+    }
 }
 
 /// The `*.yaml` / `*.yml` files of `dir`, sorted; none when `dir` does not exist.
@@ -90,8 +93,8 @@ fn yaml_files(dir: &Path) -> CrResult<Vec<PathBuf>> {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(dir).map_err(|e| io_err(dir, &e))? {
-        let path = entry.map_err(|e| io_err(dir, &e))?.path();
+    for entry in std::fs::read_dir(dir).map_err(io_err(dir))? {
+        let path = entry.map_err(io_err(dir))?.path();
         if path.is_file()
             && matches!(
                 path.extension().and_then(|e| e.to_str()),
@@ -229,12 +232,12 @@ pub async fn load_provisioning_dir(
     limits: &InputLimits,
     vars: &BTreeMap<String, String>,
 ) -> CrResult<ProvisioningLoadReport> {
-    let root = root.canonicalize().map_err(|e| io_err(root, &e))?;
+    let root = root.canonicalize().map_err(io_err(root))?;
     let mut report = ProvisioningLoadReport::default();
 
     let mut ds_outcomes = Vec::new();
     for file in yaml_files(&root.join("datasources"))? {
-        let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
+        let text = std::fs::read_to_string(&file).map_err(io_err(&file))?;
         // A `deleteDatasources` entry for one organization must not delete in another.
         let mut doc = crate::yaml::parse_yaml_to_json(&text)?;
         expand_variables(&mut doc, vars)?;
@@ -260,7 +263,7 @@ pub async fn load_provisioning_dir(
     // Paths (below the root) of the providers that delete what their files no longer hold.
     let mut pruned: Vec<(OrgId, PathBuf)> = Vec::new();
     for file in yaml_files(&root.join("dashboards"))? {
-        let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
+        let text = std::fs::read_to_string(&file).map_err(io_err(&file))?;
         let mut doc = crate::yaml::parse_yaml_to_json(&text)?;
         expand_variables(&mut doc, vars)?;
         for provider in parse_dashboard_providers_doc(&doc, Some(&root))? {
@@ -273,7 +276,7 @@ pub async fn load_provisioning_dir(
             batches.extend(read_provider(&root, &provider, org)?);
             if !provider.disable_deletion {
                 let base = Path::new(&provider.path);
-                let base = base.canonicalize().map_err(|e| io_err(base, &e))?;
+                let base = base.canonicalize().map_err(io_err(base))?;
                 if let Ok(prefix) = base.strip_prefix(&root) {
                     pruned.push((org, prefix.to_path_buf()));
                 }
@@ -417,7 +420,7 @@ fn read_provider(
     let mut by_folder: BTreeMap<Option<(String, String)>, Vec<DashboardImportInput>> =
         BTreeMap::new();
     for (rel_dir, path) in files {
-        let text = std::fs::read_to_string(&path).map_err(|e| io_err(&path, &e))?;
+        let text = std::fs::read_to_string(&path).map_err(io_err(&path))?;
         let raw_json: Value = serde_json::from_str(&text).map_err(|e| {
             CrError::BadRequest(format!(
                 "provisioning: '{}' is not JSON: {e}",
@@ -492,12 +495,12 @@ fn collect_json_files(
         )));
     }
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| io_err(dir, &e))?
-        .map(|e| e.map(|e| e.path()).map_err(|err| io_err(dir, &err)))
+        .map_err(io_err(dir))?
+        .map(|e| e.map(|e| e.path()).map_err(io_err(dir)))
         .collect::<CrResult<_>>()?;
     entries.sort();
     for path in entries {
-        let resolved = path.canonicalize().map_err(|e| io_err(&path, &e))?;
+        let resolved = path.canonicalize().map_err(io_err(&path))?;
         if !resolved.starts_with(root) {
             return Err(CrError::Forbidden(format!(
                 "provisioning: '{}' leads outside the provisioning root",

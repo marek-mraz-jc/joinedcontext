@@ -164,22 +164,19 @@ const MIGRATION_LOCK_KEY: i64 = 0x6461_6979_615f_6d67;
 /// (policies, grants) on a live database takes exclusive locks and deadlocks against application
 /// transactions, so a replica that boots next to a serving one must not do it.
 pub async fn migrate(pool: &PgPool) -> CrResult<()> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| CrError::MigrationFailed(format!("connect: {e}")))?;
+    let mut conn = pool.acquire().await.map_err(migration("connect"))?;
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *conn)
         .await
-        .map_err(|e| CrError::MigrationFailed(format!("advisory lock: {e}")))?;
+        .map_err(migration("advisory lock"))?;
     let result = migrate_locked(&mut conn).await;
     let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *conn)
         .await;
     result?;
-    unlock.map_err(|e| CrError::MigrationFailed(format!("advisory unlock: {e}")))?;
+    unlock.map_err(migration("advisory unlock"))?;
     Ok(())
 }
 
@@ -228,6 +225,21 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     }
     tx.commit().await.map_err(failed)?;
     Ok(())
+}
+
+/// A failed database step as an internal error naming the step (the detail is logged, never answered).
+fn internal(step: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::Internal(format!("{step} failed: {e}"))
+}
+
+/// A catalog the boot check could not read: RLS counts as not enforced.
+fn inspect(catalog: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::RlsNotEnforced(format!("failed to inspect {catalog}: {e}"))
+}
+
+/// A failed migration step, named.
+fn migration(step: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::MigrationFailed(format!("{step}: {e}"))
 }
 
 /// Maps a database error: a unique violation is a 409 conflict, everything else is internal
@@ -328,16 +340,12 @@ impl PgStore {
 
     /// Begins a transaction scoped to `org_id` via `SELECT set_config('cr.org', $1, true)` (§5.3).
     async fn begin_org_tx(&self, org_id: OrgId) -> CrResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| CrError::Internal(format!("begin tx failed: {e}")))?;
+        let mut tx = self.pool.begin().await.map_err(internal("begin tx"))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
             .bind(org_id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(format!("set_config cr.org failed: {e}")))?;
+            .map_err(internal("set_config cr.org"))?;
         Ok(tx)
     }
 
@@ -347,12 +355,12 @@ impl PgStore {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await
-            .map_err(|e| CrError::Internal(format!("begin snapshot failed: {e}")))?;
+            .map_err(internal("begin snapshot"))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
             .bind(org_id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(format!("set_config cr.org failed: {e}")))?;
+            .map_err(internal("set_config cr.org"))?;
         Ok(tx)
     }
 
@@ -385,7 +393,7 @@ impl PgStore {
         .bind(defaults.min_public_interval_ms)
         .execute(&mut **tx)
         .await
-        .map_err(|e| CrError::Internal(format!("ensure quota row failed: {e}")))?;
+        .map_err(internal("ensure quota row"))?;
 
         let row = sqlx::query(
             "SELECT max_dashboards, max_panels_per_dashboard, max_datasources, max_wasm_plugins,
@@ -396,7 +404,7 @@ impl PgStore {
         .bind(org_id.as_uuid())
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| CrError::Internal(format!("lock quota row failed: {e}")))?;
+        .map_err(internal("lock quota row"))?;
 
         Ok(OrgQuotas {
             max_dashboards: row.get::<i64, _>("max_dashboards") as u64,
@@ -849,7 +857,7 @@ impl DaiyaStore for PgStore {
             )
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| CrError::RlsNotEnforced(format!("failed to inspect pg_roles: {e}")))?;
+            .map_err(inspect("pg_roles"))?;
 
             let bypass: bool = role_row.get("rolbypassrls");
             let superuser: bool = role_row.get("rolsuper");
@@ -867,7 +875,7 @@ impl DaiyaStore for PgStore {
             )
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| CrError::RlsNotEnforced(format!("failed to inspect pg_class: {e}")))?;
+            .map_err(inspect("pg_class"))?;
 
             let statuses: Vec<TableRlsStatus> = table_rows
                 .into_iter()

@@ -704,6 +704,21 @@ async fn apply_takes_only_a_plan_the_server_keeps() {
     let err = load_plan(&store, ORG, &plan.digest).await.unwrap_err();
     assert_eq!(err.status_code(), 500);
     assert!(store.get_folder(ORG, "f").await.unwrap().is_none());
+
+    // A stored bundle that matches its digest but has no bundle's shape is refused as well.
+    let mut shapeless = kept.clone();
+    shapeless.org_id = OrgId::generate();
+    shapeless.desired = json!([1]);
+    shapeless.digest = plan_digest(&shapeless.base_etag, &shapeless.desired);
+    store.insert_plan(shapeless.clone()).await.unwrap();
+    let err = load_plan(&store, shapeless.org_id, &shapeless.digest)
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 500);
+    assert!(
+        err.to_string().contains("stored plan bundle did not parse"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
