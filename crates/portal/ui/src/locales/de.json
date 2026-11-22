@@ -1892,9 +1892,9 @@
           "granularity": "Der Server hat die Auflösung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
-          "spec": "Das ist kein gültiges Diagramm. Korrigieren Sie es oder verwerfen Sie Ihre Änderungen mit „Wieder die Felder nutzen“.",
-          "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder verwerfen Sie Ihre Änderungen mit „Wieder die Felder nutzen“.",
-          "address": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie {address} oder verwerfen Sie Ihre Änderungen mit „Wieder die Felder nutzen“.",
+          "spec": "Das ist kein gültiges Diagramm. Korrigieren Sie es oder verwerfen Sie Ihre Änderungen mit „Meine Änderungen verwerfen“.",
+          "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder verwerfen Sie Ihre Änderungen mit „Meine Änderungen verwerfen“.",
+          "address": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie {address} oder verwerfen Sie Ihre Änderungen mit „Meine Änderungen verwerfen“.",
           "dataLink": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Mit „Daten dieses Endpoints nutzen“ unten ersetzen Sie {address}, Ihre übrigen Änderungen bleiben."
         },
         "range": "Standardzeitraum",
@@ -1944,7 +1944,8 @@
           "lineShape": "Eine Linie über die Zeit, z. B. Messungen einer Woche.",
           "gridShape": "Ein nach einer Zahl gefärbtes Raster, z. B. Stationen nach Tagen.",
           "panelsShape": "Ein kleines Diagramm je Sache, z. B. ein Feld je Station.",
-          "detailShape": "Der ganze Zeitraum mit vergrößertem Teil, z. B. ein Tag im Monat."
+          "detailShape": "Der ganze Zeitraum mit vergrößertem Teil, z. B. ein Tag im Monat.",
+          "measureKept": "Bestimmt weiterhin, wessen Verlauf gelesen wird, z. B. no2, auch bei eigener Spezifikation."
         },
         "templates": {
           "bar": "Balkendiagramm",
@@ -1967,9 +1968,10 @@
         "chooseColumn": "Spalte wählen",
         "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",
         "setRange": "{range} für „{chart}“ vorschlagen",
-        "edited": "Was Sie unter Erweitert geschrieben haben, ersetzt Form und Spalten des Diagramms oben.",
-        "useFields": "Wieder die Felder nutzen",
-        "useSource": "Daten dieses Endpoints nutzen"
+        "edited": "Was Sie unter Erweitert geschrieben haben, ersetzt die grauen Felder oben.",
+        "useFields": "Meine Änderungen verwerfen",
+        "useSource": "Daten dieses Endpoints nutzen",
+        "readOnly": "Sie können diese Diagramme ansehen. Bitten Sie für Änderungen jemanden, der diesen Endpoint ändern darf."
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

@@ -465,6 +465,9 @@ describe("VisualizationsSection", () => {
     await userEvent.click(spec);
     await userEvent.paste(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }));
     expect(screen.getByText(V.edited)).toBeVisible();
+    // One way back, named by what it does.
+    expect(screen.queryByRole("button", { name: V.fill })).toBeNull();
+    expect(screen.getByLabelText(marked(V.roles.y))).toHaveAccessibleDescription(V.hint.measureKept);
     refusal = ["spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: never a URL"];
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
     await userEvent.click(await screen.findByRole("button", { name: V.showField }));
@@ -549,6 +552,11 @@ describe("VisualizationsSection", () => {
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
     expect(screen.getByRole("alert")).toHaveTextContent(V.badJson);
     expect(sent).toHaveLength(0);
+  });
+
+  it("tells a reader who can change the charts (T-7491)", () => {
+    mount(endpoint({ visualizations: [WEEK] }), false);
+    expect(screen.getByText(V.readOnly)).toBeVisible();
   });
 
   it("shows a reader the charts and nothing to change", () => {

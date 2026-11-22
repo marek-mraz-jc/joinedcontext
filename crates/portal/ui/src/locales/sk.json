@@ -1865,7 +1865,7 @@
         "spec": "Špecifikácia grafu (Vega-Lite)",
         "badJson": "Špecifikácia nie je platný JSON.",
         "noSource": "Tento endpoint neposkytuje žiadny zo zdrojov, ktoré graf číta.",
-        "incomplete": "Na návrh ešte vyplňte tieto polia: {fields}.",
+        "incomplete": "Ak chcete graf navrhnúť, vyplňte tieto polia: {fields}.",
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
         "toolbar": "Čo uvidia čitatelia",
@@ -1892,9 +1892,9 @@
           "granularity": "Server neprijal podrobnosť „{value}“. Vyberte {choices}.",
           "method": "Server neprijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova.",
-          "spec": "Toto nie je platný graf. Opravte ho alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
-          "outside": "Graf smie používať len údaje tohto endpointu. Odstráňte odkaz na inú adresu alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
-          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo tlačidlom „Použiť znova polia“ zahoďte úpravy.",
+          "spec": "Toto nie je platný graf. Opravte ho alebo tlačidlom „Zahodiť moje úpravy“ zahoďte úpravy.",
+          "outside": "Graf smie používať len údaje tohto endpointu. Odstráňte odkaz na inú adresu alebo tlačidlom „Zahodiť moje úpravy“ zahoďte úpravy.",
+          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo tlačidlom „Zahodiť moje úpravy“ zahoďte úpravy.",
           "dataLink": "Graf smie používať len údaje tohto endpointu. Tlačidlom „Použiť údaje tohto endpointu“ nižšie nahradíte {address} a ostatné úpravy zostanú."
         },
         "range": "Predvolené obdobie",
@@ -1944,7 +1944,8 @@
           "lineShape": "Čiara v čase, napr. merania za týždeň.",
           "gridShape": "Mriežka zafarbená číslom, napr. stanice podľa dní.",
           "panelsShape": "Malý graf pre každú vec, napr. panel na stanicu.",
-          "detailShape": "Celé obdobie so zväčšenou časťou, napr. jeden deň v mesiaci."
+          "detailShape": "Celé obdobie so zväčšenou časťou, napr. jeden deň v mesiaci.",
+          "measureKept": "Stále určuje, ktorej veličiny história sa číta, napr. no2, aj pri vlastnej špecifikácii."
         },
         "templates": {
           "bar": "Stĺpcový graf",
@@ -1967,9 +1968,10 @@
         "chooseColumn": "Vyberte stĺpec",
         "removeThenRemove": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny znova odstráňte „{removed}“.",
         "setRange": "Navrhnúť {range} pre „{chart}“",
-        "edited": "To, čo ste napísali v časti Pokročilé, nahrádza tvar a stĺpce grafu vyššie.",
-        "useFields": "Použiť znova polia",
-        "useSource": "Použiť údaje tohto endpointu"
+        "edited": "To, čo ste napísali v časti Pokročilé, nahrádza sivé polia vyššie.",
+        "useFields": "Zahodiť moje úpravy",
+        "useSource": "Použiť údaje tohto endpointu",
+        "readOnly": "Tieto grafy môžete prezerať. Ak ich chcete zmeniť, požiadajte niekoho, kto smie meniť tento endpoint."
       },
       "firstCall": "Prvé volanie",
       "firstCallOpen": "Otvoriť v prehliadači",

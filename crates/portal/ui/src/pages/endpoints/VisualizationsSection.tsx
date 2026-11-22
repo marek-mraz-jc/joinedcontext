@@ -411,6 +411,7 @@ export function VisualizationsSection({
   const fixedAxis = (role: Role) => source === "temporal" && role === "x";
   /** What a role's column is for, in the chart picked, or what to do when there is none. */
   const roleHint = (role: Role) => {
+    if (edited && source === "temporal" && role === "y") return t("endpoints.page.visualizations.hint.measureKept");
     if (offered(role).length === 0) return t("endpoints.page.visualizations.hint.noColumns");
     if (template === "heatmap") {
       const grid = { x: "gridX", y: "gridY", color: "gridColor", facet: "facet" }[role];
@@ -440,7 +441,7 @@ export function VisualizationsSection({
   });
 
   return (
-    <div className="space-y-3 max-sm:[&_button]:text-body" data-testid="visualizations">
+    <div className="space-y-3 max-sm:[&_button]:text-title max-sm:[&_summary]:text-title" data-testid="visualizations">
       {awaiting ? (
         <>
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
@@ -509,6 +510,9 @@ export function VisualizationsSection({
         </ul>
       )}
       {removing ? alert : null}
+      {canEdit ? null : (
+        <p className="text-body text-fg-muted">{t("endpoints.page.visualizations.readOnly")}</p>
+      )}
 
       {canEdit ? (
         <details
@@ -791,20 +795,24 @@ export function VisualizationsSection({
             <summary className="cursor-pointer content-center text-body font-medium text-fg">
               {t("endpoints.page.visualizations.advanced")}
             </summary>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="mt-3"
-              disabled={!complete(template, columns)}
-              disabledReason={t("endpoints.page.visualizations.pickRoles")}
-              onClick={() => void fill()}
-            >
-              {t("endpoints.page.visualizations.fill")}
-            </Button>
-            {complete(template, columns) ? null : (
-              <p className="mt-1 text-caption text-fg-muted">
-                {t("endpoints.page.visualizations.pickRoles")}
-              </p>
+            {edited ? null : (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-3"
+                  disabled={!complete(template, columns)}
+                  disabledReason={t("endpoints.page.visualizations.pickRoles")}
+                  onClick={() => void fill()}
+                >
+                  {t("endpoints.page.visualizations.fill")}
+                </Button>
+                {complete(template, columns) ? null : (
+                  <p className="mt-1 text-caption text-fg-muted">
+                    {t("endpoints.page.visualizations.pickRoles")}
+                  </p>
+                )}
+              </>
             )}
             <Field
               id="viz-spec"
@@ -838,7 +846,8 @@ export function VisualizationsSection({
             </p>
           )}
           <Button
-            variant="primary"
+            // While a repair is offered, the repair is the one primary action.
+            variant={dataLink ? "secondary" : "primary"}
             className="mt-3 max-sm:w-full"
             disabled={!ready || filling || proposal.mutation.isPending}
             disabledReason={ready ? t("app.busyReason") : incomplete}

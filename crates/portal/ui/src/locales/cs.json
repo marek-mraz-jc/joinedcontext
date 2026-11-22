@@ -1892,9 +1892,9 @@
           "granularity": "Server nepřijal podrobnost „{value}“. Vyberte {choices}.",
           "method": "Server nepřijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu.",
-          "spec": "Toto není platný graf. Opravte jej, nebo tlačítkem „Použít znovu pole“ zahoďte úpravy.",
-          "outside": "Graf smí používat jen data tohoto endpointu. Odeberte odkaz na jinou adresu, nebo tlačítkem „Použít znovu pole“ zahoďte úpravy.",
-          "address": "Graf smí používat jen data tohoto endpointu. Odeberte {address}, nebo tlačítkem „Použít znovu pole“ zahoďte úpravy.",
+          "spec": "Toto není platný graf. Opravte jej, nebo tlačítkem „Zahodit mé úpravy“ zahoďte úpravy.",
+          "outside": "Graf smí používat jen data tohoto endpointu. Odeberte odkaz na jinou adresu, nebo tlačítkem „Zahodit mé úpravy“ zahoďte úpravy.",
+          "address": "Graf smí používat jen data tohoto endpointu. Odeberte {address}, nebo tlačítkem „Zahodit mé úpravy“ zahoďte úpravy.",
           "dataLink": "Graf smí používat jen data tohoto endpointu. Tlačítkem „Použít data tohoto endpointu“ níže nahradíte {address} a ostatní úpravy zůstanou."
         },
         "range": "Výchozí období",
@@ -1944,7 +1944,8 @@
           "lineShape": "Čára v čase, např. měření za týden.",
           "gridShape": "Mřížka obarvená číslem, např. stanice podle dnů.",
           "panelsShape": "Malý graf pro každou věc, např. panel na stanici.",
-          "detailShape": "Celé období se zvětšenou částí, např. jeden den v měsíci."
+          "detailShape": "Celé období se zvětšenou částí, např. jeden den v měsíci.",
+          "measureKept": "Stále určuje, které veličiny se čte historie, např. no2, i u vlastní specifikace."
         },
         "templates": {
           "bar": "Sloupcový graf",
@@ -1967,9 +1968,10 @@
         "chooseColumn": "Vyberte sloupec",
         "removeThenRemove": "Nejdřív opravte nebo odeberte „{chart}“. Po schválení této změny znovu odeberte „{removed}“.",
         "setRange": "Navrhnout {range} pro „{chart}“",
-        "edited": "To, co jste napsali v části Pokročilé, nahrazuje tvar a sloupce grafu výše.",
-        "useFields": "Použít znovu pole",
-        "useSource": "Použít data tohoto endpointu"
+        "edited": "To, co jste napsali v části Pokročilé, nahrazuje šedá pole výše.",
+        "useFields": "Zahodit mé úpravy",
+        "useSource": "Použít data tohoto endpointu",
+        "readOnly": "Tyto grafy si můžete prohlížet. Chcete-li je změnit, požádejte někoho, kdo smí měnit tento endpoint."
       },
       "firstCall": "První volání",
       "firstCallOpen": "Otevřít v prohlížeči",
