@@ -183,6 +183,8 @@ pub struct Minute {
     /// Origins the host adds to a deployment's `allowedOrigins`, by `publicId`: the pages of the
     /// host's own catalogue, which frame its assistant (each `https://host[:port]`).
     pub extra_origins: BTreeMap<String, Vec<String>>,
+    /// The last minute whose due sources were queued.
+    pub queued_until: Option<time::OffsetDateTime>,
 }
 
 impl Minute {
@@ -211,6 +213,7 @@ impl Minute {
             ready,
             catalogue_digests: BTreeMap::new(),
             extra_origins: BTreeMap::new(),
+            queued_until: None,
         }
     }
 
@@ -257,10 +260,16 @@ impl Minute {
         if let Err(err) = chat::forget_expired(pool).await {
             tracing::warn!(%err, "expired conversations not deleted this minute");
         }
-        match worker::enqueue_due(pool, sources, now).await {
-            Ok(0) => {}
-            Ok(queued) => tracing::info!(queued, "sources due"),
-            Err(err) => tracing::warn!(%err, "sources not queued this minute"),
+        for minute in worker::unread_minutes(self.queued_until, now) {
+            match worker::enqueue_due(pool, sources, minute).await {
+                Ok(0) => {}
+                Ok(queued) => tracing::info!(queued, %minute, "sources due"),
+                Err(err) => {
+                    tracing::warn!(%err, %minute, "sources not queued this minute");
+                    break;
+                }
+            }
+            self.queued_until = Some(minute);
         }
         match worker::enqueue_changed(pool, sources, &mut self.catalogue_digests).await {
             Ok(0) => {}
