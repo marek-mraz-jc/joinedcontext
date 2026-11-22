@@ -906,6 +906,108 @@ fn scoped_write_bindings_only_grant_writes_inside_their_scope() {
     assert!(!authz.check(&carol, Action::Admin, &ds("loki")).allowed);
 }
 
+/// Only the subject [`Subject::public_dashboard`] mints is a public-dashboard subject: a person,
+/// an anonymous caller and an actor id that merely contains the prefix are not.
+#[test]
+fn only_the_minted_subject_is_a_public_dashboard() {
+    use daiya_model::PUBLIC_DASHBOARD_ACTOR_PREFIX;
+    let org = OrgId::from_u128(11);
+    assert!(Subject::public_dashboard(org, "pub").is_public_dashboard());
+    assert!(!Subject::authenticated("alice", vec![org], vec![]).is_public_dashboard());
+    assert!(!Subject::anonymous().is_public_dashboard());
+    let inside = format!("x{PUBLIC_DASHBOARD_ACTOR_PREFIX}pub");
+    assert!(!Subject::authenticated(&inside, vec![org], vec![]).is_public_dashboard());
+}
+
+/// A binding that names a folder lists that folder's dashboards, and gives nothing on a kind
+/// scoped by datasource: [`ReadScope::Nothing`], not an empty `In` a store would still query.
+#[test]
+fn a_binding_of_another_scope_reads_nothing() {
+    use daiya_model::{ReadKind, ReadScope, ScopeColumn};
+    let org = OrgId::from_u128(11);
+    let authz = PolicyAuthorizer::new(vec![RoleBinding {
+        org_id: org,
+        principal: "me".into(),
+        actions: vec![Action::Read],
+        folder_uid: Some("f1".into()),
+        datasource_uid: None,
+    }]);
+    let ctx = RequestCtx::new(
+        InstallationId::from_u128(1),
+        org,
+        InstanceId::from_u128(1),
+        Subject::authenticated("me", vec![org], vec![]),
+    );
+    assert_eq!(
+        authz.read_scope(&ctx, ReadKind::Dashboard),
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        }
+    );
+    assert_eq!(
+        authz.read_scope(&ctx, ReadKind::Datasource),
+        ReadScope::Nothing
+    );
+}
+
+/// The plan's `baseEtag`: the same state gives the same 64-hex digest, and a change of a folder's
+/// title, a datasource's url or a dashboard's JSON gives another.
+#[test]
+fn the_state_etag_follows_every_field_it_summarises() {
+    use daiya_model::{DashboardRecord, DatasourceRecord, FolderRecord, org_state_etag};
+    let ids = json!({
+        "installationId": InstallationId::from_u128(1),
+        "orgId": OrgId::from_u128(2),
+        "instanceId": InstanceId::from_u128(3),
+        "createdBy": "a", "updatedBy": "a",
+        "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+    });
+    let with = |extra: Value| {
+        let mut v = ids.clone();
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let folder: FolderRecord =
+        serde_json::from_value(with(json!({"uid": "f", "title": "F", "version": 1}))).unwrap();
+    let ds: DatasourceRecord = serde_json::from_value(with(json!({
+        "uid": "d", "name": "D", "type": "prometheus", "access": "proxy",
+        "url": "http://prom", "isDefault": false, "readOnly": false, "jsonData": {}, "version": 1,
+    })))
+    .unwrap();
+    let dash: DashboardRecord = serde_json::from_value(with(json!({
+        "uid": "x", "title": "X", "slug": "x", "tags": [], "panelCount": 0,
+        "datasourceUids": [], "version": 1, "schemaVersion": 42, "isProvisioned": false,
+        "allowUiUpdates": false, "data": {"panels": []},
+    })))
+    .unwrap();
+    let etag = org_state_etag(&[folder.clone()], &[ds.clone()], &[dash.clone()]);
+    assert_eq!(etag.len(), 64);
+    assert!(etag.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(
+        etag,
+        org_state_etag(&[folder.clone()], &[ds.clone()], &[dash.clone()])
+    );
+    assert_ne!(etag, org_state_etag(&[], &[], &[]));
+    let mut renamed = folder.clone();
+    renamed.title = "G".into();
+    assert_ne!(
+        etag,
+        org_state_etag(&[renamed], &[ds.clone()], &[dash.clone()])
+    );
+    let mut moved = ds.clone();
+    moved.url = "http://other".into();
+    assert_ne!(
+        etag,
+        org_state_etag(&[folder.clone()], &[moved], &[dash.clone()])
+    );
+    let mut edited = dash;
+    edited.data = json!({"panels": [1]});
+    assert_ne!(etag, org_state_etag(&[folder], &[ds], &[edited]));
+}
+
 /// A list's predicate and the per-object decision are one answer, for every binding shape.
 #[test]
 fn a_read_scope_lists_exactly_what_check_lets_the_caller_read() {
