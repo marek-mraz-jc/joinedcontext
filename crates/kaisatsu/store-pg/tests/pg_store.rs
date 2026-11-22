@@ -239,6 +239,85 @@ async fn data_survives_a_new_store_instance_and_secrets_stay_encrypted() {
     db.drop_db().await;
 }
 
+async fn rename(store: &PgStore, name: &str) -> Result<()> {
+    let mut u = store
+        .get_user_by_id("dev", None, "user-helsinki")
+        .await?
+        .expect("seeded person");
+    u.first_name = Some(name.into());
+    store.update_user(u).await.map(drop)
+}
+
+async fn first_name(store: &PgStore) -> Option<String> {
+    store
+        .get_user_by_id("dev", None, "user-helsinki")
+        .await
+        .unwrap()
+        .unwrap()
+        .first_name
+}
+
+fn admin_event(id: &str) -> AdminEvent {
+    AdminEvent {
+        id: id.into(),
+        realm_id: "dev".into(),
+        org_id: Some("helsinki".into()),
+        time: 0,
+        operation_type: "UPDATE".into(),
+        resource_type: "USER".into(),
+        resource_path: "users/user-helsinki".into(),
+        actor_id: "admin-1".into(),
+        actor_client_id: None,
+        representation: None,
+    }
+}
+
+/// Inside a door's unit the admin event commits with the change, and a failing event write
+/// undoes the change (AUD-02, S3-35); a replay mark stands even when its request fails.
+#[tokio::test]
+async fn an_admin_event_commits_with_its_change_or_neither_stands() {
+    let Some(db) = common::test_db("admin_event_with_change").await else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    seed(&store).await;
+    let ok = jc_audit::scope(|r: &Result<()>| r.is_ok(), async {
+        rename(&store, "Committed").await?;
+        store.append_admin_event(admin_event("ev-1")).await
+    })
+    .await
+    .unwrap();
+    assert!(ok.is_ok());
+    assert_eq!(first_name(&store).await.as_deref(), Some("Committed"));
+
+    // The second event reuses the id, so its insert fails: the rename must not stand.
+    let failed = jc_audit::scope(|r: &Result<()>| r.is_ok(), async {
+        rename(&store, "Lost").await?;
+        store.append_admin_event(admin_event("ev-1")).await
+    })
+    .await
+    .unwrap();
+    assert!(failed.is_err());
+    assert_eq!(first_name(&store).await.as_deref(), Some("Committed"));
+    assert_eq!(store.list_admin_events("dev", None).await.unwrap().len(), 1);
+
+    let mark = || RevokedTokenRecord {
+        jti_hash: "dpop-proof-hash".into(),
+        realm_id: "dev".into(),
+        expires_at: TimestampTz::now() + SignedDuration::from_mins(10),
+    };
+    let refused = jc_audit::scope(|_: &()| false, async {
+        store.mark_token_revoked(mark()).await.unwrap();
+    })
+    .await;
+    assert!(refused.is_ok());
+    assert!(
+        store.mark_token_revoked(mark()).await.is_err(),
+        "a replay mark rolled back with its failed request"
+    );
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn rls_hides_other_realms_and_organizations_from_the_request_role() {
     let Some(db) = common::test_db("rls_hides_other_realms_and_organizations").await else {

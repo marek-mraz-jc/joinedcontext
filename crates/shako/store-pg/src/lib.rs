@@ -35,14 +35,18 @@ mod tables;
 pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql");
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_store_log.sql");
 pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_secrets.sql");
+pub const JOBS_0001_SQL: &str = include_str!("../migrations/jobs/0001_mirror_sync.sql");
 /// In a ledger of its own, which a previous release never reads (T-7508).
 pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/0001_projection.sql");
+
+/// Keys led by the Organization (T-7549), in a ledger of its own for the same reason.
+pub const KEYS_0001_SQL: &str = include_str!("../migrations/keys/0001_org_keys.sql");
 
 /// How long a claimed event is this process's to send; after it another may claim it again, so
 /// an event is sent once, or again when its sender died or took longer.
 const OUTBOX_LEASE: Duration = Duration::from_secs(300);
 
-/// All 17 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
+/// All 18 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "instance",
     "repo",
@@ -61,6 +65,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "outbox",
     "store_log",
     "projection",
+    "mirror_sync",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +251,18 @@ impl PgStore {
             .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("projection migration failed: {e}")))?;
+        let mut jobs = Migrator::with_migrations(vec![migration(1, "mirror_sync", JOBS_0001_SQL)]);
+        jobs.create_schema("shako_jobs_migrations");
+        jobs.dangerous_set_table_name("shako_jobs_migrations._sqlx_migrations");
+        jobs.run(migrate_pool)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("jobs migration failed: {e}")))?;
+        let mut keys = Migrator::with_migrations(vec![migration(1, "org_keys", KEYS_0001_SQL)]);
+        keys.create_schema("shako_key_migrations");
+        keys.dangerous_set_table_name("shako_key_migrations._sqlx_migrations");
+        keys.run(migrate_pool)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("key migration failed: {e}")))?;
         Ok(())
     }
 
@@ -293,27 +310,37 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// Begins a transaction with `SET LOCAL` tenant context (`shako.instance` and `shako.org`).
+    /// Begins `tenant`'s transaction: see [`tenant_tx`].
     pub async fn begin_tenant_tx(
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
     ) -> ShakoResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
-        sqlx::query(
-            "SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
-        )
-        .bind(instance_id.to_string())
-        .bind(org_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
-        Ok(tx)
+        tenant_tx(&self.pool, instance_id, org_id).await
     }
+}
+
+/// The one way to a transaction over tenant rows (STO-06): the request role and the tenant are
+/// set in it and end with it, so forced RLS decides whoever the login is.
+async fn tenant_tx(
+    pool: &PgPool,
+    instance_id: InstanceId,
+    org_id: OrgId,
+) -> ShakoResult<Transaction<'_, Postgres>> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
+    sqlx::query(
+        "SELECT set_config('role', 'shako_app', true),
+                set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
+    )
+    .bind(instance_id.to_string())
+    .bind(org_id.to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
+    Ok(tx)
 }
 
 /// The hook and mirror secrets in `shako.secret` (S6-09, T-7280), sealed with the installation's
@@ -347,20 +374,7 @@ impl PgSecretStore {
     }
 
     async fn tenant_tx(&self, org_id: OrgId) -> ShakoResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
-        sqlx::query(
-            "SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
-        )
-        .bind(self.instance_id.to_string())
-        .bind(org_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
-        Ok(tx)
+        tenant_tx(&self.pool, self.instance_id, org_id).await
     }
 }
 
@@ -499,7 +513,26 @@ impl Store for PgStore {
                 owned_tables,
                 external_grants,
                 &statuses,
+            )?;
+            // Every tenant transaction runs as `shako_app` (`tenant_tx`). Asked last: the check
+            // above has found the schema and refused an unsafe login by its name.
+            let (member, unsafe_role): (bool, bool) = sqlx::query_as(
+                "SELECT pg_has_role(current_user, r.oid, 'MEMBER'),
+                        r.rolsuper OR r.rolbypassrls OR EXISTS (
+                            SELECT 1 FROM pg_class c WHERE c.relowner = r.oid AND c.relkind = 'r'
+                              AND c.relnamespace = 'shako'::regnamespace)
+                 FROM pg_roles r WHERE r.rolname = 'shako_app'",
             )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ShakoError::RlsNotEnforced(format!("inspect shako_app failed: {e}")))?;
+            if !member || unsafe_role {
+                return Err(ShakoError::RlsNotEnforced(format!(
+                    "role {role} must be a member of shako_app, and shako_app must own no table \
+                     and hold neither SUPERUSER nor BYPASSRLS"
+                )));
+            }
+            Ok(())
         })
     }
 
@@ -891,6 +924,113 @@ impl Store for PgStore {
                     &[webhook_id.map(|id| id.to_string())],
                 )
                 .await
+        })
+    }
+
+    fn mark_mirror_due(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+    ) -> StoreFuture<'_, i64> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            let mark: i64 = sqlx::query_scalar(
+                "INSERT INTO shako.mirror_sync AS t (instance_id, org_id, repo_id)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (instance_id, org_id, repo_id)
+                 DO UPDATE SET mark = t.mark + 1, marked_at = now()
+                 RETURNING mark",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(repo_id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            tx.commit().await.map_err(tables::failed)?;
+            Ok(mark)
+        })
+    }
+
+    fn mirror_synced(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            let synced: Option<bool> = sqlx::query_scalar(
+                "SELECT done >= $4 FROM shako.mirror_sync
+                 WHERE instance_id = $1 AND org_id = $2 AND repo_id = $3",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(repo_id.as_uuid())
+            .bind(mark)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            tx.commit().await.map_err(tables::failed)?;
+            Ok(synced.unwrap_or(false))
+        })
+    }
+
+    fn claim_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: Option<RepoId>,
+    ) -> StoreFuture<'_, Option<(RepoId, i64)>> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            let claimed: Option<(uuid::Uuid, i64)> = sqlx::query_as(
+                "WITH due AS (
+                     SELECT repo_id FROM shako.mirror_sync
+                     WHERE instance_id = $1 AND org_id = $2 AND mark > done
+                       AND (claimed_until IS NULL OR claimed_until <= now())
+                       AND ($3::uuid IS NULL OR repo_id = $3)
+                     ORDER BY marked_at, repo_id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                 UPDATE shako.mirror_sync t SET claimed_until = now() + make_interval(secs => $4)
+                 FROM due
+                 WHERE t.instance_id = $1 AND t.org_id = $2 AND t.repo_id = due.repo_id
+                 RETURNING t.repo_id, t.mark",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(repo_id.map(RepoId::as_uuid))
+            .bind(shako_core::MIRROR_LEASE.as_secs_f64())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            tx.commit().await.map_err(tables::failed)?;
+            Ok(claimed.map(|(id, mark)| (RepoId::from(id), mark)))
+        })
+    }
+
+    fn finish_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            sqlx::query(
+                "UPDATE shako.mirror_sync SET done = GREATEST(done, $4), claimed_until = NULL
+                 WHERE instance_id = $1 AND org_id = $2 AND repo_id = $3",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(repo_id.as_uuid())
+            .bind(mark)
+            .execute(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            tx.commit().await.map_err(tables::failed)
         })
     }
 

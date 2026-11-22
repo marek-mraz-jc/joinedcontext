@@ -5,7 +5,10 @@
 //! gateway no longer judges an answer entity by entity (T-4755). What stays here is the attributes
 //! a grant's own conditions read, which a write probe asks the broker for.
 
-use jc_core::kinds::PolicySpec;
+use crate::auth::subject::Subject;
+use jc_core::kinds::{Operation, PolicySpec, RegistrationInfo, WriteCapability};
+use jc_core::Urn;
+use jc_time::TimestampTz;
 use std::collections::BTreeSet;
 
 /// One grant as an entity is judged against it.
@@ -39,6 +42,145 @@ impl GrantView {
             scope_q: policy.scope_q.clone(),
             geo_q: policy.geo_q.clone(),
             attrs: super::evaluator::granted_attrs(&policy.information),
+        }
+    }
+}
+
+/// What of an entity a delete rule asks one grant for (S2-06).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Part<'a> {
+    /// The entity by type and id: the delete the broker decides itself, on what it stores.
+    Root,
+    /// Every attribute, whatever the entity holds: a delete that reads nothing more.
+    Whole,
+    /// These attributes, all the entity holds.
+    Holding(&'a [&'a str]),
+    /// This one attribute.
+    Attribute(&'a str),
+}
+
+/// Whether one selector of one grant alone gives `subject` the `operation` on `part` of `id`,
+/// as the broker compiles a Policy (one rule per selector, ADR-N-050): the type, the id, the
+/// attribute list and the attribute's capabilities are that one's, so no grant, entry or
+/// selector lends another what it lacks (AUZ-13, GW16).
+///
+/// A grant with a condition on the stored entity gives nothing here, and neither does one with
+/// a window to a write, which the broker admits under none.
+pub(crate) fn one_grant_gives(
+    subject: &Subject,
+    policies: &[PolicySpec],
+    operation: Operation,
+    id: &str,
+    part: Part<'_>,
+    now: TimestampTz,
+) -> bool {
+    let Ok(urn) = id.parse::<Urn>() else {
+        return false;
+    };
+    let kind = urn.entity_type();
+    let applying = || {
+        policies
+            .iter()
+            .filter(move |policy| super::evaluator::applies(policy, subject, operation, now))
+    };
+    // A prohibition refuses the delete of an entity holding an attribute it names, and of
+    // every entity of its type when it names none.
+    let withheld = applying().any(|policy| {
+        policy.effect.is_prohibition()
+            && match part {
+                Part::Whole => prohibits(&policy.information, kind, |_| true),
+                Part::Holding(held) => prohibits(&policy.information, kind, |named| {
+                    held.iter().any(|name| same_attribute(name, named))
+                }),
+                Part::Root | Part::Attribute(_) => false,
+            }
+    });
+    !withheld
+        && applying().any(|policy| {
+            !policy.effect.is_prohibition()
+                && policy.q.is_none()
+                && policy.scope_q.is_none()
+                && policy.geo_q.is_none()
+                && (!operation.is_write() || policy.temporal_q.is_none())
+                && (policy.information.is_empty()
+                    || policy
+                        .information
+                        .iter()
+                        .any(|info| selects(info, kind, id) && covers(info, operation, part)))
+        })
+}
+
+/// Whether a prohibition's `information` takes an attribute `named` from a `kind`, or all.
+fn prohibits(information: &[RegistrationInfo], kind: &str, named: impl Fn(&str) -> bool) -> bool {
+    information.is_empty()
+        || information.iter().any(|info| {
+            let mut names = info
+                .property_names
+                .iter()
+                .chain(&info.relationship_names)
+                .peekable();
+            (info.entities.is_empty() || info.entities.iter().any(|e| e.entity_type == kind))
+                && (names.peek().is_none() || names.any(|name| named(name)))
+        })
+}
+
+/// Whether two spellings, term or IRI, may name one attribute. For what withholds, never for
+/// what grants.
+pub(crate) fn same_attribute(one: &str, other: &str) -> bool {
+    super::write_guard::names_attribute(one, other)
+        || super::write_guard::names_attribute(other, one)
+}
+
+/// Whether one selector of `info` names both the type and the id.
+fn selects(info: &RegistrationInfo, kind: &str, id: &str) -> bool {
+    info.entities.iter().any(|selector| {
+        selector.entity_type == kind
+            && match (&selector.id, &selector.id_pattern) {
+                (Some(named), _) => named.to_string() == id,
+                // anchored at both ends, as the broker anchors it
+                (None, Some(pattern)) => antares_ql::regex::compile(&format!("^(?:{pattern})$"))
+                    .is_ok_and(|compiled| compiled.is_match(id)),
+                (None, None) => true,
+            }
+    })
+}
+
+/// Whether `info`'s own list and capabilities give `operation` on `part`.
+fn covers(info: &RegistrationInfo, operation: Operation, part: Part<'_>) -> bool {
+    let allows = |name: &str| {
+        let (own, every) = (info.attributes.get(name), info.attributes.get("*"));
+        let kind = match operation {
+            Operation::DeleteEntity | Operation::DeleteAttrs => WriteCapability::Delete,
+            Operation::UpdateAttrs => WriteCapability::Update,
+            _ => {
+                return own
+                    .and_then(|caps| caps.read)
+                    .or_else(|| every.and_then(|caps| caps.read))
+                    .unwrap_or(true)
+            }
+        };
+        own.and_then(|caps| caps.write.as_ref())
+            .or_else(|| every.and_then(|caps| caps.write.as_ref()))
+            .is_none_or(|kinds| kinds.contains(&kind))
+    };
+    let mut listed = info
+        .property_names
+        .iter()
+        .chain(&info.relationship_names)
+        .peekable();
+    let every_attribute = listed.peek().is_none();
+    match part {
+        Part::Root => true,
+        Part::Whole => {
+            every_attribute && allows("*") && info.attributes.keys().all(|name| allows(name))
+        }
+        Part::Holding(held) => {
+            let listed: BTreeSet<&str> = listed.map(String::as_str).collect();
+            held.iter()
+                .all(|name| (every_attribute || listed.contains(name)) && allows(name))
+        }
+        Part::Attribute(name) => {
+            (every_attribute || listed.any(|listed| listed == name)) && allows(name)
         }
     }
 }

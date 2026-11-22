@@ -157,6 +157,10 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
                 .collect();
             axum::Json(Value::Array(found)).into_response()
         }
+        (Method::GET, ["entities", id]) => match store.entities.get(*id) {
+            Some(entity) => axum::Json(entity.clone()).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
         (Method::POST, ["entities"]) => {
             let entity: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             let id = entity["id"].as_str().unwrap_or_default().to_owned();
@@ -1070,4 +1074,173 @@ async fn a_delete_nothing_points_at_goes_straight_to_the_broker() {
             urn("Lesson", "l1")
         )]
     );
+}
+
+// --- one grant's authority (S2-06, T-7543) ----------------------------------------------------
+
+/// The delete of Desk d1, whose rule takes `desk` off a Teacher, under the caller's `grants`
+/// beside one that deletes Desks and one that reads every class.
+async fn unlinked_under(grants: &[&str]) -> Answer {
+    let mut endpoint = endpoint(CLASSES);
+    endpoint.policies = vec![
+        policy("deleteEntity", &["Desk"]),
+        policy("queryEntity, retrieveEntity", CLASSES),
+    ];
+    endpoint.policies.extend(grants.iter().map(|grant| {
+        serde_norway::from_str::<PolicySpec>(&format!(
+            "contextSpaceRef: {SPACE}\nassigner: did:web:{DOMAIN}\nassignee: {{ kind: role, id: public }}\n{grant}"
+        ))
+        .expect("the grant parses")
+    }));
+    send_to(
+        endpoint,
+        &[],
+        Method::DELETE,
+        &format!("/entities/{}", urn("Desk", "d1")),
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_unlink_needs_the_slot_the_type_and_the_id_in_one_grant() {
+    let own_id = format!(
+        "operations: [deleteAttrs]\ninformation:\n  - entities: [{{ type: Teacher, id: \"{}\" }}]\n    relationshipNames: [desk]\n",
+        urn("Teacher", "t1")
+    );
+    for allowed in [
+        "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n",
+        "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    relationshipNames: [desk]\n",
+        "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    relationshipNames: [desk]\n    attributes: { desk: { write: [delete] } }\n",
+        own_id.as_str(),
+    ] {
+        let answer = unlinked_under(&[allowed]).await;
+        assert_eq!(answer.status, StatusCode::NO_CONTENT, "{allowed}: {}", answer.body);
+    }
+
+    let refused: &[&[&str]] = &[
+        // the slot is in no list
+        &["operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    propertyNames: [name]\n"],
+        // one grant has the type, the other the slot
+        &[
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    propertyNames: [name]\n",
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Lesson }]\n    relationshipNames: [desk]\n",
+        ],
+        // a whole other type lends no attribute
+        &[
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    propertyNames: [name]\n",
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Lesson }]\n",
+        ],
+        // two entries of one Policy are two grants
+        &["operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    propertyNames: [name]\n  - entities: [{ type: Lesson }]\n    relationshipNames: [desk]\n"],
+        // one grant has the type, the other the id
+        &[
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher, idPattern: \".*:t2\" }]\n",
+            "operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Lesson, idPattern: \".*:t1\" }]\n",
+        ],
+        // the attribute's capabilities leave delete out
+        &["operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    relationshipNames: [desk]\n    attributes: { desk: { write: [update] } }\n"],
+        &["operations: [deleteAttrs]\ninformation:\n  - entities: [{ type: Teacher }]\n    relationshipNames: [desk]\n    attributes: { \"*\": { write: [append] } }\n"],
+        // a window admits no write
+        &["operations: [deleteAttrs]\ntemporalQ: \"timerel=after;timeAt=P-1D\"\ninformation:\n  - entities: [{ type: Teacher }]\n"],
+    ];
+    for grants in refused {
+        let answer = unlinked_under(grants).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::CONFLICT,
+            "{grants:?}: {}",
+            answer.body
+        );
+        assert!(
+            answer.writes().is_empty(),
+            "{grants:?}: {:?}",
+            answer.writes()
+        );
+    }
+}
+
+/// A cascade deletes what the entity holds: a grant over the whole entity carries it, or one
+/// whose own list has every attribute stored on it, less what a prohibition withholds.
+#[tokio::test]
+async fn a_cascade_needs_a_grant_over_the_whole_entity() {
+    let refused = cascaded_under(&["operations: [deleteEntity]\ninformation:\n  - entities: [{ type: Lesson }]\n    relationshipNames: [teacher]\n"]).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert!(refused.writes().is_empty(), "{:?}", refused.writes());
+
+    let split = cascaded_under(&[
+        "operations: [deleteEntity]\ninformation:\n  - entities: [{ type: Lesson }]\n    relationshipNames: [teacher]\n",
+        "operations: [deleteEntity]\ninformation:\n  - entities: [{ type: Lesson }]\n    propertyNames: [name]\n",
+    ])
+    .await;
+    assert_eq!(split.status, StatusCode::CONFLICT, "{}", split.body);
+
+    let listed = "operations: [deleteEntity]\ninformation:\n  - entities: [{ type: Lesson }]\n    propertyNames: [name]\n    relationshipNames: [teacher]\n";
+    for withheld in ["teacher", "https://example.org/teacher", "name"] {
+        let prohibition = format!("effect: prohibition\noperations: [deleteEntity]\ninformation:\n  - entities: [{{ type: Lesson }}]\n    relationshipNames: [\"{withheld}\"]\n");
+        let answer = cascaded_under(&[listed, &prohibition]).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::CONFLICT,
+            "{withheld}: {}",
+            answer.body
+        );
+        assert!(
+            answer.writes().is_empty(),
+            "{withheld}: {:?}",
+            answer.writes()
+        );
+    }
+
+    let answer = cascaded_under(&[listed]).await;
+    assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
+    assert!(answer.held(&urn("Lesson", "l1")).is_none());
+}
+
+/// The delete of Teacher t1, whose rule takes the two Lessons with it, under `grants`.
+async fn cascaded_under(grants: &[&str]) -> Answer {
+    let mut endpoint = endpoint(CLASSES);
+    endpoint.policies = vec![
+        policy("deleteEntity", &["Teacher"]),
+        policy("queryEntity, retrieveEntity", CLASSES),
+    ];
+    endpoint.policies.extend(grants.iter().map(|grant| {
+        serde_norway::from_str::<PolicySpec>(&format!(
+            "contextSpaceRef: {SPACE}\nassigner: did:web:{DOMAIN}\nassignee: {{ kind: role, id: public }}\n{grant}"
+        ))
+        .expect("the grant parses")
+    }));
+    send_to(
+        endpoint,
+        &[],
+        Method::DELETE,
+        &format!("/entities/{}", urn("Teacher", "t1")),
+        None,
+    )
+    .await
+}
+
+/// The ids a refusal lists are those one read grant shows with that slot.
+#[tokio::test]
+async fn a_refusal_lists_no_id_whose_slot_no_one_grant_shows() {
+    let mut endpoint = endpoint(CLASSES);
+    endpoint.policies = vec![
+        policy("deleteEntity", &["Building"]),
+        serde_norway::from_str(&format!(
+            "contextSpaceRef: {SPACE}\nassigner: did:web:{DOMAIN}\nassignee: {{ kind: role, id: public }}\noperations: [queryEntity]\ninformation:\n  - entities: [{{ type: School }}]\n    propertyNames: [name]\n"
+        ))
+        .expect("the grant parses"),
+    ];
+    let answer = send_to(
+        endpoint,
+        &[],
+        Method::DELETE,
+        &format!("/entities/{}", urn("Building", "b1")),
+        None,
+    )
+    .await;
+
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.body);
+    assert_eq!(answer.body["count"], 2);
+    assert_eq!(answer.body["ids"], json!([]));
 }

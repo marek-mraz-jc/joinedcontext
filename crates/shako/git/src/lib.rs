@@ -7,6 +7,7 @@ pub mod archive;
 pub mod bundle;
 pub mod compact;
 pub mod merge;
+pub mod pack;
 pub mod pktline;
 pub mod receive_pack;
 pub mod repo;
@@ -23,9 +24,10 @@ pub use merge::{
     DiffFileEntry, MergeOptions, MergeStyle, MergeabilityOutcome, check_mergeability,
     diff_refs_files, execute_pr_merge, update_pr_branch,
 };
+pub use pack::{Admit, job_bytes, write_pack};
 pub use pktline::{PktLine, parse_all_pkt_lines, read_pkt_line, write_flush, write_text_line};
 pub use receive_pack::{
-    PushGuard, RECEIVE_PACK_CAPABILITIES, ReceivePackOutcome, RefUpdateCommand,
+    MAX_COMMAND_BYTES, PushGuard, RECEIVE_PACK_CAPABILITIES, ReceivePackOutcome, RefUpdateCommand,
     advertise_receive_pack, handle_receive_pack, scan_blob_for_secrets,
 };
 pub use repo::{
@@ -34,20 +36,20 @@ pub use repo::{
     delete_branch, init_bare_repo, list_branches, list_commits, list_tags, list_tree_entries,
     open_isolated, read_commit_info, read_file_at_ref, resolve_commit_oid, set_ref_direct,
 };
-pub use send_pack::push_mirror_over_https;
+pub use send_pack::{MirrorRemote, SendPack, write_send_pack};
 pub use upload_pack::{
-    AdvertisedRef, ObjectFilter, V0_UPLOAD_CAPABILITIES, advertise_upload_pack, build_pack_bytes,
-    collect_advertised_refs, handle_upload_pack,
+    AdvertisedRef, ObjectFilter, V0_UPLOAD_CAPABILITIES, advertise_upload_pack,
+    collect_advertised_refs, handle_upload_pack, read_negotiation,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use shako_core::{
-        Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, RefPolicy, RepoId,
-        RequestCtx, RoleBinding, Subject,
+        Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, Principal, RefPolicy,
+        RepoId, RequestCtx, RoleBinding, Subject,
     };
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     /// Pushes `main` of `source` into a new empty repository and answers the report-status text.
     fn push_main(tmp: &std::path::Path, source: &std::path::Path, tip: &str) -> String {
@@ -75,7 +77,8 @@ mod tests {
     ) -> String {
         let inst = InstanceId::from_u128(1);
         let org = OrgId::from_u128(1);
-        let bundle = create_single_ref_bundle(source, "main").expect("bundle");
+        let mut bundle = Vec::new();
+        create_single_ref_bundle(source, "main", &mut bundle, &mut |_| Ok(())).expect("bundle");
         let pack = bundle
             .windows(2)
             .position(|w| w == b"\n\n")
@@ -94,7 +97,7 @@ mod tests {
         body.extend_from_slice(&bundle[pack..]);
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![Action::Write],
             project_id: None,
             repo: None,
@@ -102,7 +105,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         );
         let guard = PushGuard {
             ctx: &ctx,
@@ -111,8 +114,16 @@ mod tests {
             repo_name: "dest",
             policy: &RefPolicy::default(),
         };
-        let out = handle_receive_pack(dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
+        let body = spooled(&body);
+        let out = handle_receive_pack(dest, &guard, 10 * 1024 * 1024, &body, &mut |_| Ok(()))
+            .expect("receive-pack");
         String::from_utf8_lossy(&out.response_bytes).into_owned()
+    }
+
+    fn spooled(bytes: &[u8]) -> std::fs::File {
+        let mut file = tempfile::tempfile().expect("spool");
+        std::io::Write::write_all(&mut file, bytes).expect("spool write");
+        file
     }
 
     /// Contract S4: a pack is named by its content, so a refused repeat of an accepted push
@@ -487,12 +498,20 @@ mod tests {
         write_text_line(&mut v2_fetch_req, &format!("want {merged_sha}")).unwrap();
         write_text_line(&mut v2_fetch_req, "done").unwrap();
         write_flush(&mut v2_fetch_req).unwrap();
-        let v2_fetch_resp =
-            handle_upload_pack(&repo_path, Some("version=2"), &v2_fetch_req).expect("v2 fetch");
+        let mut v2_fetch_resp = Vec::new();
+        handle_upload_pack(
+            &repo_path,
+            Some("version=2"),
+            &v2_fetch_req,
+            &mut v2_fetch_resp,
+            &mut |_| Ok(()),
+        )
+        .expect("v2 fetch");
         assert!(String::from_utf8_lossy(&v2_fetch_resp).contains("packfile"));
 
         // 4. Test bundle export and push_bundle into an empty repository via receive-pack
-        let bundle = create_single_ref_bundle(&repo_path, "main").expect("bundle");
+        let mut bundle = Vec::new();
+        create_single_ref_bundle(&repo_path, "main", &mut bundle, &mut |_| Ok(())).expect("bundle");
         assert!(bundle.starts_with(b"# v2 git bundle\n"));
 
         let dest_id = RepoId::from_u128(101);
@@ -518,7 +537,7 @@ mod tests {
 
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![Action::Write],
             project_id: None,
             repo: None,
@@ -526,7 +545,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         );
         let rp_out = handle_receive_pack(
             &dest_path,
@@ -538,7 +557,8 @@ mod tests {
                 policy: &RefPolicy::default(),
             },
             10 * 1024 * 1024,
-            &rp_body,
+            &spooled(&rp_body),
+            &mut |_| Ok(()),
         )
         .expect("receive-pack");
         assert_eq!(rp_out.updated_refs.len(), 1);
@@ -560,22 +580,44 @@ mod tests {
                 },
             },
             10,
-            &rp_body,
+            &spooled(&rp_body),
+            &mut |_| Ok(()),
         ) // 10 bytes max_push_bytes -> refused with unpack error quota
         .expect("quota refusal");
         assert!(String::from_utf8_lossy(&over_quota.response_bytes).contains("unpack error quota"));
         assert!(!has_active_quarantine(&dest_path));
 
         // 5. Archives (.zip and .tar.gz), Compaction, and Fsck
-        let zip_bytes =
-            create_archive(&dest_path, "dest", "main", ArchiveFormat::Zip).expect("zip");
+        let archived = |format| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            create_archive(
+                &dest_path,
+                "dest",
+                "main",
+                format,
+                &mut out,
+                &mut |_| Ok(()),
+            )
+            .map(|()| out.into_inner())
+        };
+        let zip_bytes = archived(ArchiveFormat::Zip).expect("zip");
         assert!(zip_bytes.starts_with(b"PK\x03\x04"));
-        let targz_bytes =
-            create_archive(&dest_path, "dest", "main", ArchiveFormat::TarGz).expect("targz");
+        let targz_bytes = archived(ArchiveFormat::TarGz).expect("targz");
         assert!(!targz_bytes.is_empty());
 
+        // A push that runs holds compaction back; what a crash left a day ago does not.
+        let incoming = repo_path.join("objects/incoming-left");
+        std::fs::create_dir_all(&incoming).expect("quarantine");
+        let compact = || compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()));
+        assert!(compact().expect("compact").skipped_due_to_quarantine);
+        std::fs::File::open(&incoming)
+            .and_then(|dir| dir.set_modified(SystemTime::now() - Duration::from_secs(25 * 3600)))
+            .expect("age");
+        assert!(!compact().expect("compact").skipped_due_to_quarantine);
+        assert!(!incoming.exists());
         let compact_out =
-            compact_repository(&repo_path, Duration::from_secs(3600)).expect("compact");
+            compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()))
+                .expect("compact");
         assert_eq!(compact_out.packs_after, 1);
 
         let fsck_out = fsck_repository(&repo_path).expect("fsck");
@@ -598,8 +640,14 @@ mod tests {
         write_text_line(&mut orphan_req, &format!("want {orphan_oid}")).unwrap();
         write_text_line(&mut orphan_req, "done").unwrap();
         write_flush(&mut orphan_req).unwrap();
-        let refused = handle_upload_pack(&repo_path, Some("version=2"), &orphan_req)
-            .expect_err("unreachable blob must not be served");
+        let refused = handle_upload_pack(
+            &repo_path,
+            Some("version=2"),
+            &orphan_req,
+            std::io::sink(),
+            &mut |_| Ok(()),
+        )
+        .expect_err("unreachable blob must not be served");
         assert_eq!(refused.status_code(), 400);
     }
 }

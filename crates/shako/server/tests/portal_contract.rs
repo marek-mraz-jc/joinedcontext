@@ -22,8 +22,8 @@ use joinedcontext_portal::forge::{
 use serde_json::{Value, json};
 use sha2::Digest as _;
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
@@ -69,21 +69,21 @@ impl World {
         let authz = Arc::new(LocalAuthorizer::new(vec![
             RoleBinding {
                 org_id: org,
-                principal: "jc-portal".into(),
+                principal: Principal::User("jc-portal".into()),
                 actions: all.clone(),
                 project_id: None,
                 repo: None,
             },
             RoleBinding {
                 org_id: apps_org,
-                principal: "jc-apps".into(),
+                principal: Principal::User("jc-apps".into()),
                 actions: all,
                 project_id: None,
                 repo: None,
             },
             RoleBinding {
                 org_id: org,
-                principal: "writer-bob".into(),
+                principal: Principal::User("writer-bob".into()),
                 actions: vec![Action::Write],
                 project_id: None,
                 repo: None,
@@ -93,15 +93,15 @@ impl World {
             .with_static_tokens(vec![
                 StaticTokenBinding::new(
                     PORTAL_TOKEN,
-                    Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+                    Subject::authenticated("jc-portal", "jc-portal", vec![org]),
                 ),
                 StaticTokenBinding::new(
                     APPS_TOKEN,
-                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org], vec![]),
+                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org]),
                 ),
                 StaticTokenBinding::new(
                     WRITER_TOKEN,
-                    Subject::authenticated("writer-bob", "writer-bob", vec![org], vec![]),
+                    Subject::authenticated("writer-bob", "writer-bob", vec![org]),
                 ),
             ]);
         let guard = OutboundGuard::new(OutboundPolicy {
@@ -125,15 +125,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
-        state.register_owner_org(APPS_OWNER, apps_org);
         state
             .secret_store
             .put_secret(org, "portal-webhook", WEBHOOK_SECRET)

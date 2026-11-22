@@ -30,18 +30,21 @@ async fn organization_wide_sets_need_read_on_the_organization() {
     let w = seeded().await;
     w.store
         .inner
-        .insert_import_report(daiya_model::ImportReportRecord {
-            id: "report-1".into(),
-            org_id: ORG,
-            instance_id: daiya_model::InstanceId::from_u128(1),
-            dry_run: false,
-            status: "applied".into(),
-            dashboard_count: 1,
-            refused_count: 0,
-            mapped_count: 1,
-            summary: json!({}),
-            created_at: jc_time::TimestampTz::now(),
-        })
+        .insert_import_report(
+            daiya_model::InstallationId::SINGLE,
+            daiya_model::ImportReportRecord {
+                id: "report-1".into(),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                dry_run: false,
+                status: "applied".into(),
+                dashboard_count: 1,
+                refused_count: 0,
+                mapped_count: 1,
+                summary: json!({}),
+                created_at: jc_time::TimestampTz::now(),
+            },
+        )
         .await
         .unwrap();
     let key = daiya_query::CacheKey::new(
@@ -452,10 +455,16 @@ async fn actions_query_import_plan_apply_and_rotate() {
 
     // Public dashboards: create through the compat route, rotate through both OData doors,
     // query through the action with the current token only.
+    // Published with a panel that only computes: a public dashboard reads no Prometheus.
+    let mut published = dashboard("published", "prom");
+    published["panels"][0]["datasource"] = json!({ "type": "__expr__", "uid": "__expr__" });
+    published["panels"][0]["targets"] = json!([{ "refId": "A", "type": "math",
+        "expression": "1 + 1", "datasource": { "type": "__expr__", "uid": "__expr__" } }]);
+    w.add_dashboard(published, None).await;
     let created = w
         .ok(
             "POST",
-            "/api/dashboards/uid/edge/public-dashboards",
+            "/api/dashboards/uid/published/public-dashboards",
             Some(json!({ "isEnabled": true })),
         )
         .await;
@@ -710,7 +719,7 @@ async fn every_entity_set_hides_what_the_caller_cannot_read() {
     w.ok(
         "POST",
         "/api/dashboards/uid/public/public-dashboards",
-        Some(json!({ "isEnabled": true })),
+        Some(json!({ "isEnabled": false })),
     )
     .await;
     {

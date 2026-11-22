@@ -25,7 +25,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgListener, PgPool};
-use sqlx::{PgConnection, Postgres, QueryBuilder, Transaction};
+use sqlx::{PgConnection, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -115,7 +115,9 @@ pub struct PgStore {
     reload_generation: Arc<AtomicU64>,
 }
 
-type Tx = Transaction<'static, Postgres>;
+/// A store call's transaction; inside a door's unit a savepoint of the request's one
+/// transaction, so the admin event commits with the change (AUD-02, T-7565).
+type Tx = jc_audit::Tx;
 
 /// Maps a database error to a store error; a unique violation is a conflict (409).
 fn storage(e: sqlx::Error) -> KaisatsuError {
@@ -389,14 +391,24 @@ impl PgStore {
         if realm.is_empty() || realm == "*" {
             return Err(KaisatsuError::NotFound("realm not found".into()));
         }
-        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let mut tx = jc_audit::begin(&self.pool).await.map_err(storage)?;
         set_scope(&mut tx, realm, orgs).await?;
+        Ok(tx)
+    }
+
+    /// As [`Self::begin`], but committed on its own even inside a door's unit (replay guards).
+    async fn begin_own(&self, realm: &str) -> Result<Tx> {
+        if realm.is_empty() || realm == "*" {
+            return Err(KaisatsuError::NotFound("realm not found".into()));
+        }
+        let mut tx = jc_audit::begin_own(&self.pool).await.map_err(storage)?;
+        set_scope(&mut tx, realm, None).await?;
         Ok(tx)
     }
 
     /// Opens a transaction that may read every realm row of `kaisatsu.realms` (and nothing else).
     async fn begin_all_realms(&self) -> Result<Tx> {
-        let mut tx = self.pool.begin().await.map_err(storage)?;
+        let mut tx = jc_audit::begin(&self.pool).await.map_err(storage)?;
         set_scope(&mut tx, "*", None).await?;
         Ok(tx)
     }
@@ -411,7 +423,7 @@ impl PgStore {
         .fetch_all(&mut *tx)
         .await
         .map_err(storage)?;
-        tx.commit().await.map_err(storage)?;
+        jc_audit::commit(tx).await.map_err(storage)?;
         rows.into_iter().map(key_from_row).collect()
     }
 
@@ -448,7 +460,7 @@ impl PgStore {
         if created {
             notify(&mut tx, realm_id).await?;
         }
-        tx.commit().await.map_err(storage)?;
+        jc_audit::commit(tx).await.map_err(storage)?;
         Ok(())
     }
 
@@ -461,7 +473,7 @@ impl PgStore {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             ids
         };
         // sqlx 0.9 refuses format!-built SQL: one static statement per table.
@@ -509,7 +521,7 @@ impl PgStore {
             .await
             .map_err(storage)?;
             total += res.rows_affected();
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
         }
         Ok(total)
     }
@@ -928,7 +940,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             row.map(|r| self.realm_from_row(r)).transpose()
         })
     }
@@ -964,7 +976,7 @@ impl Store for PgStore {
             .await
             .map_err(storage)?;
             notify(&mut tx, &realm.id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             self.ensure_realm_keys(&realm.id).await
         })
     }
@@ -977,7 +989,7 @@ impl Store for PgStore {
                     .fetch_all(&mut *tx)
                     .await
                     .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             rows.into_iter().map(|r| self.realm_from_row(r)).collect()
         })
     }
@@ -1031,7 +1043,7 @@ impl Store for PgStore {
                 .await
                 .map_err(storage)?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1052,7 +1064,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1071,7 +1083,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -1095,7 +1107,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1122,7 +1134,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1142,7 +1154,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -1171,7 +1183,7 @@ impl Store for PgStore {
             user.groups.clear();
             lock_grants(&mut tx, &user.realm_id, false).await?;
             insert_user(&mut tx, &user).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(user)
         })
     }
@@ -1207,7 +1219,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(user)
         })
     }
@@ -1228,7 +1240,7 @@ impl Store for PgStore {
             user.realm_roles = realm_roles.to_vec();
             user.client_roles.clone_from(client_roles);
             save_user_doc(&mut tx, &user).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1256,7 +1268,7 @@ impl Store for PgStore {
             // The person is gone; their dependent rows go in every organization.
             set_scope(&mut tx, realm_id, None).await?;
             cascade(&mut tx, realm_id, &[user_id], PERSON_CASCADE).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
     }
@@ -1277,7 +1289,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1301,7 +1313,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1347,7 +1359,7 @@ impl Store for PgStore {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -1387,7 +1399,7 @@ impl Store for PgStore {
                     .await
                     .map_err(storage)?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(ListPage {
                 items: from_docs(docs)?,
                 total: usize::try_from(total).unwrap_or_default(),
@@ -1430,7 +1442,7 @@ impl Store for PgStore {
                 }
             }
             insert_credential(&mut tx, &cred).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1450,7 +1462,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -1472,7 +1484,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1555,7 +1567,7 @@ impl Store for PgStore {
                     first = Some(g);
                 }
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             first.ok_or_else(|| KaisatsuError::Storage("group upsert wrote nothing".into()))
         })
     }
@@ -1591,7 +1603,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(group)
         })
     }
@@ -1612,7 +1624,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1638,7 +1650,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -1690,7 +1702,7 @@ impl Store for PgStore {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             let visible: Vec<GroupRepresentation> = from_docs(docs)?;
             let mut roots: Vec<GroupRepresentation> = visible
                 .iter()
@@ -1732,7 +1744,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             let mut top = parent.clone();
             attach_children(&mut top, &from_docs(docs)?);
             Ok(top.sub_groups)
@@ -1799,7 +1811,7 @@ impl Store for PgStore {
                     members.entry(group_id).or_default().push(from_doc(doc)?);
                 }
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(ListPage {
                 total: usize::try_from(total).unwrap_or_default(),
                 items: groups
@@ -1877,7 +1889,7 @@ impl Store for PgStore {
                     .await
                     .map_err(storage)?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
     }
@@ -1927,7 +1939,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1949,7 +1961,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -1973,7 +1985,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2017,7 +2029,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2058,7 +2070,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(role)
         })
     }
@@ -2081,7 +2093,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2128,7 +2140,7 @@ impl Store for PgStore {
                 }
             }
             notify(&mut tx, realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
     }
@@ -2215,7 +2227,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2274,7 +2286,7 @@ impl Store for PgStore {
                 }
                 save_user_doc(&mut tx, &u).await?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2301,7 +2313,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2327,7 +2339,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(ids)
         })
     }
@@ -2432,7 +2444,7 @@ impl Store for PgStore {
                 }
             }
             notify(&mut tx, &realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(client)
         })
     }
@@ -2453,7 +2465,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             row.map(|r| self.client_from_row(realm_id, r)).transpose()
         })
     }
@@ -2473,7 +2485,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             row.map(|r| self.client_from_row(realm_id, r)).transpose()
         })
     }
@@ -2501,7 +2513,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             rows.into_iter()
                 .map(|r| self.client_from_row(realm_id, r))
                 .collect()
@@ -2547,7 +2559,7 @@ impl Store for PgStore {
                 cascade(&mut tx, realm_id, &[&account], PERSON_CASCADE).await?;
             }
             notify(&mut tx, realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
     }
@@ -2600,7 +2612,7 @@ impl Store for PgStore {
             .await
             .map_err(storage)?;
             notify(&mut tx, &scope.realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(scope)
         })
     }
@@ -2621,7 +2633,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -2639,7 +2651,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2665,7 +2677,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2693,7 +2705,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2742,7 +2754,7 @@ impl Store for PgStore {
                 .map_err(storage)?;
             }
             notify(&mut tx, realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
     }
@@ -2771,7 +2783,7 @@ impl Store for PgStore {
             .await
             .map_err(storage)?;
             notify(&mut tx, &idp.realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2791,7 +2803,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -2809,7 +2821,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -2819,7 +2831,7 @@ impl Store for PgStore {
             let mut tx = self.begin(&key.realm_id, None).await?;
             insert_signing_key(&mut tx, &key).await?;
             notify(&mut tx, &key.realm_id).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2870,7 +2882,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2890,7 +2902,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -2904,7 +2916,7 @@ impl Store for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2924,7 +2936,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -2965,7 +2977,7 @@ impl Store for PgStore {
                     }
                 }
             };
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(out)
         })
     }
@@ -2987,7 +2999,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3007,7 +3019,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             doc.map(from_doc).transpose()
         })
     }
@@ -3027,7 +3039,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(res.rows_affected() == 1)
         })
     }
@@ -3055,7 +3067,7 @@ impl Store for PgStore {
             .await
             .map_err(storage)?;
             let Some(doc) = doc else {
-                tx.commit().await.map_err(storage)?;
+                jc_audit::commit(tx).await.map_err(storage)?;
                 return Ok(None);
             };
             let before: DeviceCodeRecord = from_doc(doc)?;
@@ -3071,7 +3083,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(Some((before, answer)))
         })
     }
@@ -3091,7 +3103,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3114,7 +3126,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -3176,7 +3188,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3197,7 +3209,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             row.map(sso_from_row).transpose()
         })
     }
@@ -3219,7 +3231,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             row.map(sso_from_row).transpose()
         })
     }
@@ -3240,7 +3252,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             rows.into_iter().map(sso_from_row).collect()
         })
     }
@@ -3277,7 +3289,7 @@ impl Store for PgStore {
                 realm_id,
                 session_id
             )?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(Some(sso_from_row(row)?))
         })
     }
@@ -3304,7 +3316,7 @@ impl Store for PgStore {
                 .await
                 .map_err(storage)?;
             revoke_families!(tx, "realm_id = $1 AND user_id = $2", realm_id, user_id)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             rows.into_iter().map(sso_from_row).collect()
         })
     }
@@ -3332,7 +3344,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3361,7 +3373,7 @@ impl Store for PgStore {
                 user_id,
                 client_id
             )?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3401,7 +3413,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3421,7 +3433,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -3448,7 +3460,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(res.rows_affected() == 1)
         })
     }
@@ -3480,14 +3492,15 @@ impl Store for PgStore {
                 .await
                 .map_err(storage)?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
 
     fn mark_token_revoked<'a>(&'a self, rec: RevokedTokenRecord) -> StoreFuture<'a, ()> {
         Box::pin(async move {
-            let mut tx = self.begin(&rec.realm_id, None).await?;
+            // A replay mark stands even when the request that spent it fails.
+            let mut tx = self.begin_own(&rec.realm_id).await?;
             let inserted: Option<String> = sqlx::query_scalar(
                 "INSERT INTO kaisatsu.revoked_token (realm_id, token_hash, expires_at) VALUES ($1, $2, $3)
                  ON CONFLICT (realm_id, token_hash) DO NOTHING RETURNING token_hash",
@@ -3498,7 +3511,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             if inserted.is_none() {
                 return Err(KaisatsuError::Conflict(
                     "token or jti already used/revoked".into(),
@@ -3524,7 +3537,7 @@ impl Store for PgStore {
             .fetch_one(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(revoked)
         })
     }
@@ -3544,7 +3557,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -3562,7 +3575,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3603,7 +3616,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(rec)
         })
     }
@@ -3623,7 +3636,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3653,7 +3666,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3673,7 +3686,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -3711,7 +3724,7 @@ impl Store for PgStore {
                 user_id,
                 client_id
             )?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -3737,7 +3750,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3755,7 +3768,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -3783,7 +3796,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3806,7 +3819,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -3827,7 +3840,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3846,7 +3859,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -3867,7 +3880,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3886,7 +3899,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -3925,7 +3938,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(cred)
         })
     }
@@ -3960,7 +3973,7 @@ impl Store for PgStore {
                     "WebAuthn credential not found".into(),
                 ));
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -3981,7 +3994,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             doc.map(webauthn_from_doc).transpose()
         })
     }
@@ -4002,7 +4015,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             docs.into_iter().map(webauthn_from_doc).collect()
         })
     }
@@ -4023,7 +4036,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -4064,7 +4077,7 @@ impl Store for PgStore {
             .await
             .map_err(storage)?;
             insert_outbox(&mut tx, &outbox).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(user)
         })
     }
@@ -4076,7 +4089,7 @@ impl Store for PgStore {
             }
             let mut tx = self.begin(&outbox.realm_id, None).await?;
             insert_outbox(&mut tx, &outbox).await?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -4112,7 +4125,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -4168,7 +4181,7 @@ impl Store for PgStore {
                 .await
                 .map_err(storage)?;
             }
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -4210,7 +4223,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(Some(rec))
         })
     }
@@ -4229,7 +4242,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }
@@ -4266,7 +4279,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
     }
@@ -4289,7 +4302,7 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             opt_from_doc(doc)
         })
     }
@@ -4310,7 +4323,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
             from_docs(docs)
         })
     }

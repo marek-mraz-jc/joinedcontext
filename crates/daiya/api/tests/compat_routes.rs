@@ -82,7 +82,7 @@ async fn organizations_are_created_by_the_installation_admin_and_seen_by_members
     assert_eq!(org["id"], 1);
     assert_eq!(org["name"], "Main Org.");
     let (st, _) = w.call("GET", "/api/org", None, None).await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "no Organization named");
     // An organization the store does not hold has no number: it is never "Main Org." 1, whose
     // number would select the main organization (T-7509).
     let (st, org) = w.call("GET", "/api/org", Some("outsider"), None).await;

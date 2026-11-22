@@ -135,6 +135,15 @@ impl Subject {
         self.actor_id.is_none()
     }
 
+    /// Whether this is the subject of a public dashboard's saved query
+    /// ([`Self::public_dashboard`]): it reads the host's Endpoints, as anyone may, and nothing else.
+    #[must_use]
+    pub fn is_public_dashboard(&self) -> bool {
+        self.actor_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(PUBLIC_DASHBOARD_ACTOR_PREFIX))
+    }
+
     #[must_use]
     pub fn is_member_of(&self, org_id: OrgId) -> bool {
         self.organizations.contains(&org_id)

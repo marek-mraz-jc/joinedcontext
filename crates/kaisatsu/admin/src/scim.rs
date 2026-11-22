@@ -648,6 +648,15 @@ async fn scim_create_user(
         let mut u = user;
         u.attributes.insert("externalId".into(), vec![ext]);
         let u = state.oidc.store.update_user(u).await?;
+        record_admin_write(
+            &state,
+            &ctx,
+            "UPDATE",
+            "USER",
+            &format!("scim/Users/{}", u.id),
+            None,
+        )
+        .await?;
         return Ok(scim_json_with_etag(
             StatusCode::CREATED,
             to_scim_user_json(&u),

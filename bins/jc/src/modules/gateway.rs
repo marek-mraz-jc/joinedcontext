@@ -1196,7 +1196,7 @@ async fn serve_internal(
     let addr = listener.local_addr().map_err(err)?;
     tracing::info!(%addr, "gateway: internal listener for the MQTT brokers");
     tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, router).await {
+        if let Err(error) = context_gateway::mqtt::serve_internal(listener, router).await {
             tracing::error!(%error, "gateway: the MQTT brokers' internal listener stopped");
         }
     });

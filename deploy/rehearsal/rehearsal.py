@@ -2207,7 +2207,7 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
     for f in files:
         kind = _daiya_kind(f.name)
         row = {"file": f.name, "kind": kind}
-        hdrs = dict(auth)
+        hdrs = {**auth, "X-Grafana-Org-Id": MAIN_ORG}
         if kind != "model":
             project = f.name.split(".", 1)[0]
             try:
@@ -2269,6 +2269,8 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
     report["daiya"] = rows
 
 
+# daiya serves no Organization a request does not name: the platform models' one, by its number
+MAIN_ORG = "1"
 SOURCE_ORG_FILE = re.compile(r"^org(\d+)-(project-(?P<project>[a-z0-9-]+)|pv-[0-9a-f]+)\.json$")
 
 # The datasource type of the NGSI-LD plugin, the only kind a project dashboard reads (portal grafana.rs).
@@ -2934,7 +2936,7 @@ def cmd_smoke(a):
     orgs = {f.name.split(".", 1)[0] for f in files if _daiya_kind(f.name) == "dashboard"}
     found_uids, missing = set(), []
     for org in [None, *sorted(orgs)]:
-        hdrs = dict(dauth)
+        hdrs = {**dauth, "X-Grafana-Org-Id": MAIN_ORG}
         if org:
             ost, o = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(org)}", headers=dauth)
             if ost != 200 or not isinstance(o, dict):
@@ -3109,7 +3111,7 @@ def cmd_provisioning(a):
 
 def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
     """Each project panel's queries run against its datasource as file-provisioned into
-    organization 1 (POST /dashboards/api/ds/query, no org header): whether the data path holds
+    organization 1 (POST /dashboards/api/ds/query, X-Grafana-Org-Id 1): whether the data path holds
     while the project's own organization still waits for per-org provisioning."""
     out = {"data": 0, "red": 0, "rows": []}
     for f in sorted(dashboards.glob("*.dashboard.json")):
@@ -3121,7 +3123,8 @@ def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
                     continue
                 queries = [{**t, "refId": t.get("refId") or "A", "datasource": {"uid": uid}} for t in q["targets"]]
                 st, ans = h.json("POST", "/dashboards/api/ds/query", body={"from": "now-24h", "to": "now",
-                                                                            "queries": queries}, headers=auth)
+                                                                            "queries": queries},
+                                 headers={**auth, "X-Grafana-Org-Id": MAIN_ORG})
                 res = (ans or {}).get("results", {}) if isinstance(ans, dict) else {}
                 ok = st == 200 and bool(res) and all(isinstance(r, dict) and r.get("frames") is not None
                                                      and not r.get("error") for r in res.values())

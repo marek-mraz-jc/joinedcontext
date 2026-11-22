@@ -2,8 +2,9 @@
 //!
 //! Each broker is the unmodified RMQTT image; its `rmqtt-auth-http` plugin posts every CONNECT
 //! here, on the gateway's internal listener, and gets back `allow` with the client's ACL or
-//! `deny`. The broker asking is named by its mesh identity, never by the request: no broker can
-//! ask with another broker's roles. The password is a Keycloak access token for a device, and
+//! `deny`. The broker asking is named by its mesh identity, believed only from the pod's own
+//! Linkerd proxy ([`Peer`]), never by the request: no broker can ask with another broker's
+//! roles. The password is a Keycloak access token for a device, and
 //! empty for the pipeline runner, which is admitted only from the address of one of its own
 //! pods (T-4004): a private address alone proves nothing, because a cluster pod that dials the
 //! public listener through Traefik arrives with its pod address in the PROXY header. The Portal's
@@ -14,8 +15,11 @@ use crate::app::Gateway;
 use crate::auth::accounts::ServiceAccounts;
 use crate::auth::token::{Rejected, Verifier};
 use crate::mqtt_refusals::{account_of, Reader, Reason, Refusal, Refusals};
-use axum::extract::State;
+use axum::extract::connect_info::Connected;
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderMap;
+use axum::middleware::Next;
+use axum::serve::IncomingStream;
 use axum::Json;
 use jc_core::kinds::mqtt_broker::{
     certificate_release_name, release_name, runner_username, MqttMode, MqttRole, SourceRange,
@@ -37,6 +41,72 @@ pub const CAPTURE_USERNAME: &str = "jc-portal-capture";
 
 /// The header the Linkerd inbound proxy sets to the mTLS identity of the caller.
 pub const MESH_IDENTITY: &str = "l5d-client-id";
+
+/// Both ends of a connection to the internal listener, which says who wrote [`MESH_IDENTITY`].
+#[derive(Debug, Clone, Copy)]
+pub struct Peer {
+    /// The caller's end.
+    pub remote: Option<IpAddr>,
+    /// The end the listener accepted on.
+    pub local: Option<IpAddr>,
+}
+
+impl Peer {
+    /// Whether the caller is this pod's own proxy. The Linkerd inbound proxy forwards from the
+    /// pod's own address or loopback (measured, T-5893), after it took the header from the
+    /// verified mTLS peer and dropped the one a request brought. A connection from any other
+    /// address passed no proxy, so a header on it is the caller's own claim.
+    fn is_own_proxy(self) -> bool {
+        let local = self.local.map(|ip| ip.to_canonical());
+        self.remote
+            .map(|ip| ip.to_canonical())
+            .is_some_and(|remote| remote.is_loopback() || Some(remote) == local)
+    }
+}
+
+impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for Peer {
+    fn connect_info(stream: IncomingStream<'_, tokio::net::TcpListener>) -> Self {
+        Self {
+            remote: Some(stream.remote_addr().ip()),
+            local: stream.io().local_addr().ok().map(|address| address.ip()),
+        }
+    }
+}
+
+/// Serves [`internal_router`] on `listener` with each connection's [`Peer`]; served without
+/// one, the router believes no identity and refuses every caller.
+///
+/// # Errors
+/// What the listener fails with.
+pub async fn serve_internal(
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+) -> std::io::Result<()> {
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<Peer>(),
+    )
+    .await
+}
+
+/// Leaves [`MESH_IDENTITY`] on a request only as the pod's own proxy sets it: one value, over
+/// a connection from that proxy. Any other is removed, and every route then refuses.
+async fn verified_identity(mut request: Request, next: Next) -> axum::response::Response {
+    let values = request.headers().get_all(MESH_IDENTITY).iter().count();
+    let proxied = request
+        .extensions()
+        .get::<ConnectInfo<Peer>>()
+        .is_some_and(|ConnectInfo(peer)| peer.is_own_proxy());
+    if values > 0 && (values > 1 || !proxied) {
+        request.headers_mut().remove(MESH_IDENTITY);
+        tracing::warn!(
+            values,
+            proxied,
+            "mqtt: a mesh identity the pod's own proxy did not set is ignored"
+        );
+    }
+    next.run(request).await
+}
 
 /// One broker the repository declares, as the CONNECT check reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,19 +572,76 @@ fn certificate(broker: &Broker, accounts: &ServiceAccounts, connect: &Connect) -
     }
 }
 
-/// The common name of a subject DN as RMQTT writes it (`O=helsinki, CN=sensor-1`): the value of
-/// the one `CN` attribute, a ServiceAccount name (lowercase letters, digits, `-`); none when the
-/// DN has no `CN`, two of them, or a value no account could carry.
+/// The common name of a subject DN (RFC 4514, with the spaces RMQTT 0.24 writes around `,` and
+/// `+`: `O=helsinki, CN=sensor-1`): the value of the one `CN` attribute, a ServiceAccount name
+/// (lowercase letters, digits, `-`); none when the DN does not parse ([`attributes`]), has no
+/// `CN`, two of them, or a value no account could carry.
 pub fn common_name(dn: &str) -> Option<&str> {
-    let mut names = dn
-        .split(',')
-        .filter_map(|part| part.trim().strip_prefix("CN="));
-    let name = names.next()?;
+    let parsed = attributes(dn)?;
+    let mut names = parsed.into_iter().filter(|(kind, _)| {
+        let kind = kind
+            .strip_prefix("OID(")
+            .and_then(|oid| oid.strip_suffix(')'))
+            .unwrap_or(kind);
+        kind.eq_ignore_ascii_case("CN") || kind == COMMON_NAME_OID
+    });
+    let (_, name) = names.next()?;
     let account = !name.is_empty()
         && name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
     (names.next().is_none() && account).then_some(name)
+}
+
+/// The OID of `CN` (RFC 4519 2.3), written by its arcs.
+const COMMON_NAME_OID: &str = concat!("2.5", ".4.3");
+
+/// Every attribute of every RDN of `dn`, its value as written.
+///
+/// Stricter than RFC 4514 on purpose: RMQTT writes the DN with x509-parser, which escapes
+/// nothing, so a `\` ending one value would read as the escape of the separator after it and
+/// hide the next attribute. A value with a `=`, escaped or not, is therefore refused: each `=`
+/// of a DN read here ends exactly one attribute type, under either reading.
+fn attributes(dn: &str) -> Option<Vec<(&str, &str)>> {
+    let mut found = Vec::new();
+    let mut start = 0;
+    let mut chars = dn.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next()?.1 {
+                ' ' | '#' | '=' | '"' | '+' | ',' | ';' | '<' | '>' | '\\' => {}
+                hex if hex.is_ascii_hexdigit() && chars.next()?.1.is_ascii_hexdigit() => {}
+                _ => return None,
+            },
+            ',' | '+' => {
+                found.push(attribute(&dn[start..at])?);
+                start = at + 1;
+            }
+            '"' | ';' | '<' | '>' => return None,
+            c if c.is_control() => return None,
+            _ => {}
+        }
+    }
+    found.push(attribute(&dn[start..])?);
+    Some(found)
+}
+
+/// One `type=value`: the type a name, an OID or x509-parser's `OID(…)`.
+fn attribute(written: &str) -> Option<(&str, &str)> {
+    let (kind, value) = written.trim_matches(' ').split_once('=')?;
+    let numeric = |oid: &str| {
+        oid.split('.')
+            .all(|arc| !arc.is_empty() && arc.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let named = kind.starts_with(|c: char| c.is_ascii_alphabetic())
+        && kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let typed = named
+        || numeric(kind)
+        || kind
+            .strip_prefix("OID(")
+            .and_then(|oid| oid.strip_suffix(')'))
+            .is_some_and(numeric);
+    (typed && !value.contains('=') && !value.starts_with('#')).then_some((kind, value))
 }
 
 /// Whether a device at `ipaddr`, the address Traefik's PROXY header carried, may connect: any
@@ -852,7 +979,7 @@ async fn acl(
 /// address came through its mesh-gated internal listener (T-5893); without it, only the
 /// runner's and the Portal's own addresses count.
 /// `portal_identity` is the Portal's `{serviceaccount}.{namespace}`, the only mesh identity that
-/// reads the refusals; without it nobody does (T-5534).
+/// reads the refusals; without it nobody does (T-5534). Serve it with [`serve_internal`].
 pub fn internal_router(
     gateway: Arc<Gateway>,
     runner_host: Option<String>,
@@ -884,6 +1011,7 @@ pub fn internal_router(
                 )
                 .with_state(reader),
         )
+        .layer(axum::middleware::from_fn(verified_identity))
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use std::time::Duration;
 #[test]
 fn cache_bytes_fall_back_after_a_burst_of_moving_ranges() {
     let cache = QueryCache::new(64 * 1024 * 1024);
-    let (org, instance) = (OrgId::new(), InstanceId::new());
+    let (org, instance) = (OrgId::generate(), InstanceId::generate());
     let frames: Vec<daiya_model::FrameSet> = vec![Default::default(); 8];
     for step in 0..2000 {
         let from = step * 15_000;

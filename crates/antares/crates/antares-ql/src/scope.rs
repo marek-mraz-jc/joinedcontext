@@ -16,14 +16,90 @@ pub fn scope_matches(scope_q: &str, doc: &Value) -> bool {
         Some(Value::String(s)) => vec![s.as_str()],
         _ => Vec::new(),
     };
-    scope_q.split([',', '|']).any(|and_group| {
-        and_group
+    scope_groups(scope_q)
+        .any(|mut group| group.all(|pat| scopes.iter().any(|s| scope_pattern_matches(pat, s))))
+}
+
+/// The alternatives of a Scope Query (4.19), each the patterns that hold together: `|` and
+/// `,` part the alternatives and `;`, which binds tighter, the patterns, in or out of
+/// parentheses. The one place a Scope Query is split.
+pub fn scope_groups(scope_q: &str) -> impl Iterator<Item = impl Iterator<Item = &str>> {
+    and_groups(scope_q).map(|group| group.split(';').map(str::trim))
+}
+
+fn and_groups(scope_q: &str) -> impl Iterator<Item = &str> {
+    scope_q.split([',', '|']).map(|group| {
+        group
             .trim()
             .trim_start_matches('(')
             .trim_end_matches(')')
-            .split(';')
-            .all(|pat| scopes.iter().any(|s| scope_pattern_matches(pat.trim(), s)))
+            .trim()
     })
+}
+
+/// The Scope Query that selects the subtree of every pattern of `scope_q`, with its AND and
+/// OR kept: `/a;/b` is `(/a/#;/b/#)`. What a grant on a Scope covers.
+///
+/// Only the structure is checked, so a level may hold `.` or `-`. `None` when `scope_q` has
+/// no such structure (an empty piece, a group left open or nested, `#` before the last level,
+/// a quote): the caller grants nothing.
+#[must_use]
+pub fn subtree_scope_q(scope_q: &str) -> Option<String> {
+    let closed = scope_q.split([',', '|']).all(|group| {
+        let group = group.trim();
+        let inner = group
+            .strip_prefix('(')
+            .and_then(|g| g.strip_suffix(')'))
+            .unwrap_or(group);
+        !inner.contains(['(', ')'])
+    });
+    if !closed || scope_q.len() > MAX_SCOPE_Q_BYTES {
+        return None;
+    }
+    let mut alternatives = Vec::new();
+    for group in scope_groups(scope_q) {
+        let trees = group.map(subtree).collect::<Option<Vec<_>>>()?;
+        alternatives.push(match trees.as_slice() {
+            [one] => one.clone(),
+            several => format!("({})", several.join(";")),
+        });
+    }
+    Some(alternatives.join(","))
+}
+
+/// `pat` with everything under it.
+fn subtree(pat: &str) -> Option<String> {
+    if pat == ANY_SCOPE {
+        return Some(pat.to_owned());
+    }
+    let node = pat.strip_suffix("/#").unwrap_or(pat);
+    // a trailing slash names the same node
+    let node = node.strip_suffix('/').unwrap_or(node);
+    let readable = node.strip_prefix('/')?.split('/').all(|level| {
+        !level.is_empty()
+            && !level.contains(['#', '"', '\\'])
+            && !level.chars().any(|c| c.is_whitespace() || c.is_control())
+    });
+    readable.then(|| format!("{node}/#"))
+}
+
+/// Whether an Entity's `scopes` lie inside `scope_q`: an alternative of it holds on them, and
+/// each of them is matched by a pattern of an alternative that holds, so no Scope outside
+/// comes along. No Scope at all lies inside nothing.
+#[must_use]
+pub fn scopes_within(scope_q: &str, scopes: &[&str]) -> bool {
+    let matched = |pat: &str| scopes.iter().any(|s| scope_pattern_matches(pat, s));
+    let mut holding = Vec::new();
+    for group in scope_groups(scope_q) {
+        let patterns: Vec<&str> = group.collect();
+        if patterns.iter().all(|pat| matched(pat)) {
+            holding.extend(patterns);
+        }
+    }
+    !holding.is_empty()
+        && scopes
+            .iter()
+            .all(|s| s.starts_with('/') && holding.iter().any(|pat| scope_pattern_matches(pat, s)))
 }
 
 /// Checks a `scopeQ` against the 4.19 grammar (TS 104 175 7.2.5) before it is
@@ -110,13 +186,7 @@ fn check_scope_pattern(pat: &str) -> Result<(), &'static str> {
 /// cannot express and must refuse rather than serve the wider of the two.
 pub fn intersect_scope_q(a: &str, b: &str) -> Option<String> {
     let groups = |s: &str| -> Vec<String> {
-        s.split([',', '|'])
-            .map(|g| {
-                g.trim()
-                    .trim_start_matches('(')
-                    .trim_end_matches(')')
-                    .trim()
-            })
+        and_groups(s)
             .filter(|g| !g.is_empty())
             .map(str::to_owned)
             .collect()
@@ -330,6 +400,65 @@ mod clause_4_19 {
                     "{a} INTERSECT {b} = {both} disagrees on {d}"
                 );
             }
+        }
+    }
+
+    /// A subtree keeps the query's AND and OR, and what has no structure is none.
+    #[test]
+    fn a_subtree_keeps_and_and_or() {
+        use super::subtree_scope_q;
+        for (q, tree) in [
+            ("/a", "/a/#"),
+            ("/a/", "/a/#"),
+            ("/a/#", "/a/#"),
+            ("/#", "/#"),
+            ("/a/+", "/a/+/#"),
+            ("/org/dept.a-b", "/org/dept.a-b/#"),
+            ("/a;/b", "(/a/#;/b/#)"),
+            ("(/a;/b)|/c", "(/a/#;/b/#),/c/#"),
+            ("/a | /b", "/a/#,/b/#"),
+        ] {
+            assert_eq!(subtree_scope_q(q).as_deref(), Some(tree), "{q}");
+        }
+        for q in [
+            "",
+            "/",
+            "a",
+            "/a;",
+            "/a,,/b",
+            "//a",
+            "/a/#/b",
+            "/a#",
+            "(/a;/b",
+            "/a;/b)",
+            "((/a))",
+            "(/a|/b);/c",
+            "/a b",
+            "/a\"",
+            "/a\\b",
+        ] {
+            assert_eq!(subtree_scope_q(q), None, "{q}");
+        }
+        assert_eq!(subtree_scope_q(&"/a,".repeat(MAX_SCOPE_Q_BYTES)), None);
+    }
+
+    /// Inside: an alternative holds, and no Scope comes along that it does not match.
+    #[test]
+    fn scopes_within_an_alternative_that_holds() {
+        use super::scopes_within;
+        let q = "(/a/#;/b/#),/c/#";
+        for (scopes, inside) in [
+            (&["/a", "/b"][..], true),
+            (&["/a/x", "/b"][..], true),
+            (&["/c"][..], true),
+            (&["/a", "/b", "/c"][..], true),
+            (&["/a"][..], false),
+            (&["/a", "/c"][..], false),
+            (&["/a", "/b", "/d"][..], false),
+            (&["a", "b"][..], false),
+            (&[][..], false),
+        ] {
+            assert_eq!(scopes_within(q, scopes), inside, "{scopes:?}");
         }
     }
 

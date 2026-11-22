@@ -15,8 +15,8 @@ use jc_router::Mount;
 use serde_json::{Value, json};
 use shako_api::verify_gitea_signature;
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -46,7 +46,7 @@ async fn world() -> World {
     let org_b = OrgId::from_u128(20);
     let binding = |org_id, principal: &str, actions: Vec<Action>, repo: Option<&str>| RoleBinding {
         org_id,
-        principal: principal.into(),
+        principal: Principal::User(principal.into()),
         actions,
         project_id: None,
         repo: repo.map(str::to_owned),
@@ -73,13 +73,21 @@ async fn world() -> World {
         ),
         binding(org_b, "admin-b", vec![Action::Admin, Action::Write], None),
     ]));
-    let person = |login: &str, org| Subject::authenticated(login, login, vec![org], vec![]);
+    let person = |login: &str, org| Subject::authenticated(login, login, vec![org]);
     let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
         .with_static_tokens(vec![
             StaticTokenBinding::new("portal-token", person("jc-portal", org_a)),
             StaticTokenBinding::new("bob-token", person("reader-bob", org_a)),
             StaticTokenBinding::new("carol-token", person("scoped-carol", org_a)),
             StaticTokenBinding::new("org-b-token", person("admin-b", org_b)),
+            StaticTokenBinding::new(
+                "renamed-token",
+                Subject::authenticated("jc-portal", "renamed", vec![org_a]),
+            ),
+            StaticTokenBinding::new(
+                "namesake-token",
+                Subject::authenticated("u-namesake", "jc-portal", vec![org_a]),
+            ),
         ]);
     let delivered: Delivered = Arc::default();
     let sink = delivered.clone();
@@ -101,15 +109,12 @@ async fn world() -> World {
     let store = Arc::new(MemoryStore::new());
     let state = ShakoState::new(
         InstanceId::from_u128(1),
-        org_a,
         tmp.path().to_path_buf(),
         store.clone(),
         authz,
         verifier,
         guard,
     );
-    state.register_owner_org("joinedcontext", org_a);
-    state.register_owner_org("bbsk", org_b);
     let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
@@ -271,43 +276,80 @@ async fn repositories_by_alternate_key_create_conflict_import_archive_delete() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
-/// An owner name names one Organization: another Organization's member creates or imports
-/// nothing under it, and the owner keeps resolving to its own Organization.
+/// An owner name is a label inside one Organization: creating or importing under a name another
+/// Organization holds answers as a free name does, and each Organization reads only its own.
 #[tokio::test]
-async fn an_owner_of_another_organization_is_refused_on_create_and_import() {
+async fn a_name_another_organization_holds_answers_as_a_free_name() {
     let w = world().await;
     create_repo(&w, "helsinki").await;
+    let org_b = "org-b-token";
+    let source = json!({"Owner": "bbsk", "Name": "source"});
     let (st, body, _) = call(
         &w.app,
         "POST",
         "/odata/CreateRepository",
-        Some("org-b-token"),
-        Some(json!({"Owner": "bbsk", "Name": "source"})),
+        Some(org_b),
+        Some(source),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{body}");
-    for (op, body) in [
-        (
-            "CreateRepository",
-            json!({"Owner": "joinedcontext", "Name": "taken"}),
-        ),
-        (
-            "ImportRepository",
-            json!({"SourceOwner": "bbsk", "SourceName": "source", "RepoOwner": "joinedcontext", "RepoName": "taken"}),
-        ),
-    ] {
-        let (st, body, _) = call(
-            &w.app,
-            "POST",
-            &format!("/odata/{op}"),
-            Some("org-b-token"),
-            Some(body),
-        )
-        .await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "{op}: {body}");
+    let (st, _, _) = call(&w.app, "GET", R, Some(org_b), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "theirs, before a twin exists");
+    let stolen = json!({"SourceOwner": "joinedcontext", "SourceName": "helsinki", "RepoOwner": "mine", "RepoName": "copy"});
+    let (st, _, _) = call(
+        &w.app,
+        "POST",
+        "/odata/ImportRepository",
+        Some(org_b),
+        Some(stolen),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "theirs is no source to import");
+
+    for op in ["CreateRepository", "ImportRepository"] {
+        let mut answers = Vec::new();
+        // Held by the other Organization, then free.
+        for owner in ["joinedcontext", "nobody"] {
+            let name = if op == "CreateRepository" {
+                "helsinki"
+            } else {
+                "copy"
+            };
+            let body = json!({
+                "Owner": owner, "Name": name,
+                "SourceOwner": "bbsk", "SourceName": "source", "RepoOwner": owner, "RepoName": name,
+            });
+            let (st, body, _) = call(
+                &w.app,
+                "POST",
+                &format!("/odata/{op}"),
+                Some(org_b),
+                Some(body),
+            )
+            .await;
+            let fields: Option<Vec<String>> = body.as_object().map(|o| o.keys().cloned().collect());
+            answers.push((st, fields));
+        }
+        assert_eq!(answers[0], answers[1], "{op}: held elsewhere, free");
+        assert_eq!(answers[0].0, StatusCode::OK, "{op}");
     }
-    let (st, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
-    assert_eq!(st, StatusCode::OK, "{repo}");
+
+    let (st, ours, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{ours}");
+    let (st, theirs, _) = call(&w.app, "GET", R, Some(org_b), None).await;
+    assert_eq!(st, StatusCode::OK, "{theirs}");
+    assert_ne!(
+        ours["Id"], theirs["Id"],
+        "two repositories, one per Organization"
+    );
+    let (st, _, _) = call(&w.app, "DELETE", R, Some(org_b), None).await;
+    assert!(st.is_success(), "{st}");
+    let (st, kept, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    assert_eq!(
+        (st, &kept["Id"]),
+        (StatusCode::OK, &ours["Id"]),
+        "a twin's delete leaves it"
+    );
 }
 
 #[tokio::test]
@@ -424,6 +466,41 @@ async fn contents_history_tree_and_a_stale_sha_that_moves_nothing() {
     assert_eq!(st, StatusCode::OK, "{status}");
     assert_eq!(status["State"], "");
     assert_eq!(status["TotalCount"], 0);
+
+    // Over 1 MiB: GET answers it whole from a spool; a value (POST, MCP, CLI) names the limit.
+    let large = vec![b'x'; 1_200_000];
+    let (st, made) = commit(
+        &w,
+        R,
+        "main",
+        json!([{"operation": "create", "path": "large.txt", "content": STANDARD.encode(&large)}]),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{made}");
+    let (st, file, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/Shako.File(Path=@p,Ref=@r)?@p='large.txt'&@r='main'"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{file}");
+    assert_eq!(file["Size"], 1_200_000);
+    assert_eq!(
+        STANDARD.decode(file["Content"].as_str().unwrap()).unwrap(),
+        large
+    );
+    let (st, refused, _) = call(
+        &w.app,
+        "POST",
+        &format!("{R}/Shako.File"),
+        Some("portal-token"),
+        Some(json!({"Path": "large.txt", "Ref": "main"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(refused.to_string().contains("1048576 bytes"), "{refused}");
 
     // Protecting main refuses the next contents write there.
     let (st, _, _) = call(
@@ -1035,6 +1112,45 @@ async fn pull_request_parts_check_the_repository_read() {
         .await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{part}: {body}");
     }
+}
+
+/// An account is its subject id: renamed it is the same author, and its namesake is nobody.
+#[tokio::test]
+async fn an_account_is_its_subject_id() {
+    let w = world().await;
+    create_repo(&w, "helsinki").await;
+    let (st, me, _) = call(&w.app, "GET", "/odata/Me()", Some("renamed-token"), None).await;
+    assert_eq!((st, &me["Login"]), (StatusCode::OK, &json!("jc-portal")));
+    let (st, _, _) = call(&w.app, "GET", R, Some("namesake-token"), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let files = json!([{"operation": "create", "path": "f.yaml", "content": b64("f\n")}]);
+    let post = |path: &str, token: &'static str, body: Value| {
+        let (app, path) = (w.app.clone(), format!("{R}/{path}"));
+        async move { call(&app, "POST", &path, Some(token), Some(body)).await.0 }
+    };
+    let branch = json!({"NewBranchName": "f"});
+    assert_eq!(
+        post("Shako.CreateBranch", "portal-token", branch).await,
+        StatusCode::OK
+    );
+    assert_eq!(commit(&w, R, "f", files).await.0, StatusCode::OK);
+    let open = json!({"Head": "f", "Base": "main", "Title": "t"});
+    assert_eq!(
+        post("Shako.OpenPullRequest", "portal-token", open).await,
+        StatusCode::OK
+    );
+    let rule = json!({"Rule": {"rule_name": "main", "required_approvals": 1}});
+    assert_eq!(
+        post("Shako.Protect", "portal-token", rule).await,
+        StatusCode::OK
+    );
+    let approve = json!({"Event": "APPROVED"});
+    assert_eq!(
+        post("PullRequests(1)/Shako.Review", "renamed-token", approve).await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the author approving under another display name"
+    );
 }
 
 /// T-7508: a store that cannot say what protects a branch protects it: no merge and no

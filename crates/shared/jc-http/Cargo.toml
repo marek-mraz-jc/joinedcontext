@@ -8,9 +8,9 @@ description = "Outbound HTTP of jc (ARCH/SEC-04): one address table, resolve and
 
 [dependencies]
 ipnet = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 thiserror = "2"
-tokio = { version = "1", features = ["net", "time"] }
+tokio = { version = "1", features = ["fs", "net", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "net", "time", "io-util"] }

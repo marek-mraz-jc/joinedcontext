@@ -234,13 +234,14 @@ async fn the_binary_serves_provisioned_dashboards_and_queries_with_a_configured_
         .unwrap();
     assert!(search.to_string().contains("\"edge\""), "{search}");
 
-    // Without the token the same dashboard does not exist.
-    let anon = client
-        .get(format!("{}/api/dashboards/uid/edge", server.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(anon.status(), 404);
+    // Without the token the same dashboard does not exist, and no Organization stands in.
+    for (org, status) in [(Some("1"), 404), (None, 401)] {
+        let mut anon = client.get(format!("{}/api/dashboards/uid/edge", server.base));
+        if let Some(org) = org {
+            anon = anon.header("x-grafana-org-id", org);
+        }
+        assert_eq!(anon.send().await.unwrap().status(), status, "{org:?}");
+    }
 
     // The provisioned datasource answers through its built driver.
     let answer = client

@@ -40,14 +40,10 @@ pub fn compile_scope_q(scope_q: &str, col: &'static str, first_bind: usize) -> O
     let mut or_parts = Vec::new();
     // 4.19: orOp = `|` / `,`; a conjunction is parenthesized — the parens
     // only group and must not reach the per-segment regexes.
-    for and_group in scope_q.split([',', '|']) {
-        let and_group = and_group
-            .trim()
-            .trim_start_matches('(')
-            .trim_end_matches(')');
+    for and_group in antares_ql::scope::scope_groups(scope_q) {
         let mut and_parts = Vec::new();
-        for pat in and_group.split(';') {
-            let re = pattern_regex(pat.trim())?;
+        for pat in and_group {
+            let re = pattern_regex(pat)?;
             // "some scope of this entity matches the pattern" — the SQL
             // spelling of the matcher's `scopes.iter().any(...)`. An entity
             // with no scopes matches nothing, exactly as `any()` over an
@@ -123,12 +119,8 @@ pub fn scope_keys(scope_q: &str) -> Option<Vec<ScopeKey>> {
     if scope_q.len() > MAX_SCOPE_Q_BYTES || scope_q.contains('\0') {
         return None;
     }
-    scope_q
-        .split([',', '|'])
-        .map(|g| {
-            let g = g.trim().trim_start_matches('(').trim_end_matches(')');
-            g.split(';').find_map(|p| pattern_key(p.trim()))
-        })
+    antares_ql::scope::scope_groups(scope_q)
+        .map(|mut group| group.find_map(pattern_key))
         .collect()
 }
 
