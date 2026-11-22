@@ -1852,7 +1852,8 @@
         "title": "Grafy u datové sady",
         "lead": "Grafy, které katalog otevřených dat ukazuje u datové sady tohoto endpointu, z vlastních dat endpointu.",
         "none": "Zatím žádné grafy.",
-        "awaiting": "Zatím žádné grafy. Navržený graf se tu zobrazí po schválení změny.",
+        "awaiting": "Graf „{chart}“ je navržen. Zobrazí se tu po schválení změny.",
+        "overTime": "V čase",
         "add": "Přidat graf",
         "name": "Název",
         "nameHint": "Malá písmena, číslice a pomlčky; jedinečný v tomto endpointu.",
@@ -1918,7 +1919,7 @@
           "range": "Co čtenář uvidí po otevření grafu, např. 7 dní: poslední týden do teď.",
           "granularity": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
           "method": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
-          "controls": "Čtenáři si mohou tato nastavení sami změnit, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
+          "controls": "Čtenáři si mohou tato nastavení sami změnit, např. vybrat jiné období. Zrušte zaškrtnutí pro pevný graf.",
           "locked": "Čtenáři graf nemohou měnit. Vždy vidí: {settings}. Zaškrtněte, pokud si mají sami vybrat např. jiné období.",
           "raw": "Kreslí se každé měření, např. každá pětiminutová hodnota, proto výpočet není potřeba.",
           "fixedRange": "Období, které čtenáři vždy vidí, např. 7 dní: poslední týden do teď."

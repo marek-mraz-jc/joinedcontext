@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
@@ -79,6 +79,7 @@ export function VisualizationsSection({
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
   const [failed, setFailed] = useState<string | null>(null);
+  const editor = useRef<HTMLDetailsElement>(null);
   const proposal = useProposal(project, "endpoints", (proposed) => {
     setChange(proposed);
     if (sent.added === undefined) return;
@@ -92,6 +93,7 @@ export function VisualizationsSection({
     setColumns({});
     setSpecText("");
     setTemporal(DEFAULT_TEMPORAL);
+    if (editor.current) editor.current.open = false;
   });
   const propose = (next: Visualization[], at: { added?: number; removed?: Visualization }) => {
     setFailed(null);
@@ -187,6 +189,9 @@ export function VisualizationsSection({
   };
   const fieldsOf = (settings: RefusedSetting[]) =>
     [...new Set(settings.map((one) => (one.field === "controls" ? t("endpoints.page.visualizations.controls") : label(one.field))))].join(", ");
+  // A refused field's sentence takes the place of its hint, right under the control.
+  const hintOf = (field: RefusedSetting["field"], hint: string) =>
+    own.some((one) => one.field === field) ? undefined : hint;
   const blocking = other ? sent.charts[other.index] : undefined;
   const blocked = blocking && {
     chart: titleOf(blocking),
@@ -249,6 +254,9 @@ export function VisualizationsSection({
         : []),
     ].join(" · ");
   };
+  const added = change && sent.added !== undefined ? sent.charts[sent.added] : undefined;
+  // Proposed and not yet approved: the Endpoint read back does not list it.
+  const awaiting = added && !list.some((one) => one.name === added.name) ? added : undefined;
   const unsaved = defaultData(template, type, "", served, temporal);
   const lockedTo = unsaved ? settingsOf(unsaved) : "";
 
@@ -265,10 +273,25 @@ export function VisualizationsSection({
 
   return (
     <div className="space-y-3" data-testid="visualizations">
-      {list.length === 0 ? (
-        <p className="text-body text-fg-muted">
-          {t(change ? "endpoints.page.visualizations.awaiting" : "endpoints.page.visualizations.none")}
+      {awaiting ? (
+        <p className="text-body text-fg">
+          {t("endpoints.page.visualizations.awaiting", { chart: titleOf(awaiting) })}
+          {awaiting.data.source === "temporal" ? (
+            <span className="block">
+              {t(
+                awaiting.data.controls === false
+                  ? "endpoints.page.visualizations.lockedTo"
+                  : "endpoints.page.visualizations.startsWith",
+                { settings: settingsOf(awaiting.data) },
+              )}
+            </span>
+          ) : null}
         </p>
+      ) : null}
+      {list.length === 0 ? (
+        awaiting ? null : (
+          <p className="text-body text-fg-muted">{t("endpoints.page.visualizations.none")}</p>
+        )
       ) : (
         <ul className="space-y-2">
           {list.map((one) => (
@@ -282,7 +305,11 @@ export function VisualizationsSection({
                 {titleOf(one)}
               </span>
               <Badge mono>{one.name}</Badge>
-              <Badge>{one.data.source}</Badge>
+              <Badge>
+                {one.data.source === "temporal"
+                  ? t("endpoints.page.visualizations.overTime")
+                  : one.data.source}
+              </Badge>
               {one.data.source === "temporal" && one.data.controls === false ? (
                 <Badge>{t("endpoints.page.visualizations.toolbarHidden")}</Badge>
               ) : null}
@@ -328,7 +355,7 @@ export function VisualizationsSection({
       {removing ? alert : null}
 
       {canEdit ? (
-        <details className="rounded-lg border border-border p-3">
+        <details ref={editor} className="rounded-lg border border-border p-3">
           <summary className="cursor-pointer text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
           </summary>
@@ -463,10 +490,13 @@ export function VisualizationsSection({
                 id="viz-range"
                 errors={errorsOf("range")}
                 label={label("range")}
-                help={t(
-                  temporal.controls
-                    ? "endpoints.page.visualizations.hint.range"
-                    : "endpoints.page.visualizations.hint.fixedRange",
+                help={hintOf(
+                  "range",
+                  t(
+                    temporal.controls
+                      ? "endpoints.page.visualizations.hint.range"
+                      : "endpoints.page.visualizations.hint.fixedRange",
+                  ),
                 )}
               >
                 <Select
@@ -492,10 +522,13 @@ export function VisualizationsSection({
                 id="viz-granularity"
                 errors={errorsOf("granularity")}
                 label={label("granularity")}
-                help={t(
-                  temporal.granularity === "raw"
-                    ? "endpoints.page.visualizations.hint.raw"
-                    : "endpoints.page.visualizations.hint.granularity",
+                help={hintOf(
+                  "granularity",
+                  t(
+                    temporal.granularity === "raw"
+                      ? "endpoints.page.visualizations.hint.raw"
+                      : "endpoints.page.visualizations.hint.granularity",
+                  ),
                 )}
               >
                 <Select
@@ -523,7 +556,7 @@ export function VisualizationsSection({
                   id="viz-method"
                   errors={errorsOf("method")}
                   label={label("method")}
-                  help={t("endpoints.page.visualizations.hint.method")}
+                  help={hintOf("method", t("endpoints.page.visualizations.hint.method"))}
                 >
                   <Select
                     id="viz-method"

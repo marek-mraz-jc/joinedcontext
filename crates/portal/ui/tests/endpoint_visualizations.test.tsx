@@ -263,6 +263,7 @@ describe("VisualizationsSection", () => {
     const control = screen.getByLabelText(V[field]);
     await waitFor(() => expect(control).toHaveAttribute("aria-invalid", "true"));
     expect(control).toHaveAccessibleDescription(expect.stringContaining(says));
+    if (field !== "controls") expect(control).not.toHaveAccessibleDescription(expect.stringContaining(V.hint[field]));
     expect(document.body.textContent).not.toContain("/spec/catalog");
     expect(screen.getAllByText(new RegExp(`Nothing was proposed.*${V[field]}`))).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: V.showField }));
@@ -347,6 +348,8 @@ describe("VisualizationsSection", () => {
     await waitFor(() => expect(screen.getByLabelText(V.name)).toHaveValue(""));
     expect(screen.getByLabelText(V.controls)).toBeChecked();
     expect(screen.getByLabelText(V.range)).toHaveValue("day");
+    expect(screen.getByText(V.add).closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/“New” is proposed/)).toBeVisible();
     expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
   });
 
