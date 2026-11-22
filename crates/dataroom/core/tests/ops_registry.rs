@@ -218,6 +218,11 @@ async fn registry_lookup_by_name_tool_and_command() {
         assert!(op.output_schema.is_object(), "{}", op.name);
     }
     assert!(find_operation("nope").is_none());
+    // Distinct from the Portal's manifest tools of the same verb.
+    assert_eq!(
+        find_operation("resource.propose").map(|d| d.mcp_tool),
+        Some("jc_catalogue_resource_propose")
+    );
     let w = world().await;
     let r = w.run(&w.admin(), "nope", json!({})).await;
     assert!(is_not_found(&r), "{r:?}");

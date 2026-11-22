@@ -385,8 +385,10 @@ pub fn all_operations() -> Vec<OperationDef> {
         },
         OperationDef {
             name: "resource.propose",
-            mcp_tool: "jc_resource_propose",
-            cli_command: "resource-propose",
+            // The Portal's `jc_resource_propose` changes a manifest: a client holding both servers
+            // must not mistake one for the other.
+            mcp_tool: "jc_catalogue_resource_propose",
+            cli_command: "catalogue-resource-propose",
             segment: "publish",
             permission: Action::Propose,
             target_kind: "Dataset",
@@ -396,8 +398,10 @@ pub fn all_operations() -> Vec<OperationDef> {
         },
         OperationDef {
             name: "resource.delete",
-            mcp_tool: "jc_resource_delete",
-            cli_command: "resource-delete",
+            // The Portal's `jc_resource_delete` changes a manifest: a client holding both servers
+            // must not mistake one for the other.
+            mcp_tool: "jc_catalogue_resource_delete",
+            cli_command: "catalogue-resource-delete",
             segment: "publish",
             permission: Action::Delete,
             target_kind: "Dataset",
