@@ -181,7 +181,7 @@ for (const width of [1440, 400]) {
 
     // Hourly, the same days: drawn as answered, the held value included, and said so in one line.
     await host.getByLabel("Podrobnosť").selectOption("PT1H");
-    await expect(host.locator("#data-note.carried")).toContainText("opakovaná cez čas bez meraní");
+    await expect(host.locator("#data-note.carried")).toContainText("prenesená cez čas bez meraní");
     await expect(host.locator("#data-note")).toContainText("„Merania“");
     await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
     await expect(host.locator("#axis-note")).toContainText("v miestnom čase");
@@ -217,9 +217,11 @@ for (const width of [1440, 400]) {
     // Daily buckets are UTC days: the axis says that in place of local time.
     await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
     await expect(host.locator("#axis-note")).not.toContainText("miestnom");
-    await expect(host.locator("#data-note.carried")).toContainText("prenesenú z predošlého dňa");
+    await expect(host.locator("#data-note.carried")).toContainText("hodnotu z predošlého dňa");
     await expect(host.locator("#c-from-hint")).toContainText("1. nov. 2026 (UTC)");
-    await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
+    // A point a day and no line through a day that may be carried.
+    await expect(chart.locator("g.concat_0_group g.mark-line path")).toHaveCount(0);
+    await expect(chart.locator("g.concat_0_group g.mark-symbol.role-mark path[d]:not([d=''])")).toHaveCount(21);
     // No tick label runs out of the chart.
     expect(await chart.locator("svg.marks g.role-axis-label text").evaluateAll((labels) => labels.filter((l) => {
       const svg = (l as SVGTextElement).ownerSVGElement!.getBoundingClientRect();
@@ -236,7 +238,7 @@ for (const width of [1440, 400]) {
     await pick(host, ["urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11518", "urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11519"]);
     await expect(chart.locator("g.mark-line path")).toHaveCount(4);
     // The closed list names both picks.
-    await expect(host.locator("#c-stations-picker summary")).toHaveText(/^2: \S+, \S+$/);
+    await expect(host.locator("#c-stations-picker summary")).toHaveText(/^\S+, \S+ \(2\)$/);
     expect(state.asked.length).toBe(reads);
     await shot(page, "two-stations", width);
 
@@ -266,7 +268,7 @@ for (const width of [1440, 400]) {
     page.on("console", (m) => { if (m.type() === "error" && !/503/.test(m.text())) errors.push(m.text()); });
     await page.setViewportSize({ width, height: 900 });
     const state = { mode: "empty" as Mode, asked: [] as URL[] };
-    const { host } = await open(page, state);
+    const { host, chart } = await open(page, state);
     await expect(host.locator("#status")).toContainText("žiadne údaje", { timeout: 20_000 });
     // The stations stay to change with no answer to read them from, and the pick is kept.
     const stations = host.locator("#c-stations");
@@ -287,10 +289,12 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#status")).toContainText("Skoršie údaje v tomto období uložené nie sú");
+    await expect(host.locator("#controls-note")).toContainText("Skoršie údaje v tomto období uložené nie sú");
     await expect(host.locator("#status")).toContainText("novšie údaje");
     await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
+    // The axis runs on to the end of the range picked, past the last bucket read.
+    await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: "21. 11." })).toHaveCount(1);
     await shot(page, "cut", width);
 
     state.mode = "error";

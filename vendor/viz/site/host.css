@@ -28,10 +28,11 @@ a { color: #1d4ed8; }
 .control input { height: 2.2rem; }
 .control summary { cursor: pointer; display: block; height: 2.2rem; line-height: 1.5rem; padding-inline-end: 24px; position: relative; list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .control summary::-webkit-details-marker { display: none; }
-.control summary::after { content: "\25BE"; position: absolute; right: 8px; }
+.control summary::after { content: ""; position: absolute; right: 10px; top: 0.75rem; width: 5px; height: 5px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 #c-stations { margin-top: 4px; }
 #c-stations option { padding: 4px 2px; }
 .inline .controls { padding: 3px; }
+.inline #status, .inline #data-note { margin-left: 3px; }
 .control select:focus-visible, .control input:focus-visible, .control summary:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 1px; }
 .hint { font-size: 0.78rem; color: #475569; margin: 0; }
 #controls-note { flex: 1 1 100%; }
@@ -51,12 +52,13 @@ html[data-theme="dark"] .hint { color: #a0a8b3; }
   .control { min-width: 0; }
   .control.first { grid-column: 1; }
   #controls-note { grid-column: 1 / -1; }
+  .hint { font-size: 0.75rem; }
   #status { margin: 6px 0; padding: 6px 10px; font-size: 0.85rem; }
 }
 .retry { font: inherit; margin: 0 0 8px; padding: 6px 14px; border: 1px solid #1d4ed8; border-radius: 6px; background: #1d4ed8; color: #fff; cursor: pointer; }
 .skeleton { height: 420px; margin: 8px 0; border-radius: 8px; background: #f1f5f9; }
 html[data-theme="dark"] .skeleton { background: #22272e; }
-.retry.reset { margin: 4px 0; }
+.retry.reset { margin: 4px 0; padding: 4px 12px; background: transparent; color: #1d4ed8; }
 /* The retry sits in the panel that says what failed. */
 #status.blank + .retry { display: block; position: relative; top: -150px; margin: 0 auto; }
 .retry:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
