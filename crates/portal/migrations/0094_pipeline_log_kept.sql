@@ -1,6 +1,6 @@
 -- The trim of a pipeline's log (T-7494). Its cut walks the newest 5000 ids of the pipeline, and
 -- forced row-level security (0080) reads org_id and project_id of each, which pipeline_log_by_pipeline
--- does not hold: 5000 heap rows per trim, past the 30 s statement timeout on jc-prod. With the key
+-- does not hold: 5000 heap rows per trim, on a table whose trims timed out on jc-prod. With the key
 -- in the index the cut reads about 60 index pages on 1.4 million rows and no heap page that vacuum
 -- marked visible, so the table is vacuumed at 2 % changed or inserted rather than 20 %.
 --
