@@ -47,6 +47,17 @@ the time the broker received it. A payload that is an NGSI-LD Notification
 `DELETE /x/channels/{id}` unbinds. A Channel another subject bound answers
 404.
 
+## Limits and replicas
+
+A Tenant binds at most `ANTARES_CHANNELS_PER_TENANT` Channels (50), and one
+process runs at most `ANTARES_CHANNELS_MAX` (1000). A bind past either
+answers 403 and names the setting.
+
+A Channel is stored in its Tenant's own scope. Every replica checks the
+Channels it runs against the store every 5 seconds: one unbound, re-bound or
+purged through another replica stops within that time, and while the store
+cannot be read its samples are refused.
+
 ## MQTT
 
 The MQTT bridge speaks MQTT 5 at QoS 1 under the shared subscription

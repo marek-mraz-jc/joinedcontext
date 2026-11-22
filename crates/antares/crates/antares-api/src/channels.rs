@@ -30,13 +30,14 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The broker's own tenant the Channel documents live under, keyed
-/// `{tenant}:{id}` (both `[A-Za-z0-9_-]`, so the key splits one way).
-pub const CHANNEL_TENANT: &str = "antares-channels";
+/// The reserved Tenant Channel documents lived under, keyed `{tenant}:{id}`,
+/// before each moved to its own (S4-16). A start moves what is left there
+/// ([`move_leftovers`]); the name stays reserved, so no client ever owns it.
+const LEFTOVER_TENANT: &str = "antares-channels";
 
 /// Samples per second a Channel accepts unless its binder asks for fewer.
 pub const DEFAULT_RATE: u32 = 10;
@@ -387,6 +388,22 @@ impl Stats {
 struct Running {
     tasks: Vec<tokio::task::AbortHandle>,
     stats: Arc<Stats>,
+    tenant: TenantId,
+    id: String,
+    /// The document it runs; once the stored one differs, it is stale.
+    doc: Arc<Value>,
+    /// Whether the last [`tend`] could read it; no sample is written else.
+    fresh: Arc<AtomicBool>,
+}
+
+/// A stored Channel as it is started.
+#[derive(Clone)]
+struct Bind {
+    /// The Tenant whose row it is, whatever the document says.
+    tenant: TenantId,
+    doc: Arc<Value>,
+    ch: Channel,
+    subject: Vec<(String, String)>,
 }
 
 impl Drop for Running {
@@ -440,10 +457,6 @@ struct Shared {
     running: Arc<Mutex<HashMap<String, Running>>>,
 }
 
-fn store_tenant() -> ApiResult<TenantId> {
-    Ok(TenantId::new_internal(CHANNEL_TENANT)?)
-}
-
 fn key(tenant: &TenantId, id: &str) -> String {
     format!("{}:{id}", tenant.as_str())
 }
@@ -475,7 +488,13 @@ impl crate::ApiSurface for Channels {
                     lock(&running).retain(|k, _| !k.starts_with(&prefix));
                 }));
             let (st, shared) = (st.clone(), shared.clone());
-            tokio::spawn(async move { restore(&st, &shared).await });
+            tokio::spawn(async move {
+                restore(&st, &shared).await;
+                loop {
+                    tokio::time::sleep(TEND_EVERY).await;
+                    tend(&st, &shared).await;
+                }
+            });
         }
         let one = {
             let (a, b, c) = (shared.clone(), shared.clone(), shared.clone());
@@ -501,8 +520,14 @@ impl crate::ApiSurface for Channels {
             .route("/{id}", one)
             // EP-188: the bind door and every read of a binding
             .layer(axum::middleware::from_fn_with_state(
-                st,
+                st.clone(),
                 crate::admin_auth::existing_tenant_layer,
+            ))
+            // T-5032: the API's own door, so a caller nobody vouches for
+            // reads and binds no Channel (S4-16)
+            .layer(axum::middleware::from_fn_with_state(
+                st,
+                crate::admin_auth::subject_or_admin,
             ))
     }
 
@@ -628,14 +653,15 @@ impl Budget {
 
 /// Start Channel `ch` on its bridge. A bind (`replace`) replaces a running
 /// one of the same key; a restore leaves one a bind already started alone.
-async fn start(
-    st: &AppState,
-    shared: &Shared,
-    key: String,
-    ch: Channel,
-    subject: Vec<(String, String)>,
-    replace: bool,
-) -> Result<(), String> {
+async fn start(st: &AppState, shared: &Shared, bound: Bind, replace: bool) -> Result<(), String> {
+    let Bind {
+        tenant,
+        doc,
+        ch,
+        subject,
+    } = bound;
+    let key = key(&tenant, &ch.id);
+    let id = ch.id.clone();
     let bridge = shared
         .bridges
         .get(&ch.broker)
@@ -647,6 +673,11 @@ async fn start(
     } else if lock(&shared.running).contains_key(&key) {
         return Ok(());
     }
+    if replica_full(shared, &key) {
+        return Err(refused_by_replica());
+    }
+    let fresh = Arc::new(AtomicBool::new(true));
+    let readable = Arc::clone(&fresh);
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Sample>(QUEUE);
     let feed = bridge.open(&ch.topic, tx).await?;
     let stats = Arc::new(Stats::default());
@@ -674,6 +705,10 @@ async fn start(
                     continue;
                 }
             };
+            if !readable.load(Ordering::Relaxed) {
+                counters.refused.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
             if !budget.admits(Instant::now()) {
                 counters.over_rate.fetch_add(1, Ordering::Relaxed);
                 continue;
@@ -699,7 +734,14 @@ async fn start(
     });
     let mut tasks = vec![worker.abort_handle()];
     tasks.extend(feed);
-    let run = Running { tasks, stats };
+    let run = Running {
+        tasks,
+        stats,
+        tenant,
+        id,
+        doc,
+        fresh,
+    };
     let mut running = lock(&shared.running);
     // a restore that lost the race to a bind drops its own (and its tasks)
     if replace || !running.contains_key(&key) {
@@ -708,13 +750,14 @@ async fn start(
     Ok(())
 }
 
-/// Delete the stored Channels of `tenant` (S4-30); the purge hook the
-/// router registered stops the running ones.
+/// Delete the Channels of `tenant` still waiting to be moved to it (S4-30):
+/// its own go with the store's purge, and the purge hook the router
+/// registered stops the running ones.
 ///
 /// # Errors
 /// The store's.
 pub(crate) async fn purge_tenant(st: &AppState, tenant: &TenantId) -> Result<(), NgsiError> {
-    let store = TenantId::new_internal(CHANNEL_TENANT)?;
+    let store = TenantId::new_internal(LEFTOVER_TENANT)?;
     let mut keys = Vec::new();
     crate::csource::walk_docs(st, &store, Kind::View, |doc| {
         if stored_tenant(&doc).as_ref() == Some(tenant) {
@@ -749,22 +792,99 @@ fn topic_in_namespace(tenant: Option<&str>, topic: &str) -> bool {
     }
 }
 
-/// Start every stored Channel; one its bridge refuses is logged and skipped.
+/// Whether this process runs as many Channels as it may and `key` is none
+/// of them.
+fn replica_full(shared: &Shared, key: &str) -> bool {
+    let running = lock(&shared.running);
+    !running.contains_key(key) && running.len() >= *crate::bounds::CHANNELS_MAX
+}
+
+/// What a Channel past [`crate::bounds::CHANNELS_MAX`] is told.
+fn refused_by_replica() -> String {
+    format!(
+        "this broker runs {} Channels, the most it may (ANTARES_CHANNELS_MAX): unbind one, or ask the operator to raise it",
+        *crate::bounds::CHANNELS_MAX
+    )
+}
+
+fn count_refused(cap: &'static str) {
+    metrics::counter!("antares_tenant_cap_refused_total", "cap" => cap).increment(1);
+}
+
+/// The Channel a row of `tenant` holds. The Tenant is the row's: a rename
+/// moves the row and leaves the document's own `tenant` as it was bound.
+fn channel_of(tenant: &TenantId, doc: &Value) -> Option<Channel> {
+    let mut ch: Channel = serde_json::from_value(doc.clone()).ok()?;
+    ch.tenant = (*tenant != TenantId::default()).then(|| tenant.as_str().to_owned());
+    Some(ch)
+}
+
+/// Every Channel document of `tenant`, read through the Tenant's own scope.
+async fn stored(st: &AppState, tenant: &TenantId) -> Result<Vec<Value>, NgsiError> {
+    let mut docs = Vec::new();
+    crate::csource::walk_docs(st, tenant, Kind::View, |doc| {
+        docs.push(doc);
+        Ok(())
+    })
+    .await?;
+    Ok(docs)
+}
+
+/// Move the documents left in [`LEFTOVER_TENANT`] to their Tenants. Safe to
+/// repeat and on every replica: a Channel the Tenant holds already wins, and
+/// the leftover goes only after the move is stored.
+async fn move_leftovers(st: &AppState) -> Result<(), NgsiError> {
+    let from = TenantId::new_internal(LEFTOVER_TENANT)?;
+    for doc in st.store.list(&from, Kind::View).await? {
+        let (Some(tenant), Some(id)) = (
+            stored_tenant(&doc),
+            doc.get("id").and_then(Value::as_str).map(str::to_owned),
+        ) else {
+            continue;
+        };
+        // a renamed-away Tenant's is refused by the store and waits where it is
+        if let Err(e) = st.store.create(&tenant, Kind::View, &id, doc).await {
+            tracing::warn!(
+                channel = %id, tenant = tenant.as_str(),
+                "channels: a stored channel was not moved to its Tenant: {e}"
+            );
+            continue;
+        }
+        st.store
+            .delete(&from, Kind::View, &key(&tenant, &id))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Start every stored Channel; one its bridge refuses is retried, one past
+/// the process's cap is logged and left stopped.
 async fn restore(st: &AppState, shared: &Shared) {
-    let Ok(t) = store_tenant() else { return };
-    let docs = match st.store.list(&t, Kind::View).await {
-        Ok(d) => d,
+    if let Err(e) = move_leftovers(st).await {
+        tracing::error!("channels: moving the stored channels to their Tenants failed: {e}");
+    }
+    let names = match st.store.tenant_ids().await {
+        Ok(names) => names,
         Err(e) => {
-            tracing::error!("channels: listing the stored channels failed: {e}");
+            tracing::error!("channels: listing the Tenants failed: {e}");
             return;
         }
     };
-    for doc in docs {
-        let Ok(ch) = serde_json::from_value::<Channel>(doc.clone()) else {
+    let mut started = 0usize;
+    for name in names {
+        let Ok(tenant) = TenantId::new_internal(&name) else {
             continue;
         };
-        let Some(tenant) = stored_tenant(&doc) else {
-            continue;
+        let docs = match stored(st, &tenant).await {
+            Ok(docs) if docs.is_empty() => continue,
+            Ok(docs) => docs,
+            Err(e) => {
+                tracing::error!(
+                    tenant = tenant.as_str(),
+                    "channels: listing the stored channels failed: {e}"
+                );
+                continue;
+            }
         };
         // EP-188: the replay acts for the stored Tenant, which no caller
         // names now: its shape, tombstone and stored Organization decide.
@@ -773,27 +893,89 @@ async fn restore(st: &AppState, shared: &Shared) {
             .is_some()
         {
             tracing::warn!(
-                channel = %ch.id, tenant = tenant.as_str(),
-                "channels: a stored channel's Tenant is refused by the Organization check (EP-188): not restored"
+                tenant = tenant.as_str(),
+                "channels: a Tenant with stored channels is refused by the Organization check (EP-188): not restored"
             );
             continue;
         }
-        // a binding stored before the topic namespace (T-7306) that reaches
-        // outside it stays stored and stopped until its binder binds again
-        if !topic_in_namespace(ch.tenant.as_deref(), &ch.topic) {
-            tracing::warn!(
-                channel = %ch.id, tenant = tenant.as_str(),
-                "channels: a stored channel's topic is outside its Tenant's namespace: not restored; bind it again under {}/",
-                tenant.as_str()
-            );
-            continue;
+        for doc in docs {
+            let Some(ch) = channel_of(&tenant, &doc) else {
+                continue;
+            };
+            // a binding stored before the topic namespace (T-7306) that reaches
+            // outside it stays stored and stopped until its binder binds again
+            if !topic_in_namespace(ch.tenant.as_deref(), &ch.topic) {
+                tracing::warn!(
+                    channel = %ch.id, tenant = tenant.as_str(),
+                    "channels: a stored channel's topic is outside its Tenant's namespace: not restored; bind it again under {}/",
+                    tenant.as_str()
+                );
+                continue;
+            }
+            // the cap bounds the retrying tasks as well as the running ones
+            if started >= *crate::bounds::CHANNELS_MAX {
+                count_refused("channels_replica");
+                tracing::error!(
+                    channel = %ch.id, tenant = tenant.as_str(),
+                    "channels: not restored: {}", refused_by_replica()
+                );
+                continue;
+            }
+            started = started.saturating_add(1);
+            let bound = Bind {
+                subject: crate::policy::stored_subject(&tenant, &doc).headers,
+                tenant: tenant.clone(),
+                doc: Arc::new(doc),
+                ch,
+            };
+            let (st, shared) = (st.clone(), shared.clone());
+            tokio::spawn(async move {
+                keep_starting(&st, &shared, bound, RESTORE_RETRY).await;
+            });
         }
-        let subject = crate::policy::stored_subject(&tenant, &doc).headers;
-        let k = key(&tenant, &ch.id);
-        let (st, shared) = (st.clone(), shared.clone());
-        tokio::spawn(async move {
-            keep_starting(&st, &shared, k, doc, ch, subject, RESTORE_RETRY).await;
-        });
+    }
+}
+
+/// How often the running Channels are held to what is stored.
+const TEND_EVERY: Duration = Duration::from_secs(5);
+
+/// Stop the Channels here whose document another replica deleted, replaced
+/// or purged, and hold the samples of those that cannot be read (S4-16).
+/// One read per Tenant with a Channel running here.
+async fn tend(st: &AppState, shared: &Shared) {
+    // taken before the read: a bind made during it is not judged by it
+    let mut held: HashMap<TenantId, Vec<(String, String, Arc<Value>)>> = HashMap::new();
+    for (k, run) in lock(&shared.running).iter() {
+        held.entry(run.tenant.clone()).or_default().push((
+            k.clone(),
+            run.id.clone(),
+            Arc::clone(&run.doc),
+        ));
+    }
+    for (tenant, runs) in held {
+        let read = stored(st, &tenant).await;
+        let mut running = lock(&shared.running);
+        for (k, id, doc) in runs {
+            let Some(run) = running.get(&k).filter(|run| Arc::ptr_eq(&run.doc, &doc)) else {
+                continue;
+            };
+            match &read {
+                Err(e) => {
+                    run.fresh.store(false, Ordering::Relaxed);
+                    tracing::warn!("channels: channel {k} is unreadable, its samples wait: {e}");
+                }
+                Ok(docs) => {
+                    let now = docs
+                        .iter()
+                        .find(|d| d.get("id").and_then(Value::as_str) == Some(id.as_str()));
+                    if now == Some(&*doc) {
+                        run.fresh.store(true, Ordering::Relaxed);
+                    } else {
+                        running.remove(&k);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -801,21 +983,13 @@ async fn restore(st: &AppState, shared: &Shared) {
 const RESTORE_RETRY: Duration = Duration::from_secs(30);
 
 /// Start a restored Channel, again every `every` while its bridge refuses,
-/// for as long as the stored View is still `doc`: a Channel deleted or
-/// re-bound meanwhile is not this restore's to start (its delete stopped it,
-/// its new bind started its own).
-async fn keep_starting(
-    st: &AppState,
-    shared: &Shared,
-    k: String,
-    doc: Value,
-    ch: Channel,
-    subject: Vec<(String, String)>,
-    every: Duration,
-) {
-    let Ok(t) = store_tenant() else { return };
+/// for as long as the stored document is still the one it read: a Channel
+/// deleted or re-bound meanwhile is not this restore's to start (its delete
+/// stopped it, its new bind started its own).
+async fn keep_starting(st: &AppState, shared: &Shared, bound: Bind, every: Duration) {
+    let k = key(&bound.tenant, &bound.ch.id);
     loop {
-        match start(st, shared, k.clone(), ch.clone(), subject.clone(), false).await {
+        match start(st, shared, bound.clone(), false).await {
             Ok(()) => return,
             Err(e) => tracing::warn!(
                 "channels: channel {k} did not start, retrying in {} s: {e}",
@@ -823,8 +997,8 @@ async fn keep_starting(
             ),
         }
         tokio::time::sleep(every).await;
-        match st.store.get(&t, Kind::View, &k).await {
-            Ok(Some(now)) if now == doc => {}
+        match st.store.get(&bound.tenant, Kind::View, &bound.ch.id).await {
+            Ok(Some(now)) if now == *bound.doc => {}
             Ok(_) => return,
             // a store that cannot answer now may answer at the next try
             Err(e) => tracing::warn!("channels: reading channel {k} failed: {e}"),
@@ -853,7 +1027,7 @@ async fn owned(
     let k = key(tenant, id);
     let doc = st
         .store
-        .get(&store_tenant()?, Kind::View, &k)
+        .get(tenant, Kind::View, id)
         .await?
         .filter(|d| crate::policy::belongs_to(d, &crate::policy::subject_of(tenant, headers)))
         .ok_or_else(|| NgsiError::ResourceNotFound(format!("channel {id} not found")))?;
@@ -925,8 +1099,7 @@ async fn bind_inner(
         return Ok(probe);
     }
     let k = key(&tenant, id);
-    let store = store_tenant()?;
-    let old = st.store.get(&store, Kind::View, &k).await?;
+    let old = st.store.get(&tenant, Kind::View, id).await?;
     if let Some(old) = &old {
         if !crate::policy::belongs_to(old, &subject) {
             return Err(NgsiError::AlreadyExists(format!(
@@ -935,6 +1108,10 @@ async fn bind_inner(
             .into());
         }
     }
+    if replica_full(shared, &k) {
+        count_refused("channels_replica");
+        return Err(NgsiError::TooManyResults(refused_by_replica()).into());
+    }
     let mut doc = serde_json::to_value(&ch).map_err(|e| NgsiError::InternalError(e.to_string()))?;
     if let (Some(o), Some(s)) = (doc.as_object_mut(), crate::policy::subject_member(&subject)) {
         o.insert(crate::policy::SUBJECT_MEMBER.into(), s);
@@ -942,11 +1119,39 @@ async fn bind_inner(
     // stored before it replaces the running Channel: a refused write leaves
     // the old binding running and stored (F-ANT3-011); a bridge that refuses
     // the new one puts the old document back, so nothing new is bound
-    let replaced = st.store.upsert(&store, Kind::View, &k, doc).await?;
-    if let Err(e) = start(st, shared, k.clone(), ch, subject.headers, true).await {
+    let replaced = st
+        .store
+        .upsert(&tenant, Kind::View, id, doc.clone())
+        .await?;
+    if !replaced {
+        // counted with this one stored, so two replicas cannot both take the
+        // last place: at worst both are refused and one binds again
+        let held = stored(st, &tenant).await;
+        let cap = *crate::bounds::CHANNELS_PER_TENANT;
+        if !matches!(&held, Ok(docs) if docs.len() <= cap) {
+            st.store.delete(&tenant, Kind::View, id).await?;
+            held?;
+            count_refused("channels");
+            return Err(NgsiError::TooManyResults(format!(
+                "this Tenant holds {cap} Channels, the most this broker keeps for one (ANTARES_CHANNELS_PER_TENANT): unbind one, or ask the operator to raise it"
+            ))
+            .into());
+        }
+    }
+    let bound = Bind {
+        tenant: tenant.clone(),
+        doc: Arc::new(doc),
+        ch,
+        subject: subject.headers,
+    };
+    if let Err(e) = start(st, shared, bound, true).await {
         match old {
-            Some(old) => st.store.upsert(&store, Kind::View, &k, old).await.map(drop),
-            None => st.store.delete(&store, Kind::View, &k).await.map(drop),
+            Some(old) => st
+                .store
+                .upsert(&tenant, Kind::View, id, old)
+                .await
+                .map(drop),
+            None => st.store.delete(&tenant, Kind::View, id).await.map(drop),
         }?;
         return Err(NgsiError::InternalError(format!("channel {id} is not bound: {e}")).into());
     }
@@ -991,7 +1196,7 @@ async fn unbind(
             let (tenant, _) = tenant_of(&headers)?;
             let (k, _) = owned(&st, &tenant, &headers, &id).await?;
             lock(&shared.running).remove(&k);
-            st.store.delete(&store_tenant()?, Kind::View, &k).await?;
+            st.store.delete(&tenant, Kind::View, &id).await?;
             Ok(StatusCode::NO_CONTENT.into_response())
         }
         .await,
@@ -1004,7 +1209,7 @@ async fn list(State(st): State<AppState>, shared: Shared, headers: HeaderMap) ->
             let (tenant, _) = tenant_of(&headers)?;
             let subject = crate::policy::subject_of(&tenant, &headers);
             let prefix = key(&tenant, "");
-            let docs = st.store.list(&store_tenant()?, Kind::View).await?;
+            let docs = stored(&st, &tenant).await?;
             let running = lock(&shared.running);
             let out: Vec<Value> = docs
                 .into_iter()
@@ -1012,8 +1217,7 @@ async fn list(State(st): State<AppState>, shared: Shared, headers: HeaderMap) ->
                 .filter_map(|d| {
                     let id = d.get("id")?.as_str()?.to_owned();
                     let k = format!("{prefix}{id}");
-                    (stored_tenant(&d).as_ref() == Some(&tenant))
-                        .then(|| served(d, running.get(&k).map(|r| Arc::clone(&r.stats))))
+                    Some(served(d, running.get(&k).map(|r| Arc::clone(&r.stats))))
                 })
                 .collect();
             Ok(Json(out).into_response())
@@ -1022,8 +1226,8 @@ async fn list(State(st): State<AppState>, shared: Shared, headers: HeaderMap) ->
     )
 }
 
-/// The tenant a stored Channel document belongs to; `None` for one that
-/// names no valid tenant.
+/// The Tenant a document left in [`LEFTOVER_TENANT`] names; `None` for one
+/// that names no valid one. A moved document's Tenant is its row's.
 fn stored_tenant(doc: &Value) -> Option<TenantId> {
     match doc.get("tenant").and_then(Value::as_str) {
         None => Some(TenantId::default()),
@@ -1131,29 +1335,27 @@ mod tests {
             link: None,
         };
         let k = key(&TenantId::default(), &ch.id);
+        let id = ch.id.clone();
         let doc = serde_json::to_value(&ch).expect("channel doc");
-        let t = store_tenant().expect("store tenant");
+        let t = TenantId::default();
         st.store
-            .create(&t, Kind::View, &k, doc.clone())
+            .create(&t, Kind::View, &id, doc.clone())
             .await
             .expect("seed");
+        let bound = Bind {
+            tenant: t.clone(),
+            doc: Arc::new(doc),
+            ch,
+            subject: Vec::new(),
+        };
         let retry = {
-            let (st, shared, k, doc) = (st.clone(), shared.clone(), k.clone(), doc.clone());
+            let (st, shared) = (st.clone(), shared.clone());
             tokio::spawn(async move {
-                keep_starting(
-                    &st,
-                    &shared,
-                    k,
-                    doc,
-                    ch,
-                    Vec::new(),
-                    Duration::from_millis(20),
-                )
-                .await;
+                keep_starting(&st, &shared, bound, Duration::from_millis(20)).await;
             })
         };
         tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(st.store.delete(&t, Kind::View, &k).await.expect("delete"));
+        assert!(st.store.delete(&t, Kind::View, &id).await.expect("delete"));
         tokio::time::timeout(Duration::from_secs(5), retry)
             .await
             .expect("the retry never stopped")
@@ -1161,6 +1363,86 @@ mod tests {
         assert!(
             !lock(&shared.running).contains_key(&k),
             "a deleted Channel was started by its restore"
+        );
+    }
+
+    /// S4-16: a document of the former shared Tenant moves to the Tenant it
+    /// names, once, and never over the Channel that Tenant holds already.
+    #[tokio::test]
+    async fn leftovers_move_to_their_tenants_and_never_over_a_newer_channel() {
+        let st = AppState::new("antares-channels-move".into());
+        let from = TenantId::new_internal(LEFTOVER_TENANT).expect("tenant");
+        let city = TenantId::new("city").expect("tenant");
+        for id in ["moved", "newer"] {
+            let doc = json!({"id": id, "tenant": "city", "topic": "city/old"});
+            st.store
+                .create(&from, Kind::View, &key(&city, id), doc)
+                .await
+                .expect("leftover");
+        }
+        let newer = json!({"id": "newer", "tenant": "city", "topic": "city/new"});
+        st.store
+            .create(&city, Kind::View, "newer", newer.clone())
+            .await
+            .expect("newer");
+        for _ in 0..2 {
+            move_leftovers(&st).await.expect("move");
+            let get = |id| st.store.get(&city, Kind::View, id);
+            assert!(get("moved").await.expect("read").is_some());
+            assert_eq!(get("newer").await.expect("read"), Some(newer.clone()));
+            assert!(st
+                .store
+                .list(&from, Kind::View)
+                .await
+                .expect("list")
+                .is_empty());
+        }
+    }
+
+    /// S4-16, two replicas: a Channel another one deleted or re-bound stops
+    /// here at the next check, and an unchanged one runs on.
+    #[tokio::test]
+    async fn a_channel_changed_on_another_replica_stops_here() {
+        let st = AppState::new("antares-channels-tend".into());
+        let shared = Shared {
+            bridges: Arc::default(),
+            running: Arc::default(),
+        };
+        let city = TenantId::new("city").expect("tenant");
+        for id in ["same", "deleted", "rebound"] {
+            let doc = json!({"id": id, "topic": "city/a"});
+            st.store
+                .create(&city, Kind::View, id, doc.clone())
+                .await
+                .expect("seed");
+            let run = Running {
+                tasks: Vec::new(),
+                stats: Arc::default(),
+                tenant: city.clone(),
+                id: id.to_owned(),
+                doc: Arc::new(doc),
+                fresh: Arc::new(AtomicBool::new(false)),
+            };
+            lock(&shared.running).insert(key(&city, id), run);
+        }
+        st.store
+            .delete(&city, Kind::View, "deleted")
+            .await
+            .expect("delete");
+        let rebound = json!({"id": "rebound", "topic": "city/b"});
+        st.store
+            .upsert(&city, Kind::View, "rebound", rebound)
+            .await
+            .expect("rebind");
+        tend(&st, &shared).await;
+        let running = lock(&shared.running);
+        assert_eq!(running.len(), 1, "{:?}", running.keys());
+        let same = running
+            .get(&key(&city, "same"))
+            .expect("the unchanged one runs");
+        assert!(
+            same.fresh.load(Ordering::Relaxed),
+            "a readable one takes samples"
         );
     }
 

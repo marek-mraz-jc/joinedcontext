@@ -544,6 +544,24 @@ pub static CONTEXT_BYTES_PER_TENANT: std::sync::LazyLock<Option<u64>> =
             .and_then(|v| v.parse().ok())
             .filter(|n| *n > 0)
     });
+/// Deployment knob (ANTARES_CHANNELS_PER_TENANT): the inbound Channels one
+/// Tenant binds (S4-16), each a task and a bridge connection. 50 unless set.
+pub static CHANNELS_PER_TENANT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("ANTARES_CHANNELS_PER_TENANT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(50)
+});
+/// Deployment knob (ANTARES_CHANNELS_MAX): the Channels one process runs,
+/// every Tenant's together. 1,000 unless set.
+pub static CHANNELS_MAX: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("ANTARES_CHANNELS_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(1_000)
+});
 /// Deployment knob (ANTARES_MAX_LIMIT): the most Entities one query page
 /// answers (`limit`, 6.3.9; past it 403 TooManyResults). 1,000 unless set;
 /// read once at first use, and advertised by the MCP tools as their `limit`
@@ -933,6 +951,8 @@ impl LimitStats {
             "maxBatchItems": *MAX_BATCH_ITEMS,
             "maxLimit": *MAX_LIMIT,
             "contextsPerTenant": *CONTEXTS_PER_TENANT,
+            "channelsPerTenant": *CHANNELS_PER_TENANT,
+            "channelsMax": *CHANNELS_MAX,
             "defaultLimit": *DEFAULT_LIMIT,
             "temporalInstanceLimit": temporal_instance_limit(),
             "temporalDefaultInstances": temporal_default_instances(),
@@ -1393,6 +1413,9 @@ mod tests {
                 "batchInflightBytes",
                 "changeQueue",
                 "changeQueueBytes",
+                "channelsMax",
+                "channelsPerTenant",
+                "contextsPerTenant",
                 "defaultLimit",
                 "deliveryLane",
                 "deliveryLaneBytes",
