@@ -983,25 +983,26 @@ fn the_state_etag_follows_every_field_it_summarises() {
         "allowUiUpdates": false, "data": {"panels": []},
     })))
     .unwrap();
-    let etag = org_state_etag(&[folder.clone()], &[ds.clone()], &[dash.clone()]);
+    use std::slice::from_ref;
+    let etag = org_state_etag(from_ref(&folder), from_ref(&ds), from_ref(&dash));
     assert_eq!(etag.len(), 64);
     assert!(etag.bytes().all(|b| b.is_ascii_hexdigit()));
     assert_eq!(
         etag,
-        org_state_etag(&[folder.clone()], &[ds.clone()], &[dash.clone()])
+        org_state_etag(from_ref(&folder), from_ref(&ds), from_ref(&dash))
     );
     assert_ne!(etag, org_state_etag(&[], &[], &[]));
     let mut renamed = folder.clone();
     renamed.title = "G".into();
     assert_ne!(
         etag,
-        org_state_etag(&[renamed], &[ds.clone()], &[dash.clone()])
+        org_state_etag(&[renamed], from_ref(&ds), from_ref(&dash))
     );
     let mut moved = ds.clone();
     moved.url = "http://other".into();
     assert_ne!(
         etag,
-        org_state_etag(&[folder.clone()], &[moved], &[dash.clone()])
+        org_state_etag(from_ref(&folder), &[moved], from_ref(&dash))
     );
     let mut edited = dash;
     edited.data = json!({"panels": [1]});
