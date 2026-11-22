@@ -996,6 +996,78 @@ async fn resource_create_cannot_reuse_another_datasets_resource_id() {
     assert_eq!(a.json()["result"]["id"], "res-open-new", "{}", a.body);
 }
 
+/// The activity rows written so far, as `(operation, object id)`, oldest first.
+async fn activity(w: &World) -> Vec<(String, String)> {
+    let mut rows = w
+        .store
+        .list_activity(&w.admin_ctx(), None, 500)
+        .await
+        .unwrap();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    rows.into_iter()
+        .map(|r| (r.operation, r.object_id))
+        .collect()
+}
+
+#[tokio::test]
+async fn every_ckan_write_is_a_registered_operation_with_an_activity_row() {
+    let w = world().await;
+    let writes = [
+        ("resource_create", "resource.propose",
+         json!({"package_id": "open", "id": "res-more", "name": "More", "url": "https://files.example.org/more.csv", "format": "CSV"})),
+        ("resource_update", "resource.propose",
+         json!({"id": "res-more", "url": "https://files.example.org/more-2.csv"})),
+        ("resource_patch", "resource.propose",
+         json!({"id": "res-more", "name": "More rows"})),
+        ("resource_view_create", "resource_view.propose",
+         json!({"resource_id": "res-more", "id": "view-more", "view_type": "datatables_view", "title": "Rows"})),
+        ("resource_view_update", "resource_view.propose",
+         json!({"id": "view-more", "view_type": "datatables_view", "title": "All rows"})),
+        ("resource_view_delete", "resource_view.delete", json!({"id": "view-more"})),
+        ("resource_delete", "resource.delete", json!({"id": "res-more"})),
+        ("organization_create", "publisher.propose",
+         json!({"name": "library", "title": "Library"})),
+        ("organization_update", "publisher.propose",
+         json!({"id": "library", "title": "City library"})),
+        ("organization_patch", "publisher.propose",
+         json!({"id": "library", "description": "Books"})),
+        ("organization_delete", "publisher.withdraw", json!({"id": "library"})),
+        ("package_delete", "dataset.withdraw", json!({"id": "second"})),
+        ("dataset_purge", "dataset.purge", json!({"id": "second"})),
+    ];
+    let mut wrong = Vec::new();
+    for (action, op, body) in writes {
+        let before = activity(&w).await.len();
+        let a = ckan(&w.app, action, Some("tok-admin"), body).await;
+        assert_eq!(a.status, StatusCode::OK, "{action}: {}", a.body);
+        let rows = activity(&w).await;
+        if rows.len() != before + 1 || !rows.iter().any(|(o, _)| o == op) {
+            wrong.push(format!("{action}: no activity row of {op}"));
+        }
+        if dataroom_core::ops::find_operation(op).is_none() {
+            wrong.push(format!("{action}: {op} is not registered"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[tokio::test]
+async fn a_ckan_resource_write_is_judged_by_the_main_profile() {
+    let w = world().await;
+    let mut wrong = Vec::new();
+    for (action, body) in [
+        ("resource_create", json!({"package_id": "open", "id": "res-bad", "name": "Bad", "url": ""})),
+        ("resource_update", json!({"id": "res-open-0", "url": ""})),
+        ("resource_patch", json!({"id": "res-open-0", "url": ""})),
+    ] {
+        let a = ckan(&w.app, action, Some("tok-admin"), body).await;
+        if a.status.is_success() {
+            wrong.push(action);
+        }
+    }
+    assert!(wrong.is_empty(), "stored without the gate: {wrong:?}");
+}
+
 #[tokio::test]
 async fn mcp_tool_errors_keep_the_stores_text_in_the_server_log() {
     let w = world().await;
