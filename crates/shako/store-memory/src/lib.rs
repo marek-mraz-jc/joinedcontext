@@ -5,8 +5,8 @@
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
-    PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
+    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxClaim,
+    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
     ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
@@ -30,6 +30,8 @@ struct TenantState {
     package_files: BTreeMap<(String, String, String, String), PackageFileRecord>,
     blobs: BTreeMap<(String, String, String), BlobRecord>,
     outbox: Vec<OutboxEvent>,
+    /// Events whose delivery failed: the attempts so far and when each is due again.
+    outbox_retry: BTreeMap<uuid::Uuid, (u32, std::time::Instant)>,
     mirror_sync: BTreeMap<RepoId, MirrorSync>,
 }
 
@@ -1167,9 +1169,63 @@ impl Store for MemoryStore {
             if let Some(ev) = t.outbox.iter_mut().find(|e| e.id == event_id) {
                 ev.dispatched = true;
                 ev.dispatched_at = Some(TimestampTz::now());
+                t.outbox_retry.remove(&event_id);
                 return Ok(true);
             }
             Ok(false)
+        })
+    }
+
+    fn claim_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Option<OutboxClaim>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            let Some(t) = guard.tenants.get(&(instance_id, org_id)) else {
+                return Ok(None);
+            };
+            // A waiting event holds back its repository's later events only.
+            let now = std::time::Instant::now();
+            let mut held = BTreeSet::new();
+            for e in t.outbox.iter().filter(|e| !e.dispatched) {
+                if !held.insert(e.repo_id) {
+                    continue;
+                }
+                match t.outbox_retry.get(&e.id) {
+                    Some((_, due)) if *due > now => {}
+                    retry => {
+                        return Ok(Some(OutboxClaim {
+                            event: e.clone(),
+                            attempts: retry.map_or(0, |(n, _)| *n),
+                        }));
+                    }
+                }
+            }
+            Ok(None)
+        })
+    }
+
+    fn retry_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        event_id: uuid::Uuid,
+        after: std::time::Duration,
+    ) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let Some(t) = guard.tenants.get_mut(&(instance_id, org_id)) else {
+                return Ok(false);
+            };
+            if !t.outbox.iter().any(|e| e.id == event_id && !e.dispatched) {
+                return Ok(false);
+            }
+            let due = std::time::Instant::now() + after;
+            let entry = t.outbox_retry.entry(event_id).or_insert((0, due));
+            *entry = (entry.0.saturating_add(1), due);
+            Ok(true)
         })
     }
 

@@ -477,7 +477,7 @@ async fn two_dispatchers_claim_each_event_once() {
         let claimed: Vec<uuid::Uuid> = [a, b, c, d]
             .into_iter()
             .filter_map(|claim| claim.unwrap())
-            .map(|event| event.id)
+            .map(|claim| claim.event.id)
             .collect();
         assert_eq!(claimed, [*id], "one claimant, the oldest event");
         assert!(one.mark_outbox_dispatched(i, o, *id).await.unwrap());
@@ -496,7 +496,7 @@ async fn two_dispatchers_claim_each_event_once() {
     .execute(&db.admin)
     .await
     .unwrap();
-    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().id, id);
+    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().event.id, id);
 
     one.pool().close().await;
     two.pool().close().await;

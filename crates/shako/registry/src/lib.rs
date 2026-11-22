@@ -957,7 +957,7 @@ async fn oci_put_manifest(
         return oci_store_error(&e);
     }
 
-    let _ = emit_and_dispatch_event(
+    if let Err(e) = emit_and_dispatch_event(
         &state,
         ctx.org_id,
         None,
@@ -967,7 +967,10 @@ async fn oci_put_manifest(
         format!("oci:{}:{owner}/{image}:{computed_digest}", ctx.org_id),
         json!({"owner": owner, "image": image, "reference": reference, "digest": computed_digest}),
     )
-    .await;
+    .await
+    {
+        return oci_store_error(&e);
+    }
 
     let loc = format!("/v2/{owner}/{image}/manifests/{computed_digest}");
     (

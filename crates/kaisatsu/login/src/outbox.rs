@@ -235,19 +235,17 @@ impl OutboxDispatcher {
             else {
                 break;
             };
-            let name = match &realm_name {
-                Some(name) => name,
-                None => realm_name.insert(self.realm_display_name(realm_id).await?),
-            };
-            let delivery =
-                tokio::time::timeout(OUTBOX_SEND_DEADLINE, self.deliver(mount, &row, name))
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(Failure {
-                            detail: "the mail server did not answer in time".into(),
-                            retry_in: SignedDuration::from_secs(10),
-                        })
-                    });
+            let delivery = tokio::time::timeout(
+                OUTBOX_SEND_DEADLINE,
+                self.deliver(mount, &row, &mut realm_name),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(Failure {
+                    detail: "the mail server did not answer in time".into(),
+                    retry_in: SignedDuration::from_secs(10),
+                })
+            });
             let completed = match delivery {
                 Ok(()) => {
                     let done = self
@@ -294,20 +292,23 @@ impl OutboxDispatcher {
             .unwrap_or_default())
     }
 
-    /// Mints `row`'s link and sends its mail; a failure says when to try again.
+    /// Mints `row`'s link and sends its mail; a failure says when to try again. `realm_name` is
+    /// looked up once per batch, by the first row that needs it.
     async fn deliver(
         &self,
         mount: &Mount,
         row: &EmailOutboxRecord,
-        realm_name: &str,
+        realm_name: &mut Option<String>,
     ) -> std::result::Result<(), Failure> {
-        let link = self
-            .mint_link_for_row(mount, row)
-            .await
-            .map_err(|e| Failure {
-                detail: e.public_detail(),
-                retry_in: SignedDuration::from_secs(10),
-            })?;
+        let soon = |e: KaisatsuError| Failure {
+            detail: e.public_detail(),
+            retry_in: SignedDuration::from_secs(10),
+        };
+        let realm_name = match realm_name {
+            Some(name) => name,
+            None => realm_name.insert(self.realm_display_name(&row.realm_id).await.map_err(soon)?),
+        };
+        let link = self.mint_link_for_row(mount, row).await.map_err(soon)?;
         let (subject, body) = action_mail(&Bundle::for_locale(&row.locale), row, realm_name, &link);
         self.sender
             .send_mail(&row.realm_id, &row.to_address, &subject, &body, &link)
