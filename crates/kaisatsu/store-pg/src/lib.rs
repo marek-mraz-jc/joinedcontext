@@ -39,6 +39,8 @@ pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql")
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_k_items.sql");
 /// Embedded migration 0003 SQL (`device_code`, RFC 8628 device authorizations).
 pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_device_code.sql");
+/// Embedded migration 0004 SQL (orphan grants and document memberships, S3-15, S3-16).
+pub const MIGRATION_0004_SQL: &str = include_str!("../migrations/0004_grant_cleanup.sql");
 
 /// Table holding the applied migration versions (outside schema `kaisatsu`, so the request role
 /// has no grant on it and the RLS boot check does not see it).
@@ -363,6 +365,13 @@ impl PgStore {
                 "device_code".into(),
                 MigrationType::Simple,
                 MIGRATION_0003_SQL.into_sql_str(),
+                false,
+            ),
+            Migration::new(
+                4,
+                "grant_cleanup".into(),
+                MigrationType::Simple,
+                MIGRATION_0004_SQL.into_sql_str(),
                 false,
             ),
         ]);
