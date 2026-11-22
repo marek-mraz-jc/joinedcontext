@@ -7,7 +7,8 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 // answered here. The temporal answers are praha-pocasi's (jc-prod Endpoint fudnrvyz…, three
 // stations, relativeHumidity, read 2026-11-21 15:15Z): raw readings, hourly averages, daily maxima
 // per UTC day (read again ~16:40Z with lastN 1000, whole days; the data starts on 2026-11-14). The hourly answer leaves out the
-// buckets of 2026-11-19 00:00..2026-11-20 05:00Z: the broker filled them with the last reading
+// buckets of 2026-11-19 00:00..2026-11-20 06:00Z: the broker filled them with the last reading
+// (the 06:00Z average mixes that fill with the one reading at 06:50Z)
 // while the raw answer has none there (chyby.md), and the chart must show that gap as a gap; the
 // daily answer leaves out 2026-11-19, a UTC day without a reading, for the same reason.
 //   node <portal ui>/node_modules/@playwright/test/cli.js test -c crates/dataroom/web/e2e temporal_chart_controls
