@@ -337,6 +337,14 @@ async fn each_history_step_has_released_its_lock_when_it_returns() {
         eprintln!("SKIP: the one-index and audit steps build on partitions");
         return;
     }
+    // The shape before 0017, or the one-index step has nothing to do.
+    for ddl in [
+        "DROP INDEX u_attr_instances_time",
+        "CREATE INDEX i_attr_instances_lookup ON attr_instances (tenant_id, entity_id, attr_id, observed_at DESC)",
+        "CREATE UNIQUE INDEX u_attr_instances ON attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at)",
+    ] {
+        db.owner.execute(ddl).await.expect("legacy shape");
+    }
     let mut probe = db.owner.acquire().await.expect("probe");
     // A backend with temporary tables drops them before its exit releases its locks, so a
     // lock left to the close is still held when the probe asks.
@@ -356,6 +364,7 @@ async fn each_history_step_has_released_its_lock_when_it_returns() {
         .connect(&db.url)
         .await
         .expect("pool");
+    let mut held = Vec::new();
     for step in [
         "history_expiry_index",
         "history_reap",
@@ -386,8 +395,14 @@ async fn each_history_step_has_released_its_lock_when_it_returns() {
             .fetch_one(&mut *probe)
             .await
             .expect("probe");
-        assert!(free, "{step} returned with its lock still held");
+        if !free {
+            held.push(step);
+        }
     }
+    assert!(
+        held.is_empty(),
+        "returned with the lock still held: {held:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
