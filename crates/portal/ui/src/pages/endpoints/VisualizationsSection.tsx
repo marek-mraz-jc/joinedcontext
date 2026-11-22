@@ -10,6 +10,7 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
   Checkbox,
   Field,
   InlineError,
@@ -518,349 +519,351 @@ export function VisualizationsSection({
       )}
 
       {canEdit ? (
-        <details
-          ref={editor}
-          // In this form the hints, and what to do on a refusal, are read at body size.
-          // The Portal's root is 80 %: at phone width the form reads at the title size and what is
-          // typed or picked at the display size, 16 px, which iOS does not zoom into.
-          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words sm:[&_[role=alert]]:text-body sm:[&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-display max-sm:[&_:is(p,label,output,[role=alert])]:text-title"
-        >
-          <summary className="cursor-pointer content-center text-body font-semibold text-fg">
-            {t("endpoints.page.visualizations.add")}
-          </summary>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field
-              id="viz-name"
-              required
-              label={t("endpoints.page.visualizations.name")}
-              help={badName ? undefined : t("endpoints.page.visualizations.hint.name")}
-              errors={badName ? [t("endpoints.page.visualizations.hint.name")] : undefined}
-            >
-              <Input
+        <Card padding="sm" className="max-sm:has-[>details:not([open])]:py-0">
+          <details
+            ref={editor}
+            // In this form the hints, and what to do on a refusal, are read at body size.
+            // The Portal's root is 80 %: at phone width the form reads at the title size and what is
+            // typed or picked at the display size, 16 px, which iOS does not zoom into.
+            className="[&_[role=alert]]:break-words sm:[&_[role=alert]]:text-body sm:[&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&_:is(input,select,textarea)]:text-display max-sm:[&_:is(p,label,output,[role=alert])]:text-title"
+          >
+            <summary className="cursor-pointer content-center text-body font-semibold text-fg">
+              {t("endpoints.page.visualizations.add")}
+            </summary>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field
                 id="viz-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </Field>
-            <Field
-              id="viz-title"
-              required
-              label={t("endpoints.page.visualizations.chartTitle")}
-              help={t("endpoints.page.visualizations.hint.title")}
-            >
-              <Input
-                id="viz-title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </Field>
-            <Field
-              id="viz-description"
-              required
-              label={t("endpoints.page.visualizations.description")}
-              help={t("endpoints.page.visualizations.hint.description")}
-              className="sm:col-span-2"
-            >
-              <Input
-                id="viz-description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-            </Field>
-            <Field
-              id="viz-template"
-              required
-              label={t("endpoints.page.visualizations.template")}
-              help={t(`endpoints.page.visualizations.hint.${SHAPE_HINT[template]}`)}
-            >
-              <Select
-                id="viz-template"
-                value={template}
-                disabled={edited}
-                title={edited ? t("endpoints.page.visualizations.edited") : undefined}
-                onChange={(event) => {
-                  setTemplate(event.target.value as TemplateName);
-                  setSpecText("");
-                }}
+                required
+                label={t("endpoints.page.visualizations.name")}
+                help={badName ? undefined : t("endpoints.page.visualizations.hint.name")}
+                errors={badName ? [t("endpoints.page.visualizations.hint.name")] : undefined}
               >
-                {(Object.keys(TEMPLATES) as TemplateName[]).map((one) => (
-                  <option key={one} value={one}>
-                    {t(`endpoints.page.visualizations.templates.${one}`)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              id="viz-type"
-              required
-              label={t("endpoints.page.visualizations.type")}
-              help={t(
-                types.length
-                  ? "endpoints.page.visualizations.hint.type"
-                  : "endpoints.page.visualizations.hint.noTypes",
-                { example: type },
-              )}
-            >
-              <Select
-                id="viz-type"
-                value={type}
-                onChange={(event) => {
-                  setType(event.target.value);
-                  repick({});
-                }}
-              >
-                {types.map((one) => (
-                  <option key={one} value={one}>
-                    {one}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {roles.map((role) => (
-              <Field
-                key={role}
-                id={`viz-${role}`}
-                required={required.includes(role) && !fixedAxis(role)}
-                label={t(`endpoints.page.visualizations.roles.${role}`)}
-                help={roleHint(role)}
-              >
-                {fixedAxis(role) ? (
-                  <output id={`viz-${role}`} className={`py-1.5 text-body ${edited ? "text-fg-muted" : "text-fg"}`}>
-                    {t("endpoints.page.visualizations.readingTime")}
-                  </output>
-                ) : (
-                  <Select
-                    id={`viz-${role}`}
-                    value={columns[role] ?? ""}
-                    // The history is read for its measure, whatever the specification draws.
-                    disabled={edited && !(source === "temporal" && role === "y")}
-                    title={edited ? t("endpoints.page.visualizations.edited") : undefined}
-                    onChange={(event) =>
-                      repick({ ...picks, [role]: event.target.value })
-                    }
-                  >
-                    <option value="">
-                      {t(
-                        required.includes(role)
-                          ? "endpoints.page.visualizations.chooseColumn"
-                          : "endpoints.page.visualizations.noColumn",
-                      )}
-                    </option>
-                    {offered(role).map((column) => (
-                      <option key={column} value={column}>
-                        {column}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            ))}
-          </div>
-          {edited ? (
-            <Alert
-              tone="info"
-              className="mt-3"
-              actions={
-                <Button size="sm" variant="secondary" onClick={useFields}>
-                  {t("endpoints.page.visualizations.useFields")}
-                </Button>
-              }
-            >
-              {t("endpoints.page.visualizations.edited")}
-            </Alert>
-          ) : null}
-          {source === "temporal" ? (
-            <fieldset
-              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
-              data-testid="viz-temporal"
-            >
-              <legend className="px-1 text-sm font-medium text-fg">
-                {t("endpoints.page.visualizations.toolbar")}
-              </legend>
-              <Field
-                id="viz-controls"
-                errors={errorsOf("controls")}
-                hideLabel
-                help={t(
-                  temporal.controls
-                    ? "endpoints.page.visualizations.hint.controls"
-                    : "endpoints.page.visualizations.hint.locked",
-                )}
-                className="sm:col-span-3"
-              >
-                <Checkbox
-                  id="viz-controls"
-                  className="touch-size"
-                  label={t("endpoints.page.visualizations.controls")}
-                  checked={temporal.controls}
-                  onChange={(event) =>
-                    setTemporal({ ...temporal, controls: event.target.checked })
-                  }
+                <Input
+                  id="viz-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
                 />
               </Field>
               <Field
-                id="viz-range"
-                errors={errorsOf("range")}
-                label={label("range")}
-                help={hintOf(
-                  "range",
-                  t(
-                    temporal.controls
-                      ? "endpoints.page.visualizations.hint.range"
-                      : "endpoints.page.visualizations.hint.fixedRange",
-                  ),
-                )}
+                id="viz-title"
+                required
+                label={t("endpoints.page.visualizations.chartTitle")}
+                help={t("endpoints.page.visualizations.hint.title")}
               >
-                <Select
-                  id="viz-range"
-                  value={temporal.range}
-                  onChange={(event) =>
-                    setTemporal({
-                      ...temporal,
-                      range: event.target.value as TemporalDefaults["range"],
-                    })
-                  }
-                >
-                  {(Object.keys(RANGES) as TemporalDefaults["range"][]).map(
-                    (one) => (
-                      <option key={one} value={one}>
-                        {t(`endpoints.page.visualizations.ranges.${one}`)}
-                      </option>
-                    ),
-                  )}
-                </Select>
+                <Input
+                  id="viz-title"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
               </Field>
               <Field
-                id="viz-granularity"
-                errors={errorsOf("granularity")}
-                label={label("granularity")}
-                help={hintOf(
-                  "granularity",
-                  t(
-                    temporal.granularity === "raw"
-                      ? temporal.controls
-                        ? "endpoints.page.visualizations.hint.rawShown"
-                        : "endpoints.page.visualizations.hint.raw"
-                      : "endpoints.page.visualizations.hint.granularity",
-                  ),
-                )}
+                id="viz-description"
+                required
+                label={t("endpoints.page.visualizations.description")}
+                help={t("endpoints.page.visualizations.hint.description")}
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="viz-description"
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </Field>
+              <Field
+                id="viz-template"
+                required
+                label={t("endpoints.page.visualizations.template")}
+                help={t(`endpoints.page.visualizations.hint.${SHAPE_HINT[template]}`)}
               >
                 <Select
-                  id="viz-granularity"
-                  value={temporal.granularity}
-                  onChange={(event) =>
-                    setTemporal({
-                      ...temporal,
-                      granularity: event.target
-                        .value as TemporalDefaults["granularity"],
-                    })
-                  }
+                  id="viz-template"
+                  value={template}
+                  disabled={edited}
+                  title={edited ? t("endpoints.page.visualizations.edited") : undefined}
+                  onChange={(event) => {
+                    setTemplate(event.target.value as TemplateName);
+                    setSpecText("");
+                  }}
                 >
-                  {(
-                    Object.keys(GRANULARITIES) as TemporalDefaults["granularity"][]
-                  ).map((one) => (
+                  {(Object.keys(TEMPLATES) as TemplateName[]).map((one) => (
                     <option key={one} value={one}>
-                      {t(`endpoints.page.visualizations.granularities.${one}`)}
+                      {t(`endpoints.page.visualizations.templates.${one}`)}
                     </option>
                   ))}
                 </Select>
               </Field>
-              {temporal.granularity === "raw" ? null : (
+              <Field
+                id="viz-type"
+                required
+                label={t("endpoints.page.visualizations.type")}
+                help={t(
+                  types.length
+                    ? "endpoints.page.visualizations.hint.type"
+                    : "endpoints.page.visualizations.hint.noTypes",
+                  { example: type },
+                )}
+              >
+                <Select
+                  id="viz-type"
+                  value={type}
+                  onChange={(event) => {
+                    setType(event.target.value);
+                    repick({});
+                  }}
+                >
+                  {types.map((one) => (
+                    <option key={one} value={one}>
+                      {one}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {roles.map((role) => (
                 <Field
-                  id="viz-method"
-                  errors={errorsOf("method")}
-                  label={label("method")}
-                  help={hintOf("method", t("endpoints.page.visualizations.hint.method"))}
+                  key={role}
+                  id={`viz-${role}`}
+                  required={required.includes(role) && !fixedAxis(role)}
+                  label={t(`endpoints.page.visualizations.roles.${role}`)}
+                  help={roleHint(role)}
+                >
+                  {fixedAxis(role) ? (
+                    <output id={`viz-${role}`} className={`py-1.5 text-body ${edited ? "text-fg-muted" : "text-fg"}`}>
+                      {t("endpoints.page.visualizations.readingTime")}
+                    </output>
+                  ) : (
+                    <Select
+                      id={`viz-${role}`}
+                      value={columns[role] ?? ""}
+                      // The history is read for its measure, whatever the specification draws.
+                      disabled={edited && !(source === "temporal" && role === "y")}
+                      title={edited ? t("endpoints.page.visualizations.edited") : undefined}
+                      onChange={(event) =>
+                        repick({ ...picks, [role]: event.target.value })
+                      }
+                    >
+                      <option value="">
+                        {t(
+                          required.includes(role)
+                            ? "endpoints.page.visualizations.chooseColumn"
+                            : "endpoints.page.visualizations.noColumn",
+                        )}
+                      </option>
+                      {offered(role).map((column) => (
+                        <option key={column} value={column}>
+                          {column}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              ))}
+            </div>
+            {edited ? (
+              <Alert
+                tone="info"
+                className="mt-3"
+                actions={
+                  <Button size="sm" variant="secondary" onClick={useFields}>
+                    {t("endpoints.page.visualizations.useFields")}
+                  </Button>
+                }
+              >
+                {t("endpoints.page.visualizations.edited")}
+              </Alert>
+            ) : null}
+            {source === "temporal" ? (
+              <fieldset
+                className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
+                data-testid="viz-temporal"
+              >
+                <legend className="px-1 text-sm font-medium text-fg">
+                  {t("endpoints.page.visualizations.toolbar")}
+                </legend>
+                <Field
+                  id="viz-controls"
+                  errors={errorsOf("controls")}
+                  hideLabel
+                  help={t(
+                    temporal.controls
+                      ? "endpoints.page.visualizations.hint.controls"
+                      : "endpoints.page.visualizations.hint.locked",
+                  )}
+                  className="sm:col-span-3"
+                >
+                  <Checkbox
+                    id="viz-controls"
+                    className="touch-size"
+                    label={t("endpoints.page.visualizations.controls")}
+                    checked={temporal.controls}
+                    onChange={(event) =>
+                      setTemporal({ ...temporal, controls: event.target.checked })
+                    }
+                  />
+                </Field>
+                <Field
+                  id="viz-range"
+                  errors={errorsOf("range")}
+                  label={label("range")}
+                  help={hintOf(
+                    "range",
+                    t(
+                      temporal.controls
+                        ? "endpoints.page.visualizations.hint.range"
+                        : "endpoints.page.visualizations.hint.fixedRange",
+                    ),
+                  )}
                 >
                   <Select
-                    id="viz-method"
-                    value={temporal.method}
+                    id="viz-range"
+                    value={temporal.range}
                     onChange={(event) =>
                       setTemporal({
                         ...temporal,
-                        method: event.target.value as TemporalDefaults["method"],
+                        range: event.target.value as TemporalDefaults["range"],
                       })
                     }
                   >
-                    {METHODS.map((one) => (
+                    {(Object.keys(RANGES) as TemporalDefaults["range"][]).map(
+                      (one) => (
+                        <option key={one} value={one}>
+                          {t(`endpoints.page.visualizations.ranges.${one}`)}
+                        </option>
+                      ),
+                    )}
+                  </Select>
+                </Field>
+                <Field
+                  id="viz-granularity"
+                  errors={errorsOf("granularity")}
+                  label={label("granularity")}
+                  help={hintOf(
+                    "granularity",
+                    t(
+                      temporal.granularity === "raw"
+                        ? temporal.controls
+                          ? "endpoints.page.visualizations.hint.rawShown"
+                          : "endpoints.page.visualizations.hint.raw"
+                        : "endpoints.page.visualizations.hint.granularity",
+                    ),
+                  )}
+                >
+                  <Select
+                    id="viz-granularity"
+                    value={temporal.granularity}
+                    onChange={(event) =>
+                      setTemporal({
+                        ...temporal,
+                        granularity: event.target
+                          .value as TemporalDefaults["granularity"],
+                      })
+                    }
+                  >
+                    {(
+                      Object.keys(GRANULARITIES) as TemporalDefaults["granularity"][]
+                    ).map((one) => (
                       <option key={one} value={one}>
-                        {t(`endpoints.page.visualizations.methods.${one}`)}
+                        {t(`endpoints.page.visualizations.granularities.${one}`)}
                       </option>
                     ))}
                   </Select>
                 </Field>
-              )}
-            </fieldset>
-          ) : null}
-          <details
-            className="mt-3"
-            open={advanced || ownSpec !== undefined}
-            onToggle={(event) => setAdvanced(event.currentTarget.open)}
-          >
-            <summary className="cursor-pointer content-center text-body font-medium text-fg">
-              {t("endpoints.page.visualizations.advanced")}
-            </summary>
-            {edited ? null : (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="mt-3"
-                  disabled={!complete(template, columns)}
-                  disabledReason={t("endpoints.page.visualizations.pickRoles")}
-                  onClick={() => void fill()}
-                >
-                  {t("endpoints.page.visualizations.fill")}
-                </Button>
-                {complete(template, columns) ? null : (
-                  <p className="mt-1 text-caption text-fg-muted">
-                    {t("endpoints.page.visualizations.pickRoles")}
-                  </p>
+                {temporal.granularity === "raw" ? null : (
+                  <Field
+                    id="viz-method"
+                    errors={errorsOf("method")}
+                    label={label("method")}
+                    help={hintOf("method", t("endpoints.page.visualizations.hint.method"))}
+                  >
+                    <Select
+                      id="viz-method"
+                      value={temporal.method}
+                      onChange={(event) =>
+                        setTemporal({
+                          ...temporal,
+                          method: event.target.value as TemporalDefaults["method"],
+                        })
+                      }
+                    >
+                      {METHODS.map((one) => (
+                        <option key={one} value={one}>
+                          {t(`endpoints.page.visualizations.methods.${one}`)}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
                 )}
-              </>
-            )}
-            <Field
-              id="viz-spec"
-              label={t("endpoints.page.visualizations.spec")}
-              help={t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
-              errors={
-                ownSpec
-                  ? [
-                    address
-                      ? t(`endpoints.page.visualizations.fix.${dataLink ? "dataLink" : "address"}`, { address })
-                      : t(`endpoints.page.visualizations.fix.${ownSpec.why}`),
-                  ]
-                  : undefined
-              }
+              </fieldset>
+            ) : null}
+            <details
               className="mt-3"
+              open={advanced || ownSpec !== undefined}
+              onToggle={(event) => setAdvanced(event.currentTarget.open)}
             >
-              <Textarea
+              <summary className="cursor-pointer content-center text-body font-medium text-fg">
+                {t("endpoints.page.visualizations.advanced")}
+              </summary>
+              {edited ? null : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="mt-3"
+                    disabled={!complete(template, columns)}
+                    disabledReason={t("endpoints.page.visualizations.pickRoles")}
+                    onClick={() => void fill()}
+                  >
+                    {t("endpoints.page.visualizations.fill")}
+                  </Button>
+                  {complete(template, columns) ? null : (
+                    <p className="mt-1 text-caption text-fg-muted">
+                      {t("endpoints.page.visualizations.pickRoles")}
+                    </p>
+                  )}
+                </>
+              )}
+              <Field
                 id="viz-spec"
-                // Short until Fill or a paste puts something to read in it.
-                rows={specText ? 12 : 4}
-                className="font-mono text-caption"
-                value={specText}
-                onChange={(event) => setSpecText(event.target.value)}
-              />
-            </Field>
+                label={t("endpoints.page.visualizations.spec")}
+                help={t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
+                errors={
+                  ownSpec
+                    ? [
+                      address
+                        ? t(`endpoints.page.visualizations.fix.${dataLink ? "dataLink" : "address"}`, { address })
+                        : t(`endpoints.page.visualizations.fix.${ownSpec.why}`),
+                    ]
+                    : undefined
+                }
+                className="mt-3"
+              >
+                <Textarea
+                  id="viz-spec"
+                  // Short until Fill or a paste puts something to read in it.
+                  rows={specText ? 12 : 4}
+                  className="font-mono text-caption"
+                  value={specText}
+                  onChange={(event) => setSpecText(event.target.value)}
+                />
+              </Field>
+            </details>
+            {removing ? null : alert}
+            {ready ? null : (
+              <p className="mt-3 text-caption text-fg-muted">
+                {incomplete}
+              </p>
+            )}
+            <Button
+              // While a repair is offered, the repair is the one primary action.
+              variant={dataLink ? "secondary" : "primary"}
+              className="mt-3 max-sm:w-full"
+              disabled={!ready || filling || proposal.mutation.isPending}
+              disabledReason={ready ? t("app.busyReason") : incomplete}
+              onClick={() => void add()}
+            >
+              {t("endpoints.page.visualizations.propose")}
+            </Button>
           </details>
-          {removing ? null : alert}
-          {ready ? null : (
-            <p className="mt-3 text-caption text-fg-muted">
-              {incomplete}
-            </p>
-          )}
-          <Button
-            // While a repair is offered, the repair is the one primary action.
-            variant={dataLink ? "secondary" : "primary"}
-            className="mt-3 max-sm:w-full"
-            disabled={!ready || filling || proposal.mutation.isPending}
-            disabledReason={ready ? t("app.busyReason") : incomplete}
-            onClick={() => void add()}
-          >
-            {t("endpoints.page.visualizations.propose")}
-          </Button>
-        </details>
+        </Card>
       ) : null}
       {change && !awaiting ? <ChangeNotice change={change} project={project} /> : null}
     </div>
