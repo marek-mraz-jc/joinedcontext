@@ -138,6 +138,8 @@ const PURGE_TABLES: &[&str] = &[
     "jsonld_contexts",
     // and its uses of the shared Cached copies (0039)
     "jsonld_context_usage",
+    // pending write approvals and spent nonces (0047)
+    "mcp_confirmations",
 ];
 
 /// Rows one purge statement takes at most (S5-04): a Tenant's whole share of
@@ -2339,6 +2341,100 @@ impl antares_store::CurrentStateDriver for AnyStore {
             out.push(booked);
         }
         Ok(out)
+    }
+    async fn confirmation_ask(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        question: &antares_store::confirmations::Confirmation,
+        caps: antares_store::confirmations::Caps,
+    ) -> Result<bool, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.ask(tenant, id, question, caps)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                crate::store::pg::confirmations::ask(p.docs.pool(), tenant, id, question, caps)
+                    .await
+                    .map_err(db)
+            }
+        }
+    }
+    async fn confirmation_find(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+    ) -> Result<Option<antares_store::confirmations::Confirmation>, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.find(tenant, id)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => crate::store::pg::confirmations::find(p.docs.pool(), tenant, id)
+                .await
+                .map_err(db),
+        }
+    }
+    async fn confirmation_decide(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        accept: bool,
+    ) -> Result<Option<antares_store::confirmations::Confirmation>, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.decide(tenant, id, accept)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                crate::store::pg::confirmations::decide(p.docs.pool(), tenant, id, accept)
+                    .await
+                    .map_err(db)
+            }
+        }
+    }
+    async fn confirmation_take(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        subject: &antares_store::confirmations::Subject,
+    ) -> Result<antares_store::confirmations::Taken, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.take(tenant, id, subject)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                crate::store::pg::confirmations::take(p.docs.pool(), tenant, id, subject)
+                    .await
+                    .map_err(db)
+            }
+        }
+    }
+    async fn confirmation_spend(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        subject: &antares_store::confirmations::Subject,
+        ttl: std::time::Duration,
+        caps: antares_store::confirmations::Caps,
+    ) -> Result<bool, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.spend(tenant, id, subject, ttl, caps)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => crate::store::pg::confirmations::spend(
+                p.docs.pool(),
+                tenant,
+                id,
+                subject,
+                ttl,
+                caps,
+            )
+            .await
+            .map_err(db),
+        }
+    }
+    async fn confirmation_sweep(&self, tenant: &TenantId) -> Result<u64, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.confirmations.sweep(tenant)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => crate::store::pg::confirmations::sweep(p.docs.pool(), tenant)
+                .await
+                .map_err(db),
+        }
     }
     async fn sweep_expired(&self) -> usize {
         AnyStore::sweep_expired(self)

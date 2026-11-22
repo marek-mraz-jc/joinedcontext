@@ -18,6 +18,7 @@ use antares_store::{
     filter, ChangeHook, Kind, CONTEXT_USAGE,
 };
 
+pub(crate) mod confirmations;
 mod redb;
 use self::redb::{
     key_bytes, split_key, table_for, Shadow, Table, FORMAT_VERSION, T_ENTITIES, T_JSONLD_CONTEXTS,
@@ -190,6 +191,8 @@ pub struct Store {
     /// until the emit is done. Only the local single-process path needs it:
     /// across processes the transactional outbox is the ordered channel.
     emit_order: tokio::sync::Mutex<()>,
+    /// The MCP write confirmations (T-7507).
+    pub(crate) confirmations: confirmations::Confirmations,
 }
 
 #[derive(Default)]
@@ -334,6 +337,7 @@ impl Store {
             inner: RwLock::new(inner),
             hook: RwLock::new(None),
             emit_order: tokio::sync::Mutex::new(()),
+            confirmations: Default::default(),
             shadow: Some(Shadow { db }),
             temporal_only: false,
             write_waiters: Default::default(),
@@ -838,6 +842,7 @@ impl Store {
     /// Remove the tenant from every kind, history included.
     pub fn purge_tenant(&self, tenant: &TenantId) -> bool {
         let existed = self.purge_kinds(tenant, &ALL_KINDS);
+        self.confirmations.purge(tenant);
         // ADR-0021: the Tenant's Hosted and ImplicitlyCreated @contexts are
         // its documents and go with it — a row that outlived its Tenant would
         // hand the next holder of that name a stranger's term mappings. A

@@ -2,6 +2,7 @@
 //! Postgres foundation: ONE shared pool, embedded migrations,
 //! transaction-scoped tenancy. Store implementations build on top.
 
+pub mod confirmations;
 pub mod doc;
 pub mod entity;
 pub mod maintenance;

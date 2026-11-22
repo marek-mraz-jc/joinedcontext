@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), warn(clippy::expect_used))]
 #![deny(missing_docs)]
 
+pub mod confirmations;
 #[cfg(feature = "test-kit")]
 /// The shared driver contract every backend runs as a test. It asserts, so
 /// it panics on a store that breaks an invariant — that is the point.
@@ -60,6 +61,11 @@ pub type HookFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()>
 pub type ChangeHook = std::sync::Arc<
     dyn for<'a> Fn(&'a TenantId, Option<Value>, Option<Value>) -> HookFuture<'a> + Send + Sync,
 >;
+
+/// The refusal of a driver that keeps no write confirmations.
+fn no_confirmations() -> NgsiError {
+    NgsiError::InternalError("this store keeps no write confirmations".into())
+}
 
 /// Which resource family an operation touches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -853,6 +859,59 @@ pub trait CurrentStateDriver: Send + Sync {
             out.push(booked);
         }
         Ok(out)
+    }
+    /// Open a write confirmation's question `id` (T-7507); `false` when
+    /// `caps` are full. A driver that keeps none refuses: the write fails closed.
+    async fn confirmation_ask(
+        &self,
+        _tenant: &TenantId,
+        _id: &str,
+        _question: &confirmations::Confirmation,
+        _caps: confirmations::Caps,
+    ) -> Result<bool, NgsiError> {
+        Err(no_confirmations())
+    }
+    /// `tenant`'s open question `id`.
+    async fn confirmation_find(
+        &self,
+        _tenant: &TenantId,
+        _id: &str,
+    ) -> Result<Option<confirmations::Confirmation>, NgsiError> {
+        Err(no_confirmations())
+    }
+    /// Record the decision on `tenant`'s open question `id`.
+    async fn confirmation_decide(
+        &self,
+        _tenant: &TenantId,
+        _id: &str,
+        _accept: bool,
+    ) -> Result<Option<confirmations::Confirmation>, NgsiError> {
+        Err(no_confirmations())
+    }
+    /// What the retry of `subject` finds; a decision is taken once, across
+    /// every replica.
+    async fn confirmation_take(
+        &self,
+        _tenant: &TenantId,
+        _id: &str,
+        _subject: &confirmations::Subject,
+    ) -> Result<confirmations::Taken, NgsiError> {
+        Err(no_confirmations())
+    }
+    /// Spend nonce `id` for `ttl`; `false` when it was spent or `caps` are full.
+    async fn confirmation_spend(
+        &self,
+        _tenant: &TenantId,
+        _id: &str,
+        _subject: &confirmations::Subject,
+        _ttl: std::time::Duration,
+        _caps: confirmations::Caps,
+    ) -> Result<bool, NgsiError> {
+        Err(no_confirmations())
+    }
+    /// Delete `tenant`'s expired confirmations.
+    async fn confirmation_sweep(&self, _tenant: &TenantId) -> Result<u64, NgsiError> {
+        Ok(0)
     }
     /// Reap expired docs/instances (backends with their own maintenance job
     /// return 0).

@@ -298,6 +298,10 @@ pub async fn sweep_expired_docs(st: &AppState) -> usize {
         let Ok(tenant) = antares_model::TenantId::new(&name) else {
             continue;
         };
+        match st.store.confirmation_sweep(&tenant).await {
+            Ok(gone) => n = n.saturating_add(usize::try_from(gone).unwrap_or(usize::MAX)),
+            Err(e) => tracing::warn!("the sweep of expired write confirmations failed: {e}"),
+        }
         // Each sweep counts documents it deleted, far below `usize::MAX`.
         n = n
             .saturating_add(csource::sweep_expired_registrations(st, &tenant).await)
