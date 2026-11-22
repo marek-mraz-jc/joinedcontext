@@ -31,13 +31,13 @@
   // T-5414: a temporal chart cut at a limit says so instead of passing for the whole window, and
   // names what was cut: newer data, more stations, or both.
   var PARTIAL = {
-    sk: { note: "Graf je neúplný: {what} sa nezmestili do limitu stránky. Zobrazuje údaje od {from} do {to}.",
+    sk: { note: "Graf je neúplný, chýbajú {what}. Zobrazuje údaje od {from} do {to}; skúste kratšie obdobie.",
       newer: "novšie údaje", more: "ďalšie stanice", both: "novšie údaje a ďalšie stanice" },
-    cs: { note: "Graf je neúplný: {what} se nevešly do limitu stránky. Ukazuje data od {from} do {to}.",
+    cs: { note: "Graf je neúplný, chybí {what}. Ukazuje data od {from} do {to}; zkuste kratší období.",
       newer: "novější data", more: "další stanice", both: "novější data a další stanice" },
-    fi: { note: "Kaavio on vajaa: {what} ylittävät sivun rajan. Kaavio näyttää tiedot {from}–{to}.",
-      newer: "uudemmat tiedot", more: "muut asemat", both: "uudemmat tiedot ja muut asemat" },
-    en: { note: "Partial chart: {what} went over the page's limit. It shows data from {from} to {to}.",
+    fi: { note: "Kaavio on vajaa, siitä puuttuu {what}. Kaavio näyttää tiedot {from}–{to}; kokeile lyhyempää aikaväliä.",
+      newer: "uudempia tietoja", more: "muita asemia", both: "uudempia tietoja ja muita asemia" },
+    en: { note: "Partial chart, missing {what}. It shows data from {from} to {to}; try a shorter range.",
       newer: "newer data", more: "more stations", both: "newer data and more stations" }
   };
 
@@ -58,72 +58,79 @@
   // A tick this near an end of the axis keeps its label inside the chart: the plot's padding puts
   // the first and the last point 8 px in, where a flush of 1 px misses them.
   var FLUSH = 20;
+  // Past four series the colours alone do not part them, and two that coincide hide each other:
+  // each takes a dash of its own as well.
+  var DASHES = [[1, 0], [8, 3], [2, 2], [10, 3, 2, 3]];
   var DATE = /^\d{4}-\d\d-\d\d$/;
   var ENTITY = /^urn:[A-Za-z0-9][A-Za-z0-9:._~%+-]{0,254}$/;
   var TEXT = {
     sk: {
-      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Napr. 7 dní do teraz.",
-      PT24H: "24 hodín", P7D: "7 dní", P31D: "31 dní", custom: "Vlastné", from: "Od", to: "Do", dateHint: "{d} (UTC)",
-      gran: "Podrobnosť", granHint: "Napr. hodnota za hodinu.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
-      method: "Výpočet", methodHint: "Napr. maximum dňa.", avg: "Priemer", min: "Minimum", max: "Maximum",
-      stations: "Stanice", stationsHint: "Napr. dve: Ctrl alebo Cmd a klik.",
+      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Napr. posledných 7 dní.",
+      PT24H: "24 hodín", P7D: "7 dní", P31D: "31 dní", custom: "Vlastné", from: "Od", to: "Do", dateHint: "Napr. 1. nov. 2026 (UTC).",
+      gran: "Podrobnosť", granHint: "Napr. Denne: každý deň.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
+      method: "Výpočet", methodHint: "Napr. Maximum: najvyššia.", avg: "Priemer", min: "Minimum", max: "Maximum",
+      stations: "Stanice", stationsHint: "Napr. dve: Ctrl/Cmd a klik.",
       attr: "Veličina", attrHint: "Napr. Teplota: graf ukáže iba ju.", all: "Všetky",
-      loading: "Načítavam údaje…", empty: "Za toto obdobie graf nemá žiadne údaje. Skúste dlhšie obdobie alebo inú podrobnosť.",
-      hourly: "Merania za viac ako 7 dní sa zobrazujú po hodinách.", daily: "Obdobie dlhšie ako 31 dní sa zobrazuje po dňoch.",
+      loading: "Načítavam údaje…", empty: "Za toto obdobie nie sú žiadne údaje. Skúste dlhšie obdobie alebo inú podrobnosť.",
+      hourly: "Nad 7 dní sa merania zobrazujú po hodinách.", daily: "Nad 31 dní sa zobrazuje po dňoch.",
       capped: "Zobrazuje sa posledných {n} dní vybraného obdobia (limit stránky).", badDates: "Dátum Od musí byť najneskôr Do a nie v budúcnosti.",
-      zoom: "Ťahaním v páse pod grafom priblížite časť obdobia. Výber stanice v legende ju zvýrazní.",
-      time: "Čas", station: "Stanica", retry: "Skúsiť znova", resetZoom: "Zobraziť celé obdobie", firstData: "Prvé uložené údaje v zobrazenom období sú z {d}; skoršie v ňom uložené nie sú.",
-      dateExample: "napr. 1. november 2026", stationsTouch: "Napr. dve: ťuknite na obe.", allStations: "Všetky stanice", slow: "Údaje sa nenačítali do 15 sekúnd.",
-      held: "Hodnota sa môže prenášať cez čas bez meraní.", measured: "„Merania“ ukážu časy meraní (do 7 dní).", local: "Časy na osi sú v miestnom čase.", utcDays: "Dni sú v UTC.",
-      noEarlier: "Skoršie údaje v tomto období uložené nie sú."
+      zoom: "Ťahaním v páse pod grafom priblížite časť obdobia.",
+      time: "Čas", station: "Stanica", retry: "Skúsiť znova", resetZoom: "Zobraziť celé obdobie", firstData: "V tomto období sú uložené údaje až od {d}; skoršie uložené nie sú.",
+      stationsTouch: "Napr. dve: ťuknite na obe.", allStations: "Všetky stanice", slow: "Údaje sa nenačítali do 15 sekúnd.",
+      held: "Ak stanica nemerala, graf môže opakovať poslednú hodnotu.", measured: "Skutočné časy: „Merania“ (do 7 dní).", local: "Časy na osi sú v miestnom čase ({tz}).", utcDays: "Dni sú v UTC, krajný deň môže byť neúplný.",
+      noEarlier: "Skoršie údaje v tomto období uložené nie sú.",
+      gap: "Prerušená čiara: v tom čase nie sú merania.", legend: "Kliknutím na stanicu v legende ju zvýrazníte."
     },
     cs: {
-      controls: "Nastavení grafu", range: "Období", rangeHint: "Např. 7 dní do teď.",
-      PT24H: "24 hodin", P7D: "7 dní", P31D: "31 dní", custom: "Vlastní", from: "Od", to: "Do", dateHint: "{d} (UTC)",
-      gran: "Podrobnost", granHint: "Např. hodnota za hodinu.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
-      method: "Výpočet", methodHint: "Např. maximum dne.", avg: "Průměr", min: "Minimum", max: "Maximum",
-      stations: "Stanice", stationsHint: "Např. dvě: Ctrl nebo Cmd a klik.",
+      controls: "Nastavení grafu", range: "Období", rangeHint: "Např. posledních 7 dní.",
+      PT24H: "24 hodin", P7D: "7 dní", P31D: "31 dní", custom: "Vlastní", from: "Od", to: "Do", dateHint: "Např. 1. lis. 2026 (UTC).",
+      gran: "Podrobnost", granHint: "Např. Po dnech: každý den.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
+      method: "Výpočet", methodHint: "Např. Maximum: nejvyšší.", avg: "Průměr", min: "Minimum", max: "Maximum",
+      stations: "Stanice", stationsHint: "Např. dvě: Ctrl/Cmd a klik.",
       attr: "Veličina", attrHint: "Např. Teplota: graf ukáže jen ji.", all: "Všechny",
-      loading: "Načítám data…", empty: "Za toto období graf nemá žádná data. Zkuste delší období nebo jinou podrobnost.",
-      hourly: "Měření za více než 7 dní se zobrazují po hodinách.", daily: "Období delší než 31 dní se zobrazuje po dnech.",
+      loading: "Načítám data…", empty: "Za toto období nejsou žádná data. Zkuste delší období nebo jinou podrobnost.",
+      hourly: "Nad 7 dní se měření zobrazují po hodinách.", daily: "Nad 31 dní se zobrazuje po dnech.",
       capped: "Zobrazuje se posledních {n} dní vybraného období (limit stránky).", badDates: "Datum Od musí být nejpozději Do a ne v budoucnosti.",
-      zoom: "Tažením v pásu pod grafem přiblížíte část období. Výběr stanice v legendě ji zvýrazní.",
-      time: "Čas", station: "Stanice", retry: "Zkusit znovu", resetZoom: "Zobrazit celé období", firstData: "První uložená data v zobrazeném období jsou z {d}; dřívější v něm uložena nejsou.",
-      dateExample: "např. 1. listopad 2026", stationsTouch: "Např. dvě: klepněte na obě.", allStations: "Všechny stanice", slow: "Data se nenačetla do 15 sekund.",
-      held: "Hodnota se může přenášet i přes čas bez měření.", measured: "„Měření“ ukážou časy měření (do 7 dní).", local: "Časy na ose jsou v místním čase.", utcDays: "Dny jsou v UTC.",
-      noEarlier: "Dřívější data v tomto období uložena nejsou."
+      zoom: "Tažením v pásu pod grafem přiblížíte část období.",
+      time: "Čas", station: "Stanice", retry: "Zkusit znovu", resetZoom: "Zobrazit celé období", firstData: "V tomto období jsou uložena data až od {d}; dřívější uložena nejsou.",
+      stationsTouch: "Např. dvě: klepněte na obě.", allStations: "Všechny stanice", slow: "Data se nenačetla do 15 sekund.",
+      held: "Pokud stanice neměřila, graf může opakovat poslední hodnotu.", measured: "Skutečné časy: „Měření“ (do 7 dní).", local: "Časy na ose jsou v místním čase ({tz}).", utcDays: "Dny jsou v UTC, krajní den může být neúplný.",
+      noEarlier: "Dřívější data v tomto období uložena nejsou.",
+      gap: "Přerušená čára: v tu dobu nejsou měření.", legend: "Kliknutím na stanici v legendě ji zvýrazníte."
     },
     fi: {
-      controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Esim. 7 päivää tähän asti.",
-      PT24H: "24 tuntia", P7D: "7 päivää", P31D: "31 päivää", custom: "Oma", from: "Alkaen", to: "Asti", dateHint: "{d} (UTC)",
-      gran: "Tarkkuus", granHint: "Esim. arvo tunnilta.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
-      method: "Laskenta", methodHint: "Esim. päivän maksimi.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
-      stations: "Asemat", stationsHint: "Esim. kaksi: Ctrl tai Cmd ja napsautus.",
+      controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Esim. viimeiset 7 päivää.",
+      PT24H: "24 tuntia", P7D: "7 päivää", P31D: "31 päivää", custom: "Oma", from: "Alkaen", to: "Asti", dateHint: "Esim. 1.11.2026 (UTC).",
+      gran: "Tarkkuus", granHint: "Esim. Päivittäin: joka päivä.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
+      method: "Laskenta", methodHint: "Esim. Maksimi: suurin arvo.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
+      stations: "Asemat", stationsHint: "Esim. kaksi: Ctrl/Cmd.",
       attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
       loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista tarkkuutta.",
-      hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivän aikaväli näytetään päivittäin.",
+      hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivää näytetään päivittäin.",
       capped: "Näytetään valitun aikavälin viimeiset {n} päivää (sivun raja).", badDates: "Alkupäivän on oltava viimeistään loppupäivä eikä tulevaisuudessa.",
-      zoom: "Vedä kaavion alla olevassa kaistassa lähentääksesi. Asema korostuu, kun valitset sen selitteestä.",
-      time: "Aika", station: "Asema", retry: "Yritä uudelleen", resetZoom: "Näytä koko aikaväli", firstData: "Näytetyn aikavälin ensimmäiset tallennetut tiedot ovat {d}; aiempia ei siltä ole tallennettu.",
-      dateExample: "esim. 1. marraskuuta 2026", stationsTouch: "Esim. kaksi: napauta molempia.", allStations: "Kaikki asemat", slow: "Tietoja ei saatu 15 sekunnissa.",
-      held: "Arvo voi jatkua myös ajan yli, jolta ei ole mittauksia.", measured: "”Mittaukset” näyttää mittausajat (enintään 7 päivää).", local: "Akselin ajat ovat paikallista aikaa.", utcDays: "Päivät ovat UTC-ajassa.",
-      noEarlier: "Aiempia tietoja ei tältä aikaväliltä ole tallennettu."
+      zoom: "Vedä kaavion alla olevassa kaistassa lähentääksesi.",
+      time: "Aika", station: "Asema", retry: "Yritä uudelleen", resetZoom: "Näytä koko aikaväli", firstData: "Tältä aikaväliltä on tallennettu tietoja vasta {d} alkaen; aiempia ei ole tallennettu.",
+      stationsTouch: "Esim. kaksi: napauta molempia.", allStations: "Kaikki asemat", slow: "Tietoja ei saatu 15 sekunnissa.",
+      held: "Jos asema ei mitannut, kaavio voi toistaa edellisen arvon.", measured: "Todelliset ajat: ”Mittaukset” (enintään 7 päivää).", local: "Akselin ajat ovat paikallista aikaa ({tz}).", utcDays: "Päivät ovat UTC-ajassa, reunimmainen päivä voi olla vajaa.",
+      noEarlier: "Aiempia tietoja ei tältä aikaväliltä ole tallennettu.",
+      gap: "Katkennut viiva: ajalta ei ole mittauksia.", legend: "Napsauta asemaa selitteessä korostaaksesi sen."
     },
     en: {
-      controls: "Chart settings", range: "Range", rangeHint: "E.g. 7 days up to now.",
-      PT24H: "24 hours", P7D: "7 days", P31D: "31 days", custom: "Custom", from: "From", to: "To", dateHint: "{d} (UTC)",
-      gran: "Granularity", granHint: "E.g. a value an hour.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
-      method: "Method", methodHint: "E.g. the day's maximum.", avg: "Average", min: "Minimum", max: "Maximum",
-      stations: "Stations", stationsHint: "E.g. two: Ctrl or Cmd and click.",
+      controls: "Chart settings", range: "Range", rangeHint: "E.g. the last 7 days.",
+      PT24H: "24 hours", P7D: "7 days", P31D: "31 days", custom: "Custom", from: "From", to: "To", dateHint: "E.g. 1 Nov 2026 (UTC).",
+      gran: "Granularity", granHint: "E.g. Daily: every day.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
+      method: "Method", methodHint: "E.g. Maximum: the highest.", avg: "Average", min: "Minimum", max: "Maximum",
+      stations: "Stations", stationsHint: "E.g. two: Ctrl/Cmd+click.",
       attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
       loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another granularity.",
-      hourly: "Readings over more than 7 days are shown hourly.", daily: "A range over 31 days is shown daily.",
+      hourly: "Over 7 days, readings are shown hourly.", daily: "Over 31 days, values are shown daily.",
       capped: "Showing the last {n} days of the range picked (the page's limit).", badDates: "From must be on or before To and not in the future.",
-      zoom: "Drag in the strip under the chart to zoom into part of the range. Pick a station in the legend to highlight it.",
-      time: "Time", station: "Station", retry: "Try again", resetZoom: "Show the whole range", firstData: "The first stored data in the range shown is from {d}; no earlier readings in it are stored.",
-      dateExample: "e.g. 1 November 2026", stationsTouch: "E.g. two: tap both.", allStations: "All stations", slow: "The data did not load within 15 seconds.",
-      held: "A value may be carried over time without measurements.", measured: "\"Readings\" shows the measured times (up to 7 days).", local: "Times on the axis are local.", utcDays: "Days are in UTC.",
-      noEarlier: "No earlier readings in this range are stored."
+      zoom: "Drag in the strip under the chart to zoom into part of the range.",
+      time: "Time", station: "Station", retry: "Try again", resetZoom: "Show the whole range", firstData: "Data in this range is stored only from {d}; no earlier readings are stored.",
+      stationsTouch: "E.g. two: tap both.", allStations: "All stations", slow: "The data did not load within 15 seconds.",
+      held: "If a station did not measure, the chart may repeat its last value.", measured: "\"Readings\" shows the measured times (up to 7 days).", local: "Times on the axis are local ({tz}).", utcDays: "Days are in UTC, the first or last may be incomplete.",
+      noEarlier: "No earlier readings in this range are stored.",
+      gap: "A broken line: no readings at that time.", legend: "Click a station in the legend to highlight it."
     }
   };
   // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
@@ -454,7 +461,7 @@
     copy.mark = Object.assign({}, typeof copy.mark === "string" ? { type: copy.mark } : copy.mark, { invalid: "break-paths-show-domains" });
     if (opts.dense && copy.mark.point) copy.mark.point = false;
     // On a phone the lines of several stations merge at the theme's width.
-    if (opts.dense && opts.width < 480 && copy.mark.strokeWidth === undefined) copy.mark.strokeWidth = 1;
+    if (opts.dense && opts.width < 480 && copy.mark.strokeWidth === undefined) copy.mark.strokeWidth = 1.25;
     // Daily points sit on their day and the ticks are days; finer data labels each tick with its
     // time and the first tick and each midnight with the day too, so a zoomed axis says its days.
     var ticks = opts.daily
@@ -475,7 +482,18 @@
     if (color && !enc.opacity) {
       copy.params = [{ name: "pick", select: { type: "point", fields: [color] }, bind: "legend" }];
       enc.opacity = { condition: { param: "pick", value: 1 }, value: 0.15 };
-      enc.color.legend = Object.assign({ orient: "bottom", columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, Array.isArray(opts.shown) && opts.shown.length ? { values: opts.shown } : {}, enc.color.legend);
+      enc.color.legend = Object.assign({ orient: "bottom", symbolType: "stroke", symbolStrokeWidth: 3, symbolSize: 250, columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, Array.isArray(opts.shown) && opts.shown.length ? { values: opts.shown } : {}, enc.color.legend);
+    }
+    var series = Array.isArray(opts.names) ? opts.names : [];
+    var rows = color && opts.width < 480 && Array.isArray(opts.shown) && opts.shown.length > 4 && copy.mark.type === "line";
+    if (!rows && color && series.length > 4 && copy.mark.type === "line" && !enc.strokeDash) {
+      enc.strokeDash = {
+        field: color,
+        type: enc.color.type || "nominal",
+        title: enc.color.title === undefined ? color : enc.color.title,
+        scale: { domain: series, range: series.map(function (name, i) { return DASHES[i % DASHES.length]; }) },
+        legend: enc.color.legend
+      };
     }
     var strip = {
       width: width,
@@ -483,13 +501,31 @@
       mark: { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains", point: opts.dense ? false : { size: 8, filled: true } },
       params: [{ name: "brush", select: { type: "interval", encodings: ["x"] } }],
       encoding: {
-        x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelFlush: FLUSH, labelOverlap: "greedy", labelSeparation: 8, tickMinStep: DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
+        x: { field: enc.x.field, type: "temporal", title: null, scale: { padding: 8 }, axis: { format: "%-d. %-m.", labelFlush: FLUSH, labelOverlap: "greedy", labelSeparation: 8, tickMinStep: DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
         y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
       }
     };
     delete strip.encoding.y.sort;
     if (color) strip.encoding.color = { field: color, type: enc.color.type || "nominal", scale: enc.color.scale, legend: null };
     if (color && enc.detail) strip.encoding.detail = enc.detail;
+    if (rows) {
+      // On a phone more than four lines in one plot cannot be followed: each station gets a row of
+      // its own, named, all over one time axis and one scale.
+      var title = enc.y ? enc.y.title : null;
+      if (copy.params) {
+        delete copy.params;
+        delete enc.opacity;
+      }
+      enc.color.legend = null;
+      copy.height = 64;
+      if (enc.y) {
+        enc.y.title = null;
+        enc.y.axis = Object.assign({ tickCount: 3 }, enc.y.axis);
+      }
+      var header = { title: null, labelOrient: "top", labelAnchor: "start", labelPadding: 2, labelFontSize: 12 };
+      outer.vconcat = [{ title: title || "", facet: { row: { field: color, type: "nominal", header: header } }, spacing: 8, spec: copy }, strip];
+      return outer;
+    }
     outer.vconcat = [copy, strip];
     return outer;
   }
@@ -1029,13 +1065,25 @@
       skeleton.setAttribute("aria-hidden", "true");
       skeleton.hidden = true;
       frame.parentNode.insertBefore(skeleton, frame);
+      // Beside the plot: what an aggregate may hide, or what a broken line means.
+      var caveat = document.createElement("p");
+      caveat.id = "data-note";
+      caveat.hidden = true;
+      frame.parentNode.insertBefore(caveat, frame);
+      // Under it: from when the readings are stored.
+      var since = document.createElement("p");
+      since.id = "range-note";
+      since.className = "hint";
+      since.setAttribute("role", "status");
+      since.hidden = true;
+      frame.parentNode.insertBefore(since, frame.nextSibling);
       var zoom = document.createElement("p");
       zoom.id = "axis-note";
       zoom.className = "hint";
       // Drawing the chart again clears the brush (a double click is hard to find on a phone).
       var reset = document.createElement("button");
       reset.type = "button";
-      reset.className = "retry";
+      reset.className = "retry reset";
       reset.textContent = t.resetZoom;
       reset.hidden = true;
       document.addEventListener("jc-viz-zoom", function (event) { reset.hidden = !event.detail; });
@@ -1073,11 +1121,15 @@
         // the day's tick in any time zone.
         if (daily) rows = rows.map(function (row) { return Object.assign({}, row, { observedAt: String(row.observedAt).slice(0, 10) + "T00:00:00" }); });
         var authored = spec.encoding && spec.encoding.y && source.attrs.indexOf(spec.encoding.y.field) >= 0 ? spec.encoding.y.field : null;
+        var measured = rows.length;
         if (attr) rows = gapped(rows, attr, plan.method ? 1.5 : 3);
+        // The answer does not mark a bucket the broker filled with a held value, so every
+        // aggregated chart says it may hold one.
+        var said = plan.method ? [t.held].concat(bar ? [t.measured] : []) : rows.length > measured ? [t.gap] : [];
         var series = {};
         rows.forEach(function (row) { series[row.name] = (series[row.name] || 0) + 1; });
         var dense = Object.keys(series).some(function (k) { return series[k] > 60; });
-        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 70;
+        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 96;
         var names = Object.keys(all.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
         var shownNames = Object.keys(rows.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
         var key = [attr, m && m.title, dense, daily, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
@@ -1086,9 +1138,13 @@
           listed = true;
           bar.stations(all, state.stations);
         }
+        caveat.textContent = said.join(" ");
+        caveat.className = plan.method ? "carried" : "hint";
+        caveat.hidden = !rows.length || !said.length;
+        since.hidden = !rows.length || !since.textContent;
         frame.hidden = zoom.hidden = !rows.length;
         if (!rows.length) reset.hidden = true;
-        if (!rows.length) return say(t.empty, "note");
+        if (!rows.length) return say(t.empty, "note blank");
         if (drawn === key) {
           frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
           return;
@@ -1097,10 +1153,11 @@
         reset.hidden = true; // a new drawing starts unzoomed
         var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
         frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
-        zoom.textContent = (daily ? t.utcDays : t.local) + (shown.vconcat ? " " + t.zoom : "");
+        var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        zoom.textContent = (daily ? t.utcDays : t.local.replace("{tz}", zone)) + (shown.vconcat ? " " + t.zoom + (shown.vconcat[0].params ? " " + t.legend : "") : "");
         if (!zoom.parentNode) {
-          frame.parentNode.insertBefore(zoom, frame.nextSibling);
-          zoom.parentNode.insertBefore(reset, zoom.nextSibling);
+          frame.parentNode.insertBefore(reset, frame.nextSibling);
+          frame.parentNode.insertBefore(zoom, since.nextSibling);
         }
       }
       function read() {
@@ -1111,6 +1168,7 @@
         retry.hidden = true;
         // The chart's place stays taken while the first rows load, so the page does not jump.
         if (!plan) frame.hidden = true;
+        if (frame.hidden) caveat.hidden = since.hidden = true;
         skeleton.hidden = !frame.hidden;
         var p;
         try {
@@ -1139,19 +1197,18 @@
             remember();
           }
           var late = "";
+          var span = plan.end - plan.start;
           var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
           // An answer is read oldest first, so a cut one misses its end: a late first reading is
           // still where the source starts, and both notes hold.
-          if (first !== Infinity && !data.moreStations && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
+          if (first !== Infinity && !data.moreStations && first - plan.start > Math.max(span > DAY ? DAY / 2 : DAY, span / 20)) {
             // A cut answer's note has named that day already.
             late = data.partial ? t.noEarlier : t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: plan.gran === "P1D" ? "UTC" : undefined })));
           }
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
-          // The broker carries a held value over time without measurements and the answer does not
-          // mark such a bucket, so every aggregated chart says it may hold one.
-          if (plan.method && all.length) notes.push(bar ? t.held + " " + t.measured : t.held);
           note.textContent = notes.join(" ");
-          say([data.partial, late].filter(Boolean).join(" "), "note");
+          since.textContent = late;
+          say(data.partial || "", "note");
           frame.hidden = zoom.hidden = false;
           return ready.then(draw);
         }).catch(function (error) {
@@ -1160,10 +1217,12 @@
           zoom.hidden = reset.hidden = true;
           // Nothing is left to redraw under an error, whatever the reader picks.
           plan = drawn = null;
-          frame.hidden = true;
+          frame.hidden = caveat.hidden = since.hidden = true;
           if (error && error.message === "dates") return say(t.badDates, "");
           if (error && error.name === "AbortError") fail(t.slow);
           else failed(error);
+          if (error && error.status) status.textContent = status.textContent.replace("HTTP ", "HTTP\u00a0");
+          status.className = "blank";
           retry.hidden = false;
         }).then(function () {
           if (mine !== controller) return;
@@ -1233,6 +1292,19 @@
     ranges.push("custom");
     var range = select(ranges, ranges.map(label), state.range);
     field("c-range", t.range, t.rangeHint, range);
+    var stations = doc.createElement("select");
+    stations.multiple = true;
+    var touch = !!root.matchMedia && root.matchMedia("(pointer: coarse)").matches;
+    var stationsBox = field("c-stations", t.stations, touch ? t.stationsTouch : t.stationsHint, stations);
+    // The list opens under a line that names the pick, so no pick hides in a scrolled list and the
+    // chart stays near the top.
+    var picker = doc.createElement("details");
+    picker.id = "c-stations-picker";
+    var summary = doc.createElement("summary");
+    summary.setAttribute("aria-describedby", "c-stations-hint");
+    picker.appendChild(summary);
+    stationsBox.replaceChild(picker, stations);
+    picker.appendChild(stations);
     var today = new Date().toISOString().slice(0, 10);
     var from = doc.createElement("input");
     var to = doc.createElement("input");
@@ -1243,17 +1315,6 @@
     });
     from.value = state.from || new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
     to.value = state.to || today;
-    var fromBox = field("c-from", t.from, "", from);
-    var toBox = field("c-to", t.to, "", to);
-    // The field shows the day in the browser's format; its hint says it in the page's language.
-    function dated() {
-      [[from, fromBox], [to, toBox]].forEach(function (pair) {
-        var ms = day(pair[0].value);
-        var words = ms === null ? t.dateExample : nb(new Date(ms).toLocaleDateString(lang, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }));
-        pair[1].querySelector(".hint").textContent = t.dateHint.replace("{d}", words);
-      });
-    }
-    dated();
     var grans = GRANS.indexOf(own.gran) >= 0 ? GRANS : GRANS.concat([own.gran]);
     var gran = select(grans, grans.map(label), state.gran);
     field("c-gran", t.gran, t.granHint, gran);
@@ -1265,17 +1326,20 @@
       attr = select([""].concat(source.attrs), [t.all].concat(source.attrs.map(function (a) { return measure(a, null, lang, []).label; })), state.attr || "");
       field("c-attr", t.attr, t.attrHint, attr);
     }
-    var stations = doc.createElement("select");
-    stations.multiple = true;
-    var touch = !!root.matchMedia && root.matchMedia("(pointer: coarse)").matches;
-    var narrow = !!root.matchMedia && root.matchMedia("(max-width: 480px)").matches;
-    var stationsBox = field("c-stations", t.stations, touch ? t.stationsTouch : t.stationsHint, stations);
+    // The fields that come and go are last, so the others stay where they are.
+    var fromBox = field("c-from", t.from, t.dateHint, from);
+    var toBox = field("c-to", t.to, t.dateHint, to);
+    fromBox.className += " first";
     // None picked is every station, which the list shows as its first option selected.
     var chosen = state.stations.slice();
     function mark() {
       Array.prototype.forEach.call(stations.options, function (o) {
         o.selected = o.value ? chosen.indexOf(o.value) >= 0 : !chosen.length;
       });
+      var known = Array.prototype.filter.call(stations.options, function (o) { return o.value; });
+      var picks = known.filter(function (o) { return o.selected; }).map(function (o) { return o.textContent; });
+      summary.textContent = picks.length ? picks.join("; ") : t.allStations + (known.length ? " (" + known.length + ")" : "");
+      summary.setAttribute("aria-label", t.stations + ": " + summary.textContent);
     }
     function list(entries) {
       stations.textContent = "";
@@ -1285,8 +1349,7 @@
         o.textContent = s.name;
         stations.appendChild(o);
       });
-      // A longer list scrolls; on a phone sooner, so the chart stays on the first screen.
-      stations.size = Math.min(Math.max(entries.length + 1, 4), narrow ? 4 : 6);
+      stations.size = Math.min(Math.max(entries.length + 1, 2), 10);
       mark();
     }
     list([]);
@@ -1298,7 +1361,6 @@
     shape();
     function changed() {
       shape();
-      dated();
       if (range.value === "custom" && (!from.checkValidity() || !to.checkValidity() || day(from.value) === null || day(to.value) === null)) return;
       change({
         range: range.value,

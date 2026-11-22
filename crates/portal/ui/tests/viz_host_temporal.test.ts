@@ -222,6 +222,27 @@ describe("the interactive chart", () => {
     expect((SPEC.encoding.y as Record<string, unknown>).title).toBeUndefined();
   });
 
+  it("parts more than four stations by dash too, in one legend", () => {
+    const names = ["A", "B", "C", "D", "E", "F", "G"];
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 270, names });
+    const [detail] = spec.vconcat as { encoding: { strokeDash: { scale: { domain: string[] } } } }[];
+    expect(detail.encoding.strokeDash.scale.domain).toEqual(names);
+    const vega = vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec;
+    expect(vega.legends ?? []).toHaveLength(1);
+  });
+
+  it("gives each of more than four stations a row of its own on a phone", () => {
+    const names = ["A", "B", "C", "D", "E", "F", "G"];
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 270, names, shown: names });
+    const [detail] = spec.vconcat as { title: string; facet: { row: { field: string } }; spec: { encoding: { x: { scale: { domain: unknown } } } } }[];
+    expect(detail.facet.row.field).toBe("name");
+    expect(detail.title).toBe("Relatívna vlhkosť (%)");
+    expect(detail.spec.encoding.x.scale.domain).toEqual({ param: "brush" });
+    expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec.legends ?? []).toHaveLength(0);
+  });
+
   it("breaks a series' line at a gap over three steps, and only there", () => {
     const row = (name: string, at: string, v: number) => ({ id: name, name, observedAt: at, t: v });
     const rows = host.gapped([
