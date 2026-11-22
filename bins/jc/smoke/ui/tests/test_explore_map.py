@@ -9,12 +9,16 @@ import gzip
 import json
 import os
 import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from phone_check import phone_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 VIZ = ROOT / "vendor" / "viz"
@@ -147,15 +151,16 @@ def pw():
         yield p
 
 
-def open_explorer(browser, srv, width, lang="en", q=""):
-    page = browser.new_page(viewport={"width": width, "height": 900})
+def open_explorer(browser, srv, width, lang="en", q="", touch=False):
+    page = browser.new_page(viewport={"width": width, "height": 900}, has_touch=touch, is_mobile=touch)
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"http://127.0.0.1:{srv.server_port}/viz/explore.html#{SLUG}&type=Event&lang={lang}" + (f"&q={quote(q, safe='')}" if q else ""))
     page.wait_for_selector("#map-section:not([hidden])", timeout=20_000)
     # The map starts lazily, once it has stayed near the reader's view.
     page.locator("#map-section").scroll_into_view_if_needed()
-    page.mouse.wheel(0, 2000)
+    if not touch:  # a phone has no wheel
+        page.mouse.wheel(0, 2000)
     return page, errors
 
 
@@ -317,7 +322,7 @@ def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, widt
             assert not page.locator(".jc-grid-pager .jc-grid-total").is_visible()  # one count, named against its total
         if q:
             of.wait_for(state="visible", timeout=10_000)
-            assert of.inner_text() == {"en": "200 of 234 records match the filter.", "sk": "Filtru vyhovuje 200 z 234 záznamov."}[lang]
+            assert of.inner_text() == {"en": "200 of 234 records match the filter · 34 hidden", "sk": "Filtru vyhovuje 200 z 234 záznamov · skrytých: 34"}[lang]
         else:
             assert of.is_hidden()
         view = page.evaluate(DRAWN)
@@ -384,7 +389,7 @@ def test_a_search_narrows_the_map_and_both_counts_with_the_table(pw):
         box = page.locator('[data-testid="grid-toolbar"] > input[type="search"]')
         box.fill("Podujatie 23")
         found = [e for e in PODUJATIA if "podujatie 23" in e["properties"]["name"].lower()]
-        page.wait_for_function("(line) => document.getElementById('grid-count').textContent === line", arg=f"{len(found)} of 234 records match the filter.", timeout=15_000)
+        page.wait_for_function("(line) => document.getElementById('grid-count').textContent === line", arg=f"{len(found)} of 234 records match the filter · {234 - len(found)} hidden", timeout=15_000)
         located = sum(1 for e in found if e["geometry"])
         page.wait_for_function("(tail) => document.getElementById('map-count').textContent.includes(tail)", arg=f"{located} of {len(found)} with a location", timeout=15_000)
         page.wait_for_timeout(1200)
@@ -503,7 +508,7 @@ def test_a_phone_reads_at_body_size_counts_the_readers_hides_and_breaks_no_word(
         shot(page, f"phone-open-{width}")
         tools.click()
         bar.get_by_text("Hide fields", exact=True).click()
-        bar.get_by_label(re.compile("^organizer$", re.I)).check()
+        bar.get_by_label(re.compile("^organizer$", re.IGNORECASE)).check()
         page.wait_for_function("() => document.querySelectorAll('#grid tbody tr:first-child td').length >= 3")
         assert tools.inner_text().strip() == "Tools"
         shot(page, f"phone-menu-{width}")
@@ -522,6 +527,22 @@ def test_a_phone_reads_at_body_size_counts_the_readers_hides_and_breaks_no_word(
         assert look["broken"] == [] and look["name"] >= 120 and look["sw"] > look["cw"], look
         assert look["cells"] == ["rgba(0, 0, 0, 0)"], look  # the edge's shadow shows through every row
         shot(page, f"phone-restored-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_the_phone_check_finds_no_small_text_or_target(pw):
+    """T-7503, T-7512's page check: 28 px header buttons, 36 px pages and 20 px links were each a high finding."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    said = [{**e, "properties": {"name": {"type": "Property", "value": f"Event {n}"}}} for n, e in enumerate(PODUJATIA)]
+    srv = serve(lambda: True, said)
+    try:
+        page, errors = open_explorer(browser, srv, 400, touch=True)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        assert phone_hits(page) == []
+        assert min(page.eval_on_selector_all("#grid tbody tr", "rows => rows.map((r) => r.getBoundingClientRect().height)")) >= 43.5
         assert errors == []
     finally:
         browser.close()

@@ -16,6 +16,7 @@ interface Explore {
   countLine(t: object, c: { inView: number; total: number; none: number; drawn?: number; tiled?: boolean }): string;
   matchLine(t: object, matching: number, all: number): string;
   capLine(t: object, read: number): string;
+  cardOf(row: object, card: object | null, t: object): { fields: Array<{ text: string }>; dev: Array<{ label: string; text: string }> };
   badges(points: Feature[], zoom: number, merge: boolean): Badge[];
   mapStart(maplibre: { Map: new (o: object) => FakeMap }, options: object, fail: (kind: string) => void): FakeMap | null;
   TEXT: Record<string, object>;
@@ -80,6 +81,13 @@ describe("explore.js map view", () => {
     expect(X.viewPlan([point(17.1, 48.14), point(19, 48.5)], null, url, box)).toEqual({ local: 1 });
   });
 
+  it("leaves another entity's bare id to the developers' fold of the row card (T-7503)", () => {
+    const place = "urn:ngsi-ld:PointOfInterest:bbsk-podujatia:osm-node-1";
+    const card = X.cardOf({ id: "urn:ngsi-ld:Event:1", type: "Event", name: "Koncert", venue: "Synagóga", place }, null, { ...X.TEXT.en, locale: "en-GB" });
+    expect(card.fields.map((field) => field.text)).toEqual(["Synagóga"]);
+    expect(card.dev.map((field) => field.text)).toContain(place);
+  });
+
   it("says what each number counts, and the numbers add up to the broker's (T-7503)", () => {
     const located = (rows: typeof PODUJATIA) => rows.filter(([at]) => at).length;
     const all = PODUJATIA.length;
@@ -91,8 +99,8 @@ describe("explore.js map view", () => {
     // A capped read draws fewer than are in view, and says how many.
     expect(X.countLine(en, { inView: 231, total: all, none: 3, drawn: 197 })).toBe("197 of 231 with a location drawn · 3 without");
     expect(X.countLine({ ...X.TEXT.sk, locale: "sk-SK" }, { inView: 49, total: 200, none: 3 })).toBe("Vo výreze: 49 · s polohou: 197 z 200 · bez polohy: 3");
-    expect(X.matchLine(en, upcoming.length, all)).toBe("200 of 234 records match the filter.");
-    expect(X.matchLine({ ...X.TEXT.sk, locale: "sk-SK" }, upcoming.length, all)).toBe("Filtru vyhovuje 200 z 234 záznamov.");
+    expect(X.matchLine(en, upcoming.length, all)).toBe("200 of 234 records match the filter · 34 hidden");
+    expect(X.matchLine({ ...X.TEXT.sk, locale: "sk-SK" }, upcoming.length, all)).toBe("Filtru vyhovuje 200 z 234 záznamov · skrytých: 34");
     // A read cap below the total is named as one, never shown as the total.
     expect(X.capLine(en, 200)).toBe("The map draws up to 200 records at a time; zoom in for the rest.");
   });

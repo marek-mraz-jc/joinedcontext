@@ -138,7 +138,19 @@
   .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty),
   .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty) * { font-size: 15px; }
   .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty) button { min-height: 44px; }
-  .jc-explorer .jc-grid .jc-grid-pages button { min-width: 36px; min-height: 44px; }
+  .jc-explorer .jc-grid .jc-grid-pages { flex-wrap: wrap; }
+  .jc-explorer .jc-grid .jc-grid-pages button { min-width: 44px; min-height: 44px; }
+  /* Every control takes a finger, 44 px both ways (T-7512's page check): a header's two, a row and its links, a switch. */
+  .jc-explorer .jc-data-card .jc-grid thead .jc-grid-th :is(.jc-grid-filter-btn, .jc-grid-meta-btn) { width: 44px; min-width: 44px; }
+  .jc-explorer .jc-grid[data-row-size] tbody tr > td { height: 44px; }
+  .jc-explorer .jc-grid[data-row-size] tbody td a[href],
+  .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell a.jc-cell--link { display: flex; align-items: center; min-width: 44px; min-height: 44px; }
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-show { min-width: 44px; }
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-check { min-height: 44px; }
+  .jc-explorer .jc-grid .jc-grid-query :is(input:not([type="checkbox"]), textarea, label) { min-height: 44px; }
+  .jc-explorer .jc-grid .jc-grid-error,
+  .jc-explorer .jc-grid .jc-grid-error * { font-size: 15px; }
+  .jc-explorer .jc-grid .jc-grid-error button { min-width: 44px; min-height: 44px; }
   /* Arrange columns is a frame of three columns, not a second menu beside Tools. */
   .jc-explorer .jc-arrange-slot .jc-grid-menu-icon {
     width: 18px; height: 15px; border: 2px solid currentColor; border-radius: 2px; font-size: 0; color: inherit;

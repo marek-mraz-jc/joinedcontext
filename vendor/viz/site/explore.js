@@ -73,7 +73,7 @@
   var TIMEOUT_MS = 15000;
   var MAP_LIMIT = 1000;
   // Room round a fitted view for the widest badge, the zoom buttons (right) and the attribution (bottom).
-  var BADGE_ROOM = { top: 32, left: 32, right: 78, bottom: 48 };
+  var BADGE_ROOM = { top: 32, left: 24, right: 72, bottom: 48 };
   var MVT = "application/vnd.mapbox-vector-tile";
   var COLOUR = "#1f5fae";
   var TEXT = {
@@ -83,7 +83,7 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
-      mapFirst: "The map draws up to {n} records at a time; zoom in for the rest.", matches: "{n} of {total} records match the filter.",
+      mapFirst: "The map draws up to {n} records at a time; zoom in for the rest.", matches: "{n} of {total} records match the filter · {hidden} hidden",
       mapNone: "No entity of this query has a location.", mapNoMatch: "No record matches this query, so there is nothing to map.", mapNoneOf: "None of the {n} records of this query has a location, so there is nothing to map. The table above lists them.",
       mapViewEmpty: "No point of this query is in view; zoom out to find them.", mapLoading: "Loading map…",
       mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table above lists the same rows.",
@@ -114,7 +114,7 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
-      mapFirst: "Mapa kreslí naraz najviac {n} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov.",
+      mapFirst: "Mapa kreslí naraz najviac {n} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov · skrytých: {hidden}",
       mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapNoMatch: "Dopytu nevyhovuje žiadny záznam, preto mapa nemá čo ukázať.", mapNoneOf: "Žiadny zo záznamov tohto dopytu ({n}) nemá polohu, preto ich mapa nemá kde ukázať. Uvádza ich tabuľka vyššie.",
       mapViewEmpty: "Vo výreze nie je žiadny bod tohto dopytu; oddiaľte mapu.", mapLoading: "Načítavam mapu…",
       mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované. Zvyčajne ho vráti zapnutie hardvérovej akcelerácie v nastaveniach prehliadača. Tabuľka vyššie uvádza tie isté riadky.",
@@ -381,7 +381,8 @@
       if (isGeo(v)) { if (!out.geo) out.geo = v; return; }
       var said = cardValue(v, fields[k], t);
       if (!said) return;
-      if (SYSTEM[k] || (fields[k] && fields[k].hidden)) return out.dev.push({ label: label(k), text: said.text });
+      // A link to another entity without its name is an id, and an id is the developers' (T-7503).
+      if (SYSTEM[k] || (fields[k] && fields[k].hidden) || /^urn:ngsi-ld:/.test(said.text)) return out.dev.push({ label: label(k), text: said.text });
       if (k === titleKey) return;
       if (k === "source" || k === "dataProvider") {
         out.source = out.source || {};
@@ -586,9 +587,10 @@
     return said + (c.tiled ? t.countTiles : "");
   }
 
-  // "Filtru vyhovuje 200 z 234 záznamov.": the pager's total beside the type's, both the broker's.
+  // "Filtru vyhovuje 200 z 234 záznamov · skrytých: 34": the pager's total beside the type's, both the
+  // broker's, and what the filter hides, so 200 never reads as a read cap.
   function matchLine(t, matching, all) {
-    return say(t.matches, { n: number(t, matching), total: number(t, all) });
+    return say(t.matches, { n: number(t, matching), total: number(t, all), hidden: number(t, Math.max(0, all - matching)) });
   }
 
   // A first read that stopped short says so.

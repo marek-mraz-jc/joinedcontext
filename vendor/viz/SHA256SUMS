@@ -4,9 +4,9 @@
 # jc.patch applied to explore.js, explore.html, explore.css, embed.js, map.html, host.css, host.js, render.css, render.html and render.js, plus csv.js and theme.js, which jc.patch adds (vendor/SOURCES.md).
 d777da540a64b580e57dd0418ddf487d114ef7e1267201d9a5ed569902d6e17a  csv.js
 1fa68fbfc99c7a5c7715440de8ad6ad8e37d7f4e79192f627e07cd758d27fd87  embed.js
-e4b8379e551797b19484379a484d87f56c319c68e0b6af3400b01c40dbb5a0e9  explore.css
+47dd8cf833fe28083bbfe42001705d7f450e35550c000fde082e846562dbb084  explore.css
 75eba43bf9547ada2408292c283f36d8d821fb2dbe920c3933715e1faa5638eb  explore.html
-65ec7121dab3c5e7f091bb69296317664eec8f42ee9188313d68e885c876f69f  explore.js
+1f77676906ebc5b799d906f722dfed6e0601d14f4651c021e4e4efc904265c41  explore.js
 f9c2f09c5fad10558bde379cdf9fe3cbaa18307a0200fdea5bb96a0295fa3e6f  host.css
 1fca497e438454e56b636fea03aec7b8eb632ffa9cd95b806abc9fe10d5da2d7  host.js
 57dd801453cd7a724b95f98e4e4c44fe73a0691bd20aa7d3c873c88c16b3e2f2  index.html
