@@ -4,4 +4,9 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
+  'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
 ]

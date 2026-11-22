@@ -423,6 +423,11 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.as_str().ends_with("__bikes"));
         assert!(a.as_str().len() <= INTERNAL_NAME_MAX);
+        let longest = Label::parse(&"a".repeat(63)).unwrap();
+        assert_eq!(
+            internal_name(parent, &longest).as_str().len(),
+            INTERNAL_NAME_MAX
+        );
         assert!(
             a.as_str()
                 .bytes()

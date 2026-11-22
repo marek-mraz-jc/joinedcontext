@@ -305,11 +305,79 @@ mod tests {
         for n in 0..1_000 {
             cache.insert(Key(org, n), n, 16, Duration::from_millis(50));
         }
+        let other = OrgId::mint();
+        cache.insert(Key(other, 0), 0, 16, TTL);
         assert!(!cache.is_empty());
         std::thread::sleep(Duration::from_millis(80));
+        assert!(
+            cache.entries_of(org).is_empty(),
+            "expired entries are not listed before the sweep"
+        );
+        assert_eq!(cache.entries_of(other), [(Key(other, 0), overhead() + 16)]);
         cache.sweep();
-        assert_eq!((cache.len(), cache.bytes()), (0, 0));
+        assert_eq!((cache.len(), cache.bytes()), (1, overhead() + 16));
         assert!(!cache.holds(org));
+        assert!(cache.holds(other));
+    }
+
+    /// What one entry costs beside its value's bytes.
+    fn overhead() -> usize {
+        let cache = BoundedCache::new(1 << 20);
+        cache.insert(Key(OrgId::mint(), 0), 0, 0, TTL);
+        cache.bytes()
+    }
+
+    #[test]
+    fn a_cache_filled_to_exactly_its_budget_keeps_every_entry() {
+        let c = overhead();
+        let budget = 2 * (c + 1_000);
+        let cache = BoundedCache::new(budget);
+        let org = OrgId::mint();
+        cache.insert(Key(org, 0), 0, 1_000, TTL);
+        cache.insert(Key(org, 1), 1, 1_000, TTL);
+        assert_eq!((cache.len(), cache.bytes()), (2, budget));
+        assert!(cache.holds(org));
+        assert_eq!(
+            cache.entries_of(org),
+            [(Key(org, 0), c + 1_000), (Key(org, 1), c + 1_000)]
+        );
+        cache.insert(Key(org, 2), 2, 1, TTL);
+        assert_eq!(
+            cache.get(&Key(org, 0)),
+            None,
+            "one byte over evicts the oldest"
+        );
+    }
+
+    #[test]
+    fn the_organization_holding_most_with_the_incoming_entry_gives_way() {
+        let c = overhead();
+        let (noisy, quiet) = (OrgId::mint(), OrgId::mint());
+        // quiet holds more than noisy will with its new entry: quiet's oldest goes.
+        let cache = BoundedCache::new(4 * c + 5_999);
+        cache.insert(Key(quiet, 0), 0, 3_000, TTL);
+        cache.insert(Key(quiet, 1), 1, 3_000, TTL);
+        cache.insert(Key(noisy, 0), 0, 0, TTL);
+        cache.insert(Key(noisy, 1), 1, 0, TTL);
+        assert_eq!(cache.get(&Key(quiet, 0)), None);
+        assert_eq!(cache.get(&Key(noisy, 0)), Some(0));
+        // noisy's new entry makes it the larger share although it held less before: its own
+        // oldest goes, quiet keeps both.
+        let cache = BoundedCache::new(4 * c + 8_999);
+        cache.insert(Key(quiet, 0), 0, 3_000, TTL);
+        cache.insert(Key(noisy, 0), 0, 1_000, TTL);
+        cache.insert(Key(noisy, 1), 1, 1_000, TTL);
+        cache.insert(Key(noisy, 2), 2, 4_000, TTL);
+        assert_eq!(cache.get(&Key(noisy, 0)), None);
+        assert_eq!(cache.get(&Key(quiet, 0)), Some(0));
+        // A tie goes against the Organization that inserts.
+        let cache = BoundedCache::new(4 * c + 3_999);
+        cache.insert(Key(quiet, 0), 0, 1_000, TTL);
+        cache.insert(Key(quiet, 1), 1, 1_000, TTL);
+        cache.insert(Key(noisy, 0), 0, 1_000, TTL);
+        cache.insert(Key(noisy, 1), 1, 1_000, TTL);
+        assert_eq!(cache.get(&Key(noisy, 0)), None);
+        assert_eq!(cache.get(&Key(quiet, 0)), Some(0));
     }
 
     #[test]
