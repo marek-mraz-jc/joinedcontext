@@ -302,7 +302,7 @@ fn options(
         statement_timeout.as_millis(),
         IDLE_SESSION.as_millis()
     );
-    PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(5))
         .idle_timeout(POOL_IDLE)
@@ -315,7 +315,8 @@ fn options(
         // bounded; one that fails or runs out drops the socket at once, and
         // the slot opens a fresh connection on demand. sqlx's own ping after
         // it costs one more round trip on a connection that just answered.
-        // How a failed or stalled ping is closed: [`bounded_ping`] (T-6000).
+        // How a failed or stalled ping is closed: [`bounded_ping`] (T-6000); it
+        // replaces jc_pool's release hook and keeps that hook's rule, never `Err`.
         // sqlx keeps a connection's buffers at the largest size they ever
         // reached: every slot that once carried a pipeline's batch upsert held
         // its bytes until the connection closed, 118-218 MiB on the prod

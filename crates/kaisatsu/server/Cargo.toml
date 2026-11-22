@@ -14,6 +14,7 @@ kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
 kaisatsu-store-memory = { path = "../store-memory" }
 kaisatsu-store-pg = { path = "../store-pg" }
+jc-pool = { path = "../../shared/jc-pool" }
 kaisatsu-oidc = { path = "../oidc" }
 kaisatsu-login = { path = "../login" }
 kaisatsu-admin = { path = "../admin" }

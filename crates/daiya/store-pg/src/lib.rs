@@ -14,7 +14,7 @@ use daiya_model::{
     QueryCacheStatRecord, ShareType, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgConnectOptions;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -113,7 +113,7 @@ impl PgPoolConfig {
             .database(&self.database)
             .username(&self.app_role)
             .password(self.password.as_str());
-        PgPoolOptions::new()
+        jc_pool::options::<sqlx::Postgres>()
             .max_connections(self.max_connections)
             .connect_with(opts)
             .await
@@ -1760,7 +1760,7 @@ static TEST_ROLE_PASSWORD: tokio::sync::OnceCell<Zeroizing<String>> =
 pub async fn connect_test_database(admin_url: &str) -> CrResult<TestDatabase> {
     let opts = PgConnectOptions::from_str(admin_url)
         .map_err(|e| CrError::Internal(format!("invalid test db url: {e}")))?;
-    let admin = PgPoolOptions::new()
+    let admin = jc_pool::options::<sqlx::Postgres>()
         .max_connections(4)
         .connect_with(opts.clone())
         .await

@@ -2643,6 +2643,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-pool"
+version = "0.1.0"
+dependencies = [
+ "sqlx-core",
+ "tracing",
+]
+
+[[package]]
 name = "jc-relationships"
 version = "0.1.0"
 dependencies = [
@@ -2846,6 +2854,7 @@ dependencies = [
  "http-body-util",
  "jc-chart",
  "jc-core",
+ "jc-pool",
  "jc-router",
  "jc-time",
  "jc-types",

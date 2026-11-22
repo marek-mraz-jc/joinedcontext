@@ -74,6 +74,12 @@ Rows of the installation (target the deployment; T-7458), from the snapshot's jc
 - pipelines.recorded (T-7494): some Pipeline's run was recorded in the last 30 min, by the
   database's own clock. A deployment that recorded none in 7 days is a skip. Neither row may be
   known-listed.
+- database.held (T-7499): no session of a jc database sits in a transaction for over 2 min, or
+  idle after a ROLLBACK for over 2 min (the shape of a pool slot that never returned); the actual
+  names database, application_name (sqlx sets none) and login. A healthy pool ends on a ROLLBACK
+  too, and closes such a session within twice its idle timeout: 2 min by jc_pool::options (the
+  row allows 10 s more), 8 min at Antares (the server ends its idle sessions at 10 min). Never
+  known-listed.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
 Result lines carry statuses and counts, never a response body or a person's data."""
 
@@ -112,6 +118,10 @@ ASK = {
 TITLE_MAX = 120
 LOG_WINDOW = "30m"  # watch.py LOG_WINDOW
 POOL_FAILING_SECONDS = 120  # T-7494: the pool handed out nothing for minutes
+HELD_SECONDS = 120  # T-7499: in a transaction
+# T-7499: idle after a ROLLBACK, past the pool's reaper (twice its idle timeout) and 10 s for the close
+IDLE_HELD_SECONDS = {"jc_antares": 490}  # antares-sql POOL_IDLE 240 s; every other pool jc_pool's 60 s
+IDLE_HELD_DEFAULT = 130
 RECORDED_MINUTES = 30  # T-7494: the deployment recorded no run
 ROLES = {"working": "portal", "opendata": "opendata", "api": "api", "signin": "idm", "apps": "apps"}
 
@@ -369,6 +379,24 @@ def pool_available(snap: dict) -> tuple[str, str]:
     return PASS, f"unavailable for {seconds} s"
 
 
+def sessions_held(snap: dict) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of database.held, from pg_stat_activity."""
+    if not isinstance(snap.get("heldSessions"), list):
+        return SKIP, "no sessions in the snapshot (watch.py reads them)"
+    held = []
+    for s in snap["heldSessions"]:
+        db, state = clean_title(s.get("database")), clean_title(s.get("state"))
+        limit = IDLE_HELD_SECONDS.get(db, IDLE_HELD_DEFAULT) if state == "idle" else HELD_SECONDS
+        if (seconds := int(s.get("seconds") or 0)) > limit:
+            what = "idle after ROLLBACK" if state == "idle" else state
+            held.append(f"{db} application_name={clean_title(s.get('application')) or '(none)'} "
+                        f"login={clean_title(s.get('login'))} {what} {seconds} s")
+    if not held:
+        return PASS, "no session held"
+    more = f"; {len(held) - 12} more" if len(held) > 12 else ""
+    return FAIL, f"{len(held)} held: {'; '.join(held[:12])}{more}"
+
+
 def runs_recorded(snap: dict) -> tuple[str, str]:
     """(pass, fail or skip, the actual) of pipelines.recorded, by the database's clock."""
     now, last = parse_time(snap.get("pipelinesAt")), parse_time(snap.get("lastRecorded"))
@@ -465,6 +493,8 @@ class Suite:
         for rid, judge, read, want in (
                 ("database.pool", pool_available, "jc_portal_db_unavailable_seconds (Prometheus)",
                  "the Portal's database pool hands out connections"),
+                ("database.held", sessions_held, "pg_stat_activity (read-only snapshot)",
+                 "no database session of jc held past 2 min"),
                 ("pipelines.recorded", runs_recorded, "max(pipeline_runs.last_at) (read-only snapshot)",
                  f"a Pipeline run recorded in the last {RECORDED_MINUTES} min"),
                 ("pipelines.refused", refused_writes, call, "no write of a Pipeline refused by the gateway"),
