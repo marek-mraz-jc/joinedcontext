@@ -586,6 +586,12 @@ fn totp_algorithms_and_malformed_credentials() {
         ..Default::default()
     };
     assert!(verify_totp_code(&bad_secret, "123456", 1, now).is_err());
+    // A code that is no number is refused before the secret is read.
+    assert_eq!(
+        verify_totp_code(&bad_secret, "12a456", 1, now).unwrap(),
+        None
+    );
+    assert_eq!(verify_totp_code(&bad_secret, " ", 1, now).unwrap(), None);
     let bad_meta = CredentialRecord {
         secret_data: "seed".into(),
         credential_data: "{".into(),
@@ -593,6 +599,33 @@ fn totp_algorithms_and_malformed_credentials() {
     };
     assert!(generate_totp_code_for_credential(&bad_meta, now).is_err());
     assert!(verify_recovery_code("  abcde-fghjk ", &[]).is_none());
+}
+
+/// Ten recovery codes `XXXXX-XXXXX` over the 32-character alphabet, each stored as its SHA-256 and
+/// accepted case-blind, once per position.
+#[test]
+fn recovery_codes_are_shown_once_and_stored_hashed() {
+    let (plain, hashes) = generate_recovery_codes();
+    assert_eq!((plain.len(), hashes.len()), (10, 10));
+    let mut letters = std::collections::BTreeSet::new();
+    for (i, code) in plain.iter().enumerate() {
+        assert_eq!(code.len(), 11, "{code}");
+        assert_eq!(code.find('-'), Some(5), "{code}");
+        assert_eq!(code.matches('-').count(), 1, "{code}");
+        for c in code.chars().filter(|c| *c != '-') {
+            assert!("ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(c), "{code}");
+            letters.insert(c);
+        }
+        assert_eq!(hashes[i], sha256_hex(code));
+        assert_eq!(
+            verify_recovery_code(&format!(" {} ", code.to_lowercase()), &hashes),
+            Some(i)
+        );
+    }
+    assert!(
+        letters.len() > 16,
+        "100 draws use most of the alphabet: {letters:?}"
+    );
 }
 
 /// RFC 6238 appendix B: the 8-digit codes of the reference seeds at T=59 s and T=1111111109 s, one
