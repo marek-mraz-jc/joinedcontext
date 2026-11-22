@@ -1132,6 +1132,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_slug_address_redirects_only_to_a_portals_own_host() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store);
+        let redirect = |host: Option<&str>, redirect: bool| {
+            let mut spec = mobility(host);
+            if let Some(route) = spec.portal.as_mut() {
+                route.redirect = redirect;
+            }
+            spec
+        };
+        let slug = || {
+            state
+                .portals
+                .slug("city", "mobility")
+                .expect("routed")
+                .redirect
+        };
+        writer
+            .upsert(redirect(None, true))
+            .await
+            .expect("slug only");
+        assert_eq!(
+            slug(),
+            None,
+            "without a host the slug address serves itself"
+        );
+        writer
+            .upsert(redirect(Some("mobility.city.test"), false))
+            .await
+            .expect("own host");
+        assert_eq!(slug(), None);
+        writer
+            .upsert(redirect(Some("mobility.city.test"), true))
+            .await
+            .expect("redirect");
+        assert_eq!(slug().as_deref(), Some("https://mobility.city.test"));
+    }
+
+    #[tokio::test]
+    async fn the_catalogue_row_is_written_only_when_its_portal_fields_change() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let row = || async {
+            store
+                .get_catalogue(spec.org_id, spec.id)
+                .await
+                .expect("read")
+                .expect("held")
+        };
+        writer.upsert(spec.clone()).await.expect("served");
+        let first = row().await;
+        assert!(
+            first.left_hosts.is_empty(),
+            "a slug address is no host a portal leaves"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        writer.upsert(spec.clone()).await.expect("unchanged");
+        assert_eq!(
+            row().await.modified,
+            first.modified,
+            "nothing changed, nothing written"
+        );
+
+        let mut based = spec.clone();
+        based.base = Some("https://data.city.test/-/mobility-2".into());
+        writer.upsert(based).await.expect("a new base");
+        let moved = row().await;
+        assert_eq!(
+            moved.portal_base.as_deref(),
+            Some("https://data.city.test/-/mobility-2")
+        );
+        assert_ne!(moved.modified, first.modified);
+
+        writer
+            .upsert(mobility(Some("mobility.city.test")))
+            .await
+            .expect("own host");
+        assert!(
+            row().await.left_hosts.is_empty(),
+            "the synthetic host of the slug address is not kept as a left host"
+        );
+        writer
+            .upsert(mobility(Some("data.city.test")))
+            .await
+            .expect("another host");
+        assert_eq!(row().await.left_hosts, ["mobility.city.test"]);
+    }
+
+    #[tokio::test]
     async fn iri_pins_and_left_hosts_survive_a_restart() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let spec = mobility(Some("mobility.city.test"));
