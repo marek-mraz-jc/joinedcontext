@@ -253,9 +253,12 @@ const FORGET_BATCHES: usize = 20;
 const IN_INDEX_ORDER: &str = "SELECT set_config('enable_sort', 'off', true), \
      set_config('enable_bitmapscan', 'off', true), set_config('jit', 'off', true)";
 /// The planner while the found rows are deleted, after [`IN_INDEX_ORDER`] in the same transaction:
-/// it goes to their addresses instead of reading the project again.
+/// it goes to their addresses instead of reading the project again. The plan is made for these
+/// addresses: Postgres 16 takes no address scan from a generic plan under row-level security and
+/// read the whole project past the 30 s timeout.
 const BY_ADDRESS: &str = "SELECT set_config('enable_indexscan', 'off', true), \
-     set_config('enable_seqscan', 'off', true)";
+     set_config('enable_seqscan', 'off', true), \
+     set_config('plan_cache_mode', 'force_custom_plan', true)";
 
 /// The addresses of at most `$3` rows of `$table` whose pipeline project `$1` no longer names in
 /// `$2`. It steps the `(project, pipeline, ..)` index from one pipeline name to the next instead
@@ -1874,20 +1877,27 @@ mod tests {
         .execute(&mut *tx)
         .await
         .expect("a role row-level security holds");
-        for (find, delete) in FORGET {
+        for (n, (find, delete)) in FORGET.into_iter().enumerate() {
             let mut savepoint = sqlx::Acquire::begin(&mut *tx).await.expect("savepoint");
+            // The plan a pooled connection keeps after five runs, which a first EXPLAIN never shows.
+            sqlx::raw_sql("SET LOCAL plan_cache_mode = force_generic_plan")
+                .execute(&mut *savepoint)
+                .await
+                .expect("set");
             sqlx::query(IN_INDEX_ORDER)
                 .execute(&mut *savepoint)
                 .await
                 .expect("set");
-            let walk: Vec<String> =
-                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {find}")))
-                    .bind("p")
-                    .bind(vec!["kept"])
-                    .bind(FORGET_ROWS as i64)
-                    .fetch_all(&mut *savepoint)
-                    .await
-                    .expect("a plan");
+            let walk: Vec<String> = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "PREPARE forget_find_{n} (text, text[], bigint) AS {find}; \
+                 EXPLAIN EXECUTE forget_find_{n} ('p', ARRAY['kept'], {FORGET_ROWS})"
+            )))
+            .fetch_all(&mut *savepoint)
+            .await
+            .expect("a plan")
+            .iter()
+            .map(|row| sqlx::Row::get(row, 0))
+            .collect();
             let walk = walk.join("\n");
             assert!(
                 !walk.contains("Sort") && !walk.contains("_by_key"),
@@ -1897,14 +1907,16 @@ mod tests {
                 .execute(&mut *savepoint)
                 .await
                 .expect("set");
-            let deleted: Vec<String> =
-                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {delete}")))
-                    .bind("p")
-                    .bind(vec!["kept"])
-                    .bind(vec!["(0,1)"])
-                    .fetch_all(&mut *savepoint)
-                    .await
-                    .expect("a plan");
+            let deleted: Vec<String> = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "PREPARE forget_delete_{n} (text, text[], text[]) AS {delete}; \
+                 EXPLAIN EXECUTE forget_delete_{n} ('p', ARRAY['kept'], ARRAY['(0,1)'])"
+            )))
+            .fetch_all(&mut *savepoint)
+            .await
+            .expect("a plan")
+            .iter()
+            .map(|row| sqlx::Row::get(row, 0))
+            .collect();
             let deleted = deleted.join("\n");
             assert!(deleted.contains("Tid Scan"), "{deleted}");
             savepoint.rollback().await.expect("rolled back");
