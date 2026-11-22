@@ -114,8 +114,16 @@ fn a_subject_debug_print_redacts_the_bearer_token() {
     s.on_behalf_of = Some("public".into());
     let printed = format!("{s:?}");
     assert!(!printed.contains("s3cr3t-token"), "{printed}");
-    assert!(printed.contains(r#"bearer_token: Some("[redacted]")"#), "{printed}");
-    for shown in ["alice", "/ops", "read_only: false", r#"on_behalf_of: Some("public")"#] {
+    assert!(
+        printed.contains(r#"bearer_token: Some("[redacted]")"#),
+        "{printed}"
+    );
+    for shown in [
+        "alice",
+        "/ops",
+        "read_only: false",
+        r#"on_behalf_of: Some("public")"#,
+    ] {
         assert!(printed.contains(shown), "{shown} missing from {printed}");
     }
     let anon = format!("{:?}", Subject::anonymous());
@@ -162,7 +170,11 @@ fn each_row_set_reads_its_target_from_the_row_and_refuses_a_row_without_uid() {
     // A row missing its object member shows nothing; an import report needs none.
     for set in RowSet::ALL {
         let got = set.target(ORG, &json!({"folderUid": "f"}));
-        assert_eq!(got.is_some(), set == RowSet::ImportReports, "{set:?}: {got:?}");
+        assert_eq!(
+            got.is_some(),
+            set == RowSet::ImportReports,
+            "{set:?}: {got:?}"
+        );
     }
 }
 
@@ -778,7 +790,7 @@ fn identifiers_limits_quotas_and_share_types() {
 #[test]
 fn public_dashboard_subjects_read_only_their_dashboard_and_saved_datasources() {
     use daiya_model::rows::RowSet;
-use daiya_model::{PUBLIC_DASHBOARD_ACTOR_PREFIX, PublicDashboardAuthorizer};
+    use daiya_model::{PUBLIC_DASHBOARD_ACTOR_PREFIX, PublicDashboardAuthorizer};
     let subject = Subject::public_dashboard(ORG, "pub");
     assert!(subject.read_only);
     assert_eq!(subject.organizations, vec![ORG]);

@@ -983,7 +983,8 @@ mod tests {
         let mut reg = daiya_registry();
         let ns = reg.service.namespace.clone();
         let set = &mut reg.service.sets[0];
-        set.fields.push(Field::new("ratio", FieldKind::Number, "a share"));
+        set.fields
+            .push(Field::new("ratio", FieldKind::Number, "a share"));
         set.fields.push(Field::new(
             "owner",
             FieldKind::Object {
@@ -994,6 +995,9 @@ mod tests {
         ));
         let xml = reg.csdl_xml();
         assert!(xml.contains(r#"Name="ratio" Type="Edm.Double""#), "{xml}");
-        assert!(xml.contains(&format!(r#"Name="owner" Type="{ns}.Owner""#)), "{xml}");
+        assert!(
+            xml.contains(&format!(r#"Name="owner" Type="{ns}.Owner""#)),
+            "{xml}"
+        );
     }
 }

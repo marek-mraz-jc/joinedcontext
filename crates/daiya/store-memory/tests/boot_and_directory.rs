@@ -11,7 +11,10 @@ const INSTALLATION: InstallationId = InstallationId::from_u128(1);
 #[tokio::test]
 async fn boot_refuses_a_role_with_bypassrls_until_it_is_dropped() {
     let store = MemoryStore::new();
-    store.verify_rls_enforced().await.expect("a fresh store boots");
+    store
+        .verify_rls_enforced()
+        .await
+        .expect("a fresh store boots");
 
     store.simulate_bypassrls_role(true);
     let err = store.verify_rls_enforced().await.unwrap_err();
@@ -19,7 +22,10 @@ async fn boot_refuses_a_role_with_bypassrls_until_it_is_dropped() {
     assert!(err.to_string().contains("BYPASSRLS"), "{err}");
 
     store.simulate_bypassrls_role(false);
-    store.verify_rls_enforced().await.expect("boots again without it");
+    store
+        .verify_rls_enforced()
+        .await
+        .expect("boots again without it");
 
     store.simulate_table_without_forced_rls("cr_dashboard");
     let err = store.verify_rls_enforced().await.unwrap_err();
@@ -53,9 +59,17 @@ async fn a_name_or_number_is_held_by_one_live_organization() {
                 .status_code()
         }
     };
-    assert_eq!(conflict("zilina", Some(4), second).await, 409, "a held number");
+    assert_eq!(
+        conflict("zilina", Some(4), second).await,
+        409,
+        "a held number"
+    );
     assert_eq!(conflict("helsinki", None, second).await, 409, "a live name");
-    assert_eq!(conflict("zilina", None, first).await, 409, "an id another name holds");
+    assert_eq!(
+        conflict("zilina", None, first).await,
+        409,
+        "an id another name holds"
+    );
 
     let zilina = store
         .create_org(INSTALLATION, "zilina", None, second)
@@ -64,8 +78,14 @@ async fn a_name_or_number_is_held_by_one_live_organization() {
     assert_eq!(zilina.number, 5, "the next number after the highest");
 
     assert!(store.retire_org(INSTALLATION, 4).await.unwrap());
-    assert!(!store.retire_org(INSTALLATION, 4).await.unwrap(), "retired once");
-    assert!(!store.retire_org(INSTALLATION, 99).await.unwrap(), "never held");
+    assert!(
+        !store.retire_org(INSTALLATION, 4).await.unwrap(),
+        "retired once"
+    );
+    assert!(
+        !store.retire_org(INSTALLATION, 99).await.unwrap(),
+        "never held"
+    );
     assert_eq!(
         conflict("helsinki", Some(4), second).await,
         409,
