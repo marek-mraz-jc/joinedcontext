@@ -45,6 +45,9 @@ iframe[aria-busy="true"] { opacity: 0.4; }
 #status.note.blank { background: #f8fafc; color: #334155; }
 html[data-theme="dark"] #status.note.blank { background: #22272e; color: #e5e7eb; }
 #data-note { margin: 6px 0; }
+.link { font: inherit; padding: 0; border: 0; background: none; color: inherit; font-weight: 600; text-align: start; text-decoration: underline; cursor: pointer; }
+.link:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+figure:has(iframe[aria-busy="true"]) :is(#data-note, #controls-note, #axis-note) { opacity: 0.55; }
 #data-note.carried { padding: 5px 10px; border-left: 3px solid #d97706; background: #fffbeb; color: #78350f; font-size: 0.85rem; }
 html[data-theme="dark"] #data-note.carried { background: #422006; color: #fde68a; }
 html[data-theme="dark"] .control select, html[data-theme="dark"] .control input, html[data-theme="dark"] .control summary { background: #1f2329; border-color: #4b5563; }

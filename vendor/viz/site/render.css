@@ -4,4 +4,4 @@ body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-seri
 #chart { width: 100%; }
 #chart .vega-embed { width: 100%; }
 /* T-7490: the export menu's button reads at rest, not only under a pointer. */
-#chart .vega-embed summary { opacity: 1; }
+#chart summary { opacity: 1; }

@@ -181,9 +181,11 @@ for (const width of [1440, 400]) {
 
     // Hourly, the same days: drawn as answered, the held value included, and said so in one line.
     await host.getByLabel("Podrobnosť").selectOption("PT1H");
-    await expect(host.locator("#data-note.carried")).toContainText("prenesená cez čas bez meraní");
+    await expect(host.locator("#data-note.carried")).toContainText("Ak sa nemeralo, môže sa opakovať posledná hodnota");
     await expect(host.locator("#data-note")).toContainText("„Merania“");
     await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
+    // Within a week the notice's step keeps the range picked.
+    await expect(host.getByRole("button", { name: "Časy meraní ukážu „Merania“", exact: true })).toBeVisible();
     await expect(host.locator("#axis-note")).toContainText("v miestnom čase");
     await shot(page, "hourly", width);
 
@@ -217,7 +219,7 @@ for (const width of [1440, 400]) {
     // Daily buckets are UTC days: the axis says that in place of local time.
     await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
     await expect(host.locator("#axis-note")).not.toContainText("miestnom");
-    await expect(host.locator("#data-note.carried")).toContainText("poslednú hodnotu spred výpadku");
+    await expect(host.locator("#data-note.carried")).toContainText("môže sa opakovať posledná hodnota");
     await expect(host.locator("#c-from-hint")).toContainText("1. nov. 2026 (UTC)");
     // A point a day and no line through a day that may be carried.
     await expect(chart.locator("g.concat_0_group g.mark-line path")).toHaveCount(0);
@@ -227,8 +229,14 @@ for (const width of [1440, 400]) {
       const svg = (l as SVGTextElement).ownerSVGElement!.getBoundingClientRect();
       return getComputedStyle(l).opacity !== "0" && l.getBoundingClientRect().right > svg.right;
     }).map((l) => l.textContent))).toEqual([]);
-    await expect(chart.locator("g.concat_0_group g.role-axis-label text").first()).toHaveText(/^\d+\. \d+\.$/);
+    await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: /\d\./ }).first()).toHaveText(/^\d+\.\d+\.$/);
     await shot(page, "daily-walk", width);
+
+    // The notice's own step to the measured times: the last week's readings, the gap named.
+    await host.getByRole("button", { name: "Časy meraní ukážu „Merania“ za 7 dní" }).click();
+    await expect(host.getByLabel("Obdobie")).toHaveValue("P7D");
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("raw");
+    await expect(chart.locator("g.concat_0_group text", { hasText: "bez meraní" }).first()).toBeVisible();
 
     // Back to 7 days, then two stations: the third line goes, no new read.
     await host.getByLabel("Obdobie").selectOption("P7D");
@@ -246,7 +254,7 @@ for (const width of [1440, 400]) {
     const strip = chart.locator("g.concat_1_group path.background, g[class*='concat_1'] .background").first();
     const box = await strip.boundingBox();
     expect(box).not.toBeNull();
-    const firstLabel = () => chart.locator("g.concat_0_group g.role-axis-label text, g[class*='concat_0'] .role-axis-label text").first().textContent();
+    const firstLabel = () => chart.locator("g.concat_0_group g.role-axis-label text, g[class*='concat_0'] .role-axis-label text").filter({ hasText: /\d[.:]/ }).first().textContent();
     const unzoomed = await firstLabel();
     const reset = host.getByRole("button", { name: "Zobraziť celé obdobie" });
     await expect(reset).toBeHidden();
@@ -294,8 +302,8 @@ for (const width of [1440, 400]) {
     await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
     // The axis runs on to the end of the range picked, past the last bucket read.
-    await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: "21. 11." })).toHaveCount(1);
-    await expect(chart.locator("g.concat_0_group text", { hasText: "nenačítané" })).toHaveCount(1);
+    await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: "21. 11." }).first()).toBeVisible();
+    await expect(chart.locator("g.concat_0_group text", { hasText: "nenačítané" }).first()).toBeVisible();
     await shot(page, "cut", width);
 
     state.mode = "error";

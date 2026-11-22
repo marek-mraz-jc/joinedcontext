@@ -225,11 +225,12 @@ describe("the interactive chart", () => {
   it("gives each of more than four stations a row of its own, with the legend where it fits", () => {
     const names = ["A", "B", "C", "D", "E", "F", "G"];
     const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
-    type Rows = { title: { text: string }; facet: { row: { field: string } }; spec: { params?: unknown; encoding: { x: { scale: { domain: unknown } } } } };
+    type Rows = { title: { text: string }; columns: number; facet: { field: string }; spec: { params?: unknown; encoding: { x: { scale: { domain: unknown } } } } };
     for (const width of [1200, 270]) {
       const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width, names, shown: names });
       const [detail] = spec.vconcat as Rows[];
-      expect(detail.facet.row.field).toBe("name");
+      expect(detail.facet.field).toBe("name");
+      expect(detail.columns).toBe(width > 480 ? 2 : 1);
       expect(detail.title.text).toBe("Relatívna vlhkosť (%)");
       expect(detail.spec.encoding.x.scale.domain).toEqual({ param: "brush" });
       expect(!!detail.spec.params).toBe(width > 480);
@@ -237,13 +238,13 @@ describe("the interactive chart", () => {
     }
   });
 
-  it("shades and names what a cut answer left out, and still zooms", () => {
+  it("shades and names time without a value, and still zooms", () => {
     const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
-    const missing = { from: "2026-11-20T00:00:00Z", middle: "2026-11-20T12:00:00Z", to: "2026-11-21T00:00:00Z" };
-    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, missing });
-    const [detail] = spec.vconcat as { layer: { mark: { type: string; text?: string } }[] }[];
+    const band = { text: "nenačítané", from: "2026-11-20T00:00:00Z", middle: "2026-11-20T12:00:00Z", to: "2026-11-21T00:00:00Z" };
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, bands: [band] });
+    const [detail] = spec.vconcat as { layer: { mark: { type: string }; data?: { values: { text: string }[] } }[] }[];
     expect(detail.layer.map((l) => l.mark.type)).toEqual(["rect", "text", "line"]);
-    expect(detail.layer[1].mark.text).toBe("nenačítané");
+    expect(detail.layer[1].data?.values[0].text).toBe("nenačítané");
     expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec).toBeTruthy();
   });
 
