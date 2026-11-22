@@ -1,7 +1,7 @@
 //! The Portal's pool when a statement is cut off (T-7494, the jc-prod outage of 2026-11-22): the
 //! runner stops waiting after 5 s, the request's future is dropped, and Postgres cancels the trim
 //! later. sqlx 0.9.0 hung closing such a connection over TLS and never gave its slot back, so the
-//! database here is reached over TLS.
+//! database here is reached over TLS. The other statement that starved that pool is tested below.
 //!
 //! Runs when `JC_PORTAL_TEST_DATABASE_URL` points at a PostgreSQL the test may write to; otherwise
 //! it says so and returns, like the other database suites.
@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use joinedcontext_portal::pipeline_log::{LogStore, LINES_KEPT};
+use joinedcontext_portal::pipeline_log::{LogStore, NewLine, Outcome, LINES_KEPT};
 use p256::pkcs8::EncodePrivateKey;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::rustls;
@@ -198,5 +198,96 @@ async fn a_trim_that_times_out_after_the_caller_left_leaves_the_pool_at_full_siz
             runs.iter().any(|run| run.run == "r1"),
             "held-{n} lost its history row to the failed trim"
         );
+    }
+}
+
+/// `forget_gone` drops exactly the pipelines a project no longer holds, whichever table still has
+/// their rows, and no other project's (T-7494: it now steps the index by pipeline name).
+#[tokio::test]
+async fn forgetting_gone_pipelines_drops_theirs_alone_in_every_table() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: forgetting's database half is not run");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let (project, other) = (
+        format!("p-{}", unique::unique()),
+        format!("p-{}", unique::unique()),
+    );
+    let mirror = common::keyed_mirror(&pool, &[&project, &other]).await;
+    let log = LogStore::new(Some(pool.clone()), mirror.clone());
+    let written = [("urn:a".to_owned(), "h".to_owned())];
+    // The first, the middle and the last name of the walk go; names differing in case stay apart.
+    for (project, pipeline) in [
+        (&project, "A-gone"),
+        (&project, "a-kept"),
+        (&project, "m-gone"),
+        (&project, "n-kept"),
+        (&project, "z-gone"),
+        (&other, "m-gone"),
+    ] {
+        log.append(project, pipeline, "r", &[line()])
+            .await
+            .expect("kept");
+        log.record_changes(project, pipeline, "r", &written)
+            .await
+            .expect("hashed");
+    }
+    let held = |project: &str| {
+        let (pool, mirror, project) = (pool.clone(), mirror.clone(), project.to_owned());
+        async move {
+            let key = joinedcontext_portal::project_ids::key_of(&pool, &mirror, &project)
+                .await
+                .expect("read")
+                .expect("placed");
+            let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+                .await
+                .expect("keyed");
+            let mut tables = Vec::new();
+            for table in ["pipeline_log", "pipeline_runs", "pipeline_record_hashes"] {
+                let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT DISTINCT pipeline FROM {table} WHERE project = $1"
+                )))
+                .bind(&project)
+                .fetch_all(&mut *tx)
+                .await
+                .expect("read");
+                tables.push(names.into_iter().collect::<std::collections::BTreeSet<_>>());
+            }
+            tables
+        }
+    };
+    let loaded = |names: &[&str]| {
+        std::collections::BTreeMap::from([(
+            project.clone(),
+            names.iter().map(|name| (*name).to_owned()).collect(),
+        )])
+    };
+    let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+
+    log.forget_gone(&loaded(&["a-kept", "n-kept", "never-ran"]))
+        .await
+        .expect("forgotten");
+    let kept: std::collections::BTreeSet<String> = names(&["a-kept", "n-kept"]);
+    assert_eq!(held(&project).await, vec![kept; 3]);
+    let others: std::collections::BTreeSet<String> = names(&["m-gone"]);
+    assert_eq!(held(&other).await, vec![others.clone(); 3]);
+
+    log.forget_gone(&loaded(&[])).await.expect("forgotten");
+    assert!(held(&project).await.iter().all(|table| table.is_empty()));
+    assert_eq!(held(&other).await, vec![others; 3]);
+}
+
+fn line() -> NewLine {
+    NewLine {
+        record_id: "urn:a".to_owned(),
+        step: None,
+        outcome: Outcome::Sent,
+        message: String::new(),
     }
 }

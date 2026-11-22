@@ -239,6 +239,28 @@ async fn trim(
     tx.commit().await
 }
 
+/// The statement that drops `$table`'s rows of the pipelines `$2` no longer names in project `$1`.
+/// It steps the `(project, pipeline, ..)` index from one pipeline name to the next instead of
+/// reading every row the project keeps: `NOT (pipeline = ANY($2))` timed out on jc-prod's 2.26M
+/// hashes on pass after pass, holding a pooled connection 30 s each time (T-7494).
+macro_rules! forget_gone_in {
+    ($table:literal) => {
+        concat!(
+            "WITH RECURSIVE held (pipeline) AS (",
+            "(SELECT pipeline FROM ",
+            $table,
+            " WHERE project = $1 ORDER BY pipeline LIMIT 1) ",
+            "UNION ALL SELECT next.pipeline FROM held, LATERAL (SELECT t.pipeline FROM ",
+            $table,
+            " t WHERE t.project = $1 AND t.pipeline > held.pipeline ORDER BY t.pipeline LIMIT 1) AS next) ",
+            "DELETE FROM ",
+            $table,
+            " WHERE project = $1 AND pipeline = ANY(ARRAY(",
+            "SELECT pipeline FROM held WHERE NOT (pipeline = ANY($2))))"
+        )
+    };
+}
+
 /// The runs and logs of every pipeline.
 pub struct LogStore {
     inner: Inner,
@@ -797,9 +819,9 @@ impl LogStore {
                     };
                     let names: Vec<&str> = names.iter().map(String::as_str).collect();
                     for statement in [
-                        "DELETE FROM pipeline_log WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                        "DELETE FROM pipeline_runs WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                        "DELETE FROM pipeline_record_hashes WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                        forget_gone_in!("pipeline_log"),
+                        forget_gone_in!("pipeline_runs"),
+                        forget_gone_in!("pipeline_record_hashes"),
                     ] {
                         sqlx::query(statement)
                             .bind(project)
