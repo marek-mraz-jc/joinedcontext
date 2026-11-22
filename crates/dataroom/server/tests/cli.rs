@@ -406,6 +406,13 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
     .await
     .unwrap();
     assert!(out.to_string().contains("cli-pg-ovzdusie"), "{out}");
+    // With a publisher and a dataset held, the feed check reads both.
+    let out = run_cli(pg(&["feed-check"])).await.unwrap();
+    assert_eq!(
+        (out["datasetsChecked"].as_u64(), out["conforms"].as_bool()),
+        (Some(1), Some(true)),
+        "{out}"
+    );
 
     // A harvest source on loopback is saved, and its run is refused by the outbound guard.
     let looped = json!({"name": "cli-pg-loop2", "kind": "dcat-ap", "url": "https://127.0.0.1/feed.ttl",
