@@ -343,6 +343,66 @@ async fn two_replicas_on_one_database_agree() {
     );
 }
 
+/// A name or key one Organization holds is free in every other: no unique index spans two.
+#[tokio::test]
+async fn no_unique_index_spans_two_organizations() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts.clone())
+        .await
+        .expect("SHAKO_TEST_DATABASE_URL is set but unreachable");
+    PgStore::run_migrations(&admin_pool).await.expect("migrate");
+    let app_password = ensure_app_login(&admin_pool).await;
+    let app_opts = opts.clone().username(APP_LOGIN).password(&app_password);
+    let store = PgStore::connect_with(app_opts, 2).await.unwrap();
+
+    let inst = shako_core::InstanceId::new();
+    let mut refused = Vec::new();
+    for org in [shako_core::OrgId::new(), shako_core::OrgId::new()] {
+        if let Err(e) = store.create_repo(repo(inst, org, "config")).await {
+            refused.push(format!("repository: {e}"));
+        }
+        let event = shako_core::OutboxEvent {
+            id: uuid::Uuid::now_v7(),
+            instance_id: inst,
+            org_id: org,
+            repo_id: None,
+            event_kind: "package".into(),
+            idempotency_key: "oci:city/app:sha256:1".into(),
+            payload: serde_json::json!({}),
+            dispatched: false,
+            created_at: jc_time::TimestampTz::now(),
+            dispatched_at: None,
+        };
+        let appended = store.append_outbox(event).await;
+        let pending = store.list_undispatched_outbox(inst, org).await.unwrap();
+        if appended.is_err() || pending.len() != 1 {
+            refused.push(format!("event of {org}: {appended:?}"));
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+
+    let spanning: Vec<String> = sqlx::query_scalar(
+        "SELECT i.indexrelid::regclass::text FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'shako' AND i.indisunique AND NOT i.indisprimary
+           AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           WHERE a.attrelid = c.oid AND a.attnum = i.indkey[0]
+                             AND a.attname = 'org_id')",
+    )
+    .fetch_all(&admin_pool)
+    .await
+    .unwrap();
+    assert!(spanning.is_empty(), "not led by org_id: {spanning:?}");
+}
+
 /// A restart keeps every record kind: a fresh store answers the repository, the pull request and
 /// its number counter as before, with nothing to load first, and never another organization's
 /// rows (forced RLS on every table and on the log).

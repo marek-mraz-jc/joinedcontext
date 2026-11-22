@@ -1312,6 +1312,32 @@ async fn branch_rules_are_refused_when_they_would_not_protect() {
 }
 
 /// A hook or mirror names only its own repository's forge-kept secrets.
+/// An open upload is its Organization's: the same owner and image in another finds none.
+#[tokio::test]
+async fn an_open_upload_is_invisible_to_another_organization() {
+    let world = setup_world().await;
+    let upload = |method: &'static str, uri: String, token: &'static str| {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from("part"))
+            .unwrap();
+        world.app.clone().oneshot(request)
+    };
+    let opened = upload("POST", "/v2/city/app/blobs/uploads/".into(), "portal-token")
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), StatusCode::ACCEPTED);
+    let location = opened.headers()["location"].to_str().unwrap().to_owned();
+    let theirs = upload("PATCH", location.clone(), "org-b-token")
+        .await
+        .unwrap();
+    assert_eq!(theirs.status(), StatusCode::NOT_FOUND);
+    let ours = upload("PATCH", location, "portal-token").await.unwrap();
+    assert_eq!(ours.status(), StatusCode::ACCEPTED);
+}
+
 #[tokio::test]
 async fn a_secret_ref_never_reaches_another_repositorys_secret() {
     let world = setup_world().await;

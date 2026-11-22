@@ -271,43 +271,60 @@ async fn repositories_by_alternate_key_create_conflict_import_archive_delete() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
-/// An owner name names one Organization: another Organization's member creates or imports
-/// nothing under it, and the owner keeps resolving to its own Organization.
+/// An owner name is a label inside one Organization: creating or importing under a name another
+/// Organization holds answers as a free name does, and each Organization reads only its own.
 #[tokio::test]
-async fn an_owner_of_another_organization_is_refused_on_create_and_import() {
+async fn a_name_another_organization_holds_answers_as_a_free_name() {
     let w = world().await;
     create_repo(&w, "helsinki").await;
+    let org_b = "org-b-token";
+    let source = json!({"Owner": "bbsk", "Name": "source"});
     let (st, body, _) = call(
         &w.app,
         "POST",
         "/odata/CreateRepository",
-        Some("org-b-token"),
-        Some(json!({"Owner": "bbsk", "Name": "source"})),
+        Some(org_b),
+        Some(source),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{body}");
-    for (op, body) in [
-        (
-            "CreateRepository",
-            json!({"Owner": "joinedcontext", "Name": "taken"}),
-        ),
-        (
-            "ImportRepository",
-            json!({"SourceOwner": "bbsk", "SourceName": "source", "RepoOwner": "joinedcontext", "RepoName": "taken"}),
-        ),
-    ] {
-        let (st, body, _) = call(
-            &w.app,
-            "POST",
-            &format!("/odata/{op}"),
-            Some("org-b-token"),
-            Some(body),
-        )
-        .await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "{op}: {body}");
+
+    for op in ["CreateRepository", "ImportRepository"] {
+        let mut answers = Vec::new();
+        // Held by the other Organization, then free.
+        for owner in ["joinedcontext", "nobody"] {
+            let name = if op == "CreateRepository" {
+                "helsinki"
+            } else {
+                "copy"
+            };
+            let body = json!({
+                "Owner": owner, "Name": name,
+                "SourceOwner": "bbsk", "SourceName": "source", "RepoOwner": owner, "RepoName": name,
+            });
+            let (st, body, _) = call(
+                &w.app,
+                "POST",
+                &format!("/odata/{op}"),
+                Some(org_b),
+                Some(body),
+            )
+            .await;
+            let fields: Option<Vec<String>> = body.as_object().map(|o| o.keys().cloned().collect());
+            answers.push((st, fields));
+        }
+        assert_eq!(answers[0], answers[1], "{op}: held elsewhere, free");
+        assert_eq!(answers[0].0, StatusCode::OK, "{op}");
     }
-    let (st, repo, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
-    assert_eq!(st, StatusCode::OK, "{repo}");
+
+    let (st, ours, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{ours}");
+    let (st, theirs, _) = call(&w.app, "GET", R, Some(org_b), None).await;
+    assert_eq!(st, StatusCode::OK, "{theirs}");
+    assert_ne!(
+        ours["Id"], theirs["Id"],
+        "two repositories, one per Organization"
+    );
 }
 
 #[tokio::test]
