@@ -34,8 +34,8 @@ use serde_json::{Value, json};
 use shako_api::verify_gitea_signature;
 use shako_core::{
     Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, OutboundGuard,
-    OutboundPolicy, RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject,
-    TokenVerifier,
+    OutboundPolicy, Principal, RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding,
+    Subject, TokenVerifier,
 };
 use shako_git::{create_full_backup_bundle, restore_from_bundle};
 use shako_mcp::{call_mcp_tool, list_mcp_tools};
@@ -73,7 +73,20 @@ async fn setup_world() -> TestWorld {
     let authz = Arc::new(LocalAuthorizer::new(vec![
         RoleBinding {
             org_id: org_a,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
+            actions: vec![
+                Action::Admin,
+                Action::Write,
+                Action::Approve,
+                Action::Publish,
+            ],
+            project_id: None,
+            repo: None,
+        },
+        // Its username is the Portal's; its rights are the ones its own id is bound to.
+        RoleBinding {
+            org_id: org_a,
+            principal: Principal::User("apps-bot".into()),
             actions: vec![
                 Action::Admin,
                 Action::Write,
@@ -85,46 +98,46 @@ async fn setup_world() -> TestWorld {
         },
         RoleBinding {
             org_id: org_a,
-            principal: "writer-alice".into(),
+            principal: Principal::User("writer-alice".into()),
             actions: vec![Action::Write, Action::Approve],
             project_id: None,
             repo: None,
         },
         RoleBinding {
             org_id: org_a,
-            principal: "reader-bob".into(),
+            principal: Principal::User("reader-bob".into()),
             actions: vec![Action::Read],
             project_id: None,
             repo: None,
         },
         RoleBinding {
             org_id: org_b,
-            principal: "admin-b".into(),
+            principal: Principal::User("admin-b".into()),
             actions: vec![Action::Admin, Action::Write],
             project_id: None,
             repo: None,
         },
     ]));
 
-    let mut apps_only_subj = Subject::authenticated("apps-bot", "jc-portal", vec![org_a], vec![]);
+    let mut apps_only_subj = Subject::authenticated("apps-bot", "jc-portal", vec![org_a]);
     apps_only_subj.connector_segments = Some(vec!["apps".into()]);
 
     let tokens = vec![
         StaticTokenBinding::new(
             "portal-token",
-            Subject::authenticated("jc-portal", "jc-portal", vec![org_a], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "alice-token",
-            Subject::authenticated("writer-alice", "writer-alice", vec![org_a], vec![]),
+            Subject::authenticated("writer-alice", "writer-alice", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "bob-token",
-            Subject::authenticated("reader-bob", "reader-bob", vec![org_a], vec![]),
+            Subject::authenticated("reader-bob", "reader-bob", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "org-b-token",
-            Subject::authenticated("admin-b", "admin-b", vec![org_b], vec![]),
+            Subject::authenticated("admin-b", "admin-b", vec![org_b]),
         ),
         StaticTokenBinding::new("apps-only-token", apps_only_subj),
     ];
@@ -168,15 +181,12 @@ async fn setup_world() -> TestWorld {
 
     let state = ShakoState::new(
         inst,
-        org_a,
         tmp.path().to_path_buf(),
         store,
         authz,
         verifier,
         guard,
     );
-    state.register_owner_org("joinedcontext", org_a);
-    state.register_owner_org("bbsk", org_b);
     let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
@@ -1054,29 +1064,32 @@ async fn create_repo(world: &TestWorld, name: &str) {
     assert_eq!(st, StatusCode::CREATED, "create {name}");
 }
 
-/// The Organization routes act only for a member of the Organization the owner names, never
+/// The Organization routes act only for a member of the token's one Organization, never
 /// write tenant data, and report rights the caller holds.
 #[tokio::test]
-async fn organization_routes_refuse_outsiders_and_report_real_rights() {
+async fn organization_routes_answer_alike_for_held_and_free_names_and_report_real_rights() {
     let world = setup_world().await;
     let inst = InstanceId::from_u128(1);
+    create_repo(&world, "helsinki").await;
     for (method, uri) in [
-        ("GET", "/api/v1/orgs/joinedcontext/teams"),
-        ("POST", "/api/v1/orgs/joinedcontext/teams"),
-        (
-            "GET",
-            "/api/v1/users/admin-b/orgs/joinedcontext/permissions",
-        ),
+        ("GET", "/api/v1/orgs/{org}/teams"),
+        ("POST", "/api/v1/orgs/{org}/teams"),
+        ("GET", "/api/v1/users/admin-b/orgs/{org}/permissions"),
     ] {
-        let (st, _) = send_json(
-            &world.app,
-            method,
-            uri,
-            Some("org-b-token"),
-            Some(json!({ "name": "intruders" })),
-        )
-        .await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}");
+        let mut answers = Vec::new();
+        // Held by the other Organization, then free: no route says which.
+        for org in ["joinedcontext", "nobody"] {
+            let answer = send_json(
+                &world.app,
+                method,
+                &uri.replace("{org}", org),
+                Some("org-b-token"),
+                Some(json!({ "name": "intruders" })),
+            )
+            .await;
+            answers.push(answer);
+        }
+        assert_eq!(answers[0], answers[1], "{method} {uri}");
     }
     let (st, _) = send_json(
         &world.app,
@@ -1311,6 +1324,79 @@ async fn branch_rules_are_refused_when_they_would_not_protect() {
     );
 }
 
+/// An open upload is its Organization's: the same owner and image in another finds none.
+#[tokio::test]
+async fn an_open_upload_is_invisible_to_another_organization() {
+    let world = setup_world().await;
+    let upload = |method: &'static str, uri: String, token: &'static str| {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from("part"))
+            .unwrap();
+        world.app.clone().oneshot(request)
+    };
+    let opened = upload("POST", "/v2/city/app/blobs/uploads/".into(), "portal-token")
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), StatusCode::ACCEPTED);
+    let location = opened.headers()["location"].to_str().unwrap().to_owned();
+    let theirs = upload("PATCH", location.clone(), "org-b-token")
+        .await
+        .unwrap();
+    assert_eq!(theirs.status(), StatusCode::NOT_FOUND);
+    let ours = upload("PATCH", location.clone(), "portal-token")
+        .await
+        .unwrap();
+    assert_eq!(ours.status(), StatusCode::ACCEPTED);
+
+    // The PUT's body is the last chunk: three "part" in all.
+    let digest = format!("sha256:{}", shako_core::sha256_hex(b"partpartpart"));
+    let last = format!("{location}?digest={digest}");
+    let theirs = upload("PUT", last.clone(), "org-b-token").await.unwrap();
+    assert_eq!(theirs.status(), StatusCode::NOT_FOUND);
+    let ours = upload("PUT", last, "portal-token").await.unwrap();
+    assert_eq!(
+        ours.status(),
+        StatusCode::CREATED,
+        "another's PUT dropped nothing"
+    );
+    let blob = format!("/v2/city/app/blobs/{digest}");
+    let theirs = upload("GET", blob.clone(), "org-b-token").await.unwrap();
+    assert_eq!(
+        theirs.status(),
+        StatusCode::NOT_FOUND,
+        "a twin name reads no blob"
+    );
+    let ours = upload("GET", blob, "portal-token").await.unwrap();
+    assert_eq!(ours.status(), StatusCode::OK);
+}
+
+/// A token names the one Organization it acts in: none, or several in either order, act in none
+/// and mint no registry token.
+#[tokio::test]
+async fn a_token_without_exactly_one_organization_acts_in_none() {
+    let mut world = setup_world().await;
+    let (a, b) = (world.org_a, world.org_b);
+    let portal = |orgs| Subject::authenticated("jc-portal", "jc-portal", orgs);
+    let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
+        .with_static_tokens(vec![
+            StaticTokenBinding::new("none", portal(vec![])),
+            StaticTokenBinding::new("both", portal(vec![a, b])),
+            StaticTokenBinding::new("reordered", portal(vec![b, a])),
+        ]);
+    world.state.token_verifier = verifier;
+    let mount = Mount::new("shako", "https", "city.example", "/git").expect("mount");
+    let app = router(world.state.clone(), mount);
+    for token in ["none", "both", "reordered"] {
+        let (st, _) = send_json(&app, "GET", "/api/v1/user", Some(token), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{token}");
+        let (st, body) = send_json(&app, "GET", "/v2/token", Some(token), None).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{token}: {body}");
+    }
+}
+
 /// A hook or mirror names only its own repository's forge-kept secrets.
 #[tokio::test]
 async fn a_secret_ref_never_reaches_another_repositorys_secret() {
@@ -1511,7 +1597,7 @@ async fn advertised_forge_tools_answer() {
     let ctx = RequestCtx::new(
         InstanceId::from_u128(1),
         world.org_a,
-        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a]),
     );
     let mount = Mount::default();
     let (st, _) = send_json(
@@ -1878,6 +1964,20 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
             .signing_key()
             .verify_cosign_payload(&payload_bytes, sig_b64)
     );
+    let signed: Value = serde_json::from_slice(&payload_bytes).unwrap();
+    assert_eq!(signed["optional"]["org_id"], json!(world.org_a.to_string()));
+    let events = world
+        .state
+        .store()
+        .list_outbox_events(InstanceId::from_u128(1), world.org_a)
+        .await
+        .unwrap();
+    assert!(
+        events.iter().any(|e| e
+            .idempotency_key
+            .starts_with(&format!("oci:{}:", world.org_a))),
+        "the package event's key names its Organization"
+    );
     // The signature manifest's config blob is pullable too: cosign and crane fetch it.
     let config_digest = sig_man["config"]["digest"].as_str().unwrap();
     let config_resp = world
@@ -2063,7 +2163,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
     let ctx = RequestCtx::new(
         world.state.default_instance_id,
         world.org_a,
-        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a]),
     );
     let mount = Mount::default();
     let cli_res = execute_cli_operation(&world.state, &ctx, &mount, "repos", json!({}))

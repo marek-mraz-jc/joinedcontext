@@ -38,6 +38,9 @@ pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_secrets.sq
 /// In a ledger of its own, which a previous release never reads (T-7508).
 pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/0001_projection.sql");
 
+/// Keys led by the Organization (T-7549), in a ledger of its own for the same reason.
+pub const KEYS_0001_SQL: &str = include_str!("../migrations/keys/0001_org_keys.sql");
+
 /// How long a claimed event is this process's to send; after it another may claim it again, so
 /// an event is sent once, or again when its sender died or took longer.
 const OUTBOX_LEASE: Duration = Duration::from_secs(300);
@@ -246,6 +249,12 @@ impl PgStore {
             .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("projection migration failed: {e}")))?;
+        let mut keys = Migrator::with_migrations(vec![migration(1, "org_keys", KEYS_0001_SQL)]);
+        keys.create_schema("shako_key_migrations");
+        keys.dangerous_set_table_name("shako_key_migrations._sqlx_migrations");
+        keys.run(migrate_pool)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("key migration failed: {e}")))?;
         Ok(())
     }
 
@@ -293,27 +302,37 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// Begins a transaction with `SET LOCAL` tenant context (`shako.instance` and `shako.org`).
+    /// Begins `tenant`'s transaction: see [`tenant_tx`].
     pub async fn begin_tenant_tx(
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
     ) -> ShakoResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
-        sqlx::query(
-            "SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
-        )
-        .bind(instance_id.to_string())
-        .bind(org_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
-        Ok(tx)
+        tenant_tx(&self.pool, instance_id, org_id).await
     }
+}
+
+/// The one way to a transaction over tenant rows (STO-06): the request role and the tenant are
+/// set in it and end with it, so forced RLS decides whoever the login is.
+async fn tenant_tx(
+    pool: &PgPool,
+    instance_id: InstanceId,
+    org_id: OrgId,
+) -> ShakoResult<Transaction<'_, Postgres>> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
+    sqlx::query(
+        "SELECT set_config('role', 'shako_app', true),
+                set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
+    )
+    .bind(instance_id.to_string())
+    .bind(org_id.to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
+    Ok(tx)
 }
 
 /// The hook and mirror secrets in `shako.secret` (S6-09, T-7280), sealed with the installation's
@@ -347,20 +366,7 @@ impl PgSecretStore {
     }
 
     async fn tenant_tx(&self, org_id: OrgId) -> ShakoResult<Transaction<'_, Postgres>> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
-        sqlx::query(
-            "SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
-        )
-        .bind(self.instance_id.to_string())
-        .bind(org_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
-        Ok(tx)
+        tenant_tx(&self.pool, self.instance_id, org_id).await
     }
 }
 
@@ -499,7 +505,26 @@ impl Store for PgStore {
                 owned_tables,
                 external_grants,
                 &statuses,
+            )?;
+            // Every tenant transaction runs as `shako_app` (`tenant_tx`). Asked last: the check
+            // above has found the schema and refused an unsafe login by its name.
+            let (member, unsafe_role): (bool, bool) = sqlx::query_as(
+                "SELECT pg_has_role(current_user, r.oid, 'MEMBER'),
+                        r.rolsuper OR r.rolbypassrls OR EXISTS (
+                            SELECT 1 FROM pg_class c WHERE c.relowner = r.oid AND c.relkind = 'r'
+                              AND c.relnamespace = 'shako'::regnamespace)
+                 FROM pg_roles r WHERE r.rolname = 'shako_app'",
             )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| ShakoError::RlsNotEnforced(format!("inspect shako_app failed: {e}")))?;
+            if !member || unsafe_role {
+                return Err(ShakoError::RlsNotEnforced(format!(
+                    "role {role} must be a member of shako_app, and shako_app must own no table \
+                     and hold neither SUPERUSER nor BYPASSRLS"
+                )));
+            }
+            Ok(())
         })
     }
 

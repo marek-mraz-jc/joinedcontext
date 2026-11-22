@@ -4,7 +4,9 @@
 
 use clap::{Parser, Subcommand};
 use jc_router::Mount;
-use shako_core::{Action, LocalAuthorizer, OrgId, RoleBinding, StaticTokenBinding, Subject};
+use shako_core::{
+    Action, LocalAuthorizer, OrgId, Principal, RoleBinding, StaticTokenBinding, Subject,
+};
 use shako_server::{
     ShakoManifestBundle, ShakoState, check_manifest_bundle, compact_all_repositories,
     fsck_all_repositories, router,
@@ -92,7 +94,7 @@ fn build_standalone_state(
     let store = Arc::new(MemoryStore::new());
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
-        principal: "admin".into(),
+        principal: Principal::User("admin".into()),
         actions: vec![Action::Admin],
         project_id: None,
         repo: None,
@@ -107,11 +109,11 @@ fn build_standalone_state(
         }
         tokens.push(StaticTokenBinding::new(
             trimmed,
-            Subject::authenticated("admin", "admin", vec![org_id], vec![]),
+            Subject::authenticated("admin", "admin", vec![org_id]),
         ));
     }
-    let state = ShakoState::for_standalone(root, store, authz, org_id, tokens)
-        .map_err(|e| e.to_string())?;
+    let state =
+        ShakoState::for_standalone(root, store, authz, tokens).map_err(|e| e.to_string())?;
     Ok((state, org_id))
 }
 

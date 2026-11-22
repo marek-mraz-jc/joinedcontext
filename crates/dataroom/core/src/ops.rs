@@ -6,7 +6,10 @@
 //! kind, and input/output JSON schemas once.
 
 use crate::auth::{Action, Authorizer, Decision, ObjectTarget, RequestCtx};
-use crate::ckan_compat::{dataset_from_ckan, dataset_to_ckan};
+use crate::ckan_compat::{
+    dataset_from_ckan, dataset_to_ckan, distribution_from_ckan, distribution_to_ckan,
+    resource_view_from_ckan, resource_view_to_ckan, validate_view_payload,
+};
 use crate::error::{DataroomError, Result};
 use crate::model::{
     validate_slug, ActivityRow, Catalogue, CataloguePlugin, Dataset, HarvestSource, Publisher,
@@ -68,6 +71,34 @@ pub trait DatasetValidator: Send + Sync {
         publishers: &BTreeMap<String, Publisher>,
         profile_id: Option<&str>,
     ) -> Result<Value>;
+
+    /// Takes an uploaded profile under `catalogue` alone and dry-runs it over `datasets`: the
+    /// record to store and the report. A published version is never replaced (C17).
+    fn upload_profile(
+        &self,
+        _profile: crate::model::ProfileRecord,
+        _catalogue: &Catalogue,
+        _datasets: &[Dataset],
+        _publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(crate::model::ProfileRecord, Value)> {
+        Err(DataroomError::NotSupported(
+            "this validator takes no uploaded profile".into(),
+        ))
+    }
+
+    /// What `datasets` would answer to the profile version: the report and each dataset's.
+    fn dry_run_profile(
+        &self,
+        _profile_id: &str,
+        _version: &str,
+        _catalogue: &Catalogue,
+        _datasets: &[Dataset],
+        _publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(Value, Vec<crate::model::ShaclValidationReport>)> {
+        Err(DataroomError::NotSupported(
+            "this validator dry-runs no profile".into(),
+        ))
+    }
 }
 
 /// Hook trait so `dataroom-core` operations can start a harvest run without a circular
@@ -342,6 +373,65 @@ pub fn all_operations() -> Vec<OperationDef> {
             output_schema: json!({"type": "object"}),
         },
         OperationDef {
+            name: "dataset.purge",
+            mcp_tool: "jc_dataset_purge",
+            cli_command: "dataset-purge",
+            segment: "admin",
+            permission: Action::Admin,
+            target_kind: "Dataset",
+            description: "Remove a dataset for good; its activity stays.",
+            input_schema: json!({"type": "object", "required": ["name"], "additionalProperties": false, "properties": {"name": {"type": "string"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "resource.propose",
+            // The Portal's `jc_resource_propose` changes a manifest: a client holding both servers
+            // must not mistake one for the other.
+            mcp_tool: "jc_catalogue_resource_propose",
+            cli_command: "catalogue-resource-propose",
+            segment: "publish",
+            permission: Action::Propose,
+            target_kind: "Dataset",
+            description: "Add a resource to a dataset or change one, running SHACL validation against active profiles.",
+            input_schema: json!({"type": "object", "required": ["resource"], "additionalProperties": false, "properties": {"dataset": {"type": "string"}, "id": {"type": "string"}, "resource": {"type": "object"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "resource.delete",
+            // The Portal's `jc_resource_delete` changes a manifest: a client holding both servers
+            // must not mistake one for the other.
+            mcp_tool: "jc_catalogue_resource_delete",
+            cli_command: "catalogue-resource-delete",
+            segment: "publish",
+            permission: Action::Delete,
+            target_kind: "Dataset",
+            description: "Remove a resource from a dataset, running SHACL validation against active profiles.",
+            input_schema: json!({"type": "object", "required": ["id"], "additionalProperties": false, "properties": {"id": {"type": "string"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "resource_view.propose",
+            mcp_tool: "jc_resource_view_propose",
+            cli_command: "resource-view-propose",
+            segment: "publish",
+            permission: Action::Propose,
+            target_kind: "Dataset",
+            description: "Add a view to a resource or change one.",
+            input_schema: json!({"type": "object", "required": ["view"], "additionalProperties": false, "properties": {"resource": {"type": "string"}, "id": {"type": "string"}, "view": {"type": "object"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "resource_view.delete",
+            mcp_tool: "jc_resource_view_delete",
+            cli_command: "resource-view-delete",
+            segment: "publish",
+            permission: Action::Delete,
+            target_kind: "Dataset",
+            description: "Remove a view of a resource.",
+            input_schema: json!({"type": "object", "required": ["id"], "additionalProperties": false, "properties": {"id": {"type": "string"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
             name: "publisher.list",
             mcp_tool: "jc_publisher_list",
             cli_command: "publisher-list",
@@ -529,6 +619,17 @@ pub fn all_operations() -> Vec<OperationDef> {
             output_schema: json!({"type": "object"}),
         },
         OperationDef {
+            name: "profile.activate",
+            mcp_tool: "jc_profile_activate",
+            cli_command: "profile-activate",
+            segment: "admin",
+            permission: Action::Approve,
+            target_kind: "Profile",
+            description: "Pin a profile version, optionally as the main profile, after a dry run over the catalogue.",
+            input_schema: json!({"type": "object", "required": ["id", "version"], "additionalProperties": false, "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "makeMain": {"type": "boolean"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
             name: "publisher.merge",
             mcp_tool: "jc_publisher_merge",
             cli_command: "publisher-merge",
@@ -594,10 +695,155 @@ fn enforce_decision(decision: Decision) -> Result<()> {
     if decision.allowed {
         Ok(())
     } else if !decision.visible {
-        Err(DataroomError::NotFound("not found".into()))
+        Err(not_found())
     } else {
         Err(DataroomError::Forbidden(decision.reason))
     }
+}
+
+/// A record that is missing and one the caller may not know of answer alike (C11).
+fn not_found() -> DataroomError {
+    DataroomError::NotFound("Not found".into())
+}
+
+/// The input of an operation, its unknown fields refused.
+fn op_input<T: serde::de::DeserializeOwned>(input: Value) -> Result<T> {
+    serde_json::from_value(input)
+        .map_err(|e| DataroomError::field_error("input", format!("invalid input: {e}")))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordId {
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordName {
+    name: String,
+}
+
+/// `resource.propose`: `dataset` names the dataset a new resource joins, `id` the stored one a
+/// change is merged into.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceProposal {
+    dataset: Option<String>,
+    id: Option<String>,
+    resource: serde_json::Map<String, Value>,
+}
+
+/// `resource_view.propose`: `resource` names the resource a new view joins, `id` the stored one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ViewProposal {
+    resource: Option<String>,
+    id: Option<String>,
+    view: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProfileActivation {
+    id: String,
+    version: String,
+    #[serde(default)]
+    make_main: bool,
+}
+
+/// The caller's decision on `ds`, with its publisher's record.
+async fn authorize_dataset(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    ds: &Dataset,
+    action: Action,
+) -> Result<Option<Publisher>> {
+    let publisher = op_ctx
+        .store
+        .get_publisher(req_ctx, &ds.publisher_id)
+        .await?;
+    let target = ObjectTarget::from_dataset(ds, publisher.as_ref());
+    enforce_decision(op_ctx.authorizer.check(req_ctx, action, &target))?;
+    Ok(publisher)
+}
+
+async fn own_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx) -> Result<Catalogue> {
+    op_ctx
+        .store
+        .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+        .await?
+        .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))
+}
+
+/// The one way an operation stores a dataset record: a Public one conforms to the main profile,
+/// its reports are kept and the change leaves its activity row.
+async fn store_dataset(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    cat: &Catalogue,
+    publisher: Option<&Publisher>,
+    ds: Dataset,
+    operation: &str,
+) -> Result<Dataset> {
+    let mut reports = Vec::new();
+    if let Some(validator) = &op_ctx.validator {
+        validator.load_stored_profiles(cat, &op_ctx.store.list_profiles(req_ctx).await?);
+        reports = validator.validate_dataset(cat, &ds, publisher)?;
+        if let Some(report) = reports.iter().find(|r| {
+            r.profile_id == cat.main_profile && !r.conforms && ds.visibility == Visibility::Public
+        }) {
+            let details = report
+                .findings
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{}: {}",
+                        f.result_path.as_deref().unwrap_or(&f.focus_node),
+                        crate::model::text_in_lang(&f.message, Some("en"))
+                            .unwrap_or(&f.source_constraint_component)
+                    )
+                })
+                .collect();
+            return Err(DataroomError::ShaclViolation {
+                profile: report.profile_id.clone(),
+                violations: report.violation_count,
+                details,
+            });
+        }
+    }
+    let saved = op_ctx.store.upsert_dataset(req_ctx, ds).await?;
+    for mut report in reports {
+        report.dataset_id.clone_from(&saved.id);
+        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
+    }
+    let row = activity_row(
+        req_ctx,
+        operation,
+        "Dataset",
+        &saved.id,
+        format!("Saved dataset {}", saved.name),
+        json!({"name": saved.name}),
+    );
+    op_ctx.store.record_activity(req_ctx, row).await?;
+    Ok(saved)
+}
+
+/// Every dataset of the catalogue and its publishers, by id and by name: what a profile dry run
+/// reads.
+async fn dry_run_records(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+) -> Result<(Vec<Dataset>, BTreeMap<String, Publisher>)> {
+    let datasets = op_ctx.store.list_datasets(req_ctx).await?;
+    let publishers = op_ctx
+        .store
+        .list_publishers(req_ctx)
+        .await?
+        .into_iter()
+        .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
+        .collect();
+    Ok((datasets, publishers))
 }
 
 /// Whether `dataset.get` (and `allowed` about it) shows `ds` to the caller: the caller may read
@@ -644,8 +890,8 @@ fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
 /// changing who may edit a publisher (its editor grants), the publisher it is merged into or the
-/// instance that declared it needs Admin on it; and changing its state needs Delete, as
-/// `publisher.withdraw` does.
+/// instance that declared it (but a caller's claim of an undeclared one) needs Admin on it; and
+/// changing its state needs Delete, as `publisher.withdraw` does.
 pub fn authorize_publisher_write(
     authorizer: &dyn Authorizer,
     req_ctx: &RequestCtx,
@@ -665,9 +911,13 @@ pub fn authorize_publisher_write(
     if proposed.state != base.state {
         enforce_decision(authorizer.check(req_ctx, Action::Delete, &target))?;
     }
+    // An instance declares an undeclared publisher as its own with Propose (G2): the name is
+    // the caller's verified client, never another's.
+    let claims_own = base.declared_by_instance.is_none()
+        && proposed.declared_by_instance == req_ctx.subject.client_id;
     if proposed.editor_grants != base.editor_grants
         || proposed.merged_into != base.merged_into
-        || proposed.declared_by_instance != base.declared_by_instance
+        || (proposed.declared_by_instance != base.declared_by_instance && !claims_own)
     {
         enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
     }
@@ -751,6 +1001,17 @@ fn activity_row(
 pub const SOURCES_BY_PORTAL: &str = "harvest sources are written by the Portal (ODP-11): add the source to a Portal's spec.sources and propose the Change";
 
 pub async fn execute_operation(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    op_name: &str,
+    input: Value,
+) -> Result<Value> {
+    // Boxed: every route, tool and action that calls an operation would otherwise hold the whole
+    // registry's future in its own frame.
+    Box::pin(dispatch(op_ctx, req_ctx, op_name, input)).await
+}
+
+async fn dispatch(
     op_ctx: &OpContext,
     req_ctx: &RequestCtx,
     op_name: &str,
@@ -1096,83 +1357,8 @@ pub async fn execute_operation(
                 return Err(DataroomError::Forbidden(decision.reason));
             }
 
-            if let Some(validator) = &op_ctx.validator {
-                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
-                let reports = validator.validate_dataset(&cat, &ds, Some(&pub_rec))?;
-                for report in &reports {
-                    if report.profile_id == cat.main_profile
-                        && !report.conforms
-                        && ds.visibility == Visibility::Public
-                    {
-                        let details: Vec<String> = report
-                            .findings
-                            .iter()
-                            .map(|f| {
-                                format!(
-                                    "{}: {}",
-                                    f.result_path.as_deref().unwrap_or(&f.focus_node),
-                                    crate::model::text_in_lang(&f.message, Some("en"))
-                                        .unwrap_or(&f.source_constraint_component)
-                                )
-                            })
-                            .collect();
-                        return Err(DataroomError::ShaclViolation {
-                            profile: report.profile_id.clone(),
-                            violations: report.violation_count,
-                            details,
-                        });
-                    }
-                }
-                let saved = op_ctx.store.upsert_dataset(req_ctx, ds).await?;
-                for mut report in reports {
-                    report.dataset_id = saved.id.clone();
-                    op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
-                }
-                op_ctx
-                    .store
-                    .record_activity(
-                        req_ctx,
-                        ActivityRow {
-                            org_id: req_ctx.org_id,
-                            catalogue_id: req_ctx.catalogue_id,
-                            id: format!("act-{}", Uuid::now_v7()),
-                            at: TimestampTz::now(),
-                            actor: req_ctx.actor_name().to_owned(),
-                            operation: "dataset.propose".into(),
-                            object_type: "Dataset".into(),
-                            object_id: saved.id.clone(),
-                            summary: format!("Saved dataset {}", saved.name),
-                            details: json!({"name": saved.name}),
-                        },
-                    )
-                    .await?;
-                return Ok(dataset_to_ckan(
-                    &saved,
-                    Some(&pub_rec),
-                    &BTreeMap::new(),
-                    &cat.default_language,
-                ));
-            }
-
-            let saved = op_ctx.store.upsert_dataset(req_ctx, ds).await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "dataset.propose".into(),
-                        object_type: "Dataset".into(),
-                        object_id: saved.id.clone(),
-                        summary: format!("Saved dataset {}", saved.name),
-                        details: json!({"name": saved.name}),
-                    },
-                )
-                .await?;
+            let saved =
+                store_dataset(op_ctx, req_ctx, &cat, Some(&pub_rec), ds, "dataset.propose").await?;
             Ok(dataset_to_ckan(
                 &saved,
                 Some(&pub_rec),
@@ -1190,13 +1376,8 @@ pub async fn execute_operation(
                 .store
                 .get_dataset(req_ctx, name)
                 .await?
-                .ok_or_else(|| DataroomError::NotFound(format!("dataset '{name}' not found")))?;
-            let pub_rec = op_ctx
-                .store
-                .get_publisher(req_ctx, &ds.publisher_id)
-                .await?;
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
+                .ok_or_else(not_found)?;
+            authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
             let withdrawn = op_ctx.store.withdraw_dataset(req_ctx, &ds.id).await?;
             op_ctx
                 .store
@@ -1218,6 +1399,11 @@ pub async fn execute_operation(
                 .await?;
             Ok(json!({ "id": withdrawn.id, "name": withdrawn.name, "state": "deleted" }))
         }
+        "dataset.purge" => dataset_purge(op_ctx, req_ctx, input).await,
+        "resource.propose" => resource_propose(op_ctx, req_ctx, input).await,
+        "resource.delete" => resource_delete(op_ctx, req_ctx, input).await,
+        "resource_view.propose" => resource_view_propose(op_ctx, req_ctx, input).await,
+        "resource_view.delete" => resource_view_delete(op_ctx, req_ctx, input).await,
         "publisher.list" => {
             let mut publishers = op_ctx.store.list_publishers(req_ctx).await?;
             // Outside the organization: the active publishers (as organization_list), without
@@ -1674,39 +1860,8 @@ pub async fn execute_operation(
             let profiles = op_ctx.store.list_profiles(req_ctx).await?;
             Ok(json!({ "profiles": profiles }))
         }
-        "profile.propose" => {
-            let raw_pr = input.get("profile").cloned().unwrap_or(input);
-            let profile: crate::model::ProfileRecord =
-                serde_json::from_value(raw_pr).map_err(|e| {
-                    DataroomError::field_error("profile", format!("invalid profile: {e}"))
-                })?;
-            let target = ObjectTarget::Profile {
-                org_id: req_ctx.org_id,
-                catalogue_id: req_ctx.catalogue_id,
-                profile_id: profile.id.clone(),
-            };
-            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
-            let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "profile.propose".into(),
-                        object_type: "Profile".into(),
-                        object_id: format!("{}:{}", saved.id, saved.version),
-                        summary: format!("Saved profile {} {}", saved.id, saved.version),
-                        details: json!({"id": saved.id, "version": saved.version}),
-                    },
-                )
-                .await?;
-            Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
-        }
+        "profile.propose" => profile_propose(op_ctx, req_ctx, input).await,
+        "profile.activate" => profile_activate(op_ctx, req_ctx, input).await,
         "publisher.merge" => {
             let source_id = input
                 .get("source")
@@ -1755,14 +1910,17 @@ pub async fn execute_operation(
                 .store
                 .get_publisher(req_ctx, pub_id)
                 .await?
-                .ok_or_else(|| {
-                    DataroomError::NotFound(format!("publisher '{pub_id}' not found"))
-                })?;
+                .ok_or_else(not_found)?;
             let target = ObjectTarget::from_publisher(&pub_rec);
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
             if !pub_rec.named_by(pub_id) {
+                let field = if input.get("publisher").is_some() {
+                    "publisher"
+                } else {
+                    "id"
+                };
                 return Err(DataroomError::field_error(
-                    "publisher",
+                    field,
                     format!(
                         "'{pub_id}' was merged into '{}': withdraw that publisher by its own name",
                         pub_rec.name
@@ -1938,4 +2096,363 @@ pub async fn execute_operation(
             "unknown operation {other}"
         ))),
     }
+}
+
+/// The `dataset.purge` operation.
+async fn dataset_purge(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    let RecordName { name } = op_input(input)?;
+    let ds = op_ctx
+        .store
+        .get_dataset(req_ctx, &name)
+        .await?
+        .ok_or_else(not_found)?;
+    // A purge cannot be undone: it needs Admin, while Delete (a withdrawal) is an editor's.
+    authorize_dataset(op_ctx, req_ctx, &ds, Action::Admin).await?;
+    op_ctx.store.purge_dataset(req_ctx, &ds.id).await?;
+    let row = activity_row(
+        req_ctx,
+        "dataset.purge",
+        "Dataset",
+        &ds.id,
+        format!("Purged dataset {}", ds.name),
+        json!({"name": ds.name}),
+    );
+    op_ctx.store.record_activity(req_ctx, row).await?;
+    Ok(json!({}))
+}
+
+/// The `resource.propose` operation.
+async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    let ResourceProposal {
+        dataset,
+        id,
+        resource,
+    } = op_input(input)?;
+    let store = &op_ctx.store;
+    let (mut ds, stored) = match (&dataset, &id) {
+        (Some(name), None) => (
+            store
+                .get_dataset(req_ctx, name)
+                .await?
+                .ok_or_else(not_found)?,
+            None,
+        ),
+        (None, Some(id)) => {
+            let (ds, dist) = store
+                .get_distribution(req_ctx, id)
+                .await?
+                .ok_or_else(not_found)?;
+            (ds, Some(dist))
+        }
+        _ => {
+            return Err(DataroomError::field_error(
+                "id",
+                "name either the dataset of a new resource or the id of a stored one",
+            ))
+        }
+    };
+    let publisher = authorize_dataset(op_ctx, req_ctx, &ds, Action::Propose).await?;
+    let cat = own_catalogue(op_ctx, req_ctx).await?;
+    let lang = cat.default_language.as_str();
+    let (pos, dist) = match stored {
+        None => {
+            let pos = ds.distributions.len();
+            let fallback_id = format!("res-{}-{pos}", ds.name);
+            let dist = distribution_from_ckan(&Value::Object(resource), &ds.id, &fallback_id, lang);
+            // A create never takes over a stored resource id: its views and updates would
+            // resolve to this dataset, decided on its editors instead of the owner's.
+            if store.get_distribution(req_ctx, &dist.id).await?.is_some() {
+                return Err(DataroomError::Conflict(format!(
+                    "a resource with id '{}' exists: use resource_update",
+                    dist.id
+                )));
+            }
+            ds.distributions.push(dist.clone());
+            (pos, dist)
+        }
+        Some(stored) => {
+            let pos = ds
+                .distributions
+                .iter()
+                .position(|r| r.id == stored.id)
+                .ok_or_else(not_found)?;
+            let mut merged = distribution_to_ckan(&stored, &ds.id, pos, &[], lang);
+            if let Some(merged) = merged.as_object_mut() {
+                merged.extend(resource.clone());
+                // A plain `name` / `description` names the default language's text; the
+                // stored per-language map would otherwise win and the change would be lost.
+                for (plain, translated) in [
+                    ("name", "name_translated"),
+                    ("description", "description_translated"),
+                ] {
+                    if resource.contains_key(translated) {
+                        continue;
+                    }
+                    if let Some(text) = resource.get(plain).and_then(Value::as_str) {
+                        let mut texts = merged
+                            .get(translated)
+                            .and_then(Value::as_object)
+                            .cloned()
+                            .unwrap_or_default();
+                        texts.insert(lang.to_owned(), json!(text));
+                        merged.insert(translated.to_owned(), Value::Object(texts));
+                    }
+                }
+            }
+            let dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
+            ds.distributions[pos] = dist.clone();
+            (pos, dist)
+        }
+    };
+    ds.modified = TimestampTz::now();
+    let saved = store_dataset(
+        op_ctx,
+        req_ctx,
+        &cat,
+        publisher.as_ref(),
+        ds,
+        "resource.propose",
+    )
+    .await?;
+    Ok(distribution_to_ckan(&dist, &saved.id, pos, &[], lang))
+}
+
+/// The `resource.delete` operation.
+async fn resource_delete(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    let RecordId { id } = op_input(input)?;
+    let (mut ds, _) = op_ctx
+        .store
+        .get_distribution(req_ctx, &id)
+        .await?
+        .ok_or_else(not_found)?;
+    let publisher = authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
+    let cat = own_catalogue(op_ctx, req_ctx).await?;
+    ds.distributions.retain(|r| r.id != id);
+    ds.modified = TimestampTz::now();
+    store_dataset(
+        op_ctx,
+        req_ctx,
+        &cat,
+        publisher.as_ref(),
+        ds,
+        "resource.delete",
+    )
+    .await?;
+    Ok(json!({}))
+}
+
+/// The `resource_view.propose` operation.
+async fn resource_view_propose(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    input: Value,
+) -> Result<Value> {
+    let ViewProposal { resource, id, view } = op_input(input)?;
+    validate_view_payload(&view)?;
+    let store = &op_ctx.store;
+    let (resource_id, stored) = match (resource, id) {
+        (Some(resource), None) => (resource, None),
+        (None, Some(id)) => {
+            let stored = store
+                .get_resource_view(req_ctx, &id)
+                .await?
+                .ok_or_else(not_found)?;
+            (stored.resource_id.clone(), Some(stored))
+        }
+        _ => {
+            return Err(DataroomError::field_error(
+                "id",
+                "name either the resource of a new view or the id of a stored one",
+            ))
+        }
+    };
+    let view_type = view
+        .get("view_type")
+        .and_then(Value::as_str)
+        .or(stored.as_ref().map(|v| v.view_type.as_str()))
+        .ok_or_else(|| DataroomError::field_error("view_type", "Missing value"))?;
+    let (ds, _) = store
+        .get_distribution(req_ctx, &resource_id)
+        .await?
+        .ok_or_else(not_found)?;
+    authorize_dataset(op_ctx, req_ctx, &ds, Action::Propose).await?;
+    let mut record = resource_view_from_ckan(
+        &view,
+        stored.as_ref().map_or("", |v| v.id.as_str()),
+        &resource_id,
+        view_type,
+    );
+    match &stored {
+        // An update writes the view it was decided on, whatever id its body carries.
+        Some(stored) => record.id.clone_from(&stored.id),
+        None => {
+            // The id lands in links and embed snippets: a slug, as CKAN's generated ids are.
+            validate_slug("id", &record.id)?;
+            // A create never takes over a stored view: that one is changed by
+            // resource_view_update, decided on its own dataset.
+            if store
+                .get_resource_view(req_ctx, &record.id)
+                .await?
+                .is_some()
+            {
+                return Err(DataroomError::Conflict(format!(
+                    "a view with id '{}' exists: use resource_view_update",
+                    record.id
+                )));
+            }
+        }
+    }
+    let saved = store.upsert_resource_view(req_ctx, record).await?;
+    let row = activity_row(
+        req_ctx,
+        "resource_view.propose",
+        "ResourceView",
+        &saved.id,
+        format!("Saved view {} of dataset {}", saved.id, ds.name),
+        json!({"dataset": ds.name, "resource": saved.resource_id}),
+    );
+    store.record_activity(req_ctx, row).await?;
+    Ok(resource_view_to_ckan(&saved))
+}
+
+/// The `resource_view.delete` operation.
+async fn resource_view_delete(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    input: Value,
+) -> Result<Value> {
+    let RecordId { id } = op_input(input)?;
+    let store = &op_ctx.store;
+    let view = store
+        .get_resource_view(req_ctx, &id)
+        .await?
+        .ok_or_else(not_found)?;
+    // Decided on the view's dataset; a view whose resource is gone is decided on the
+    // catalogue. A failed lookup refuses rather than skipping the check.
+    match store.get_distribution(req_ctx, &view.resource_id).await? {
+        Some((ds, _)) => {
+            authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
+        }
+        None => {
+            let target = ObjectTarget::Catalogue {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
+        }
+    }
+    store.delete_resource_view(req_ctx, &id).await?;
+    let row = activity_row(
+        req_ctx,
+        "resource_view.delete",
+        "ResourceView",
+        &id,
+        format!("Deleted view {id}"),
+        json!({"resource": view.resource_id}),
+    );
+    store.record_activity(req_ctx, row).await?;
+    Ok(json!({}))
+}
+
+/// The `profile.propose` operation.
+async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    let activate = input
+        .get("activate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let raw_pr = input.get("profile").cloned().unwrap_or(input);
+    let mut profile: crate::model::ProfileRecord = serde_json::from_value(raw_pr)
+        .map_err(|e| DataroomError::field_error("profile", format!("invalid profile: {e}")))?;
+    let target = ObjectTarget::Profile {
+        org_id: req_ctx.org_id,
+        catalogue_id: req_ctx.catalogue_id,
+        profile_id: profile.id.clone(),
+    };
+    enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
+    // Activating changes what the catalogue validates against, which profile.activate
+    // decides with Approve; uploading with `activate` may not skip that.
+    if activate {
+        enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Approve, &target))?;
+    }
+    let mut cat = own_catalogue(op_ctx, req_ctx).await?;
+    let stored = op_ctx.store.list_profiles(req_ctx).await?;
+    if stored
+        .iter()
+        .any(|p| p.id == profile.id && p.version == profile.version)
+    {
+        return Err(DataroomError::Conflict(format!(
+            "profile '{}' version '{}' already exists; upload a new version",
+            profile.id, profile.version
+        )));
+    }
+    let mut dry_run = Value::Null;
+    if let Some(validator) = &op_ctx.validator {
+        validator.load_stored_profiles(&cat, &stored);
+        let (datasets, publishers) = dry_run_records(op_ctx, req_ctx).await?;
+        (profile, dry_run) = validator.upload_profile(profile, &cat, &datasets, &publishers)?;
+    }
+    let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
+    if activate {
+        cat.active_profiles.retain(|p| p.profile_id != saved.id);
+        cat.active_profiles.push(crate::model::ProfilePin {
+            profile_id: saved.id.clone(),
+            version: saved.version.clone(),
+        });
+        op_ctx.store.upsert_catalogue(cat).await?;
+    }
+    let row = activity_row(
+        req_ctx,
+        "profile.propose",
+        "Profile",
+        &format!("{}:{}", saved.id, saved.version),
+        format!("Saved profile {} {}", saved.id, saved.version),
+        json!({"id": saved.id, "version": saved.version, "activated": activate}),
+    );
+    op_ctx.store.record_activity(req_ctx, row).await?;
+    Ok(json!({ "profile": saved, "dryRun": dry_run }))
+}
+
+/// The `profile.activate` operation.
+async fn profile_activate(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    let ProfileActivation {
+        id,
+        version,
+        make_main,
+    } = op_input(input)?;
+    let target = ObjectTarget::Profile {
+        org_id: req_ctx.org_id,
+        catalogue_id: req_ctx.catalogue_id,
+        profile_id: id.clone(),
+    };
+    enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Approve, &target))?;
+    let validator = op_ctx.validator.as_ref().ok_or_else(|| {
+        DataroomError::NotSupported("no validator holds the profiles here".into())
+    })?;
+    let mut cat = own_catalogue(op_ctx, req_ctx).await?;
+    validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
+    let (datasets, publishers) = dry_run_records(op_ctx, req_ctx).await?;
+    let (dry_run, reports) =
+        validator.dry_run_profile(&id, &version, &cat, &datasets, &publishers)?;
+    cat.active_profiles.retain(|p| p.profile_id != id);
+    cat.active_profiles.push(crate::model::ProfilePin {
+        profile_id: id.clone(),
+        version: version.clone(),
+    });
+    if make_main {
+        cat.main_profile.clone_from(&id);
+    }
+    let saved = op_ctx.store.upsert_catalogue(cat).await?;
+    for report in reports {
+        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
+    }
+    let row = activity_row(
+        req_ctx,
+        "profile.activate",
+        "Profile",
+        &format!("{id}:{version}"),
+        format!("Activated profile {id} {version}"),
+        json!({"id": id, "version": version, "main": make_main}),
+    );
+    op_ctx.store.record_activity(req_ctx, row).await?;
+    Ok(json!({ "catalogue": saved, "dryRun": dry_run }))
 }

@@ -590,6 +590,43 @@ impl DatasetValidator for ProfileRegistry {
             "findings": feed_report.findings,
         }))
     }
+
+    fn upload_profile(
+        &self,
+        profile: ProfileRecord,
+        catalogue: &Catalogue,
+        datasets: &[Dataset],
+        publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(ProfileRecord, Value)> {
+        let taken = self
+            .list(scope_of(catalogue))
+            .iter()
+            .any(|p| p.id == profile.id && p.version == profile.version);
+        if taken {
+            return Err(DataroomError::Conflict(format!(
+                "profile '{}' version '{}' already exists; upload a new version",
+                profile.id, profile.version
+            )));
+        }
+        let (saved, report) = self.upload_and_dry_run(profile, catalogue, datasets, publishers)?;
+        let report = serde_json::to_value(report)
+            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        Ok((saved, report))
+    }
+
+    fn dry_run_profile(
+        &self,
+        profile_id: &str,
+        version: &str,
+        catalogue: &Catalogue,
+        datasets: &[Dataset],
+        publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(Value, Vec<ShaclValidationReport>)> {
+        let report = self.dry_run(profile_id, version, catalogue, datasets, publishers)?;
+        let value = serde_json::to_value(&report)
+            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        Ok((value, report.dataset_reports))
+    }
 }
 
 #[cfg(test)]
