@@ -924,3 +924,30 @@ mod tests {
         assert!(parse("pipelineRef: { kind: Pipeline, name: Not_A_Name }\n").is_err());
     }
 }
+
+#[cfg(test)]
+mod declared_iri_tests {
+    use super::is_declared_iri;
+
+    #[test]
+    fn a_placeholder_or_a_bare_word_declares_no_publisher() {
+        for iri in [
+            "https://data.gov.sk/id/legal-subject/00313271",
+            "https://www.hel.fi/",
+            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00064581",
+        ] {
+            assert!(is_declared_iri(iri), "{iri}");
+        }
+        for none in [
+            "",
+            "city",
+            "urn:example:city",
+            "https://",
+            "https://city.example/a b",
+            "https://data.gov.sk/id/legal-subject/00000000",
+            "https://data.gov.sk/id/legal-subject/00000000/",
+        ] {
+            assert!(!is_declared_iri(none), "{none}");
+        }
+    }
+}

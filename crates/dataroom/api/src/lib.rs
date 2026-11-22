@@ -72,7 +72,7 @@ impl std::fmt::Debug for TokenBinding {
 }
 
 /// The principal the Portal's CKAN publisher acts as (PORTAL-CALLS.md).
-pub const PORTAL_PUBLISHER: &str = "portal-ckan";
+pub use dataroom_core::auth::PORTAL_PUBLISHER;
 
 /// The shortest Portal publisher token accepted: a guessable token would let anyone publish.
 pub const MIN_PORTAL_TOKEN_LEN: usize = 32;

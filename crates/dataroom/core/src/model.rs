@@ -306,15 +306,18 @@ fn default_true() -> bool {
 
 impl Publisher {
     /// Whether the record's IRI is the publisher's own: declared, and not the page `catalogue`
-    /// mints for the record (`{base}/publisher/{name}` on one of its hosts or on the
-    /// Organization's `/opendata` address), which only identifies it here.
+    /// mints for the record (`{base}/publisher/{name}`, or CKAN's `{base}/organization/{name}`, on
+    /// one of its hosts or on the Organization's `/opendata` address), which only identifies it
+    /// here.
     pub fn has_own_iri(&self, catalogue: &Catalogue) -> bool {
         if !jc_core::kinds::is_declared_iri(&self.uri) {
             return false;
         }
         let uri = self.uri.trim_end_matches('/');
-        let page = format!("/publisher/{}", self.name);
-        let Some(at) = uri.strip_suffix(&page) else {
+        let Some(at) = ["publisher", "organization"]
+            .iter()
+            .find_map(|page| uri.strip_suffix(&format!("/{page}/{}", self.name)))
+        else {
             return true;
         };
         let host = jc_core::kinds::http_url_host(at);

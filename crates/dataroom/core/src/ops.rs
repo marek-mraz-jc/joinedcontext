@@ -643,8 +643,8 @@ fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue
 
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
-/// changing who may edit a publisher (its editor grants), the publisher it is merged into or the
-/// instance that declared it needs Admin on it; and changing its state needs Delete, as
+/// changing who may edit a publisher (its editor grants), the publisher it is merged into, the
+/// instance that declared it or the IRI its datasets are attributed to needs Admin on it; and changing its state needs Delete, as
 /// `publisher.withdraw` does.
 pub fn authorize_publisher_write(
     authorizer: &dyn Authorizer,
@@ -668,8 +668,46 @@ pub fn authorize_publisher_write(
     if proposed.editor_grants != base.editor_grants
         || proposed.merged_into != base.merged_into
         || proposed.declared_by_instance != base.declared_by_instance
+        || proposed.uri != base.uri
     {
         enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
+    }
+    Ok(())
+}
+
+/// A dataset's declarations (CMP-08, SEC-17): personal data is one of the two statements, and
+/// the IRI of the body it is attributed to is set by an Admin or by the Portal's publisher,
+/// which carries the Endpoint's manifest. Anyone else would publish as another body.
+fn check_declarations(
+    authorizer: &dyn Authorizer,
+    req_ctx: &RequestCtx,
+    target: &ObjectTarget,
+    existing: Option<&Dataset>,
+    ds: &Dataset,
+) -> Result<()> {
+    if let Some(stated) = ds.extras.get(crate::model::PERSONAL_DATA) {
+        let allowed = [
+            crate::model::PERSONAL_DATA_CONTAINS,
+            crate::model::PERSONAL_DATA_NONE,
+        ];
+        if !allowed.contains(&stated.as_str()) {
+            return Err(DataroomError::field_error(
+                crate::model::PERSONAL_DATA,
+                format!("must be one of {}", allowed.join(", ")),
+            ));
+        }
+    }
+    let iri = |d: &Dataset| d.publisher.as_ref().and_then(|a| a.uri.clone());
+    let proposed = iri(ds);
+    if proposed.is_some()
+        && proposed != existing.and_then(iri)
+        && req_ctx.actor_name() != crate::auth::PORTAL_PUBLISHER
+        && !authorizer.check(req_ctx, Action::Admin, target).allowed
+    {
+        return Err(DataroomError::Forbidden(
+            "publisher_uri: only an administrator declares the body a dataset is attributed to"
+                .into(),
+        ));
     }
     Ok(())
 }
@@ -691,8 +729,8 @@ async fn proposed_publisher_record(
     }))
 }
 
-/// What `catalogue.propose` may change: its host and name, profiles, branding, hidden datasets
-/// and outbound rules only with Admin on the catalogue (each has its own Admin route); a
+/// What `catalogue.propose` may change: its host and name, profiles, publisher and contact,
+/// branding, hidden datasets and outbound rules only with Admin on the catalogue (each has its own Admin route); a
 /// Propose-only caller's values for them are replaced by the stored ones. A new host or name is
 /// validated, so `base_url` and robots.txt only ever carry a host name.
 fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Result<()> {
@@ -701,6 +739,9 @@ fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Res
         cat.host = stored.host;
         cat.main_profile = stored.main_profile;
         cat.active_profiles = stored.active_profiles;
+        cat.publisher_uri = stored.publisher_uri;
+        cat.publisher_name = stored.publisher_name;
+        cat.contact_point = stored.contact_point;
         cat.theme = stored.theme;
         cat.branding = stored.branding;
         cat.hidden_datasets = stored.hidden_datasets;
@@ -1095,6 +1136,13 @@ pub async fn execute_operation(
             if !decision.allowed {
                 return Err(DataroomError::Forbidden(decision.reason));
             }
+            check_declarations(
+                op_ctx.authorizer.as_ref(),
+                req_ctx,
+                &target,
+                existing.as_ref(),
+                &ds,
+            )?;
 
             if let Some(validator) = &op_ctx.validator {
                 validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
@@ -1686,6 +1734,29 @@ pub async fn execute_operation(
                 profile_id: profile.id.clone(),
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
+            // A pinned version decides who is in a feed: it is never replaced under its pin.
+            if profile.built_in {
+                return Err(DataroomError::field_error(
+                    "profile.builtIn",
+                    "a built-in profile ships with the release; upload under an id of your own",
+                ));
+            }
+            if op_ctx
+                .store
+                .list_profiles(req_ctx)
+                .await?
+                .iter()
+                .any(|held| {
+                    held.id == profile.id
+                        && held.version == profile.version
+                        && held.shapes_turtle != profile.shapes_turtle
+                })
+            {
+                return Err(DataroomError::Conflict(format!(
+                    "profile {} {} exists; give changed shapes a new version",
+                    profile.id, profile.version
+                )));
+            }
             let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
             op_ctx
                 .store

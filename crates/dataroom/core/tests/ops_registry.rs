@@ -857,6 +857,73 @@ async fn dataset_propose_cannot_take_over_another_publishers_dataset() {
 }
 
 #[tokio::test]
+async fn declarations_are_closed_to_invented_values_and_borrowed_identities() {
+    let w = world().await;
+    let editor = w.dept_editor();
+    let package = |extras: Value| {
+        json!({"name": "dept-noise", "title": "Hluk", "owner_org": "dept", "private": true,
+               "extras": extras})
+    };
+    let r = w
+        .run(
+            &editor,
+            "dataset.propose",
+            package(json!([{"key": "personal_data", "value": "none"}])),
+        )
+        .await;
+    assert!(field(&r, "personal_data"), "{r:?}");
+    let body = json!([{"key": "publisher_uri",
+                       "value": "https://data.gov.sk/id/legal-subject/00151866"}]);
+    let r = w
+        .run(&editor, "dataset.propose", package(body.clone()))
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor publishes as another body: {r:?}"
+    );
+    w.run(&w.admin(), "dataset.propose", package(body))
+        .await
+        .expect("an administrator declares it");
+    w.run(
+        &editor,
+        "dataset.propose",
+        package(json!([{"key": "personal_data", "value": "does-not-contain"}])),
+    )
+    .await
+    .expect("an editor declares personal data and keeps the publisher");
+
+    let r = w
+        .run(
+            &editor,
+            "publisher.propose",
+            json!({"publisher": {"name": "dept", "title": {"sk": "Odbor"}, "description": {},
+                   "uri": "https://data.gov.sk/id/legal-subject/00151866", "state": "active"}}),
+        )
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor changes the publisher IRI: {r:?}"
+    );
+
+    let profile = |shapes: &str, built_in: bool| {
+        json!({"profile": {"id": "city", "version": "1", "uri": "https://city.example/profile",
+               "title": {"en": "City"}, "shapesTurtle": shapes, "requiredLanguages": [],
+               "builtIn": built_in, "formFields": []}})
+    };
+    let r = w
+        .run(&w.admin(), "profile.propose", profile("", true))
+        .await;
+    assert!(field(&r, "profile.builtIn"), "{r:?}");
+    w.run(&w.admin(), "profile.propose", profile("", false))
+        .await
+        .expect("a first version");
+    let r = w
+        .run(&w.admin(), "profile.propose", profile("# other", false))
+        .await;
+    assert!(matches!(r, Err(DataroomError::Conflict(_))), "{r:?}");
+}
+
+#[tokio::test]
 async fn dataset_withdraw() {
     let w = world().await;
     assert!(field(
