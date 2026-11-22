@@ -354,8 +354,8 @@ async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
     assert_eq!(view["dashboard"]["templating"]["list"][0]["name"], "job");
 }
 
-/// A public dashboard uid names one public dashboard, and deleting a folder deletes the public
-/// links of its dashboards: a later dashboard of the same uid answers no old link.
+/// A public dashboard uid names one public dashboard, and deleting a dashboard deletes its public
+/// links: a later dashboard of the same uid answers no old link.
 #[tokio::test]
 async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
     let w = world_beside(&gateway().await.0).await;
@@ -385,8 +385,15 @@ async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
     assert_eq!(st, StatusCode::OK, "{answer}");
     assert_eq!(answer["dashboard"]["uid"], "a");
 
+    // The folder keeps its dashboard: a folder delete is refused while it holds one (S9-36).
     let (st, body) = w
         .call("DELETE", "/api/folders/f", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let (st, answer) = w.call("GET", &view, None, None).await;
+    assert_eq!(st, StatusCode::OK, "{answer}");
+    let (st, body) = w
+        .call("DELETE", "/api/dashboards/uid/a", Some("admin"), None)
         .await;
     assert_eq!(st, StatusCode::OK, "{body}");
     w.add_dashboard(endpoint_dashboard("a"), None).await;

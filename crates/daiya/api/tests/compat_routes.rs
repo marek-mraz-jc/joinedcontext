@@ -566,6 +566,41 @@ async fn folders_list_read_and_delete_within_the_callers_folders() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
+/// A folder that still holds dashboards or subfolders is refused with 409 naming them; nothing
+/// in it is deleted. Emptied, it deletes (S9-36).
+#[tokio::test]
+async fn deleting_a_folder_with_content_is_refused_naming_it() {
+    let w = world();
+    let (url, _) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    w.add_folder("ops", "Ops").await;
+    w.add_dashboard(dashboard("edge", "prom"), Some("ops")).await;
+    w.ok(
+        "POST",
+        "/api/folders",
+        Some(json!({ "uid": "ops-night", "title": "Night", "parentUid": "ops" })),
+    )
+    .await;
+
+    let (st, body) = w
+        .call("DELETE", "/api/folders/ops", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let text = body.to_string();
+    assert!(text.contains("edge") && text.contains("ops-night"), "{text}");
+    w.ok("GET", "/api/dashboards/uid/edge", None).await;
+    w.ok("GET", "/api/folders/ops-night", None).await;
+
+    w.ok("DELETE", "/api/dashboards/uid/edge", None).await;
+    let (st, body) = w
+        .call("DELETE", "/api/folders/ops", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "the subfolder still holds it: {body}");
+    w.ok("DELETE", "/api/folders/ops-night", None).await;
+    let del = w.ok("DELETE", "/api/folders/ops", None).await;
+    assert_eq!(del["message"], "Folder deleted");
+}
+
 #[tokio::test]
 async fn dashboards_save_read_version_search_and_delete() {
     let w = world();

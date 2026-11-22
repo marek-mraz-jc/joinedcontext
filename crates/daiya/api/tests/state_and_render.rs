@@ -40,6 +40,8 @@ impl Datasource for Fixed {
         Box::pin(async move {
             Ok(q.iter()
                 .map(|q| {
+                    // Query C reads ten times A's values, so a combined result tells them apart.
+                    let k = if q.ref_id == "C" { 10.0 } else { 1.0 };
                     FrameSet::new(
                         q.ref_id.clone(),
                         vec![Frame {
@@ -56,7 +58,7 @@ impl Datasource for Fixed {
                                 FieldColumn::numbers(
                                     "value",
                                     BTreeMap::new(),
-                                    vec![Some(2.0), Some(1.0), None],
+                                    vec![Some(2.0 * k), Some(k), None],
                                 ),
                             ],
                             ..Frame::default()
@@ -458,7 +460,16 @@ fn fixed_board() -> Value {
                 "id": 5, "type": "table", "title": "No sort column",
                 "options": { "sortBy": [{ "displayName": "", "desc": true }] },
                 "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }]
-            }
+            },
+            { "id": 6, "type": "table", "title": "Merged",
+              "transformations": [{ "id": "merge", "options": {} }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
+            { "id": 7, "type": "table", "title": "Joined",
+              "transformations": [{ "id": "joinByField", "options": { "byField": "time", "mode": "outer" } }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
+            { "id": 8, "type": "table", "title": "Rows",
+              "transformations": [{ "id": "seriesToRows", "options": {} }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] }
         ]
     })
 }
@@ -520,6 +531,33 @@ async fn panel_view_runs_targets_expressions_transformations_and_sort() {
         .await
         .unwrap_err();
     assert_eq!(err.status_code(), 404);
+}
+
+/// `merge`, `joinByField` and `seriesToRows` combine the frames of every query of the panel, as
+/// Grafana runs a panel's transformations once over all its series (S9-20).
+#[tokio::test]
+async fn transformations_combine_the_frames_of_all_queries() {
+    let (w, _) = fixed_world().await;
+    let admin = Subject::authenticated("admin", vec![ORG], vec![]);
+    let view = |id| panel_view(&w.state, &admin, ORG, "fx", id, PanelTimeRange::default());
+
+    let merged = view(6).await.unwrap();
+    assert_eq!(merged.frame_sets.len(), 1, "{:?}", merged.frame_sets);
+    let frames = &merged.frame_sets[0].frames;
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    assert_eq!(frames[0].row_count(), 6, "{frames:?}");
+
+    let joined = view(7).await.unwrap();
+    assert_eq!(joined.frame_sets.len(), 1, "{:?}", joined.frame_sets);
+    let frame = &joined.frame_sets[0].frames[0];
+    assert_eq!(frame.row_count(), 3, "{frame:?}");
+    assert_eq!(frame.fields.len(), 5, "time once, name and value per query: {frame:?}");
+    let values: Vec<Value> = frame.fields.iter().filter_map(|f| f.values.first().cloned()).collect();
+    assert!(values.contains(&json!(2.0)) && values.contains(&json!(20.0)), "{values:?}");
+
+    let rows = view(8).await.unwrap();
+    assert_eq!(rows.frame_sets.len(), 1, "{:?}", rows.frame_sets);
+    assert_eq!(rows.frame_sets[0].frames[0].row_count(), 6, "{:?}", rows.frame_sets);
 }
 
 /// Allows every member everything except reading the datasource `named`.
