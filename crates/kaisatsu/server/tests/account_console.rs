@@ -903,6 +903,80 @@ async fn the_last_authenticator_is_kept_under_the_floor() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
+/// S3-26: a passkey is a second factor, so under the floor the last one stays, and with an
+/// authenticator application beside it either may go.
+#[tokio::test]
+async fn the_last_passkey_is_kept_under_the_floor() {
+    let (state, store, _) = console_state().await;
+    let plain = router(state.clone(), mount()).layer(Extension(mount()));
+    let floor = router(
+        state.with_second_factor(kaisatsu_server::SecondFactor::Required),
+        mount(),
+    )
+    .layer(Extension(mount()));
+    let member = sign_in(&plain, &store, MEMBER, MEMBER_PW).await;
+    let m = user(&store, MEMBER).await;
+    let s = user(&store, STEWARD).await;
+    store
+        .insert_webauthn_credential(WebAuthnCredentialRecord {
+            id: "pk-member".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: m.id.clone(),
+            user_handle: "h".into(),
+            credential_id: "cred-member".into(),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: true,
+            backup_eligible: false,
+            backup_state: false,
+            transports: vec![],
+            attestation_type: "none".into(),
+            rp_id: "idm.dev.example.test".into(),
+            user_label: Some("Phone".into()),
+            created_at: jc_time::TimestampTz::now(),
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+    let delete = "/credentials/pk-member";
+    let (st, err) = rest(&floor, Method::DELETE, delete, &member.token, None).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
+    assert_eq!(err["errorMessage"], "accountSecondFactorRequired");
+    assert_eq!(
+        store
+            .list_webauthn_credentials("dev", &m.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // An authenticator application beside it: the passkey may go, the application then stays.
+    let mut otp = store
+        .list_credentials("dev", &s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "otp")
+        .unwrap();
+    otp.id = "member-otp".into();
+    otp.user_id = m.id.clone();
+    store.upsert_credential(otp).await.unwrap();
+    let (st, _) = rest(&floor, Method::DELETE, delete, &member.token, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, err) = rest(
+        &floor,
+        Method::DELETE,
+        "/credentials/member-otp",
+        &member.token,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
+}
+
 #[tokio::test]
 async fn passkeys_are_removed_only_by_their_owner() {
     let (app, store) = app().await;
