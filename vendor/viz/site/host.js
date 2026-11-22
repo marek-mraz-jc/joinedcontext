@@ -174,7 +174,7 @@
   // `<meta name="jc-viz">` (as explore.js reads it): a meta that is present names both, and one it
   // leaves out or names badly is "" (none), never a guess.
   function hosts(hostname, meta) {
-    var domain = String(hostname).replace(/^viz\./, "");
+    var domain = String(hostname).replace(/^(?:embed|viz)\./, "");
     var own = { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
     if (meta == null) return own;
     var given = {};
@@ -1010,6 +1010,7 @@
     if (location.hash === "#show") return show(h, frame, fail);
     if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
     if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
+    frame.src = "render.html";
     if (where.inline) document.body.classList.add("inline");
     // One controller and one 15 s timer per read: a toolbar change aborts the read before it.
     var controller = null;
@@ -1556,6 +1557,9 @@
           mapFrame.src = "map.html";
           ready = false;
           frame.replaceWith(mapFrame);
+        } else {
+          // The renderer loads for a chart alone: a map answer fetches no Vega (T-7504).
+          frame.src = "render.html";
         }
         return send();
       }

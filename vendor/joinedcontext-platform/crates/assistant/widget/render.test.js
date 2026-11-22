@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
 
@@ -216,7 +216,7 @@ test("a data table shows at most 20 rows of text and only http(s) links", () => 
   assert.equal(shown.rows.length, 20);
   assert.deepEqual(shown.rows[0], ["Námestie SNP", '{"value":21}', ""]);
   assert.deepEqual(shown.rows[1], ["Stanica 0", "0", ""]);
-  assert.equal(shown.caption, "Air quality (20)");
+  assert.equal(shown.caption, "Air quality — 1–20 of 50", "a page of the 50 listed (T-7504)");
   assert.equal(shown.dataset, "https://opendata.dev.joinedcontext.com/dataset/ovzdusie");
   assert.equal(shown.download, null);
   assert.equal(shown.geojson, null);
@@ -1168,4 +1168,39 @@ test("a table of participation data is captioned in the reader's language (T-644
   const rows = { columns: ["name"], rows: [["Amfik"]], type: "Proposal", total: 1 };
   assert.equal(table(rows, "sk", 0).caption, "Návrhy (1)");
   assert.equal(table({ ...rows, type: "ParticipatoryProcess" }, "sk", 0).caption, "Procesy (1)");
+});
+
+test("vizOrigin takes the renderer on embed. as on its old name viz. (T-7504, jc T-6992)", () => {
+  assert.equal(vizOrigin("https://embed.smartcity.example.org"), "https://embed.smartcity.example.org");
+  for (const bad of ["http://embed.example.org", "https://embed.example.org/x", "https://notembed.example.org", "https://embed"]) {
+    assert.equal(vizOrigin(bad), null, bad);
+  }
+});
+
+test("a list pages twenty rows with the total, a superlative is one of all (T-7504)", () => {
+  const rows = Array.from({ length: 50 }, (_, i) => ["Most " + i, 1900 + i]);
+  const list = { type: "Bridge", total: 151, columns: ["name", "yearBuilt"], rows };
+  assert.equal(table(list, "en").caption, "Bridges — 1–20 of 151");
+  const last = table(list, "en", undefined, 2);
+  assert.deepEqual([last.caption, last.rows.length, last.pages, last.listed], ["Bridges — 41–50 of 151", 10, 3, 50]);
+  assert.equal(last.rows[0][0], "Most 40");
+  const one = { type: "Bridge", total: 1651, top: 1, columns: ["name", "yearBuilt"], rows: [["50_178", 1996]] };
+  assert.equal(table(one, "en").caption, "Bridges — 1 of 1,651");
+  const seen = [];
+  assert.equal(firstTable(seen, { endpoint: "e", ...list }), true);
+  assert.equal(firstTable(seen, { endpoint: "e", ...one }), true, "the answering row is no second page");
+  assert.equal(firstTable(seen, { endpoint: "e", ...one }), false);
+});
+
+test("an aggregation names its method and says when it is part of the data (T-7504)", () => {
+  const count = { method: "count", per: "decade", of: "yearBuilt", shown: 1651, total: 1651 };
+  assert.equal(aggregated(count, "en"), "Count per decade");
+  assert.equal(aggregated({ ...count, shown: 1200 }, "en"), "Count per decade · 1,200 of 1,651");
+  assert.equal(aggregated({ method: "avg", per: "day", of: "pm10", shown: 1, total: 1 }, "sk"), "Priemer za deň (UTC)");
+  assert.equal(aggregated({ method: "constructor", per: "day" }, "en"), "");
+  const made = { type: "AirQualityObserved", aggregation: { method: "avg", per: "day", of: "pm10", shown: 1, total: 1 }, columns: ["name", "date", "pm10"], rows: [["BB", "2026-10-01", 11.5]] };
+  assert.equal(table(made, "sk").rows[0][1], "1. 10. 2026");
+  assert.equal(table(made, "sk").caption, "Kvalita ovzdušia — Priemer za deň (UTC)");
+  const rows = vizRows([{ label: "_other", value: 42 }, { label: "SSC", value: 422 }], "sk", { _other: { sk: "Ostatné" } });
+  assert.deepEqual(rows, [{ label: "Ostatné", value: 42 }, { label: "SSC", value: 422 }]);
 });

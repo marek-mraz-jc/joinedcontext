@@ -187,6 +187,22 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
   .jc-data td:first-child::before { content: none; }
   .jc-data .jc-num { white-space: normal; }
 }
+/* T-7504: the row that answers is a card at every width, its first value the title. */
+.jc-record table, .jc-record tbody, .jc-record tr, .jc-record td { display: block; width: auto; max-width: none; min-width: 0; }
+.jc-record thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.jc-record tbody tr { padding: 6px 0; border-top: 1px solid var(--line); }
+.jc-record tbody tr:first-child { border-top: 0; }
+.jc-record tbody tr:nth-child(even) td { background: transparent; }
+.jc-record td, .jc-record td:not(.jc-num) { display: flex; gap: 12px; justify-content: space-between; min-width: 0; border-top: 0; padding-block: 3px; text-align: right; }
+.jc-record td::before { content: attr(data-label); flex: 0 1 50%; color: var(--muted); font-weight: 400; text-align: left; }
+.jc-record td:first-child { display: block; text-align: left; font-size: 15px; }
+.jc-record td:first-child::before { content: none; }
+.jc-record .jc-num { white-space: normal; }
+.jc-record .jc-viz-box { margin-top: 8px; }
+.jc-pager { position: sticky; bottom: 0; left: 0; display: flex; gap: 8px; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--line); background: var(--bg); }
+.jc-pager .jc-tab { min-height: 36px; opacity: 1; }
+.jc-pager .jc-tab[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.jc-viz-note { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
 .jc-data-chart { display: block; width: 100%; height: auto; margin: 6px 0 0; }
 .jc-chart-axis { stroke: var(--line); }
 .jc-chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }

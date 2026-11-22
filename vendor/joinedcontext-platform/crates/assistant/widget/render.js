@@ -387,8 +387,30 @@ var JCRender = (function () {
   var FIRST = { sk: "prvých", cs: "prvních", en: "first", de: "die ersten" };
   // A long address in a cell reads as this word, a link (T-4682).
   var LINK = { sk: "Zdroj", cs: "Zdroj", en: "Source", de: "Quelle" };
-  // The rows a table shows in the panel; the dataset holds the rest (T-4682).
+  // The rows a table shows at once, and of how many it pages (T-7504); the dataset holds the
+  // rest (T-4682).
   var ROWS = 20;
+  var LISTED = 50;
+  var PAGE = { sk: ["Predchádzajúce", "Ďalšie"], cs: ["Předchozí", "Další"], en: ["Previous", "Next"], de: ["Zurück", "Weiter"] };
+  // What code computed, said over its chart and as its table's caption (T-7504).
+  var METHODS = {
+    count: { sk: "Počet", cs: "Počet", en: "Count", de: "Anzahl" },
+    avg: { sk: "Priemer", cs: "Průměr", en: "Average", de: "Durchschnitt" },
+    sum: { sk: "Súčet", cs: "Součet", en: "Sum", de: "Summe" },
+    max: { sk: "Maximum", cs: "Maximum", en: "Maximum", de: "Maximum" },
+    min: { sk: "Minimum", cs: "Minimum", en: "Minimum", de: "Minimum" },
+    totalCount: { sk: "Počet meraní", cs: "Počet měření", en: "Number of readings", de: "Zahl der Messungen" }
+  };
+  var PER = {
+    value: { sk: "podľa: {of}", cs: "podle: {of}", en: "by {of}", de: "nach: {of}" },
+    year: { sk: "za rok", cs: "za rok", en: "per year", de: "pro Jahr" },
+    decade: { sk: "za desaťročie", cs: "za desetiletí", en: "per decade", de: "pro Jahrzehnt" },
+    month: { sk: "za mesiac", cs: "za měsíc", en: "per month", de: "pro Monat" },
+    day: { sk: "za deň (UTC)", cs: "za den (UTC)", en: "per day (UTC)", de: "pro Tag (UTC)" },
+    hour: { sk: "za hodinu", cs: "za hodinu", en: "per hour", de: "pro Stunde" },
+    period: { sk: "za interval", cs: "za interval", en: "per interval", de: "pro Intervall" }
+  };
+  var PART = { sk: "len časť obdobia", cs: "jen část období", en: "only part of the period", de: "nur ein Teil des Zeitraums" };
   // A row measured a day or more before the table's newest says so beside its time (T-4682).
   var STALE = { sk: "neaktuálne", cs: "neaktuální", en: "out of date", de: "veraltet" };
   var STALE_MS = 24 * 3600 * 1000;
@@ -404,9 +426,12 @@ var JCRender = (function () {
     return entry ? entry[lang] || entry.en : spelt(key);
   }
 
-  /** The chart renderer the widget frames (T-4657): `https://viz.{domain}` exactly, else null. */
+  /**
+   * The chart renderer the widget frames (T-4657): `https://embed.{domain}` or its old name
+   * `https://viz.{domain}` (jc T-6992) exactly, else null.
+   */
   function vizOrigin(value) {
-    return typeof value === "string" && /^https:\/\/viz(\.[a-z0-9-]+)+$/.test(value) ? value : null;
+    return typeof value === "string" && /^https:\/\/(?:embed|viz)(\.[a-z0-9-]+)+$/.test(value) ? value : null;
   }
 
   /**
@@ -433,6 +458,34 @@ var JCRender = (function () {
       encoding[channel].title = named(parts[1]) + (parts[2] || "");
     });
     return copy;
+  }
+
+  /**
+   * What an aggregated table or chart holds, in `lang` (T-7504): "Count per decade", with "N of
+   * TOTAL" when it is part of the data; "" for a table nothing computed.
+   */
+  function aggregated(made, lang, labels) {
+    if (!made || typeof made !== "object" || !Object.prototype.hasOwnProperty.call(METHODS, made.method) || !Object.prototype.hasOwnProperty.call(PER, made.per)) return "";
+    lang = YES_NO[lang] ? lang : "en";
+    var of = String(made.of || "");
+    var own = labels && typeof labels === "object" ? entry(labels, lang) || entry(labels, "en") : "";
+    var said = METHODS[made.method][lang] + " " + PER[made.per][lang].replace("{of}", own || word(LABELS, of, lang));
+    var numbers = new Intl.NumberFormat(lang);
+    if (typeof made.shown === "number" && typeof made.total === "number" && made.shown < made.total) {
+      said += " · " + numbers.format(made.shown) + " " + OF[lang] + " " + numbers.format(made.total);
+    }
+    return made.partial === true ? said + " · " + PART[lang] : said;
+  }
+
+  /** A chart's rows with the words of their categories in `lang` (T-7504). A copy. */
+  function vizRows(rows, lang, enums) {
+    if (!Array.isArray(rows) || !enums || typeof enums !== "object") return rows;
+    return rows.map(function (row) {
+      var key = row && row.label;
+      var words = typeof key === "string" && Object.prototype.hasOwnProperty.call(enums, key) ? enums[key] : null;
+      var said = words && typeof words === "object" ? entry(words, lang) || entry(words, "en") : "";
+      return said ? Object.assign({}, row, { label: said }) : row;
+    });
   }
 
   /** Whether a data card opens on its map (T-4657): every row of the table has a place. */
@@ -462,10 +515,12 @@ var JCRender = (function () {
    * is never grouped: 1953, not "1 953". Times read as `when` says, booleans as words, and an enum
    * as the words the table's `enums` give it. An http(s) address becomes `{text, href}`, a short
    * link. An empty cell stays empty. The entity's URN is never a column: an unnamed row is called
-   * by the URN's last segment, and a column of references is left out. At most 20 rows; the
-   * caption says how many more the dataset holds. Everything is text; nothing here becomes HTML.
+   * by the URN's last segment, and a column of references is left out. 20 rows of `page`, of at
+   * most 50; the caption says which of how many the dataset holds, how many answer of all for a
+   * most or least question, or what was computed (T-7504). Everything is text; nothing here
+   * becomes HTML.
    */
-  function table(data, lang, now) {
+  function table(data, lang, now, page) {
     if (!data || !Array.isArray(data.columns) || data.columns.length === 0) return null;
     lang = YES_NO[lang] ? lang : "en";
     now = typeof now === "number" ? now : Date.now();
@@ -477,7 +532,12 @@ var JCRender = (function () {
     var small = new Intl.NumberFormat(lang, { maximumSignificantDigits: 2 });
     var modelled = Array.isArray(data.labels) ? data.labels : [];
     var enums = Array.isArray(data.enums) ? data.enums : [];
-    var raw = (Array.isArray(data.rows) ? data.rows : []).filter(Array.isArray).slice(0, ROWS);
+    var made = data.aggregation && typeof data.aggregation === "object" ? data.aggregation : null;
+    // A history's table is its chart for a screen reader: all of its points page.
+    var raw = (Array.isArray(data.rows) ? data.rows : []).filter(Array.isArray).slice(0, made ? 500 : LISTED);
+    var pages = Math.max(1, Math.ceil(raw.length / ROWS));
+    page = Math.min(Math.max(0, page || 0), pages - 1);
+    var first = page * ROWS;
     var urn = function (v) { return typeof v === "string" && /^urn:/i.test(v); };
     // The columns shown: an `id` column becomes the row's name, a column of references goes.
     var keep = [];
@@ -503,13 +563,17 @@ var JCRender = (function () {
       if (typeof v === "boolean") return YES_NO[lang][v ? 0 : 1];
       if (typeof v === "object") return JSON.stringify(v);
       if (safeUrl(v)) return { text: LINK[lang], href: v };
+      if (made && column === "date" && TIME.test(v) && isFinite(Date.parse(v))) {
+        return new Intl.DateTimeFormat(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: "UTC" }).format(Date.parse(v));
+      }
       if (column === "observedAt" || (TIME.test(v) && v.length > 10)) return when(v, lang, now);
       return String(v);
     };
     var at = data.columns.indexOf("observedAt");
     var times = raw.map(function (row) { return at < 0 || typeof row[at] !== "string" ? NaN : Date.parse(row[at]); });
     var newest = Math.max.apply(null, times.filter(isFinite).concat([-Infinity]));
-    var rows = raw.map(function (row, r) {
+    var rows = raw.slice(first, first + ROWS).map(function (row, at0) {
+      var r = first + at0;
       return keep.map(function (i) {
         var shown = cell(row[i], data.columns[i], i);
         return i === at && newest - times[r] >= STALE_MS ? shown + " · " + STALE[lang] : shown;
@@ -529,7 +593,14 @@ var JCRender = (function () {
     });
     var named = typeof data.type === "string" && data.type ? word(TYPES, data.type, lang) : "";
     var caption = "";
-    if (named && typeof data.total === "number" && data.total > rows.length) {
+    var total = typeof data.total === "number" ? Math.max(data.total, raw.length) : raw.length;
+    if (made && aggregated(made, lang, modelled[0] && typeof modelled[0] === "object" ? modelled[0] : null)) {
+      caption = (named ? named + " — " : "") + aggregated(made, lang, modelled[0] && typeof modelled[0] === "object" ? modelled[0] : null);
+    } else if (named && typeof data.top === "number") {
+      caption = named + " — " + numbers.format(rows.length) + " " + OF[lang] + " " + numbers.format(total);
+    } else if (named && pages > 1) {
+      caption = named + " — " + numbers.format(first + 1) + "–" + numbers.format(first + rows.length) + " " + OF[lang] + " " + numbers.format(total);
+    } else if (named && typeof data.total === "number" && data.total > rows.length) {
       caption = named + " — " + FIRST[lang] + " " + numbers.format(rows.length) + " " + OF[lang] + " " + numbers.format(data.total);
     } else if (named) {
       caption = named + " (" + numbers.format(rows.length) + ")";
@@ -539,6 +610,10 @@ var JCRender = (function () {
       columns: columns,
       numeric: numeric,
       rows: rows,
+      page: page,
+      pages: pages,
+      listed: raw.length,
+      turn: PAGE[lang],
       dataset: safeUrl(data.dataset),
       download: safeUrl(data.download),
       // An address for programs is neither a link nor text: the dataset page names it (T-4799).
@@ -828,6 +903,9 @@ var JCRender = (function () {
   function firstTable(seen, data) {
     if (!data || typeof data !== "object" || typeof data.type !== "string" || !data.type) return true;
     var key = String(data.endpoint || "") + "\n" + data.type;
+    // The rows that answer, and what was computed, are no second page of the type (T-7504).
+    if (typeof data.top === "number") key += "\ntop " + JSON.stringify(data.rows);
+    else if (data.aggregation) key += "\naggregated " + JSON.stringify(data.aggregation);
     if (seen.indexOf(key) >= 0) return false;
     seen.push(key);
     return true;
@@ -1232,7 +1310,7 @@ var JCRender = (function () {
     markdown: markdown, streamable: streamable, sources: sources, label: label, unlisted: unlisted, linkHost: linkHost,
     safeUrl: safeUrl, events: events, language: language, table: table, chart: chart, greeting: greeting, title: title,
     suggestions: suggestions, trouble: trouble, retryable: retryable, said: said, retry: retry,
-    vizOrigin: vizOrigin, vizSpec: vizSpec, mapFirst: mapFirst
+    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, mapFirst: mapFirst
   };
 })();
 if (typeof module !== "undefined") module.exports = JCRender;

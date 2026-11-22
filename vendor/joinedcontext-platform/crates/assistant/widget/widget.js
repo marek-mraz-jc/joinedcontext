@@ -964,7 +964,7 @@
     frame.setAttribute("referrerpolicy", "no-referrer");
     // The chat's own scheme, so the chart draws in the theme's light or dark (T-6886).
     var dark = document.documentElement.getAttribute("data-scheme") !== "light" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-    var message = { type: "jc-viz-show", spec: JCRender.vizSpec(payload.spec, lang, payload.labels), rows: payload.rows, lang: lang, theme: dark ? "dark" : "light" };
+    var message = { type: "jc-viz-show", spec: JCRender.vizSpec(payload.spec, lang, payload.labels), rows: JCRender.vizRows(payload.rows, lang, payload.enums), lang: lang, theme: dark ? "dark" : "light" };
     frame.addEventListener("load", function () {
       frame.contentWindow.postMessage(message, VIZ);
     });
@@ -987,9 +987,18 @@
   function showVisualization(item, data) {
     if (!VIZ || !data || !data.spec || typeof data.spec !== "object") return;
     var figure = el("figure", "jc-data jc-viz-card");
-    var title = typeof data.spec.title === "string" && data.spec.title ? data.spec.title : w.chart;
-    figure.appendChild(vizFrame(data, title, function () { figure.remove(); }));
+    var made = data.aggregation;
+    var said = made ? JCRender.aggregated(made, lang, data.labels && data.labels[made.of]) : "";
+    var title = typeof data.spec.title === "string" && data.spec.title ? data.spec.title : said || w.chart;
+    if (said) figure.appendChild(el("figcaption", "jc-viz-note", said));
+    figure.appendChild(vizFrame(data, title, function () {
+      figure.remove();
+      // A chart that cannot be drawn leaves its table open in its place.
+      if (said && item.data) item.data.open = true;
+    }));
     visual(item, figure);
+    // The chart leads, its table under it for whoever reads no picture (T-7504).
+    if (said) item.visuals.insertBefore(figure, item.visuals.firstChild);
   }
 
   // "Table | Map" over a data card whose rows have places; the map loads when it is first shown,
@@ -1027,6 +1036,13 @@
     pick(JCRender.mapFirst(data));
   }
 
+  // The answer to a most or least question is the entity's card and its place under it (T-7504).
+  function mapUnder(figure, scroll, data) {
+    var box = el("div", "jc-viz-box");
+    box.appendChild(vizFrame({ spec: data.map }, w.tabMap, function () { box.remove(); }));
+    figure.insertBefore(box, scroll.nextSibling);
+  }
+
   // An answer's visuals sit under its text (T-4682): one box the text is put before, and with more
   // than one visual each is folded to its caption.
   function visual(item, figure) {
@@ -1042,15 +1058,16 @@
   function showData(item, data) {
     var shown = JCRender.table(data, lang);
     if (!shown || !JCRender.firstTable(item.tables = item.tables || [], data)) return;
-    var figure = el("details", "jc-data");
+    var answers = typeof data.top === "number";
+    var figure = el("details", answers ? "jc-data jc-record" : "jc-data");
     figure.open = true;
-    figure.appendChild(el("summary", "", shown.caption || w.table));
+    var summary = figure.appendChild(el("summary", "", shown.caption || w.table));
     var scroll = el("div", "jc-data-scroll");
     scroll.tabIndex = 0;
     scroll.setAttribute("role", "region");
     scroll.setAttribute("aria-label", w.table);
     var table = el("table");
-    if (shown.caption) table.appendChild(el("caption", "jc-sr", shown.caption));
+    var caption = shown.caption ? table.appendChild(el("caption", "jc-sr", shown.caption)) : null;
     var headRow = el("tr");
     shown.columns.forEach(function (c, i) {
       var th = el("th", shown.numeric[i] ? "jc-num" : "", c);
@@ -1059,32 +1076,63 @@
     });
     table.appendChild(el("thead")).appendChild(headRow);
     var body = table.appendChild(el("tbody"));
-    shown.rows.forEach(function (row) {
-      var tr = body.appendChild(el("tr"));
-      row.forEach(function (cell, i) {
-        // A long text keeps two lines; the whole of it is its title.
-        var td = tr.appendChild(el("td", shown.numeric[i] ? "jc-num" : "", ""));
-        // Below 600 px a row is a card and each value carries its column's name (T-4711).
-        td.setAttribute("data-label", shown.columns[i]);
-        if (cell && typeof cell === "object") {
-          // A long address reads as one short word, the whole of it its title (T-4682).
-          var a = td.appendChild(link(cell.href, cell.text));
-          a.title = cell.href;
-          return;
-        }
-        var text = td.appendChild(el("span", "jc-cell", cell));
-        if (cell.length > 40) text.title = cell;
+    var fill = function () {
+      body.textContent = "";
+      shown.rows.forEach(function (row) {
+        var tr = body.appendChild(el("tr"));
+        row.forEach(function (cell, i) {
+          // A long text keeps two lines; the whole of it is its title.
+          var td = tr.appendChild(el("td", shown.numeric[i] ? "jc-num" : "", ""));
+          // Below 600 px a row is a card and each value carries its column's name (T-4711).
+          td.setAttribute("data-label", shown.columns[i]);
+          if (cell && typeof cell === "object") {
+            // A long address reads as one short word, the whole of it its title (T-4682).
+            var a = td.appendChild(link(cell.href, cell.text));
+            a.title = cell.href;
+            return;
+          }
+          var text = td.appendChild(el("span", "jc-cell", cell));
+          if (cell.length > 40) text.title = cell;
+        });
       });
-    });
+    };
+    fill();
     scroll.appendChild(table);
     figure.appendChild(scroll);
-    var drawn = plot(JCRender.chart(data));
+    // The renderer draws what code aggregated, and one entity needs no bars.
+    var drawn = answers || (VIZ && data.aggregation) ? null : plot(JCRender.chart(data));
     if (drawn) figure.appendChild(drawn);
-    if (VIZ && data.map && typeof data.map === "object") mapTabs(figure, scroll, drawn, data);
+    if (shown.pages > 1) {
+      // Twenty rows a page (T-7504); a button that has nothing more stays in place, off.
+      var pager = el("div", "jc-pager");
+      var back = pager.appendChild(el("button", "jc-tab", shown.turn[0]));
+      var next = pager.appendChild(el("button", "jc-tab", shown.turn[1]));
+      back.type = next.type = "button";
+      var where = pager.appendChild(el("span", "jc-sr"));
+      where.setAttribute("role", "status");
+      var turn = function (to) {
+        shown = JCRender.table(data, lang, undefined, to);
+        fill();
+        scroll.scrollTop = 0;
+        summary.textContent = shown.caption || w.table;
+        if (caption) caption.textContent = shown.caption;
+        where.textContent = summary.textContent;
+        back.setAttribute("aria-disabled", String(shown.page === 0));
+        next.setAttribute("aria-disabled", String(shown.page === shown.pages - 1));
+      };
+      back.setAttribute("aria-disabled", "true");
+      back.addEventListener("click", function () { if (shown.page > 0) turn(shown.page - 1); });
+      next.addEventListener("click", function () { if (shown.page < shown.pages - 1) turn(shown.page + 1); });
+      scroll.appendChild(pager);
+    }
+    if (VIZ && data.map && typeof data.map === "object") {
+      if (answers) mapUnder(figure, scroll, data);
+      else mapTabs(figure, scroll, drawn, data);
+    }
     if (shown.dataset || shown.download || shown.geojson) {
       var links = el("p", "jc-data-links");
       // More rows than the panel shows: the dataset holds them all (T-4682).
-      var more = typeof data.total === "number" && data.total > shown.rows.length;
+      var more = typeof data.total === "number" && data.total > shown.listed && !data.aggregation;
       if (shown.dataset) links.appendChild(link(shown.dataset, more ? w.allRows : w.dataset));
       if (shown.download) links.appendChild(link(shown.download, w.download));
       // One area's own outline, as the Endpoint serves it (T-4697).

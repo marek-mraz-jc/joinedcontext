@@ -6,7 +6,7 @@
   "use strict";
 
   var chart = document.getElementById("chart");
-  var domain = location.hostname.replace(/^viz\./, "");
+  var domain = location.hostname.replace(/^(?:embed|viz)\./, "");
 
   // To any parent: beside the Portal (jc slug mode) the host page is an opaque origin too, which no
   // named target matches, and a ready, a height or a refusal tells a framer nothing it lacks.

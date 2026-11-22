@@ -10,11 +10,11 @@
   var STYLES = ["sk", "cs", "en", "fi"];
   var COLOUR = "#1f5fae";
   var TEXT = {
-    sk: { detail: "Detail", hint: "Kliknite na bod alebo stlačte Enter.", yes: "áno", no: "nie" },
-    cs: { detail: "Detail", hint: "Klikněte na bod nebo stiskněte Enter.", yes: "ano", no: "ne" },
-    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein" },
-    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei" },
-    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no" }
+    sk: { detail: "Detail", hint: "Kliknite na bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené {n} z {total}", unlocated: "{none} bez polohy" },
+    cs: { detail: "Detail", hint: "Klikněte na bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno {n} z {total}", unlocated: "{none} bez polohy" },
+    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
+    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
+    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
   };
 
   // Every position of a geometry, however deep it nests.
@@ -81,6 +81,17 @@
     };
   }
 
+  // What the map says on itself (T-7504): how many it draws of all, and how many of all have no
+  // location. "" for a map that was not counted.
+  function countText(spec, lang) {
+    if (!spec.count) return "";
+    var t = TEXT[lang] || TEXT.en;
+    var numbers = new Intl.NumberFormat(lang);
+    var said = t.shown.replace("{n}", numbers.format(spec.data.features.length)).replace("{total}", numbers.format(spec.count.total));
+    if (!spec.count.unlocated) return said;
+    return said + " · " + t.unlocated.replace("{none}", numbers.format(spec.count.unlocated));
+  }
+
   function node(tag, className, text) {
     var el = document.createElement(tag);
     if (className) el.className = className;
@@ -117,9 +128,12 @@
   }
 
   async function draw(spec, lang) {
-    var domain = location.hostname.replace(/^viz\./, "");
+    var domain = location.hostname.replace(/^(?:embed|viz)\./, "");
     var errors = root.jcRefuseMap(spec, domain);
     if (errors.length) throw new Error("The map was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
+    var count = document.getElementById("count");
+    count.textContent = countText(spec, lang);
+    count.hidden = !count.textContent;
     var maplibre = await import(MAPLIBRE);
     maplibre.setWorkerUrl(WORKER);
     maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
@@ -163,7 +177,7 @@
   }
 
   if (typeof module === "object" && module.exports) {
-    module.exports = { anchors: anchors, bounds: bounds, nearest: nearest, lines: lines };
+    module.exports = { anchors: anchors, bounds: bounds, nearest: nearest, lines: lines, countText: countText };
     return;
   }
   window.addEventListener("message", function (event) {
