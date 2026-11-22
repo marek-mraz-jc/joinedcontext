@@ -7,4 +7,11 @@ exclude_re = [
   # antares-notifier: the retry jitter is 1 + j * (2n - 1) with n uniform clock noise in [0, 1); 1 - j * (2n - 1)
   # has the same distribution over the same range [1 - j, 1 + j], so no test can tell the two apart.
   'crates/antares-notifier/src/lib\.rs:\d+:26: replace \+ with - in DeliveryPolicy::next_delay',
+  # antares-notifier: page_sink is cfg(target_arch = "wasm32"); the native test run does not compile it, so its mutants
+  # change nothing the native tests build (the browser build of antares-wasm registers and calls it).
+  'crates/antares-notifier/src/http\.rs:\d+:\d+: replace .*page_sink::',
+  # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
+  # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
+  # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
+  'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
 ]

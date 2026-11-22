@@ -902,6 +902,9 @@ mod tests {
             MqttEndpoint::parse("mqtt://h/a/b?x=1").is_ok(),
             "`?` is a topic character"
         );
+        // 65 535 bytes is the longest topic MQTT encodes, and it is allowed
+        let longest = format!("mqtt://h/{}", "a".repeat(65_535));
+        assert!(MqttEndpoint::parse(&longest).is_ok());
     }
 
     /// The mqtts trust store is loaded once and the same shared rustls
@@ -1012,6 +1015,8 @@ mod tests {
                     let mut buf = [0u8; 4096];
                     while let Ok(n) = s.read(&mut buf).await {
                         let Some(packet) = buf.get(..n).filter(|p| !p.is_empty()) else {
+                            // the client closed: an empty entry marks it
+                            log.lock().expect("log").push(Vec::new());
                             return;
                         };
                         log.lock().expect("log").push(packet.to_vec());
@@ -1173,12 +1178,13 @@ mod tests {
     }
 
     /// The pool is bounded: past `cap` sessions the least recently used one
-    /// is dropped.
+    /// is dropped, and dropping it closes its connection to the broker.
     #[tokio::test]
     async fn the_pool_evicts_the_least_recently_used_session() {
         let sink = MqttSink::new(1, Duration::from_secs(2));
         let params = MqttParams { qos: 1, v5: false };
-        let first = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+        let (first_port, _, first_seen) = stub(OnPublish::Ack, Vec::new()).await;
+        let first = ep_at(first_port);
         let second = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
         sink.publish_message(&first, params, b"{}")
             .await
@@ -1192,6 +1198,15 @@ mod tests {
             pool.contains_key(&pool_key(&second, params)),
             "the newest session stays"
         );
+        drop(pool);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !first_seen.lock().expect("seen").iter().any(Vec::is_empty) {
+            assert!(
+                Instant::now() < deadline,
+                "the evicted session's connection stayed open"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// ADR-0031 inbound bridge: `listen` subscribes under the shared

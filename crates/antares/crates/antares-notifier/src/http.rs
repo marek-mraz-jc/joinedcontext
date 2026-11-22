@@ -350,6 +350,37 @@ mod tests {
         assert!(text.contains("example.org"), "{text}");
     }
 
+    /// 6.3.8: a 2xx answer is a delivery: the notification is POSTed with
+    /// the accept type as its Content-Type.
+    #[tokio::test]
+    async fn a_success_status_is_a_delivery() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let asked = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).await.expect("read");
+            let _ = s
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        sink()
+            .deliver(
+                &format!("http://127.0.0.1:{port}/notify"),
+                &out("application/ld+json", &[]),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("204 delivers");
+        let head = asked.await.expect("request").to_ascii_lowercase();
+        assert!(head.starts_with("post /notify "), "{head}");
+        assert!(head.contains("content-type: application/ld+json"), "{head}");
+    }
+
     /// 6.3.8: an endpoint that answers with a non-2xx status took the
     /// notification and refused it: a failed attempt naming the status, not
     /// a timeout (the circuit breaker counts only silence).
