@@ -8,9 +8,8 @@ mod common;
 
 use common::{ORG, OTHER_ORG, World, dashboard, prometheus, world};
 use daiya_api::render::{find_panel_in_slice, parse_time_str_ms, render_frames_html_table};
-use daiya_api::state::OrgDirectory;
-use daiya_api::{DaiyaState, PanelTimeRange, panel_view, resolve_request_ctx};
-use daiya_model::{FieldColumn, Frame, FrameSet, OrgId, PanelSpec, Subject};
+use daiya_api::{DaiyaState, PanelTimeRange, panel_view};
+use daiya_model::{DaiyaStore, FieldColumn, Frame, FrameSet, OrgId, OrgKey, PanelSpec, Subject};
 use daiya_query::{
     Datasource, DsError, DsFuture, EditorSchema, Health, ImportOutcome, Query, QueryCtx,
     ResourceReq, ResourceResp,
@@ -111,6 +110,14 @@ fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
     h
 }
 
+/// [`daiya_api::resolve_request_ctx`], which asks the store for the organization (T-7509).
+fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> daiya_model::RequestCtx {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(daiya_api::resolve_request_ctx(state, headers))
+}
+
 #[test]
 fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
     let w = world();
@@ -148,8 +155,8 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
     assert_eq!(actor(&HeaderMap::new()), None);
 
     // Org headers choose among the subject's organizations; a numeric Grafana org id maps
-    // through the directory; an unknown one falls back to the subject's first organization here,
-    // and the router answers such a request 404 before any handler reads it.
+    // through the store; an unknown one is nobody's organization, never the subject's first, and
+    // the router answers such a request 404 before any handler reads it.
     let pick =
         |pairs: &[(&'static str, &str)]| resolve_request_ctx(&w.state, &headers(pairs)).org_id;
     assert_eq!(pick(&[("authorization", "Bearer admin")]), ORG);
@@ -167,13 +174,15 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
             ("x-grafana-org-id", "99"),
             ("authorization", "Bearer outsider")
         ]),
-        OTHER_ORG
+        OrgId::from_u128(0),
+        "an unknown number is no fallback to the caller's own organization"
     );
     assert_eq!(
         pick(&[("x-grafana-org-id", "main")]),
-        ORG,
-        "anonymous: default org"
+        OrgId::from_u128(0),
+        "nor to the main one"
     );
+    assert_eq!(pick(&[]), ORG, "anonymous, no header: default org");
 
     // The read-only header only narrows.
     for v in ["true", "1"] {
@@ -224,15 +233,19 @@ async fn a_read_only_header_refuses_writes() {
     assert_eq!(st, StatusCode::FORBIDDEN);
 }
 
-#[test]
-fn the_org_directory_registers_a_name_once() {
-    let main = OrgId::from_u128(1);
-    let mut dir = OrgDirectory::with_main_org(main);
-    let (num, id, created) = dir.register_org("Edge", OrgId::from_u128(2));
-    assert_eq!((num, created), (2, true));
-    let (again, same, created) = dir.register_org("Edge", OrgId::from_u128(3));
-    assert_eq!((again, same, created), (2, id, false));
-    assert_eq!(dir.register_org("Main Org.", OrgId::from_u128(4)).0, 1);
+#[tokio::test]
+async fn the_store_holds_a_name_once_and_the_main_organization_is_number_one() {
+    let store = Arc::new(MemoryStore::new());
+    let state = DaiyaState::for_standalone(store.clone(), ORG);
+    let installation = state.installation_id;
+    let create = |id| store.create_org(installation, "Edge", None, OrgId::from_u128(id));
+    let edge = create(2).await.expect("created");
+    assert_eq!((edge.number, edge.org_id), (2, OrgId::from_u128(2)));
+    assert!(create(3).await.is_err(), "a name is held once");
+    let held = state.organization(OrgKey::Name("Edge".into())).await;
+    assert_eq!(held.expect("store"), Some(edge));
+    let main = state.organization(OrgKey::Name("Main Org.".into())).await;
+    assert_eq!(main.expect("store").map(|org| org.number), Some(1));
 }
 
 #[tokio::test]

@@ -7,17 +7,62 @@ use crate::entities::{
     QueryCacheStatRecord,
 };
 use crate::error::CrResult;
-use crate::ids::OrgId;
+use crate::ids::{InstallationId, OrgId};
 use crate::limits::OrgQuotas;
 use std::future::Future;
 use std::pin::Pin;
 
 pub type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = CrResult<T>> + Send + 'a>>;
 
+/// An organization of the installation (T-7509). Its number and id are the store's, so every
+/// replica and restart answers alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgRow {
+    /// Grafana's `orgId`, from 2: 1 is the main organization, which has no row.
+    pub number: i64,
+    pub name: String,
+    pub org_id: OrgId,
+    /// A retired organization keeps its number and id; its name is free.
+    pub retired: bool,
+}
+
+/// What an organization is looked up by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrgKey {
+    /// Live or retired.
+    Number(i64),
+    /// Live or retired.
+    Id(OrgId),
+    /// Live only: a retired organization's name names nothing.
+    Name(String),
+}
+
 /// Storage interface for all `daiya` entities, scoped per organization (`OrgId`).
 pub trait DaiyaStore: Send + Sync {
     /// Verifies that forced RLS is active on every table and the app role does not have `BYPASSRLS` (R8).
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()>;
+
+    // The installation's organizations
+    fn find_org(
+        &self,
+        installation: InstallationId,
+        key: OrgKey,
+    ) -> StoreFuture<'_, Option<OrgRow>>;
+    /// The live ones, by number.
+    fn list_orgs(&self, installation: InstallationId) -> StoreFuture<'_, Vec<OrgRow>>;
+    /// Holds `name`, under `number` when one is declared, else the next one. The id is `first_id`
+    /// the first time the installation holds the name, a new random one once an organization of
+    /// that name was retired. A declared organization already held answers its row; any other
+    /// name or number held is a conflict.
+    fn create_org(
+        &self,
+        installation: InstallationId,
+        name: &str,
+        number: Option<i64>,
+        first_id: OrgId,
+    ) -> StoreFuture<'_, OrgRow>;
+    /// Whether a live organization had that number; it is retired now.
+    fn retire_org(&self, installation: InstallationId, number: i64) -> StoreFuture<'_, bool>;
 
     // Quotas
     fn get_quotas(&self, org_id: OrgId) -> StoreFuture<'_, OrgQuotas>;

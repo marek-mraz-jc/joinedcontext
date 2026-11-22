@@ -48,12 +48,15 @@ the same local administrator, `X-Grafana-Org-Id` from the `POST /api/orgs` answe
   `with_server_admin`): before, the Portal's Basic credential matched no binding, and a project
   organization made by `POST /api/orgs` at runtime had no binding or member, so G1 to G6 and every
   `provision.sh` write were refused. The credential is compared by SHA-256 in constant time, makes
-  a member of every organization in the directory, and allows every action there. A subject from
+  a member of the live organization the request names (404 for any other id), and allows every action there. A subject from
   the host resolver or the tokens file naming `SERVER_ADMIN_ACTOR` is anonymous (tokens file
   refuses it at start). Password at least 16 characters, read from a file in `daiya serve`.
-- **Stable organization ids** (`api/src/compat.rs` `org_id_for_name`): the directory of names is
-  memory only, and `POST /api/orgs` drew a random id, so on a Postgres store everything saved before
-  a restart sat under an id nobody could reach. The id is now derived from installation and name.
+- **Stored organizations** (T-7509, `daiya_org`): (number, name, id) is a row, so every replica and
+  restart answers alike. A name held for the first time gets the id derived from installation and
+  name (`org_id_for_name`, the id earlier releases used, so a rollback still finds the rows). After
+  `DELETE /api/orgs/{orgId}` retired it, the name created again gets a random id and none of the old
+  rows, and the retired number and id answer 404. A creator of an organization the store holds gets
+  409 and looks it up by name. A configured number that contradicts a row refuses the start.
 - **The dashboard page** (`api/src/page.rs`): G7 answered 404. It now renders each panel's
   server-side table (`panel_view`) with the caller's rights; 404 for a missing organization,
   dashboard or right; no script, `Content-Security-Policy: default-src 'none'`.

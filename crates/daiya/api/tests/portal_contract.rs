@@ -10,8 +10,8 @@ use base64::Engine as _;
 use common::{FlakyStore, ORG};
 use daiya_api::{DaiyaState, TokenBinding, api_router};
 use daiya_model::{
-    GrafanaRole, InstallationId, InstanceId, PolicyAuthorizer, RoleBinding, SERVER_ADMIN_ACTOR,
-    Subject,
+    GrafanaRole, InstallationId, InstanceId, OrgKey, PolicyAuthorizer, RoleBinding,
+    SERVER_ADMIN_ACTOR, Subject,
 };
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -476,14 +476,11 @@ async fn a_host_subject_naming_the_server_admin_actor_is_anonymous() {
         )
         .await;
     assert!(status.is_client_error(), "{status} {body}");
-    assert!(
-        !grafana
-            .state
-            .org_registry
-            .read()
-            .by_name
-            .contains_key("forged")
-    );
+    let held = grafana
+        .state
+        .organization(OrgKey::Name("forged".into()))
+        .await;
+    assert!(held.expect("store").is_none());
 }
 
 #[tokio::test]
@@ -491,22 +488,155 @@ async fn an_organization_keeps_its_id_when_provisioned_again_after_a_restart() {
     let store = Arc::new(FlakyStore::default());
     let first = Grafana::new(store.clone(), None);
     let org = first.provision("helsinki").await;
-    let id = first.state.org_registry.read().by_name["helsinki"].1;
+    let (_, before) = first.admin("GET", "/orgs/name/helsinki", None, None).await;
 
-    // A new process on the same store: provision.sh creates the organization again and finds
-    // what the store kept under it.
+    // A new process on the same store holds the organization: provision.sh is told the name is
+    // taken, as Grafana tells it, and finds it and what the store kept under it.
     let second = Grafana::new(store, None);
-    let (status, created) = second
+    let (status, taken) = second
         .admin("POST", "/orgs", None, Some(json!({ "name": "helsinki" })))
         .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    assert_eq!(second.state.org_registry.read().by_name["helsinki"].1, id);
-    let again = created["orgId"].as_i64().expect("orgId");
+    assert_eq!(status, StatusCode::CONFLICT, "{taken}");
+    let (status, held) = second.admin("GET", "/orgs/name/helsinki", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    assert_eq!(held, before, "the same number and id");
+    let again = held["id"].as_i64().expect("orgId");
     assert_eq!(again, org);
     let (status, held) = second
         .admin("GET", "/dashboards/uid/project-helsinki", Some(again), None)
         .await;
     assert_eq!(status, StatusCode::OK, "{held}");
+}
+
+/// T-7509: an organization's number is the same on every replica, whatever order each one
+/// heard of the organizations in, so `X-Grafana-Org-Id: N` selects one organization.
+#[tokio::test]
+async fn two_replicas_give_an_organization_one_number() {
+    let store = Arc::new(FlakyStore::default());
+    let first = Grafana::new(store.clone(), None);
+    let second = Grafana::new(store, None);
+    let mut numbers = Vec::new();
+    for (replica, names) in [
+        (&first, ["helsinki", "zilina"]),
+        (&second, ["zilina", "helsinki"]),
+    ] {
+        for name in names {
+            // a replica that already knows the name answers 409; both are asked by name below
+            replica
+                .admin("POST", "/orgs", None, Some(json!({ "name": name })))
+                .await;
+        }
+    }
+    for name in ["helsinki", "zilina"] {
+        let path = format!("/orgs/name/{name}");
+        for replica in [&first, &second] {
+            let (status, held) = replica.admin("GET", &path, None, None).await;
+            assert_eq!(status, StatusCode::OK, "{held}");
+            numbers.push((name, held["id"].as_i64()));
+        }
+    }
+    assert_eq!(
+        (numbers[0], numbers[2]),
+        (numbers[1], numbers[3]),
+        "each organization's number on the first and on the second replica"
+    );
+}
+
+/// T-7509: a retired organization's name created again is another organization, with a new
+/// number and id and none of the old rows, and the retired one answers nobody.
+#[tokio::test]
+async fn a_recreated_name_is_a_new_organization_with_no_old_rows() {
+    let store = Arc::new(FlakyStore::default());
+    let first = Grafana::new(store.clone(), None);
+    let old = first.provision("helsinki").await;
+    let (_, old_org) = first.admin("GET", "/orgs/name/helsinki", None, None).await;
+
+    let path = format!("/orgs/{old}");
+    let (status, body) = first
+        .call("DELETE", &path, None, Some("Bearer viewer-token"), None)
+        .await;
+    assert!(
+        status.is_client_error(),
+        "a viewer retires nothing: {status} {body}"
+    );
+    let (status, body) = first.admin("DELETE", "/orgs/1", None, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = first.admin("DELETE", &path, None, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let second = Grafana::new(store, None);
+    let (status, body) = second.admin("DELETE", &path, None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "retired once: {body}");
+    let (status, new_org) = second
+        .admin("POST", "/orgs", None, Some(json!({ "name": "helsinki" })))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{new_org}");
+    let new = new_org["orgId"].as_i64().expect("orgId");
+    assert_ne!(new, old, "a number is never given again");
+    assert_ne!(new_org["uuid"], old_org["uuid"], "nor an id");
+
+    for replica in [&first, &second] {
+        let dashboard = "/dashboards/uid/project-helsinki";
+        let (status, body) = replica.admin("GET", dashboard, Some(new), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "no old row: {body}");
+        let (status, body) = replica.admin("GET", dashboard, Some(old), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "the retired one: {body}");
+        let (status, _, _) = replica
+            .page(
+                &format!("/d/project-helsinki?orgId={old}"),
+                Some(&basic(USER, PASSWORD)),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "nor by its page");
+    }
+}
+
+/// I-18: the server administrator selects a live Organization of the store and no other id, and
+/// a directory that cannot answer is never read as another Organization.
+#[tokio::test]
+async fn the_server_admin_selects_no_organization_the_store_does_not_hold() {
+    let store = Arc::new(FlakyStore::default());
+    let grafana = Grafana::new(store.clone(), None);
+    let number = grafana.provision("helsinki").await;
+    let (_, held) = grafana
+        .admin("GET", "/orgs/name/helsinki", None, None)
+        .await;
+    let retired = grafana.provision("zilina").await;
+    let (_, gone) = grafana.admin("GET", "/orgs/name/zilina", None, None).await;
+    let (status, body) = grafana
+        .admin("DELETE", &format!("/orgs/{retired}"), None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let gone = gone["uuid"].as_str().expect("uuid").to_owned();
+    let live = held["uuid"].as_str().expect("uuid").to_owned();
+    let unheld = uuid::Uuid::from_u128(0xfeed).to_string();
+    for header in ["x-daiya-org-id", "x-grafana-org-id"] {
+        for (org, wanted) in [
+            (&live, StatusCode::OK),
+            (&unheld, StatusCode::NOT_FOUND),
+            (&gone, StatusCode::NOT_FOUND),
+        ] {
+            let req = Request::builder()
+                .uri("/api/search")
+                .header("authorization", basic(USER, PASSWORD))
+                .header(header, org.as_str())
+                .body(Body::empty())
+                .expect("request");
+            let res = grafana.app.clone().oneshot(req).await.expect("answer");
+            assert_eq!(res.status(), wanted, "{header}: {org}");
+        }
+    }
+
+    store.fail("find_org");
+    let (status, body) = grafana.admin("GET", "/search", Some(number), None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let (status, body) = grafana.admin("GET", "/org", Some(number), None).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "never Main Org.: {body}"
+    );
 }
 
 #[test]

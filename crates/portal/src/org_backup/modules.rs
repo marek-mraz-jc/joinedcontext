@@ -786,13 +786,38 @@ pub const DATAROOM_TABLES: &[Table] = &[
     ),
 ];
 
-/// daiya's organization of `project` (daiya's `org_id_for_name`, `crates/daiya/api/src/
-/// compat.rs`): the Portal provisions one daiya organization per project, named after it.
+/// The id daiya gives `project`'s organization the first time it holds that name (daiya's
+/// `org_id_for_name`, `crates/daiya/api/src/compat.rs`): the Portal provisions one daiya
+/// organization per project, named after it. A stored id takes its place ([`daiya_orgs`]).
 pub fn daiya_org(installation: uuid::Uuid, project: &str) -> uuid::Uuid {
     let digest = Sha256::digest(format!("daiya-org\n{installation}\n{project}"));
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
     uuid::Builder::from_custom_bytes(bytes).into_uuid()
+}
+
+/// daiya's organizations of `projects`: the id daiya stores for the name (T-7509), and the
+/// first-time id only where it holds none or no daiya client is configured. A daiya that cannot
+/// answer fails the source, so a backup never exports a retired organization's rows as a
+/// project's.
+async fn daiya_orgs(
+    state: &AppState,
+    installation: uuid::Uuid,
+    projects: &[String],
+) -> Result<Vec<String>, String> {
+    let mut orgs = Vec::with_capacity(projects.len());
+    for project in projects {
+        let stored = match state.config.grafana.as_ref() {
+            Some(config) => crate::grafana::Client::new(config)
+                .organization_id(project)
+                .await
+                .map_err(|e| format!("daiya did not name the organization of {project}: {e}"))?,
+            None => None,
+        };
+        let org = stored.unwrap_or_else(|| daiya_org(installation, project));
+        orgs.push(org.to_string());
+    }
+    Ok(orgs)
 }
 
 /// The realm of `organization` when it signs in through a realm of its own: the last segment
@@ -931,10 +956,10 @@ async fn daiya(state: &AppState, organization: &str) -> Result<Source, String> {
         .tenants
         .daiya_installation
         .ok_or("jc named no daiya installation (JC_PORTAL_BACKUP_TENANTS)")?;
-    let orgs: Vec<String> = super::projects_of(&state.mirror, organization)
-        .iter()
-        .map(|project| daiya_org(installation, project).to_string())
+    let projects: Vec<String> = super::projects_of(&state.mirror, organization)
+        .into_iter()
         .collect();
+    let orgs = daiya_orgs(state, installation, &projects).await?;
     Ok(Source {
         pool: reader(state, "daiya").await?,
         schema: "",

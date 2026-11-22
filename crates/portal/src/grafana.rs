@@ -358,6 +358,37 @@ impl<'a> Client<'a> {
     /// The organization of `project`; `None` when the deployment has made none.
     pub async fn organization(&self, project: &str) -> Result<Option<i64>, ApiError> {
         let what = "finding the project's organization";
+        let Some(org) = self.organization_named(project, what).await? else {
+            return Ok(None);
+        };
+        org["id"]
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| unreachable(what, "an organization without an id"))
+    }
+
+    /// The id daiya stores the rows of `project`'s organization under (T-7509), which a
+    /// retired name created again does not share with the one before; `None` when it holds
+    /// none or is a Grafana, which names no such id.
+    pub async fn organization_id(&self, project: &str) -> Result<Option<uuid::Uuid>, ApiError> {
+        let what = "finding the id of the project's organization";
+        let Some(org) = self.organization_named(project, what).await? else {
+            return Ok(None);
+        };
+        let Some(id) = org.get("uuid") else {
+            return Ok(None);
+        };
+        id.as_str()
+            .and_then(|id| id.parse().ok())
+            .map(Some)
+            .ok_or_else(|| unreachable(what, "an organization id that is no UUID"))
+    }
+
+    async fn organization_named(
+        &self,
+        project: &str,
+        what: &str,
+    ) -> Result<Option<Value>, ApiError> {
         let answer = self
             .request(reqwest::Method::GET, &format!("/orgs/name/{project}"), None)
             .send()
@@ -369,11 +400,7 @@ impl<'a> Client<'a> {
         let answer = answer
             .error_for_status()
             .map_err(|err| unreachable(what, err))?;
-        let org: Value = json_of(answer, what).await?;
-        org["id"]
-            .as_i64()
-            .map(Some)
-            .ok_or_else(|| unreachable(what, "an organization without an id"))
+        json_of(answer, what).await.map(Some)
     }
 
     /// The Endpoints the organization has a datasource for.
@@ -1208,6 +1235,50 @@ mod tests {
         assert_eq!(org.expect("the organization"), 4);
         let requests = server.received_requests().await.expect("recorded");
         assert_eq!(posted(&requests), ["/api/folders"]);
+    }
+
+    #[tokio::test]
+    async fn an_organizations_id_is_the_one_daiya_stores() {
+        let server = wiremock::MockServer::start().await;
+        let stored = "0190a000-0000-7000-8000-000000000009";
+        answer_with(
+            &server,
+            "GET",
+            "/api/orgs/name/doprava",
+            json!({ "id": 4, "uuid": stored }),
+        )
+        .await;
+        answer_with(&server, "GET", "/api/orgs/name/grafana", json!({ "id": 5 })).await;
+        answer_with(
+            &server,
+            "GET",
+            "/api/orgs/name/broken",
+            json!({ "id": 6, "uuid": "x" }),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let client = Client::new(&config);
+        let id = client.organization_id("doprava").await.expect("answered");
+        assert_eq!(id.map(|id| id.to_string()).as_deref(), Some(stored));
+        assert!(client
+            .organization_id("grafana")
+            .await
+            .expect("answered")
+            .is_none());
+        assert!(client
+            .organization_id("gone")
+            .await
+            .expect("answered")
+            .is_none());
+        assert!(
+            client.organization_id("broken").await.is_err(),
+            "never a guessed id"
+        );
     }
 
     #[tokio::test]

@@ -358,7 +358,8 @@ async fn build_state_loads_tokens_secrets_and_provisioning_into_a_serving_router
             .title,
         "alpha"
     );
-    assert_eq!(state.org_registry.read().by_num.get(&1).unwrap().0, "City");
+    let main = state.organization(daiya_model::OrgKey::Number(1)).await;
+    assert_eq!(main.unwrap().unwrap().name, "City");
 
     // The CLI context is the organization's admin.
     let ctx = cli_ctx(&state);

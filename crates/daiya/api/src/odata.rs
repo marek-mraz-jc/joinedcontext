@@ -818,7 +818,7 @@ async fn handle_odata_single_segment_get(
     Path(segment): Path<String>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let (name, parens) = split_paren_segment(&segment);
 
     // Unbound function `Allowed(operation=..., object=...)`
@@ -947,7 +947,7 @@ async fn handle_odata_two_segment_get(
     Path((seg1, seg2)): Path<(String, String)>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let (set_name, key_parens) = split_paren_segment(&seg1);
     let (sub_op, sub_parens) = split_paren_segment(&seg2);
     let op_short = sub_op
@@ -1078,7 +1078,7 @@ async fn handle_odata_single_segment_post(
     Path(segment): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let (name, _) = split_paren_segment(&segment);
     let op_short = name.strip_prefix("JoinedContext.Daiya.").unwrap_or(name);
 
@@ -1189,7 +1189,7 @@ async fn handle_odata_two_segment_post(
     Path((seg1, seg2)): Path<(String, String)>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let (set_name, key_parens) = split_paren_segment(&seg1);
     let uid = key_parens.map_or_else(String::new, unquote_odata_key);
     let op_short = seg2.strip_prefix("JoinedContext.Daiya.").unwrap_or(&seg2);
@@ -1257,7 +1257,7 @@ async fn odata_batch(
     headers: HeaderMap,
     Json(batch): Json<ODataBatchRequest>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     if batch.requests.len() > MAX_BATCH_REQUESTS {
         return error_response(&CrError::BadRequest(format!(
             "$batch carries {} requests, the limit is {MAX_BATCH_REQUESTS}",

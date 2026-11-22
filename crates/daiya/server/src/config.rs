@@ -162,16 +162,27 @@ pub struct NumberedOrganization {
     pub name: String,
 }
 
-/// Holds `organizations` in `state`'s directory (see `compat::declare_organization`).
+/// Holds `organizations` in `state`'s store (see `compat::declare_organization`).
 ///
 /// # Errors
-/// A number below 2, or a number or name held twice.
-pub fn declare_organizations(
+/// A number below 2, a number or name declared twice, or one the store holds for another
+/// organization.
+pub async fn declare_organizations(
     state: &DaiyaState,
     organizations: &[NumberedOrganization],
 ) -> CrResult<()> {
-    for org in organizations {
-        daiya_api::compat::declare_organization(state, org.id, &org.name)?;
+    for (i, org) in organizations.iter().enumerate() {
+        let earlier = organizations.iter().take(i);
+        if earlier
+            .into_iter()
+            .any(|o| o.id == org.id || o.name == org.name)
+        {
+            return Err(config_err(format!(
+                "organization {} '{}': a number from 2 and a name no other organization holds",
+                org.id, org.name
+            )));
+        }
+        daiya_api::compat::declare_organization(state, org.id, &org.name).await?;
     }
     Ok(())
 }
@@ -379,6 +390,8 @@ pub async fn open_store(cfg: &StoreConfig) -> CrResult<Arc<dyn DaiyaStore>> {
                 .await?;
             let store = PgStore::new(app.connect().await?);
             store.verify_rls_enforced().await?;
+            // A schema without the organizations (migration 2) stops the start, not each request.
+            store.list_orgs(InstallationId::from_u128(1)).await?;
             Ok(Arc::new(store))
         }
     }
@@ -455,19 +468,8 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
         })?;
         state = state.with_server_admin(&admin.user, password.trim_end_matches(['\r', '\n']))?;
     }
-    {
-        let mut directory = state.org_registry.write();
-        if cfg.organization.name != default_org_name() {
-            directory.by_name.remove(&default_org_name());
-            directory
-                .by_name
-                .insert(cfg.organization.name.clone(), (1, org));
-            directory
-                .by_num
-                .insert(1, (cfg.organization.name.clone(), org));
-        }
-    }
-    declare_organizations(&state, &cfg.organizations)?;
+    state.default_org_name.clone_from(&cfg.organization.name);
+    declare_organizations(&state, &cfg.organizations).await?;
     let provisioning = match &cfg.provisioning_dir {
         Some(dir) => Some(provision(&state, dir, &cfg.provisioning_vars).await?),
         None => None,
@@ -485,14 +487,12 @@ pub async fn provision(
     dir: &Path,
     vars: &BTreeMap<String, String>,
 ) -> CrResult<ProvisioningLoadReport> {
-    // The registry's read guard ends here, before the load awaits.
     let organizations = state
-        .org_registry
-        .read()
-        .by_num
-        .iter()
-        .filter(|(num, _)| **num != 1)
-        .map(|(num, (_, org))| (*num, *org))
+        .store
+        .list_orgs(state.installation_id)
+        .await?
+        .into_iter()
+        .map(|org| (org.number, org.org_id))
         .collect();
     load_provisioning_dir(
         state.store.as_ref(),

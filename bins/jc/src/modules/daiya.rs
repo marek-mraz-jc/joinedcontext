@@ -114,7 +114,9 @@ pub async fn build(
     {
         state = state.with_page_reader(page_reader);
     }
-    declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
+    declare_organizations(&state, &cfg.organizations)
+        .await
+        .map_err(|e| e.to_string())?;
     state.own_reach = gateway_reach(siblings).into_iter().collect();
     state.endpoint_bases = gateway_endpoint_bases(siblings);
     if let Some(raw) = &cfg.prometheus_reach {
