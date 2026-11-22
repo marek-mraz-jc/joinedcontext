@@ -178,6 +178,126 @@ fn each_row_set_reads_its_target_from_the_row_and_refuses_a_row_without_uid() {
     }
 }
 
+/// Set names and keys as OData spells them, and an unknown name is no set.
+#[test]
+fn row_sets_parse_their_own_names_and_know_their_key() {
+    for set in RowSet::ALL {
+        assert_eq!(RowSet::parse(set.name()), Some(set));
+    }
+    assert_eq!(RowSet::Dashboards.name(), "Dashboards");
+    assert_eq!(RowSet::ImportReports.name(), "ImportReports");
+    assert_eq!(RowSet::parse("dashboards"), None);
+    assert_eq!(RowSet::parse(""), None);
+    let keys: Vec<_> = RowSet::ALL.iter().map(|s| s.key()).collect();
+    assert_eq!(keys, ["uid", "id", "uid", "uid", "uid", "uid", "id"]);
+}
+
+/// The memory store's reference read: scope first, then filter, keyset cursor, order, skip and
+/// limit, with the count taken before the page.
+#[test]
+fn answer_rows_scopes_filters_orders_and_pages() {
+    use daiya_model::rows::{RowQuery, RowWindow, answer_rows, page_rows};
+    use daiya_model::{ReadScope, ScopeColumn};
+    use odata_table::{Cond, SortKey};
+    let rows: Vec<Value> = [
+        ("a", "f1", 3),
+        ("b", "f2", 1),
+        ("c", "f1", 2),
+        ("d", "f1", 2),
+    ]
+    .iter()
+    .map(|(uid, folder, n)| json!({"uid": uid, "folderUid": folder, "panelCount": n}))
+    .collect();
+    let uids = |page: &daiya_model::rows::RowPage| -> Vec<String> {
+        page.rows
+            .iter()
+            .map(|r| r["uid"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let every = RowQuery::every(RowSet::Dashboards, ReadScope::All);
+    assert_eq!(
+        uids(&answer_rows(rows.clone(), &every)),
+        ["a", "b", "c", "d"]
+    );
+    let nothing = RowQuery::every(RowSet::Dashboards, ReadScope::Nothing);
+    assert!(answer_rows(rows.clone(), &nothing).rows.is_empty());
+    let f1 = RowQuery::every(
+        RowSet::Dashboards,
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        },
+    );
+    assert_eq!(uids(&answer_rows(rows.clone(), &f1)), ["a", "c", "d"]);
+    // A set whose rows carry no member for the column shows none of them.
+    let ds = RowQuery::every(
+        RowSet::Datasources,
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        },
+    );
+    assert!(answer_rows(rows.clone(), &ds).rows.is_empty());
+
+    // panelCount descending, then uid: a total order.
+    let order = vec![
+        SortKey {
+            path: vec!["panelCount".into()],
+            descending: true,
+        },
+        SortKey {
+            path: vec!["uid".into()],
+            descending: false,
+        },
+    ];
+    let window = |after: Option<Vec<Value>>, skip, limit, count| RowWindow {
+        filter: Cond::Const(true),
+        order: order.clone(),
+        after,
+        skip,
+        limit,
+        count,
+    };
+    let page = page_rows(rows.clone(), &window(None, 0, None, true));
+    assert_eq!(uids(&page), ["a", "c", "d", "b"]);
+    assert_eq!(page.count, Some(4));
+    let page = page_rows(rows.clone(), &window(None, 1, Some(2), false));
+    assert_eq!(
+        (uids(&page), page.count),
+        (vec!["c".to_owned(), "d".to_owned()], None)
+    );
+    assert!(
+        page_rows(rows.clone(), &window(None, 0, Some(0), true))
+            .rows
+            .is_empty()
+    );
+    // The cursor of row "c" (2, "c") starts the page behind it; the count ignores the cursor.
+    let page = page_rows(
+        rows.clone(),
+        &window(Some(vec![json!(2), json!("c")]), 0, None, true),
+    );
+    assert_eq!(
+        (uids(&page), page.count),
+        (vec!["d".to_owned(), "b".to_owned()], Some(4))
+    );
+    let filtered = RowWindow {
+        filter: Cond::Compare {
+            path: vec!["folderUid".into()],
+            op: odata_url::CompareOp::Eq,
+            value: json!("f1"),
+        },
+        ..window(None, 0, None, true)
+    };
+    let page = page_rows(rows, &filtered);
+    assert_eq!(
+        (uids(&page), page.count),
+        (
+            vec!["a".to_owned(), "c".to_owned(), "d".to_owned()],
+            Some(3)
+        )
+    );
+}
+
 #[test]
 fn object_targets_report_their_org_and_folder() {
     let targets = [
