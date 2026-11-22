@@ -551,9 +551,11 @@ var JCRender = (function () {
     var made = data.aggregation && typeof data.aggregation === "object" ? data.aggregation : null;
     // A history's table is its chart for a screen reader: all of its points page.
     var raw = (Array.isArray(data.rows) ? data.rows : []).filter(Array.isArray).slice(0, made ? 500 : LISTED);
-    var pages = Math.max(1, Math.ceil(raw.length / ROWS));
+    // An aggregated table is read whole, as its chart is: it scrolls and has no pages.
+    var size = made ? Math.max(1, raw.length) : ROWS;
+    var pages = Math.max(1, Math.ceil(raw.length / size));
     page = Math.min(Math.max(0, page || 0), pages - 1);
-    var first = page * ROWS;
+    var first = page * size;
     var urn = function (v) { return typeof v === "string" && /^urn:/i.test(v); };
     // The columns shown: an `id` column becomes the row's name, a column of references goes.
     var keep = [];
@@ -562,6 +564,18 @@ var JCRender = (function () {
       if (c !== "id" && filled.length > 0 && filled.every(function (row) { return urn(row[i]); })) return;
       keep.push(i);
     });
+    // A word every row repeats is said once, over the rows: the one place of a history, whose
+    // rows are then headed by their day, or the district of a district's list.
+    var same = [];
+    if (raw.length > 1 && (made ? made.method !== "count" : pages > 1)) {
+      keep = keep.filter(function (i) {
+        var v = raw[0][i];
+        if ((made ? i !== 0 : i === 0 || same.length > 1) || typeof v !== "string" || !v || v.length > 80 || TIME.test(v) || safeUrl(v)) return true;
+        if (!raw.every(function (row) { return row[i] === v; })) return true;
+        same.push(i);
+        return false;
+      });
+    }
     // Tied answers are short cards, so their map is in view: the name and what decides first.
     if (typeof data.top === "number" && raw.length > 1) keep = keep.slice(0, 4);
     var plain = function (column) { return /year|code$/i.test(String(column)) || /Id$|^id$/.test(String(column)); };
@@ -582,7 +596,8 @@ var JCRender = (function () {
       if (typeof v === "object") return JSON.stringify(v);
       if (safeUrl(v)) return { text: LINK[lang], href: v };
       if (made && column === "date" && TIME.test(v) && isFinite(Date.parse(v))) {
-        return new Intl.DateTimeFormat(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: "UTC" }).format(Date.parse(v));
+        // The day before the month, as on the chart's axis: 10/1 is January to a European.
+        return new Intl.DateTimeFormat(lang === "en" ? "en-GB" : lang, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(Date.parse(v));
       }
       if (column === "observedAt" || (TIME.test(v) && v.length > 10)) return when(v, lang, now);
       return String(v);
@@ -590,7 +605,7 @@ var JCRender = (function () {
     var at = data.columns.indexOf("observedAt");
     var times = raw.map(function (row) { return at < 0 || typeof row[at] !== "string" ? NaN : Date.parse(row[at]); });
     var newest = Math.max.apply(null, times.filter(isFinite).concat([-Infinity]));
-    var rows = raw.slice(first, first + ROWS).map(function (row, at0) {
+    var rows = raw.slice(first, first + size).map(function (row, at0) {
       var r = first + at0;
       return keep.map(function (i) {
         var shown = cell(row[i], data.columns[i], i);
@@ -625,10 +640,12 @@ var JCRender = (function () {
     } else if (named) {
       caption = named + " (" + numbers.format(rows.length) + ")";
     }
+    var repeated = same.map(function (i) { return cell(raw[0][i], data.columns[i], i); }).join(", ");
+    if (caption && repeated) caption += " · " + repeated;
     return {
       caption: caption,
       // Over the map, which draws what is listed and says so on itself, the caption names them all.
-      mapCaption: named && pages > 1 ? named + " — " + numbers.format(raw.length) + " " + OF[lang] + " " + numbers.format(total) : caption,
+      mapCaption: named && pages > 1 ? named + " — " + numbers.format(raw.length) + " " + OF[lang] + " " + numbers.format(total) + (repeated ? " · " + repeated : "") : caption,
       columns: columns,
       numeric: numeric,
       rows: rows,

@@ -1195,6 +1195,10 @@ test("a list pages twenty rows with the total, a superlative is one of all (T-75
 test("an aggregation names its method and says when it is part of the data (T-7504)", () => {
   const count = { method: "count", per: "decade", of: "yearBuilt", shown: 1651, total: 1651 };
   assert.equal(aggregated(count, "en"), "Count per decade");
+  const days = table({ type: "Air", columns: ["name", "date", "pm10"], aggregation: { method: "avg", per: "day", of: "pm10" },
+    rows: Array.from({ length: 31 }, (_, d) => ["BB", "2026-10-" + String(d + 1).padStart(2, "0") + "T00:00:00Z", d]) }, "en");
+  assert.deepEqual([days.pages, days.rows.length, days.rows[0][0]], [1, 31, "1 Oct 2026"]);
+  assert.match(days.caption, / · BB$/);
   assert.equal(chartNote({ type: "Bridge", aggregation: count }, "en"), "Bridges — Count per decade");
   assert.equal(chartNote({ series: "BB", aggregation: { method: "avg", per: "day", of: "pm10" } }, "en"), "BB · PM10 — Average per day (UTC)");
   assert.equal(aggregated({ ...count, shown: 1200 }, "en"), "Count per decade · 1,200 of 1,651");

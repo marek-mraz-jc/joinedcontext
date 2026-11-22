@@ -449,7 +449,8 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     if !counts {
         spec["encoding"]["x"]["scale"] = json!({"type": "utc"});
         if made.per == "day" {
-            spec["encoding"]["x"]["axis"] = json!({"format": "%-d %b", "labelOverlap": true});
+            spec["encoding"]["x"]["axis"] =
+                json!({"format": "%-d %b", "labelOverlap": "greedy", "labelSeparation": 24});
         }
         let first = table.rows.first()?.first();
         if table.rows.iter().all(|row| row.first() == first) {
@@ -477,7 +478,7 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     } else {
         // Periods read left to right, in time.
         spec["encoding"] = json!({
-            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -90, "labelFontSize": 10, "labelOverlap": "greedy"}},
+            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -90, "labelFontSize": 11, "labelOverlap": "greedy"}},
             "y": spec["encoding"]["x"].clone(),
         });
         spec["mark"] = json!({"type": "bar", "tooltip": true});
@@ -497,6 +498,15 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     }
     if let Some(Some(words)) = table.enums.first() {
         event["enums"] = json!(words);
+    }
+    // A decade's bar carries the year it starts with, as the note says "per decade"; the table
+    // under the chart has the whole range.
+    if made.per == "decade" {
+        for key in table.rows.iter().filter_map(|row| row.first()?.as_str()) {
+            if let Some((start, _)) = key.split_once('–') {
+                event["enums"][key] = json!({"en": start});
+            }
+        }
     }
     Some(event)
 }

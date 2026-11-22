@@ -190,6 +190,13 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
   .jc-data td:first-child::before { content: none; }
   .jc-data .jc-num { white-space: normal; }
 }
+/* T-7504: a listed row's values stand two abreast, label over value, so a card is half as tall. */
+@media (max-width: 599px) {
+  .jc-data:not(.jc-record):not(.jc-fallback) tbody tr { display: grid; grid-template-columns: 1fr 1fr; }
+  .jc-data:not(.jc-record):not(.jc-fallback) td { display: block; text-align: left; overflow-wrap: anywhere; }
+  .jc-data:not(.jc-record):not(.jc-fallback) td::before { display: block; }
+  .jc-data:not(.jc-record):not(.jc-fallback) td:first-child { grid-column: 1 / -1; }
+}
 /* T-7504: the row that answers is a card at every width, its first value the title. */
 .jc-record table, .jc-record tbody, .jc-record tr, .jc-record td { display: block; width: auto; max-width: none; min-width: 0; }
 .jc-record thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
