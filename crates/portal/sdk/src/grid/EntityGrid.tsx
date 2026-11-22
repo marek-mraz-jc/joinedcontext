@@ -17,6 +17,7 @@ import { GridCellPanels, GridDetail } from "./GridDetail";
 import { GridMapPanel } from "./GridMapPanel";
 import { ArrangeColumns } from "./ArrangeColumns";
 import { GridNotices, GridStatus, HiddenFields } from "./GridNotices";
+import { createPortal } from "react-dom";
 import { GridPager } from "./GridPager";
 import { GridQueryBox } from "./GridQueryBox";
 import { GridReview } from "./GridReview";
@@ -88,6 +89,11 @@ export interface EntityGridProps extends UseEntityGridOptions {
   detailPlace?: { tab?: string | null; attr?: string | null };
   onDetailPlace?: (place: { tab: string; attr: string }) => void;
   toolbar?: React.ReactNode;
+  /**
+   * Where Arrange columns draws when the host's own toolbar sits outside the grid (T-7503): the grid
+   * then keeps no band of its own for that one button.
+   */
+  arrangeIn?: HTMLElement | null;
   /** The bounds the "Draw area" action asks about; the host owns the map's viewport. */
   mapBounds?: () => [number, number, number, number] | null;
   empty?: React.ReactNode;
@@ -122,9 +128,10 @@ export interface EntityGridProps extends UseEntityGridOptions {
   onHide?: (attr: string) => void;
   /**
    * The per-column filter row; `false` for a host that asks through a filter panel of its own and
-   * hands the query in as `query` (T-4883).
+   * hands the query in as `query` (T-4883); `"used"` shows it once a column is filtered from its
+   * header, or for a place's area picker (T-7503).
    */
-  filterRow?: boolean;
+  filterRow?: boolean | "used";
   /** The box under the rows that shows the asked query; `false` for a host that opens it from its own toolbar. */
   queryBox?: boolean;
   /** Every column the endpoint can be asked about, with its kind, for a host's own filter panel. */
@@ -294,18 +301,22 @@ export function GridFrame({ view, children }: { view: GridView; children: React.
 
 function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: string) => void }): React.JSX.Element {
   const view = useGridView(props);
-  const { toolbar } = props;
+  const { toolbar, arrangeIn } = props;
+  const restores = !props.onHide && view.ownHidden.length > 0;
   return (
     <GridFrame view={view}>
       {/* The host's tools, then the grid's own: Arrange columns (T-6738). */}
-      <div className="jc-grid-toolbar">
-        {toolbar && <div className="jc-grid-toolbar-host">{toolbar}</div>}
-        {/* The way back from the grid's own hides sits beside the panel that also brings them back (T-5620). */}
-        {!props.onHide && view.ownHidden.length > 0 && (
-          <HiddenFields attrs={view.ownHidden} labels={view.labels} labelOf={view.hiddenLabel} onShow={view.showColumns} />
-        )}
-        <ArrangeColumns view={view} />
-      </div>
+      {toolbar || restores || !arrangeIn ? (
+        <div className="jc-grid-toolbar">
+          {toolbar && <div className="jc-grid-toolbar-host">{toolbar}</div>}
+          {/* The way back from the grid's own hides sits beside the panel that also brings them back (T-5620). */}
+          {restores && (
+            <HiddenFields attrs={view.ownHidden} labels={view.labels} labelOf={view.hiddenLabel} onShow={view.showColumns} />
+          )}
+          {arrangeIn ? null : <ArrangeColumns view={view} />}
+        </div>
+      ) : null}
+      {arrangeIn ? createPortal(<ArrangeColumns view={view} />, arrangeIn) : null}
       <GridNotices view={view} />
       <GridTypeLine view={view} />
       <GridTable view={view} />

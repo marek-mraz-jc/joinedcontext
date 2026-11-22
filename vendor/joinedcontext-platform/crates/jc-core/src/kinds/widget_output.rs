@@ -55,7 +55,7 @@ pub struct WidgetSource {
     /// The roles: which attribute the map reads for each.
     #[serde(default)]
     pub mapping: WidgetRoles,
-    /// Whether markers cluster; absent: the widget's own rule (above 200 in view, EP-161).
+    /// Whether markers cluster; absent: the widget's own rule (where they would overlap, EP-161).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<bool>,
     /// Where the table starts; absent: the model's `view_*` annotations (EP-164).

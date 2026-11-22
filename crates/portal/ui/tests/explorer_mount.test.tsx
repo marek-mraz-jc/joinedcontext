@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { mount } from "../src/explorer/main";
+import { catalogueColumns } from "../src/components/entities/EndpointDataView";
 import i18n from "../src/explorer/i18n";
 import { Map as NoMap } from "../src/explorer/no-map";
 
@@ -78,6 +79,17 @@ describe("the catalogue widget's mount", () => {
     root.unmount();
     element.remove();
     vi.unstubAllGlobals();
+  });
+
+  it("leaves the id, the one type and the scope to the row's card, and starts a phone on two columns (T-7503)", () => {
+    const shape = { order: ["name", "startDate", "venue", "organizer", "url"], shown: ["name", "startDate", "venue", "organizer"] };
+    expect(catalogueColumns(shape, ["url"], true, false)).toEqual(["url", "id", "entity:type", "entity:scope"]);
+    // The scope stays where the model chose no columns.
+    expect(catalogueColumns(shape, [], false, false)).toEqual(["id", "entity:type"]);
+    expect(catalogueColumns(shape, ["url"], true, true)).toEqual(["url", "id", "entity:type", "entity:scope", "venue", "organizer"]);
+    // The title stays on a phone wherever the model orders it.
+    const titled = { order: ["code", "label", "kind"], shown: ["code", "label", "kind"], title: "label" };
+    expect(catalogueColumns(titled, [], false, true)).toEqual(["id", "entity:type", "kind"]);
   });
 
   it("carries only the view's strings, in English and Slovak, and no map", () => {

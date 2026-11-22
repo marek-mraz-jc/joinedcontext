@@ -11,6 +11,11 @@ export function GridFilterRow({ view }: { view: GridView }): React.JSX.Element |
   const { filterRow = true, rowNumbers, typeChoice } = props;
   const { state, setFilter } = grid;
   if (!filterRow || filterable.size === 0) return null;
+  if (filterRow === "used") {
+    // Empty until then: a row of blanks under the header tells a reader nothing (T-7503).
+    const placed = !asText && columns.some((col) => col.attr && !col.meta && kindOf.get(col.key) === "geo");
+    if (!placed && view.activeFilters === 0) return null;
+  }
   return (
     <tr className="jc-grid-filter-row" aria-label={labels.filterRow}>
       {rowNumbers && <td className="jc-grid-rownum" />}
