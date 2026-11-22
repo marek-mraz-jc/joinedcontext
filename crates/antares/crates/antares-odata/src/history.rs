@@ -6,21 +6,31 @@
 //! the history as they narrow the current state. A row's members hold the values valid at its
 //! `observedAt`: each Attribute's latest default instance at or before it.
 //!
+//! Rows are built lazily along one time axis per Entity (T-7518): an instance stays the broker's
+//! JSON until a row that is judged or served holds it, a page builds its own rows only, and what
+//! it builds is charged to the broker's answer pool beside the answers it reads.
+//!
 //! `$filter` is evaluated over each row by the residual evaluator; its top-level bounds on
 //! `observedAt` narrow the temporal read (`timerel`, `timeAt`, `endTimeAt`), and a lower bound
 //! reads each Attribute's last instance before it (`timerel=before&lastN=1`) so the first rows
 //! in the window still hold the values valid then. Rows come in Entity then `observedAt` order;
-//! `$count` and any other `$orderby` read the whole answer, at most `RESIDUAL_SCAN` rows over
-//! `WHOLE_ENTITIES` Entities.
+//! A page judges at most [`PAGE_JUDGED`] rows by `$filter` and holds at most [`PAGE_BYTES`];
+//! past either it ends with a next link at that row. `$count` and any other `$orderby` read the
+//! whole answer, at most `RESIDUAL_SCAN` rows over `WHOLE_ENTITIES` Entities, and keep no row
+//! past the page's end.
 //! ponytail: each Entity's newest [`INSTANCES`] instances per Attribute in the window are read
-//! (the broker's own default ceiling), as the OGC history does.
+//! (the broker's own default ceiling), as the OGC history does, and read again by each page
+//! inside that Entity. Paging by time needs a `firstN` the Postgres store serves from its index
+//! (`newest_rows` serves `lastN` alone; T-5616).
 
 use crate::edm::{Member, Set, OBSERVED_AT_IRI};
 use crate::filter::{bounds_of, mint, program, residual_whole, Refused, Translated};
 use crate::read::{
-    compare, default_instance, encode, not_found, not_implemented, now, page_link, paged, position,
-    refusal, resource, run, selected, served, token, Reads, ODATA_VERSION,
+    answered, bad_token, compare, default_instance, encode, get, next_page, not_found,
+    not_implemented, now, page_link, position, refusal, refused, resource, selected, served, token,
+    Reads, ODATA_VERSION,
 };
+use antares_ops::bounds::{AnswerCharge, HeldAnswer};
 use antares_ops::residual::{DateTime, Program, Truth};
 use antares_ops::{Caller, OperationId, RESIDUAL_SCAN};
 use axum::http::{HeaderMap, StatusCode};
@@ -28,8 +38,11 @@ use axum::response::{IntoResponse, Response};
 use odata_axum::{json_response, ODataErrorResponse};
 use odata_json::{write_collection, write_entity, Ctx, EntityValue, ODataVersion, Page};
 use odata_url::{CompareOp, Expr, Key, KeyValue, Literal, QueryOptions, Segment};
+use serde::de::IgnoredAny;
+use serde_json::value::RawValue;
 use serde_json::{json, Map, Value};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 /// The constructs a history set refuses with `501`, named in its message.
@@ -46,20 +59,18 @@ const MAX_READS: usize = 25;
 /// The Entities one whole read ([`whole`]: `$count`, a sort) may walk. Each temporal read pages
 /// by offset, so a walk costs the square of its Entities: 1 000 is 250 reads, ten natural pages.
 const WHOLE_ENTITIES: usize = 1_000;
+/// The rows one page judges by `$filter` at most, of one Entity or of several.
+const PAGE_JUDGED: usize = RESIDUAL_SCAN;
+/// The bytes of rows one page holds at most, never more than half of what one answer may hold:
+/// a value repeats in every row it is valid in.
+const PAGE_BYTES: usize = 8 * 1024 * 1024;
+/// The rows walked between two yields to the runtime.
+const YIELD_EVERY: usize = 1_024;
 /// The start of a read no lower bound narrows.
 const EPOCH: &str = "1970-01-01T00:00:00Z";
 
 /// An instant in microseconds and as the request wrote it.
 type Bound = (i64, String);
-
-/// One row: the Entity, its `observedAt` as stored and in microseconds, and its document in
-/// the normalized form the residual reads, each member's term holding the instance valid then.
-struct Row {
-    urn: String,
-    at: String,
-    micros: i64,
-    doc: Map<String, Value>,
-}
 
 /// What a read of a history set asks the broker and keeps.
 struct Plan<'s> {
@@ -68,6 +79,8 @@ struct Plan<'s> {
     program: Option<Program>,
     /// Each member but `observedAt`, with its term.
     terms: Vec<(&'s str, &'s Member, String)>,
+    /// Each member's term once, in the members' order: the Attributes a row holds.
+    attrs: Vec<String>,
     /// The term of `observedAt`.
     observed: String,
     /// The `timerel` part of the temporal query.
@@ -94,34 +107,32 @@ pub(crate) async fn collection(
     let plan = plan(set, options, version)?;
     let picked = picked(set, options, version)?;
     let digest = crate::read::digest(&reads.state.service_root, path, options);
-    let (cursor, skip, top, page) = position(reads, options, digest, headers, version)?;
-    let link = |cursor: u64, skip: u64, top: Option<u64>| {
-        page_link(reads, path, options, token(cursor, skip, top, digest))
-    };
     let sort = sort_keys(&plan, options, version)?;
     let counted = options.count == Some(true);
-    let (rows, total, next) = if counted || sort.is_some() {
-        let mut all = whole(reads, caller, &plan, None, version).await?;
-        if let Some(keys) = &sort {
-            all.sort_by(|a, b| ordered(keys, a, b));
-        }
-        paged(all, (cursor, skip, top, page), &link)
-    } else {
-        let (rows, next) = streamed(
-            reads,
-            caller,
-            &plan,
-            (cursor, skip, top, page),
-            &link,
-            version,
-        )
-        .await?;
-        (rows, 0, next)
+    let link = |text: String| page_link(reads, path, options, text);
+    let scan = Scan {
+        reads,
+        caller,
+        plan: &plan,
+        set_name,
+        picked: picked.as_deref(),
+        version,
     };
-    let values: Vec<EntityValue> = rows
-        .iter()
-        .map(|r| value(set_name, &plan, r, picked.as_deref()))
-        .collect();
+    let (built, total, next) = if counted || sort.is_some() {
+        let (cursor, skip, top, page) = position(reads, options, digest, headers, version)?;
+        let from = cursor.saturating_add(skip);
+        let kept = whole(&scan, sort.as_deref(), from, page).await?;
+        let served = u64::try_from(kept.built.values.len()).unwrap_or(u64::MAX);
+        let at = (cursor, skip, top, page);
+        let next = next_page(served, kept.total, at, &|cursor, skip, top| {
+            link(token(cursor, skip, top, digest))
+        });
+        (kept.built, kept.total, next)
+    } else {
+        let start = start(reads, options, digest, headers, version)?;
+        let (built, next) = streamed(&scan, start).await?;
+        (built, 0, next.map(|next| link(next.token(digest))))
+    };
     let resource = resource(reads, set_name, version)?;
     let names: Option<Vec<&str>> = picked
         .as_ref()
@@ -136,7 +147,7 @@ pub(crate) async fn collection(
     };
     let mut body = Vec::new();
     // A Vec takes every byte: the write cannot fail.
-    let _ = write_collection(ctx, &resource, &values, &page, &mut body);
+    let _ = write_collection(ctx, &resource, &built.values, &page, &mut body);
     Ok(json_response(version, ctx.level, body))
 }
 
@@ -148,7 +159,16 @@ pub(crate) async fn count(
     version: ODataVersion,
 ) -> Result<Response, ODataErrorResponse> {
     let plan = plan(set, options, version)?;
-    let total = whole(reads, caller, &plan, None, version).await?.len();
+    let scan = Scan {
+        reads,
+        caller,
+        plan: &plan,
+        // a count serves no row
+        set_name: "",
+        picked: None,
+        version,
+    };
+    let total = whole(&scan, None, 0, 0).await?.total;
     Ok((
         StatusCode::OK,
         [
@@ -188,12 +208,17 @@ pub(crate) async fn entity(
     };
     plan.window = format!("timerel=before&timeAt={}", encode(&end));
     let picked = picked(set, options, version)?;
-    let rows = whole(reads, caller, &plan, Some(urn), version).await?;
-    let row = rows
-        .iter()
-        .find(|r| r.micros == micros)
+    let scan = Scan {
+        reads,
+        caller,
+        plan: &plan,
+        set_name,
+        picked: picked.as_deref(),
+        version,
+    };
+    let value = row_at(&scan, urn, micros)
+        .await?
         .ok_or_else(|| not_found(version))?;
-    let value = value(set_name, &plan, row, picked.as_deref());
     let resource = resource(reads, set_name, version)?;
     let names: Option<Vec<&str>> = picked
         .as_ref()
@@ -265,13 +290,19 @@ fn plan<'s>(
         None => Translated::default(),
     };
     let program = program(&filter, now()).map_err(|r| refusal(r, "$filter", version))?;
-    let terms = set
+    let terms: Vec<(&str, &Member, String)> = set
         .members
         .iter()
         .filter(|(_, m)| m.iri != OBSERVED_AT_IRI)
         .map(|(name, m)| (name.as_str(), m, mint(&mut filter.context, &m.iri)))
         .collect();
     let observed = mint(&mut filter.context, OBSERVED_AT_IRI);
+    let mut named = std::collections::HashSet::new();
+    let attrs = terms
+        .iter()
+        .filter(|(_, _, term)| named.insert(term.as_str()))
+        .map(|(_, _, term)| term.clone())
+        .collect();
     let bounds: Vec<(CompareOp, Bound)> = options
         .filter
         .as_ref()
@@ -310,6 +341,7 @@ fn plan<'s>(
         filter,
         program,
         terms,
+        attrs,
         observed,
         window,
         lower,
@@ -386,18 +418,123 @@ fn sort_keys<'s>(
     Ok((!natural).then_some(keys))
 }
 
-/// `a` against `b` by `keys`, then in the natural order.
-fn ordered(keys: &[(By<'_>, bool)], a: &Row, b: &Row) -> Ordering {
-    let by = |row: &Row, key: &By<'_>| -> Value {
-        match key {
-            By::Id => Value::from(row.urn.as_str()),
-            By::Observed => Value::from(row.micros),
-            By::Member(m, term) => served(&m.shape, default_instance(row.doc.get(term))).0,
+/// What one request's rows are built with.
+struct Scan<'p> {
+    reads: &'p Reads,
+    caller: &'p Caller,
+    plan: &'p Plan<'p>,
+    set_name: &'p str,
+    /// The members `$select` names.
+    picked: Option<&'p [String]>,
+    version: ODataVersion,
+}
+
+impl Scan<'_> {
+    /// Whether the residual keeps the row `axis` is at; refused when it is past its bounds.
+    fn keeps(&self, axis: &mut Axis<'_>) -> Result<bool, ODataErrorResponse> {
+        let Some(program) = &self.plan.program else {
+            return Ok(true);
+        };
+        let truth = program
+            .eval(axis.doc(self.version)?)
+            .map_err(|_| refusal(Refused::TooComplex, "$filter", self.version))?;
+        Ok(truth == Truth::True)
+    }
+
+    /// The row `axis` is at as its OData entity, and its bytes.
+    fn value(&self, axis: &mut Axis<'_>) -> Result<(EntityValue, usize), ODataErrorResponse> {
+        axis.hold(self.version)?;
+        let value = value(
+            self.set_name,
+            self.plan,
+            (axis.urn, axis.at, &axis.doc),
+            self.picked,
+        );
+        let bytes = size_of_row(&value);
+        Ok((value, bytes))
+    }
+}
+
+/// Rows built, holding their share of the broker's answer pool until they are written.
+struct Built {
+    values: Vec<EntityValue>,
+    charge: AnswerCharge,
+}
+
+impl Built {
+    fn new(reads: &Reads) -> Self {
+        Self {
+            values: Vec::new(),
+            charge: reads.view.answer_share(),
         }
-    };
+    }
+}
+
+/// Widens `charge` to `bytes`, `503` while the pool has no room.
+async fn charged(
+    charge: &mut AnswerCharge,
+    bytes: usize,
+    version: ODataVersion,
+) -> Result<(), ODataErrorResponse> {
+    charge
+        .grow(bytes, "odata")
+        .await
+        .map_err(|_| refused(StatusCode::SERVICE_UNAVAILABLE, version))
+}
+
+/// A row's bytes: its members' names and JSON, and its id twice (the member and the key).
+fn size_of_row(row: &EntityValue) -> usize {
+    struct Bytes(usize);
+    impl std::io::Write for Bytes {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(buf.len());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut bytes = Bytes(row.id.len().saturating_mul(2));
+    for (name, value) in &row.properties {
+        bytes.0 = bytes
+            .0
+            .saturating_add(name.len())
+            .saturating_add(std::mem::size_of::<(String, Value)>());
+        // Counting takes every byte: the write cannot fail.
+        let _ = serde_json::to_writer(&mut bytes, value);
+    }
+    bytes.0
+}
+
+/// Lets the runtime serve others: a walk is all CPU between two reads.
+async fn breathe() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            return std::task::Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
+    })
+    .await;
+}
+
+/// A row a whole read keeps, with what orders it.
+struct Candidate {
+    keys: Vec<Value>,
+    urn: String,
+    micros: i64,
+    value: EntityValue,
+    bytes: usize,
+}
+
+/// `a` against `b` by `keys`, then in the natural order.
+fn ordered(keys: &[(By<'_>, bool)], a: &Candidate, b: &Candidate) -> Ordering {
     keys.iter()
-        .map(|(key, descending)| {
-            let o = compare(Some(&by(a, key)), Some(&by(b, key)));
+        .zip(a.keys.iter().zip(&b.keys))
+        .map(|((_, descending), (a, b))| {
+            let o = compare(Some(a), Some(b));
             if *descending {
                 o.reverse()
             } else {
@@ -408,284 +545,627 @@ fn ordered(keys: &[(By<'_>, bool)], a: &Row, b: &Row) -> Ordering {
         .unwrap_or_else(|| a.urn.cmp(&b.urn).then(a.micros.cmp(&b.micros)))
 }
 
-/// Every row of the answer (of the one Entity `urn`): at most [`RESIDUAL_SCAN`] rows kept and
-/// [`WHOLE_ENTITIES`] Entities read, as a residual scan is bounded (ADR-0028), so a filter that
-/// keeps no row never walks the whole type.
+/// What a whole read answers: how many rows there are and the page of them.
+struct Whole {
+    total: u64,
+    built: Built,
+}
+
+fn too_many(detail: &str, version: ODataVersion) -> ODataErrorResponse {
+    ODataErrorResponse::new(
+        StatusCode::BAD_REQUEST,
+        "TooManyResults",
+        &format!(
+            "the history holds more than {detail}: narrow it with $filter on id or observedAt"
+        ),
+    )
+    .with_version(version)
+}
+
+/// The count of the whole answer and its rows `from..from + page`: at most [`RESIDUAL_SCAN`]
+/// rows counted and [`WHOLE_ENTITIES`] Entities read, as a residual scan is bounded (ADR-0028),
+/// so a filter that keeps no row never walks the whole type. A count builds no row; a sort
+/// keeps no more than twice the rows up to the page's end.
 async fn whole(
-    reads: &Reads,
-    caller: &Caller,
-    plan: &Plan<'_>,
-    urn: Option<&str>,
-    version: ODataVersion,
-) -> Result<Vec<Row>, ODataErrorResponse> {
-    let mut all = Vec::new();
+    scan: &Scan<'_>,
+    sort: Option<&[(By<'_>, bool)]>,
+    from: u64,
+    page: u64,
+) -> Result<Whole, ODataErrorResponse> {
+    let (reads, version) = (scan.reads, scan.version);
+    let end = from.saturating_add(page);
+    // a page that starts past every row an answer may count holds none
+    let last = usize::try_from(end)
+        .unwrap_or(usize::MAX)
+        .min(RESIDUAL_SCAN);
+    let most = reads.view.max_answer_bytes();
+    let mut built = Built::new(reads);
+    let mut kept: Vec<Candidate> = Vec::new();
+    let (mut total, mut held, mut walked) = (0u64, 0usize, 0usize);
     let mut offset = 0;
     loop {
-        let (batch, more) = batch(reads, caller, plan, urn, offset, version).await?;
-        all.extend(batch.into_iter().flatten());
-        offset = offset.saturating_add(BATCH);
-        let scanned = usize::try_from(offset).unwrap_or(usize::MAX);
-        if all.len() > RESIDUAL_SCAN || (more && scanned >= WHOLE_ENTITIES) {
-            return Err(ODataErrorResponse::new(
-                StatusCode::BAD_REQUEST,
-                "TooManyResults",
-                &format!(
-                    "the history holds more than the {RESIDUAL_SCAN} rows or {WHOLE_ENTITIES} Entities one count or sort may read: narrow it with $filter on id or observedAt"
-                ),
-            )
-            .with_version(version));
-        }
-        if !more {
-            return Ok(all);
-        }
-    }
-}
-
-/// One page in the natural order: Entities read [`BATCH`] at a time from the cursor's Entity
-/// offset, `skip` rows dropped first. The next link resumes at the batch the page ended in.
-async fn streamed(
-    reads: &Reads,
-    caller: &Caller,
-    plan: &Plan<'_>,
-    (cursor, mut skip, top, page): (u64, u64, Option<u64>, u64),
-    link: &(dyn Fn(u64, u64, Option<u64>) -> String + Sync),
-    version: ODataVersion,
-) -> Result<(Vec<Row>, Option<String>), ODataErrorResponse> {
-    let want = top.map_or(page, |top| top.min(page));
-    let mut out: Vec<Row> = Vec::new();
-    let mut offset = cursor;
-    for _ in 0..MAX_READS {
-        let (batch, more) = batch(reads, caller, plan, None, offset, version).await?;
-        let rows: Vec<Row> = batch.into_iter().flatten().collect();
-        let held = u64::try_from(rows.len()).unwrap_or(u64::MAX);
-        let start = skip;
-        let mut used = start;
-        for row in rows
-            .into_iter()
-            .skip(usize::try_from(start).unwrap_or(usize::MAX))
-        {
-            if u64::try_from(out.len()).unwrap_or(u64::MAX) >= want {
-                break;
+        let batch = Batch::read(scan, None, offset).await?;
+        let found = batch.entities(version)?;
+        let more = found.len() >= usize::try_from(BATCH).unwrap_or(usize::MAX);
+        for entity in &found {
+            breathe().await;
+            let mut axis = Axis::new(scan.plan, entity, version)?;
+            while axis.step() {
+                walked = walked.saturating_add(1);
+                if walked % YIELD_EVERY == 0 {
+                    breathe().await;
+                }
+                if !scan.keeps(&mut axis)? {
+                    continue;
+                }
+                let index = total;
+                total = total.saturating_add(1);
+                if total > u64::try_from(RESIDUAL_SCAN).unwrap_or(u64::MAX) {
+                    return Err(too_many(
+                        &format!("the {RESIDUAL_SCAN} rows one count or sort may read"),
+                        version,
+                    ));
+                }
+                let wanted = match sort {
+                    Some(_) => page > 0,
+                    None => (from..end).contains(&index),
+                };
+                if !wanted {
+                    continue;
+                }
+                let keys = sort_values(sort.unwrap_or_default(), &mut axis, version)?;
+                let (value, bytes) = scan.value(&mut axis)?;
+                held = held.saturating_add(bytes);
+                kept.push(Candidate {
+                    keys,
+                    urn: axis.urn.to_owned(),
+                    micros: axis.micros,
+                    value,
+                    bytes,
+                });
+                if kept.len() >= last.saturating_mul(2) || held > most {
+                    if let Some(keys) = sort {
+                        kept.sort_by(|a, b| ordered(keys, a, b));
+                        kept.truncate(last);
+                        held = kept.iter().map(|c| c.bytes).sum();
+                    }
+                }
+                if held > most {
+                    return Err(too_many(
+                        &format!("the {most} bytes one count or sort may hold"),
+                        version,
+                    ));
+                }
+                charged(&mut built.charge, held, version).await?;
             }
-            out.push(row);
-            used = used.saturating_add(1);
-        }
-        skip = skip.saturating_sub(held);
-        let served = u64::try_from(out.len()).unwrap_or(u64::MAX);
-        let left = top.map(|top| top.saturating_sub(served));
-        if left == Some(0) {
-            return Ok((out, None));
-        }
-        if served >= want {
-            let next = if used < held {
-                Some(link(offset, used, left))
-            } else {
-                more.then(|| link(offset.saturating_add(BATCH), 0, left))
-            };
-            return Ok((out, next));
-        }
-        if !more {
-            return Ok((out, None));
         }
         offset = offset.saturating_add(BATCH);
+        if !more {
+            break;
+        }
+        if usize::try_from(offset).unwrap_or(usize::MAX) >= WHOLE_ENTITIES {
+            return Err(too_many(
+                &format!("the {WHOLE_ENTITIES} Entities one count or sort may read"),
+                version,
+            ));
+        }
     }
-    let served = u64::try_from(out.len()).unwrap_or(u64::MAX);
-    let left = top.map(|top| top.saturating_sub(served));
-    Ok((out, Some(link(offset, skip, left))))
+    let mut skipped = 0;
+    if let Some(keys) = sort {
+        kept.sort_by(|a, b| ordered(keys, a, b));
+        skipped = usize::try_from(from).unwrap_or(usize::MAX);
+    }
+    built.values = kept
+        .into_iter()
+        .skip(skipped)
+        .take(usize::try_from(page).unwrap_or(usize::MAX))
+        .map(|c| c.value)
+        .collect();
+    Ok(Whole { total, built })
 }
 
-/// The rows of [`BATCH`] Entities from `offset` (or of the one `urn`), Entity by Entity, and
-/// whether more Entities may follow.
-async fn batch(
-    reads: &Reads,
-    caller: &Caller,
-    plan: &Plan<'_>,
-    urn: Option<&str>,
-    offset: u64,
+/// What `keys` read from the row `axis` is at.
+fn sort_values(
+    keys: &[(By<'_>, bool)],
+    axis: &mut Axis<'_>,
     version: ODataVersion,
-) -> Result<(Vec<Vec<Row>>, bool), ODataErrorResponse> {
-    if plan.empty {
-        return Ok((Vec::new(), false));
+) -> Result<Vec<Value>, ODataErrorResponse> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
     }
-    let attrs: Vec<&str> = plan
-        .terms
-        .iter()
-        .map(|(_, _, term)| term.as_str())
-        .collect();
-    let ids = urn
-        .map(|u| vec![u.to_owned()])
-        .or_else(|| plan.filter.ids.clone());
-    let read = |window: &str, last: usize, ids: Option<&[String]>, offset: u64| {
-        let mut target = format!(
-            "/ngsi-ld/v1/temporal/entities?type={}&{window}&lastN={last}&limit={BATCH}&offset={offset}",
-            encode(&plan.set.type_iri)
-        );
-        let _ = write!(target, "&attrs={}", encode(&attrs.join(",")));
-        if let Some(ids) = ids {
-            let _ = write!(target, "&id={}", encode(&ids.join(",")));
-        }
-        target
+    axis.hold(version)?;
+    let by = |key: &By<'_>| match key {
+        By::Id => Value::from(axis.urn),
+        By::Observed => Value::from(axis.micros),
+        By::Member(m, term) => served(&m.shape, default_instance(axis.doc.get(term.as_str()))).0,
     };
-    let target = read(&plan.window, INSTANCES, ids.as_deref(), offset);
-    let (mut entities, _) = run(
-        reads,
-        caller,
+    Ok(keys.iter().map(|(key, _)| by(key)).collect())
+}
+
+/// The row of the Entity `urn` at `micros`.
+async fn row_at(
+    scan: &Scan<'_>,
+    urn: &str,
+    micros: i64,
+) -> Result<Option<EntityValue>, ODataErrorResponse> {
+    let batch = Batch::read(scan, Some(urn), 0).await?;
+    for entity in &batch.entities(scan.version)? {
+        let mut axis = Axis::new(scan.plan, entity, scan.version)?;
+        while axis.step() {
+            if axis.micros == micros {
+                return Ok(Some(scan.value(&mut axis)?.0));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Where a page starts and how much it takes.
+#[derive(Debug, Clone, Copy)]
+struct Start {
+    /// The Entities before the page's first read.
+    offset: u64,
+    /// The rows of that read's Entities earlier pages went past, judged or not.
+    passed: u64,
+    /// The kept rows still to drop (`$skip`).
+    skip: u64,
+    top: Option<u64>,
+    page: u64,
+}
+
+impl Start {
+    /// The skip token of a page that starts here: the plain one at a read's first row, `3.`
+    /// inside a read's rows.
+    fn token(&self, digest: u64) -> String {
+        if self.passed == 0 {
+            return token(self.offset, self.skip, self.top, digest);
+        }
+        let top = self.top.map_or_else(|| "-".to_owned(), |t| t.to_string());
+        let (offset, passed, skip) = (self.offset, self.passed, self.skip);
+        format!("3.{offset}.{passed}.{skip}.{top}.{digest:016x}")
+    }
+}
+
+/// The page's [`Start`] from the request's options or its skip token. The token is no secret
+/// and grants nothing: every page reads through the view and its Policy again.
+fn start(
+    reads: &Reads,
+    options: &QueryOptions,
+    digest: u64,
+    headers: &HeaderMap,
+    version: ODataVersion,
+) -> Result<Start, ODataErrorResponse> {
+    let inside = options
+        .skiptoken
+        .as_deref()
+        .and_then(|text| text.strip_prefix("3."));
+    let Some(text) = inside else {
+        let (offset, skip, top, page) = position(reads, options, digest, headers, version)?;
+        return Ok(Start {
+            offset,
+            passed: 0,
+            skip,
+            top,
+            page,
+        });
+    };
+    if options.skip.is_some() || options.top.is_some() {
+        return Err(bad_token(version));
+    }
+    let (offset, passed, skip, top) =
+        read_inside(text, digest).ok_or_else(|| bad_token(version))?;
+    let resumed = QueryOptions {
+        skiptoken: None,
+        skip: Some(skip),
+        top,
+        ..options.clone()
+    };
+    let (_, skip, top, page) = position(reads, &resumed, digest, headers, version)?;
+    Ok(Start {
+        offset,
+        passed,
+        skip,
+        top,
+        page,
+    })
+}
+
+/// The fields of a `3.` token of this request.
+fn read_inside(text: &str, digest: u64) -> Option<(u64, u64, u64, Option<u64>)> {
+    let parts: Vec<&str> = text.split('.').collect();
+    let [offset, passed, skip, top, tag] = parts.as_slice() else {
+        return None;
+    };
+    if *tag != format!("{digest:016x}") {
+        return None;
+    }
+    let top = match *top {
+        "-" => None,
+        n => Some(n.parse().ok()?),
+    };
+    Some((
+        offset.parse().ok()?,
+        passed.parse().ok()?,
+        skip.parse().ok()?,
+        top,
+    ))
+}
+
+/// One page in the natural order: Entities read [`BATCH`] at a time from the start's Entity
+/// offset, `skip` kept rows dropped first. It ends at the rows it wants, at [`PAGE_JUDGED`]
+/// rows judged, at [`PAGE_BYTES`] or at [`MAX_READS`], and the next link resumes at the row it
+/// stopped before.
+async fn streamed(
+    scan: &Scan<'_>,
+    start: Start,
+) -> Result<(Built, Option<Start>), ODataErrorResponse> {
+    let (reads, version) = (scan.reads, scan.version);
+    let want = start.top.map_or(start.page, |top| top.min(start.page));
+    let most = PAGE_BYTES.min(reads.view.max_answer_bytes() / 2);
+    let mut built = Built::new(reads);
+    let mut at = start;
+    let (mut judged, mut walked, mut held) = (0usize, 0usize, 0usize);
+    for _ in 0..MAX_READS {
+        let batch = Batch::read(scan, None, at.offset).await?;
+        let found = batch.entities(version)?;
+        if at.top == Some(0) {
+            return Ok((built, None));
+        }
+        let mut row = 0u64;
+        for entity in &found {
+            breathe().await;
+            let mut axis = Axis::new(scan.plan, entity, version)?;
+            while axis.step() {
+                let here = row;
+                row = row.saturating_add(1);
+                walked = walked.saturating_add(1);
+                if walked % YIELD_EVERY == 0 {
+                    breathe().await;
+                }
+                if here < at.passed {
+                    continue;
+                }
+                let stop = Start { passed: here, ..at };
+                if scan.plan.program.is_some() {
+                    if judged >= PAGE_JUDGED {
+                        return Ok((built, Some(stop)));
+                    }
+                    judged = judged.saturating_add(1);
+                }
+                if !scan.keeps(&mut axis)? {
+                    continue;
+                }
+                if at.skip > 0 {
+                    at.skip = at.skip.saturating_sub(1);
+                    continue;
+                }
+                let full = u64::try_from(built.values.len()).unwrap_or(u64::MAX) >= want;
+                if full {
+                    return Ok((built, Some(stop)));
+                }
+                let (value, bytes) = scan.value(&mut axis)?;
+                // one row always goes out, or the next link would name this page again
+                if !built.values.is_empty() && held.saturating_add(bytes) > most {
+                    return Ok((built, Some(stop)));
+                }
+                held = held.saturating_add(bytes);
+                charged(&mut built.charge, held, version).await?;
+                built.values.push(value);
+                at.top = at.top.map(|top| top.saturating_sub(1));
+                if at.top == Some(0) {
+                    return Ok((built, None));
+                }
+            }
+        }
+        if found.len() < usize::try_from(BATCH).unwrap_or(usize::MAX) {
+            return Ok((built, None));
+        }
+        at.offset = at.offset.saturating_add(BATCH);
+        at.passed = 0;
+        if u64::try_from(built.values.len()).unwrap_or(u64::MAX) >= want {
+            return Ok((built, Some(at)));
+        }
+    }
+    Ok((built, Some(at)))
+}
+
+/// The temporal answers of [`BATCH`] Entities, held in the answer pool while rows are built
+/// from them: their instances, and past a lower bound each one's last before it.
+struct Batch {
+    window: Option<HeldAnswer>,
+    earlier: Option<HeldAnswer>,
+}
+
+/// One Entity of a [`Batch`], unparsed.
+struct Found<'a> {
+    urn: String,
+    window: &'a RawValue,
+    earlier: Option<&'a RawValue>,
+}
+
+impl Batch {
+    /// The Entities from `offset`, or the one `urn`.
+    async fn read(
+        scan: &Scan<'_>,
+        urn: Option<&str>,
+        offset: u64,
+    ) -> Result<Self, ODataErrorResponse> {
+        let plan = scan.plan;
+        if plan.empty {
+            return Ok(Self {
+                window: None,
+                earlier: None,
+            });
+        }
+        let ids = urn
+            .map(|u| vec![u.to_owned()])
+            .or_else(|| plan.filter.ids.clone());
+        let window = temporal(scan, &plan.window, INSTANCES, ids.as_deref(), offset).await?;
+        let mut earlier = None;
+        if let Some((_, lower)) = &plan.lower {
+            let held: Vec<String> = elements(window.as_ref(), scan.version)?
+                .into_iter()
+                .filter_map(id_of)
+                .collect();
+            if !held.is_empty() {
+                let before = format!("timerel=before&timeAt={}", encode(lower));
+                earlier = temporal(scan, &before, 1, Some(&held), 0).await?;
+            }
+        }
+        Ok(Self { window, earlier })
+    }
+
+    fn entities(&self, version: ODataVersion) -> Result<Vec<Found<'_>>, ODataErrorResponse> {
+        let earlier: Vec<(String, &RawValue)> = elements(self.earlier.as_ref(), version)?
+            .into_iter()
+            .filter_map(|e| Some((id_of(e)?, e)))
+            .collect();
+        Ok(elements(self.window.as_ref(), version)?
+            .into_iter()
+            .map(|window| {
+                let urn = id_of(window).unwrap_or_default();
+                let earlier = earlier.iter().find(|(id, _)| *id == urn).map(|(_, e)| *e);
+                Found {
+                    urn,
+                    window,
+                    earlier,
+                }
+            })
+            .collect())
+    }
+}
+
+/// One Temporal Query of the set's Attributes over `window`, `last` instances of each.
+async fn temporal(
+    scan: &Scan<'_>,
+    window: &str,
+    last: usize,
+    ids: Option<&[String]>,
+    offset: u64,
+) -> Result<Option<HeldAnswer>, ODataErrorResponse> {
+    let plan = scan.plan;
+    let mut target = format!(
+        "/ngsi-ld/v1/temporal/entities?type={}&{window}&lastN={last}&limit={BATCH}&offset={offset}",
+        encode(&plan.set.type_iri)
+    );
+    let _ = write!(target, "&attrs={}", encode(&plan.attrs.join(",")));
+    if let Some(ids) = ids {
+        let _ = write!(target, "&id={}", encode(&ids.join(",")));
+    }
+    let (answer, _) = answered(
+        scan.reads,
+        scan.caller,
         OperationId::TemporalQuery,
-        target,
-        &plan.filter,
-        version,
+        get(target, &plan.filter),
+        scan.version,
     )
     .await?;
-    let more = urn.is_none() && entities.len() >= usize::try_from(BATCH).unwrap_or(usize::MAX);
-    if let (Some((_, lower)), false) = (&plan.lower, entities.is_empty()) {
-        let held: Vec<String> = entities
-            .iter()
-            .filter_map(|e| e.get("id")?.as_str().map(str::to_owned))
-            .collect();
-        let before = format!("timerel=before&timeAt={}", encode(lower));
-        let target = read(&before, 1, Some(&held), 0);
-        let (earlier, _) = run(
-            reads,
-            caller,
-            OperationId::TemporalQuery,
-            target,
-            &plan.filter,
-            version,
-        )
-        .await?;
-        for e in &mut entities {
-            let id = e.get("id").and_then(Value::as_str).map(str::to_owned);
-            let Some(old) = earlier
-                .iter()
-                .find(|o| o.get("id").and_then(Value::as_str) == id.as_deref())
-            else {
-                continue;
-            };
-            merge(e, old, &attrs);
-        }
-    }
-    let rows = entities
-        .iter()
-        .map(|e| rows(plan, e, version))
-        .collect::<Result<_, _>>()?;
-    Ok((rows, more))
+    Ok(answer)
 }
 
-/// `e` with the instances of each of `attrs` that `old` holds added.
-fn merge(e: &mut Value, old: &Value, attrs: &[&str]) {
-    for term in attrs {
-        let earlier = instances_of(old.get(*term));
-        if earlier.is_empty() {
-            continue;
-        }
-        let mut now: Vec<Value> = instances_of(e.get(*term)).into_iter().cloned().collect();
-        now.extend(earlier.into_iter().cloned());
-        let list = Value::Array(now);
-        e.as_object_mut()
-            .into_iter()
-            .for_each(|obj| drop(obj.insert((*term).to_owned(), list.clone())));
+/// The elements of an answer's array, each still its JSON.
+fn elements(
+    answer: Option<&HeldAnswer>,
+    version: ODataVersion,
+) -> Result<Vec<&RawValue>, ODataErrorResponse> {
+    answer.map_or(Ok(Vec::new()), |bytes| {
+        serde_json::from_slice(bytes)
+            .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))
+    })
+}
+
+fn id_of(entity: &RawValue) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Id {
+        id: String,
     }
+    serde_json::from_str::<Id>(entity.get()).ok().map(|e| e.id)
 }
 
 /// The instances of a temporal Attribute: a list, or one object unlisted.
-fn instances_of(attr: Option<&Value>) -> Vec<&Value> {
-    match attr {
-        Some(Value::Array(list)) => list.iter().collect(),
-        Some(one @ Value::Object(_)) => vec![one],
+fn instances_of(attr: &RawValue) -> Vec<&RawValue> {
+    match attr.get().as_bytes().first() {
+        Some(b'[') => serde_json::from_str(attr.get()).unwrap_or_default(),
+        Some(b'{') => vec![attr],
         _ => Vec::new(),
     }
 }
 
-/// An instance's `observedAt` in microseconds and as stored, and the instance.
-type Timed<'v> = (i64, &'v str, &'v Value);
-
-/// The default instances (no `datasetId`) of one Attribute with their `observedAt`, oldest
-/// first; an instance without `observedAt` has no place in a history.
-fn timed(attr: Option<&Value>) -> Vec<Timed<'_>> {
-    let mut out: Vec<Timed<'_>> = instances_of(attr)
-        .into_iter()
-        .filter(|i| i.get("datasetId").is_none())
-        .filter_map(|i| {
-            let at = i.get("observedAt")?.as_str()?;
-            Some((DateTime::parse(at)?.unix_micros(), at, i))
-        })
-        .collect();
-    out.sort_by_key(|(t, _, _)| *t);
-    out
+/// What places an instance on the axis.
+#[derive(serde::Deserialize)]
+struct Head<'a> {
+    #[serde(rename = "observedAt", borrow)]
+    at: Option<&'a str>,
+    #[serde(rename = "datasetId")]
+    dataset: Option<IgnoredAny>,
 }
 
-/// The rows of one temporal Entity, oldest first: one per distinct `observedAt` at or past the
-/// lower bound, kept when the residual holds; refused when the residual is past its bounds.
-fn rows(plan: &Plan<'_>, e: &Value, version: ODataVersion) -> Result<Vec<Row>, ODataErrorResponse> {
-    let urn = e.get("id").and_then(Value::as_str).unwrap_or_default();
-    let attrs: Vec<(&str, Vec<Timed<'_>>)> = plan
-        .terms
-        .iter()
-        .map(|(_, _, term)| (term.as_str(), timed(e.get(term.as_str()))))
-        .collect();
-    let mut times: Vec<(i64, &str)> = attrs
-        .iter()
-        .flat_map(|(_, list)| list.iter().map(|(t, text, _)| (*t, *text)))
-        .filter(|(t, _)| plan.lower.as_ref().is_none_or(|(l, _)| t >= l))
-        .collect();
-    times.sort_by_key(|(t, _)| *t);
-    times.dedup_by_key(|(t, _)| *t);
-    let mut out = Vec::new();
-    for (at, text) in times {
-        let mut doc = Map::new();
-        doc.insert("id".into(), Value::from(urn));
-        doc.insert("type".into(), Value::from(plan.set.type_iri.as_str()));
-        for (term, list) in &attrs {
-            if let Some((_, _, instance)) = list.iter().rev().find(|(t, _, _)| *t <= at) {
-                doc.insert((*term).to_owned(), (*instance).clone());
+/// A default instance (no `datasetId`) on the axis; an instance without `observedAt` has no
+/// place in a history.
+struct Timed<'a> {
+    micros: i64,
+    at: &'a str,
+    slot: usize,
+    instance: &'a RawValue,
+}
+
+fn timed(instance: &RawValue, slot: usize) -> Option<Timed<'_>> {
+    let head: Head<'_> = serde_json::from_str(instance.get()).ok()?;
+    if head.dataset.is_some() {
+        return None;
+    }
+    let at = head.at?;
+    Some(Timed {
+        micros: DateTime::parse(at)?.unix_micros(),
+        at,
+        slot,
+        instance,
+    })
+}
+
+/// One Entity's rows, oldest first: one merged time axis over its Attributes' instances, sorted
+/// once (O(I log I) for I instances), and the instance of each Attribute valid where it stands.
+/// A step moves references; an instance is parsed when a row that holds it is judged or served.
+struct Axis<'a> {
+    plan: &'a Plan<'a>,
+    urn: &'a str,
+    times: Vec<Timed<'a>>,
+    next: usize,
+    /// The row it stands at.
+    micros: i64,
+    at: &'a str,
+    /// Per Attribute, the instance valid at the row, and the one `doc` holds.
+    valid: Vec<Option<&'a RawValue>>,
+    parsed: Vec<Option<&'a RawValue>>,
+    /// The normalized document the residual and the members read.
+    doc: Map<String, Value>,
+    judged: Value,
+}
+
+impl<'a> Axis<'a> {
+    fn new(
+        plan: &'a Plan<'a>,
+        entity: &'a Found<'a>,
+        version: ODataVersion,
+    ) -> Result<Self, ODataErrorResponse> {
+        let members = |raw: &'a RawValue| {
+            serde_json::from_str::<HashMap<String, &'a RawValue>>(raw.get())
+                .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))
+        };
+        let window = members(entity.window)?;
+        let earlier = entity.earlier.map(members).transpose()?.unwrap_or_default();
+        let mut times: Vec<Timed<'a>> = Vec::new();
+        for (slot, term) in plan.attrs.iter().enumerate() {
+            for list in [window.get(term), earlier.get(term)].into_iter().flatten() {
+                times.extend(
+                    instances_of(list)
+                        .into_iter()
+                        .filter_map(|i| timed(i, slot)),
+                );
             }
+        }
+        // Stable: of one instant the members' order and the answer's stand, so the row is
+        // spelled as the first and holds, per Attribute, the last.
+        times.sort_by_key(|t| t.micros);
+        Ok(Self {
+            plan,
+            urn: &entity.urn,
+            times,
+            next: 0,
+            micros: 0,
+            at: "",
+            valid: vec![None; plan.attrs.len()],
+            parsed: vec![None; plan.attrs.len()],
+            doc: Map::new(),
+            judged: Value::Null,
+        })
+    }
+
+    /// Moves to the next distinct `observedAt` at or past the lower bound; false past the last.
+    fn step(&mut self) -> bool {
+        while let Some(first) = self.times.get(self.next) {
+            let (micros, at) = (first.micros, first.at);
+            while let Some(t) = self.times.get(self.next).filter(|t| t.micros == micros) {
+                if let Some(valid) = self.valid.get_mut(t.slot) {
+                    *valid = Some(t.instance);
+                }
+                self.next = self.next.saturating_add(1);
+            }
+            if self.plan.lower.as_ref().is_none_or(|(l, _)| micros >= *l) {
+                (self.micros, self.at) = (micros, at);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Brings `doc` to the row: only the instances that changed since are parsed.
+    fn hold(&mut self, version: ODataVersion) -> Result<(), ODataErrorResponse> {
+        if let Value::Object(doc) = std::mem::take(&mut self.judged) {
+            self.doc = doc;
+        }
+        let changed = self
+            .plan
+            .attrs
+            .iter()
+            .zip(&self.valid)
+            .zip(&mut self.parsed);
+        for ((term, valid), parsed) in changed {
+            let Some(instance) = *valid else { continue };
+            if parsed.is_some_and(|held| std::ptr::eq(held, instance)) {
+                continue;
+            }
+            let value: Value = serde_json::from_str(instance.get())
+                .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))?;
+            self.doc.insert(term.clone(), value);
+            *parsed = Some(instance);
+        }
+        Ok(())
+    }
+
+    /// The row as the document the residual judges.
+    fn doc(&mut self, version: ODataVersion) -> Result<&Value, ODataErrorResponse> {
+        self.hold(version)?;
+        let doc = &mut self.doc;
+        if !doc.contains_key("id") {
+            doc.insert("id".into(), Value::from(self.urn));
+            doc.insert("type".into(), Value::from(self.plan.set.type_iri.as_str()));
         }
         doc.insert(
-            plan.observed.clone(),
-            json!({"type": "Property", "value": {"@type": "DateTime", "@value": text}}),
+            self.plan.observed.clone(),
+            json!({"type": "Property", "value": {"@type": "DateTime", "@value": self.at}}),
         );
-        let doc = Value::Object(doc);
-        let keep = match &plan.program {
-            None => true,
-            Some(p) => {
-                p.eval(&doc)
-                    .map_err(|_| refusal(Refused::TooComplex, "$filter", version))?
-                    == Truth::True
-            }
-        };
-        if let (true, Value::Object(doc)) = (keep, doc) {
-            out.push(Row {
-                urn: urn.to_owned(),
-                at: text.to_owned(),
-                micros: at,
-                doc,
-            });
-        }
+        self.judged = Value::Object(std::mem::take(doc));
+        Ok(&self.judged)
     }
-    Ok(out)
 }
 
 /// A row as its OData entity: the key, then each member (the `picked` ones) as the current
 /// state serves it.
-fn value(set_name: &str, plan: &Plan<'_>, row: &Row, picked: Option<&[String]>) -> EntityValue {
+fn value(
+    set_name: &str,
+    plan: &Plan<'_>,
+    (urn, at, doc): (&str, &str, &Map<String, Value>),
+    picked: Option<&[String]>,
+) -> EntityValue {
     let wanted = |name: &str| picked.is_none_or(|p| p.iter().any(|n| n == name));
     let mut properties = vec![
-        ("id".to_owned(), Value::from(row.urn.as_str())),
-        ("observedAt".to_owned(), Value::from(row.at.as_str())),
+        ("id".to_owned(), Value::from(urn)),
+        ("observedAt".to_owned(), Value::from(at)),
     ];
     for (name, member, term) in plan.terms.iter().filter(|(name, _, _)| wanted(name)) {
-        let instance = default_instance(row.doc.get(term.as_str()));
+        let instance = default_instance(doc.get(term.as_str()));
         let (value, _) = served(&member.shape, instance);
         properties.push(((*name).to_owned(), value));
     }
     let key = Key::Compound(vec![
         (
             "id".into(),
-            KeyValue::Literal(Literal::String(row.urn.clone())),
+            KeyValue::Literal(Literal::String(urn.to_owned())),
         ),
         (
             "observedAt".into(),
-            KeyValue::Literal(Literal::DateTimeOffset(row.at.clone())),
+            KeyValue::Literal(Literal::DateTimeOffset(at.to_owned())),
         ),
     ]);
     EntityValue {
@@ -698,33 +1178,179 @@ fn value(set_name: &str, plan: &Plan<'_>, row: &Row, picked: Option<&[String]>) 
 mod tests {
     use super::*;
 
+    fn raw(value: &Value) -> Box<RawValue> {
+        serde_json::value::to_raw_value(value).unwrap_or_default()
+    }
+
     #[test]
     fn an_unlisted_instance_is_one_and_only_timed_default_instances_count() {
-        let one = json!({"type": "Property", "value": 4, "observedAt": "2026-10-21T10:00:00Z"});
-        assert_eq!(instances_of(Some(&one)).len(), 1);
-        assert_eq!(instances_of(Some(&json!(3))).len(), 0);
-        let list = json!([
+        let one =
+            raw(&json!({"type": "Property", "value": 4, "observedAt": "2026-10-21T10:00:00Z"}));
+        assert_eq!(instances_of(&one).len(), 1);
+        assert_eq!(instances_of(&raw(&json!(3))).len(), 0);
+        let list = raw(&json!([
             {"type": "Property", "value": 1, "datasetId": "urn:x", "observedAt": "2026-10-21T10:00:00Z"},
             {"type": "Property", "value": 2},
             {"type": "Property", "value": 3, "observedAt": "2026-10-21T11:00:00+01:00"},
             {"type": "Property", "value": 5, "observedAt": "2026-10-21T09:00:00Z"}
-        ]);
-        let got: Vec<&str> = timed(Some(&list))
+        ]));
+        let mut got: Vec<Timed<'_>> = instances_of(&list)
             .into_iter()
-            .map(|(_, at, _)| at)
+            .filter_map(|i| timed(i, 0))
             .collect();
-        assert_eq!(got, ["2026-10-21T09:00:00Z", "2026-10-21T11:00:00+01:00"]);
+        got.sort_by_key(|t| t.micros);
+        let at: Vec<&str> = got.iter().map(|t| t.at).collect();
+        assert_eq!(at, ["2026-10-21T09:00:00Z", "2026-10-21T11:00:00+01:00"]);
+    }
+
+    /// A row as the test compares it: its spelling, time and document.
+    type Seen = (String, i64, Value);
+    /// An instance the eager build placed: its time, spelling and document.
+    type Placed = (i64, String, Value);
+
+    /// The rows as `rows` built them before T-7518, eagerly and by scanning every list for
+    /// every time: the reference the axis answers like.
+    fn eager(plan: &Plan<'_>, window: &Value, earlier: &Value) -> Vec<Seen> {
+        let list = |e: &Value, term: &str| match e.get(term) {
+            Some(Value::Array(list)) => list.clone(),
+            Some(one @ Value::Object(_)) => vec![one.clone()],
+            _ => Vec::new(),
+        };
+        let attrs: Vec<(&str, Vec<Placed>)> = plan
+            .terms
+            .iter()
+            .map(|(_, _, term)| {
+                let mut out: Vec<Placed> = list(window, term)
+                    .into_iter()
+                    .chain(list(earlier, term))
+                    .filter(|i| i.get("datasetId").is_none())
+                    .filter_map(|i| {
+                        let at = i.get("observedAt")?.as_str()?.to_owned();
+                        Some((DateTime::parse(&at)?.unix_micros(), at, i))
+                    })
+                    .collect();
+                out.sort_by_key(|(t, _, _)| *t);
+                (term.as_str(), out)
+            })
+            .collect();
+        let mut times: Vec<(i64, String)> = attrs
+            .iter()
+            .flat_map(|(_, list)| list.iter().map(|(t, text, _)| (*t, text.clone())))
+            .filter(|(t, _)| plan.lower.as_ref().is_none_or(|(l, _)| t >= l))
+            .collect();
+        times.sort_by_key(|(t, _)| *t);
+        times.dedup_by_key(|(t, _)| *t);
+        times
+            .into_iter()
+            .map(|(at, text)| {
+                let mut doc = Map::new();
+                for (term, list) in &attrs {
+                    if let Some((_, _, instance)) = list.iter().rev().find(|(t, _, _)| *t <= at) {
+                        doc.insert((*term).to_owned(), instance.clone());
+                    }
+                }
+                (text, at, Value::Object(doc))
+            })
+            .collect()
+    }
+
+    proptest::proptest! {
+        /// Ties, two spellings of one instant, datasets, unlisted instances, two members of
+        /// one term and a lower bound with earlier instances: each row of the axis is the
+        /// eager one, whether every row or only some are parsed.
+        #[test]
+        fn the_axis_answers_the_rows_the_eager_build_did(
+            stored in proptest::collection::vec(
+                (0usize..4, 0i64..8, 0u8..3, proptest::bool::ANY, proptest::bool::ANY), 0..24),
+            lower in proptest::option::of(0i64..8),
+            every in 1usize..4,
+        ) {
+            let member = Member {
+                iri: String::new(),
+                shape: crate::edm::Shape::Geo,
+                list: false,
+                json: false,
+                untyped: false,
+                written: crate::edm::Written::Always,
+            };
+            let set = Set {
+                type_iri: String::new(),
+                members: std::collections::BTreeMap::new(),
+                identifier: None,
+                writable: crate::edm::Writable::default(),
+                references: std::collections::BTreeMap::new(),
+                bound: std::collections::BTreeMap::new(),
+                output: None,
+            };
+            let term = |n: usize| format!("t{}", n.min(2));
+            let plan = Plan {
+                set: &set,
+                filter: Translated::default(),
+                program: None,
+                terms: (0..4).map(|n| ("m", &member, term(n))).collect(),
+                attrs: (0..3).map(term).collect(),
+                observed: "observed".to_owned(),
+                window: String::new(),
+                lower: lower.map(|l| (l.saturating_mul(3_600_000_000), String::new())),
+                empty: false,
+            };
+            let (mut window, mut earlier) = (json!({"id": "urn:a"}), json!({"id": "urn:a"}));
+            for (n, (attr, hour, kind, offset, before)) in stored.iter().enumerate() {
+                let at = if *offset {
+                    format!("1970-01-01T{:02}:00:00+01:00", hour.saturating_add(1))
+                } else {
+                    format!("1970-01-01T{hour:02}:00:00Z")
+                };
+                let mut i = json!({"type": "Property", "value": n, "observedAt": at});
+                if let (1, Some(fields)) = (*kind, i.as_object_mut()) {
+                    fields.insert("datasetId".into(), json!("urn:d"));
+                }
+                let side = if *before { &mut earlier } else { &mut window };
+                if let Some(members) = side.as_object_mut() {
+                    let held = members.entry(term(*attr)).or_insert_with(|| json!([]));
+                    if let Some(list) = held.as_array_mut() {
+                        list.push(i);
+                    }
+                }
+            }
+            let (w, e) = (raw(&window), raw(&earlier));
+            let found = Found { urn: "urn:a".to_owned(), window: &w, earlier: Some(&e) };
+            let version = ODataVersion::V4_01;
+            let want = eager(&plan, &window, &earlier);
+            let Ok(mut axis) = Axis::new(&plan, &found, version) else {
+                return Err(proptest::test_runner::TestCaseError::fail("axis"));
+            };
+            let mut row = 0usize;
+            while axis.step() {
+                let Some((text, micros, doc)) = want.get(row) else {
+                    return Err(proptest::test_runner::TestCaseError::fail("a row too many"));
+                };
+                proptest::prop_assert_eq!((axis.at, axis.micros), (text.as_str(), *micros));
+                if row.is_multiple_of(every) {
+                    proptest::prop_assert!(axis.hold(version).is_ok());
+                    proptest::prop_assert_eq!(&Value::Object(axis.doc.clone()), doc);
+                }
+                row = row.saturating_add(1);
+            }
+            proptest::prop_assert_eq!(row, want.len());
+        }
     }
 
     #[test]
-    fn merge_adds_the_earlier_instances_of_each_attribute() {
-        let mut e = json!({"id": "urn:a", "t0": {"type": "Property", "value": 2, "observedAt": "2026-10-21T10:00:00Z"}});
-        let old = json!({"id": "urn:a", "t0": [{"type": "Property", "value": 1, "observedAt": "2026-10-21T09:00:00Z"}]});
-        merge(&mut e, &old, &["t0", "t1"]);
-        assert_eq!(timed(e.get("t0")).len(), 2);
-        assert!(
-            e.get("t1").is_none(),
-            "an attribute with no earlier instance stays absent"
-        );
+    fn a_token_inside_a_read_answers_its_own_request_alone() {
+        let at = Start {
+            offset: 8,
+            passed: 41,
+            skip: 3,
+            top: Some(9),
+            page: 100,
+        };
+        let text = at.token(7);
+        let inside = text.strip_prefix("3.").unwrap_or_default();
+        assert_eq!(read_inside(inside, 7), Some((8, 41, 3, Some(9))));
+        assert_eq!(read_inside(inside, 8), None, "another request's token");
+        assert_eq!(read_inside(&format!("{inside}.1"), 7), None);
+        let first = Start { passed: 0, ..at };
+        assert_eq!(first.token(7), token(8, 3, Some(9), 7));
     }
 }

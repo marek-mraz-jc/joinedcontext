@@ -451,6 +451,13 @@ impl Ops {
         antares_api::admin_auth::tenant_door(&self.state, named, headers, true).await
     }
 
+    /// An empty share of the broker's buffered-answer pool, for what a surface
+    /// builds from the answers it read (T-7518).
+    #[must_use]
+    pub fn answer_share(&self) -> bounds::AnswerCharge {
+        self.state.answer_pool.share()
+    }
+
     /// An answer's body read whole, up to the broker's `max_answer_bytes`
     /// ([`bounds::MAX_ANSWER_BYTES`]): the page size bounds the Entities, not the
     /// bytes, and every concurrent request holds its buffer.
@@ -703,6 +710,18 @@ impl ViewOps {
     #[must_use]
     pub fn mapping(&self) -> Option<&mapping::Mapping> {
         self.mapping.as_deref()
+    }
+
+    /// [`Ops::answer_share`] for what is built from this view's answers.
+    #[must_use]
+    pub fn answer_share(&self) -> bounds::AnswerCharge {
+        self.inner.answer_share()
+    }
+
+    /// The most bytes one answer of this view may hold ([`Ops::max_answer_bytes`]).
+    #[must_use]
+    pub fn max_answer_bytes(&self) -> usize {
+        self.inner.max_answer_bytes()
     }
 
     /// [`Ops::read_answer`] for an answer of this view.
