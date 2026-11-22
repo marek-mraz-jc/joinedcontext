@@ -414,6 +414,7 @@ export function VisualizationsSection({
   /** What a role's column is for, in the chart picked, or what to do when there is none. */
   const roleHint = (role: Role) => {
     if (edited && source === "temporal" && role === "y") return t("endpoints.page.visualizations.hint.measureKept");
+    if (edited && fixedAxis(role)) return t("endpoints.page.visualizations.hint.axisEdited");
     if (offered(role).length === 0) return t("endpoints.page.visualizations.hint.noColumns");
     if (template === "heatmap") {
       const grid = { x: "gridX", y: "gridY", color: "gridColor", facet: "facet" }[role];
@@ -447,7 +448,7 @@ export function VisualizationsSection({
       {awaiting ? (
         <>
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
-            <span className="text-sm font-medium text-fg">
+            <span className="text-body font-semibold text-fg max-sm:text-display">
               {t("endpoints.page.visualizations.awaiting", { chart: titleOf(awaiting) })}
             </span>
             <Badge mono>{awaiting.name}</Badge>
@@ -472,7 +473,7 @@ export function VisualizationsSection({
                 one.name === blocking?.name ? "border-danger" : "border-border"
               }`}
             >
-              <span className="text-sm font-medium text-fg">
+              <span className="text-body font-semibold text-fg max-sm:text-display">
                 {titleOf(one)}
               </span>
               <Badge mono>{one.name}</Badge>
@@ -624,7 +625,7 @@ export function VisualizationsSection({
                 help={roleHint(role)}
               >
                 {fixedAxis(role) ? (
-                  <output id={`viz-${role}`} className={`py-1.5 text-body ${edited ? "text-fg-subtle line-through" : "text-fg"}`}>
+                  <output id={`viz-${role}`} className={`py-1.5 text-body ${edited ? "text-fg-muted" : "text-fg"}`}>
                     {t("endpoints.page.visualizations.readingTime")}
                   </output>
                 ) : (
@@ -737,7 +738,9 @@ export function VisualizationsSection({
                   "granularity",
                   t(
                     temporal.granularity === "raw"
-                      ? "endpoints.page.visualizations.hint.raw"
+                      ? temporal.controls
+                        ? "endpoints.page.visualizations.hint.rawShown"
+                        : "endpoints.page.visualizations.hint.raw"
                       : "endpoints.page.visualizations.hint.granularity",
                   ),
                 )}

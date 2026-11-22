@@ -1933,7 +1933,7 @@
           "time": "Kedy sa meralo, napr. 14:00. Graf v čase má tento čas vždy na tejto osi.",
           "x": "Stĺpec pozdĺž spodku grafu, napr. dateObserved pre čas.",
           "bars": "Stĺpec, ktorý pomenuje každý pruh, napr. „name“ pre jeden pruh na stanicu.",
-          "y": "Číslo, ktoré graf kreslí, napr. no2.",
+          "y": "Číslo, ktoré graf kreslí, napr. no2 pre oxid dusičitý.",
           "color": "Nepovinné. Farba pre každú hodnotu, napr. „name“ pre jednu farbu na stanicu.",
           "facet": "Malý graf pre každú hodnotu, napr. „name“ pre jeden panel na stanicu.",
           "spec": "Nepovinné. Nechajte prázdne a graf sa zapíše z polí vyššie. Ak ho upravíte, zostaňte pri údajoch tohto endpointu, napr. {example}.",
@@ -1945,7 +1945,9 @@
           "gridShape": "Mriežka zafarbená číslom, napr. stanice podľa dní.",
           "panelsShape": "Malý graf pre každú vec, napr. panel na stanicu.",
           "detailShape": "Celé obdobie so zväčšenou časťou, napr. jeden deň v mesiaci.",
-          "measureKept": "Graf stále číta tento stĺpec, napr. no2, aj s vašou vlastnou špecifikáciou."
+          "measureKept": "Graf stále číta tento stĺpec, napr. no2, aj s vašou vlastnou špecifikáciou.",
+          "axisEdited": "Určuje ju vaša špecifikácia v časti Pokročilé, napr. čas každého merania.",
+          "rawShown": "Kreslí každé zapísané meranie, napr. každých desať minút. Čitateľ, ktorý si vyberie hodiny alebo dni, dostane priemer."
         },
         "templates": {
           "bar": "Stĺpcový graf",
@@ -1963,7 +1965,7 @@
         "removeFirst": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny navrhnite svoj graf znova.",
         "removeBlocking": "Odstrániť „{chart}“",
         "advanced": "Pokročilé: upraviť špecifikáciu grafu",
-        "type": "Typ entity",
+        "type": "Typ údajov",
         "readingTime": "Čas merania",
         "chooseColumn": "Vyberte stĺpec",
         "removeThenRemove": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny znova odstráňte „{removed}“.",

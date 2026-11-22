@@ -1933,7 +1933,7 @@
           "time": "When each reading was taken, e.g. 14:00. A chart over time always has it on this axis.",
           "x": "The column along the bottom of the chart, e.g. dateObserved for time.",
           "bars": "The column that names each bar, e.g. “name” for one bar per station.",
-          "y": "The number the chart draws, e.g. no2.",
+          "y": "The number the chart draws, e.g. no2 for nitrogen dioxide.",
           "color": "Optional. A colour for each value, e.g. “name” for one colour per station.",
           "facet": "A small chart for each value, e.g. “name” for one panel per station.",
           "spec": "Optional. Leave it empty and the chart is written from the fields above. If you edit it, keep to this endpoint's data, e.g. {example}.",
@@ -1945,7 +1945,9 @@
           "gridShape": "A grid coloured by a number, e.g. stations against days.",
           "panelsShape": "One small chart for each thing, e.g. a panel per station.",
           "detailShape": "The whole period with a part enlarged, e.g. one day within a month.",
-          "measureKept": "The chart still reads this column, e.g. no2, even with your own specification."
+          "measureKept": "The chart still reads this column, e.g. no2, even with your own specification.",
+          "axisEdited": "Set by your specification under Advanced, e.g. the time of each reading.",
+          "rawShown": "Draws every recorded reading, e.g. one every ten minutes. A reader who picks hourly or daily gets the average."
         },
         "templates": {
           "bar": "Bar chart",
@@ -1963,7 +1965,7 @@
         "removeFirst": "Correct or remove “{chart}” first. Once that change is approved, propose your chart again.",
         "removeBlocking": "Remove “{chart}”",
         "advanced": "Advanced: edit the chart's specification",
-        "type": "Entity type",
+        "type": "Data type",
         "readingTime": "Time of the reading",
         "chooseColumn": "Choose a column",
         "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",

@@ -1933,7 +1933,7 @@
           "time": "Wann gemessen wurde, z. B. 14:00. Ein Zeitverlauf hat diese Zeit immer auf dieser Achse.",
           "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
           "bars": "Die Spalte, die jeden Balken benennt, z. B. „name“ für einen Balken je Station.",
-          "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
+          "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2 für Stickstoffdioxid.",
           "color": "Optional. Eine Farbe je Wert, z. B. „name“ für eine Farbe je Station.",
           "facet": "Ein kleines Diagramm je Wert, z. B. „name“ für ein Feld je Station.",
           "spec": "Optional. Leer lassen, dann wird das Diagramm aus den Feldern oben geschrieben. Bleiben Sie beim Bearbeiten bei den Daten dieses Endpoints, z. B. {example}.",
@@ -1945,7 +1945,9 @@
           "gridShape": "Ein nach einer Zahl gefärbtes Raster, z. B. Stationen nach Tagen.",
           "panelsShape": "Ein kleines Diagramm je Sache, z. B. ein Feld je Station.",
           "detailShape": "Der ganze Zeitraum mit vergrößertem Teil, z. B. ein Tag im Monat.",
-          "measureKept": "Das Diagramm liest weiterhin diese Spalte, z. B. no2, auch mit Ihrer eigenen Spezifikation."
+          "measureKept": "Das Diagramm liest weiterhin diese Spalte, z. B. no2, auch mit Ihrer eigenen Spezifikation.",
+          "axisEdited": "Ihre Spezifikation unter Erweitert legt sie fest, z. B. die Zeit jeder Messung.",
+          "rawShown": "Zeichnet jede Messung, z. B. alle zehn Minuten. Wer stündlich oder täglich wählt, erhält den Mittelwert."
         },
         "templates": {
           "bar": "Balkendiagramm",
@@ -1963,7 +1965,7 @@
         "removeFirst": "Korrigieren oder entfernen Sie zuerst „{chart}“. Schlagen Sie Ihr Diagramm nach der Genehmigung erneut vor.",
         "removeBlocking": "„{chart}“ entfernen",
         "advanced": "Erweitert: Spezifikation des Diagramms bearbeiten",
-        "type": "Entitätstyp",
+        "type": "Datentyp",
         "readingTime": "Zeit der Messung",
         "chooseColumn": "Spalte wählen",
         "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",

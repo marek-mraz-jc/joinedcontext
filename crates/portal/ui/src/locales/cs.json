@@ -1933,7 +1933,7 @@
           "time": "Kdy se měřilo, např. 14:00. Graf v čase má tento čas vždy na této ose.",
           "x": "Sloupec podél spodku grafu, např. dateObserved pro čas.",
           "bars": "Sloupec, který pojmenuje každý pruh, např. „name“ pro jeden pruh na stanici.",
-          "y": "Číslo, které graf kreslí, např. no2.",
+          "y": "Číslo, které graf kreslí, např. no2 pro oxid dusičitý.",
           "color": "Nepovinné. Barva pro každou hodnotu, např. „name“ pro jednu barvu na stanici.",
           "facet": "Malý graf pro každou hodnotu, např. „name“ pro jeden panel na stanici.",
           "spec": "Nepovinné. Nechte prázdné a graf se zapíše z polí výše. Pokud jej upravíte, zůstaňte u dat tohoto endpointu, např. {example}.",
@@ -1945,7 +1945,9 @@
           "gridShape": "Mřížka obarvená číslem, např. stanice podle dnů.",
           "panelsShape": "Malý graf pro každou věc, např. panel na stanici.",
           "detailShape": "Celé období se zvětšenou částí, např. jeden den v měsíci.",
-          "measureKept": "Graf stále čte tento sloupec, např. no2, i s vaší vlastní specifikací."
+          "measureKept": "Graf stále čte tento sloupec, např. no2, i s vaší vlastní specifikací.",
+          "axisEdited": "Určuje ji vaše specifikace v části Pokročilé, např. čas každého měření.",
+          "rawShown": "Kreslí každé zapsané měření, např. každých deset minut. Čtenář, který si vybere hodiny nebo dny, dostane průměr."
         },
         "templates": {
           "bar": "Sloupcový graf",
@@ -1963,7 +1965,7 @@
         "removeFirst": "Nejdřív opravte nebo odeberte „{chart}“. Po schválení této změny navrhněte svůj graf znovu.",
         "removeBlocking": "Odebrat „{chart}“",
         "advanced": "Pokročilé: upravit specifikaci grafu",
-        "type": "Typ entity",
+        "type": "Typ dat",
         "readingTime": "Čas měření",
         "chooseColumn": "Vyberte sloupec",
         "removeThenRemove": "Nejdřív opravte nebo odeberte „{chart}“. Po schválení této změny znovu odeberte „{removed}“.",
