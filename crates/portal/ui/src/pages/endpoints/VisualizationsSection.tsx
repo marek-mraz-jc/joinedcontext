@@ -274,19 +274,24 @@ export function VisualizationsSection({
   return (
     <div className="space-y-3" data-testid="visualizations">
       {awaiting ? (
-        <p className="text-body text-fg">
-          {t("endpoints.page.visualizations.awaiting", { chart: titleOf(awaiting) })}
-          {awaiting.data.source === "temporal" ? (
-            <span className="block">
-              {t(
-                awaiting.data.controls === false
-                  ? "endpoints.page.visualizations.lockedTo"
-                  : "endpoints.page.visualizations.startsWith",
-                { settings: settingsOf(awaiting.data) },
-              )}
-            </span>
-          ) : null}
-        </p>
+        <>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
+            <span className="text-sm font-medium text-fg">{titleOf(awaiting)}</span>
+            <Badge mono>{awaiting.name}</Badge>
+            <Badge>{t("endpoints.page.visualizations.awaiting")}</Badge>
+            {awaiting.data.source === "temporal" ? (
+              <p className="w-full text-body text-fg">
+                {t(
+                  awaiting.data.controls === false
+                    ? "endpoints.page.visualizations.lockedTo"
+                    : "endpoints.page.visualizations.startsWith",
+                  { settings: settingsOf(awaiting.data) },
+                )}
+              </p>
+            ) : null}
+          </div>
+          {change ? <ChangeNotice change={change} project={project} /> : null}
+        </>
       ) : null}
       {list.length === 0 ? (
         awaiting ? null : (
@@ -457,6 +462,16 @@ export function VisualizationsSection({
               </Field>
             ))}
           </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            disabled={!complete(template, columns)}
+            disabledReason={t("endpoints.page.visualizations.pickRoles")}
+            onClick={() => void fill()}
+          >
+            {t("endpoints.page.visualizations.fill")}
+          </Button>
           {sourceOf(template, served) === "temporal" ? (
             <fieldset
               className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
@@ -578,16 +593,6 @@ export function VisualizationsSection({
               )}
             </fieldset>
           ) : null}
-          <Button
-            size="sm"
-            variant="secondary"
-            className="mt-3"
-            disabled={!complete(template, columns)}
-            disabledReason={t("endpoints.page.visualizations.pickRoles")}
-            onClick={() => void fill()}
-          >
-            {t("endpoints.page.visualizations.fill")}
-          </Button>
           <Field
             id="viz-spec"
             label={t("endpoints.page.visualizations.spec")}
@@ -618,7 +623,7 @@ export function VisualizationsSection({
           </Button>
         </details>
       ) : null}
-      {change ? <ChangeNotice change={change} project={project} /> : null}
+      {change && !awaiting ? <ChangeNotice change={change} project={project} /> : null}
     </div>
   );
 }

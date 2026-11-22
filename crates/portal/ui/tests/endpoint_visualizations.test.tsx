@@ -251,9 +251,9 @@ describe("VisualizationsSection", () => {
   }
 
   it.each([
-    ["last", "range", "The check did not allow 24 hours as the range. Pick 7 days or 31 days."],
-    ["aggrPeriod", "granularity", "The check did not allow Hourly as the granularity. Pick Raw readings or Daily."],
-    ["aggrMethod", "method", "The check did not allow Average as the method. Pick Minimum or Maximum."],
+    ["last", "range", "24 hours can't be used as the range here. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "Hourly can't be used as the granularity here. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "Average can't be used as the method here. Pick Minimum or Maximum."],
     ["controls", "controls", V.fix.controls],
   ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
     mount(endpoint({ visualizations: [BAR] }), true);
@@ -349,7 +349,7 @@ describe("VisualizationsSection", () => {
     expect(screen.getByLabelText(V.controls)).toBeChecked();
     expect(screen.getByLabelText(V.range)).toHaveValue("day");
     expect(screen.getByText(V.add).closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText(/“New” is proposed/)).toBeVisible();
+    expect(screen.getByText(V.awaiting).parentElement).toHaveTextContent("New");
     expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
   });
 

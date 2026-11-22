@@ -1852,7 +1852,7 @@
         "title": "Grafy pri datasete",
         "lead": "Grafy, ktoré katalóg otvorených dát ukazuje pri datasete tohto endpointu, z vlastných dát endpointu.",
         "none": "Zatiaľ žiadne grafy.",
-        "awaiting": "Graf „{chart}“ je navrhnutý. Zobrazí sa tu po schválení zmeny.",
+        "awaiting": "Čaká na schválenie",
         "overTime": "V čase",
         "add": "Pridať graf",
         "name": "Názov",
@@ -1870,13 +1870,13 @@
         "incomplete": "Zadajte grafu názov, nadpis, popis a špecifikáciu.",
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
-        "toolbar": "Nastavenia grafu pre čitateľov",
-        "toolbarHidden": "Pevný pre čitateľov",
-        "startsWith": "Čitatelia začínajú s: {settings}",
-        "lockedTo": "Čitatelia vidia iba: {settings}",
+        "toolbar": "Čo uvidia čitatelia",
+        "toolbarHidden": "Bez možnosti zmeny",
+        "startsWith": "Predvolene sa zobrazí: {settings}",
+        "lockedTo": "Vždy sa zobrazí: {settings}",
         "refusedOwn": "Nič sa nenavrhlo. Opravte „{fields}“ vyššie a navrhnite znova.",
-        "refusedOther": "Nič sa nenavrhlo: graf „{chart}“, ktorý už je na tomto endpointe, má nepovolené nastavenie ({fields}). Najprv odstráňte „{chart}“ a skúste znova.",
-        "refusedRemoval": "Graf „{removed}“ sa neodstránil, lebo „{chart}“ má nepovolené nastavenie ({fields}). Najprv odstráňte „{chart}“ a skúste znova.",
+        "refusedOther": "Nič sa nenavrhlo, lebo graf „{chart}“ na tomto endpointe má nepovolené nastavenie: {fields}. Odstráňte „{chart}“, dajte zmenu schváliť a skúste znova.",
+        "refusedRemoval": "Graf „{removed}“ sa neodstránil, lebo „{chart}“ má nepovolené nastavenie: {fields}. Odstráňte „{chart}“, dajte zmenu schváliť a skúste znova.",
         "days": "{count, plural, one {# deň} few {# dni} other {# dní}}",
         "fixed": {
           "range": "Obdobie",
@@ -1884,16 +1884,16 @@
           "method": "Výpočet"
         },
         "invalid": {
-          "range": "Obdobie „{value}“ nie je povolené: maximum je 31 dní. Na zmenu odstráňte graf a pridajte ho znova.",
+          "range": "Obdobie „{value}“ nie je povolené: maximum je 31 dní. Na opravu odstráňte graf a pridajte ho znova s kratším obdobím.",
           "granularity": "Táto podrobnosť nie je povolená. Potrebuje periódu a výpočet.",
           "method": "Tento výpočet nie je povolený. Pridajte graf znova s priemerom, minimom alebo maximom.",
           "controls": "Tento prepínač panela nie je povolený. Môže byť len zapnutý alebo vypnutý."
         },
         "showField": "Prejsť na pole",
         "fix": {
-          "range": "Kontrola nepovolila obdobie „{value}“. Vyberte {choices}.",
-          "granularity": "Kontrola nepovolila podrobnosť „{value}“. Vyberte {choices}.",
-          "method": "Kontrola nepovolila výpočet „{value}“. Vyberte {choices}.",
+          "range": "Obdobie „{value}“ sa tu nedá použiť. Vyberte {choices}.",
+          "granularity": "Podrobnosť „{value}“ sa tu nedá použiť. Vyberte {choices}.",
+          "method": "Výpočet „{value}“ sa tu nedá použiť. Vyberte {choices}.",
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova."
         },
         "range": "Predvolené obdobie",
@@ -1917,11 +1917,11 @@
         "controls": "Zobraziť čitateľom panel nastavení",
         "hint": {
           "range": "Čo čitateľ uvidí po otvorení grafu, napr. 7 dní: posledný týždeň do teraz.",
-          "granularity": "Surové hodnoty kreslia každé meranie; po hodinách a po dňoch jeden bod za hodinu alebo deň, napr. po dňoch pre 31 dní.",
+          "granularity": "Surové hodnoty kreslia každé meranie; po hodinách a po dňoch jeden bod za hodinu alebo deň, napr. po dňoch pre dlhé obdobie.",
           "method": "Ako sa merania jednej hodiny alebo dňa zlúčia do bodu, napr. maximum pre dennú špičku.",
           "controls": "Čitatelia si môžu tieto nastavenia sami zmeniť, napr. vybrať iné obdobie. Zrušte zaškrtnutie pre pevný graf.",
-          "locked": "Čitatelia graf nemôžu meniť. Vždy vidia: {settings}. Zaškrtnite, ak si majú sami vybrať napr. iné obdobie.",
-          "raw": "Kreslí sa každé meranie, napr. každá päťminútová hodnota, preto výpočet netreba.",
+          "locked": "Čitatelia graf nemôžu meniť. Vždy vidia: {settings}. Zaškrtnite políčko, aby mohli meniť tieto nastavenia, napr. obdobie.",
+          "raw": "Kreslí sa každé meranie tak, ako bolo zapísané, napr. každé meranie dňa, preto výpočet netreba.",
           "fixedRange": "Obdobie, ktoré čitatelia vždy vidia, napr. 7 dní: posledný týždeň do teraz."
         },
         "templates": {

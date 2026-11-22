@@ -1852,7 +1852,7 @@
         "title": "Charts on the dataset",
         "lead": "The charts the open-data catalogue shows on this endpoint's dataset, drawn from the endpoint's own data.",
         "none": "No charts yet.",
-        "awaiting": "“{chart}” is proposed. It is listed here once its change is approved.",
+        "awaiting": "Waiting for approval",
         "overTime": "Over time",
         "add": "Add a chart",
         "name": "Name",
@@ -1870,13 +1870,13 @@
         "incomplete": "Give the chart a name, a title, a description and a specification.",
         "propose": "Propose the chart",
         "remove": "Remove",
-        "toolbar": "Reader's chart settings",
+        "toolbar": "What readers see",
         "toolbarHidden": "Fixed for readers",
         "startsWith": "Readers start with: {settings}",
         "lockedTo": "Readers see only: {settings}",
         "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
-        "refusedOther": "Nothing was proposed: “{chart}”, already on this endpoint, has a setting that is not allowed ({fields}). Remove “{chart}” first, then try again.",
-        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed ({fields}). Remove “{chart}” first, then try again.",
+        "refusedOther": "Nothing was proposed, because “{chart}” on this endpoint has a setting that is not allowed: {fields}. Remove “{chart}” and have that change approved, then try again.",
+        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed: {fields}. Remove “{chart}” and have that change approved, then try again.",
         "days": "{count, plural, one {# day} other {# days}}",
         "fixed": {
           "range": "Range",
@@ -1884,16 +1884,16 @@
           "method": "Method"
         },
         "invalid": {
-          "range": "{value} is not an allowed range: the maximum is 31 days. To change it, remove this chart and add it again.",
+          "range": "{value} is not an allowed range: the maximum is 31 days. To fix it, remove this chart and add it again with a shorter range.",
           "granularity": "This granularity is not allowed. It needs a period and a method.",
           "method": "This method is not allowed. Add the chart again with average, minimum or maximum.",
           "controls": "This toolbar switch is not allowed. It is either on or off."
         },
         "showField": "Go to the field",
         "fix": {
-          "range": "The check did not allow {value} as the range. Pick {choices}.",
-          "granularity": "The check did not allow {value} as the granularity. Pick {choices}.",
-          "method": "The check did not allow {value} as the method. Pick {choices}.",
+          "range": "{value} can't be used as the range here. Pick {choices}.",
+          "granularity": "{value} can't be used as the granularity here. Pick {choices}.",
+          "method": "{value} can't be used as the method here. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again."
         },
         "range": "Default range",
@@ -1917,11 +1917,11 @@
         "controls": "Show the toolbar to readers",
         "hint": {
           "range": "What a reader sees on opening the chart, e.g. 7 days: the last week up to now.",
-          "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for 31 days.",
+          "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for a long range.",
           "method": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
           "controls": "Readers can change these settings themselves, e.g. pick another range. Untick it for a fixed chart.",
-          "locked": "Readers cannot change this chart. They always see: {settings}. Tick it to let them choose, e.g. another range.",
-          "raw": "Every reading is drawn, e.g. each five-minute value, so no method is needed.",
+          "locked": "Readers cannot change this chart. They always see: {settings}. Tick the box to let them change these settings, e.g. the range.",
+          "raw": "Every reading is drawn as recorded, e.g. each measurement of the day, so no method is needed.",
           "fixedRange": "The period readers always see, e.g. 7 days: the last week up to now."
         },
         "templates": {

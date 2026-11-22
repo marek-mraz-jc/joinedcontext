@@ -147,6 +147,8 @@ for (const width of [1440, 400]) {
     await expect.poll(() => s.puts.length).toBe(2);
     expect(s.puts[1].body).toMatchObject({ spec: { catalog: { visualizations: [CHART] } } });
     await expect(page.getByText("chg-1").first()).toBeVisible();
+    await expect(section.getByText("Waiting for approval")).toBeVisible();
+    await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-proposed-${width}.png`) });
   });
 
@@ -171,7 +173,7 @@ for (const width of [1440, 400]) {
     await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/The check did not allow 31 days as the range. Pick 24 hours or 7 days/);
+    await expect(range).toHaveAccessibleDescription(/31 days can't be used as the range here. Pick 24 hours or 7 days/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
