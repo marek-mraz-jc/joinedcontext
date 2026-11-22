@@ -303,10 +303,19 @@ async fn a_request_without_an_organization_is_refused_on_every_route_of_one() {
         state.with_server_admin("admin", ADMIN_PASSWORD).unwrap()
     });
     let admin = admin_basic();
-    for auth in [None, Some(admin.as_str())] {
+    // Nobody is asked to sign in; a verified caller is told the header is missing, never that
+    // its credential is bad.
+    for (auth, want) in [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(admin.as_str()), StatusCode::BAD_REQUEST),
+    ] {
         for (method, uri) in ORG_ROUTES {
             let (st, body) = w.send(request(method, uri, auth, None)).await;
-            assert_eq!(st, StatusCode::UNAUTHORIZED, "{method} {uri}: {body}");
+            assert_eq!(st, want, "{method} {uri}: {body}");
+            assert!(
+                body.to_string().contains("X-Grafana-Org-Id"),
+                "{method} {uri}"
+            );
             assert!(!body.to_string().contains("Main Org."), "{method} {uri}");
         }
     }
@@ -337,7 +346,7 @@ async fn the_only_organization_of_a_verified_caller_is_theirs_and_several_must_b
         req
     };
     let (st, body) = w.send(both(None)).await;
-    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     assert!(body.to_string().contains("X-Grafana-Org-Id"), "{body}");
     let (st, body) = w.send(both(Some(&ORG.to_string()))).await;
     assert_eq!(st, StatusCode::OK, "{body}");

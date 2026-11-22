@@ -680,15 +680,19 @@ pub(crate) async fn caller(
 /// Builds the [`RequestCtx`] of a request that works inside one Organization.
 ///
 /// # Errors
-/// 401 when the request names no Organization and its caller has not exactly one; otherwise as
-/// the Organization header is refused (404) or the directory fails.
+/// When the request names no Organization and its caller has not exactly one: 401 to a caller
+/// who is nobody, 400 to a verified one (its credential is fine, a 401 would say otherwise).
+/// Otherwise as the Organization header is refused (404) or the directory fails.
 pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> CrResult<RequestCtx> {
     let (subject, org) = caller(state, headers).await?;
-    let org = org.ok_or_else(|| {
-        CrError::Unauthorized(
-            "name the Organization in X-Grafana-Org-Id: the request carries none".into(),
-        )
-    })?;
+    let Some(org) = org else {
+        let missing = "name the Organization in X-Grafana-Org-Id: the request carries none";
+        return Err(if subject.is_anonymous() {
+            CrError::Unauthorized(missing.into())
+        } else {
+            CrError::BadRequest(missing.into())
+        });
+    };
     Ok(state.ctx_in(subject, org))
 }
 
