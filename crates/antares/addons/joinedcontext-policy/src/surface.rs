@@ -319,6 +319,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_process_engine_is_one_and_the_surface_names_its_routes() {
+        let engine = JoinedcontextPolicy::process();
+        assert!(Arc::ptr_eq(&engine, &JoinedcontextPolicy::process()));
+        let info = Access::new(engine).version_info();
+        assert_eq!(info["routes"].as_array().map(Vec::len), Some(4), "{info}");
+        assert!(
+            info.to_string().contains("/x/views/{view}/access/check"),
+            "{info}"
+        );
+    }
+
+    #[test]
     fn the_first_served_representation_wins_and_anything_else_is_authzen() {
         for (accept, want) in [
             (None, Representation::AuthZen),
