@@ -319,8 +319,7 @@ pub(crate) fn next_project(
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more
 /// often than sqlx's 10 min default, so all five stayed open all day, ~19 MiB of Postgres each.
 ///
-/// A connection cut off mid-statement gives its slot back by `jc_pool::options`' release rule
-/// (T-7494, T-7499).
+/// A connection cut off mid-statement gives its slot back (`jc_pool::options`, T-7494, T-7510).
 fn pool_options() -> PgPoolOptions {
     jc_pool::options::<sqlx::Postgres>()
         .max_connections(5)
