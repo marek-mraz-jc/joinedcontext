@@ -72,10 +72,10 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
         .await
         .expect("RLS must be enforced at boot");
 
-    let inst = InstallationId::new();
-    let instance = InstanceId::new();
-    let org_a = OrgId::new();
-    let org_b = OrgId::new();
+    let inst = InstallationId::generate();
+    let instance = InstanceId::generate();
+    let org_a = OrgId::generate();
+    let org_b = OrgId::generate();
     let now = TimestampTz::now();
 
     // Seed organizations `a` and `b` holding dashboards with the same uid (`jc-portal`),
@@ -360,7 +360,9 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
     // Quota enforcement check (§5.3)
     store
         .set_quotas(
+            inst,
             org_a,
+            instance,
             OrgQuotas {
                 max_dashboards: 1,
                 ..OrgQuotas::default()

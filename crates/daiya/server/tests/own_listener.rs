@@ -127,10 +127,14 @@ async fn app(own: SocketAddr, root: &Scratch) -> (DaiyaState, Router) {
 }
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let mut req = Request::builder().method(method).uri(uri).header(
-        "authorization",
-        format!("Basic {}", B64.encode(format!("{ADMIN}:{PASSWORD}"))),
-    );
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-grafana-org-id", "1")
+        .header(
+            "authorization",
+            format!("Basic {}", B64.encode(format!("{ADMIN}:{PASSWORD}"))),
+        );
     let body = match body {
         Some(b) => {
             req = req.header("content-type", "application/json");
@@ -380,6 +384,7 @@ async fn call_as_person(app: &Router, uri: &str, token: &str) -> (StatusCode, Va
     let req = Request::builder()
         .method("GET")
         .uri(uri)
+        .header("x-grafana-org-id", "1")
         .header(
             "authorization",
             format!("Basic {}", B64.encode(format!("{ADMIN}:{PASSWORD}"))),

@@ -29,8 +29,12 @@ async fn a_count_and_a_page_of_1000_dashboards_read_one_page() {
         return;
     };
     let db = connect_test_database(&url).await.expect("database");
-    let (installation, org, instance) = (InstallationId::new(), OrgId::new(), InstanceId::new());
-    let other = OrgId::new();
+    let (installation, org, instance) = (
+        InstallationId::generate(),
+        OrgId::generate(),
+        InstanceId::generate(),
+    );
+    let other = OrgId::generate();
     let now = jc_time::TimestampTz::now();
     db.app
         .upsert_dashboard(

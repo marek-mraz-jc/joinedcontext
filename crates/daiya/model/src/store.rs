@@ -6,7 +6,7 @@ use crate::entities::{
     ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
 };
 use crate::error::CrResult;
-use crate::ids::{InstallationId, OrgId};
+use crate::ids::{InstallationId, InstanceId, OrgId};
 use crate::limits::OrgQuotas;
 use crate::rows::{RowPage, RowQuery};
 use std::future::Future;
@@ -66,7 +66,13 @@ pub trait DaiyaStore: Send + Sync {
 
     // Quotas
     fn get_quotas(&self, org_id: OrgId) -> StoreFuture<'_, OrgQuotas>;
-    fn set_quotas(&self, org_id: OrgId, quotas: OrgQuotas) -> StoreFuture<'_, ()>;
+    fn set_quotas(
+        &self,
+        installation: InstallationId,
+        org_id: OrgId,
+        instance: InstanceId,
+        quotas: OrgQuotas,
+    ) -> StoreFuture<'_, ()>;
 
     // Folders
     fn list_folders(&self, org_id: OrgId) -> StoreFuture<'_, Vec<FolderRecord>>;
@@ -143,7 +149,11 @@ pub trait DaiyaStore: Send + Sync {
     fn read_rows(&self, org_id: OrgId, query: RowQuery) -> StoreFuture<'_, RowPage>;
 
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>>;
-    fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()>;
+    fn insert_import_report(
+        &self,
+        installation: InstallationId,
+        report: ImportReportRecord,
+    ) -> StoreFuture<'_, ()>;
 
     // Plans and Apply (R2, §7.3)
     /// Keeps `plan` (a repeated `(org_id, digest)` renews its creator and expiry) and drops the

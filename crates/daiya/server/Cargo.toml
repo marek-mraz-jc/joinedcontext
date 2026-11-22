@@ -15,7 +15,6 @@ clap = { version = "4", features = ["derive"] }
 daiya-api = { path = "../api" }
 daiya-expr = { path = "../expr" }
 daiya-import = { path = "../import" }
-daiya-mcp = { path = "../mcp" }
 daiya-model = { path = "../model" }
 daiya-query = { path = "../query" }
 daiya-store-memory = { path = "../store-memory" }

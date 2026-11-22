@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{World, dashboard, prometheus, world};
+use common::{World, endpoint_dashboard, gateway, world_beside};
 use daiya_api::{PublicCaller, PublicRateLimiter};
 use http::StatusCode;
 use serde_json::{Value, json};
@@ -14,14 +14,14 @@ use std::sync::Arc;
 
 /// A dashboard with a `$job` variable (options `edge`, `core`), a range of one hour and a
 /// panel whose saved target names it.
-fn templated(uid: &str, ds: &str) -> Value {
-    let mut d = dashboard(uid, ds);
+fn templated(uid: &str) -> Value {
+    let mut d = endpoint_dashboard(uid);
     d["templating"] = json!({ "list": [{
         "name": "job", "type": "custom",
         "current": { "value": "edge", "text": "edge" },
         "options": [{ "value": "edge", "text": "edge" }, { "value": "core", "text": "core" }]
     }]});
-    d["panels"][0]["targets"][0]["expr"] = json!("up{job=\"$job\"}");
+    d["panels"][0]["targets"][0]["customQuery"] = json!("job==\"$job\"");
     d["panels"][0]["transformations"] = json!([{ "id": "organize", "options": {} }]);
     d["panels"].as_array_mut().unwrap().push(json!({
         "id": 3, "type": "stat", "title": "Empty",
@@ -31,10 +31,9 @@ fn templated(uid: &str, ds: &str) -> Value {
 }
 
 async fn published(time_selection: bool) -> (World, String) {
-    let w = world();
-    let (url, _) = prometheus().await;
-    w.add_prometheus("prom", &url).await;
-    w.add_dashboard(templated("pub", "prom"), None).await;
+    let (url, _) = gateway().await;
+    let w = world_beside(&url).await;
+    w.add_dashboard(templated("pub"), None).await;
     let created = w
         .ok(
             "POST",
@@ -48,8 +47,8 @@ async fn published(time_selection: bool) -> (World, String) {
 
 #[tokio::test]
 async fn approvers_manage_the_opt_in_record() {
-    let w = world();
-    w.add_dashboard(dashboard("d", "prom"), None).await;
+    let w = world_beside(&gateway().await.0).await;
+    w.add_dashboard(endpoint_dashboard("d"), None).await;
 
     // Off by default; the raw token comes back once.
     let created = w
@@ -104,12 +103,12 @@ async fn approvers_manage_the_opt_in_record() {
             "/api/dashboards/uid/d/public-dashboards/pd-1",
             Some(json!({
                 "isEnabled": true, "timeSelectionEnabled": true, "annotationsEnabled": true,
-                "showQueryText": true, "share": "email"
+                "showQueryText": true, "share": "public"
             })),
         )
         .await;
     assert_eq!(updated["isEnabled"], true);
-    assert_eq!(updated["share"], "email");
+    assert_eq!(updated["share"], "public");
     assert_eq!(updated["showQueryText"], true);
     assert!(updated.get("accessToken").is_none(), "{updated}");
     assert_eq!(updated["uid"], "pd-1");
@@ -198,8 +197,8 @@ async fn the_anonymous_view_is_sanitized_and_answers_404_for_any_bad_token() {
     assert_eq!(view["meta"]["publicDashboardEnabled"], true);
     assert_eq!(view["dashboard"]["timepicker"]["hidden"], true);
     let text = view.to_string();
-    assert!(!text.contains("\"prom\""), "no datasource uid: {text}");
-    assert!(!text.contains("up{"), "no query text: {text}");
+    assert!(!text.contains("\"air\""), "no datasource uid: {text}");
+    assert!(!text.contains("job=="), "no query text: {text}");
     assert!(view["dashboard"].get("id").is_none());
 
     for bad in ["short", &"z".repeat(64), &"0".repeat(64)] {
@@ -240,8 +239,8 @@ async fn the_anonymous_view_is_sanitized_and_answers_404_for_any_bad_token() {
 /// only: no datasource and no query text.
 #[tokio::test]
 async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
-    let w = world();
-    let mut d = templated("vars", "prom");
+    let w = world_beside(&gateway().await.0).await;
+    let mut d = templated("vars");
     d["templating"]["list"].as_array_mut().unwrap().push(json!({
         "name": "inst", "type": "query",
         "datasource": { "type": "prometheus", "uid": "prom" },
@@ -272,7 +271,7 @@ async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
         .await;
     assert_eq!(st, StatusCode::OK, "{view}");
     let text = view.to_string();
-    for leaked in ["\"prom\"", "label_values", "changes("] {
+    for leaked in ["\"air\"", "\"prom\"", "label_values", "changes("] {
         assert!(!text.contains(leaked), "{leaked}: {text}");
     }
     assert_eq!(
@@ -289,8 +288,8 @@ async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
 /// panel references and unknown members of a panel, a target or a variable never reach it.
 #[tokio::test]
 async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
-    let w = world();
-    let mut d = templated("listed", "prom");
+    let w = world_beside(&gateway().await.0).await;
+    let mut d = templated("listed");
     d["links"] =
         json!([{ "title": "Ops", "type": "link", "url": "https://ops.internal.example/a" }]);
     d["internalNote"] = json!("note-kept-from-viewers");
@@ -359,10 +358,10 @@ async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
 /// links of its dashboards: a later dashboard of the same uid answers no old link.
 #[tokio::test]
 async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
-    let w = world();
+    let w = world_beside(&gateway().await.0).await;
     w.add_folder("f", "Folder").await;
-    w.add_dashboard(dashboard("a", "prom"), Some("f")).await;
-    w.add_dashboard(dashboard("b", "prom"), None).await;
+    w.add_dashboard(endpoint_dashboard("a"), Some("f")).await;
+    w.add_dashboard(endpoint_dashboard("b"), None).await;
     let created = w
         .ok(
             "POST",
@@ -390,7 +389,7 @@ async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
         .call("DELETE", "/api/folders/f", Some("admin"), None)
         .await;
     assert_eq!(st, StatusCode::OK, "{body}");
-    w.add_dashboard(dashboard("a", "prom"), None).await;
+    w.add_dashboard(endpoint_dashboard("a"), None).await;
     let (st, _) = w.call("GET", &view, None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (_, versions) = w
@@ -420,8 +419,8 @@ async fn query_text_is_shown_only_when_the_owner_allows_it() {
             None,
         )
         .await;
-    assert!(view.to_string().contains("up{"), "{view}");
-    assert!(!view.to_string().contains("\"prom\""), "{view}");
+    assert!(view.to_string().contains("job=="), "{view}");
+    assert!(!view.to_string().contains("\"air\""), "{view}");
     assert_eq!(view["dashboard"]["timepicker"]["hidden"], false);
 }
 
@@ -530,10 +529,9 @@ async fn panel_queries_run_only_the_saved_targets() {
 
 #[tokio::test]
 async fn a_repeated_query_is_served_from_the_public_cache() {
-    let w = world();
-    let (url, seen) = prometheus().await;
-    w.add_prometheus("prom", &url).await;
-    let mut d = dashboard("cached", "prom");
+    let (url, seen) = gateway().await;
+    let w = world_beside(&url).await;
+    let mut d = endpoint_dashboard("cached");
     d["time"] = json!({ "from": "1700000000000", "to": "1700000600000" });
     w.add_dashboard(d, None).await;
     let created = w
@@ -563,12 +561,31 @@ async fn a_repeated_query_is_served_from_the_public_cache() {
         Some(json!({ "showQueryText": true })),
     )
     .await;
-    let (_, shown) = w.call("POST", &uri, None, Some(json!({}))).await;
-    assert_ne!(first, shown, "query text shown is another answer");
+    let source_hits = || {
+        let stats = w
+            .state
+            .query_cache
+            .stats_for_org(common::ORG, daiya_model::InstanceId::from_u128(1));
+        stats
+            .iter()
+            .find(|s| s.datasource_uid == "air")
+            .map_or(0, |s| s.hits)
+    };
+    let before = source_hits();
+    let (st, _) = w.call("POST", &uri, None, Some(json!({}))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        source_hits(),
+        before + 1,
+        "query text shown is another public entry"
+    );
     w.ok(
         "PUT",
-        "/api/datasources/uid/prom",
-        Some(json!({ "uid": "prom", "name": "Prom renamed", "type": "prometheus", "url": url })),
+        "/api/datasources/uid/air",
+        Some(
+            json!({ "uid": "air", "name": "Air renamed", "type": "ngsild-grafana-datasource",
+                     "url": format!("{url}/api/endpoint/air") }),
+        ),
     )
     .await;
     let (st, _) = w.call("POST", &uri, None, Some(json!({}))).await;
@@ -673,14 +690,9 @@ async fn a_public_request_without_a_source_address_is_refused() {
 
 #[tokio::test]
 async fn an_anonymous_viewer_gets_a_fixed_text_for_a_failed_saved_query() {
-    let w = world();
-    let (url, _) = common::upstream(vec![(
-        "/api/v1/query_range",
-        json!({ "status": "error", "errorType": "bad_data", "error": "upstream-internal-detail" }),
-    )])
-    .await;
-    w.add_prometheus("prom", &url).await;
-    w.add_dashboard(dashboard("failing", "prom"), None).await;
+    let (url, _) = common::upstream_or(Vec::new(), "upstream-internal-detail").await;
+    let w = world_beside(&url).await;
+    w.add_dashboard(endpoint_dashboard("failing"), None).await;
     let created = w
         .ok(
             "POST",
@@ -772,7 +784,7 @@ async fn store_failures_are_errors() {
         );
     }
     // A new record whose write fails.
-    w.add_dashboard(dashboard("fresh", "prom"), None).await;
+    w.add_dashboard(endpoint_dashboard("fresh"), None).await;
     w.store.fail("upsert_public_dashboard");
     let (st, _) = w
         .call(
@@ -790,10 +802,9 @@ async fn store_failures_are_errors() {
 /// still starts inside the capped window, not in 1970.
 #[tokio::test]
 async fn an_overflowing_public_range_is_still_capped() {
-    let w = world();
-    let (url, seen) = prometheus().await;
-    w.add_prometheus("prom", &url).await;
-    w.add_dashboard(templated("pub", "prom"), None).await;
+    let (url, seen) = gateway().await;
+    let w = world_beside(&url).await;
+    w.add_dashboard(templated("pub"), None).await;
     let created = w
         .ok(
             "POST",
@@ -812,11 +823,9 @@ async fn an_overflowing_public_range_is_still_capped() {
         .await;
     assert_eq!(st, StatusCode::OK, "{body}");
     let head = seen.lock().last().cloned().unwrap();
-    let start: f64 = head
+    let start = head
         .split(['?', '&', ' '])
-        .find_map(|p| p.strip_prefix("start="))
-        .unwrap()
-        .parse()
+        .find_map(|p| p.strip_prefix("timeAt="))
         .unwrap();
-    assert!(start > 1_690_000_000.0, "capped start, not 1970: {head}");
+    assert!(start.starts_with("2023"), "capped start, not 1970: {head}");
 }
