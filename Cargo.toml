@@ -21,6 +21,7 @@ members = [
   "crates/shared/jc-limits",
   "crates/shared/jc-time",
   "crates/shared/jc-pool",
+  "crates/shared/jc-audit",
   "crates/shared/jc-door",
   "crates/shared/jc-chart",
   "crates/shared/ekiben-linkml",

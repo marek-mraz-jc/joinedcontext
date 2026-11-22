@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
+jc-audit = { path = "../../shared/jc-audit" }
 jc-pool = { path = "../../shared/jc-pool" }
 jc-time = { path = "../../shared/jc-time", features = ["sqlx"] }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
