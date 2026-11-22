@@ -9,18 +9,18 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use dataroom_core::{
     text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Result,
-    Visibility,
+    ShaclSeverity, Visibility,
 };
 use dataroom_rdf::rdfxml::xml_escape as escape_xml;
 use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
     RdfFormat,
 };
-use dataroom_shacl::validate_graph_against_shapes;
+use dataroom_shacl::{predicate_to_field_name, validate_graph_against_shapes};
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::BuildHasher;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Datasets per DCAT feed page (`ours/deployment/README.md`: 100 datasets per page).
 pub const DCAT_PAGE_SIZE: usize = 100;
@@ -30,25 +30,25 @@ pub const ATOM_PAGE_SIZE: usize = 20;
 /// Verdicts a feed keeps before it starts over (a few MB at most).
 const CONFORMANCE_CAP: usize = 100_000;
 
-/// Whether a dataset conformed to a profile's shapes, by a hash of the exact graph validated,
+/// The fields that keep a dataset out of a profile's feed, none when it conforms, by a hash of the exact graph validated,
 /// the shapes and the report subject: a feed page validates only a dataset, catalogue,
 /// publisher or profile that changed since the last page (P-7-02). The hasher's keys are
 /// random per process, so nobody can craft a dataset that collides with another's verdict.
 #[derive(Debug, Default)]
 pub struct FeedConformance {
     hasher: std::hash::RandomState,
-    verdicts: Mutex<HashMap<u64, bool>>,
+    verdicts: Mutex<HashMap<u64, Arc<[String]>>>,
 }
 
 impl FeedConformance {
-    fn conforms(
+    fn missing(
         &self,
         (sg, shapes_key): (&dataroom_shacl::ShapesGraph, u64),
         graph: &dataroom_rdf::RdfGraph,
         cat: &Catalogue,
         ds_id: &str,
         profile: DcatProfileKind,
-    ) -> bool {
+    ) -> Arc<[String]> {
         let key = self.hasher.hash_one((
             shapes_key,
             &graph.triples,
@@ -62,18 +62,31 @@ impl FeedConformance {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         };
-        if let Some(&conforms) = verdicts().get(&key) {
-            return conforms;
+        if let Some(missing) = verdicts().get(&key) {
+            return missing.clone();
         }
-        let conforms =
-            validate_graph_against_shapes(graph, sg, cat.org_id, cat.id, ds_id, profile.id(), "1")
-                .conforms;
+        let report =
+            validate_graph_against_shapes(graph, sg, cat.org_id, cat.id, ds_id, profile.id(), "1");
+        let missing: Arc<[String]> = if report.conforms {
+            Arc::default()
+        } else {
+            let fields: BTreeSet<String> = report
+                .findings
+                .iter()
+                .filter(|f| f.severity == ShaclSeverity::Violation)
+                .map(|f| match &f.result_path {
+                    Some(path) => predicate_to_field_name(path.trim_matches(['<', '>'])),
+                    None => f.source_shape.clone(),
+                })
+                .collect();
+            fields.into_iter().collect()
+        };
         let mut v = verdicts();
         if v.len() >= CONFORMANCE_CAP {
             v.clear();
         }
-        v.insert(key, conforms);
-        conforms
+        v.insert(key, missing.clone());
+        missing
     }
 }
 
@@ -86,8 +99,9 @@ pub struct FeedQuery {
 
 /// Filters datasets for a public DCAT feed under `profile`:
 /// 1. Only `Active` and `Public` datasets whose publisher is not `Withdrawn`.
-/// 2. If `profile` is not the catalogue's main profile, any dataset with SHACL violations in
-///    `profile` is hidden from that profile's feed only (C17).
+/// 2. A dataset with SHACL violations in `profile` is hidden from that profile's feed only (C17).
+/// 3. A national feed without a declared catalogue publisher, or with candidates of which none
+///    conforms, answers a problem naming what is missing.
 ///
 /// A store failure is an error, never an empty feed: a harvester reads an empty catalogue as
 /// "every dataset was dropped" and withdraws them all (C9).
@@ -105,16 +119,17 @@ async fn public_feed_datasets(
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
         .collect();
 
-    let stacked_shapes = state
+    // A profile whose shapes are not found is no feed, never an unfiltered one.
+    let (_, shapes) = state
         .profiles
-        .stacked_shapes((cat.org_id, cat.id), profile.id(), None)
-        .ok()
-        .map(|(_, sg)| sg);
-    let shapes_key = stacked_shapes
-        .as_ref()
-        .map(|sg| state.feed_conformance.hasher.hash_one(format!("{sg:?}")));
+        .stacked_shapes((cat.org_id, cat.id), profile.id(), None)?;
+    let shapes_key = state
+        .feed_conformance
+        .hasher
+        .hash_one(format!("{shapes:?}"));
 
     let mut visible = Vec::new();
+    let mut gaps = BTreeSet::new();
     for ds in all_ds {
         if ds.state != RecordState::Active
             || ds.visibility != Visibility::Public
@@ -133,17 +148,34 @@ async fn public_feed_datasets(
                 continue;
             }
         }
-        if let (Some(sg), Some(shapes_key)) = (&stacked_shapes, shapes_key) {
-            let ds_graph = dataroom_rdf::dataset_to_graph(&ds, cat, pub_rec, profile);
-            if !state
+        let ds_graph = dataroom_rdf::dataset_to_graph(&ds, cat, pub_rec, profile);
+        let missing =
+            state
                 .feed_conformance
-                .conforms((sg, shapes_key), &ds_graph, cat, &ds.id, profile)
-            {
-                // C17: Violations in a profile hide the record from that profile's feed.
-                continue;
-            }
+                .missing((&shapes, shapes_key), &ds_graph, cat, &ds.id, profile);
+        if !missing.is_empty() {
+            // C17: Violations in a profile hide the record from that profile's feed.
+            gaps.extend(missing.iter().cloned());
+            continue;
         }
         visible.push(ds);
+    }
+
+    if profile != DcatProfileKind::Eu301 {
+        if cat.declared_publisher_uri().is_none() {
+            return Err(DataroomError::FeedUnavailable(format!(
+                "missing publisher: the {} feed needs the catalogue's publisher IRI; declare \
+                 spec.catalog.publisher.uri on the Organization",
+                profile.id()
+            )));
+        }
+        if visible.is_empty() && !gaps.is_empty() {
+            return Err(DataroomError::FeedUnavailable(format!(
+                "no dataset declares what {} requires; missing or not valid: {}",
+                profile.id(),
+                gaps.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
     }
 
     Ok((visible, pub_map))
@@ -644,12 +676,20 @@ mod tests {
         let key = seen.hasher.hash_one(format!("{sg:?}"));
         let profile = DcatProfileKind::Eu301;
         // The same dataset id, edited between two pages: each edit gets its own verdict.
-        assert!(seen.conforms((&sg, key), &full, &cat, "pkg-a", profile));
-        assert!(!seen.conforms((&sg, key), &bare, &cat, "pkg-a", profile));
-        assert!(seen.conforms((&sg, key), &full, &cat, "pkg-a", profile));
+        assert!(seen
+            .missing((&sg, key), &full, &cat, "pkg-a", profile)
+            .is_empty());
+        assert!(!seen
+            .missing((&sg, key), &bare, &cat, "pkg-a", profile)
+            .is_empty());
+        assert!(seen
+            .missing((&sg, key), &full, &cat, "pkg-a", profile)
+            .is_empty());
         assert_eq!(seen.verdicts.lock().unwrap().len(), 2);
         // Other shapes (a profile change) validate again.
-        assert!(!seen.conforms((&sg, key ^ 1), &bare, &cat, "pkg-a", profile));
+        assert!(!seen
+            .missing((&sg, key ^ 1), &bare, &cat, "pkg-a", profile)
+            .is_empty());
         assert_eq!(seen.verdicts.lock().unwrap().len(), 3);
     }
 

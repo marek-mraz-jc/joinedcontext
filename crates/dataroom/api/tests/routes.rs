@@ -141,6 +141,7 @@ fn catalogue(org: OrgId, cat: CatalogueId) -> Catalogue {
         "description": {"sk": "Otvorené dáta & <mesto>"},
         "defaultLanguage": "sk", "languages": ["sk", "en"],
         "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [],
+        "publisherUri": "https://data.gov.sk/id/legal-subject/00313271",
         "hiddenDatasets": {"veiled": "quality check pending"},
         "modified": "2026-11-01T10:00:00Z"
     }))
@@ -166,7 +167,9 @@ fn dataset(name: &str, publisher: &str, visibility: &str, modified_day: u32) -> 
         "publisherId": publisher, "visibility": visibility, "state": "active",
         "licenceId": "cc-by", "themes": ["http://publications.europa.eu/resource/authority/data-theme/ENVI"],
         "keywords": {"sk": ["ovzdušie"]}, "tags": ["ovzdusie", name],
-        "spatial": ["SK032"],
+        "spatial": ["SK032"], "frequency": "daily",
+        "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+        "extras": {"personal_data": "does-not-contain"},
         "distributions": [
             {"id": "", "datasetId": "", "title": {"sk": format!("CSV {name}")},
              "accessUrl": format!("https://files.example.org/{name}.csv"), "format": "CSV"},
@@ -2183,6 +2186,52 @@ async fn atom_feeds_list_public_datasets_newest_first() {
         "{}",
         a.body
     );
+}
+
+#[tokio::test]
+async fn a_national_feed_names_what_is_missing_and_is_never_empty() {
+    let w = world().await;
+    let ctx = w.admin_ctx();
+    let sk = "/profiles/dcat-ap-sk-2.0/catalog.ttl";
+    let a = get(&w.app, sk, None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(a.body.contains("open.csv"), "the complete dataset is in it");
+
+    // One dataset without a statement leaves that feed and stays in the EU one.
+    let mut open = w.store.get_dataset(&ctx, "open").await.unwrap().unwrap();
+    open.extras.remove("personal_data");
+    w.store.upsert_dataset(&ctx, open).await.unwrap();
+    let a = get(&w.app, sk, None).await;
+    assert!(!a.body.contains("open.csv"), "{}", a.body);
+    assert!(get(&w.app, "/catalog.ttl", None)
+        .await
+        .body
+        .contains("open.csv"));
+
+    // None left: a problem naming the field, never an empty catalogue.
+    for mut dataset in w.store.list_datasets(&ctx).await.unwrap() {
+        dataset.extras.remove("personal_data");
+        w.store.upsert_dataset(&ctx, dataset).await.unwrap();
+    }
+    let a = get(&w.app, sk, None).await;
+    assert_eq!(a.status, StatusCode::SERVICE_UNAVAILABLE, "{}", a.body);
+    assert!(a.body.contains("personal_data"), "{}", a.body);
+
+    // A placeholder is no publisher.
+    for uri in [None, Some("https://data.gov.sk/id/legal-subject/00000000")] {
+        let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+        cat.publisher_uri = uri.map(str::to_owned);
+        w.store.upsert_catalogue(cat).await.unwrap();
+        for national in [sk, "/profiles/dcat-ap-cz/catalog.jsonld"] {
+            let a = get(&w.app, national, None).await;
+            assert_eq!(a.status, StatusCode::SERVICE_UNAVAILABLE, "{}", a.body);
+            assert!(a.body.contains("missing publisher"), "{}", a.body);
+        }
+        assert_eq!(
+            get(&w.app, "/catalog.ttl", None).await.status,
+            StatusCode::OK
+        );
+    }
 }
 
 #[tokio::test]

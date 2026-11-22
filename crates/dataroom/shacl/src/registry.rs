@@ -107,7 +107,8 @@ pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormF
     fields
 }
 
-fn predicate_to_field_name(pred_iri: &str) -> String {
+/// The field a person fills in for a shape's path.
+pub fn predicate_to_field_name(pred_iri: &str) -> String {
     match pred_iri {
         "http://purl.org/dc/terms/title" => "title".into(),
         "http://purl.org/dc/terms/description" => "notes".into(),
@@ -122,6 +123,18 @@ fn predicate_to_field_name(pred_iri: &str) -> String {
         "http://data.europa.eu/r5r/applicableLegislation" => "applicable_legislation".into(),
         "http://purl.org/dc/terms/conformsTo" => "conforms_to".into(),
         "http://www.w3.org/ns/dcat#landingPage" => "landing_page".into(),
+        "https://data.gov.sk/def/ontology/legislation/personalDataContainmentType"
+        | "https://data.gov.cz/slovník/podmínky-užití/osobní-údaje" => "personal_data".into(),
+        "https://data.gov.sk/def/ontology/legislation/termsOfUse"
+        | "https://data.gov.sk/def/ontology/legislation/authorsWorkType"
+        | "https://data.gov.sk/def/ontology/legislation/originalDatabaseType"
+        | "https://data.gov.sk/def/ontology/legislation/databaseProtectedBySpecialRightsType"
+        | "https://data.gov.cz/slovník/podmínky-užití/specifikace"
+        | "https://data.gov.cz/slovník/podmínky-užití/autorské-dílo"
+        | "https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo"
+        | "https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy" => {
+            "license_id".into()
+        }
         other => other.rsplit(['/', '#']).next().unwrap_or(other).to_owned(),
     }
 }
