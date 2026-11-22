@@ -75,6 +75,9 @@ function renderApp(world: World = {}) {
       if (url.pathname.endsWith("/blueprints")) return json(list([BLUEPRINT]));
       if (url.pathname.endsWith("/permissions/me")) return json(PROPOSER);
       if (url.pathname.endsWith("/audience")) return json({ project: 4, organization: 30, roles: [] });
+      if (url.pathname.endsWith(`/apps/${APP}/dashboard`)) {
+        return json({ path: "src/dashboard.json", config: null, entityType: "", attributes: [], edit: { allowed: false, reason: "No dashboard" } });
+      }
       if (app && url.pathname.endsWith(`/apps/${APP}`)) return json(app);
       if (!url.pathname.endsWith("/agent-runs") || request.method !== "GET") return undefined;
       if (pending) return new Promise<Response>(() => undefined);
@@ -264,6 +267,6 @@ describe("a published App with no run of its own (T-4264, T-4160 #35)", () => {
     expect(summary.closest("details")).not.toHaveAttribute("open");
     await userEvent.click(summary);
     expect(summary.closest("details")).toHaveAttribute("open");
-    await waitFor(() => expect(summary.closest("details")?.querySelector("div.mt-3")).not.toBeNull());
+    expect(await screen.findByText(en.apps.dashboard.unavailable)).toBeInTheDocument();
   });
 });

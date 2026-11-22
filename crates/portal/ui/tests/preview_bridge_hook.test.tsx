@@ -6,6 +6,7 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RefObject } from "react";
+import { pickElement, pickedElement } from "../src/assistant/state";
 
 const doorAction = vi.fn(async (..._args: unknown[]) => ({}));
 vi.mock("../src/api/odata", () => ({ doorAction: (...args: unknown[]) => doorAction(...args) }));
@@ -77,6 +78,17 @@ describe("usePreviewBridge", () => {
     await message({ kind: "jc-request", id: 1, method: "GET", path: `/api/endpoint/${OTHER}/ngsi-ld/v1/entities?type=A` });
     await vi.waitFor(() => expect(posted).toHaveBeenCalledWith({ kind: "jc-response", id: 1, status: 200, body: [] }, "*"));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a refused error report and hands a pointed element to the run's dock (SDK-46)", async () => {
+    doorAction.mockRejectedValueOnce(new Error("409"));
+    renderHook(() => usePreviewBridge(ref, run, false));
+    await message(error("refused report"));
+    expect(doorAction).toHaveBeenCalledTimes(1);
+    expect(pickedElement("r1")).toBeNull();
+    await message({ kind: "jc-select", src: "src/App.tsx:12" });
+    expect(pickedElement("r1")).toBe("src/App.tsx:12");
+    pickElement("r1", null);
   });
 
   it("listens to nothing without a run, a project or a slug", async () => {
