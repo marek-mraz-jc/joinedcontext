@@ -19,11 +19,15 @@ use joinedcontext_portal::state::AppState;
 
 const PROJECT: &str = "ovzdusie";
 
-/// The broker's admin token, mounted as the deployment mounts it (T-3983).
+/// The broker's admin token, mounted as the deployment mounts it (T-3983). Written once: the
+/// tests share the process, and a second write truncates the file under another test's read.
 fn token_file() -> std::path::PathBuf {
-    let file = std::env::temp_dir().join(format!("goes-with-token-{}", std::process::id()));
-    std::fs::write(&file, "admin-token\n").expect("write the token file");
-    file
+    static FILE: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        let file = std::env::temp_dir().join(format!("goes-with-token-{}", std::process::id()));
+        std::fs::write(&file, "admin-token\n").expect("write the token file");
+        file
+    });
+    FILE.clone()
 }
 
 /// The broker's count of one tenant (`GET /q/tenants/{tenant}`, T-3983).
