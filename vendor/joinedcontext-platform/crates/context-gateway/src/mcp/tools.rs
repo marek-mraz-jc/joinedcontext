@@ -143,9 +143,32 @@ pub(crate) fn anonymous_refusal(id: Value, name: &str) -> Value {
 const ANONYMOUS_WINDOW_DAYS: i64 = 31;
 /// The shortest aggregation period an anonymous read may ask for, in seconds (`PT1H`).
 const ANONYMOUS_AGGR_SECONDS: f64 = 3600.0;
+/// The arguments of an aggregated history read past those days (T-7526): each one the store
+/// answers by itself, so the broker's statement budget bounds it. An allow-list, so an
+/// argument added later is no way around the days.
+const LONG_READ_ARGUMENTS: &[&str] = &[
+    "endpoint",
+    "type",
+    "id",
+    "attrs",
+    "timerel",
+    "timeAt",
+    "endTimeAt",
+    "timeproperty",
+    "aggrMethods",
+    "aggrPeriodDuration",
+    "format",
+    "count",
+    "limit",
+    "cursor",
+];
+/// The most Entities, Attributes and methods of such a read.
+const LONG_READ_ENTITIES: u64 = 20;
+const LONG_READ_ATTRS: usize = 5;
+const LONG_READ_METHODS: usize = 3;
 
 /// Bounds what one anonymous temporal read makes the broker read (T-4261, Architecture/07 §2):
-/// a window of at most 31 days, `type` or `id`, `lastN` within the broker's maximum and its
+/// a window of at most 31 days unless [`long_read`] admits it, `type` or `id`, `lastN` within the broker's maximum and its
 /// default when absent, `limit` within the broker's page maximum (T-4804: the owner's 1,000
 /// for every caller; the body cap and the per-caller rate stay the bound), and aggregation
 /// periods of an hour or more. Any other tool passes untouched; the error names the bound it
@@ -189,18 +212,29 @@ pub(crate) fn anonymous_bounds(
             ))
         }
     };
-    if window > jiff::SignedDuration::from_hours(24 * ANONYMOUS_WINDOW_DAYS) {
+    let long = window > jiff::SignedDuration::from_hours(24 * ANONYMOUS_WINDOW_DAYS);
+    if long && !(name == "query_temporal" && long_read(arguments, window)) {
         return Err(format!(
-            "`{name}` without a token reads at most {ANONYMOUS_WINDOW_DAYS} days between timeAt and endTimeAt"
+            "`{name}` without a token reads at most {ANONYMOUS_WINDOW_DAYS} days between timeAt and endTimeAt; \
+             a longer range is query_temporal with type, up to {LONG_READ_ATTRS} attrs, up to {LONG_READ_METHODS} aggrMethods \
+             and an aggrPeriodDuration of {} or longer, no lastN or other filter, up to {LONG_READ_ENTITIES} Entities",
+            jc_time::granularity::aggregated(window)
         ));
     }
     // A window over a day that asks neither raw values (`format`) nor its own aggregation
     // answers the broker's hourly or daily averages (T-4800), periods the PT1H floor below
     // allows; every other read keeps the broker's default of newest instances.
-    let averaged = window > jiff::SignedDuration::from_hours(24)
-        && !arguments.contains_key("format")
-        && !arguments.contains_key("aggrMethods");
+    // A long read is aggregated and takes no lastN either: the store aggregates no capped read.
+    let averaged = long
+        || (window > jiff::SignedDuration::from_hours(24)
+            && !arguments.contains_key("format")
+            && !arguments.contains_key("aggrMethods"));
     crate::mcp::limits::anonymous_page(arguments, averaged)?;
+    if long {
+        arguments
+            .entry("limit")
+            .or_insert(Value::from(LONG_READ_ENTITIES));
+    }
     if arguments.contains_key("aggrMethods") {
         let period = arguments
             .get("aggrPeriodDuration")
@@ -214,6 +248,50 @@ pub(crate) fn anonymous_bounds(
         }
     }
     Ok(())
+}
+
+/// Whether an anonymous `query_temporal` over more than 31 days is bounded by what it answers:
+/// an aggregate of few Attributes of few Entities of a named type on `observedAt`, in at most
+/// [`jc_time::granularity::MAX_POINTS`] periods, with nothing only the raw instances answer.
+fn long_read(arguments: &Map<String, Value>, window: jiff::SignedDuration) -> bool {
+    let text = |key: &str, only: &str| {
+        arguments
+            .get(key)
+            .is_none_or(|value| value.as_str() == Some(only))
+    };
+    let listed = |key: &str| -> Option<usize> {
+        let items = match arguments.get(key)? {
+            Value::String(text) => vec![text.as_str()],
+            Value::Array(items) => items.iter().map(Value::as_str).collect::<Option<_>>()?,
+            _ => return None,
+        };
+        let names = items.iter().flat_map(|item| item.split(','));
+        names
+            .clone()
+            .all(|name| !name.trim().is_empty())
+            .then(|| names.count())
+            .filter(|count| *count > 0)
+    };
+    let few = |key: &str, most: usize| listed(key).is_some_and(|count| count <= most);
+    arguments
+        .keys()
+        .all(|key| LONG_READ_ARGUMENTS.contains(&key.as_str()))
+        && text("format", "aggregatedValues")
+        && text("timeproperty", "observedAt")
+        && listed("type").is_some()
+        && few("attrs", LONG_READ_ATTRS)
+        && few("aggrMethods", LONG_READ_METHODS)
+        && (!arguments.contains_key("id")
+            || listed("id").is_some_and(|count| count as u64 <= LONG_READ_ENTITIES))
+        && arguments.get("limit").is_none_or(|limit| {
+            limit
+                .as_u64()
+                .is_some_and(|limit| limit <= LONG_READ_ENTITIES)
+        })
+        && arguments
+            .get("aggrPeriodDuration")
+            .and_then(Value::as_str)
+            .is_some_and(|period| jc_time::granularity::fits(window, period))
 }
 
 /// The seconds of an ISO 8601 duration (`P1DT2H`, `PT1.5H`, `P2W`), a year taken as 365 days
@@ -860,7 +938,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     broker(
         "query_temporal",
         &[Operation::QueryTemporal],
-        "Query the history of Entities between timeAt and endTimeAt, a page of Entities at a time; lastN bounds each Attribute's instances. A window over a day answers hourly averages (daily past 31 days) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        "Query the history of Entities between timeAt and endTimeAt, a page of Entities at a time; lastN bounds each Attribute's instances. A window over a day answers averages (hourly up to 31 days, then daily, monthly past two years, yearly past 40) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
         TEMPORAL_QUERY,
         "entities",
     ),
@@ -881,7 +959,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     broker(
         "retrieve_temporal",
         &[Operation::RetrieveTemporal],
-        "Read the history of one Entity between timeAt and endTimeAt; lastN bounds each Attribute's instances. A window over a day answers hourly averages (daily past 31 days) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        "Read the history of one Entity between timeAt and endTimeAt; lastN bounds each Attribute's instances. A window over a day answers averages (hourly up to 31 days, then daily, monthly past two years, yearly past 40) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
         TEMPORAL_ONE,
         "entity",
     ),
