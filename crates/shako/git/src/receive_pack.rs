@@ -375,20 +375,26 @@ pub fn handle_receive_pack(
 
     // 4. Move indexed pack into `objects/pack/` temporarily with a rollback list so `gix::Repository`
     //    can inspect trees, fast-forward ancestry, and connectivity of new tips; if all refs are
-    //    rejected (or atomic fails), we delete the moved pack before returning!
+    //    rejected (or atomic fails), we delete the moved pack before returning! A pack is named by
+    //    its content, so a file already stored under that name belongs to an earlier push: it is
+    //    neither written over nor put on the rollback list.
     let mut installed_files = Vec::new();
     if let (Some(p_src), Some(i_src)) = (&written_pack_path, &written_idx_path) {
         let pack_dir = repo_path.join("objects/pack");
         std::fs::create_dir_all(&pack_dir)
             .map_err(|e| ShakoError::Storage(format!("mkdir pack: {e}")))?;
-        let p_dst = pack_dir.join(p_src.file_name().unwrap_or_default());
-        let i_dst = pack_dir.join(i_src.file_name().unwrap_or_default());
-        std::fs::rename(p_src, &p_dst)
-            .map_err(|e| ShakoError::Storage(format!("move pack: {e}")))?;
-        std::fs::rename(i_src, &i_dst)
-            .map_err(|e| ShakoError::Storage(format!("move idx: {e}")))?;
-        installed_files.push(p_dst);
-        installed_files.push(i_dst);
+        for (what, src) in [("pack", p_src), ("idx", i_src)] {
+            let dst = pack_dir.join(src.file_name().unwrap_or_default());
+            let stored = dst
+                .try_exists()
+                .map_err(|e| ShakoError::Storage(format!("look up {what}: {e}")))?;
+            if stored {
+                continue;
+            }
+            std::fs::rename(src, &dst)
+                .map_err(|e| ShakoError::Storage(format!("move {what}: {e}")))?;
+            installed_files.push(dst);
+        }
     }
     quarantine.disarm();
 
