@@ -63,7 +63,7 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-log > .jc-intro:first-child { margin-top: 0; }
 .jc-log > li { margin: 0 0 14px; overflow-wrap: anywhere; }
 .jc-you { display: flex; flex-wrap: wrap; justify-content: flex-end; }
-.jc-time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.jc-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .jc-you .jc-time { flex-basis: 100%; text-align: right; margin-top: 2px; }
 .jc-you p { margin: 0; max-width: 85%; padding: 9px 13px; border-radius: 18px 18px 4px 18px; background: var(--accent);
   color: var(--on-accent); white-space: pre-wrap; }
@@ -75,9 +75,8 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-answer li, .jc-part li { margin: 0 0 4px; padding: 0; }
 .jc-answer code { font-size: 13px; background: var(--bg); padding: 0 4px; border-radius: 4px; }
 .jc-answer a, .jc-cite a { color: var(--link); }
-/* A citation is a small numbered pill, a 22 px target inside the sentence (WCAG 2.5.8 exempts inline targets;
-   the 44 px ones are the source rows under the answer). */
-.jc-cite { font-size: 11px; margin-left: 2px; vertical-align: 2px; line-height: 1; }
+/* A citation is a small numbered pill inside the sentence; on a phone its target is 44 px (below). */
+.jc-cite { font-size: 12px; margin-left: 2px; vertical-align: 2px; line-height: 1; }
 .jc-cite a { display: inline-block; min-width: 18px; padding: 3px 4px; border-radius: var(--pill); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line);
   text-align: center; text-decoration: none; font-weight: 600; }
 .jc-answer table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0 0 8px; font-size: 13px; }
@@ -117,7 +116,7 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-cards > li > .jc-part { flex-basis: 100%; }
 .jc-cards[hidden] { display: none; }
 .jc-card-n { position: absolute; left: 9px; top: 7px; width: 18px; height: 18px; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent); font-size: 11px; line-height: 18px; text-align: center; }
+  background: var(--accent); color: var(--on-accent); font-size: 12px; line-height: 18px; text-align: center; }
 .jc-cards a { flex: 0 1 auto; min-width: 0; color: var(--link); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jc-domain { flex: none; margin-left: auto; color: var(--muted); font-size: 12px; }
 .jc-part { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--soft); overflow-wrap: anywhere; }
@@ -259,7 +258,7 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-form .jc-stop { background: var(--fg); color: var(--bg); }
 .jc-form button[hidden] { display: none; }
 .jc-more { padding: 0; border: 0; background: none; color: var(--link); font: inherit; text-decoration: underline; cursor: pointer; }
-.jc-privacy-line { margin: 6px 4px 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.jc-privacy-line { margin: 6px 4px 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
 /* The privacy dialog (T-4670): over the chat, inside the panel's own page. */
 .jc-about { max-width: min(360px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box;
   padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); color: var(--fg);
@@ -294,7 +293,6 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
   .jc-avatar { width: 28px; height: 28px; font-size: 12px; }
   .jc-actions { gap: 2px; }
   .jc-name { font-size: 15px; }
-  .jc-role { font-size: 11px; }
 }
 @media (max-width: 480px) {
   .jc-icon-button, .jc-answer-tools .jc-icon-button, .jc-langs button { min-height: 44px; min-width: 44px; }
@@ -306,6 +304,12 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
   /* A button is an inline block: the padding grows the tap target, the negative margin keeps the line. */
   .jc-more { padding: 14px 12px; margin: -14px -8px; }
   .jc-privacy-line { margin-bottom: 8px; }
+  /* T-7504: the pill keeps its look and the line its height; the target around it is 44 px. */
+  .jc-cite a { position: relative; z-index: 0; min-width: 44px; padding: 16px 0; margin: -16px -6px; background: none; box-shadow: none; }
+  .jc-cite a::before { content: ""; position: absolute; z-index: -1; inset: 12px; border-radius: var(--pill); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+  .jc-data-links a { display: inline-flex; align-items: center; min-height: 44px; }
+  .jc-form textarea { min-height: 44px; padding-block: 11px; }
+  .jc-retry { min-height: 44px; }
 }
 /* With the expand button (T-4658, never on a phone) four controls share a 420 px header: 34 px
    targets and a slimmer toggle keep the name whole. */

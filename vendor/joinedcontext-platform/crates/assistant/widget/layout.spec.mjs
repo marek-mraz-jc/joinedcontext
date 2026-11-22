@@ -385,10 +385,14 @@ for (const [width, height] of [[1366, 768], [768, 1024], [390, 844], [320, 640]]
     expect(head.y, "the header stays at the top after a long answer").toBeLessThanOrEqual(frameBox.y + 1);
     expect(await panel.boundingBox(), "a long answer leaves the panel as it opened").toEqual(opened);
     if (width <= 480) {
-      const controls = [".jc-head button", ".jc-form button", ".jc-answer-tools button", ".jc-cards > li", ".jc-followups button", ".jc-privacy-line .jc-more"].map((s) => s + ":visible").join(", ");
+      const controls = [".jc-head button", ".jc-form button", ".jc-answer-tools button", ".jc-cards > li", ".jc-followups button", ".jc-privacy-line .jc-more", ".jc-cite a", ".jc-form textarea"].map((s) => s + ":visible").join(", ");
       for (const control of await frame.locator(controls).all()) {
         const box = await control.boundingBox();
         expect(Math.min(box.width, box.height), "a tap target of 44 px").toBeGreaterThanOrEqual(44);
+      }
+      for (const small of [".jc-time", ".jc-cite a", ".jc-privacy-line", ".jc-role", ".jc-card-n"]) {
+        const size = await frame.locator(small).first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+        expect(size, `${small} is 12 px or more on a phone`).toBeGreaterThanOrEqual(12);
       }
     }
 
