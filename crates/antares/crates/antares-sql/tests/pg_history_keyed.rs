@@ -154,8 +154,10 @@ async fn reads(s: &PgTemporalStore, t: &TenantId, id: &str) -> Vec<(&'static str
                 range: after("2026-01-01T00:00:00Z"),
                 aggregate: Some(Aggregate {
                     methods: &methods,
-                    period_secs: Some(21_600),
+                    period: antares_sql::store::filter::Period::Seconds(21_600),
                     anchor: Some("2026-01-01T00:00:00Z"),
+                    attrs: None,
+                    budget: None,
                 }),
                 ..base()
             },

@@ -66,6 +66,23 @@ pub(crate) fn db(e: sqlx::Error) -> NgsiError {
     NgsiError::InternalError("database error".into())
 }
 
+/// 5.5.2 TooManyResults for an aggregated read that outran its own statement
+/// budget: the caller asked for too much, and can ask for less.
+#[cfg(feature = "postgres")]
+fn over_budget(f: &crate::store::filter::TemporalFilter<'_>, e: &sqlx::Error) -> Option<NgsiError> {
+    let budget = f.aggregate?.budget?;
+    let sqlx::Error::Database(d) = e else {
+        return None;
+    };
+    (d.code().as_deref() == Some("57014")).then(|| {
+        NgsiError::TooManyResults(format!(
+            "this aggregation reads more history than one read may in {} seconds: \
+             ask a shorter window, fewer Entities (id, limit) or fewer attrs",
+            budget.as_secs().max(1)
+        ))
+    })
+}
+
 /// 4.22: the read-boundary "now" — every entity read strips expired docs and
 /// instances against this stamp (UTC Z, millisecond precision, the same form
 /// the broker writes into system timestamps).
@@ -1337,7 +1354,11 @@ impl AnyStore {
                 aggregated: false,
             },
             #[cfg(feature = "postgres")]
-            AnyStore::Pg(p) => p.temporal.query(tenant, f).await.map_err(db)?,
+            AnyStore::Pg(p) => p
+                .temporal
+                .query(tenant, f)
+                .await
+                .map_err(|e| over_budget(f, &e).unwrap_or_else(|| db(e)))?,
         };
         // 4.22 on temporal reads: the Pg arm already dropped expired ENTITIES in
         // SQL (paging exact); this strips expired attribute INSTANCES, and does

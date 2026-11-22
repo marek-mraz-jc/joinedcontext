@@ -64,18 +64,22 @@ pub(super) fn cap_keeps_shown(
 /// that instance, and one without shows none. `attrs`, the request's own,
 /// narrow what is shown. Without it a view read every Entity of the type
 /// for each page: 577 bike stations, past the 30 s statement timeout.
+/// `clamped`: the store's range is already intersected with the windows
+/// ([`rules_window`]), so they hold whatever the request's own.
 pub(super) fn page_attrs(
     rules: &crate::policy::Filter,
     types: Option<&[String]>,
     tq: Option<&TemporalQ>,
     attrs: Option<&[String]>,
+    clamped: bool,
 ) -> Option<Option<Vec<String>>> {
     let first = rules.rules.first()?;
     let start = range_start(tq);
     let late = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(1))
         .unwrap_or(jiff::Timestamp::MAX);
-    let windows_hold = first.temporal.is_empty()
+    let windows_hold = clamped
+        || first.temporal.is_empty()
         || (tq.is_none_or(|t| t.timeproperty == "observedAt")
             && start.is_some_and(|s| {
                 first
@@ -121,6 +125,37 @@ pub(super) fn page_attrs(
         (false, None) => Some(names.into_iter().cloned().collect()),
         (false, Some(a)) => Some(a.iter().filter(|x| names.contains(x)).cloned().collect()),
     })
+}
+
+/// The range an aggregation in the store reads under `rules`: the request's,
+/// intersected with the windows every rule shares (gap G6), resolved as the
+/// request is decided. The bucket origin stays the request's own timeAt, so
+/// the answer is the one `rules_per_instance` would leave. `Ok(None)`: no
+/// windows to intersect. `Err(())`: windows no range can stand for.
+pub(super) fn rules_window(
+    rules: &crate::policy::Filter,
+    params: &HashMap<String, String>,
+    tq: Option<&TemporalQ>,
+) -> Result<Option<TemporalQ>, ()> {
+    let Some(first) = rules.rules.first() else {
+        return Ok(None);
+    };
+    if rules.rules.iter().any(|r| r.temporal != first.temporal) {
+        return Err(());
+    }
+    if first.temporal.is_empty() {
+        return Ok(None);
+    }
+    // the windows are on observedAt, whatever the request's timeproperty
+    if tq.is_none_or(|t| t.timeproperty != "observedAt") {
+        return Err(());
+    }
+    let windows = crate::policy::Filter {
+        temporal: first.temporal.clone().into(),
+        ..Default::default()
+    };
+    let narrowed = windows.narrow_window(params, true).map_err(|_| ())?;
+    TemporalQ::from_params(&narrowed, true).map_err(|_| ())
 }
 
 /// The instant a window read oldest first starts at: `timeAt` of `after`

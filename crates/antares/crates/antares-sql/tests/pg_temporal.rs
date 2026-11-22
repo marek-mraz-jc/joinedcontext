@@ -725,8 +725,10 @@ async fn aggregation_pushdown_buckets_like_the_api() {
         expand: &expand,
         aggregate: Some(Aggregate {
             methods: &methods,
-            period_secs: Some(3600),
+            period: antares_sql::store::filter::Period::Seconds(3600),
             anchor: Some("2026-01-01T00:00:00Z"),
+            attrs: None,
+            budget: None,
         }),
         ..TemporalFilter::default()
     };
@@ -782,8 +784,10 @@ async fn aggregation_pushdown_buckets_like_the_api() {
         expand: &expand,
         aggregate: Some(Aggregate {
             methods: &methods,
-            period_secs: None,
+            period: antares_sql::store::filter::Period::Whole,
             anchor: None,
+            attrs: None,
+            budget: None,
         }),
         ..TemporalFilter::default()
     };
@@ -812,8 +816,10 @@ async fn aggregation_pushdown_buckets_like_the_api() {
         expand: &expand,
         aggregate: Some(Aggregate {
             methods: &methods,
-            period_secs: None,
+            period: antares_sql::store::filter::Period::Whole,
             anchor: Some("2030-01-01T00:00:00Z"),
+            attrs: None,
+            budget: None,
         }),
         ..TemporalFilter::default()
     };
@@ -841,8 +847,10 @@ async fn aggregation_pushdown_buckets_like_the_api() {
         expand: &expand,
         aggregate: Some(Aggregate {
             methods: &methods,
-            period_secs: None,
+            period: antares_sql::store::filter::Period::Whole,
             anchor: Some("2025-12-01T00:00:00Z"),
+            attrs: None,
+            budget: None,
         }),
         ..TemporalFilter::default()
     };
@@ -984,8 +992,10 @@ async fn a_temporal_query_never_reads_another_tenants_history() {
         expand: &expand,
         aggregate: Some(Aggregate {
             methods: &methods,
-            period_secs: Some(3600),
+            period: antares_sql::store::filter::Period::Seconds(3600),
             anchor: Some("2026-01-01T00:00:00Z"),
+            attrs: None,
+            budget: None,
         }),
         ..TemporalFilter::default()
     };

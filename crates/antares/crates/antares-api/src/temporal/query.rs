@@ -391,10 +391,22 @@ pub(crate) async fn query_temporal_collected(
     };
     let qry = Parsed::new(&req, types_rule, client_q)?;
     let (geos, shown_geos) = qry.geos(filter);
-    let plan = Pushdown::plan(&req, &qry, geos.is_empty()).await?;
-    let outcome = fetch_temporal(&req, &qry, &geos, &plan).await?;
+    let mut plan = Pushdown::plan(&req, &qry, geos.is_empty(), true).await?;
+    let mut outcome = fetch_temporal(&req, &qry, &geos, &plan).await?;
+    // an Entity of the page may carry a type not asked for that records one of
+    // these Attributes onChange, and the store fills no period a value held
+    // through, nor reads the row before a range inside the rules' windows
+    if (outcome.aggregated || plan.scope.is_some())
+        && outcome
+            .rows
+            .iter()
+            .any(|d| !crate::history::held_attrs(st, &tenant, d).is_empty())
+    {
+        plan = Pushdown::plan(&req, &qry, geos.is_empty(), false).await?;
+        outcome = fetch_temporal(&req, &qry, &geos, &plan).await?;
+    }
     if outcome.aggregated {
-        return respond_aggregated(
+        let mut resp = respond_aggregated(
             st,
             &shown,
             &tenant,
@@ -404,7 +416,9 @@ pub(crate) async fn query_temporal_collected(
             qry.tq.as_ref(),
             qry.attrs_filter.as_ref(),
             outcome,
-        );
+        )?;
+        filter.mark(&st.host_alias, resp.headers_mut());
+        return Ok(resp);
     }
     let (all, pre_paged, pre_total) = (outcome.rows, outcome.paged, outcome.total);
     let mut warnings: Vec<String> = Vec::new();
@@ -645,14 +659,7 @@ impl<'p> Parsed<'p> {
     }
 
     fn instance_range(&self) -> Option<antares_store::filter::InstanceRange<'_>> {
-        self.tq
-            .as_ref()
-            .map(|t| antares_store::filter::InstanceRange {
-                timerel: &t.timerel,
-                time_at: &t.time_at,
-                end_time_at: t.end_time_at.as_deref(),
-                timeproperty: &t.timeproperty,
-            })
+        self.tq.as_ref().map(range_of)
     }
 }
 
@@ -686,6 +693,8 @@ struct Pushdown {
     limit: usize,
     /// with `page` under rules: the Attributes an Entity qualifies through
     page_attrs: Option<Vec<String>>,
+    /// with `agg` under rules with windows: the store's range, inside them
+    scope: Option<TemporalQ>,
 }
 
 impl Pushdown {
@@ -700,7 +709,13 @@ impl Pushdown {
     // (q/geo still drop entities after SQL) wait for exactness.
     // scopeQ joins q/geo here: the 4.18 validity filter drops entities and
     // instances AFTER SQL, so a pushed page/lastN cap would under-return.
-    async fn plan(req: &QueryReq<'_>, qry: &Parsed<'_>, no_geo: bool) -> ApiResult<Self> {
+    /// `aggregate`: the store may compute an aggregation.
+    async fn plan(
+        req: &QueryReq<'_>,
+        qry: &Parsed<'_>,
+        no_geo: bool,
+        aggregate: bool,
+    ) -> ApiResult<Self> {
         let (st, params, filter) = (req.st, req.params, req.filter);
         let exact = qry.q_ast.is_none() && no_geo && qry.scope_q.is_none();
         // Entity-page pushdown: a temporal query used to materialize the
@@ -727,6 +742,18 @@ impl Pushdown {
         // under rules only where their verdict on an Entity is the store's,
         // and the request's own q and geoquery, read on the shown history,
         // are absent
+        let mut agg = aggregate && exact && store_aggregates(req, qry);
+        let mut scope = None;
+        if let Some(rules) = qry.types_rule.as_deref().filter(|_| agg) {
+            match rules_window(rules, params, qry.tq.as_ref()) {
+                // PT0S takes its one bucket's edges from the range the store reads
+                Ok(Some(inside)) if qry.trepr.aggr_period != AggrPeriod::Whole => {
+                    scope = Some(inside);
+                }
+                Ok(None) => {}
+                Ok(Some(_)) | Err(()) => agg = false,
+            }
+        }
         let ruled = match qry.types_rule.as_deref() {
             None => Some(None),
             Some(_) if qry.client_q.is_some() || qry.own_geo.is_some() => None,
@@ -735,6 +762,7 @@ impl Pushdown {
                 qry.types.as_deref(),
                 qry.tq.as_ref(),
                 qry.shown_attrs.as_deref(),
+                scope.is_some(),
             ),
         };
         let page = (exact || (no_geo && qry.scope_q.is_none() && q_page_exact))
@@ -747,8 +775,9 @@ impl Pushdown {
             && !narrowed_now
             && !crate::federation::would_federate(st, req.tenant, req.ctx, params, req.headers)
                 .await?;
-        // the store aggregates every Attribute it reads: never one the rules hide
-        let agg = exact && page && qry.types_rule.is_none() && store_aggregates(req, &qry.trepr);
+        // under rules only where `page_attrs` made their verdict the store's: it
+        // reads the Attributes they show (`fetch_temporal`) inside their windows
+        let agg = agg && page;
         Ok(Self {
             exact,
             page,
@@ -757,6 +786,7 @@ impl Pushdown {
             offset,
             limit,
             page_attrs: ruled.flatten(),
+            scope: scope.filter(|_| agg),
         })
     }
 }
@@ -767,17 +797,34 @@ impl Pushdown {
 /// projection/lastN/month periods — otherwise the instances are
 /// aggregated here as before. A store that cannot (memory) or a
 /// non-numeric value class leaves `outcome.aggregated` false.
-fn store_aggregates(req: &QueryReq<'_>, trepr: &TRepr) -> bool {
+fn store_aggregates(req: &QueryReq<'_>, qry: &Parsed<'_>) -> bool {
+    let trepr = &qry.trepr;
+    // whole months alone step in the store's calendar: timeAt is always in UTC (4.6.3)
+    let period = !matches!(trepr.aggr_period, AggrPeriod::Months(_, secs) if secs != 0);
     trepr.aggregated
-        && !crate::history::records_on_change(req.st, req.tenant)
+        && period
+        && !crate::history::may_hold(
+            req.st,
+            req.tenant,
+            qry.types.as_deref(),
+            trepr.attrs.as_deref(),
+        )
         && trepr.omit.is_none()
         && trepr.page == InstancePage::default()
-        && !matches!(trepr.aggr_period, AggrPeriod::Months(..))
         && req.params.get("entityMap").map(String::as_str) != Some("true")
         && trepr
             .aggr_methods
             .iter()
             .all(|m| antares_store::filter::AGGREGATE_METHODS.contains(&m.as_str()))
+}
+
+fn range_of(t: &TemporalQ) -> antares_store::filter::InstanceRange<'_> {
+    antares_store::filter::InstanceRange {
+        timerel: &t.timerel,
+        time_at: &t.time_at,
+        end_time_at: t.end_time_at.as_deref(),
+        timeproperty: &t.timeproperty,
+    }
 }
 
 /// The store call of one query, with what `plan` pushed down.
@@ -804,8 +851,11 @@ async fn fetch_temporal(
         attrs: qry.entity_attr_filter.as_deref(),
         // a condition rebuilds each instance's state from the whole
         // history; rules without one read only the window (T-4246)
-        range: qry
-            .instance_range()
+        range: plan
+            .scope
+            .as_ref()
+            .map(range_of)
+            .or_else(|| qry.instance_range())
             .filter(|_| !replays_state(qry.types_rule.as_deref())),
         last_n: page_n
             .store_cap(default_page(req.st, req.tenant, trepr))
@@ -831,11 +881,20 @@ async fn fetch_temporal(
         geo: &geo_pre,
         aggregate: plan.agg.then_some(antares_store::filter::Aggregate {
             methods: &trepr.aggr_methods,
-            period_secs: match trepr.aggr_period {
-                AggrPeriod::Seconds(sc) => Some(sc),
-                _ => None,
+            period: match trepr.aggr_period {
+                AggrPeriod::Whole => antares_store::filter::Period::Whole,
+                AggrPeriod::Seconds(sc) => antares_store::filter::Period::Seconds(sc),
+                AggrPeriod::Months(m, _) => antares_store::filter::Period::Months(m),
             },
             anchor: qry.tq.as_ref().map(|t| t.time_at.as_str()),
+            attrs: match qry.types_rule {
+                Some(_) => plan.page_attrs.as_deref(),
+                None => qry.attrs_filter.as_deref(),
+            },
+            budget: qry
+                .types_rule
+                .is_some()
+                .then_some(crate::bounds::AGGREGATE_BUDGET),
         }),
     };
     Ok(req.st.temporal.query_temporal(req.tenant, &tf).await?)

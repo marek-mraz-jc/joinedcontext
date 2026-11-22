@@ -196,10 +196,25 @@ pub struct TemporalFilter<'a> {
 pub struct Aggregate<'a> {
     /// aggregation methods, each one of [`AGGREGATE_METHODS`]
     pub methods: &'a [String],
-    /// bucket width in seconds; `None` = one bucket over the whole range (PT0S)
-    pub period_secs: Option<i64>,
+    /// the width of a bucket
+    pub period: Period,
     /// bucket origin (the request's timeAt); `None` = each attribute's first instant
     pub anchor: Option<&'a str>,
+    /// only these Attribute IRIs are read: those asked for, of those a narrowing shows
+    pub attrs: Option<&'a [String]>,
+    /// the statement time this read may take, below the session's own (DAT-11)
+    pub budget: Option<std::time::Duration>,
+}
+
+/// The width of a clause 4.5.19.1 bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Period {
+    /// one bucket over the whole range (PT0S)
+    Whole,
+    /// this many seconds
+    Seconds(i64),
+    /// whole calendar months in UTC from a UTC anchor, the day clamped to the month's last
+    Months(u32),
 }
 
 /// Table 4.5.19.1-1: the methods every numeric Property is eligible for —

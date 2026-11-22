@@ -2,7 +2,7 @@
 //! assistant, the broker's MCP and the gateway's anonymous bound read this one table, so a range
 //! of 10 or 100 years stays under [`MAX_POINTS`] points a series wherever it is asked.
 
-use jiff::SignedDuration;
+pub use jiff::SignedDuration;
 
 /// `[days, period]`: a range of at most `days` days is read by `period`, a longer one by the next
 /// row's. `granularity.json` is JSON and a Rust array expression at once: jc serves the same
