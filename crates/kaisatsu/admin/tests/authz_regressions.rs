@@ -1796,3 +1796,49 @@ async fn org_admin_post_creates_no_role_mappings() {
     assert_ne!(u.id, "esp-person", "an organization admin picks no id");
     assert_eq!(f.user("esp-person").await.username, "esp-person");
 }
+
+#[tokio::test]
+async fn partial_import_turns_paths_into_membership_rows() {
+    let f = Fixture::new().await;
+    let t = f
+        .token(
+            "dev",
+            "root",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let import = async |mode: &str, path: &str| {
+        let body = json!({
+            "ifResourceExists": mode,
+            "users": [{ "username": "imported", "groups": [path] }],
+            "groups": [{ "name": "team", "subGroups": [{ "name": "inner" }] }],
+        });
+        f.send(
+            Method::POST,
+            "/admin/realms/dev/partialImport",
+            &t,
+            Some(body),
+        )
+        .await
+    };
+    assert_eq!(import("SKIP", "/team/inner").await, StatusCode::OK);
+    let person = async || {
+        f.store
+            .get_user_by_username_or_email("dev", None, "imported")
+            .await
+            .unwrap()
+            .expect("imported person")
+    };
+    let first = person().await;
+    assert!(first.groups.is_empty());
+    let joined = f.store.list_user_groups("dev", &first.id).await.unwrap();
+    assert_eq!(joined.len(), 1);
+    assert_eq!(joined[0].path, "/team/inner");
+
+    // An unknown path is refused before OVERWRITE deletes the person.
+    assert_eq!(
+        import("OVERWRITE", "/nowhere").await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(person().await.id, first.id);
+}

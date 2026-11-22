@@ -46,10 +46,7 @@ fn members_of(
         .collect();
     st.users
         .iter()
-        .filter(|u| {
-            u.realm_id == group.realm_id
-                && (member_ids.contains(&u.id.as_str()) || u.groups.contains(&group.path))
-        })
+        .filter(|u| u.realm_id == group.realm_id && member_ids.contains(&u.id.as_str()))
         .skip(first)
         .take(max)
         .cloned()
@@ -563,6 +560,8 @@ impl Store for MemoryStore {
             if let Some(em) = &mut user.email {
                 *em = em.to_ascii_lowercase();
             }
+            // Membership is a row: the document never carries a group path.
+            user.groups.clear();
             if user.created_timestamp.is_none() {
                 user.created_timestamp = Some(TimestampTz::now().as_millis());
             }
@@ -594,6 +593,7 @@ impl Store for MemoryStore {
             if let Some(em) = &mut user.email {
                 *em = em.to_ascii_lowercase();
             }
+            user.groups.clear();
             let mut st = self.inner.write();
             let pos = st
                 .users
@@ -1109,13 +1109,9 @@ impl Store for MemoryStore {
             if !Self::org_allowed(allowed_orgs, st.groups[pos].org_id.as_deref()) {
                 return Ok(false);
             }
-            let removed = st.groups.remove(pos);
+            st.groups.remove(pos);
             st.group_members
                 .retain(|gm| !(gm.realm_id == realm_id && gm.group_id == group_id));
-            for u in st.users.iter_mut().filter(|u| u.realm_id == realm_id) {
-                u.groups
-                    .retain(|p| p != &removed.path && p != &removed.name);
-            }
             Ok(true)
         })
     }
@@ -1145,14 +1141,6 @@ impl Store for MemoryStore {
                     user_id: user_id.to_owned(),
                 });
             }
-            if let Some(u) = st
-                .users
-                .iter_mut()
-                .find(|u| u.realm_id == realm_id && u.id == user_id)
-                && !u.groups.contains(&group.path)
-            {
-                u.groups.push(group.path);
-            }
             Ok(())
         })
     }
@@ -1165,22 +1153,9 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            let group_path = st
-                .groups
-                .iter()
-                .find(|g| g.realm_id == realm_id && g.id == group_id)
-                .map(|g| g.path.clone());
             st.group_members.retain(|gm| {
                 !(gm.realm_id == realm_id && gm.user_id == user_id && gm.group_id == group_id)
             });
-            if let Some(path) = group_path
-                && let Some(u) = st
-                    .users
-                    .iter_mut()
-                    .find(|u| u.realm_id == realm_id && u.id == user_id)
-            {
-                u.groups.retain(|p| p != &path);
-            }
             Ok(())
         })
     }
@@ -1198,21 +1173,10 @@ impl Store for MemoryStore {
                 .filter(|gm| gm.realm_id == realm_id && gm.user_id == user_id)
                 .map(|gm| gm.group_id.as_str())
                 .collect();
-            let user_paths: Vec<String> = st
-                .users
-                .iter()
-                .find(|u| u.realm_id == realm_id && u.id == user_id)
-                .map(|u| u.groups.clone())
-                .unwrap_or_default();
             let mut groups: Vec<GroupRepresentation> = st
                 .groups
                 .iter()
-                .filter(|g| {
-                    g.realm_id == realm_id
-                        && (member_group_ids.contains(&g.id.as_str())
-                            || user_paths.contains(&g.path)
-                            || user_paths.contains(&g.name))
-                })
+                .filter(|g| g.realm_id == realm_id && member_group_ids.contains(&g.id.as_str()))
                 .cloned()
                 .collect();
             groups.sort_by(|a, b| a.path.cmp(&b.path));
@@ -2597,6 +2561,7 @@ impl Store for MemoryStore {
             if outbox.id.is_empty() {
                 outbox.id = uuid::Uuid::now_v7().to_string();
             }
+            user.groups.clear();
             let mut st = self.inner.write();
             let pos = st
                 .users

@@ -1020,6 +1020,7 @@ impl Store for PgStore {
                     "user with same username or email already exists".into(),
                 ));
             }
+            user.groups.clear();
             insert_user(&mut tx, &user).await?;
             tx.commit().await.map_err(storage)?;
             Ok(user)
@@ -1042,6 +1043,8 @@ impl Store for PgStore {
             {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
+            // Membership is a row: the document never carries a group path.
+            user.groups.clear();
             if user_key_taken(&mut tx, &user, Some(&user.id)).await? {
                 return Err(KaisatsuError::Conflict(
                     "another user already holds that username or email".into(),
@@ -1588,30 +1591,20 @@ impl Store for PgStore {
             let mut members: HashMap<String, Vec<UserRepresentation>> = HashMap::new();
             if !groups.is_empty() {
                 let ids: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
-                let paths: Vec<&str> = groups.iter().map(|g| g.path.as_str()).collect();
                 // The page is what the caller may see; its members are listed whatever their home.
                 set_scope(&mut tx, realm_id, None).await?;
                 let pairs: Vec<(String, Value)> = sqlx::query_as(
-                    "WITH joined AS (
-                         SELECT group_id, user_id FROM kaisatsu.group_members
-                         WHERE realm_id = $1 AND group_id = ANY($2)
-                     ), named AS (
-                         SELECT g.id AS group_id, p.id AS user_id
-                         FROM kaisatsu.people p
-                         JOIN unnest($2::text[], $3::text[]) AS g(id, path)
-                             ON p.doc->'groups' ? g.path
-                         WHERE p.realm_id = $1 AND p.doc->'groups' ?| $3
-                     ), ranked AS (
+                    "WITH ranked AS (
                          SELECT m.group_id, p.doc, p.seq,
                                 row_number() OVER (PARTITION BY m.group_id ORDER BY p.seq) AS place
-                         FROM (SELECT * FROM joined UNION SELECT * FROM named) m
-                         JOIN kaisatsu.people p ON p.realm_id = $1 AND p.id = m.user_id
+                         FROM kaisatsu.group_members m
+                         JOIN kaisatsu.people p ON p.realm_id = m.realm_id AND p.id = m.user_id
+                         WHERE m.realm_id = $1 AND m.group_id = ANY($2)
                      )
-                     SELECT group_id::text, doc FROM ranked WHERE place <= $4 ORDER BY seq",
+                     SELECT group_id::text, doc FROM ranked WHERE place <= $3 ORDER BY seq",
                 )
                 .bind(realm_id)
                 .bind(&ids)
-                .bind(&paths)
                 .bind(i64::try_from(MAX_PAGE).unwrap_or(i64::MAX))
                 .fetch_all(&mut *tx)
                 .await
@@ -1642,18 +1635,17 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let removed: Option<Value> = sqlx::query_scalar(
-                "DELETE FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2 RETURNING doc",
+            let removed: Option<String> = sqlx::query_scalar(
+                "DELETE FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2 RETURNING id",
             )
             .bind(realm_id)
             .bind(group_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            let Some(removed) = removed else {
+            if removed.is_none() {
                 return Ok(false);
-            };
-            let removed: GroupRepresentation = from_doc(removed)?;
+            }
             set_scope(&mut tx, realm_id, None).await?;
             sqlx::query("DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND group_id = $2")
                 .bind(realm_id)
@@ -1661,22 +1653,6 @@ impl Store for PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(storage)?;
-            let holders: Vec<Value> = sqlx::query_scalar(
-                "SELECT doc FROM kaisatsu.people
-                 WHERE realm_id = $1 AND (doc->'groups' ? $2 OR doc->'groups' ? $3)",
-            )
-            .bind(realm_id)
-            .bind(&removed.path)
-            .bind(&removed.name)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(storage)?;
-            for doc in holders {
-                let mut u: UserRepresentation = from_doc(doc)?;
-                u.groups
-                    .retain(|p| p != &removed.path && p != &removed.name);
-                save_user_doc(&mut tx, &u).await?;
-            }
             tx.commit().await.map_err(storage)?;
             Ok(true)
         })
@@ -1723,12 +1699,6 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if let Some(mut u) = load_user(&mut tx, realm_id, user_id).await?
-                && !u.groups.contains(&group.path)
-            {
-                u.groups.push(group.path);
-                save_user_doc(&mut tx, &u).await?;
-            }
             tx.commit().await.map_err(storage)?;
             Ok(())
         })
@@ -1742,14 +1712,6 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
-            let path: Option<String> = sqlx::query_scalar(
-                "SELECT path FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2",
-            )
-            .bind(realm_id)
-            .bind(group_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(storage)?;
             sqlx::query(
                 "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND user_id = $2 AND group_id = $3",
             )
@@ -1759,12 +1721,6 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if let Some(path) = path
-                && let Some(mut u) = load_user(&mut tx, realm_id, user_id).await?
-            {
-                u.groups.retain(|p| p != &path);
-                save_user_doc(&mut tx, &u).await?;
-            }
             tx.commit().await.map_err(storage)?;
             Ok(())
         })
@@ -1777,21 +1733,15 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
-            let paths = load_user(&mut tx, realm_id, user_id)
-                .await?
-                .map(|u| u.groups)
-                .unwrap_or_default();
             let docs: Vec<Value> = sqlx::query_scalar(
                 "SELECT g.doc FROM kaisatsu.groups g
-                 WHERE g.realm_id = $1 AND (
-                     g.id IN (SELECT gm.group_id FROM kaisatsu.group_members gm
-                              WHERE gm.realm_id = $1 AND gm.user_id = $2)
-                     OR g.path = ANY($3) OR (g.doc->>'name') = ANY($3))
+                 WHERE g.realm_id = $1
+                   AND g.id IN (SELECT gm.group_id FROM kaisatsu.group_members gm
+                                WHERE gm.realm_id = $1 AND gm.user_id = $2)
                  ORDER BY g.path",
             )
             .bind(realm_id)
             .bind(user_id)
-            .bind(&paths)
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
@@ -1810,32 +1760,30 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let path: Option<String> = sqlx::query_scalar(
-                "SELECT path FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2",
+            let visible: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2)",
             )
             .bind(realm_id)
             .bind(group_id)
-            .fetch_optional(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(storage)?;
-            let Some(path) = path else {
+            if !visible {
                 return Err(KaisatsuError::NotFound("group not found".into()));
-            };
+            }
             // The group is visible to the caller; its members are listed whatever their home.
             set_scope(&mut tx, realm_id, None).await?;
             let limit = i64::try_from(max.clamp(1, MAX_PAGE)).unwrap_or(i64::MAX);
             let offset = i64::try_from(first).unwrap_or(i64::MAX);
             let docs: Vec<Value> = sqlx::query_scalar(
                 "SELECT p.doc FROM kaisatsu.people p
-                 WHERE p.realm_id = $1 AND (
-                     p.id IN (SELECT gm.user_id FROM kaisatsu.group_members gm
-                              WHERE gm.realm_id = $1 AND gm.group_id = $2)
-                     OR p.doc->'groups' ? $3)
-                 ORDER BY p.seq OFFSET $5 LIMIT $4",
+                 WHERE p.realm_id = $1
+                   AND p.id IN (SELECT gm.user_id FROM kaisatsu.group_members gm
+                                WHERE gm.realm_id = $1 AND gm.group_id = $2)
+                 ORDER BY p.seq OFFSET $4 LIMIT $3",
             )
             .bind(realm_id)
             .bind(group_id)
-            .bind(&path)
             .bind(limit)
             .bind(offset)
             .fetch_all(&mut *tx)
@@ -3804,6 +3752,8 @@ impl Store for PgStore {
             {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
+            // Membership is a row: the document never carries a group path.
+            user.groups.clear();
             if user_key_taken(&mut tx, &user, Some(&user.id)).await? {
                 return Err(KaisatsuError::Conflict(
                     "another user already holds that username or email".into(),

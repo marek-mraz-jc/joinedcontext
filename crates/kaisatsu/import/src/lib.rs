@@ -1460,16 +1460,31 @@ pub async fn apply_realm_files(
             if user.managed_by.is_none() {
                 user.managed_by = Some("apply".into());
             }
+            let file_groups = std::mem::take(&mut user.groups);
             let prev = store
                 .get_user_by_username_or_email(&realm_id, None, &user.username)
                 .await?;
+            let joined: Vec<String> = match &prev {
+                Some(p) if !file_groups.is_empty() => store
+                    .list_user_groups(&realm_id, &p.id)
+                    .await?
+                    .into_iter()
+                    .map(|g| g.path)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let in_every_group = file_groups.iter().all(|path| {
+                joined
+                    .iter()
+                    .any(|j| j.trim_start_matches('/') == path.trim_start_matches('/'))
+            });
             let act = match &prev {
                 None => ChangeAction::Create,
                 Some(p)
                     if p.first_name == user.first_name
                         && p.last_name == user.last_name
                         && p.realm_roles == user.realm_roles
-                        && p.groups == user.groups =>
+                        && in_every_group =>
                 {
                     ChangeAction::Unchanged
                 }
@@ -1493,10 +1508,19 @@ pub async fn apply_realm_files(
                     store.create_user(user.clone()).await?
                 };
                 // Link groups
-                for gpath in &saved.groups {
-                    if let Some(grp) = store.get_group_by_path(&realm_id, None, gpath).await? {
-                        let _ = store.add_user_to_group(&realm_id, &saved.id, &grp.id).await;
-                    }
+                for gpath in &file_groups {
+                    let grp = store
+                        .get_group_by_path(&realm_id, None, gpath)
+                        .await?
+                        .ok_or_else(|| {
+                            KaisatsuError::NotFound(format!(
+                                "user '{}': group '{gpath}' does not exist",
+                                saved.username
+                            ))
+                        })?;
+                    store
+                        .add_user_to_group(&realm_id, &saved.id, &grp.id)
+                        .await?;
                 }
                 // Import credentials (`password`, `otp`, `webauthn`). A file seeds a credential
                 // type only while the user holds none of it: `jc` re-applies its realm files after
@@ -1699,6 +1723,28 @@ pub async fn apply_plan(
     .await
 }
 
+/// An export names each person's groups by path, read from the membership rows group by group.
+async fn fill_user_groups(
+    store: &dyn Store,
+    realm_id: &str,
+    groups: &[GroupRepresentation],
+    users: &mut [UserRepresentation],
+) -> Result<()> {
+    let mut paths: HashMap<String, Vec<String>> = HashMap::new();
+    let mut pending: Vec<&GroupRepresentation> = groups.iter().collect();
+    while let Some(group) = pending.pop() {
+        pending.extend(&group.sub_groups);
+        for member in kaisatsu_core::listing::all_group_members(store, realm_id, &group.id).await? {
+            paths.entry(member.id).or_default().push(group.path.clone());
+        }
+    }
+    for user in users {
+        user.groups = paths.remove(&user.id).unwrap_or_default();
+        user.groups.sort();
+    }
+    Ok(())
+}
+
 /// Exports a realm back into the `keycloak-config-cli` JSON representation so `apply -> export -> apply`
 /// is a fixed point (W1b).
 pub async fn export_realm(
@@ -1772,13 +1818,13 @@ pub async fn export_realm(
             serde_json::to_value(&idps).unwrap_or(Value::Array(Vec::new())),
         );
         if with_users {
-            let users = kaisatsu_core::listing::all_users(store.as_ref(), realm_id).await?;
+            let mut users = kaisatsu_core::listing::all_users(store.as_ref(), realm_id).await?;
+            fill_user_groups(store.as_ref(), realm_id, &groups, &mut users).await?;
             map.insert(
                 "users".into(),
                 serde_json::to_value(&users).unwrap_or(Value::Array(Vec::new())),
             );
         }
     }
-    let _ = HashMap::<String, String>::new();
     Ok(out)
 }

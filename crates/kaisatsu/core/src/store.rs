@@ -174,6 +174,8 @@ pub trait Store: Send + Sync {
         user_id: &'a str,
         group_id: &'a str,
     ) -> StoreFuture<'a, ()>;
+    /// The groups of the person's `group_members` rows, and only those: a path in
+    /// [`UserRepresentation::groups`] is input of imports and creates, never a membership.
     fn list_user_groups<'a>(
         &'a self,
         realm_id: &'a str,

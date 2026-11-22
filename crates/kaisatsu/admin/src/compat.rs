@@ -18,7 +18,7 @@ use kaisatsu_crypto::{random_handle_256, verify_jwt};
 use kaisatsu_oidc::OidcState;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -545,7 +545,7 @@ pub(crate) fn merge_user_update(
     user.realm_id = existing.realm_id.clone();
     user.realm_roles = existing.realm_roles.clone();
     user.client_roles = existing.client_roles.clone();
-    user.groups = existing.groups.clone();
+    user.groups.clear();
     user.service_account_client_id = existing.service_account_client_id.clone();
     user.created_timestamp = existing.created_timestamp;
     user.transient = existing.transient;
@@ -554,6 +554,23 @@ pub(crate) fn merge_user_update(
         user.org_id = existing.org_id.clone();
     }
     user
+}
+
+/// The paths of `groups` and their subgroups, as `upsert_group` will store them.
+fn payload_group_paths(groups: &[GroupRepresentation]) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    let mut pending: Vec<(String, &GroupRepresentation)> =
+        groups.iter().map(|g| (String::new(), g)).collect();
+    while let Some((parent, group)) = pending.pop() {
+        let path = if group.path.is_empty() {
+            format!("{}/{}", parent.trim_end_matches('/'), group.name)
+        } else {
+            group.path.clone()
+        };
+        pending.extend(group.sub_groups.iter().map(|s| (path.clone(), s)));
+        paths.insert(format!("/{}", path.trim_start_matches('/')));
+    }
+    paths
 }
 
 /// The user attribute prefix of an identity-provider link (`kaisatsu.idp.{alias}.sub`), which the
@@ -971,9 +988,33 @@ async fn compat_partial_import(
             }
         }
     }
+    // Every path a person names is a stored group or one of this payload, found before anything
+    // is written: OVERWRITE deletes the person first.
+    let in_payload = payload_group_paths(&payload.groups);
+    for path in payload.users.iter().flat_map(|u| &u.groups) {
+        let norm = format!("/{}", path.trim_start_matches('/'));
+        if !in_payload.contains(&norm)
+            && state
+                .oidc
+                .store
+                .get_group_by_path(&realm_name, None, &norm)
+                .await?
+                .is_none()
+        {
+            return Err(KaisatsuError::BadRequest(format!(
+                "partialImport: group {path} does not exist: create it or add it to the import's groups"
+            )));
+        }
+    }
     let mut added = 0u32;
     let mut overwritten = 0u32;
     let mut skipped = 0u32;
+
+    for mut g in payload.groups {
+        g.realm_id = realm_name.clone();
+        state.oidc.store.upsert_group(g).await?;
+        added += 1;
+    }
 
     for mut u in payload.users {
         u.realm_id = realm_name.clone();
@@ -995,29 +1036,40 @@ async fn compat_partial_import(
             None
         };
         let existing = existing_by_id.or(existing_by_name);
-        match existing {
+        let paths = std::mem::take(&mut u.groups);
+        let written = match existing {
             Some(old) if mode == "OVERWRITE" => {
                 let _ = state
                     .oidc
                     .store
                     .delete_user(&realm_name, None, &old.id)
                     .await?;
-                state.oidc.store.create_user(u).await?;
                 overwritten += 1;
+                state.oidc.store.create_user(u).await?
             }
             // SKIP (FAIL found its conflicts before writing).
-            Some(_) => skipped += 1,
-            None => {
-                state.oidc.store.create_user(u).await?;
-                added += 1;
+            Some(_) => {
+                skipped += 1;
+                continue;
             }
+            None => {
+                added += 1;
+                state.oidc.store.create_user(u).await?
+            }
+        };
+        for path in &paths {
+            let group = state
+                .oidc
+                .store
+                .get_group_by_path(&realm_name, None, path)
+                .await?
+                .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
+            state
+                .oidc
+                .store
+                .add_user_to_group(&realm_name, &written.id, &group.id)
+                .await?;
         }
-    }
-
-    for mut g in payload.groups {
-        g.realm_id = realm_name.clone();
-        state.oidc.store.upsert_group(g).await?;
-        added += 1;
     }
 
     for mut c in payload.clients {
@@ -1223,11 +1275,11 @@ async fn compat_get_user(
         },
     ))?;
     let mut user = user;
-    if !user.groups.is_empty() && !ctx.principal.is_realm_admin() {
-        let visible = visible_user_groups(&state, &ctx, &realm, &user.id).await?;
-        user.groups
-            .retain(|path| visible.iter().any(|g| &g.path == path));
-    }
+    user.groups = visible_user_groups(&state, &ctx, &realm, &user.id)
+        .await?
+        .into_iter()
+        .map(|g| g.path)
+        .collect();
     Ok(Json(user))
 }
 
