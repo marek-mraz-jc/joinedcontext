@@ -32,8 +32,9 @@ use shako_api::{
     read_body_bounded, stream_file_in_64k_chunks,
 };
 use shako_core::{
-    Action, BlobRecord, PackageId, PackageRecord, PackageVersionRecord, RequestCtx, ShakoError,
-    ShakoResult, TokenVerifier, sha256_hex, validate_package_segment, validate_repo_or_owner_name,
+    Action, BlobRecord, OrgId, PackageId, PackageRecord, PackageVersionRecord, RequestCtx,
+    ShakoError, ShakoResult, TokenVerifier, sha256_hex, validate_package_segment,
+    validate_repo_or_owner_name,
 };
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -53,7 +54,8 @@ const MAX_OPEN_UPLOAD_BYTES: usize = 2 * MAX_PACKAGE_BLOB_BYTES;
 /// An upload not finished in this time is dropped with its bytes.
 const UPLOAD_TTL: Duration = Duration::from_secs(3600);
 
-type Uploads = BTreeMap<String, (String, String, Instant, Vec<u8>)>;
+/// By Organization and upload id: an open upload is its Organization's alone.
+type Uploads = BTreeMap<(OrgId, String), (String, String, Instant, Vec<u8>)>;
 
 fn open_upload_bytes(map: &Uploads) -> usize {
     map.values().map(|(_, _, _, b)| b.len()).sum()
@@ -139,16 +141,12 @@ fn oci_store_error(e: &ShakoError) -> Response {
     )
 }
 
-fn authenticate_oci(
-    state: &ShakoState,
-    headers: &HeaderMap,
-    owner: Option<&str>,
-) -> ShakoResult<RequestCtx> {
+fn authenticate_oci(state: &ShakoState, headers: &HeaderMap) -> ShakoResult<RequestCtx> {
     // Accept either a `/v2/token` bearer (`aud = "container_registry"`) or a `shako` token
-    if let Ok(ctx) = authenticate_request(state, headers, owner, "container_registry") {
+    if let Ok(ctx) = authenticate_request(state, headers, "container_registry") {
         return Ok(ctx);
     }
-    authenticate_request(state, headers, owner, "shako")
+    authenticate_request(state, headers, "shako")
 }
 
 fn validate_sha256_digest(digest: &str) -> ShakoResult<String> {
@@ -176,7 +174,7 @@ async fn oci_v2_ping(
 ) -> Response {
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
     let token_realm = format!("{}://{}/v2/token", mount.scheme, mount.host);
-    match authenticate_oci(&state, &headers, None) {
+    match authenticate_oci(&state, &headers) {
         Ok(_) => (
             StatusCode::OK,
             [(
@@ -262,16 +260,18 @@ async fn oci_get_token(
         }
     };
 
+    let Some(org) = subject.organization() else {
+        return oci_error_response(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            "requested access to the resource is denied",
+            None,
+        );
+    };
     let mut granted = Vec::new();
-    let mut target_org = subject
-        .organizations
-        .first()
-        .copied()
-        .unwrap_or(state.default_org_id);
-
     // Each requested `repository:{owner}/{image}:{actions}` is checked against the Authorizer
     // (T4); the token carries the granted ones, space separated.
-    for (idx, scope) in requested.iter().enumerate() {
+    for scope in &requested {
         let Some(rest) = scope.strip_prefix("repository:") else {
             continue;
         };
@@ -281,12 +281,6 @@ async fn oci_get_token(
         let Some((owner, image)) = repo_part.split_once('/') else {
             continue;
         };
-        let org = state.resolve_org_for_owner(owner, &subject);
-        if idx == 0 {
-            target_org = org;
-        } else if org != target_org {
-            continue;
-        }
         let ctx = RequestCtx::new(state.default_instance_id, org, subject.clone());
         let mut allowed_actions = Vec::new();
         for act in actions_part.split(',') {
@@ -319,7 +313,7 @@ async fn oci_get_token(
 
     match state
         .signing_key()
-        .mint_registry_token(&subject, target_org, &granted_scope, 900)
+        .mint_registry_token(&subject, org, &granted_scope, 900)
     {
         Ok(jwt) => (
             StatusCode::OK,
@@ -350,7 +344,7 @@ async fn oci_head_or_get_blob(
     method: axum::http::Method,
     Path((owner, image, digest)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -376,12 +370,11 @@ async fn oci_head_or_get_blob(
         }
     };
 
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let Some(blob_rec) = state
         .store()
         .get_blob(
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             &owner,
             Some(&image),
             &clean_digest,
@@ -448,7 +441,7 @@ async fn oci_post_blob_upload(
     Query(q): Query<UploadQuery>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -468,7 +461,6 @@ async fn oci_post_blob_upload(
     if authorize_package(&state, &ctx, &owner, "container", &image, Action::Publish).is_err() {
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
 
     // 1. Cross-repo blob mount (`?mount={digest}&from={from_owner}/{from_repo}`):
     //    Contract S13 & Threat T13: mount allowed ONLY within the SAME `owner`!
@@ -501,7 +493,7 @@ async fn oci_post_blob_upload(
                 .store()
                 .get_blob(
                     ctx.instance_id,
-                    target_org,
+                    ctx.org_id,
                     &owner,
                     Some(from_image),
                     &clean_digest,
@@ -511,7 +503,7 @@ async fn oci_post_blob_upload(
             let mounted = BlobRecord {
                 id: uuid::Uuid::now_v7(),
                 instance_id: ctx.instance_id,
-                org_id: target_org,
+                org_id: ctx.org_id,
                 owner: owner.clone(),
                 repo_name: image.clone(),
                 digest: clean_digest.clone(),
@@ -560,7 +552,7 @@ async fn oci_post_blob_upload(
         return finish_blob_store(
             &state,
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             &owner,
             &image,
             &clean_digest,
@@ -581,7 +573,7 @@ async fn oci_post_blob_upload(
             return too_many_uploads();
         }
         map.insert(
-            upload_uuid.clone(),
+            (ctx.org_id, upload_uuid.clone()),
             (owner.clone(), image.clone(), Instant::now(), initial_bytes),
         );
     }
@@ -612,7 +604,7 @@ async fn oci_patch_blob_upload(
     Path((owner, image, upload_uuid)): Path<(String, String, String)>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -636,7 +628,7 @@ async fn oci_patch_blob_upload(
     };
     let mut map = CHUNKED_UPLOADS.write();
     let buffered = open_upload_bytes(&map);
-    let Some((u_owner, u_image, _, buf)) = map.get_mut(&upload_uuid) else {
+    let Some((u_owner, u_image, _, buf)) = map.get_mut(&(ctx.org_id, upload_uuid.clone())) else {
         return oci_error_response(
             StatusCode::NOT_FOUND,
             "BLOB_UPLOAD_UNKNOWN",
@@ -690,7 +682,7 @@ async fn oci_put_blob_upload(
     Query(q): Query<UploadQuery>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -728,7 +720,18 @@ async fn oci_put_blob_upload(
             None,
         );
     };
-    let Some((u_owner, u_image, _, mut buf)) = CHUNKED_UPLOADS.write().remove(&upload_uuid) else {
+    let key = (ctx.org_id, upload_uuid);
+    let taken = {
+        let mut map = CHUNKED_UPLOADS.write();
+        // Compared before it is taken, so a wrong address never drops an open upload.
+        match map.get(&key) {
+            Some((u_owner, u_image, _, _)) if *u_owner == owner && *u_image == image => {
+                map.remove(&key)
+            }
+            _ => None,
+        }
+    };
+    let Some((_, _, _, mut buf)) = taken else {
         return oci_error_response(
             StatusCode::NOT_FOUND,
             "BLOB_UPLOAD_UNKNOWN",
@@ -736,14 +739,6 @@ async fn oci_put_blob_upload(
             None,
         );
     };
-    if u_owner != owner || u_image != image {
-        return oci_error_response(
-            StatusCode::NOT_FOUND,
-            "BLOB_UPLOAD_UNKNOWN",
-            "upload unknown",
-            None,
-        );
-    }
     if buf.len().saturating_add(final_chunk.len()) > MAX_PACKAGE_BLOB_BYTES {
         return oci_error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -753,11 +748,10 @@ async fn oci_put_blob_upload(
         );
     }
     buf.extend_from_slice(&final_chunk);
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     finish_blob_store(
         &state,
         ctx.instance_id,
-        target_org,
+        ctx.org_id,
         &owner,
         &image,
         &clean_digest,
@@ -811,7 +805,7 @@ async fn oci_put_manifest(
     Path((owner, image, reference)): Path<(String, String, String)>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -887,14 +881,13 @@ async fn oci_put_manifest(
         })
         .map(str::to_owned);
 
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let now = TimestampTz::now();
     let size_bytes = manifest_bytes.len() as u64;
     // The manifest first: its quota answer is the push's, and nothing signs what was refused.
     if let Err(e) = service::store_image_blob(
         &state,
         ctx.instance_id,
-        target_org,
+        ctx.org_id,
         &owner,
         &image,
         manifest_bytes,
@@ -908,7 +901,7 @@ async fn oci_put_manifest(
         .upsert_package(PackageRecord {
             id: PackageId::new(),
             instance_id: ctx.instance_id,
-            org_id: target_org,
+            org_id: ctx.org_id,
             owner: owner.clone(),
             package_type: "container".into(),
             name: image.clone(),
@@ -923,7 +916,7 @@ async fn oci_put_manifest(
     let ver_rec = PackageVersionRecord {
         id: uuid::Uuid::now_v7(),
         instance_id: ctx.instance_id,
-        org_id: target_org,
+        org_id: ctx.org_id,
         package_id: pkg.id,
         owner: owner.clone(),
         package_type: "container".into(),
@@ -946,7 +939,7 @@ async fn oci_put_manifest(
         match store_cosign_signature_tag(
             &state,
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             pkg.id,
             &owner,
             &image,
@@ -966,10 +959,12 @@ async fn oci_put_manifest(
 
     let _ = emit_and_dispatch_event(
         &state,
-        target_org,
+        ctx.org_id,
         None,
         "package.publish",
-        format!("oci:{owner}/{image}:{computed_digest}"),
+        // The Organization is in the key: two may hold one owner and image, and until the index
+        // of a previous release is dropped (migrations/keys) keys are unique per installation.
+        format!("oci:{}:{owner}/{image}:{computed_digest}", ctx.org_id),
         json!({"owner": owner, "image": image, "reference": reference, "digest": computed_digest}),
     )
     .await;
@@ -1010,7 +1005,9 @@ async fn store_cosign_signature_tag(
             "type": "cosign container image signature"
         },
         "optional": {
-            "creator": "shako"
+            "creator": "shako",
+            // Two Organizations may hold one owner and image: `cosign verify -a org_id=...`.
+            "org_id": org_id.to_string()
         }
     });
     let payload_bytes = serde_json::to_vec(&simple_signing_payload)
@@ -1079,7 +1076,7 @@ async fn oci_get_or_head_manifest(
     method: axum::http::Method,
     Path((owner, image, reference)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -1093,7 +1090,6 @@ async fn oci_get_or_head_manifest(
     if authorize_package(&state, &ctx, &owner, "container", &image, Action::Read).is_err() {
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let unknown = || {
         oci_error_response(
             StatusCode::NOT_FOUND,
@@ -1106,7 +1102,7 @@ async fn oci_get_or_head_manifest(
         .store()
         .get_package_version(
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             &owner,
             "container",
             &image,
@@ -1123,7 +1119,7 @@ async fn oci_get_or_head_manifest(
         .store()
         .get_blob(
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             &owner,
             Some(&image),
             &ver.digest,
@@ -1195,7 +1191,7 @@ async fn oci_list_tags(
     Path((owner, image)): Path<(String, String)>,
     Query(q): Query<TagsQuery>,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -1209,13 +1205,12 @@ async fn oci_list_tags(
     if authorize_package(&state, &ctx, &owner, "container", &image, Action::Read).is_err() {
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let count = q.n.unwrap_or(MAX_TAGS_PAGE).min(MAX_TAGS_PAGE);
     let mut tags = match state
         .store()
         .list_package_tags(
             ctx.instance_id,
-            target_org,
+            ctx.org_id,
             &owner,
             &image,
             q.last.as_deref(),
@@ -1259,7 +1254,7 @@ async fn oci_list_referrers(
     headers: HeaderMap,
     Path((owner, image, digest)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
+    let ctx = match authenticate_oci(&state, &headers) {
         Ok(c) => c,
         Err(_) => {
             return oci_error_response(
@@ -1273,10 +1268,9 @@ async fn oci_list_referrers(
     if authorize_package(&state, &ctx, &owner, "container", &image, Action::Read).is_err() {
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let versions = match state
         .store()
-        .list_referrers(ctx.instance_id, target_org, &owner, &image, &digest)
+        .list_referrers(ctx.instance_id, ctx.org_id, &owner, &image, &digest)
         .await
     {
         Ok(versions) => versions,
@@ -1318,7 +1312,7 @@ async fn generic_put_file(
     Path((owner, pkg, ver, file)): Path<(String, String, String, String)>,
     body: Body,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1347,7 +1341,7 @@ async fn generic_get_file(
     headers: HeaderMap,
     Path((owner, pkg, ver, file)): Path<(String, String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1469,7 +1463,10 @@ mod tests {
         let now = Instant::now();
         let mut map = Uploads::new();
         let open = |map: &mut Uploads, id: usize, at: Instant, len: usize| {
-            map.insert(id.to_string(), ("o".into(), "i".into(), at, vec![0; len]));
+            map.insert(
+                (OrgId::from_u128(1), id.to_string()),
+                ("o".into(), "i".into(), at, vec![0; len]),
+            );
         };
         for id in 0..MAX_OPEN_UPLOADS {
             open(&mut map, id, now, 0);

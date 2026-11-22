@@ -138,8 +138,9 @@ which the Portal reads as `GitError::NotFound` (no runs, no artifact) rather tha
 - `JC_GITEA_URL` = shako's mount (`https://{host}/git/` in slug mode); the registry calls of row
   34 go to `{JC_GITEA_URL}/v2/...`, which shako's main router serves.
 - The tokens behind `JC_GITEA_TOKEN` and `JC_GITEA_APPS_TOKEN` need RoleBindings with `Admin`,
-  `Write`, `Approve` and `Publish` in the owners' organizations, and each owner
-  (`JC_GITEA_OWNER`, `JC_GITEA_APPS_OWNER`) registered with `ShakoState::register_owner_org`;
+  `Write`, `Approve` and `Publish` in the owners' organizations, each bound to the token's subject
+  id. A token names one Organization and acts there; an owner (`JC_GITEA_OWNER`,
+  `JC_GITEA_APPS_OWNER`) is a label inside it and needs no registration (T-7549);
   `bins/jc/src/modules/shako.rs` binds one `admin` token in one organization today.
 - A hook per configuration repository (row 39) pointing at the Portal's
   `/api/v1/webhooks/gitea` with `JC_GITEA_WEBHOOK_SECRET`. In one process the Portal is on the

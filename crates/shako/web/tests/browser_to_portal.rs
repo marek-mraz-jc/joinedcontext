@@ -12,7 +12,7 @@ use http_body_util::BodyExt;
 use shako_api::ShakoState;
 use shako_api::service::{NewRepository, create_repository};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, RequestCtx, RoleBinding,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, Principal, RequestCtx, RoleBinding,
     ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_store_memory::MemoryStore;
@@ -31,15 +31,14 @@ const PATHS: [&str; 4] = [
 /// A shako with the repository `joinedcontext/helsinki`, or with none.
 async fn shako(tmp: &tempfile::TempDir, with_repo: bool) -> Router {
     let org = OrgId::from_u128(10);
-    let subject = Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]);
+    let subject = Subject::authenticated("jc-portal", "jc-portal", vec![org]);
     let state = ShakoState::new(
         InstanceId::from_u128(1),
-        org,
         tmp.path().to_path_buf(),
         Arc::new(MemoryStore::new()),
         Arc::new(LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
             actions: vec![Action::Admin, Action::Write, Action::Read],
             project_id: None,
             repo: None,
@@ -48,7 +47,6 @@ async fn shako(tmp: &tempfile::TempDir, with_repo: bool) -> Router {
             .with_static_tokens(vec![StaticTokenBinding::new(TOKEN, subject.clone())]),
         OutboundGuard::default(),
     );
-    state.register_owner_org("joinedcontext", org);
     if with_repo {
         let ctx = RequestCtx::new(InstanceId::from_u128(1), org, subject);
         let repo = NewRepository {

@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -92,13 +92,14 @@ impl Action {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Subject {
+    /// The only identity of a caller: bindings, allow-lists and authorship key on it.
     pub subject_id: Option<String>,
+    /// Display text, renameable: never compared to decide a right.
     pub username: String,
     pub full_name: String,
     pub email: Option<String>,
     pub client_id: Option<String>,
     pub organizations: Vec<OrgId>,
-    pub groups: Vec<String>,
     /// Connector segments allowed when this token is a delegated/connector token (`None` = unrestricted).
     pub connector_segments: Option<Vec<String>>,
     /// Registry scope if this is a short-lived `/v2/token` bearer (`repository:{owner}/{image}:{actions}`).
@@ -116,7 +117,6 @@ impl Subject {
             email: None,
             client_id: None,
             organizations: Vec::new(),
-            groups: Vec::new(),
             connector_segments: None,
             registry_scope: None,
             read_only: false,
@@ -128,7 +128,6 @@ impl Subject {
         subject_id: impl Into<String>,
         username: impl Into<String>,
         organizations: Vec<OrgId>,
-        groups: Vec<String>,
     ) -> Self {
         let u = username.into();
         Self {
@@ -138,36 +137,43 @@ impl Subject {
             email: None,
             client_id: None,
             organizations,
-            groups,
             connector_segments: None,
             registry_scope: None,
             read_only: false,
         }
     }
 
+    /// No subject id, or an empty one, is nobody.
     #[must_use]
-    pub const fn is_anonymous(&self) -> bool {
-        self.subject_id.is_none()
+    pub fn is_anonymous(&self) -> bool {
+        self.login().is_empty()
+    }
+
+    /// The Organization the caller acts in: the one its token names. A token naming none or
+    /// several acts in none (TEN-04).
+    #[must_use]
+    pub fn organization(&self) -> Option<OrgId> {
+        match self.organizations.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        }
+    }
+
+    /// The caller's account name in the forge: the subject id.
+    #[must_use]
+    pub fn login(&self) -> &str {
+        self.subject_id.as_deref().unwrap_or_default()
+    }
+
+    /// Whether an allow-list of subject ids names this caller.
+    #[must_use]
+    pub fn is_named_in(&self, subject_ids: &[String]) -> bool {
+        !self.is_anonymous() && subject_ids.iter().any(|id| id == self.login())
     }
 
     #[must_use]
     pub fn is_member_of(&self, org_id: OrgId) -> bool {
         self.organizations.contains(&org_id)
-    }
-
-    #[must_use]
-    pub fn principals(&self) -> Vec<&str> {
-        let mut out = Vec::new();
-        if let Some(sub) = &self.subject_id {
-            out.push(sub.as_str());
-        }
-        if !self.username.is_empty() {
-            out.push(self.username.as_str());
-        }
-        for g in &self.groups {
-            out.push(g.as_str());
-        }
-        out
     }
 
     #[must_use]
@@ -322,7 +328,7 @@ impl Decision {
 pub trait Authorizer: Send + Sync {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision;
 
-    /// Checks whether a named principal (username or subject ID) holds `Action::Write` on `repo`
+    /// Checks whether the subject with this id holds `Action::Write` on `repo`
     /// (used when validating branch protection whitelists, S5 & T8).
     fn principal_has_write(
         &self,
@@ -330,14 +336,34 @@ pub trait Authorizer: Send + Sync {
         org_id: OrgId,
         owner: &str,
         repo: &str,
-        principal: &str,
+        subject_id: &str,
     ) -> bool;
 
-    /// Returns visible role bindings for a repository (for the read-only OData `Teams` set, R§9).
+    /// Returns the group bindings of a repository (for the read-only OData `Teams` set, R§9).
     fn bindings_for_repo(&self, org_id: OrgId, repo: &str) -> Vec<(String, Action)> {
         let _ = (org_id, repo);
         Vec::new()
     }
+}
+
+/// Who a binding names. The kinds never stand in for one another (AUZ-12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Principal {
+    /// A subject id, never a username.
+    User(String),
+    /// A group id of the binding's Organization.
+    Group(String),
+}
+
+/// A membership row: `subject_id` is in group `group_id` of `org_id`. Groups come from these
+/// rows alone, never from a token (IDN-03).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GroupMember {
+    pub org_id: OrgId,
+    pub group_id: String,
+    pub subject_id: String,
 }
 
 /// One role binding in [`LocalAuthorizer`] (S12).
@@ -345,8 +371,7 @@ pub trait Authorizer: Send + Sync {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoleBinding {
     pub org_id: OrgId,
-    /// Principal (subject ID, username, or group path like `"/helsinki-writers"`).
-    pub principal: String,
+    pub principal: Principal,
     pub actions: Vec<Action>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
@@ -358,6 +383,7 @@ pub struct RoleBinding {
 #[derive(Debug, Clone, Default)]
 pub struct LocalAuthorizer {
     bindings: Arc<RwLock<Vec<RoleBinding>>>,
+    members: Arc<BTreeSet<GroupMember>>,
 }
 
 impl LocalAuthorizer {
@@ -365,6 +391,27 @@ impl LocalAuthorizer {
     pub fn new(bindings: Vec<RoleBinding>) -> Self {
         Self {
             bindings: Arc::new(RwLock::new(bindings)),
+            members: Arc::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_members(mut self, members: Vec<GroupMember>) -> Self {
+        self.members = Arc::new(members.into_iter().collect());
+        self
+    }
+
+    fn names(&self, binding: &RoleBinding, org_id: OrgId, subject_id: &str) -> bool {
+        if binding.org_id != org_id || subject_id.is_empty() {
+            return false;
+        }
+        match &binding.principal {
+            Principal::User(id) => id == subject_id,
+            Principal::Group(group_id) => self.members.contains(&GroupMember {
+                org_id,
+                group_id: group_id.clone(),
+                subject_id: subject_id.to_owned(),
+            }),
         }
     }
 
@@ -437,12 +484,11 @@ impl Authorizer for LocalAuthorizer {
             return Decision::deny_visible("caller token is read-only");
         }
 
-        let principals = ctx.subject.principals();
+        let caller = ctx.subject.login();
         let bindings = self.bindings.read();
 
         let can_read = bindings.iter().any(|b| {
-            b.org_id == ctx.org_id
-                && principals.contains(&b.principal.as_str())
+            self.names(b, ctx.org_id, caller)
                 && Self::matches_target(b, object)
                 && b.actions.iter().any(|a| a.implies(Action::Read))
         });
@@ -456,8 +502,7 @@ impl Authorizer for LocalAuthorizer {
         }
 
         let granted = bindings.iter().any(|b| {
-            b.org_id == ctx.org_id
-                && principals.contains(&b.principal.as_str())
+            self.names(b, ctx.org_id, caller)
                 && Self::matches_target(b, object)
                 && b.actions.iter().any(|a| a.implies(action))
         });
@@ -475,7 +520,7 @@ impl Authorizer for LocalAuthorizer {
         org_id: OrgId,
         owner: &str,
         repo: &str,
-        principal: &str,
+        subject_id: &str,
     ) -> bool {
         let target = ObjectTarget::Repository {
             instance_id,
@@ -487,8 +532,7 @@ impl Authorizer for LocalAuthorizer {
         };
         let bindings = self.bindings.read();
         bindings.iter().any(|b| {
-            b.org_id == org_id
-                && b.principal == principal
+            self.names(b, org_id, subject_id)
                 && Self::matches_target(b, &target)
                 && b.actions.iter().any(|a| a.implies(Action::Write))
         })
@@ -499,10 +543,11 @@ impl Authorizer for LocalAuthorizer {
         let mut out = Vec::new();
         for b in bindings.iter() {
             if b.org_id == org_id
+                && let Principal::Group(group_id) = &b.principal
                 && b.repo.as_deref().is_none_or(|r| r == repo)
                 && let Some(&highest) = b.actions.iter().max()
             {
-                out.push((b.principal.clone(), highest));
+                out.push((group_id.clone(), highest));
             }
         }
         out
@@ -659,14 +704,14 @@ impl ShakoSigningKey {
         scope: &str,
         ttl_secs: i64,
     ) -> ShakoResult<String> {
+        if subject.is_anonymous() {
+            return Err(ShakoError::Unauthorized("token has no subject".into()));
+        }
         let now = TimestampTz::now().as_second();
         let ttl = ttl_secs.clamp(1, 900);
         let claims = JwtClaims {
             iss: Some("shako".into()),
-            sub: subject
-                .subject_id
-                .clone()
-                .unwrap_or_else(|| subject.username.clone()),
+            sub: subject.login().to_owned(),
             aud: Some(AudClaim::Single("container_registry".into())),
             exp: now + ttl,
             nbf: Some(now - 5),
@@ -676,7 +721,6 @@ impl ShakoSigningKey {
             email: subject.email.clone(),
             azp: subject.client_id.clone(),
             jc_org: Some(OrgClaim::Single(org_id.to_string())),
-            groups: Some(subject.groups.clone()),
             scope: Some(scope.to_owned()),
         };
         let mut header = Header::new(Algorithm::ES256);
@@ -733,8 +777,6 @@ pub struct JwtClaims {
     pub azp: Option<String>,
     #[serde(default)]
     pub jc_org: Option<OrgClaim>,
-    #[serde(default)]
-    pub groups: Option<Vec<String>>,
     #[serde(default)]
     pub scope: Option<String>,
 }
@@ -860,6 +902,12 @@ impl TokenVerifier {
             .as_deref()
             .ok_or_else(|| ShakoError::Unauthorized("JWT missing kid".into()))?;
 
+        // A registry bearer's scope stands in for the bindings, so only shako itself issues one.
+        if expected_audience == "container_registry" && kid != self.signing_key.kid {
+            return Err(ShakoError::Unauthorized(
+                "a registry token is issued by shako alone".into(),
+            ));
+        }
         let jwk_val = self.lookup_or_refresh_jwk(kid)?;
         let jwk: Jwk = serde_json::from_value(jwk_val)
             .map_err(|_| ShakoError::Unauthorized("invalid JWK".into()))?;
@@ -887,6 +935,10 @@ impl TokenVerifier {
         };
         if !aud.contains(expected_audience) {
             return Err(ShakoError::Unauthorized("JWT audience mismatch".into()));
+        }
+
+        if claims.sub.is_empty() {
+            return Err(ShakoError::Unauthorized("JWT names no subject".into()));
         }
 
         let mut organizations = Vec::new();
@@ -918,7 +970,6 @@ impl TokenVerifier {
             email: claims.email,
             client_id: claims.azp,
             organizations,
-            groups: claims.groups.unwrap_or_default(),
             connector_segments: None,
             registry_scope,
             read_only: false,
@@ -965,7 +1016,7 @@ mod tests {
         let (inst, org) = (InstanceId::from_u128(1), OrgId::from_u128(10));
         let authz = LocalAuthorizer::new(vec![RoleBinding {
             org_id: org,
-            principal: "proj-admin".into(),
+            principal: Principal::User("proj-admin".into()),
             actions: vec![Action::Admin],
             project_id: Some("proj-a".into()),
             repo: None,
@@ -973,7 +1024,7 @@ mod tests {
         let ctx = RequestCtx::new(
             inst,
             org,
-            Subject::authenticated("proj-admin", "proj-admin", vec![org], vec![]),
+            Subject::authenticated("proj-admin", "proj-admin", vec![org]),
         );
         let repo = |project: Option<&str>| ObjectTarget::Repository {
             instance_id: inst,
@@ -1023,7 +1074,7 @@ mod tests {
             Ok(vec![key2_jwk.clone()])
         }));
 
-        let subj = Subject::authenticated("u1", "alice", vec![org_a], vec!["/devs".into()]);
+        let subj = Subject::authenticated("u1", "alice", vec![org_a]);
         let reg_tok = key1
             .mint_registry_token(&subj, org_a, "repository:org/app:pull", 300)
             .expect("mint");
@@ -1041,12 +1092,25 @@ mod tests {
         );
 
         // Token signed by key2 triggers exactly 1 JWKS refetch on unknown kid
-        let tok2 = key2
+        let registry_tok2 = key2
             .mint_registry_token(&subj, org_a, "repository:org/app:push,pull", 300)
             .expect("mint2");
-        let verified2 = verifier
-            .verify(&tok2, "container_registry")
-            .expect("refetched kid");
+        assert!(
+            verifier
+                .verify(&registry_tok2, "container_registry")
+                .is_err(),
+            "another key mints no registry scope"
+        );
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(key2.kid.clone());
+        let tok2 = encode(
+            &header,
+            &json!({"sub": "u1", "preferred_username": "alice", "aud": "shako",
+                    "exp": TimestampTz::now().as_second() + 300}),
+            &EncodingKey::from_ec_der(&key2.pkcs8_der),
+        )
+        .expect("sign2");
+        let verified2 = verifier.verify(&tok2, "shako").expect("refetched kid");
         assert_eq!(verified2.username, "alice");
         assert_eq!(fetch_count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
