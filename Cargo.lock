@@ -12429,6 +12429,7 @@ dependencies = [
  "gix-ref",
  "hex",
  "hmac 0.12.1",
+ "jc-audit",
  "jc-router",
  "jc-time",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12559,6 +12560,7 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "ipnet",
+ "jc-audit",
  "jc-pool",
  "jc-router",
  "jc-time",
@@ -12603,6 +12605,7 @@ dependencies = [
 name = "shako-store-pg"
 version = "0.1.0"
 dependencies = [
+ "jc-audit",
  "jc-pool",
  "jc-time",
  "kaisatsu-crypto",
