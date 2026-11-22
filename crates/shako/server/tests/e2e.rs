@@ -1064,7 +1064,7 @@ async fn create_repo(world: &TestWorld, name: &str) {
     assert_eq!(st, StatusCode::CREATED, "create {name}");
 }
 
-/// The Organization routes act only for a member of the Organization the owner names, never
+/// The Organization routes act only for a member of the token's one Organization, never
 /// write tenant data, and report rights the caller holds.
 #[tokio::test]
 async fn organization_routes_answer_alike_for_held_and_free_names_and_report_real_rights() {
@@ -1324,7 +1324,6 @@ async fn branch_rules_are_refused_when_they_would_not_protect() {
     );
 }
 
-/// A hook or mirror names only its own repository's forge-kept secrets.
 /// An open upload is its Organization's: the same owner and image in another finds none.
 #[tokio::test]
 async fn an_open_upload_is_invisible_to_another_organization() {
@@ -1398,6 +1397,7 @@ async fn a_token_without_exactly_one_organization_acts_in_none() {
     }
 }
 
+/// A hook or mirror names only its own repository's forge-kept secrets.
 #[tokio::test]
 async fn a_secret_ref_never_reaches_another_repositorys_secret() {
     let world = setup_world().await;
