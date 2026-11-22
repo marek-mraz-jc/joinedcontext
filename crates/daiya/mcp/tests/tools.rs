@@ -217,6 +217,23 @@ async fn an_unknown_tool_is_404() {
 }
 
 #[tokio::test]
+async fn a_registry_operation_mcp_does_not_wire_is_501_not_a_guess() {
+    let mut f = fixture().await;
+    let mut registry = (*f.state.registry).clone();
+    let mut op = registry.operations[0].clone();
+    op.name = "Dashboard/Archive".into();
+    op.mcp_tool = "daiya_dashboard_archive".into();
+    op.cli_command = "dashboard-archive".into();
+    registry.operations.push(op);
+    f.state.registry = Arc::new(registry);
+    let err = call_mcp_tool(&f.state, &f.admin, "daiya_dashboard_archive", json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 501, "{err}");
+    assert!(err.to_string().contains("Dashboard/Archive"), "{err}");
+}
+
+#[tokio::test]
 async fn datasource_tools_query_health_schema_and_resources() {
     let f = fixture().await;
     let answer = call_mcp_tool(
