@@ -833,3 +833,122 @@ fn scoped_write_bindings_only_grant_writes_inside_their_scope() {
     assert!(authz.check(&carol, Action::Admin, &ds("prom")).allowed);
     assert!(!authz.check(&carol, Action::Admin, &ds("loki")).allowed);
 }
+
+/// A list's predicate and the per-object decision are one answer, for every binding shape.
+#[test]
+fn a_read_scope_lists_exactly_what_check_lets_the_caller_read() {
+    use daiya_model::*;
+    use std::sync::Arc;
+
+    let (org, other) = (OrgId::from_u128(11), OrgId::from_u128(12));
+    let mut shapes = Vec::new();
+    for org_id in [org, other] {
+        for principal in ["me", "someone"] {
+            for actions in [
+                vec![Action::Read],
+                vec![Action::Propose],
+                vec![Action::Admin],
+            ] {
+                for folder_uid in [None, Some("f1".to_owned())] {
+                    for datasource_uid in [None, Some("o1".to_owned())] {
+                        shapes.push(RoleBinding {
+                            org_id,
+                            principal: principal.into(),
+                            actions: actions.clone(),
+                            folder_uid: folder_uid.clone(),
+                            datasource_uid,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let mut sets = vec![Vec::new()];
+    for first in &shapes {
+        sets.push(vec![first.clone()]);
+        for second in &shapes {
+            sets.push(vec![first.clone(), second.clone()]);
+        }
+    }
+    let mut read_only = Subject::authenticated(SERVER_ADMIN_ACTOR, vec![org], vec![]);
+    read_only.read_only = true;
+    let subjects = [
+        Subject::anonymous(),
+        Subject::authenticated("me", vec![org], vec![]),
+        Subject::authenticated("x", vec![org], vec!["me".into()]),
+        Subject::authenticated("me", vec![other], vec![]),
+        Subject::authenticated(SERVER_ADMIN_ACTOR, vec![org], vec![]),
+        Subject::authenticated(SERVER_ADMIN_ACTOR, vec![other], vec![]),
+        read_only,
+        Subject::public_dashboard(org, "o1"),
+        Subject::public_dashboard(other, "o1"),
+    ];
+    let mut authorizers: Vec<Arc<dyn Authorizer>> = vec![Arc::new(PublicDashboardAuthorizer::new(
+        org,
+        "o1",
+        ["o2".to_owned()],
+    ))];
+    for set in sets {
+        let policy: Arc<dyn Authorizer> = Arc::new(PolicyAuthorizer::new(set));
+        authorizers.push(Arc::new(ServerAdminAuthorizer {
+            inner: policy.clone(),
+        }));
+        authorizers.push(policy);
+    }
+    for (at, authorizer) in authorizers.iter().enumerate() {
+        for subject in &subjects {
+            let ctx = RequestCtx::new(
+                InstallationId::from_u128(1),
+                org,
+                InstanceId::from_u128(1),
+                subject.clone(),
+            );
+            for kind in ReadKind::ALL {
+                let scope = authorizer.read_scope(&ctx, kind);
+                for uid in ["o1", "o2", "f1"] {
+                    for folder in [None, Some("f1"), Some("f2")] {
+                        let (id, folder_uid) = (uid.to_owned(), folder.map(str::to_owned));
+                        let org_id = org;
+                        let object = match kind {
+                            ReadKind::Organization => ObjectTarget::Organization { org_id },
+                            ReadKind::Folder => ObjectTarget::Folder {
+                                org_id,
+                                folder_uid: id,
+                            },
+                            ReadKind::Dashboard => ObjectTarget::Dashboard {
+                                org_id,
+                                dashboard_uid: id,
+                                folder_uid,
+                            },
+                            ReadKind::Datasource => ObjectTarget::Datasource {
+                                org_id,
+                                datasource_uid: id,
+                            },
+                            ReadKind::LibraryPanel => ObjectTarget::LibraryPanel {
+                                org_id,
+                                panel_uid: id,
+                                folder_uid,
+                            },
+                            ReadKind::PublicDashboard => ObjectTarget::PublicDashboard {
+                                org_id,
+                                dashboard_uid: id,
+                            },
+                        };
+                        let listed = match &scope {
+                            ReadScope::All => true,
+                            ReadScope::Nothing => false,
+                            ReadScope::In { column, values } => match column {
+                                ScopeColumn::Object => values.contains(uid),
+                                ScopeColumn::Folder => {
+                                    object.folder_uid().is_some_and(|f| values.contains(f))
+                                }
+                            },
+                        };
+                        let allowed = authorizer.check(&ctx, Action::Read, &object).allowed;
+                        assert_eq!(listed, allowed, "authorizer {at}: {subject:?} {object:?}");
+                    }
+                }
+            }
+        }
+    }
+}

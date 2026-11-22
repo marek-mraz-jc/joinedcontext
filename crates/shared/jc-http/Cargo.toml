@@ -1,0 +1,16 @@
+[package]
+name = "jc-http"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Outbound HTTP of jc (ARCH/SEC-04): one address table, resolve and pin, no proxy or redirect, a time and size cap"
+
+[dependencies]
+ipnet = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+thiserror = "2"
+tokio = { version = "1", features = ["net", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "net", "time", "io-util"] }
