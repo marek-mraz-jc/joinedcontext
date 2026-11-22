@@ -173,10 +173,10 @@ impl NatsBus {
         F: Fn(&[u8]) -> Option<Vec<u8>> + Send + 'static,
     {
         let client = self.client.clone();
-        let requests = client
-            .subscribe(subject.clone())
-            .await
-            .map_err(|e| BusError(e.to_string()))?;
+        let requests = match client.subscribe(subject.clone()).await {
+            Ok(requests) => requests,
+            Err(e) => return Err(BusError(e.to_string())),
+        };
         // A flush only empties the write buffer. The server answers one
         // connection in order, so once it says that nobody listens on a
         // fresh inbox it holds the subscription sent before.
@@ -614,6 +614,17 @@ mod tests {
     /// 3-node deployment at replicas=1 — that is a durability downgrade
     /// nobody chose. Absent stays 1; whitespace is tolerated; garbage and
     /// zero name the key in the error.
+    #[test]
+    fn a_non_utf8_user_is_refused_without_echoing_the_url() {
+        let e = url_credentials("nats://%ff:pw@127.0.0.1:4222").expect_err("refused");
+        assert_eq!(
+            e.to_string(),
+            "bus error: ANTARES_NATS_URL: the user or password is not UTF-8"
+        );
+        let e = url_credentials("nats://u:%fe@127.0.0.1:4222").expect_err("refused");
+        assert!(!e.to_string().contains("127.0.0.1"), "{e}");
+    }
+
     #[test]
     fn replica_count_garbage_is_fatal_not_a_silent_default() {
         assert_eq!(replicas_from(None).map_err(|e| e.0), Ok(1));
