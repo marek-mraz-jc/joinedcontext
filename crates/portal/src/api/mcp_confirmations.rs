@@ -286,7 +286,11 @@ mod tests {
     #[test]
     fn an_id_may_end_in_the_hex_of_its_tenant_and_nothing_else() {
         let nonce = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
-        for tenant in ["77".to_owned(), "64656661756c74".to_owned(), "74".repeat(128)] {
+        for tenant in [
+            "77".to_owned(),
+            "64656661756c74".to_owned(),
+            "74".repeat(128),
+        ] {
             assert!(well_formed(&format!("{nonce}-{tenant}")), "{tenant}");
         }
         for bad in ["", "7", "7A", "77-77", "..%2f", "77/../../q/views", "7g"] {
