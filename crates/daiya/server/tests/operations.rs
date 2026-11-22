@@ -23,6 +23,9 @@ use tower::ServiceExt;
 
 const ORG: OrgId = OrgId::from_u128(91);
 
+/// Every request line the Prometheus mock answered, so a test can read what was asked.
+static ASKED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 async fn prometheus_mock() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -31,6 +34,9 @@ async fn prometheus_mock() -> String {
             let mut buf = vec![0u8; 8192];
             let n = sock.read(&mut buf).await.unwrap_or(0);
             let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            if let Some(line) = head.lines().next() {
+                ASKED.lock().unwrap().push(line.to_owned());
+            }
             let body = if head.contains("/api/v1/labels") {
                 json!({ "status": "success", "data": ["job", "instance"] })
             } else if head.contains("/api/endpoint/site/") {
@@ -281,6 +287,23 @@ async fn render_panel_and_export_run_the_dashboard_operations() {
     .await
     .unwrap();
     assert_eq!(view["panelTitle"], "Web", "{view}");
+
+    // The panel's range is the one asked for (epoch ms 2010-01-01 to 2010-01-02), not the dashboard's.
+    execute_cli_command(
+        &f.state,
+        &f.viewer,
+        "render-panel",
+        json!({ "uid": "web", "panelId": 1, "from": "1262304000000", "to": "1262390400000" }),
+    )
+    .await
+    .unwrap();
+    let asked = ASKED.lock().unwrap().clone();
+    assert!(
+        asked
+            .iter()
+            .any(|l| l.contains("start=1262304000.000") && l.contains("end=1262390400.000")),
+        "{asked:#?}"
+    );
 
     let exported = execute_cli_command(&f.state, &f.viewer, "export", json!({ "uid": "db" }))
         .await
