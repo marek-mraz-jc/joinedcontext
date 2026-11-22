@@ -40,6 +40,11 @@ export interface DataLink {
   search?: string;
   /** `attr` or `attr;desc`, as `orderBy` takes it (CIM 009 4.23). */
   sort?: string;
+  /**
+   * While a search is typed, the whole query the rows ask, the search included (T-7503): a host's map
+   * and counts follow it. Only reported, never read from a link or written into one.
+   */
+  rows?: string;
   /** The reader removed the model's default filter (DM-135): the link opens without it. */
   noDefault?: boolean;
 }
@@ -895,8 +900,8 @@ export function EndpointDataView({
   const filtered = opened.filterText !== null || conditionCount(group) > 0;
   const sortKeys = useMemo(() => sortKeysOf(opened.sort, tools.thenBy), [opened.sort, tools.thenBy]);
   useEffect(() => {
-    if (type) onLink?.({ type: type.name, q: linkQ || undefined, ...(linkSearch ? { search: linkSearch } : {}), sort: sortText, ...(dropped ? { noDefault: true } : {}) });
-  }, [type, linkQ, linkSearch, sortText, dropped, onLink]);
+    if (type) onLink?.({ type: type.name, q: linkQ || undefined, ...(linkSearch ? { search: linkSearch, rows: allAsked } : {}), sort: sortText, ...(dropped ? { noDefault: true } : {}) });
+  }, [type, linkQ, linkSearch, allAsked, sortText, dropped, onLink]);
   const map = useMemo(() => (type ? mapDefaultsOf(widget.data, type.name) : undefined), [widget.data, type]);
   useRowCard(type?.name, klass, slots, shape, kinds, enums, i18n.language, map, onCard);
   const onQuery = useCallback((query: { q?: string }) => setAsked(query.q), []);

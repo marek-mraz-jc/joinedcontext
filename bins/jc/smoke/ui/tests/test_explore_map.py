@@ -39,7 +39,9 @@ PODUJATIA = [
 
 
 def matching(events, q):
-    """The stub broker's q: the tests ask `upcoming==true`, the map's counts add `!location`."""
+    """The stub broker's q: the tests ask `upcoming==true` or a search, the map's counts add `!location`."""
+    if word := re.search(r'~="\(\?i\)([^"]*)"', q):
+        events = [e for e in events if word[1].lower() in str(e["properties"]["name"]).lower()]
     if "!location" in q:
         events = [e for e in events if not e["geometry"]]
     if "upcoming" in q:
@@ -366,6 +368,39 @@ def test_a_query_matching_nothing_says_so_in_place_of_the_map(pw):
         page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
         assert page.locator("#map-note").inner_text() == "No record matches this query, so there is nothing to map."
         shot(page, "map-no-match-400")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_search_narrows_the_map_and_both_counts_with_the_table(pw):
+    """T-7503: a search matched no row while the map drew all 231 points and said the table lists the same."""
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA)
+    try:
+        page, errors = open_explorer(browser, srv, 400)
+        wait_drawn(page)
+        box = page.locator('[data-testid="grid-toolbar"] > input[type="search"]')
+        box.fill("Podujatie 23")
+        found = [e for e in PODUJATIA if "podujatie 23" in e["properties"]["name"].lower()]
+        page.wait_for_function("(line) => document.getElementById('grid-count').textContent === line", arg=f"{len(found)} of 234 records match the filter.", timeout=15_000)
+        located = sum(1 for e in found if e["geometry"])
+        page.wait_for_function("(tail) => document.getElementById('map-count').textContent.includes(tail)", arg=f"{located} of {len(found)} with a location", timeout=15_000)
+        page.wait_for_timeout(1200)
+        shot(page, "map-search-400")
+        zoom = page.evaluate("""() => { const m = document.querySelector("#map").getBoundingClientRect(), c = document.querySelector("#map .maplibregl-ctrl-top-right .maplibregl-ctrl").getBoundingClientRect();
+                                       return {left: c.left - m.left, bottom: c.bottom - m.top}; }""")
+        under = [b for b in page.evaluate(DRAWN)["badges"] if b["x"] + b["r"] > zoom["left"] and b["y"] - b["r"] < zoom["bottom"]]
+        assert under == [], zoom  # the fit keeps a marker from under the zoom buttons
+        assert "~=" not in unquote(page.url.partition("&q=")[2])  # the search is never written as a query the reader typed
+        box.fill("qqqzzz")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=15_000)
+        assert page.locator("#map-note").inner_text() == "No record matches this query, so there is nothing to map."
+        shot(page, "map-search-none-400")
+        box.fill("")
+        page.wait_for_function("() => document.getElementById('map-count').textContent.includes('231 of 234 with a location')", timeout=15_000)
+        page.wait_for_function("() => document.getElementById('grid-count').hidden", timeout=15_000)
         assert errors == []
     finally:
         browser.close()

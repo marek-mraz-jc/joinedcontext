@@ -100,7 +100,8 @@
   .jc-explorer .jc-grid-scroll {
     background:
       linear-gradient(to left, var(--jc-explorer-row, #fff) 60%, transparent) right / 40px 100% no-repeat local,
-      linear-gradient(to left, rgb(100 116 139 / 55%), transparent) right / 18px 100% no-repeat scroll;
+      linear-gradient(to left, rgb(100 116 139 / 55%), transparent) right / 18px 100% no-repeat scroll,
+      var(--jc-explorer-row, #fff);
   }
 }
 .jc-explorer .jc-data-card .jc-grid .jc-grid-pager { margin: 0; padding: 8px; background: transparent; }
@@ -121,13 +122,23 @@
   .jc-explorer [data-testid="grid-toolbar"] :is(input, select, details input, details select) { font-size: 15px; }
   .jc-explorer [data-testid="grid-toolbar"] details :is(summary, button, a, label) { min-height: 44px; }
   .jc-explorer [data-testid="grid-toolbar"] details label { align-items: center; }
-  .jc-explorer [data-testid="grid-toolbar"] details input[type="checkbox"] { width: 20px; height: 20px; }
+  /* A tool of the menu opens under its own line, not after the last one. */
+  .jc-explorer [data-testid="grid-toolbar"] details details > div { position: static; }
+  .jc-explorer [data-testid="grid-toolbar"] details input[type="checkbox"],
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-panel input[type="checkbox"] { width: 20px; height: 20px; }
   /* With a type to pick, the search takes the second row and Arrange columns stays beside Tools. */
   .jc-explorer [data-testid="grid-toolbar"]:has(> span > select) > input { order: 1; flex-basis: 100%; }
   .jc-explorer [data-testid="grid-toolbar"] > span:has(> select) { flex: 1 1 0; min-width: 0; }
   .jc-explorer [data-testid="grid-toolbar"] > span > select { width: 100%; }
   .jc-explorer .jc-arrange-slot .jc-grid-arrange-hint { font-size: 14px; line-height: 1.35; }
   .jc-explorer .jc-arrange-slot .jc-grid-arrange-head h2 { font-size: 17px; }
+  .jc-explorer .jc-arrange-slot :is(.jc-grid-arrange-input, .jc-grid-arrange-move, .jc-grid-arrange-done, .jc-grid-arrange-for select) { min-height: 44px; }
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-move { min-width: 44px; }
+  /* The query box, an empty table's words and their buttons read as the tools do; the pages take a finger. */
+  .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty),
+  .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty) * { font-size: 15px; }
+  .jc-explorer .jc-grid :is(.jc-grid-query, .jc-grid-empty) button { min-height: 44px; }
+  .jc-explorer .jc-grid .jc-grid-pages button { min-width: 36px; min-height: 44px; }
   /* Arrange columns is a frame of three columns, not a second menu beside Tools. */
   .jc-explorer .jc-arrange-slot .jc-grid-menu-icon {
     width: 18px; height: 15px; border: 2px solid currentColor; border-radius: 2px; font-size: 0; color: inherit;

@@ -272,11 +272,12 @@ describe("the data section of an endpoint", () => {
     const asked = () => entityReads().flatMap((url) => url.searchParams.get("q") ?? []);
     await waitFor(() => expect(asked()).toContain('(name[*]~="(?i)032"|dataProvider~="(?i)032")'));
     expect(asked().every((q) => q.includes('name[*]~="(?i)032"') && !q.includes("location"))).toBe(true);
-    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "032" }));
+    // Beside the link, `rows` is what the rows ask: a host's map and counts follow it (T-7503).
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "032", rows: '(name[*]~="(?i)032"|dataProvider~="(?i)032")' }));
     // A new word replaces it in the link, once typing settles.
     await user.clear(box);
     await user.type(box, "03");
-    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "03" }));
+    await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "03", rows: '(name[*]~="(?i)03"|dataProvider~="(?i)03")' }));
     await user.clear(box);
     await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight" }));
   });
