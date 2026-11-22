@@ -4944,7 +4944,7 @@ mod tests {
     async fn a_planned_create_merges_only_when_the_forge_adds_it() {
         let file = "projects/p/spaces/trial/space.yaml";
         for (status, phase) in [
-            ("modified", ChangePhase::Pending),
+            ("modified", ChangePhase::PendingApproval),
             ("added", ChangePhase::Deploying),
         ] {
             let (server, state) = secret_forge_with(file, "", status).await;
@@ -4964,7 +4964,11 @@ mod tests {
             };
             let change = Change::new(
                 ChangeMeta::new("chg-00000009", "p"),
-                ChangeStatus::new(Lane::Green, ChangePhase::Pending, PlanSummary::new(1, 0, 0)),
+                ChangeStatus::new(
+                    Lane::Green,
+                    ChangePhase::PendingApproval,
+                    crate::change::PlanSummary::new(1, 0, 0),
+                ),
             );
             let merged = merge_if_only(&state, &shako, &pr, &[file], &[file], "m", change).await;
             assert_eq!(merged.status.phase, phase, "{status}");
