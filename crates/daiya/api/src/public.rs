@@ -525,6 +525,13 @@ fn sanitize_panels_for_public(panels: &mut Vec<Value>, show_query_text: bool) {
     }
 }
 
+/// Whether `org` was retired: a token of it opens nothing.
+async fn in_retired_org(state: &DaiyaState, org: daiya_model::OrgId) -> CrResult<bool> {
+    let key = daiya_model::OrgKey::Id(org);
+    let held = state.store.find_org(state.installation_id, key).await?;
+    Ok(held.is_some_and(|row| row.retired))
+}
+
 /// Anonymous view of a public dashboard by `access_token` (R7).
 /// Unknown, disabled, or rotated tokens return the exact same 404 error.
 pub async fn view_public_dashboard(
@@ -548,7 +555,7 @@ pub async fn view_public_dashboard(
         return Err(CrError::NotFound("Public dashboard not found".into()));
     };
 
-    if !pubdash.is_enabled {
+    if !pubdash.is_enabled || in_retired_org(state, pubdash.org_id).await? {
         return Err(CrError::NotFound("Public dashboard not found".into()));
     }
 
@@ -629,7 +636,7 @@ pub async fn execute_public_dashboard_query(
         return Err(CrError::NotFound("Public dashboard not found".into()));
     };
 
-    if !pubdash.is_enabled {
+    if !pubdash.is_enabled || in_retired_org(state, pubdash.org_id).await? {
         return Err(CrError::NotFound("Public dashboard not found".into()));
     }
 
@@ -886,7 +893,7 @@ async fn http_create_public_dashboard(
     Path(dashboard_uid): Path<String>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match create_or_update_public_dashboard(&state, &ctx, &dashboard_uid, dto).await {
         Ok(rec) => (StatusCode::OK, Json(rec)).into_response(),
         Err(e) => error_response(&e),
@@ -899,7 +906,7 @@ async fn http_update_public_dashboard(
     Path((dashboard_uid, uid)): Path<(String, String)>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     // As Grafana, the record is the one the path names: another uid is 404, never a new record.
     match state
         .store
@@ -921,7 +928,7 @@ async fn http_get_public_dashboard(
     headers: HeaderMap,
     Path(dashboard_uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,

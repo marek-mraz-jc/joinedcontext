@@ -335,6 +335,18 @@ async fn json_of<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&body).map_err(|err| unreachable(what, err))
 }
 
+/// What daiya stores under a project's name (T-7509).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredOrganization {
+    /// The live organization's id, which a retired name created again does not share with the
+    /// one before.
+    Held(uuid::Uuid),
+    /// The name's last organization was retired and none has the name now.
+    Retired,
+    /// The name was never held, or the server is a Grafana, which stores no such id.
+    NeverHeld,
+}
+
 impl<'a> Client<'a> {
     pub fn new(config: &'a GrafanaConfig) -> Self {
         Self { config }
@@ -358,22 +370,57 @@ impl<'a> Client<'a> {
     /// The organization of `project`; `None` when the deployment has made none.
     pub async fn organization(&self, project: &str) -> Result<Option<i64>, ApiError> {
         let what = "finding the project's organization";
+        let answer = self.organization_named(project, what).await?;
+        if answer.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let org: Value = json_of(answer, what).await?;
+        org["id"]
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| unreachable(what, "an organization without an id"))
+    }
+
+    /// What daiya stores under `project`'s name. A 404 is read too: its body alone tells a
+    /// retired name from one never held, so one that is no JSON is no answer.
+    pub async fn stored_organization(&self, project: &str) -> Result<StoredOrganization, ApiError> {
+        let what = "finding the id of the project's organization";
+        let answer = self.organization_named(project, what).await?;
+        let found = answer.status() != reqwest::StatusCode::NOT_FOUND;
+        let org: Value = json_of(answer, what).await?;
+        if !found {
+            return Ok(if org["retired"] == true {
+                StoredOrganization::Retired
+            } else {
+                StoredOrganization::NeverHeld
+            });
+        }
+        let Some(id) = org.get("uuid") else {
+            return Ok(StoredOrganization::NeverHeld);
+        };
+        id.as_str()
+            .and_then(|id| id.parse().ok())
+            .map(StoredOrganization::Held)
+            .ok_or_else(|| unreachable(what, "an organization id that is no UUID"))
+    }
+
+    /// The answer of the lookup by name: a success or a 404.
+    async fn organization_named(
+        &self,
+        project: &str,
+        what: &str,
+    ) -> Result<reqwest::Response, ApiError> {
         let answer = self
             .request(reqwest::Method::GET, &format!("/orgs/name/{project}"), None)
             .send()
             .await
             .map_err(|err| unreachable(what, err))?;
         if answer.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+            return Ok(answer);
         }
-        let answer = answer
+        answer
             .error_for_status()
-            .map_err(|err| unreachable(what, err))?;
-        let org: Value = json_of(answer, what).await?;
-        org["id"]
-            .as_i64()
-            .map(Some)
-            .ok_or_else(|| unreachable(what, "an organization without an id"))
+            .map_err(|err| unreachable(what, err))
     }
 
     /// The Endpoints the organization has a datasource for.
@@ -1109,6 +1156,12 @@ mod tests {
         assert!(uid.ends_with("-ssssssss"));
     }
 
+    /// A server of the test's own, never one from wiremock's pool: `HTTP` keeps connections, and
+    /// one to a pooled server's port dies with the runtime of the test before.
+    async fn server() -> wiremock::MockServer {
+        wiremock::MockServer::builder().start().await
+    }
+
     fn config(server: &wiremock::MockServer) -> GrafanaConfig {
         GrafanaConfig {
             url: server.uri(),
@@ -1154,7 +1207,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_opened_project_gets_its_organization_and_folder() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         daiya_health(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/orgs/name/doprava"))
@@ -1196,7 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_organization_that_exists_is_found_by_name() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
         Mock::given(method("POST"))
             .and(path("/api/folders"))
@@ -1211,8 +1264,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_organizations_id_is_the_one_daiya_stores() {
+        let server = server().await;
+        let stored = "0190a000-0000-7000-8000-000000000009";
+        answer_with(
+            &server,
+            "GET",
+            "/api/orgs/name/doprava",
+            json!({ "id": 4, "uuid": stored }),
+        )
+        .await;
+        answer_with(&server, "GET", "/api/orgs/name/grafana", json!({ "id": 5 })).await;
+        answer_with(
+            &server,
+            "GET",
+            "/api/orgs/name/broken",
+            json!({ "id": 6, "uuid": "x" }),
+        )
+        .await;
+        for (name, answer) in [
+            (
+                "never",
+                ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
+            ),
+            (
+                "retired",
+                ResponseTemplate::new(404).set_body_json(json!({ "retired": true })),
+            ),
+            ("unreadable", ResponseTemplate::new(404)),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/orgs/name/{name}")))
+                .respond_with(answer)
+                .mount(&server)
+                .await;
+        }
+        let config = config(&server);
+        let client = Client::new(&config);
+        for (name, expected) in [
+            (
+                "doprava",
+                StoredOrganization::Held(stored.parse().expect("uuid")),
+            ),
+            ("grafana", StoredOrganization::NeverHeld),
+            ("never", StoredOrganization::NeverHeld),
+            ("retired", StoredOrganization::Retired),
+        ] {
+            let held = client.stored_organization(name).await.expect("answered");
+            assert_eq!(held, expected, "{name}");
+        }
+        for name in ["broken", "unreadable"] {
+            assert!(
+                client.stored_organization(name).await.is_err(),
+                "{name}: never a guessed id"
+            );
+        }
+        for name in ["never", "retired", "unreadable"] {
+            let org = client.organization(name).await.expect("answered");
+            assert!(org.is_none(), "{name}: no organization to show");
+        }
+    }
+
+    #[tokio::test]
     async fn a_grafana_that_is_not_daiya_gets_no_organization() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/health", json!({ "commit": "abc123" })).await;
         let config = config(&server);
         provision_projects(&project_state(), &Client::new(&config)).await;
@@ -1222,7 +1337,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_daiya_that_is_away_leaves_the_project_for_the_next_pass() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         daiya_health(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/orgs/name/doprava"))
@@ -1245,7 +1360,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_answer_past_the_cap_is_refused_unread() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         Mock::given(method("GET"))
             .and(path("/api/datasources"))
             .respond_with(
@@ -1263,7 +1378,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_datasources_of_an_organization_are_those_reading_an_endpoint() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(
             &server,
             "GET",
@@ -1288,7 +1403,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_push_makes_a_public_datasource_and_stops_at_a_closed_endpoint() {
-        let server = wiremock::MockServer::start().await;
+        let server = server().await;
         answer_with(&server, "GET", "/api/datasources", json!([])).await;
         answer_with(&server, "POST", "/api/datasources", json!({})).await;
         answer_with(&server, "POST", "/api/dashboards/db", json!({})).await;

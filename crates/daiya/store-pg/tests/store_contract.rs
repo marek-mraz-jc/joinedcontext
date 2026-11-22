@@ -1151,6 +1151,17 @@ async fn migration_is_idempotent_and_runs_concurrently() {
         policies, 1,
         "org_isolation only: no second setting widens RLS"
     );
+    let path: String = sqlx::query_scalar(
+        "SELECT array_to_string(proconfig, ',') FROM pg_proc
+         WHERE oid = 'daiya_public_token_org(text)'::regprocedure",
+    )
+    .fetch_one(&db.admin)
+    .await
+    .unwrap();
+    assert!(
+        path.ends_with(", pg_temp"),
+        "version 1 again never undoes what version 2 altered: {path}"
+    );
     let checksum: String =
         sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = 1")
             .fetch_one(&db.admin)

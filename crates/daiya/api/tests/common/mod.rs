@@ -71,6 +71,43 @@ macro_rules! guarded {
 }
 
 impl DaiyaStore for FlakyStore {
+    fn find_org(
+        &self,
+        installation: daiya_model::InstallationId,
+        key: daiya_model::OrgKey,
+    ) -> StoreFuture<'_, Option<daiya_model::OrgRow>> {
+        guarded!(self, "find_org", self.inner.find_org(installation, key))
+    }
+    fn list_orgs(
+        &self,
+        installation: daiya_model::InstallationId,
+    ) -> StoreFuture<'_, Vec<daiya_model::OrgRow>> {
+        guarded!(self, "list_orgs", self.inner.list_orgs(installation))
+    }
+    fn create_org(
+        &self,
+        installation: daiya_model::InstallationId,
+        name: &str,
+        number: Option<i64>,
+        first_id: OrgId,
+    ) -> StoreFuture<'_, daiya_model::OrgRow> {
+        guarded!(
+            self,
+            "create_org",
+            self.inner.create_org(installation, name, number, first_id)
+        )
+    }
+    fn retire_org(
+        &self,
+        installation: daiya_model::InstallationId,
+        number: i64,
+    ) -> StoreFuture<'_, bool> {
+        guarded!(
+            self,
+            "retire_org",
+            self.inner.retire_org(installation, number)
+        )
+    }
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         guarded!(
             self,

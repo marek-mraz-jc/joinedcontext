@@ -11,8 +11,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use daiya_model::{
-    Action, Authorizer, CrError, DashboardDocument, Decision, ObjectTarget, OrgId, PanelSpec,
-    RequestCtx, Subject, validation::html_escape,
+    Action, Authorizer, CrError, DashboardDocument, Decision, ObjectTarget, OrgId, OrgKey, OrgRow,
+    PanelSpec, RequestCtx, SERVER_ADMIN_ACTOR, Subject, validation::html_escape,
 };
 use serde::Deserialize;
 
@@ -132,19 +132,13 @@ fn page_reader(
     state: &DaiyaState,
     headers: &HeaderMap,
     ctx: &RequestCtx,
+    org: &OrgRow,
 ) -> Option<(Subject, DaiyaState)> {
     let reader = state.page_reader.as_ref()?;
     if ctx.subject.actor_id.is_some() || headers.contains_key(header::AUTHORIZATION) {
         return None;
     }
-    let (num, name) = state
-        .org_registry
-        .read()
-        .by_num
-        .iter()
-        .find(|(_, (_, org))| *org == ctx.org_id)
-        .map(|(num, (name, _))| (*num, name.clone()))?;
-    let person = reader(headers, num, &name).filter(|p| !p.is_empty())?;
+    let person = reader(headers, org.number, &org.name).filter(|p| !p.is_empty())?;
     let actor = format!("{PAGE_READER_PREFIX}{person}");
     let mut subject = Subject::authenticated(actor.clone(), vec![ctx.org_id], Vec::new());
     subject.read_only = true;
@@ -163,22 +157,30 @@ async fn dashboard_page(
     uid: String,
     params: PageParams,
 ) -> Response {
-    let mut ctx = resolve_request_ctx(&state, &headers);
-    if let Some(num) = params.org_id {
-        let Some(org) = state
-            .org_registry
-            .read()
-            .by_num
-            .get(&num)
-            .map(|(_, org)| *org)
-        else {
-            return refused(&CrError::NotFound("organization".into()));
-        };
-        ctx.org_id = org;
-    }
-    if let Some((subject, scoped)) = page_reader(&state, &headers, &ctx) {
-        ctx.subject = subject;
-        state = scoped;
+    let mut ctx = resolve_request_ctx(&state, &headers).await;
+    let named = match params.org_id {
+        Some(num) => match state.organization(OrgKey::Number(num)).await {
+            Ok(Some(org)) => Some(org),
+            Ok(None) => return refused(&CrError::NotFound("organization".into())),
+            Err(e) => return refused(&e),
+        },
+        None => match state.organization(OrgKey::Id(ctx.org_id)).await {
+            Ok(org) => org,
+            Err(e) => return refused(&e),
+        },
+    };
+    if let Some(org) = &named {
+        ctx.org_id = org.org_id;
+        // The server administrator is a member of the live organization the link names.
+        if ctx.subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR)
+            && !ctx.subject.is_member_of(org.org_id)
+        {
+            ctx.subject.organizations.push(org.org_id);
+        }
+        if let Some((subject, scoped)) = page_reader(&state, &headers, &ctx, org) {
+            ctx.subject = subject;
+            state = scoped;
+        }
     }
     let record = match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(Some(record)) => record,

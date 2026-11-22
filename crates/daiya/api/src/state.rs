@@ -6,8 +6,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use daiya_model::{
     Authorizer, CrError, DaiyaStore, InputLimits, InstallationId, InstanceId, OperationRegistry,
-    OrgId, PolicyAuthorizer, RequestCtx, SERVER_ADMIN_ACTOR, ServerAdminAuthorizer, Subject,
-    constant_time_eq, daiya_registry, sha256_hex,
+    OrgId, OrgKey, OrgRow, PolicyAuthorizer, RequestCtx, SERVER_ADMIN_ACTOR, ServerAdminAuthorizer,
+    Subject, constant_time_eq, daiya_registry, sha256_hex,
 };
 use daiya_model::{CrResult, DatasourceRecord};
 use daiya_query::{
@@ -63,8 +63,8 @@ pub struct DaiyaState {
     pub authorizer: Arc<dyn Authorizer>,
     /// Live datasource drivers keyed by `(org_id, datasource_uid)`.
     pub datasources: Arc<RwLock<DriverMap>>,
-    /// Mapping between Grafana numeric `orgId` / org name and `(numeric_id, OrgId)` for `provision.sh` and `src/grafana.rs`.
-    pub org_registry: Arc<RwLock<OrgDirectory>>,
+    /// The name of organization 1; every other organization is a row of the store (T-7509).
+    pub default_org_name: String,
     pub query_cache: Arc<QueryCache>,
     pub wasm_host: Arc<WasmPluginHost>,
     pub secret_resolver: Arc<dyn SecretResolver>,
@@ -101,38 +101,12 @@ pub type ServerAdminCheck = Arc<dyn Fn(&HeaderMap) -> bool + Send + Sync>;
 /// The shortest server administrator password accepted.
 pub const MIN_SERVER_ADMIN_PASSWORD: usize = 16;
 
-/// Directory mapping Grafana organization names and numeric IDs to UUIDv7 [`OrgId`]s.
-#[derive(Debug, Default)]
-pub struct OrgDirectory {
-    pub by_name: BTreeMap<String, (i64, OrgId)>,
-    pub by_num: BTreeMap<i64, (String, OrgId)>,
-    pub next_num: i64,
-}
+/// The main organization's name unless the operator names it.
+const MAIN_ORG_NAME: &str = "Main Org.";
 
-impl OrgDirectory {
-    #[must_use]
-    pub fn with_main_org(main_org_id: OrgId) -> Self {
-        let mut dir = Self {
-            by_name: BTreeMap::new(),
-            by_num: BTreeMap::new(),
-            next_num: 2,
-        };
-        dir.by_name.insert("Main Org.".to_owned(), (1, main_org_id));
-        dir.by_num.insert(1, ("Main Org.".to_owned(), main_org_id));
-        dir
-    }
-
-    pub fn register_org(&mut self, name: &str, org_id: OrgId) -> (i64, OrgId, bool) {
-        if let Some(&(num, existing_id)) = self.by_name.get(name) {
-            return (num, existing_id, false);
-        }
-        let num = self.next_num;
-        self.next_num += 1;
-        self.by_name.insert(name.to_owned(), (num, org_id));
-        self.by_num.insert(num, (name.to_owned(), org_id));
-        (num, org_id, true)
-    }
-}
+/// The active organization of a request whose Organization header names none it may use: nobody
+/// is a member of it.
+const NO_ORGANIZATION: OrgId = OrgId::from_u128(0);
 
 impl DaiyaState {
     #[must_use]
@@ -150,7 +124,7 @@ impl DaiyaState {
             store,
             authorizer,
             datasources: Arc::new(RwLock::new(BTreeMap::new())),
-            org_registry: Arc::new(RwLock::new(OrgDirectory::with_main_org(default_org_id))),
+            default_org_name: MAIN_ORG_NAME.to_owned(),
             query_cache: Arc::new(QueryCache::default()),
             wasm_host: Arc::new(WasmPluginHost::default()),
             secret_resolver: Arc::new(MapSecretResolver::new()),
@@ -216,24 +190,42 @@ impl DaiyaState {
         self
     }
 
-    /// The server administrator, when one of its checks recognises the request: a member of
-    /// every organization the directory holds, the main one first.
-    fn server_admin_for(&self, headers: &HeaderMap) -> Option<Subject> {
-        if !self.server_admin.iter().any(|check| check(headers)) {
-            return None;
+    fn is_server_admin(&self, headers: &HeaderMap) -> bool {
+        self.server_admin.iter().any(|check| check(headers))
+    }
+
+    /// The live organization `key` names: the main one (number 1), or a row of the store, so
+    /// every replica and restart answers alike.
+    ///
+    /// # Errors
+    /// A store that cannot answer, which never reads as another organization.
+    pub async fn organization(&self, key: OrgKey) -> CrResult<Option<OrgRow>> {
+        Ok(self
+            .organization_held(key)
+            .await?
+            .filter(|row| !row.retired))
+    }
+
+    /// The organization `key` names, live or retired: only for telling a retired one from one
+    /// never held. Nothing is served inside a retired one.
+    ///
+    /// # Errors
+    /// A store that cannot answer.
+    pub(crate) async fn organization_held(&self, key: OrgKey) -> CrResult<Option<OrgRow>> {
+        let main = match &key {
+            OrgKey::Number(number) => *number == 1,
+            OrgKey::Id(id) => *id == self.default_org_id,
+            OrgKey::Name(name) => *name == self.default_org_name,
+        };
+        if main {
+            return Ok(Some(OrgRow {
+                number: 1,
+                name: self.default_org_name.clone(),
+                org_id: self.default_org_id,
+                retired: false,
+            }));
         }
-        let organizations = self
-            .org_registry
-            .read()
-            .by_num
-            .values()
-            .map(|(_, org)| *org)
-            .collect();
-        Some(Subject::authenticated(
-            SERVER_ADMIN_ACTOR,
-            organizations,
-            Vec::new(),
-        ))
+        self.store.find_org(self.installation_id, key).await
     }
 
     /// Accepts these API credentials (hashed bindings).
@@ -525,7 +517,7 @@ pub fn credential_refused(state: &DaiyaState, headers: &HeaderMap) -> bool {
         .get(axum::http::header::AUTHORIZATION)
         .is_some_and(|value| !value.as_bytes().iter().all(u8::is_ascii_whitespace));
     present
-        && state.server_admin_for(headers).is_none()
+        && !state.is_server_admin(headers)
         && state
             .subject_resolver
             .as_ref()
@@ -546,17 +538,27 @@ pub async fn refuse_unknown_credential(
         // The answer names no reason: which check failed would help a forger.
         return error_response(&CrError::Unauthorized("invalid credential".into()));
     }
-    // An Organization header that names no Organization never falls back to another one.
-    if requested_org(&state, request.headers()).is_err() {
-        return error_response(&CrError::NotFound("Organization not found".into()));
+    // An Organization header that names no Organization never falls back to another one, and
+    // neither does a directory that cannot answer.
+    let headers = request.headers().clone();
+    let admin = state.is_server_admin(&headers);
+    if let Err(e) = requested_org(&state, &headers, admin).await {
+        return error_response(&e);
     }
     next.run(request).await
 }
 
 /// The Organization `X-Daiya-Org-Id` (a UUID) or else `X-Grafana-Org-Id` (a UUID or a Grafana
-/// numeric id) chooses; `None` when neither is sent, `Err` when the one sent names no
-/// Organization this server knows.
-fn requested_org(state: &DaiyaState, headers: &HeaderMap) -> Result<Option<OrgId>, ()> {
+/// numeric id) chooses; `None` when neither is sent. A number names a live Organization of the
+/// store. A UUID never names a retired one, and the server administrator's only a live one (I-18:
+/// its credential opens the Organizations the installation holds, no other id); anyone else's is
+/// confined by membership.
+async fn requested_org(
+    state: &DaiyaState,
+    headers: &HeaderMap,
+    admin: bool,
+) -> CrResult<Option<OrgId>> {
+    let unknown = || CrError::NotFound("Organization not found".into());
     let (name, value) = match (
         headers.get("x-daiya-org-id"),
         headers.get("x-grafana-org-id"),
@@ -565,21 +567,28 @@ fn requested_org(state: &DaiyaState, headers: &HeaderMap) -> Result<Option<OrgId
         (None, Some(v)) => ("x-grafana-org-id", v),
         (None, None) => return Ok(None),
     };
-    let text = value.to_str().map_err(|_| ())?.trim();
+    let text = value.to_str().map_err(|_| unknown())?.trim();
     if let Ok(org) = text.parse::<OrgId>() {
-        return Ok(Some(org));
+        if org == state.default_org_id {
+            return Ok(Some(org));
+        }
+        let held = state
+            .store
+            .find_org(state.installation_id, OrgKey::Id(org))
+            .await?;
+        let refused = held.map_or(admin, |row| row.retired);
+        return if refused {
+            Err(unknown())
+        } else {
+            Ok(Some(org))
+        };
     }
     if name == "x-daiya-org-id" {
-        return Err(());
+        return Err(unknown());
     }
-    let num: i64 = text.parse().map_err(|_| ())?;
-    state
-        .org_registry
-        .read()
-        .by_num
-        .get(&num)
-        .map(|(_, oid)| Some(*oid))
-        .ok_or(())
+    let number: i64 = text.parse().map_err(|_| unknown())?;
+    let held = state.organization(OrgKey::Number(number)).await?;
+    held.map(|row| Some(row.org_id)).ok_or_else(unknown)
 }
 
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
@@ -588,31 +597,43 @@ fn requested_org(state: &DaiyaState, headers: &HeaderMap) -> Result<Option<OrgId
 /// grant identity or membership; `X-Daiya-Org-Id` / `X-Grafana-Org-Id` only choose which
 /// of the subject's organizations is active (authorization still checks membership), and
 /// `X-Daiya-Readonly: true` can only narrow the caller.
-#[must_use]
-pub fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
-    let mut subject = state
-        .server_admin_for(headers)
-        .map(|admin| on_behalf_of(admin, headers))
-        .unwrap_or_else(|| {
-            let subject = state
-                .subject_resolver
-                .as_ref()
-                .and_then(|resolve| resolve(headers))
-                .or_else(|| state.subject_for_credential(headers))
-                .unwrap_or_else(Subject::anonymous);
-            // Only the server-admin credential makes a server administrator.
-            if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) {
-                Subject::anonymous()
-            } else {
-                subject
-            }
-        });
+pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
+    let admin = state.is_server_admin(headers);
+    let mut subject = if admin {
+        let admin =
+            Subject::authenticated(SERVER_ADMIN_ACTOR, vec![state.default_org_id], Vec::new());
+        on_behalf_of(admin, headers)
+    } else {
+        let subject = state
+            .subject_resolver
+            .as_ref()
+            .and_then(|resolve| resolve(headers))
+            .or_else(|| state.subject_for_credential(headers))
+            .unwrap_or_else(Subject::anonymous);
+        // Only the server-admin credential makes a server administrator.
+        if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) {
+            Subject::anonymous()
+        } else {
+            subject
+        }
+    };
 
-    let active_org = requested_org(state, headers)
-        .ok()
-        .flatten()
-        .or_else(|| subject.organizations.first().copied())
-        .unwrap_or(state.default_org_id);
+    let active_org = match requested_org(state, headers, admin).await {
+        Ok(Some(org)) => {
+            // The server administrator is a member of the live organization it names, no other.
+            if admin && org != state.default_org_id {
+                subject.organizations.push(org);
+            }
+            org
+        }
+        Ok(None) => subject
+            .organizations
+            .first()
+            .copied()
+            .unwrap_or(state.default_org_id),
+        // The router refused it already; whoever asks here is nobody's member.
+        Err(_) => NO_ORGANIZATION,
+    };
 
     if headers
         .get("x-daiya-readonly")

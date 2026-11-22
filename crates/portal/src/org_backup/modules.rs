@@ -11,6 +11,8 @@
 //! The keys are resolved once, at the start of the run, from what this Portal knows of the
 //! Organization (its realm, its projects, the repositories of those projects) and from what jc
 //! tells it of the modules' tenants ([`BackupModules`], `JC_PORTAL_BACKUP_TENANTS`).
+//! daiya's are also asked of daiya by name (`JC_PORTAL_GRAFANA_URL`): without it they are not
+//! exported.
 
 use std::collections::BTreeMap;
 
@@ -786,13 +788,46 @@ pub const DATAROOM_TABLES: &[Table] = &[
     ),
 ];
 
-/// daiya's organization of `project` (daiya's `org_id_for_name`, `crates/daiya/api/src/
-/// compat.rs`): the Portal provisions one daiya organization per project, named after it.
+/// The id daiya gives `project`'s organization the first time it holds that name (daiya's
+/// `org_id_for_name`, `crates/daiya/api/src/compat.rs`): the Portal provisions one daiya
+/// organization per project, named after it. A stored id takes its place ([`daiya_orgs`]).
 pub fn daiya_org(installation: uuid::Uuid, project: &str) -> uuid::Uuid {
     let digest = Sha256::digest(format!("daiya-org\n{installation}\n{project}"));
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
     uuid::Builder::from_custom_bytes(bytes).into_uuid()
+}
+
+/// daiya's organizations of `projects`: the id daiya stores for the name (T-7509), none for a
+/// retired name, and the first-time id only for a name daiya never held. Without a daiya that
+/// answers, the source fails: a retired name looks like one never held, and a backup never
+/// exports a retired organization's rows as a project's.
+async fn daiya_orgs(
+    state: &AppState,
+    installation: uuid::Uuid,
+    projects: &[String],
+) -> Result<Vec<String>, String> {
+    use crate::grafana::StoredOrganization;
+    let config = state.config.grafana.as_ref().ok_or(
+        "this Portal cannot ask daiya which organization holds each project's dashboards \
+         (JC_PORTAL_GRAFANA_URL is not set)",
+    )?;
+    let client = crate::grafana::Client::new(config);
+    let mut orgs = Vec::with_capacity(projects.len());
+    for project in projects {
+        let stored = client
+            .stored_organization(project)
+            .await
+            .map_err(|e| format!("daiya did not name the organization of {project}: {e}"))?;
+        match stored {
+            StoredOrganization::Held(id) => orgs.push(id.to_string()),
+            StoredOrganization::Retired => {}
+            StoredOrganization::NeverHeld => {
+                orgs.push(daiya_org(installation, project).to_string());
+            }
+        }
+    }
+    Ok(orgs)
 }
 
 /// The realm of `organization` when it signs in through a realm of its own: the last segment
@@ -931,10 +966,10 @@ async fn daiya(state: &AppState, organization: &str) -> Result<Source, String> {
         .tenants
         .daiya_installation
         .ok_or("jc named no daiya installation (JC_PORTAL_BACKUP_TENANTS)")?;
-    let orgs: Vec<String> = super::projects_of(&state.mirror, organization)
-        .iter()
-        .map(|project| daiya_org(installation, project).to_string())
+    let projects: Vec<String> = super::projects_of(&state.mirror, organization)
+        .into_iter()
         .collect();
+    let orgs = daiya_orgs(state, installation, &projects).await?;
     Ok(Source {
         pool: reader(state, "daiya").await?,
         schema: "",

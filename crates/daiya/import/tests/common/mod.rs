@@ -54,6 +54,22 @@ macro_rules! delegate {
 }
 
 impl DaiyaStore for FailingStore {
+    delegate!(
+        find_org(
+            installation: daiya_model::InstallationId,
+            key: daiya_model::OrgKey,
+        ) -> Option<daiya_model::OrgRow>
+    );
+    delegate!(list_orgs(installation: daiya_model::InstallationId) -> Vec<daiya_model::OrgRow>);
+    delegate!(
+        create_org(
+            installation: daiya_model::InstallationId,
+            name: &str,
+            number: Option<i64>,
+            first_id: OrgId,
+        ) -> daiya_model::OrgRow
+    );
+    delegate!(retire_org(installation: daiya_model::InstallationId, number: i64) -> bool);
     delegate!(verify_rls_enforced() -> ());
     delegate!(get_quotas(org_id: OrgId) -> OrgQuotas);
     delegate!(set_quotas(org_id: OrgId, quotas: OrgQuotas) -> ());

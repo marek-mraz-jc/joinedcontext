@@ -60,7 +60,7 @@ async fn http_mcp_call(
     headers: HeaderMap,
     Json(payload): Json<McpCallPayload>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match call_mcp_tool(&state, &ctx, &payload.name, payload.arguments).await {
         Ok(res) => (StatusCode::OK, Json(res)).into_response(),
         Err(err) => {

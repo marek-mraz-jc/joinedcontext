@@ -10,18 +10,21 @@
 use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
-    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord, PublicDashboardRecord,
-    QueryCacheStatRecord, ShareType, org_state_etag, store::StoreFuture,
+    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
+    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{Connection, PgPool, Postgres, Row, Transaction};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 use zeroize::Zeroizing;
 
 pub const MIGRATION_SQL: &str = include_str!("../migrations/0001_initial.sql");
+/// The installation's organizations (T-7509). A release before it reads only version 1 and
+/// never this table, so it still starts after a rollback.
+pub const ORGANIZATIONS_SQL: &str = include_str!("../migrations/0002_organizations.sql");
 
 /// Required tables that MUST have both `relrowsecurity` and `relforcerowsecurity` enabled at boot (§5.3, R8).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
@@ -148,13 +151,13 @@ pub fn parse_url_without_password(url: &str) -> CrResult<PgConnectOptions> {
 /// not race on `CREATE TABLE IF NOT EXISTS`.
 const MIGRATION_LOCK_KEY: i64 = 0x6461_6979_615f_6d67;
 
-/// Runs the schema migration (`0001_initial.sql`) on `pool` under an advisory lock. The pool
+/// Runs the schema migrations (`migrations/`) on `pool` under an advisory lock. The pool
 /// must belong to the migrating role (the table owner), not to the application role.
 ///
-/// The applied migration's SHA-256 is recorded in `daiya_schema_migrations`; when it matches,
-/// nothing runs. Re-running the DDL (policies, grants) on a live database takes exclusive
-/// locks and deadlocks against application transactions, so a replica that boots next to a
-/// serving one must not do it.
+/// Each applied migration's SHA-256 is recorded in `daiya_schema_migrations`; when they match,
+/// nothing runs, and one that runs again takes every later one with it. Re-running the DDL
+/// (policies, grants) on a live database takes exclusive locks and deadlocks against application
+/// transactions, so a replica that boots next to a serving one must not do it.
 pub async fn migrate(pool: &PgPool) -> CrResult<()> {
     let mut conn = pool
         .acquire()
@@ -177,7 +180,6 @@ pub async fn migrate(pool: &PgPool) -> CrResult<()> {
 
 async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     let failed = |e: sqlx::Error| CrError::MigrationFailed(e.to_string());
-    let checksum = daiya_model::sha256_hex(MIGRATION_SQL.as_bytes());
     sqlx::raw_sql(
         "CREATE TABLE IF NOT EXISTS daiya_schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -188,26 +190,34 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     .execute(&mut *conn)
     .await
     .map_err(failed)?;
-    let applied: Option<String> =
-        sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = 1")
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(failed)?;
-    if applied.as_deref() == Some(checksum.as_str()) {
-        return Ok(());
-    }
-    sqlx::raw_sql(MIGRATION_SQL)
-        .execute(&mut *conn)
+    // A version that runs again replaces what a later one altered (a function's search_path),
+    // so every later one follows it, and all of them commit at once.
+    let mut tx = conn.begin().await.map_err(failed)?;
+    let mut behind = false;
+    for (version, sql) in [(1_i32, MIGRATION_SQL), (2, ORGANIZATIONS_SQL)] {
+        let checksum = daiya_model::sha256_hex(sql.as_bytes());
+        let applied: Option<String> =
+            sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = $1")
+                .bind(version)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(failed)?;
+        if !behind && applied.as_deref() == Some(checksum.as_str()) {
+            continue;
+        }
+        behind = true;
+        sqlx::raw_sql(sql).execute(&mut *tx).await.map_err(failed)?;
+        sqlx::query(
+            "INSERT INTO daiya_schema_migrations (version, checksum) VALUES ($1, $2)
+             ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = NOW()",
+        )
+        .bind(version)
+        .bind(&checksum)
+        .execute(&mut *tx)
         .await
         .map_err(failed)?;
-    sqlx::query(
-        "INSERT INTO daiya_schema_migrations (version, checksum) VALUES (1, $1)
-         ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = NOW()",
-    )
-    .bind(&checksum)
-    .execute(&mut *conn)
-    .await
-    .map_err(failed)?;
+    }
+    tx.commit().await.map_err(failed)?;
     Ok(())
 }
 
@@ -712,7 +722,98 @@ impl PgStore {
     }
 }
 
+fn row_to_org(row: &sqlx::postgres::PgRow) -> OrgRow {
+    OrgRow {
+        number: row.get("number"),
+        name: row.get("name"),
+        org_id: OrgId(row.get("org_id")),
+        retired: row.get("retired"),
+    }
+}
+
 impl DaiyaStore for PgStore {
+    // The directory is installation-level, so these read through owner-defined functions and
+    // take no organization's transaction (migrations/0002_organizations.sql).
+    fn find_org(
+        &self,
+        installation: InstallationId,
+        key: OrgKey,
+    ) -> StoreFuture<'_, Option<OrgRow>> {
+        Box::pin(async move {
+            let (number, id, name) = match key {
+                OrgKey::Number(number) => (Some(number), None, None),
+                OrgKey::Id(id) => (None, Some(id.as_uuid()), None),
+                // Postgres holds no NUL in text, so no organization has such a name.
+                OrgKey::Name(name) if name.contains('\0') => return Ok(None),
+                OrgKey::Name(name) => (None, None, Some(name)),
+            };
+            let row = sqlx::query(
+                "SELECT number, name, org_id, retired_at IS NOT NULL AS retired
+                 FROM daiya_org_find($1, $2, $3, $4)",
+            )
+            .bind(installation.as_uuid())
+            .bind(number)
+            .bind(id)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+            Ok(row.as_ref().map(row_to_org))
+        })
+    }
+
+    fn list_orgs(&self, installation: InstallationId) -> StoreFuture<'_, Vec<OrgRow>> {
+        Box::pin(async move {
+            let rows = sqlx::query(
+                "SELECT number, name, org_id, retired_at IS NOT NULL AS retired
+                 FROM daiya_org_find($1, NULL, NULL, NULL)",
+            )
+            .bind(installation.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?;
+            Ok(rows.iter().map(row_to_org).collect())
+        })
+    }
+
+    fn create_org(
+        &self,
+        installation: InstallationId,
+        name: &str,
+        number: Option<i64>,
+        first_id: OrgId,
+    ) -> StoreFuture<'_, OrgRow> {
+        let name = name.to_owned();
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT number, name, org_id, retired_at IS NOT NULL AS retired
+                 FROM daiya_org_create($1, $2, $3, $4, $5)",
+            )
+            .bind(installation.as_uuid())
+            .bind(name)
+            .bind(number)
+            .bind(first_id.as_uuid())
+            .bind(OrgId::new().as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
+            row.as_ref()
+                .map(row_to_org)
+                .ok_or_else(|| CrError::Conflict("Organization name taken".into()))
+        })
+    }
+
+    fn retire_org(&self, installation: InstallationId, number: i64) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            sqlx::query_scalar("SELECT daiya_org_retire($1, $2)")
+                .bind(installation.as_uuid())
+                .bind(number)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db_err)
+        })
+    }
+
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             // Both the role the session logged in as and the role it acts as: a superuser

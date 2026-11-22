@@ -12,7 +12,7 @@ use crate::state::{DaiyaState, error_response, resolve_request_ctx};
 use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use daiya_import::export_dashboard;
 use daiya_model::RequestCtx;
@@ -38,7 +38,9 @@ fn can_read_folder(state: &DaiyaState, ctx: &RequestCtx, folder_uid: &str) -> bo
         )
         .allowed
 }
-use daiya_model::{Action, CrError, CrResult, DatasourceRecord, FolderRecord, ObjectTarget, OrgId};
+use daiya_model::{
+    Action, CrError, CrResult, DatasourceRecord, FolderRecord, ObjectTarget, OrgId, OrgKey,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -55,6 +57,9 @@ async fn compat_health() -> Response {
         .into_response()
 }
 
+/// Grafana's limit on an organization's name.
+const MAX_ORG_NAME: usize = 190;
+
 #[derive(Debug, Deserialize)]
 struct CreateOrgReq {
     name: String,
@@ -66,7 +71,10 @@ async fn compat_create_org(
     Json(req): Json<CreateOrgReq>,
 ) -> Response {
     // Creating an organization is an installation admin act: admin of the main organization.
-    let ctx = ctx_in_org(&resolve_request_ctx(&state, &headers), state.default_org_id);
+    let ctx = ctx_in_org(
+        &resolve_request_ctx(&state, &headers).await,
+        state.default_org_id,
+    );
     let dec = state.authorizer.check(
         &ctx,
         Action::Admin,
@@ -77,51 +85,116 @@ async fn compat_create_org(
     if let Err(e) = dec.into_result("Organization not found") {
         return error_response(&e);
     }
-    let mut reg = state.org_registry.write();
-    if reg.by_name.contains_key(&req.name) {
+    if req.name == state.default_org_name {
         return error_response(&CrError::Conflict("Organization name taken".into()));
     }
-    let new_org_id = org_id_for_name(&state, &req.name);
-    let (num, _, _) = reg.register_org(&req.name, new_org_id);
-    (
-        StatusCode::OK,
-        Json(json!({
-            "orgId": num,
-            "id": num,
-            "uuid": new_org_id,
-            "message": "Organization created",
-        })),
-    )
-        .into_response()
+    if let Err(e) = check_org_name(&req.name) {
+        return error_response(&e);
+    }
+    let first_id = org_id_for_name(&state, &req.name);
+    match state
+        .store
+        .create_org(state.installation_id, &req.name, None, first_id)
+        .await
+    {
+        Ok(org) => (
+            StatusCode::OK,
+            Json(json!({
+                "orgId": org.number,
+                "id": org.number,
+                "uuid": org.org_id,
+                "message": "Organization created",
+            })),
+        )
+            .into_response(),
+        Err(e) => error_response(&e),
+    }
 }
 
-/// The id of organization `name`: the same in every process of the installation, so the rows a
-/// Postgres store keeps under it are found again when `provision.sh` creates it after a restart
-/// (the directory of names is held in memory, as Grafana's database in its pod).
-/// Holds organization `name` under Grafana number `num` from the start, as an operator's
-/// configuration declares it, so provisioning files can name it by `orgId` and the Portal finds
-/// it by name; its id is the one [`compat_create_org`] would give it.
-///
-/// # Errors
-/// A number below 2 (1 is the main organization) or a number or name already held.
-pub fn declare_organization(state: &DaiyaState, num: i64, name: &str) -> CrResult<OrgId> {
-    let mut reg = state.org_registry.write();
-    if num < 2
-        || reg.by_num.contains_key(&num)
-        || reg.by_name.contains_key(name)
-        || name.trim().is_empty()
+/// Retires organization `number` (Grafana's `DELETE /api/orgs/:orgId`): its number and id are
+/// never given again, and an organization created with its name later gets a new id, so reads
+/// none of its rows. The rows stay; nothing serves them.
+async fn compat_delete_org(
+    State(state): State<DaiyaState>,
+    headers: HeaderMap,
+    Path(number): Path<i64>,
+) -> Response {
+    let ctx = ctx_in_org(
+        &resolve_request_ctx(&state, &headers).await,
+        state.default_org_id,
+    );
+    let dec = state.authorizer.check(
+        &ctx,
+        Action::Admin,
+        &ObjectTarget::Organization {
+            org_id: state.default_org_id,
+        },
+    );
+    if let Err(e) = dec.into_result("Organization not found") {
+        return error_response(&e);
+    }
+    if number == 1 {
+        return error_response(&CrError::BadRequest(
+            "the main organization cannot be deleted".into(),
+        ));
+    }
+    match state.store.retire_org(state.installation_id, number).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(json!({ "message": "Organization deleted" })),
+        )
+            .into_response(),
+        Ok(false) => error_response(&CrError::NotFound("Organization not found".into())),
+        Err(e) => error_response(&e),
+    }
+}
+
+fn check_org_name(name: &str) -> CrResult<()> {
+    if name.trim().is_empty()
+        || name.chars().count() > MAX_ORG_NAME
+        || name.chars().any(char::is_control)
     {
         return Err(CrError::BadRequest(format!(
-            "organization {num} '{name}': a number from 2 and a name no other organization holds"
+            "name: 1 to {MAX_ORG_NAME} characters, none a control character, e.g. helsinki"
         )));
     }
-    let org_id = org_id_for_name(state, name);
-    reg.by_num.insert(num, (name.to_owned(), org_id));
-    reg.by_name.insert(name.to_owned(), (num, org_id));
-    reg.next_num = reg.next_num.max(num.saturating_add(1));
-    Ok(org_id)
+    Ok(())
 }
 
+/// Holds organization `name` under Grafana number `num` from the start, as an operator's
+/// configuration declares it, so provisioning files can name it by `orgId` and the Portal finds
+/// it by name; its id is the one [`compat_create_org`] would give it. Declared again, it is the
+/// same row.
+///
+/// # Errors
+/// A number below 2 (1 is the main organization), or a number or name the store holds for
+/// another organization: the start is refused, nothing is renumbered.
+pub async fn declare_organization(state: &DaiyaState, num: i64, name: &str) -> CrResult<OrgId> {
+    let refused = |why: &str| {
+        CrError::BadRequest(format!(
+            "organization {num} '{name}': a number from 2 and a name no other organization holds{why}"
+        ))
+    };
+    if num < 2 || name == state.default_org_name || check_org_name(name).is_err() {
+        return Err(refused(""));
+    }
+    let first_id = org_id_for_name(state, name);
+    match state
+        .store
+        .create_org(state.installation_id, name, Some(num), first_id)
+        .await
+    {
+        Ok(org) => Ok(org.org_id),
+        Err(CrError::Conflict(_)) => Err(refused(
+            " (the store holds that number or name already: declare the number it holds)",
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+/// The id of organization `name` the first time the installation holds that name: the one every
+/// release before T-7509 derived, so its rows are found again and that release still finds them
+/// after a rollback. The stored row is what resolves it from then on.
 fn org_id_for_name(state: &DaiyaState, name: &str) -> OrgId {
     use sha2::Digest as _;
     let digest = sha2::Sha256::digest(format!("daiya-org\n{}\n{name}", state.installation_id));
@@ -135,11 +208,14 @@ async fn compat_get_org_by_name(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
-    let found = state.org_registry.read().by_name.get(&name).copied();
-    let Some((num, org_id)) = found else {
-        return error_response(&CrError::NotFound("Organization not found".into()));
+    let ctx = resolve_request_ctx(&state, &headers).await;
+    let not_found = CrError::NotFound("Organization not found".into());
+    let org = match state.organization_held(OrgKey::Name(name.clone())).await {
+        Ok(Some(org)) => org,
+        Ok(None) => return error_response(&not_found),
+        Err(e) => return error_response(&e),
     };
+    let (num, org_id) = (org.number, org.org_id);
     // Only a member (or the installation admin) learns that the organization exists.
     let member = state
         .authorizer
@@ -159,8 +235,20 @@ async fn compat_get_org_by_name(
             },
         )
         .allowed;
-    if !member && !installation_admin {
-        return error_response(&CrError::NotFound("Organization not found".into()));
+    if org.retired && installation_admin {
+        // Still no organization, as Grafana answers a deleted one. The mark keeps the Portal's
+        // backup from reading this id's rows as those of a name never held.
+        let mut body = not_found.to_odata_error();
+        body["retired"] = Value::Bool(true);
+        return (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            Json(body),
+        )
+            .into_response();
+    }
+    if org.retired || (!member && !installation_admin) {
+        return error_response(&not_found);
     }
     (
         StatusCode::OK,
@@ -175,7 +263,7 @@ async fn compat_get_org_by_name(
 }
 
 async fn compat_get_current_org(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,
@@ -184,13 +272,11 @@ async fn compat_get_current_org(State(state): State<DaiyaState>, headers: Header
     if let Err(e) = dec.into_result("Organization not found") {
         return error_response(&e);
     }
-    let reg = state.org_registry.read();
-    let (num, name) = reg
-        .by_num
-        .iter()
-        .find(|(_, (_, oid))| *oid == ctx.org_id)
-        .map(|(n, (nm, _))| (*n, nm.clone()))
-        .unwrap_or((1, "Main Org.".to_owned()));
+    let (num, name) = match state.organization(OrgKey::Id(ctx.org_id)).await {
+        Ok(Some(org)) => (org.number, org.name),
+        Ok(None) => return error_response(&CrError::NotFound("Organization not found".into())),
+        Err(e) => return error_response(&e),
+    };
     (
         StatusCode::OK,
         Json(json!({
@@ -203,7 +289,7 @@ async fn compat_get_current_org(State(state): State<DaiyaState>, headers: Header
 }
 
 async fn compat_list_datasources(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match state.store.list_datasources(ctx.org_id).await {
         Ok(list) => {
             let items: Vec<Value> = list
@@ -386,7 +472,7 @@ async fn compat_add_datasource(
     headers: HeaderMap,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(add_datasource(&state, &ctx, req).await)
 }
 
@@ -444,7 +530,7 @@ async fn compat_update_datasource_by_uid(
     Path(uid): Path<String>,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(update_datasource(&state, &ctx, uid, req).await)
 }
 
@@ -501,7 +587,7 @@ async fn compat_get_datasource_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,
@@ -525,7 +611,7 @@ async fn compat_delete_datasource_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Delete,
@@ -553,7 +639,7 @@ async fn compat_datasource_health(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_health(&state, &ctx, &uid).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => error_response(&e),
@@ -566,7 +652,7 @@ async fn compat_datasource_resource(
     Path((uid, path)): Path<(String, String)>,
     AxumQuery(params): AxumQuery<BTreeMap<String, String>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_resource(&state, &ctx, &uid, &path, params).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => error_response(&e),
@@ -588,7 +674,7 @@ async fn compat_create_folder(
     headers: HeaderMap,
     Json(req): Json<CreateFolderReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(create_folder(&state, &ctx, req).await)
 }
 
@@ -642,7 +728,7 @@ async fn create_folder(
 }
 
 async fn compat_list_folders(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match state.store.list_folders(ctx.org_id).await {
         Ok(list) => {
             let hits: Vec<Value> = list
@@ -669,7 +755,7 @@ async fn compat_get_folder_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     if !can_read_folder(&state, &ctx, &uid) {
         return error_response(&CrError::NotFound("Folder not found".into()));
     }
@@ -695,7 +781,7 @@ async fn compat_delete_folder_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Delete,
@@ -719,7 +805,7 @@ async fn compat_post_dashboard(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let folder_uid = body
         .get("folderUid")
         .and_then(Value::as_str)
@@ -763,7 +849,7 @@ async fn compat_get_dashboard_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let Some(rec) = (match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(r) => r,
         Err(e) => return error_response(&e),
@@ -818,7 +904,7 @@ async fn compat_delete_dashboard_by_uid(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let Some(rec) = (match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(r) => r,
         Err(e) => return error_response(&e),
@@ -857,7 +943,7 @@ async fn compat_get_dashboard_versions(
     headers: HeaderMap,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(dashboard_versions(&state, &ctx, &uid).await)
 }
 
@@ -897,7 +983,7 @@ async fn compat_search(
     headers: HeaderMap,
     AxumQuery(params): AxumQuery<SearchParams>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let q_lower = params.query.as_deref().unwrap_or("").to_ascii_lowercase();
     let mut hits = Vec::new();
 
@@ -975,7 +1061,7 @@ async fn compat_ds_query(
     headers: HeaderMap,
     Json(body): Json<ODataQueryActionBody>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_query(&state, &ctx, None, body).await {
         Ok(odata_val) => {
             let sets: Vec<daiya_model::FrameSet> = odata_val
@@ -1033,7 +1119,7 @@ async fn compat_render_dashboard_panel(
     Path(uid): Path<String>,
     AxumQuery(params): AxumQuery<Vec<(String, String)>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers);
+    let ctx = resolve_request_ctx(&state, &headers).await;
     let (panel_id, range) = render_range(params);
     match panel_view(&state, &ctx.subject, ctx.org_id, &uid, panel_id, range).await {
         Ok(pv) => (
@@ -1053,6 +1139,7 @@ pub fn compat_router() -> Router<DaiyaState> {
         .route("/api/org", get(compat_get_current_org))
         .route("/api/orgs", post(compat_create_org))
         .route("/api/orgs/name/{name}", get(compat_get_org_by_name))
+        .route("/api/orgs/{number}", delete(compat_delete_org))
         .route(
             "/api/datasources",
             get(compat_list_datasources).post(compat_add_datasource),
