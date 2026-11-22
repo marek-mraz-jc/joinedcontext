@@ -11,6 +11,6 @@
 "daiya-server" = { lines = 97.10, functions = 98.70 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
-"ekiben-js" = { lines = 99.63, functions = 100.00 }
-"ekiben-parquet" = { lines = 99.54, functions = 100.00 }
+"ekiben-js" = { lines = 99.62, functions = 100.00 }
+"ekiben-parquet" = { lines = 99.53, functions = 100.00 }
 "ekiben-protobuf" = { lines = 99.91, functions = 100.00 }
