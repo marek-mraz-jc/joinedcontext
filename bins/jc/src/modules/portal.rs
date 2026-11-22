@@ -989,7 +989,7 @@ pub(crate) fn backup_vars(cfg: &crate::config::Config) -> BTreeMap<String, Strin
         // DaiyaState::for_standalone's installation, the one jc's daiya runs as.
         tenants.insert(
             "daiyaInstallation".to_owned(),
-            daiya_model::InstallationId::from_u128(1).to_string().into(),
+            daiya_model::InstallationId::SINGLE.to_string().into(),
         );
     }
     #[cfg(feature = "dataroom")]

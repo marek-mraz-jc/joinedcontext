@@ -56,7 +56,7 @@ async fn main() -> ExitCode {
         };
         tracing::info!(bind = %internal, "internal listener for the MQTT brokers");
         tokio::spawn(async move {
-            if let Err(error) = axum::serve(listener, app).await {
+            if let Err(error) = context_gateway::mqtt::serve_internal(listener, app).await {
                 tracing::error!(%error, "the internal listener stopped");
             }
         });

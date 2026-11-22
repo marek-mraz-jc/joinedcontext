@@ -381,6 +381,7 @@ async fn write_everything(jc: &Jc, publisher: &str) {
         "daiya dashboard",
         http.post(jc.url("/dashboards/api/dashboards/db"))
             .basic_auth("portal", Some(&dashboards))
+            .header("x-grafana-org-id", "1")
             .json(&json!({
                 "dashboard": {"uid": "restart-overview", "title": "Restart overview", "schemaVersion": 39, "panels": []},
                 "overwrite": true,
@@ -489,7 +490,8 @@ async fn read_everything(jc: &Jc) {
     let dash = ok(
         "daiya dashboard after the restart",
         http.get(jc.url("/dashboards/api/dashboards/uid/restart-overview"))
-            .basic_auth("portal", Some(jc.secret("dashboards-password"))),
+            .basic_auth("portal", Some(jc.secret("dashboards-password")))
+            .header("x-grafana-org-id", "1"),
     )
     .await;
     assert_eq!(dash["dashboard"]["title"], "Restart overview");

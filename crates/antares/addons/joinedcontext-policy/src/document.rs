@@ -862,9 +862,8 @@ fn duration(raw: &str) -> Option<SignedDuration> {
 /// The scope paths of a `scopeQ`, whose operators separate them; a trailing
 /// `/#` or `/` names the same subtree.
 pub fn scope_paths(scope_q: &str) -> impl Iterator<Item = &str> {
-    scope_q
-        .split(['(', ')', ';', '|', ','])
-        .map(str::trim)
+    antares_ql::scope::scope_groups(scope_q)
+        .flatten()
         .filter(|p| p.starts_with('/'))
         .map(|p| p.trim_end_matches("/#").trim_end_matches('/'))
         .filter(|p| !p.is_empty())
@@ -1339,7 +1338,7 @@ PT1H => Err("refused")
     #[test]
     fn a_scope_path_covers_its_subtree_and_nothing_beside_it() {
         assert_eq!(
-            scope_paths("(/a/b/#|/c/);x").collect::<Vec<_>>(),
+            scope_paths("(/a/b/#)| /c/ ,x").collect::<Vec<_>>(),
             ["/a/b", "/c"]
         );
         assert!(covers("/a/b", "/a/b"));

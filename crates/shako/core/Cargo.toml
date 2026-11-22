@@ -11,18 +11,17 @@ testkit = []
 
 [dependencies]
 base64 = "0.22"
+jc-http = { path = "../../shared/jc-http" }
 jc-time = { path = "../../shared/jc-time", features = ["schemars"] }
 globset = "0.4"
 gix-validate = "0.13"
 hex = "0.4"
-ipnet = "2.12"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 parking_lot = "0.12"
 rand = "0.9"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 schemars = { version = "0.8", features = ["uuid1"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

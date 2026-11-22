@@ -3,7 +3,7 @@
 //! 1. Import our 9 dashboards + OData 4.01 `$metadata`, `$filter`, `$select`, `$orderby`, `$top`, `$count`, `$batch`.
 //! 2. Query mocked Prometheus and mocked NGSI-LD Endpoint (verifying caller token exchange for Endpoint audience) + `panel_view` / `RenderPanel`.
 //! 3. Mixed panel (`-- Mixed --`) with Prometheus + NGSI-LD + `math` expression + `reduce` expression.
-//! 4. OData, MCP, and CLI parity (`Allowed` and actions give the exact same answer and decision) + `jc-router` mount prefix, cookies, and CSP.
+//! 4. OData and CLI parity (`Allowed` and actions give the exact same answer and decision) + `jc-router` mount prefix, cookies, and CSP.
 //! 5. Public dashboard rules of R7 (opt-in off by default, 256-bit hashed token, forged target/variable refusal, range cap, cache isolation, metadata stripping, token rotation 404, per-IP rate limit).
 //! 6. Cross-organization 404s (never 403) and zero outbound calls on cross-org datasource query.
 //! 7. Regression tests for the §4.3 / R12 CVE classes (datasource proxy credential leak, SSRF & redirect block, stored XSS in titles/markdown, public dashboard data leak, provisioning path traversal).
@@ -15,12 +15,11 @@ use axum::extract::Query as AxumQuery;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::routing::get;
 use daiya_api::state::TokenBinding;
-use daiya_api::{PanelTimeRange, panel_view};
+use daiya_api::{PanelTimeRange, panel_view, readable_rows};
 use daiya_import::parse_dashboard_providers_yaml;
-use daiya_mcp::{call_mcp_tool, list_mcp_tools};
 use daiya_model::{
     DaiyaStore, DatasourceRecord, GrafanaRole, InstallationId, InstanceId, OrgId, PolicyAuthorizer,
-    RequestCtx, RoleBinding, Subject,
+    RequestCtx, RoleBinding, RowSet, Subject,
 };
 use daiya_query::{
     EndpointBase, GuardConfig, MapSecretResolver, NgsiLdDatasource, OutboundGuard,
@@ -217,6 +216,24 @@ async fn send_req(app: &Router, mut req: Request<Body>) -> (StatusCode, HeaderMa
     (status, headers, json_val)
 }
 
+/// The panels reading the Endpoint datasource `public-endpoint`, their query text kept.
+fn on_the_endpoint(panels: &mut Value) {
+    let source = json!({ "type": "ngsild-grafana-datasource", "uid": "public-endpoint" });
+    for panel in panels.as_array_mut().into_iter().flatten() {
+        if let Some(nested) = panel.get_mut("panels") {
+            on_the_endpoint(nested);
+        }
+        if panel.get("datasource").is_some() {
+            panel["datasource"] = source.clone();
+        }
+        let targets = panel.get_mut("targets").and_then(Value::as_array_mut);
+        for target in targets.into_iter().flatten() {
+            *target = json!({ "refId": target["refId"], "queryType": "entity",
+                "entityType": "Probe", "customQuery": target["expr"], "datasource": source });
+        }
+    }
+}
+
 async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
     let inst = InstallationId::from_u128(1);
     let instance = InstanceId::from_u128(1);
@@ -319,6 +336,33 @@ async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
             .with_secret_ref("prom-token-ref"),
     );
     state.register_datasource_driver(org_a, "prometheus", prom_driver);
+
+    // The Endpoint a public dashboard may read: a stored record, with no driver of the host's.
+    state.own_reach =
+        vec![daiya_query::OwnReach::endpoints(&format!("{upstream_url}/api/endpoint/")).unwrap()];
+    store
+        .upsert_datasource(DatasourceRecord {
+            installation_id: inst,
+            org_id: org_a,
+            instance_id: instance,
+            project_id: None,
+            uid: "public-endpoint".into(),
+            name: "Public Endpoint".into(),
+            kind: "ngsild-grafana-datasource".into(),
+            access: "proxy".into(),
+            url: format!("{upstream_url}/api/endpoint/publicprobe"),
+            is_default: false,
+            read_only: true,
+            json_data: json!({}),
+            secret_refs: BTreeMap::new(),
+            allow_hosts: Vec::new(),
+            wasm_digest: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
 
     for (uid, slug) in [
         ("bbsk-kpi", "qfhhh5no5wz4lk3rfjisdtx3chiyfig3"),
@@ -651,15 +695,6 @@ async fn e2e_odata_mcp_and_cli_parity_and_jc_router_mount() {
     .await;
     assert_eq!(st, StatusCode::OK);
 
-    let mcp_dec = call_mcp_tool(
-        &state,
-        &ctx,
-        "daiya_allowed",
-        json!({ "operation": "Apply", "object": "Organization:default" }),
-    )
-    .await
-    .unwrap();
-
     let cli_dec = execute_cli_command(
         &state,
         &ctx,
@@ -669,8 +704,7 @@ async fn e2e_odata_mcp_and_cli_parity_and_jc_router_mount() {
     .await
     .unwrap();
 
-    assert_eq!(odata_dec, mcp_dec);
-    assert_eq!(mcp_dec, cli_dec);
+    assert_eq!(odata_dec, cli_dec);
     assert_eq!(odata_dec["allowed"], false);
 
     // Mount on `jc-router` under `/portal/daiya` and verify prefix-aware links and `__Secure-` cookie prefix (R11)
@@ -712,6 +746,8 @@ async fn e2e_public_dashboard_rules_of_r7() {
 
     // Import `slo.json` into org_a
     let slo_json: Value = serde_json::from_str(NINE_DASHBOARDS[6].1).unwrap();
+    let mut on_endpoint = slo_json.clone();
+    on_the_endpoint(&mut on_endpoint["panels"]);
     let (st, _, _) = send_req(
         &app,
         Request::builder()
@@ -758,8 +794,31 @@ async fn e2e_public_dashboard_rules_of_r7() {
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // 2. Enable the public dashboard
+    // 2. Enable the public dashboard: refused while it reads Prometheus with its stored
+    // credential (WRK-04), allowed once its panels read an Endpoint.
     let pub_uid = created_default["uid"].as_str().unwrap().to_owned();
+    let enable = || {
+        req(
+            "PATCH",
+            &format!("/api/dashboards/uid/jc-slo/public-dashboards/{pub_uid}"),
+            Some("admin-a-token"),
+            Some(json!({ "isEnabled": true })),
+        )
+    };
+    let (st, _, refused) = send_req(&app, enable()).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("prometheus"), "{refused}");
+    let (st, _, saved) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/db",
+            Some("admin-a-token"),
+            Some(json!({ "dashboard": on_endpoint, "overwrite": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{saved}");
     let (st, _, _) = send_req(
         &app,
         Request::builder()
@@ -1193,17 +1252,22 @@ async fn security_forged_identity_headers_grant_nothing() {
     let (st, _, _) = send_req(&app, forged).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // No credential at all: the default organization is not writable either.
-    let (st, _, _) = send_req(
-        &app,
+    // No credential at all: no Organization stands in, and a named one is not writable either.
+    let anon = || {
         req(
             "POST",
             "/odata/v4/Import",
             None,
             Some(json!({ "dryRun": false, "dashboard": simple_dash("anon") })),
-        ),
-    )
-    .await;
+        )
+    };
+    let (st, _, _) = send_req(&app, anon()).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let mut named = anon();
+    named
+        .headers_mut()
+        .insert("x-grafana-org-id", "1".parse().unwrap());
+    let (st, _, _) = send_req(&app, named).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
     // An unknown bearer token is refused 401, as Grafana refuses an invalid API key.
@@ -1292,14 +1356,9 @@ async fn security_export_requires_read_on_the_dashboard() {
         state.default_instance_id,
         Subject::authenticated("folder-viewer", vec![org_a], vec![]),
     );
-    let mcp = call_mcp_tool(
-        &state,
-        &viewer,
-        "daiya_export",
-        json!({ "uid": "root-dash" }),
-    )
-    .await;
-    assert!(mcp.is_err());
+    let exported =
+        execute_cli_command(&state, &viewer, "export", json!({ "uid": "root-dash" })).await;
+    assert!(exported.is_err());
 
     // The admin still exports it.
     let (st, _, body) = send_req(
@@ -1540,10 +1599,10 @@ async fn security_default_token_exchanger_never_forwards_the_caller_token() {
     );
 }
 
-/// Every MCP tool runs the same authorization as OData: a subject without a role is refused by every tool,
+/// Every CLI operation runs the same authorization as OData: a subject without a role is refused by each,
 /// a viewer reads but cannot write, a read-only connector cannot write even as admin.
 #[tokio::test]
-async fn security_mcp_tools_authorize_like_odata() {
+async fn security_operations_authorize_like_odata() {
     let (upstream_url, _, _) = spawn_mock_upstream().await;
     let (state, org_a, _org_b, app) = setup_world(&upstream_url).await;
     let (st, _, _) = send_req(
@@ -1552,7 +1611,7 @@ async fn security_mcp_tools_authorize_like_odata() {
             "POST",
             "/api/dashboards/db",
             Some("admin-a-token"),
-            Some(json!({ "dashboard": simple_dash("mcp-dash"), "overwrite": true })),
+            Some(json!({ "dashboard": simple_dash("op-dash"), "overwrite": true })),
         ),
     )
     .await;
@@ -1568,115 +1627,78 @@ async fn security_mcp_tools_authorize_like_odata() {
             subject,
         )
     };
-    let tools = list_mcp_tools(&state);
-    assert_eq!(tools.len(), state.registry.operations.len() + 1);
-    assert!(tools.iter().any(|t| t.name == "daiya_export_dashboard"));
-
-    let import_args = json!({ "dashboard": simple_dash("mcp-new") });
+    let import_args = json!({ "dashboard": simple_dash("op-new") });
     let calls: Vec<(&str, Value)> = vec![
-        ("daiya_export_dashboard", json!({ "uid": "mcp-dash" })),
+        ("export", json!({ "uid": "op-dash" })),
+        ("render-panel", json!({ "uid": "op-dash", "panelId": 1 })),
+        ("datasource-health", json!({ "uid": "prometheus" })),
+        ("editor-schema", json!({ "uid": "prometheus" })),
         (
-            "daiya_render_panel",
-            json!({ "uid": "mcp-dash", "panelId": 1 }),
-        ),
-        ("daiya_datasource_health", json!({ "uid": "prometheus" })),
-        (
-            "daiya_datasource_editor_schema",
-            json!({ "uid": "prometheus" }),
-        ),
-        (
-            "daiya_datasource_query",
+            "query",
             json!({ "queries": [{ "refId": "A", "datasource": { "uid": "prometheus" }, "expr": "up" }], "from": "1700000000000", "to": "1700003600000" }),
         ),
-        ("daiya_import", import_args.clone()),
-        (
-            "daiya_rotate_public_dashboard",
-            json!({ "uid": "mcp-dash" }),
-        ),
+        ("import", import_args.clone()),
+        ("rotate-public-token", json!({ "uid": "op-dash" })),
     ];
 
     // A subject with no role binding in org_a: every object tool refuses, and never returns data.
     let stranger = ctx_for("admin-b", false);
-    for (tool, args) in &calls {
-        let res = call_mcp_tool(&state, &stranger, tool, args.clone()).await;
+    for (command, args) in &calls {
+        let res = execute_cli_command(&state, &stranger, command, args.clone()).await;
         match res {
             Err(e) => assert!(
                 matches!(e.status_code(), 403 | 404),
-                "{tool}: stranger got {} {e}",
+                "{command}: stranger got {} {e}",
                 e.status_code()
             ),
-            Ok(v) => panic!("{tool}: stranger got data {v}"),
+            Ok(v) => panic!("{command}: stranger got data {v}"),
         }
     }
-    let listed = call_mcp_tool(&state, &stranger, "daiya_list_dashboards", json!({}))
+    let listed = readable_rows(&state, &stranger, RowSet::Dashboards)
         .await
         .unwrap();
-    assert_eq!(listed["value"], json!([]));
+    assert!(listed.is_empty(), "{listed:?}");
 
     // A viewer reads, and is refused every write.
     let viewer = ctx_for("viewer-a", false);
-    let exported = call_mcp_tool(
-        &state,
-        &viewer,
-        "daiya_export_dashboard",
-        json!({ "uid": "mcp-dash" }),
-    )
-    .await
-    .unwrap();
-    assert!(exported.to_string().contains("mcp-dash"));
-    let listed = call_mcp_tool(
-        &state,
-        &viewer,
-        "daiya_list_dashboards",
-        json!({ "query": "MCP-D" }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        listed["value"].as_array().map(Vec::len),
-        Some(1),
-        "{listed}"
+    let exported = execute_cli_command(&state, &viewer, "export", json!({ "uid": "op-dash" }))
+        .await
+        .unwrap();
+    assert!(exported.to_string().contains("op-dash"));
+    let listed = readable_rows(&state, &viewer, RowSet::Dashboards)
+        .await
+        .unwrap();
+    assert!(
+        listed.iter().any(|row| row["uid"] == "op-dash"),
+        "{listed:?}"
     );
-    for (tool, args) in [
-        ("daiya_import", import_args.clone()),
-        (
-            "daiya_rotate_public_dashboard",
-            json!({ "uid": "mcp-dash" }),
-        ),
+    for (command, args) in [
+        ("import", import_args.clone()),
+        ("rotate-public-token", json!({ "uid": "op-dash" })),
     ] {
-        let e = call_mcp_tool(&state, &viewer, tool, args)
+        let e = execute_cli_command(&state, &viewer, command, args)
             .await
             .unwrap_err();
-        assert!(matches!(e.status_code(), 403 | 404), "{tool}: {e}");
+        assert!(matches!(e.status_code(), 403 | 404), "{command}: {e}");
     }
 
     // A read-only connector holding admin rights still cannot write.
     let ro_admin = ctx_for("admin", true);
-    let e = call_mcp_tool(&state, &ro_admin, "daiya_import", import_args.clone())
+    let e = execute_cli_command(&state, &ro_admin, "import", import_args.clone())
         .await
         .unwrap_err();
     assert!(matches!(e.status_code(), 403 | 404), "{e}");
     // The same call as a writable admin succeeds, so the refusals above are about rights.
-    call_mcp_tool(
-        &state,
-        &ctx_for("admin", false),
-        "daiya_import",
-        import_args,
-    )
-    .await
-    .unwrap();
+    execute_cli_command(&state, &ctx_for("admin", false), "import", import_args)
+        .await
+        .unwrap();
 
-    let e = call_mcp_tool(&state, &viewer, "daiya_no_such_tool", json!({}))
+    let e = execute_cli_command(&state, &viewer, "no-such-command", json!({}))
         .await
         .unwrap_err();
     assert_eq!(e.status_code(), 404);
-    let e = call_mcp_tool(
-        &state,
-        &viewer,
-        "daiya_datasource_query",
-        json!({ "queries": "x" }),
-    )
-    .await
-    .unwrap_err();
+    let e = execute_cli_command(&state, &viewer, "query", json!({ "queries": "x" }))
+        .await
+        .unwrap_err();
     assert_eq!(e.status_code(), 400);
 }

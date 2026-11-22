@@ -21,6 +21,8 @@ All four or none (`portal/config.rs:576`).
 
 Every call: `Authorization: Basic base64(user:password)` (`portal/grafana.rs:263`), redirects
 refused, 10 s timeout, answers read up to 1 MiB; `X-Grafana-Org-Id: <n>` on organization calls.
+daiya answers an organization call without it 401: the server administrator is a member of no
+Organization it does not name.
 
 | # | Call | Caller | Body | What the Portal parses |
 |---|---|---|---|---|

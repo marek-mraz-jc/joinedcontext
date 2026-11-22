@@ -16,7 +16,7 @@ use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub use shako_api::service::{blob_path, write_blob_file};
-pub use shako_api::{ShakoState, dispatch_pending_outbox};
+pub use shako_api::{ShakoState, dispatch_pending_outbox, drain_mirrors};
 use shako_api::{api_router, authenticate_request, exec_odata_operation, odata_error_response};
 use shako_core::{
     BranchProtectionRule, InstanceRecord, OrgId, ProtectionRuleRecord, PushMirrorRecord, RepoId,
@@ -86,7 +86,7 @@ struct McpCallReq {
 }
 
 async fn http_mcp_list(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -100,7 +100,7 @@ async fn http_mcp_call(
     mount_ext: Option<Extension<Mount>>,
     Json(req): Json<McpCallReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -294,7 +294,6 @@ pub async fn apply_manifest_bundle(
                     .await?
             }
         };
-        state.register_owner_org(&r.owner, org_id);
         for rule in &r.protections {
             state
                 .store()
@@ -369,11 +368,12 @@ pub async fn compact_all_repositories(state: &ShakoState, org_id: OrgId) -> Shak
     for r in repos {
         let _guard = state.repo_locks.lock(r.id).await;
         let path = shako_core::repo_disk_path(state.repo_root(), r.instance_id, r.id)?;
-        tokio::task::spawn_blocking(move || {
-            compact_repository(&path, shako_git::DEFAULT_PRUNE_GRACE)
-        })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))??;
+        state
+            .git_work
+            .run(org_id, move |admit| {
+                compact_repository(&path, shako_git::DEFAULT_PRUNE_GRACE, admit)
+            })
+            .await?;
         compacted += 1;
     }
     Ok(compacted)

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! PostgreSQL store isolation, boot RLS check, `shako.org` unset zero-row check,
-//! and leakproof `(instance_id, owner, name)` index plan test (Contract S2).
+//! and leakproof `(org_id, instance_id, owner, name)` index plan test (Contract S2).
 //!
 //! When `SHAKO_TEST_DATABASE_URL` is unset, returns early with a printed `SKIP` line;
 //! when set and unreachable, FAILS as required by Contract S2.
@@ -33,6 +33,16 @@ fn catalog_validation_refuses_unforced_rls_and_bypassrls_and_table_ownership() {
         })
         .collect();
     assert!(validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &valid).is_ok());
+
+    // A table a later release added, forced RLS like the rest -> that release rolls back (STO-11)
+    let mut with_later = valid.clone();
+    with_later.push(TableRlsStatus {
+        table_name: "a_later_release".into(),
+        rls_enabled: true,
+        rls_forced: true,
+        policy_count: 1,
+    });
+    assert!(validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &with_later).is_ok());
 
     // BYPASSRLS -> refused
     assert!(validate_rls_catalog_rows("shako_app_login", true, false, 0, 0, &valid).is_err());
@@ -181,7 +191,7 @@ async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
         "queries as shako_app with shako.org unset must return zero rows"
     );
 
-    // 2. Prove leakproof index plan for `(instance_id, owner, name)` as the request role
+    // 2. Prove leakproof index plan for `(org_id, instance_id, owner, name)` as the request role
     sqlx::query("SET LOCAL enable_seqscan = off")
         .execute(&mut *tx)
         .await
@@ -209,8 +219,8 @@ async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
         .join("\n");
     println!("request-role plan:\n{plan_text}");
     assert!(
-        plan_text.contains("idx_shako_repo_instance_owner_name"),
-        "expected Index Scan on idx_shako_repo_instance_owner_name, got:\n{plan_text}"
+        plan_text.contains("idx_shako_repo_org_owner_name"),
+        "expected Index Scan on idx_shako_repo_org_owner_name, got:\n{plan_text}"
     );
     tx.commit().await.unwrap();
 
@@ -341,6 +351,177 @@ async fn two_replicas_on_one_database_agree() {
         (1, 1, (1, 2)),
         "(rules the other replica sees, events it sees, the two PR numbers)"
     );
+}
+
+/// A name or key one Organization holds is free in every other: no unique index spans two.
+#[tokio::test]
+async fn no_unique_index_spans_two_organizations() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts.clone())
+        .await
+        .expect("SHAKO_TEST_DATABASE_URL is set but unreachable");
+    PgStore::run_migrations(&admin_pool).await.expect("migrate");
+    let app_password = ensure_app_login(&admin_pool).await;
+    let app_opts = opts.clone().username(APP_LOGIN).password(&app_password);
+    let store = PgStore::connect_with(app_opts, 2).await.unwrap();
+
+    let inst = shako_core::InstanceId::new();
+    let mut refused = Vec::new();
+    for org in [shako_core::OrgId::new(), shako_core::OrgId::new()] {
+        if let Err(e) = store.create_repo(repo(inst, org, "config")).await {
+            refused.push(format!("repository: {e}"));
+        }
+        let event = shako_core::OutboxEvent {
+            id: uuid::Uuid::now_v7(),
+            instance_id: inst,
+            org_id: org,
+            repo_id: None,
+            event_kind: "package".into(),
+            // As the registry writes it.
+            idempotency_key: format!("oci:{org}:city/app:sha256:1"),
+            payload: serde_json::json!({}),
+            dispatched: false,
+            created_at: jc_time::TimestampTz::now(),
+            dispatched_at: None,
+        };
+        let appended = store.append_outbox(event).await;
+        let pending = store.list_undispatched_outbox(inst, org).await.unwrap();
+        if appended.is_err() || pending.len() != 1 {
+            refused.push(format!("event of {org}: {appended:?}"));
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+
+    let spanning: Vec<String> = sqlx::query_scalar(
+        "SELECT i.indexrelid::regclass::text FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'shako' AND i.indisunique AND NOT i.indisprimary
+           AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           WHERE a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+                             AND a.attname = 'org_id')
+           -- inferred by the previous release until it is gone (STO-11); its keys name an id
+           AND i.indexrelid::regclass::text <> 'shako.outbox_instance_id_idempotency_key_key'",
+    )
+    .fetch_all(&admin_pool)
+    .await
+    .unwrap();
+    assert!(spanning.is_empty(), "spans Organizations: {spanning:?}");
+}
+
+/// A database of the release before the keys migration, holding a repository, takes it: the row
+/// stays, its name frees up for another Organization, and a second run changes nothing.
+#[tokio::test]
+async fn the_keys_migration_upgrades_a_database_with_rows() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin = PgPool::connect_with(opts.clone()).await.expect("reachable");
+    let name = format!("shako_keys_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let pool = PgPool::connect_with(opts.database(&name)).await.unwrap();
+    for sql in [
+        shako_store_pg::MIGRATION_0001_SQL,
+        shako_store_pg::MIGRATION_0002_SQL,
+        shako_store_pg::MIGRATION_0003_SQL,
+        shako_store_pg::PROJECTION_0001_SQL,
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    }
+    let insert = "INSERT INTO shako.repo (id, instance_id, org_id, owner, name)
+                  VALUES (gen_random_uuid(), '00000000-0000-7000-8000-000000000001', $1, 'city', 'config')";
+    let (first, second) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    sqlx::query(insert)
+        .bind(first)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = sqlx::query(insert).bind(second).execute(&pool).await;
+    assert!(before.is_err(), "the older index spans Organizations");
+
+    PgStore::run_migrations(&pool).await.expect("upgrade");
+    PgStore::run_migrations(&pool).await.expect("a second run");
+    sqlx::query(insert)
+        .bind(second)
+        .execute(&pool)
+        .await
+        .expect("free in another");
+    let again = sqlx::query(insert).bind(second).execute(&pool).await;
+    assert!(again.is_err(), "still unique inside one Organization");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM shako.repo")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2);
+
+    pool.close().await;
+    sqlx::query(AssertSqlSafe(format!("DROP DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .unwrap();
+}
+
+/// Tenant transactions run as `shako_app`: a login that cannot take that role is refused at boot,
+/// and one that can runs as it inside the transaction only.
+#[tokio::test]
+async fn a_tenant_transaction_runs_as_the_request_role() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin = PgPool::connect_with(opts.clone()).await.expect("reachable");
+    PgStore::run_migrations(&admin).await.expect("migrate");
+    let password = ensure_app_login(&admin).await;
+    let store = PgStore::connect_with(opts.clone().username(APP_LOGIN).password(&password), 1)
+        .await
+        .unwrap();
+    let mut tx = store
+        .begin_tenant_tx(shako_core::InstanceId::new(), shako_core::OrgId::new())
+        .await
+        .unwrap();
+    let inside: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let after: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!((inside.as_str(), after.as_str()), ("shako_app", APP_LOGIN));
+
+    let outsider = format!("shako_outsider_{}", uuid::Uuid::new_v4().simple());
+    let password = random_secret();
+    sqlx::raw_sql(AssertSqlSafe(format!(
+        "CREATE ROLE {outsider} LOGIN PASSWORD '{password}'; GRANT USAGE ON SCHEMA shako TO {outsider};"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    let refused = PgStore::connect_with(opts.username(&outsider).password(&password), 1).await;
+    let refusal = refused.err().map(|e| e.to_string()).unwrap_or_default();
+    sqlx::raw_sql(AssertSqlSafe(format!(
+        "REVOKE USAGE ON SCHEMA shako FROM {outsider}; DROP ROLE {outsider};"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    assert!(refusal.contains("member of shako_app"), "{refusal}");
 }
 
 /// A restart keeps every record kind: a fresh store answers the repository, the pull request and

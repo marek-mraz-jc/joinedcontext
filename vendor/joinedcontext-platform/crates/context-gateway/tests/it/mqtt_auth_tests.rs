@@ -669,10 +669,16 @@ async fn the_check_answers_on_the_internal_router_and_nowhere_else() {
     };
 
     for (with_identity, result) in [(true, "allow"), (false, "deny")] {
-        let response = internal_router(Arc::clone(&gateway), None, None, None, None)
-            .oneshot(request(with_identity))
-            .await
-            .expect("answers");
+        let response = proxied(internal_router(
+            Arc::clone(&gateway),
+            None,
+            None,
+            None,
+            None,
+        ))
+        .oneshot(request(with_identity))
+        .await
+        .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
             .await
@@ -708,7 +714,13 @@ async fn stale_tables_deny_every_check_until_they_are_fresh() {
     let gateway = Arc::new(gateway);
     let token = f.token("ovzdusie-cam-north", "mqtt-ovzdusie-cameras", 300);
     let ask = |path: &'static str, body: Value| {
-        let app = internal_router(Arc::clone(&gateway), None, None, None, None);
+        let app = proxied(internal_router(
+            Arc::clone(&gateway),
+            None,
+            None,
+            None,
+            None,
+        ));
         async move {
             let request = Request::post(path)
                 .header("content-type", "application/json")
@@ -767,7 +779,7 @@ async fn the_publish_check_answers_each_publish_and_refuses_a_flood() {
     )
     .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
     gateway.replace_brokers(f.brokers.clone());
-    let app = internal_router(Arc::new(gateway), None, None, None, None);
+    let app = proxied(internal_router(Arc::new(gateway), None, None, None, None));
     let ask = |topic: &str| {
         let body = json!({
             "access": "2", "clientid": "ovzdusie-cam-north",
@@ -817,13 +829,13 @@ async fn the_router_admits_the_runner_from_its_hosts_addresses_only() {
     gateway.replace_brokers(f.brokers.clone());
     let gateway = Arc::new(gateway);
     let ask = |host: Option<&str>, ipaddr: &str| {
-        let app = internal_router(
+        let app = proxied(internal_router(
             Arc::clone(&gateway),
             host.map(str::to_owned),
             None,
             None,
             None,
-        );
+        ));
         let body = json!({
             "clientid": "jc-ovzdusie-frames", "username": "pipeline-runner-ovzdusie",
             "password": "", "ipaddr": ipaddr
@@ -866,13 +878,13 @@ async fn the_router_admits_the_runner_from_the_brokers_own_pods_only() {
     gateway.replace_brokers(f.brokers.clone());
     let gateway = Arc::new(gateway);
     let ask = |host: Option<&str>, caller: &'static str, ipaddr: &str| {
-        let app = internal_router(
+        let app = proxied(internal_router(
             Arc::clone(&gateway),
             Some("no-such-runner.invalid".to_owned()),
             None,
             host.map(str::to_owned),
             None,
-        );
+        ));
         let body = json!({
             "clientid": "jc-ovzdusie-frames", "username": "pipeline-runner-ovzdusie",
             "password": "", "ipaddr": ipaddr
@@ -914,13 +926,13 @@ async fn a_refusal_is_kept_without_its_token_and_read_by_the_portal_alone() {
     )
     .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
     gateway.replace_brokers(f.brokers.clone());
-    let app = internal_router(
+    let app = proxied(internal_router(
         Arc::new(gateway),
         None,
         None,
         None,
         Some("portal.portal".to_owned()),
-    );
+    ));
     let expired = f.token("ovzdusie-cam-north", "mqtt-ovzdusie-cameras", -120);
     let connect = json!({
         "clientid": "ovzdusie-cam-north-7f3a", "username": "ovzdusie-cam-north",
@@ -1397,4 +1409,232 @@ fn a_door_whose_release_is_another_brokers_is_not_served() {
         (entry.name.as_str(), entry.certificate_door),
         ("x-cert", false)
     );
+}
+
+/// S2-09 (T-7544): the identity header alone proves nothing.
+#[tokio::test]
+async fn an_identity_header_without_a_verified_transport_is_refused() {
+    let f = Fixture::new("forged-identity");
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let body = json!({
+        "access": "2", "clientid": "ovzdusie-cam-north",
+        "username": "ovzdusie-cam-north", "topic": "cameras/ovzdusie-cam-north/frame"
+    });
+    let response = internal_router(Arc::new(gateway), None, None, None, None)
+        .oneshot(
+            Request::post("/internal/mqtt/acl")
+                .header("content-type", "application/json")
+                .header("l5d-client-id", CAMERAS)
+                .body(Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("answers");
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("a body");
+    let answer: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(answer["result"], "deny", "{answer}");
+}
+
+/// S2-09 (T-7544): RFC 4514 shapes as RMQTT 0.24 writes them.
+#[test]
+fn a_subject_dn_is_parsed_and_an_ambiguous_one_refused() {
+    // the OIDs of CN and organizationIdentifier, by their arcs
+    let (cn, org) = (
+        ["2", "5", "4", "3"].join("."),
+        ["2", "5", "4", "97"].join("."),
+    );
+    let (cn_first, oid_org, cn_second, oid_second) = (
+        format!("{cn}=cam-1"),
+        format!("OID({org})=NTRSK-1, CN=cam-1"),
+        format!("CN=cam-1, {cn}=cam-2"),
+        format!("CN=cam-1, OID({cn})=cam-2"),
+    );
+    use context_gateway::mqtt::common_name;
+    for (dn, name) in [
+        ("CN=cam-1", "cam-1"),
+        ("O=city, CN=cam-1", "cam-1"),
+        ("CN=cam-1,O=city", "cam-1"),
+        (r"O=Acme\, Inc., CN=cam-1", "cam-1"),
+        (r"O=R\+D, CN=cam-1", "cam-1"),
+        (r"O=\22Acme\22, CN=cam-1", "cam-1"),
+        ("CN=cam-1+O=city", "cam-1"),
+        ("O=city + CN=cam-1", "cam-1"),
+        ("cn=cam-1", "cam-1"),
+        (cn_first.as_str(), "cam-1"),
+        (oid_org.as_str(), "cam-1"),
+        ("O=, CN=cam-1", "cam-1"),
+        ("O=Mesto Banská Bystrica, CN=cam-1", "cam-1"),
+    ] {
+        assert_eq!(common_name(dn), Some(name), "{dn}");
+    }
+    for dn in [
+        "",
+        "cam-1",
+        "O=city",
+        "CN=",
+        "CN=Cam 1",
+        "CN=cam-1, CN=cam-2",
+        "CN=cam-1, O=x + CN=cam-2",
+        "CN=cam-1, cn=cam-2",
+        cn_second.as_str(),
+        oid_second.as_str(),
+        r"O=x\, CN=cam-2",
+        r"O=x\, CN=cam-1, O=y, CN=cam-2",
+        r"O=x\+CN=cam-2, CN=cam-1",
+        r"O=a\=b, CN=cam-1",
+        r"CN=cam\-1",
+        r"O=bad\, CN=cam-1\",
+        r"O=bad\zz, CN=cam-1",
+        "O=a;b, CN=cam-1",
+        "O=a\"b, CN=cam-1",
+        "O=#0403, CN=cam-1",
+        "O=Acme, Inc., CN=cam-1",
+        "O=city,, CN=cam-1",
+        "CN=cam-1,",
+        "=x, CN=cam-1",
+    ] {
+        assert_eq!(common_name(dn), None, "{dn}");
+    }
+}
+
+/// The router as the pod's own Linkerd proxy reaches it (S2-09).
+fn proxied(app: axum::Router) -> axum::Router {
+    from_peer(app, "10.42.0.5", "10.42.0.5")
+}
+
+fn from_peer(app: axum::Router, remote: &str, local: &str) -> axum::Router {
+    app.layer(axum::Extension(axum::extract::ConnectInfo(
+        context_gateway::mqtt::Peer {
+            remote: remote.parse().ok(),
+            local: local.parse().ok(),
+        },
+    )))
+}
+
+/// S2-09 (T-7544): each route believes one identity, from the pod's own proxy alone.
+#[tokio::test]
+async fn every_route_believes_the_identity_from_the_pods_own_proxy_alone() {
+    const PORTAL: &str = "portal.portal.serviceaccount.identity.linkerd.cluster.local";
+    let f = Fixture::new("peer-identity");
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let app = internal_router(
+        Arc::new(gateway),
+        None,
+        None,
+        None,
+        Some("portal.portal".to_owned()),
+    );
+    let connect = json!({
+        "clientid": "ovzdusie-cam-north", "username": "ovzdusie-cam-north",
+        "password": f.token("ovzdusie-cam-north", "mqtt-ovzdusie-cameras", 300),
+        "ipaddr": "203.0.113.7"
+    })
+    .to_string();
+    let publish = json!({
+        "access": "2", "clientid": "ovzdusie-cam-north",
+        "username": "ovzdusie-cam-north", "topic": "cameras/ovzdusie-cam-north/frame"
+    })
+    .to_string();
+    for (remote, local, times, believed) in [
+        ("10.42.0.5", "10.42.0.5", 1, true),
+        ("127.0.0.1", "10.42.0.5", 1, true),
+        ("::ffff:10.42.0.5", "10.42.0.5", 1, true),
+        ("::ffff:127.0.0.1", "::", 1, true),
+        ("10.42.0.9", "10.42.0.5", 1, false),
+        ("::ffff:10.42.0.9", "::ffff:10.42.0.5", 1, false),
+        ("not an address", "10.42.0.5", 1, false),
+        ("10.42.0.5", "10.42.0.5", 2, false),
+    ] {
+        let app = from_peer(app.clone(), remote, local);
+        for (path, body, identity) in [
+            ("/internal/mqtt/auth", Some(&connect), CAMERAS),
+            ("/internal/mqtt/acl", Some(&publish), CAMERAS),
+            (
+                "/internal/mqtt/refusals/mqtt-ovzdusie-cameras",
+                None,
+                PORTAL,
+            ),
+        ] {
+            let mut request = match body {
+                Some(_) => Request::post(path).header("content-type", "application/json"),
+                None => Request::get(path),
+            };
+            for _ in 0..times {
+                request = request.header("l5d-client-id", identity);
+            }
+            let response = app
+                .clone()
+                .oneshot(
+                    request
+                        .body(body.map_or_else(Body::empty, |body| Body::from(body.clone())))
+                        .expect("a request"),
+                )
+                .await
+                .expect("answers");
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .expect("a body");
+            let admitted = status == StatusCode::OK
+                && serde_json::from_slice::<Value>(&bytes)
+                    .is_ok_and(|answer| answer["result"] != "deny");
+            assert_eq!(admitted, believed, "{path} from {remote} x{times}");
+        }
+    }
+}
+
+/// S2-09 (T-7544): served as both binaries serve it, a connection carries its own two ends.
+#[tokio::test]
+async fn the_served_listener_knows_its_peer() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let f = Fixture::new("served-peer");
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let app = internal_router(Arc::new(gateway), None, None, None, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let address = listener.local_addr().expect("its address");
+    let served = tokio::spawn(context_gateway::mqtt::serve_internal(listener, app));
+    let body = json!({
+        "access": "2", "clientid": "ovzdusie-cam-north",
+        "username": "ovzdusie-cam-north", "topic": "cameras/ovzdusie-cam-north/frame"
+    })
+    .to_string();
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connects");
+    stream
+        .write_all(
+            format!(
+                "POST /internal/mqtt/acl HTTP/1.1\r\nhost: gateway\r\nconnection: close\r\ncontent-type: application/json\r\nl5d-client-id: {CAMERAS}\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("writes");
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).await.expect("reads");
+    served.abort();
+    assert!(answer.contains(r#""result":"allow""#), "{answer}");
 }

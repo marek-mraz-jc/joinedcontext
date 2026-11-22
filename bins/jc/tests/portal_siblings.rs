@@ -752,6 +752,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let dash = Client::new()
         .get(jc.url("/dashboards/api/datasources"))
         .basic_auth("portal", Some(jc.secret("dashboards-password")))
+        .header("x-grafana-org-id", "1")
         .send()
         .await
         .unwrap();

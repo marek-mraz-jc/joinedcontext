@@ -30,6 +30,14 @@ struct TenantState {
     package_files: BTreeMap<(String, String, String, String), PackageFileRecord>,
     blobs: BTreeMap<(String, String, String), BlobRecord>,
     outbox: Vec<OutboxEvent>,
+    mirror_sync: BTreeMap<RepoId, MirrorSync>,
+}
+
+#[derive(Debug, Default)]
+struct MirrorSync {
+    mark: i64,
+    done: i64,
+    claimed_until: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -655,6 +663,78 @@ impl Store for MemoryStore {
                         .collect()
                 })
                 .unwrap_or_default())
+        })
+    }
+
+    fn mark_mirror_due(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+    ) -> StoreFuture<'_, i64> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let t = guard.tenants.entry((instance_id, org_id)).or_default();
+            let sync = t.mirror_sync.entry(repo_id).or_default();
+            sync.mark += 1;
+            Ok(sync.mark)
+        })
+    }
+
+    fn mirror_synced(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            Ok(guard
+                .tenants
+                .get(&(instance_id, org_id))
+                .and_then(|t| t.mirror_sync.get(&repo_id))
+                .is_some_and(|sync| sync.done >= mark))
+        })
+    }
+
+    fn claim_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: Option<RepoId>,
+    ) -> StoreFuture<'_, Option<(RepoId, i64)>> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let t = guard.tenants.entry((instance_id, org_id)).or_default();
+            let now = std::time::Instant::now();
+            let due = t.mirror_sync.iter_mut().find(|(id, sync)| {
+                repo_id.is_none_or(|wanted| wanted == **id)
+                    && sync.mark > sync.done
+                    && sync.claimed_until.is_none_or(|until| until <= now)
+            });
+            Ok(due.map(|(id, sync)| {
+                sync.claimed_until = Some(now + shako_core::MIRROR_LEASE);
+                (*id, sync.mark)
+            }))
+        })
+    }
+
+    fn finish_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let t = guard.tenants.entry((instance_id, org_id)).or_default();
+            if let Some(sync) = t.mirror_sync.get_mut(&repo_id) {
+                sync.done = sync.done.max(mark);
+                sync.claimed_until = None;
+            }
+            Ok(())
         })
     }
 

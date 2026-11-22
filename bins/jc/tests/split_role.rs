@@ -148,7 +148,10 @@ async fn call(base: &str, module: Module, auth: Option<&str>) -> StatusCode {
     let req = match module {
         Module::Shako => client.get(format!("{base}/api/v1/user")),
         Module::Ekiben => client.get(format!("{base}/streams")),
-        Module::Daiya => client.get(format!("{base}/api/org")),
+        // daiya serves only inside an Organization the request names, as the Portal names it.
+        Module::Daiya => client
+            .get(format!("{base}/api/org"))
+            .header("x-grafana-org-id", "1"),
         Module::Dataroom => client
             .post(format!("{base}/api/3/action/organization_create"))
             .json(&json!({"name": format!("split-{}", free_port()), "title": "Split"})),

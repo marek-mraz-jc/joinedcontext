@@ -1,9 +1,5 @@
-#![forbid(unsafe_code)]
-//! `daiya-mcp`: MCP tool definitions and dispatcher generated from the single
-//! [`OperationRegistry`] of `daiya-model` (R10, R10a).
-//!
-//! Every MCP tool call executes the exact same operation and [`Authorizer`] check as the
-//! OData 4.01 service and CLI.
+//! The CLI's dispatcher over the single [`daiya_model::OperationRegistry`] (R10a): each
+//! operation runs the implementation and the [`daiya_model::Authorizer`] check OData runs.
 
 use daiya_api::odata::{
     ApplyBody, ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
@@ -12,68 +8,12 @@ use daiya_api::odata::{
 };
 use daiya_api::{
     DaiyaState, PanelTimeRange, PublicCaller, PublicDashboardQueryReq,
-    execute_public_dashboard_query, panel_view, readable_rows, rotate_public_dashboard_token,
+    execute_public_dashboard_query, panel_view, rotate_public_dashboard_token,
 };
 use daiya_import::DesiredBundle;
-use daiya_model::{CrError, CrResult, RequestCtx, RowSet};
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use daiya_model::{CrError, CrResult, RequestCtx};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
-
-/// MCP tool specification generated from the operation registry (R10, R10a).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolSpec {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
-
-/// Generates the full list of MCP tools from the `daiya` [`OperationRegistry`] (R10, R10a).
-#[must_use]
-pub fn list_mcp_tools(state: &DaiyaState) -> Vec<McpToolSpec> {
-    let mut tools = Vec::with_capacity(state.registry.operations.len() + 1);
-
-    // Entity-set list/search tool
-    tools.push(McpToolSpec {
-        name: "daiya_list_dashboards".into(),
-        description: "List and search dashboards in the caller's organization.".into(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Optional substring filter on title" }
-            }
-        }),
-    });
-
-    for op in &state.registry.operations {
-        let mut props = Map::new();
-        let mut req = Vec::new();
-        for p in &op.params {
-            props.insert(
-                p.name.clone(),
-                json!({
-                    "type": p.json_type,
-                    "description": p.description,
-                }),
-            );
-            if p.required {
-                req.push(Value::String(p.name.clone()));
-            }
-        }
-        tools.push(McpToolSpec {
-            name: op.mcp_tool.clone(),
-            description: op.description.clone(),
-            input_schema: json!({
-                "type": "object",
-                "properties": props,
-                "required": req,
-            }),
-        });
-    }
-
-    tools
-}
 
 /// A required string argument; a missing or non-string one is a 400, never an empty uid.
 fn required_str<'a>(args: &'a Value, name: &str) -> CrResult<&'a str> {
@@ -93,48 +33,21 @@ fn required_panel_id(args: &Value) -> CrResult<u32> {
         .ok_or_else(|| CrError::BadRequest(format!("invalid panelId {raw}")))
 }
 
-/// Executes an MCP tool call under `ctx`, delegating to the exact same implementation and
-/// [`Authorizer`] decision as OData and CLI (R10, R10a).
-pub async fn call_mcp_tool(
+/// Executes a CLI subcommand (`query`, `datasource-health`, `editor-schema`, `datasource-resource`,
+/// `render-panel`, `export`, `import`, `plan`, `apply`, `rotate-public-token`, `public-query`,
+/// `allowed`) under `ctx`, through the operation handlers OData uses.
+pub async fn execute_cli_command(
     state: &DaiyaState,
     ctx: &RequestCtx,
-    tool_name: &str,
+    cli_command: &str,
     args: Value,
 ) -> CrResult<Value> {
-    if tool_name == "daiya_list_dashboards" {
-        let q_filter = args
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let dashboards = readable_rows(state, ctx, RowSet::Dashboards).await?;
-        let visible: Vec<Value> = dashboards
-            .into_iter()
-            .filter(|d| {
-                q_filter.is_empty()
-                    || d["title"]
-                        .as_str()
-                        .is_some_and(|title| title.to_ascii_lowercase().contains(&q_filter))
-            })
-            .map(|d| {
-                json!({
-                    "uid": d["uid"],
-                    "title": d["title"],
-                    "slug": d["slug"],
-                    "folderUid": d["folderUid"],
-                    "panelCount": d["panelCount"],
-                    "version": d["version"],
-                })
-            })
-            .collect();
-        return Ok(json!({ "value": visible }));
-    }
+    let op = state
+        .registry
+        .find_operation(cli_command)
+        .ok_or_else(|| CrError::NotFound(format!("unknown CLI command '{cli_command}'")))?;
 
-    let Some(op_def) = state.registry.find_operation(tool_name) else {
-        return Err(CrError::NotFound(format!("unknown MCP tool '{tool_name}'")));
-    };
-
-    match op_def.name.as_str() {
+    match op.name.as_str() {
         "Datasource/Query" => {
             let body: ODataQueryActionBody = serde_json::from_value(args)
                 .map_err(|e| CrError::BadRequest(format!("invalid query args: {e}")))?;
@@ -187,7 +100,7 @@ pub async fn call_mcp_tool(
         "Apply" => {
             let body: ApplyBody = serde_json::from_value(args).map_err(|e| {
                 CrError::BadRequest(format!(
-                    "invalid apply args: {e}; give only the digest a daiya_plan answered"
+                    "invalid apply args: {e}; give only the digest a plan answered"
                 ))
             })?;
             exec_odata_apply(state, ctx, &body.digest).await
@@ -200,7 +113,7 @@ pub async fn call_mcp_tool(
         "PublicDashboard/Query" => {
             let token = required_str(&args, "accessToken")?;
             let panel_id = required_panel_id(&args)?;
-            // An MCP caller is counted as its own subject, never under a shared address.
+            // A CLI caller is counted as its own subject, never under a shared address.
             let sets = execute_public_dashboard_query(
                 state,
                 ctx.subject.actor_id.clone().map(PublicCaller::Subject),
@@ -220,7 +133,7 @@ pub async fn call_mcp_tool(
             Ok(serde_json::to_value(dec).unwrap_or(Value::Null))
         }
         other => Err(CrError::NotImplemented(format!(
-            "operation '{other}' not wired in MCP"
+            "operation '{other}' not wired in the CLI"
         ))),
     }
 }

@@ -12,38 +12,42 @@
 //! `/geo/SK/BB` and `/geo/SK/BB/Sasova`, never `/geo/SK/BBB`, which is the whole point
 //! (R30).
 
-/// The `q` term one `scopeQ` becomes, or `None` when it names no scope path.
+use antares_ql::scope::{scope_groups, subtree_scope_q};
+
+/// The `q` term one `scopeQ` becomes, or `None` when it is no scope query.
 ///
-/// The scope query language separates paths with `;`, `|` and parentheses; the union is
-/// what a grant covers, so the folded term is an OR of one regex per path. A caller that
-/// holds a grant on two districts may read either, and no expression mixes them.
+/// Split and widened to subtrees by the broker's own parser (`antares_ql::scope`), so `;` is
+/// AND and `|` is OR here as there: one anchored regex per pattern, joined the same way.
 pub fn fold(scope_q: &str) -> Option<String> {
-    let terms: Vec<String> = paths(scope_q).map(|path| term(&path)).collect();
-    match terms.len() {
-        0 => None,
-        1 => Some(terms.into_iter().next().expect("one term")),
-        _ => Some(format!("({})", terms.join("|"))),
+    let tree = subtree_scope_q(scope_q)?;
+    let alternatives: Vec<String> = scope_groups(&tree)
+        .map(|group| joined(group.map(term).collect(), ";"))
+        .collect();
+    Some(joined(alternatives, "|"))
+}
+
+/// `terms` as one term: parenthesized when they are several.
+fn joined(terms: Vec<String>, operator: &str) -> String {
+    match terms.as_slice() {
+        [one] => one.clone(),
+        several => format!("({})", several.join(operator)),
     }
 }
 
-/// One anchored regex term for one scope path.
-fn term(path: &str) -> String {
-    // The path is a literal: a dot or a `+` in a scope name is a character, not a regex
-    // operator, and a scope somebody names `a.b` must not match `axb`.
-    let literal = regex::escape(path);
-    format!("scope~=\"^{literal}(/.*)?$\"")
-}
-
-/// The individual scope paths of a scope query, whose operators separate the paths.
-///
-/// A trailing `/#` is the subtree wildcard of the scope query language and a trailing `/`
-/// is a typo; both mean the same subtree the anchored regex already covers, so they are
-/// trimmed rather than escaped into the pattern.
-fn paths(scope_q: &str) -> impl Iterator<Item = String> + '_ {
-    scope_q
-        .split(['(', ')', ';', '|', ','])
-        .map(str::trim)
-        .filter(|path| path.starts_with('/'))
-        .map(|path| path.trim_end_matches("/#").trim_end_matches('/').to_owned())
-        .filter(|path| !path.is_empty())
+/// One anchored regex term for one subtree pattern.
+fn term(pattern: &str) -> String {
+    if pattern == "/#" {
+        return "scope~=\"^/.*$\"".to_owned();
+    }
+    let node = pattern.strip_suffix("/#").unwrap_or(pattern);
+    // A level is a literal unless it is the one-level wildcard: a dot or a `+` inside a scope
+    // name is a character, and a scope somebody names `a.b` must not match `axb`.
+    let levels: Vec<String> = node
+        .split('/')
+        .map(|level| match level {
+            "+" => "[^/]+".to_owned(),
+            literal => regex::escape(literal),
+        })
+        .collect();
+    format!("scope~=\"^{}(/.*)?$\"", levels.join("/"))
 }

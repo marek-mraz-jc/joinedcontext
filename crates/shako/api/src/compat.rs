@@ -7,14 +7,13 @@
 use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, repo_to_gitea_json,
-    resolve_and_authorize_repo, stream_bytes_in_64k_chunks,
+    resolve_and_authorize_repo,
 };
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use jc_router::Mount;
 use jc_time::TimestampTz;
@@ -22,9 +21,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::ObjectTarget;
 use shako_core::{
-    ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
-    PullRequestRecord, RepoRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
-    WebhookId, validate_repo_or_owner_name, validate_tree_path,
+    Action, BranchProtectionRule, CommitStatusRecord, PullRequestRecord, RepoRecord, ReviewVerdict,
+    ShakoError, ShakoResult, WebhookFormat, WebhookId, validate_repo_or_owner_name,
+    validate_tree_path,
 };
 use shako_git::{
     ArchiveFormat, CommitAuthor, FileOpKind, MergeStyle, create_archive, create_single_ref_bundle,
@@ -48,7 +47,7 @@ async fn api_healthz() -> Response {
 }
 
 async fn api_version(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     (
@@ -67,7 +66,7 @@ async fn api_version(State(state): State<ShakoState>, headers: HeaderMap) -> Res
 
 async fn actions_not_served_yet(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
     // Deny by default: an unauthenticated caller learns nothing, not even that Actions are absent.
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     let err = ShakoError::NotFound("actions are not served by this forge yet".into());
@@ -100,7 +99,7 @@ async fn compat_get_repo(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -120,7 +119,7 @@ async fn compat_create_org_repo(
     Path(owner): Path<String>,
     Json(req): Json<CreateOrgRepoReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -185,7 +184,7 @@ async fn compat_migrate_repo(
     mount_ext: Option<Extension<Mount>>,
     Json(req): Json<MigrateRepoReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&req.repo_owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -288,7 +287,7 @@ async fn compat_patch_repo(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<PatchRepoReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -313,7 +312,7 @@ async fn compat_delete_repo(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -348,7 +347,7 @@ async fn compat_list_push_mirrors(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -379,7 +378,7 @@ async fn compat_add_push_mirror(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<AddPushMirrorReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -413,7 +412,7 @@ async fn compat_delete_push_mirror(
     headers: HeaderMap,
     Path((owner, repo_name, remote_name)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -428,7 +427,7 @@ async fn compat_sync_push_mirrors(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -443,7 +442,7 @@ async fn compat_sync_push_mirrors(
 // =========================================================================
 
 async fn compat_get_current_user(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -451,7 +450,7 @@ async fn compat_get_current_user(State(state): State<ShakoState>, headers: Heade
         StatusCode::OK,
         Json(json!({
             "id": 1,
-            "login": ctx.subject.username,
+            "login": ctx.subject.login(),
             "full_name": ctx.subject.full_name,
             "email": ctx.subject.email.unwrap_or_default(),
         })),
@@ -462,9 +461,9 @@ async fn compat_get_current_user(State(state): State<ShakoState>, headers: Heade
 async fn compat_get_user_org_permissions(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path((_login, org)): Path<(String, String)>,
+    _: Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&org), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -488,9 +487,9 @@ async fn compat_get_user_org_permissions(
 async fn compat_list_org_teams(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path(org): Path<String>,
+    _: Path<String>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     (StatusCode::OK, Json(json!([]))).into_response()
@@ -499,9 +498,9 @@ async fn compat_list_org_teams(
 async fn compat_create_org_team(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path(org): Path<String>,
+    _: Path<String>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     gitea_error_response(
@@ -518,7 +517,7 @@ async fn compat_delete_team(
     headers: HeaderMap,
     Path(_id): Path<u64>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     gitea_error_response(
@@ -535,7 +534,7 @@ async fn compat_list_team_repos(
     headers: HeaderMap,
     Path(_id): Path<u64>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     (StatusCode::OK, Json(json!([]))).into_response()
@@ -544,9 +543,9 @@ async fn compat_list_team_repos(
 async fn compat_put_or_delete_team_repo(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path((_id, org, _repo)): Path<(u64, String, String)>,
+    _: Path<(u64, String, String)>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     gitea_error_response(
@@ -561,9 +560,9 @@ async fn compat_put_or_delete_team_repo(
 async fn compat_put_collaborator(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path((owner, _repo, _reader)): Path<(String, String, String)>,
+    _: Path<(String, String, String)>,
 ) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, Some(&owner), "shako") {
+    if let Err(e) = authenticate_request(&state, &headers, "shako") {
         return gitea_error_response(&state, &e);
     }
     gitea_error_response(
@@ -584,7 +583,7 @@ async fn compat_list_branch_protections(
     headers: HeaderMap,
     Path((owner, repo_name)): Path<(String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -611,7 +610,7 @@ async fn compat_get_branch_protection(
     headers: HeaderMap,
     Path((owner, repo_name, rule_name)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -640,7 +639,7 @@ async fn compat_create_branch_protection(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(rule): Json<BranchProtectionRule>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -656,7 +655,7 @@ async fn compat_patch_branch_protection(
     Path((owner, repo_name, rule_name)): Path<(String, String, String)>,
     Json(patch): Json<serde_json::Map<String, Value>>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -673,7 +672,7 @@ async fn compat_delete_branch_protection(
     headers: HeaderMap,
     Path((owner, repo_name, rule_name)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -706,7 +705,7 @@ async fn compat_get_git_tree(
     Path((owner, repo_name, git_ref)): Path<(String, String, String)>,
     Query(q): Query<TreeQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -756,7 +755,7 @@ async fn compat_get_branch(
     headers: HeaderMap,
     Path((owner, repo_name, branch)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -792,7 +791,7 @@ async fn compat_create_branch(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<CreateBranchReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -816,7 +815,7 @@ async fn compat_delete_branch(
     headers: HeaderMap,
     Path((owner, repo_name, branch)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -831,7 +830,7 @@ async fn compat_get_commit_status(
     headers: HeaderMap,
     Path((owner, repo_name, sha)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -871,7 +870,7 @@ async fn compat_post_commit_status(
     Path((owner, repo_name, sha)): Path<(String, String, String)>,
     Json(req): Json<CreateCommitStatusReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -936,7 +935,7 @@ async fn compat_get_contents(
     Path((owner, repo_name, file_path)): Path<(String, String, String)>,
     Query(q): Query<ContentsQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -946,37 +945,51 @@ async fn compat_get_contents(
             Err(e) => return gitea_error_response(&state, &e),
         };
     let git_ref = q.git_ref.unwrap_or(repo.default_branch);
-    let fp = file_path.clone();
+    let fp = file_path;
 
-    let res = tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &fp))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res = state
+        .git_work
+        .produce(ctx.org_id, move |out, admit| {
+            let Some((sha, bytes)) = read_file_at_ref(&disk_path, &git_ref, &fp, admit)? else {
+                return Err(ShakoError::NotFound("file not found".into()));
+            };
+            let name = fp.rsplit('/').next().unwrap_or(&fp);
+            write_file_content(out, name, &fp, &sha, &bytes)
+                .map_err(|e| ShakoError::Storage(format!("contents spool: {e}")))
+        })
+        .await;
+    let sent = match res {
+        Ok((spool, ())) => spool.respond("application/json").await,
+        Err(e) => Err(e),
+    };
+    sent.unwrap_or_else(|e| gitea_error_response(&state, &e))
+}
 
-    match res {
-        Ok(Some((blob_sha, bytes))) => {
-            let name = file_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file_path)
-                .to_owned();
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "name": name,
-                    "path": file_path,
-                    "sha": blob_sha,
-                    "type": "file",
-                    "size": bytes.len(),
-                    "encoding": "base64",
-                    "content": STANDARD.encode(&bytes),
-                })),
-            )
-                .into_response()
-        }
-        Ok(None) => gitea_error_response(&state, &ShakoError::NotFound("file not found".into())),
-        Err(e) => gitea_error_response(&state, &e),
-    }
+/// The contents answer, its base64 written straight to `out` (T-7522).
+fn write_file_content(
+    out: &mut impl std::io::Write,
+    name: &str,
+    path: &str,
+    sha: &str,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let head = json!({
+        "name": name,
+        "path": path,
+        "sha": sha,
+        "type": "file",
+        "size": bytes.len(),
+        "encoding": "base64",
+    })
+    .to_string();
+    out.write_all(head.trim_end_matches('}').as_bytes())?;
+    out.write_all(br#","content":""#)?;
+    let mut encoded = base64::write::EncoderWriter::new(&mut *out, &STANDARD);
+    encoded.write_all(bytes)?;
+    encoded.finish()?;
+    drop(encoded);
+    out.write_all(br#""}"#)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1028,7 +1041,7 @@ async fn compat_put_contents(
     Path((owner, repo_name, file_path)): Path<(String, String, String)>,
     Json(req): Json<PutFileReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1106,7 +1119,7 @@ async fn compat_delete_contents(
     Path((owner, repo_name, file_path)): Path<(String, String, String)>,
     Json(req): Json<DeleteFileReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1172,7 +1185,7 @@ async fn compat_post_contents_multi(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<ChangeFilesReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1239,7 +1252,7 @@ async fn compat_list_commits(
     Path((owner, repo_name)): Path<(String, String)>,
     Query(q): Query<ListCommitsQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1315,7 +1328,7 @@ async fn compat_get_git_commit(
     headers: HeaderMap,
     Path((owner, repo_name, sha)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1371,7 +1384,7 @@ async fn compat_list_tags(
     Path((owner, repo_name)): Path<(String, String)>,
     Query(q): Query<PagingQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1420,7 +1433,7 @@ async fn compat_get_archive(
     headers: HeaderMap,
     Path((owner, repo_name, ref_and_ext)): Path<(String, String, String)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1429,35 +1442,21 @@ async fn compat_get_archive(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
-    let permit = match state
-        .memory_budget
-        .acquire(ARCHIVE_OPERATION_WEIGHT_BYTES)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
+    let org = ctx.org_id;
     let rname = repo.name.clone();
     if let Some(git_ref) = ref_and_ext.strip_suffix(".bundle") {
         let git_ref = git_ref.to_owned();
-        let res = tokio::task::spawn_blocking(move || {
-            let _hold = permit;
-            create_single_ref_bundle(&disk_path, &git_ref)
-        })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
-
-        return match res {
-            Ok(bytes) => (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/octet-stream")],
-                stream_bytes_in_64k_chunks(bytes),
-            )
-                .into_response(),
-            Err(e) => gitea_error_response(&state, &e),
+        let res = state
+            .git_work
+            .produce(org, move |out, admit| {
+                create_single_ref_bundle(&disk_path, &git_ref, out, admit)
+            })
+            .await;
+        let sent = match res {
+            Ok((spool, ())) => spool.respond("application/octet-stream").await,
+            Err(e) => Err(e),
         };
+        return sent.unwrap_or_else(|e| gitea_error_response(&state, &e));
     }
 
     let (git_ref, format, content_type) = if let Some(r) = ref_and_ext.strip_suffix(".tar.gz") {
@@ -1473,23 +1472,17 @@ async fn compat_get_archive(
         );
     };
 
-    let res = tokio::task::spawn_blocking(move || {
-        let _hold = permit;
-        create_archive(&disk_path, &rname, &git_ref, format)
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, content_type)],
-            stream_bytes_in_64k_chunks(bytes),
-        )
-            .into_response(),
-        Err(e) => gitea_error_response(&state, &e),
-    }
+    let res = state
+        .git_work
+        .produce(org, move |out, admit| {
+            create_archive(&disk_path, &rname, &git_ref, format, out, admit)
+        })
+        .await;
+    let sent = match res {
+        Ok((spool, ())) => spool.respond(content_type).await,
+        Err(e) => Err(e),
+    };
+    sent.unwrap_or_else(|e| gitea_error_response(&state, &e))
 }
 
 // =========================================================================
@@ -1552,7 +1545,7 @@ async fn compat_list_pulls(
     Path((owner, repo_name)): Path<(String, String)>,
     Query(q): Query<ListPullsQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1610,7 +1603,7 @@ async fn compat_create_pull(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<CreatePullReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1639,7 +1632,7 @@ async fn compat_get_pull(
     mount_ext: Option<Extension<Mount>>,
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1658,7 +1651,7 @@ async fn compat_get_pull_files(
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
     Query(q): Query<PagingQuery>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1695,7 +1688,7 @@ async fn compat_list_reviews(
     headers: HeaderMap,
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1727,7 +1720,7 @@ async fn compat_create_review(
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
     Json(req): Json<CreateReviewReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1779,7 +1772,7 @@ async fn compat_patch_pull(
     Path((owner, repo_name, number)): Path<(String, String, u64)>,
     Json(req): Json<PatchPullReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1823,7 +1816,7 @@ async fn compat_update_pull_branch(
             &ShakoError::Unprocessable(format!("update style '{st}' is not supported")),
         );
     }
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1858,7 +1851,7 @@ async fn compat_merge_pull(
         Ok(s) => s,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -1978,7 +1971,7 @@ async fn compat_create_webhook(
     Path((owner, repo_name)): Path<(String, String)>,
     Json(req): Json<CreateWebhookReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -2028,7 +2021,7 @@ async fn compat_redeliver_webhook(
     headers: HeaderMap,
     Path((owner, repo_name, hook_id)): Path<(String, String, WebhookId)>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };

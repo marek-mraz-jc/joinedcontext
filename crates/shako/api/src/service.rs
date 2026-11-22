@@ -12,19 +12,18 @@ use crate::outbox::{
     build_pr_webhook_payload, build_push_webhook_payload, deliver_webhook_with_retries,
     emit_and_dispatch_event,
 };
-use crate::smart_http::sync_repo_mirrors_on_commit;
 use crate::state::{ShakoState, resolve_and_authorize_repo};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use jc_time::TimestampTz;
 use shako_core::{
-    Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MERGE_OPERATION_WEIGHT_BYTES,
-    MergePolicyInput, ObjectTarget, PackageFileRecord, PackageId, PackageRecord,
-    PackageVersionRecord, ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy,
-    RefUpdate, RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError,
-    ShakoResult, WebhookFormat, WebhookId, WebhookRecord, check_repo_count_quota,
-    remaining_storage_allowance, sha256_hex, validate_branch_name, validate_package_segment,
-    validate_repo_or_owner_name, validate_tree_path,
+    Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MergePolicyInput,
+    ObjectTarget, PackageFileRecord, PackageId, PackageRecord, PackageVersionRecord,
+    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId,
+    RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
+    WebhookId, WebhookRecord, check_repo_count_quota, remaining_storage_allowance, sha256_hex,
+    validate_branch_name, validate_package_segment, validate_repo_or_owner_name,
+    validate_tree_path,
 };
 use shako_git::{
     CommitAuthor, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
@@ -33,6 +32,9 @@ use shako_git::{
     execute_pr_merge, init_bare_repo, open_isolated, set_ref_direct, update_pr_branch,
 };
 use std::path::PathBuf;
+
+/// What a merge of two refs holds at its largest.
+const MERGE_OPERATION_BYTES: u64 = 8 * 1024 * 1024;
 
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> ShakoResult<T> + Send + 'static,
@@ -51,7 +53,7 @@ pub fn caller_as_author(ctx: &RequestCtx) -> CommitAuthor {
             .subject
             .email
             .clone()
-            .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
+            .unwrap_or_else(|| format!("{}@local", ctx.subject.login())),
     }
 }
 
@@ -71,10 +73,6 @@ pub struct NewRepository {
 }
 
 fn check_org_write(state: &ShakoState, ctx: &RequestCtx, owner: &str) -> ShakoResult<()> {
-    // An owner name already bound to another Organization stays that Organization's.
-    if state.owner_org(owner).is_some_and(|org| org != ctx.org_id) {
-        return Err(ShakoError::NotFound("organization not found".into()));
-    }
     state
         .authorizer
         .check(
@@ -120,7 +118,6 @@ async fn record_new_repo(
             return Err(e);
         }
     };
-    state.register_owner_org(&created.owner, ctx.org_id);
     let _ = state
         .store()
         .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, size as i64, 0)
@@ -793,7 +790,7 @@ pub async fn commit_files(
         &format!("refs/heads/{branch}"),
         "",
         &commit_sha,
-        &ctx.subject.username,
+        ctx.subject.login(),
     );
     let _ = emit_and_dispatch_event(
         state,
@@ -804,7 +801,7 @@ pub async fn commit_files(
         payload,
     )
     .await;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
+    crate::mirror::follow_write(state, &repo).await;
     Ok(commit_sha)
 }
 
@@ -923,7 +920,7 @@ pub async fn open_pull_request(
             mergeable: Some(m.mergeable),
             merged: false,
             merge_commit_sha: String::new(),
-            author_login: ctx.subject.username.clone(),
+            author_login: ctx.subject.login().to_owned(),
             author_name: ctx.subject.full_name.clone(),
             author_email: ctx.subject.email.clone(),
             created_at: now,
@@ -931,7 +928,7 @@ pub async fn open_pull_request(
             closed_at: None,
         })
         .await?;
-    let payload = build_pr_webhook_payload(&repo, &saved, "opened", &ctx.subject.username);
+    let payload = build_pr_webhook_payload(&repo, &saved, "opened", ctx.subject.login());
     let _ = emit_and_dispatch_event(
         state,
         repo.org_id,
@@ -1039,7 +1036,7 @@ pub async fn create_review(
     };
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, needed).await?;
     let pr = load_pull(state, &repo, number).await?;
-    if verdict == ReviewVerdict::Approved && ctx.subject.username == pr.author_login {
+    if verdict == ReviewVerdict::Approved && ctx.subject.login() == pr.author_login {
         let policy = state
             .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
             .await?;
@@ -1062,7 +1059,7 @@ pub async fn create_review(
             pr_number: number,
             verdict,
             body,
-            author_login: ctx.subject.username.clone(),
+            author_login: ctx.subject.login().to_owned(),
             commit_id: commit_id
                 .filter(|c| !c.is_empty())
                 .unwrap_or_else(|| pr.head_sha.clone()),
@@ -1139,10 +1136,6 @@ pub async fn update_pull_branch(
             "only an open pull request can be updated".into(),
         ));
     }
-    let permit = state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let (b, h) = (pr.base_ref.clone(), pr.head_ref.clone());
     // Updating moves the head branch like a push does: its protection rules decide (S5), with the
@@ -1167,13 +1160,15 @@ pub async fn update_pull_branch(
         },
     )?;
     let author = caller_as_author(ctx);
-    let (new_head, m) = blocking(move || {
-        let _hold = permit;
-        let new_head = update_pr_branch(&disk_path, &b, &h, &author)?;
-        let m = check_mergeability(&disk_path, &b, &h)?;
-        Ok((new_head, m))
-    })
-    .await?;
+    let (new_head, m) = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            admit(MERGE_OPERATION_BYTES)?;
+            let new_head = update_pr_branch(&disk_path, &b, &h, &author)?;
+            let m = check_mergeability(&disk_path, &b, &h)?;
+            Ok((new_head, m))
+        })
+        .await?;
     pr.head_sha = new_head.clone();
     pr.base_sha = m.base_sha;
     pr.merge_base = m.merge_base;
@@ -1214,10 +1209,6 @@ pub async fn merge_pull_request(
             "pull request is already closed or merged".into(),
         ));
     }
-    let permit = state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let (d, b, h) = (disk_path.clone(), pr.base_ref.clone(), pr.head_ref.clone());
     let m = blocking(move || check_mergeability(&d, &b, &h)).await?;
@@ -1270,22 +1261,24 @@ pub async fn merge_pull_request(
         pr.head_ref.clone(),
         req.style,
     );
-    let merge_sha = blocking(move || {
-        let _hold = permit;
-        execute_pr_merge(
-            &d,
-            &b,
-            &h,
-            &MergeOptions {
-                expected_head_sha: expected.as_deref(),
-                style,
-                message: &message,
-                author: &author,
-                committer: &committer,
-            },
-        )
-    })
-    .await?;
+    let merge_sha = state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            admit(MERGE_OPERATION_BYTES)?;
+            execute_pr_merge(
+                &d,
+                &b,
+                &h,
+                &MergeOptions {
+                    expected_head_sha: expected.as_deref(),
+                    style,
+                    message: &message,
+                    author: &author,
+                    committer: &committer,
+                },
+            )
+        })
+        .await?;
     if req.delete_branch_after_merge {
         let (d, h) = (disk_path.clone(), pr.head_ref.clone());
         if let Err(e) = blocking(move || git_delete_branch(&d, &h)).await {
@@ -1302,7 +1295,7 @@ pub async fn merge_pull_request(
     pr.closed_at = Some(TimestampTz::now());
     let saved = state.store().update_pull_request(pr).await?;
     record_repo_size(state, &mut repo, &disk_path).await;
-    let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
+    let payload = build_pr_webhook_payload(&repo, &saved, "closed", ctx.subject.login());
     let _ = emit_and_dispatch_event(
         state,
         repo.org_id,
@@ -1312,7 +1305,7 @@ pub async fn merge_pull_request(
         payload,
     )
     .await;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
+    crate::mirror::follow_write(state, &repo).await;
     Ok(merge_sha)
 }
 
@@ -1453,10 +1446,8 @@ pub async fn sync_push_mirrors(
     owner: &str,
     name: &str,
 ) -> ShakoResult<()> {
-    let (repo, disk_path) =
-        resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
-    Ok(())
+    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    crate::mirror::sync_now(state, &repo).await
 }
 
 /// Where a webhook's signing secret comes from.
@@ -1559,19 +1550,16 @@ pub fn authorize_package(
 ) -> ShakoResult<()> {
     validate_repo_or_owner_name(owner, "owner")
         .map_err(|_| ShakoError::NotFound("package not found".into()))?;
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
-    let mut check_ctx = ctx.clone();
-    check_ctx.org_id = target_org;
     let target = ObjectTarget::Package {
         instance_id: ctx.instance_id,
-        org_id: target_org,
+        org_id: ctx.org_id,
         owner: owner.to_owned(),
         package_type: pkg_type.to_owned(),
         name: image_or_pkg.to_owned(),
     };
     state
         .authorizer
-        .check(&check_ctx, action, &target)
+        .check(ctx, action, &target)
         .into_result("package not found")
 }
 
@@ -1694,11 +1682,10 @@ pub async fn package_allowance(
     pkg: &str,
 ) -> ShakoResult<usize> {
     authorize_package(state, ctx, owner, "generic", pkg, Action::Publish)?;
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
-    let instance = state.instance_for(ctx.instance_id, target_org).await?;
+    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await?;
     let usage = state
         .store()
-        .get_quota_usage(ctx.instance_id, target_org)
+        .get_quota_usage(ctx.instance_id, ctx.org_id)
         .await?;
     Ok((remaining_storage_allowance(&instance, &usage)? as usize).min(MAX_PACKAGE_BLOB_BYTES))
 }
@@ -1722,10 +1709,9 @@ pub async fn publish_generic_file(
             limit: allowance as u64,
         });
     }
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
     if state
         .store()
-        .get_package_file(ctx.instance_id, target_org, owner, pkg, ver, file)
+        .get_package_file(ctx.instance_id, ctx.org_id, owner, pkg, ver, file)
         .await?
         .is_some()
     {
@@ -1741,7 +1727,7 @@ pub async fn publish_generic_file(
         .upsert_package(PackageRecord {
             id: PackageId::new(),
             instance_id: ctx.instance_id,
-            org_id: target_org,
+            org_id: ctx.org_id,
             owner: owner.to_owned(),
             package_type: "generic".into(),
             name: pkg.to_owned(),
@@ -1752,7 +1738,7 @@ pub async fn publish_generic_file(
     // files already stored keep a version id that exists.
     let existing = state
         .store()
-        .get_package_version(ctx.instance_id, target_org, owner, "generic", pkg, ver)
+        .get_package_version(ctx.instance_id, ctx.org_id, owner, "generic", pkg, ver)
         .await?;
     let ver_rec = match existing {
         Some(v) => v,
@@ -1762,7 +1748,7 @@ pub async fn publish_generic_file(
                 .upsert_package_version(PackageVersionRecord {
                     id: uuid::Uuid::now_v7(),
                     instance_id: ctx.instance_id,
-                    org_id: target_org,
+                    org_id: ctx.org_id,
                     package_id: pkg_rec.id,
                     owner: owner.to_owned(),
                     package_type: "generic".into(),
@@ -1784,7 +1770,7 @@ pub async fn publish_generic_file(
         .insert_package_file(PackageFileRecord {
             id: uuid::Uuid::now_v7(),
             instance_id: ctx.instance_id,
-            org_id: target_org,
+            org_id: ctx.org_id,
             version_id: ver_rec.id,
             owner: owner.to_owned(),
             package_name: pkg.to_owned(),
@@ -1797,7 +1783,7 @@ pub async fn publish_generic_file(
         .await?;
     let _ = state
         .store()
-        .adjust_quota_usage(ctx.instance_id, target_org, 0, 0, size_bytes as i64)
+        .adjust_quota_usage(ctx.instance_id, ctx.org_id, 0, 0, size_bytes as i64)
         .await;
     Ok(saved)
 }
@@ -1812,10 +1798,9 @@ pub async fn read_generic_file(
     file: &str,
 ) -> ShakoResult<tokio::fs::File> {
     authorize_package(state, ctx, owner, "generic", pkg, Action::Read)?;
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
     let rec = state
         .store()
-        .get_package_file(ctx.instance_id, target_org, owner, pkg, ver, file)
+        .get_package_file(ctx.instance_id, ctx.org_id, owner, pkg, ver, file)
         .await
         .ok()
         .flatten()
@@ -1846,7 +1831,7 @@ pub async fn redeliver_webhook(
         &format!("refs/heads/{}", repo.default_branch),
         "",
         "",
-        &ctx.subject.username,
+        ctx.subject.login(),
     );
     deliver_webhook_with_retries(state, &hook, "push", &payload).await
 }

@@ -4,6 +4,7 @@
 use crate::app::{Gateway, MAX_BODY, WRITE_RETRY_SECONDS};
 use crate::auth::subject::Subject;
 use crate::pdp::evaluator::{self, Constraints, Verdict};
+use crate::pdp::grants::Part;
 use crate::pdp::{conditional, write_guard};
 use crate::proxy::Broker;
 use crate::resolver::Endpoint;
@@ -660,7 +661,8 @@ impl HeldDelete<'_> {
                                 at.slot,
                                 &id,
                                 &pointing,
-                            )?;
+                            )
+                            .await?;
                             going.insert(other.to_owned());
                             queue.push_back(other.to_owned());
                             deleted.push(Unlinking::Delete(other.to_owned()));
@@ -673,7 +675,8 @@ impl HeldDelete<'_> {
                                 at.slot,
                                 &id,
                                 &pointing,
-                            )?;
+                            )
+                            .await?;
                             edits.push(Unlinking::DeleteAttribute {
                                 id: other.to_owned(),
                                 slot: at.slot.to_owned(),
@@ -688,7 +691,8 @@ impl HeldDelete<'_> {
                                     at.slot,
                                     &id,
                                     &pointing,
-                                )?;
+                                )
+                                .await?;
                             }
                             if !rewritten.is_empty() {
                                 self.may(
@@ -698,7 +702,8 @@ impl HeldDelete<'_> {
                                     at.slot,
                                     &id,
                                     &pointing,
-                                )?;
+                                )
+                                .await?;
                             }
                             edits.extend(removed.into_iter().map(|dataset| {
                                 Unlinking::DeleteInstance {
@@ -750,6 +755,7 @@ impl HeldDelete<'_> {
                 !granted.empty
                     && !conditional::state_dependent(&granted)
                     && write_guard::check_granted_id(root, &granted).is_ok()
+                    && self.one_gives(Operation::DeleteEntity, root, Part::Root)
             }
             _ => false,
         };
@@ -794,7 +800,7 @@ impl HeldDelete<'_> {
     /// Refuses the change unless the caller's own grants allow `operation` on `other`: a rule
     /// never reaches an entity its caller could not have changed by hand. A grant that decides
     /// from the stored entity is not evaluated here and is held as a refusal.
-    pub(crate) fn may(
+    pub(crate) async fn may(
         &self,
         operation: Operation,
         class: &str,
@@ -807,6 +813,7 @@ impl HeldDelete<'_> {
             types: BTreeSet::from([class.to_owned()]),
             ..Default::default()
         };
+        let whole = operation == Operation::DeleteEntity;
         let allowed =
             match self
                 .gateway
@@ -814,10 +821,20 @@ impl HeldDelete<'_> {
                 .decide(self.subject, operation, &requested, self.endpoint)
             {
                 Verdict::Rewrite(granted) => {
-                    !granted.empty
-                        && !granted.hidden.contains(slot)
+                    let selected = !granted.empty
+                        && !hides(&granted.hidden, slot)
+                        // what the Endpoint's projection left of the grants' lists
+                        && (whole || granted.attrs.is_empty() || granted.attrs.contains(slot))
                         && !conditional::state_dependent(&granted)
-                        && write_guard::check_granted_id(other, &granted).is_ok()
+                        && write_guard::check_granted_id(other, &granted).is_ok();
+                    if !selected {
+                        false
+                    } else if !whole {
+                        self.one_gives(operation, other, Part::Attribute(slot))
+                    } else {
+                        self.one_gives(operation, other, Part::Whole)
+                            || self.gives_all_it_holds(operation, other).await?
+                    }
                 }
                 _ => false,
             };
@@ -852,7 +869,7 @@ impl HeldDelete<'_> {
             )
         };
         let ids: Vec<Value> = if by_rule {
-            self.readable_ids(class, pointing)
+            self.readable_ids(class, slot, pointing)
         } else {
             Vec::new()
         };
@@ -866,8 +883,43 @@ impl HeldDelete<'_> {
         )
     }
 
-    /// The ids of `pointing` the caller's read grants on this endpoint select.
-    fn readable_ids(&self, class: &str, pointing: &[Value]) -> Vec<Value> {
+    /// Whether one grant alone gives `operation` on every attribute `id` stores, read only
+    /// when no grant gives the whole entity: a list of all it holds deletes it, as the broker
+    /// judges a delete by hand.
+    async fn gives_all_it_holds(
+        &self,
+        operation: Operation,
+        id: &str,
+    ) -> Result<bool, Box<ProblemDetails>> {
+        let target = format!("/ngsi-ld/v1/entities/{}", crate::query::encode(id));
+        let read = conditional::retrieve(&self.gateway.broker, &target, self.headers).await?;
+        let (200, Some(stored)) = (read.status, read.body.as_object()) else {
+            return Ok(false);
+        };
+        let held: Vec<&str> = stored
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !jc_core::system_members::is_entity_system_member(name))
+            .filter(|name| *name != "@context")
+            .collect();
+        Ok(self.one_gives(operation, id, Part::Holding(&held)))
+    }
+
+    /// Whether one grant of the caller's alone gives `operation` on `part` of `id`.
+    fn one_gives(&self, operation: Operation, id: &str, part: Part<'_>) -> bool {
+        crate::pdp::grants::one_grant_gives(
+            self.subject,
+            &self.endpoint.policies,
+            operation,
+            id,
+            part,
+            crate::pdp::now(),
+        )
+    }
+
+    /// The ids of `pointing` one read grant of the caller's on this endpoint selects and shows
+    /// `slot` of: that they point at the target is that attribute's value.
+    fn readable_ids(&self, class: &str, slot: &str, pointing: &[Value]) -> Vec<Value> {
         let requested = evaluator::Request {
             types: BTreeSet::from([class.to_owned()]),
             ..Default::default()
@@ -875,16 +927,31 @@ impl HeldDelete<'_> {
         let Some(read) = read_grant(self.gateway, self.subject, self.endpoint, &requested) else {
             return Vec::new();
         };
-        if conditional::state_dependent(&read) {
+        if conditional::state_dependent(&read)
+            || hides(&read.hidden, slot)
+            || !(read.attrs.is_empty() || read.attrs.contains(slot))
+        {
             return Vec::new();
         }
         pointing
             .iter()
             .filter_map(|entity| entity.get("id").and_then(Value::as_str))
-            .filter(|id| write_guard::check_granted_id(id, &read).is_ok())
+            .filter(|id| {
+                write_guard::check_granted_id(id, &read).is_ok()
+                    && [Operation::QueryEntity, Operation::QueryBatch]
+                        .into_iter()
+                        .any(|operation| self.one_gives(operation, id, Part::Attribute(slot)))
+            })
             .map(|id| Value::String(id.to_owned()))
             .collect()
     }
+}
+
+/// Whether `slot` is withheld, whichever of term and IRI names it.
+fn hides(hidden: &BTreeSet<String>, slot: &str) -> bool {
+    hidden
+        .iter()
+        .any(|name| crate::pdp::grants::same_attribute(name, slot))
 }
 
 /// The planned changes without the ids whose rules change nothing.

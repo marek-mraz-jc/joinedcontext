@@ -64,6 +64,7 @@ The Postgres tests ran against a throwaway PostGIS 17 server through `DAIYA_TEST
   - Tested against the in-process sample: the WIT file, the host adapter, the §3.3 limits (health and resource calls now take concurrency slots, import is size-capped) and digest pinning.
 - **R6 / R6b Query editor API, `panel_view`, HTML table**: done (`api/tests/state_and_render.rs`, `api/tests/odata_routes.rs`). Both run on drivers built from stored records.
 - **R7 Public dashboards**: done, on memory and on Postgres.
+  - A public dashboard reads only the host's gateway Endpoints, by their public Policy (review S9-18, `api/tests/anonymous_doors.rs`).
   - Public queries now run as `Subject::public_dashboard(org, uid)` under `PublicDashboardAuthorizer`. That authorizer allows only Read of its own dashboard and of the datasources its saved panels name. They no longer run as an internal "admin" subject (`api/tests/public_subject.rs`).
   - The `public_token_lookup` RLS policy is verified on Postgres: it shows exactly one row and allows no writes (`store-pg/tests/store_contract.rs`).
   - `PATCH` checks the uid in its path.
@@ -81,8 +82,9 @@ The Postgres tests ran against a throwaway PostGIS 17 server through `DAIYA_TEST
   - The OData DashboardVersions, Folders, LibraryPanels and PublicDashboards sets filter per object.
   - A `$batch` GET with an unparsable query answers 400 instead of the unfiltered set.
   - The API can no longer set `readOnly`.
-- **R10a / R10 OData, MCP, CLI parity**: done (`model/tests/migration_registry.rs`, `api/tests/odata_routes.rs`, `mcp/tests/tools.rs`, `server/tests/router.rs`).
-  - MCP tools refuse a missing uid, path, accessToken or operation, and an out-of-range panelId, with 400. Before, these became an empty string, "read" or panel 1.
+- **R10a / R10 OData and CLI parity**: done (`model/tests/migration_registry.rs`, `api/tests/odata_routes.rs`, `server/tests/operations.rs`, `server/tests/router.rs`).
+  - CLI operations refuse a missing uid, path, accessToken or operation, and an out-of-range panelId, with 400. Before, these became an empty string, "read" or panel 1.
+  - daiya serves no MCP of its own (review S9-29, `DECISIONS.md`).
   - Gap: `Dashboards('k')/$count` ignores the key.
 - **R11 One binary**: partial.
   - The standalone `daiya` binary is done. It covers configuration, stored tokens (SHA-256 digests), provisioning, a Postgres store, graceful SIGINT shutdown that exits 0, and serve flags that override the mount.

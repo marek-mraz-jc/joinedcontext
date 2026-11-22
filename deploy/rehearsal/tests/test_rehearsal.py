@@ -1209,7 +1209,7 @@ def test_each_project_dashboard_goes_into_its_own_organization(tmp_path):
     assert put and put[0][1] == "/dashboards/api/datasources/uid/air"
     assert put[0][3]["url"] == f"{base}/api/endpoint/abc"
     model = [s for s in seen if (s[3] or {}).get("dashboard", {}).get("uid") == "portal"]
-    assert model and model[0][2] is None
+    assert model and model[0][2] == "1"
 
 
 def test_only_the_guard_refusing_the_own_listener_counts_as_expected():

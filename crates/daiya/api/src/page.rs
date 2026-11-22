@@ -4,7 +4,7 @@
 //! ([`panel_view`]), read with the caller's own rights; no script and no outside origin.
 
 use crate::render::{PanelTimeRange, panel_view};
-use crate::state::{DaiyaState, resolve_request_ctx};
+use crate::state::{DaiyaState, caller};
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -170,20 +170,25 @@ async fn dashboard_page(
     uid: String,
     params: PageParams,
 ) -> Response {
-    let mut ctx = resolve_request_ctx(&state, &headers).await;
-    let named = match params.org_id {
-        Some(num) => match state.organization(OrgKey::Number(num)).await {
-            Ok(Some(org)) => Some(org),
+    let (subject, own_org) = match caller(&state, &headers).await {
+        Ok(found) => found,
+        Err(e) => return refused(&e),
+    };
+    // The link names the Organization, else it is the caller's; none is never the main one.
+    let (org_id, named) = match (params.org_id, own_org) {
+        (Some(num), _) => match state.organization(OrgKey::Number(num)).await {
+            Ok(Some(org)) => (org.org_id, Some(org)),
             Ok(None) => return refused(&CrError::NotFound("organization".into())),
             Err(e) => return refused(&e),
         },
-        None => match state.organization(OrgKey::Id(ctx.org_id)).await {
-            Ok(org) => org,
+        (None, Some(id)) => match state.organization(OrgKey::Id(id)).await {
+            Ok(org) => (id, org),
             Err(e) => return refused(&e),
         },
+        (None, None) => return refused(&CrError::NotFound("organization".into())),
     };
+    let mut ctx = state.ctx_in(subject, org_id);
     if let Some(org) = &named {
-        ctx.org_id = org.org_id;
         // The server administrator is a member of the live organization the link names.
         if ctx.subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR)
             && !ctx.subject.is_member_of(org.org_id)

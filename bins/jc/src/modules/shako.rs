@@ -13,8 +13,8 @@ use axum::Router;
 use jc_router::Mount;
 use kaisatsu_crypto::Kek;
 use shako_core::{
-    Action, LocalAuthorizer, MemorySecretStore, OrgId, RoleBinding, SecretStore, ShakoSigningKey,
-    StaticTokenBinding, Subject, TokenVerifier,
+    Action, LocalAuthorizer, MemorySecretStore, OrgId, Principal, RoleBinding, SecretStore,
+    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{PortalBase, ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
@@ -125,7 +125,7 @@ pub async fn build_state(
     let (store, secrets) = open_store(cfg, org_id, &root, setup).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
-        principal: "admin".into(),
+        principal: Principal::User("admin".into()),
         actions: vec![
             Action::Admin,
             Action::Write,
@@ -142,14 +142,13 @@ pub async fn build_state(
     if let Some(token) = setup.value(crate::setup::Secret::ShakoToken) {
         static_tokens.push(StaticTokenBinding::new(
             token,
-            Subject::authenticated("admin", "admin", vec![org_id], vec![]),
+            Subject::authenticated("admin", "admin", vec![org_id]),
         ));
     }
 
     let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
     let mut state = ShakoState::new(
         INSTANCE,
-        org_id,
         root,
         store,
         authz,
@@ -164,7 +163,7 @@ pub async fn build_state(
 const OUTBOX_POLL: Duration = Duration::from_secs(30);
 
 /// Sends what the outbox still holds: the events of a process that died before it sent them,
-/// which wait for no next write (T-7508).
+/// which wait for no next write (T-7508), and the push mirrors still due (T-7522).
 pub fn spawn_outbox(state: ShakoState, shutdown: CancellationToken, tasks: &TaskTracker) {
     poll_outbox(state, OUTBOX_POLL, shutdown, tasks);
 }
@@ -183,6 +182,7 @@ fn poll_outbox(
                     if let Err(e) = shako_server::dispatch_pending_outbox(&state, ORG).await {
                         tracing::warn!(error = %e, "shako: the outbox was not sent, trying again");
                     }
+                    shako_server::drain_mirrors(&state, INSTANCE, ORG);
                 }
             }
         }
@@ -208,7 +208,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = ShakoState::new(
             INSTANCE,
-            ORG,
             dir.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             Arc::new(LocalAuthorizer::new(Vec::new())),

@@ -43,9 +43,10 @@ macro_rules! define_uuid_id {
         pub struct $name(pub Uuid);
 
         impl $name {
-            /// Generates a new time-ordered UUIDv7 identifier.
+            /// Generates a new time-ordered UUIDv7 identifier. No `Default` and no `new`: an id
+            /// nobody named is never made up in passing.
             #[must_use]
-            pub fn new() -> Self {
+            pub fn generate() -> Self {
                 Self(Uuid::now_v7())
             }
 
@@ -59,12 +60,6 @@ macro_rules! define_uuid_id {
             #[must_use]
             pub const fn as_uuid(self) -> Uuid {
                 self.0
-            }
-        }
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self::new()
             }
         }
 
@@ -94,6 +89,12 @@ define_uuid_id!(
     InstallationId,
     "Installation identifier present on every row (§5.3)."
 );
+
+impl InstallationId {
+    /// The installation of a deployment: one deployment is one installation, whose Organizations
+    /// are the tenants. Stored rows are keyed by this id, so it never changes.
+    pub const SINGLE: Self = Self::from_u128(1);
+}
 define_uuid_id!(
     OrgId,
     "Organization identifier (UUIDv7) enforced by Postgres forced RLS (§5.3)."
@@ -123,7 +124,7 @@ mod tests {
 
     #[test]
     fn uuid_ids_round_trip() {
-        let org = OrgId::new();
+        let org = OrgId::generate();
         let parsed: OrgId = org.to_string().parse().expect("valid uuid");
         assert_eq!(org, parsed);
     }
