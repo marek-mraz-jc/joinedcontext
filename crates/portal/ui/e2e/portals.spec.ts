@@ -132,7 +132,7 @@ for (const width of [1440, 400]) {
       await shoot(page, "empty", width, info.outputPath(`portals-list-empty-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: FILLED });
       await page.reload();
       await expect(page.getByRole("link", { name: "Mobility" })).toBeVisible();
@@ -142,7 +142,7 @@ for (const width of [1440, 400]) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: [], hosts: 403 });
       await page.reload();
       await expect(page.getByText(/made by an Organization's administrators/)).toBeVisible();
@@ -159,7 +159,7 @@ for (const width of [1440, 400]) {
       await shoot(page, "hosts-empty", width, info.outputPath(`portal-hosts-empty-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       const sent = await stub(page, {
         portals: FILLED,
         hostsBody: OWN_HOSTS,
@@ -195,7 +195,7 @@ for (const width of [1440, 400]) {
       await dialog.getByRole("button", { name: "Remove host" }).click();
       await expect.poll(() => sent).toContain("DELETE /api/v1/organization/portal-hosts/data.bbsk.sk");
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: FILLED });
       await page.reload();
       await expect(page.getByText(/verified no domain yet/)).toBeVisible();
@@ -336,7 +336,7 @@ for (const width of [1440, 400]) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       const field = page.getByRole("group", { name: "Catalogue profiles" });
       const open = async (options: Partial<Stub>) => {
-        await page.unrouteAll();
+        await page.unrouteAll({ behavior: "ignoreErrors" });
         const sent = await stub(page, { portals: [HELSINKI], hostsBody: profileHosts(PROFILES), ...options });
         await page.goto("/portals/bbsk-helsinki?lang=en");
         await expect(field).toBeVisible();
