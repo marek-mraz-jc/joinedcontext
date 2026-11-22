@@ -7,8 +7,8 @@ use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::files::{FileEntry, FileStore, FileUsage};
 use dataroom_core::{
-    ActivityRow, Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer,
-    OrgId, Publisher, RecordState, RequestCtx, Result, Subject,
+    ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, DataroomError, Dataset,
+    HarvestSource, LiveAuthorizer, OrgId, Publisher, RecordState, RequestCtx, Result, Subject,
 };
 use dataroom_harvest::harvest_principal;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -199,6 +199,26 @@ impl CatalogueWriter {
             harvested.push((org, id));
         }
         Ok(cat)
+    }
+
+    /// Writes what the Organization's manifest declares of the catalogue, only on a difference;
+    /// whether it wrote.
+    pub async fn declare(
+        &self,
+        org: OrgId,
+        id: CatalogueId,
+        declared: &CatalogueDeclaration,
+    ) -> Result<bool> {
+        let _serial = self.serial.lock().await;
+        let store = self.state.store.as_ref();
+        let Some(mut held) = store.get_catalogue(org, id).await? else {
+            return Ok(false);
+        };
+        if held.deleted.is_some() || !declared.apply(&mut held) {
+            return Ok(false);
+        }
+        store.declare_catalogue(org, id, declared).await?;
+        Ok(true)
     }
 
     /// Deletes the catalogue's datasets, publishers and sources (its addresses answer 410
@@ -556,6 +576,37 @@ mod tests {
                 redirect: false,
             }),
         }
+    }
+
+    /// T-7520: a catalogue stored before its Organization declared a publisher gets it.
+    #[tokio::test]
+    async fn a_declaration_is_written_once_and_clears_nothing() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let held = writer.upsert(spec.clone()).await.expect("served");
+        assert_eq!(held.publisher_uri, None);
+        let declared = CatalogueDeclaration {
+            publisher_uri: Some("https://data.gov.sk/id/legal-subject/00691135".into()),
+            ..CatalogueDeclaration::default()
+        };
+        assert!(writer
+            .declare(spec.org_id, spec.id, &declared)
+            .await
+            .unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared)
+            .await
+            .unwrap());
+        let empty = CatalogueDeclaration::default();
+        assert!(!writer.declare(spec.org_id, spec.id, &empty).await.unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.publisher_uri, declared.publisher_uri);
+        assert_eq!(got.hidden_datasets, held.hidden_datasets);
     }
 
     #[tokio::test]

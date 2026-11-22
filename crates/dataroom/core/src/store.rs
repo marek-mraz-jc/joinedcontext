@@ -4,9 +4,9 @@
 use crate::auth::RequestCtx;
 use crate::error::Result;
 use crate::model::{
-    ActivityRow, Catalogue, CatalogueId, CataloguePlugin, Dataset, Distribution, HarvestRun,
-    HarvestSource, OrgId, ProfileRecord, Publisher, ResourceView, ShaclValidationReport,
-    StaticPage, Visibility,
+    ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin, Dataset,
+    Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, ResourceView,
+    ShaclValidationReport, StaticPage, Visibility,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -64,6 +64,26 @@ pub trait Store: Send + Sync {
 
     /// Creates or updates a catalogue.
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>>;
+
+    /// Writes only the declared members of a catalogue, so a concurrent edit of another one
+    /// (hidden datasets, branding) is never lost; `None` when there is no such catalogue.
+    fn declare_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        id: CatalogueId,
+        declared: &'a CatalogueDeclaration,
+    ) -> BoxFuture<'a, Result<Option<Catalogue>>> {
+        Box::pin(async move {
+            let Some(mut held) = self.get_catalogue(org_id, id).await? else {
+                return Ok(None);
+            };
+            if !declared.apply(&mut held) {
+                return Ok(Some(held));
+            }
+            held.modified = jc_time::TimestampTz::now();
+            self.upsert_catalogue(held).await.map(Some)
+        })
+    }
 
     /// Deletes every row of the catalogue (datasets, publishers, sources, runs, pages, ...)
     /// and keeps the catalogue row as a tombstone with [`Catalogue::deleted`] set (ODP-09).

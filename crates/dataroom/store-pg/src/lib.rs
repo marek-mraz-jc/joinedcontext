@@ -8,9 +8,10 @@ use dataroom_core::odata_defs::{
 };
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    text_in_lang, ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset,
-    Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
-    RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
+    text_in_lang, ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin,
+    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord,
+    Publisher, RecordState, RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage,
+    Store,
 };
 use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
@@ -652,6 +653,36 @@ impl Store for PgStore {
             .map_err(db_err)?;
             tx.commit().await.map_err(db_err)?;
             Ok(catalogue)
+        })
+    }
+
+    fn declare_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        id: CatalogueId,
+        declared: &'a CatalogueDeclaration,
+    ) -> BoxFuture<'a, Result<Option<Catalogue>>> {
+        Box::pin(async move {
+            // The members alone are merged into the row as it is when the write lands: another
+            // replica's or an admin's write of the other members survives it (T-7520 C12). Not
+            // `@>`: a name in two languages contains the one that dropped a language.
+            let modified = TimestampTz::now();
+            let mut tx = self.begin_tenant(org_id, Some(id)).await?;
+            sqlx::query(
+                "UPDATE dataroom.cat_catalogue
+                 SET doc = doc || $3 || jsonb_build_object('modified', $5::jsonb), modified = $4
+                 WHERE org_id = $1 AND id = $2 AND (doc || $3) <> doc",
+            )
+            .bind(org_id.as_uuid())
+            .bind(id.as_uuid())
+            .bind(Json(declared))
+            .bind(modified)
+            .bind(Json(modified))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            self.get_catalogue(org_id, id).await
         })
     }
 

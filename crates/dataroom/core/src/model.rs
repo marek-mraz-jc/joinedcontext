@@ -330,6 +330,36 @@ impl Publisher {
     }
 }
 
+/// The members of a catalogue the Organization's manifest declares (T-7520). A member left
+/// `None` is not declared there and stays as stored.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogueDeclaration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_name: Option<Texts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_point: Option<ContactPoint>,
+}
+
+impl CatalogueDeclaration {
+    /// Writes the declared members into `catalogue`; whether one of them changed.
+    pub fn apply(&self, catalogue: &mut Catalogue) -> bool {
+        fn set<T: Clone + PartialEq>(held: &mut Option<T>, declared: &Option<T>) -> bool {
+            let changed = declared.is_some() && held != declared;
+            if changed {
+                held.clone_from(declared);
+            }
+            changed
+        }
+        let uri = set(&mut catalogue.publisher_uri, &self.publisher_uri);
+        let name = set(&mut catalogue.publisher_name, &self.publisher_name);
+        let contact = set(&mut catalogue.contact_point, &self.contact_point);
+        uri || name || contact
+    }
+}
+
 impl Catalogue {
     /// The publisher's IRI when one is declared; a registry placeholder is none.
     pub fn declared_publisher_uri(&self) -> Option<&str> {

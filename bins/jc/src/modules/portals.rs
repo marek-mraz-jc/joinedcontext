@@ -10,15 +10,19 @@
 //! ([`CatalogueId::of_portal`]) and answer at `{opendata}/-/{path}/` or on a host the operator
 //! listed in `hosts.portals`.
 //!
+//! Each catalogue's publisher and contact are the ones the Organization's manifest declares
+//! (`spec.catalog`, T-7520), written every round and only on a difference.
+//!
 //! ponytail: polled every [`super::appearance::FOLLOW_EVERY`] from the one Portal of this
 //! process, as the appearance is; upgrade path: the Portal's reconciler calls the writer.
 
 use dataroom_core::files::FileEntry;
 use dataroom_core::{
-    CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher, RecordState,
+    CatalogueDeclaration, CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher,
+    RecordState,
 };
 use dataroom_server::{CatalogueSpec, CatalogueWriter, FileWrite, PortalRoute};
-use jc_core::kinds::{PortalSource, PortalSourceType, PortalSpec, http_url_host};
+use jc_core::kinds::{OrganizationSpec, PortalSource, PortalSourceType, PortalSpec, http_url_host};
 use joinedcontext_portal::api::portal_files::{
     FileDesk, FileFuture, FileLimits, FileRefusal, PortalFile,
 };
@@ -122,6 +126,93 @@ pub(crate) fn in_mirror(mirror: &Mirror) -> BTreeMap<String, PortalSpec> {
         }
     }
     out
+}
+
+/// What each Organization's manifest declares of its catalogues. An Organization the mirror
+/// does not hold (nothing is synced yet) or whose manifest does not parse is left out, so its
+/// stored values stay: unknown is never read as "declared empty".
+pub(crate) fn declarations_in(
+    mirror: &Mirror,
+    orgs: &[OrganizationPortals],
+) -> BTreeMap<String, CatalogueDeclaration> {
+    let mut out = BTreeMap::new();
+    for org in orgs {
+        let Some(held) = mirror.get(
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            "Organization",
+            &org.name,
+        ) else {
+            continue;
+        };
+        let title = serde_json::to_value(&held.metadata.title).unwrap_or_default();
+        match serde_json::from_value::<OrganizationSpec>(held.spec) {
+            Ok(spec) => {
+                out.insert(org.name.clone(), declaration_of(&spec, title));
+            }
+            Err(e) => {
+                tracing::warn!(organization = %org.name, error = %e, "Organization not read; its catalogues keep their publisher");
+            }
+        }
+    }
+    out
+}
+
+/// The publisher is `spec.catalog.publisher`, named by the Organization's own title where none
+/// is declared; the IRI only when one is declared.
+fn declaration_of(spec: &OrganizationSpec, title: serde_json::Value) -> CatalogueDeclaration {
+    let lang = spec.default_locale.to_string();
+    let titled = || match title {
+        serde_json::Value::String(text) => BTreeMap::from([(lang.clone(), text)]),
+        other => serde_json::from_value(other).unwrap_or_default(),
+    };
+    let catalog = spec.catalog.as_ref();
+    let names: dataroom_core::Texts = catalog
+        .map(|c| c.publisher.name.clone())
+        .filter(|names| !names.is_empty())
+        .unwrap_or_else(titled);
+    CatalogueDeclaration {
+        publisher_uri: catalog
+            .and_then(|c| c.publisher.uri.clone())
+            .filter(|uri| dataroom_core::is_declared_iri(uri)),
+        publisher_name: (!names.is_empty()).then_some(names),
+        contact_point: catalog.and_then(|c| c.contact_point.as_ref()).map(|desk| {
+            dataroom_core::ContactPoint {
+                uri: None,
+                kind: dataroom_core::ContactKind::Organization,
+                name: BTreeMap::from([(lang.clone(), desk.name.clone())]),
+                email: desk.email.clone(),
+                url: None,
+                identifier: None,
+            }
+        }),
+    }
+}
+
+/// Writes `declared` into each served catalogue of its Organization, `default` included.
+pub(crate) async fn declare(
+    writer: &CatalogueWriter,
+    orgs: &[OrganizationPortals],
+    served: &BTreeMap<String, PortalSpec>,
+    declared: &BTreeMap<String, CatalogueDeclaration>,
+) {
+    for org in orgs {
+        let Some(declaration) = declared.get(&org.name) else {
+            continue;
+        };
+        let further = served
+            .values()
+            .filter(|portal| portal.organization_ref == org.name)
+            .filter_map(|portal| further_catalogue(portal, orgs));
+        for (org_id, id) in std::iter::once((org.org_id, org.catalogue_id)).chain(further) {
+            match writer.declare(org_id, id, declaration).await {
+                Ok(true) => tracing::info!(catalogue = %id, "catalogue publisher declared"),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(catalogue = %id, error = %e, "publisher not written; next round");
+                }
+            }
+        }
+    }
 }
 
 /// The catalogue `portal` asks for, or why it is not served: an Organization this jc does not
@@ -446,6 +537,8 @@ pub(crate) fn follow(
                     handed = Some(names);
                 }
                 apply(&writer, &orgs, &mut served, in_mirror(&state.mirror)).await;
+                let declared = declarations_in(&state.mirror, &orgs);
+                declare(&writer, &orgs, &served, &declared).await;
                 let endpoints = endpoints_in(&state.mirror);
                 list_endpoints(&writer, &orgs, &served, &endpoints, &mut listing).await;
             }
@@ -973,6 +1066,63 @@ mod tests {
             "organizationRef": "city", "path": path, "host": host,
         }))
         .unwrap()
+    }
+
+    /// T-7520 C2: only an Organization the mirror holds and can read declares anything.
+    #[test]
+    fn a_catalogue_takes_the_publisher_its_organization_declares() {
+        let orgs = city();
+        let mirror = Mirror::new();
+        assert!(declarations_in(&mirror, &orgs).is_empty(), "nothing synced");
+        let put = |spec: serde_json::Value| {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": "joinedcontext.com/v1alpha1",
+                    "kind": "Organization",
+                    "metadata": {
+                        "name": "city",
+                        "namespace": joinedcontext_portal::permissions::ORG_NAMESPACE,
+                        "title": {"sk": "Mesto", "en": "City"},
+                    },
+                    "spec": spec,
+                }))
+                .unwrap(),
+            );
+        };
+        put(serde_json::json!({"locales": "not a list"}));
+        assert!(declarations_in(&mirror, &orgs).is_empty(), "not parsed");
+
+        let base = serde_json::json!({
+            "domain": "city.test", "locales": ["sk", "en"], "defaultLocale": "sk",
+        });
+        put(base.clone());
+        let bare = &declarations_in(&mirror, &orgs)["city"];
+        assert_eq!(bare.publisher_uri, None, "no IRI is made up");
+        assert_eq!(bare.publisher_name.as_ref().unwrap()["en"], "City");
+        assert_eq!(bare.contact_point, None);
+
+        let with = |uri: &str| {
+            let mut spec = base.clone();
+            spec["catalog"] = serde_json::json!({
+                "publisher": {"name": {"sk": "Mesto Košice"}, "uri": uri},
+                "contactPoint": {"name": "Dátová kancelária", "email": "data@city.test"},
+            });
+            put(spec);
+            declarations_in(&mirror, &orgs)["city"].clone()
+        };
+        let uri = "https://data.gov.sk/id/legal-subject/00691135";
+        let declared = with(uri);
+        assert_eq!(declared.publisher_uri.as_deref(), Some(uri));
+        assert_eq!(declared.publisher_name.unwrap()["sk"], "Mesto Košice");
+        assert_eq!(
+            declared.contact_point.unwrap().name["sk"],
+            "Dátová kancelária"
+        );
+        let placeholder = with("https://data.gov.sk/id/legal-subject/00000000");
+        assert_eq!(
+            placeholder.publisher_uri, None,
+            "a placeholder is no publisher"
+        );
     }
 
     #[test]

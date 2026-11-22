@@ -46,6 +46,44 @@ pub async fn catalogues(store: &dyn Store) {
     let got = store.get_catalogue(org, cat).await.unwrap().unwrap();
     assert_eq!(got.title["en"], "Renamed");
 
+    // A declaration writes its own members and no other (T-7520).
+    let names_in = |langs: &[&str]| {
+        langs
+            .iter()
+            .map(|lang| ((*lang).to_owned(), "Kraj".to_owned()))
+            .collect::<dataroom_core::Texts>()
+    };
+    let declared = |langs: &[&str]| dataroom_core::CatalogueDeclaration {
+        publisher_uri: Some("https://example.sk/id/legal-subject/37828100".into()),
+        publisher_name: Some(names_in(langs)),
+        contact_point: None,
+    };
+    let wide = declared(&["en", "sk"]);
+    let written = store
+        .declare_catalogue(org, cat, &wide)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.publisher_uri, wide.publisher_uri);
+    assert_eq!(written.title["en"], "Renamed");
+    let again = store
+        .declare_catalogue(org, cat, &wide)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.modified, written.modified, "no difference, no write");
+    let narrow = declared(&["sk"]);
+    let narrowed = store
+        .declare_catalogue(org, cat, &narrow)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        narrowed.publisher_name,
+        Some(names_in(&["sk"])),
+        "a dropped language goes"
+    );
+
     let (_, cat2) = tenant();
     store
         .upsert_catalogue(catalogue(org, cat2, "second", &unique_host("cat2")))
