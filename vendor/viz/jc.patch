@@ -2378,7 +2378,7 @@
        var at = "/data/features/" + i;
 --- a/site/render.css
 +++ site/render.css
-@@ -1,4 +1,10 @@
+@@ -1,4 +1,17 @@
  html { color-scheme: light; }
 +html[data-theme="dark"] { color-scheme: dark; }
  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: #fff; }
@@ -2387,8 +2387,15 @@
 +/* T-7490: the export menu's button reads at rest, not only under a pointer. */
 +#chart summary { opacity: 1; }
 +/* T-7504: the menu's button is no white disc on a dark chart. */
-+html[data-theme="dark"] #chart summary { background: #24282e; color: #e6e8eb; border-color: #4a5058; }
++html[data-theme="dark"] #chart summary { background: transparent; color: inherit; border-color: currentColor; }
 +html[data-theme="dark"] #chart summary svg { fill: currentColor; }
++/* T-7504: a finger's target, and room for it beside the chart. */
++@media (max-width: 600px), (pointer: coarse) {
++  #chart summary { box-sizing: border-box; width: 44px; height: 44px; padding: 14px; }
++  #chart.has-actions { padding-right: 50px; }
++  #chart .vega-actions { top: 50px; }
++  #chart .vega-actions a { padding-block: 14px; }
++}
 --- a/site/render.html
 +++ site/render.html
 @@ -9,7 +9,9 @@
@@ -2419,7 +2426,7 @@
    }
  
    function height() {
-@@ -23,34 +24,106 @@
+@@ -23,34 +24,108 @@
    };
    var loader = { load: refused, sanitize: refused, http: refused, file: refused };
  
@@ -2456,6 +2463,8 @@
 +    var mode = message.theme === "dark" ? "dark" : "light";
 +    document.documentElement.dataset.theme = mode;
 +    document.body.style.backgroundColor = self.jcTheme[mode].background;
++    // What is no chart (the export menu's button, render.css) takes the theme's text colour.
++    document.body.style.color = self.jcTheme[mode].text.color;
      var errors = self.jcRefuse(message.spec, domain);
      if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
      var data = message.data || {};
@@ -2531,7 +2540,7 @@
        }
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
-@@ -61,12 +134,14 @@
+@@ -61,12 +136,14 @@
    }
  
    window.addEventListener("message", function (event) {
