@@ -215,7 +215,7 @@ describe("the interactive chart", () => {
     expect(detail.params[0]).toMatchObject({ name: "pick", bind: "legend" });
     expect(detail.encoding.tooltip[1].title).toBe("Relatívna vlhkosť (%)");
     expect(detail.encoding.tooltip[0].title).toBe("Čas");
-    expect(strip.params[0]).toEqual({ name: "brush", select: { type: "interval", encodings: ["x"] } });
+    expect(strip.params[0]).toMatchObject({ name: "brush", select: { type: "interval", encodings: ["x"] } });
     const vega = vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec;
     expect(vega.data?.some((d) => d.name === "source")).toBe(true);
     // The authored spec is left as it was.
@@ -235,6 +235,16 @@ describe("the interactive chart", () => {
       expect(!!detail.spec.params).toBe(width > 480);
       expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec).toBeTruthy();
     }
+  });
+
+  it("shades and names what a cut answer left out, and still zooms", () => {
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    const missing = { from: "2026-11-20T00:00:00Z", middle: "2026-11-20T12:00:00Z", to: "2026-11-21T00:00:00Z" };
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, missing });
+    const [detail] = spec.vconcat as { layer: { mark: { type: string; text?: string } }[] }[];
+    expect(detail.layer.map((l) => l.mark.type)).toEqual(["rect", "text", "line"]);
+    expect(detail.layer[1].mark.text).toBe("nenačítané");
+    expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec).toBeTruthy();
   });
 
   it("draws daily values as points, none joined", () => {

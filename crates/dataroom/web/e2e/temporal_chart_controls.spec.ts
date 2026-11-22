@@ -174,7 +174,7 @@ for (const width of [1440, 400]) {
     await expect(host.getByLabel("Obdobie")).toHaveValue("P7D");
     await expect(host.getByLabel("Výpočet")).toBeHidden();
     await expect(host.locator("#c-stations option:checked")).toHaveText(["Všetky stanice"]);
-    await expect(host.locator("#data-note")).toContainText("Medzera v čiare: v tom čase nie sú merania");
+    await expect(host.locator("#controls-note")).toContainText("Medzera v čiare: v tom čase nie sú merania");
     // Readings have none from 19. 11. 00:00Z to 20. 11. 06:50Z: each line breaks there.
     for (const count of await strokes(chart)) expect(count).toBeGreaterThan(1);
     await shot(page, "normal", width);
@@ -217,7 +217,7 @@ for (const width of [1440, 400]) {
     // Daily buckets are UTC days: the axis says that in place of local time.
     await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
     await expect(host.locator("#axis-note")).not.toContainText("miestnom");
-    await expect(host.locator("#data-note.carried")).toContainText("hodnotu z predošlého dňa");
+    await expect(host.locator("#data-note.carried")).toContainText("poslednú hodnotu spred výpadku");
     await expect(host.locator("#c-from-hint")).toContainText("1. nov. 2026 (UTC)");
     // A point a day and no line through a day that may be carried.
     await expect(chart.locator("g.concat_0_group g.mark-line path")).toHaveCount(0);
@@ -289,12 +289,13 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#controls-note")).toContainText("Skoršie údaje v tomto období uložené nie sú");
+    await expect(host.locator("#controls-note")).toContainText("Pred 14.\u00a011.\u00a02026 v tomto období nie sú uložené údaje");
     await expect(host.locator("#status")).toContainText("novšie údaje");
     await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
     // The axis runs on to the end of the range picked, past the last bucket read.
     await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: "21. 11." })).toHaveCount(1);
+    await expect(chart.locator("g.concat_0_group text", { hasText: "nenačítané" })).toHaveCount(1);
     await shot(page, "cut", width);
 
     state.mode = "error";
