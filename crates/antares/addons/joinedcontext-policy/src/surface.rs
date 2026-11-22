@@ -323,7 +323,11 @@ mod tests {
         let engine = JoinedcontextPolicy::process();
         assert!(Arc::ptr_eq(&engine, &JoinedcontextPolicy::process()));
         let info = Access::new(engine).version_info();
-        assert_eq!(info.get("routes").and_then(Value::as_array).map(Vec::len), Some(4), "{info}");
+        assert_eq!(
+            info.get("routes").and_then(Value::as_array).map(Vec::len),
+            Some(4),
+            "{info}"
+        );
         assert!(
             info.to_string().contains("/x/views/{view}/access/check"),
             "{info}"
