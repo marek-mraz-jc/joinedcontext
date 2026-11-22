@@ -22,6 +22,7 @@ pub const UPSTREAM_CZ_LKOD_SHACL: &str =
 
 pub const BUILTIN_EU_301_SHACL: &str = include_str!("../shapes/dcat-ap-3.0.1.ttl");
 pub const BUILTIN_CZ_BASE_SHACL: &str = include_str!("../shapes/dcat-ap-cz.ttl");
+const BUILTIN_CZ_MANDATORY_SHACL: &str = include_str!("../shapes/dcat-ap-cz-mandatory.ttl");
 pub const BUILTIN_CZ_OPEN_DATA_SHACL: &str = include_str!("../shapes/dcat-ap-cz-open-data.ttl");
 pub const BUILTIN_CZ_LKOD_SHACL: &str = include_str!("../shapes/dcat-ap-cz-lkod.ttl");
 pub const BUILTIN_CZ_HVD_SHACL: &str = include_str!("../shapes/dcat-ap-cz-hvd.ttl");
@@ -176,7 +177,7 @@ pub fn built_in_profiles() -> Vec<ProfileRecord> {
             "https://ofn.gov.cz/dcat-ap-cz",
             "DCAT-AP-CZ (Základní datový model)",
             Some("dcat-ap-3.0.1"),
-            format!("{UPSTREAM_CZ_SHACL}\n{BUILTIN_CZ_BASE_SHACL}"),
+            format!("{UPSTREAM_CZ_SHACL}\n{BUILTIN_CZ_BASE_SHACL}\n{BUILTIN_CZ_MANDATORY_SHACL}"),
             Some(CZ_CATALOG_CONTEXT_IRI),
             vec!["cs"],
         ),
