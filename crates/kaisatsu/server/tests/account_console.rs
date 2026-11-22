@@ -331,6 +331,20 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     assert_eq!(info["username"], MEMBER);
     assert!(info.get("credentials").is_none());
 
+    // The console's name is trusted only on the realm's own client: moved into an
+    // Organization, its tokens manage no account.
+    let mut console = store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    console.org_id = Some("helsinki".into());
+    store.upsert_client(console.clone()).await.unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &me.token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    console.org_id = None;
+    store.upsert_client(console).await.unwrap();
+
     // No token, a garbage token, a token without audience `account` (an ID token or another
     // client's access token): 401 on every REST path.
     let id_token = {

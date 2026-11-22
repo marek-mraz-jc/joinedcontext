@@ -126,6 +126,17 @@ async fn caller(
             "not an account console token: sign in to the account console".into(),
         ));
     }
+    // The name is trusted on the realm's own client, never on an Organization's.
+    if !state
+        .store
+        .get_client_by_client_id(&realm.id, ACCOUNT_CONSOLE_CLIENT)
+        .await?
+        .is_some_and(|c| c.org_id.is_none())
+    {
+        return Err(KaisatsuError::Unauthorized(
+            "this realm has no account console: ask an administrator to register it".into(),
+        ));
+    }
     let htu = kaisatsu_oidc::external_htu(&mount, uri.path());
     kaisatsu_oidc::verify_resource_dpop(
         state,

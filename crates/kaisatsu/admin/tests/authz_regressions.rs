@@ -1798,6 +1798,31 @@ async fn org_admin_post_creates_no_role_mappings() {
 }
 
 #[tokio::test]
+async fn an_org_client_manager_cannot_create_a_reserved_client_id() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let create = async |id: &str| {
+        let body = json!({ "clientId": id, "orgId": "helsinki", "publicClient": true });
+        f.send(Method::POST, "/admin/realms/dev/clients", &t, Some(body))
+            .await
+    };
+    assert_eq!(create("hel-kiosk").await, StatusCode::CREATED);
+    for id in [
+        "account-console",
+        "admin-cli",
+        "account",
+        "broker",
+        "espoo-realm",
+        "app-kartta",
+        "mcp-portal",
+    ] {
+        assert_eq!(create(id).await, StatusCode::FORBIDDEN, "{id}");
+    }
+}
+
+#[tokio::test]
 async fn partial_import_turns_paths_into_membership_rows() {
     let f = Fixture::new().await;
     let t = f
@@ -1841,4 +1866,109 @@ async fn partial_import_turns_paths_into_membership_rows() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(person().await.id, first.id);
+}
+
+#[tokio::test]
+async fn reserved_client_ids_are_written_by_a_realm_admin_only() {
+    let f = Fixture::new().await;
+    let admin = f
+        .token(
+            "dev",
+            "root",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let portal = f
+        .token(
+            "dev",
+            "portal",
+            json!({ "resource_access": { "realm-management": { "roles": ["manage-clients", "view-clients"] } } }),
+        )
+        .await;
+    let org = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let body = |id: &str| json!({ "clientId": id, "publicClient": true });
+    let clients = "/admin/realms/dev/clients";
+
+    // A realm-wide client manager registers platform prefixes, never a reserved id.
+    assert_eq!(
+        f.send(Method::POST, clients, &portal, Some(body("app-kartta")))
+            .await,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        f.send(
+            Method::POST,
+            clients,
+            &portal,
+            Some(body("Account-Console "))
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::POST, clients, &admin, Some(body("account-console")))
+            .await,
+        StatusCode::CREATED
+    );
+    let console = f
+        .store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    let path = format!("{clients}/{}", console.id);
+    let edited = json!({ "clientId": "account-console", "publicClient": true,
+                         "redirectUris": ["https://elsewhere.example/*"] });
+    assert_eq!(
+        f.send(Method::PUT, &path, &portal, Some(edited)).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::DELETE, &path, &portal, None).await,
+        StatusCode::FORBIDDEN
+    );
+    let secret = format!("{path}/client-secret");
+    assert_eq!(
+        f.send(Method::POST, &secret, &portal, None).await,
+        StatusCode::FORBIDDEN
+    );
+
+    // A rename may neither take a reserved id nor give one up.
+    let own = format!("{clients}/uuid-hel-app");
+    let to_reserved = json!({ "clientId": "admin-cli", "publicClient": true });
+    assert_eq!(
+        f.send(Method::PUT, &own, &org, Some(to_reserved)).await,
+        StatusCode::FORBIDDEN
+    );
+    let from_reserved = json!({ "clientId": "console-2", "publicClient": true });
+    assert_eq!(
+        f.send(Method::PUT, &path, &portal, Some(from_reserved))
+            .await,
+        StatusCode::FORBIDDEN
+    );
+    let plain = json!({ "clientId": "hel-app-2", "publicClient": true,
+                        "attributes": { "managed-by": "joinedcontext" } });
+    assert_eq!(
+        f.send(Method::PUT, &own, &org, Some(plain)).await,
+        StatusCode::NO_CONTENT
+    );
+
+    // Its roles too.
+    let roles = format!("{path}/roles");
+    assert_eq!(
+        f.send(
+            Method::POST,
+            &roles,
+            &portal,
+            Some(json!({ "name": "manage-account" }))
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::DELETE, &path, &admin, None).await,
+        StatusCode::NO_CONTENT
+    );
 }

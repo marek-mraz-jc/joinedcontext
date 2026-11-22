@@ -506,9 +506,7 @@ pub(crate) async fn ensure_may_map_client_roles(
         .get_client_by_uuid(realm, None, client_uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
-    if matches!(client.client_id.as_str(), "realm-management" | "broker")
-        || client.client_id.ends_with("-realm")
-    {
+    if is_admin_client(&client.client_id) {
         return Err(KaisatsuError::Forbidden(
             "admin client roles are granted by a realm admin only".into(),
         ));
@@ -640,17 +638,6 @@ const RESERVED_CLIENT_ATTRIBUTES: [&str; 3] = [
     LINKED_SCOPE_PREFIX,
 ];
 
-/// A realm administrator, or a realm-management service account (the Portal's) acting without an
-/// Organization pinned.
-fn realm_wide_client_manager(ctx: &RequestCtx) -> bool {
-    let p = &ctx.principal;
-    p.is_realm_admin()
-        || (ctx.active_org_id.is_none()
-            && ["manage-clients", "view-clients", "manage-users"]
-                .iter()
-                .any(|r| p.has_realm_mgmt_role(r)))
-}
-
 /// Refuses a client write that changes a reserved attribute without realm-wide rights, or links a
 /// scope (by the default or optional list) the caller may not read: a linked scope's mappers and
 /// audience go into the client's tokens.
@@ -660,7 +647,7 @@ async fn guard_client_write(
     existing: Option<&ClientRepresentation>,
     client: &ClientRepresentation,
 ) -> Result<()> {
-    if !realm_wide_client_manager(ctx) {
+    if !ctx.manages_clients_realm_wide() {
         for key in RESERVED_CLIENT_ATTRIBUTES {
             if client.attributes.get(key) != existing.and_then(|e| e.attributes.get(key)) {
                 return Err(KaisatsuError::Forbidden(format!(
@@ -2714,6 +2701,21 @@ async fn compat_update_client(
             managed_by: client.attributes.get("managed-by").cloned(),
         },
     ))?;
+    // A rename registers the new id and gives up the old: both are judged as a create.
+    if client.client_id != existing.client_id {
+        for id in [&existing.client_id, &client.client_id] {
+            check_decision(state.authorizer.check(
+                &ctx,
+                Action::Create,
+                &ObjectTarget::Application {
+                    realm_id: client.realm_id.clone(),
+                    org_id: existing.org_id.clone(),
+                    client_id: id.clone(),
+                    managed_by: existing.managed_by.clone(),
+                },
+            ))?;
+        }
+    }
     guard_client_write(&state, &ctx, Some(&existing), &client).await?;
     let updated = state.oidc.store.upsert_client(client).await?;
     record_admin_write(
@@ -2915,6 +2917,11 @@ fn client_role_write(
     client: &ClientRepresentation,
     role_name: &str,
 ) -> Result<()> {
+    if is_reserved_client(&client.client_id) && !ctx.principal.is_realm_admin() {
+        return Err(KaisatsuError::Forbidden(
+            "the roles of a reserved client are written by a realm admin only".into(),
+        ));
+    }
     let on_role = state.authorizer.check(
         ctx,
         action,
@@ -3115,6 +3122,7 @@ fn portal_adds_audience(
     mapper: &ProtocolMapperRepresentation,
 ) -> bool {
     ctx.principal.has_realm_mgmt_role("view-clients")
+        && !is_reserved_client(&client.client_id)
         && client
             .attributes
             .get(AUDIENCES_MANAGED_BY)

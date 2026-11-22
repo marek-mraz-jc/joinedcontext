@@ -143,8 +143,6 @@ pub(crate) async fn ensure_may_join_group(
     if caller.has_realm_mgmt_role("manage-users") {
         return Ok(());
     }
-    let admin_client =
-        |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
     let refused = || {
         Err(KaisatsuError::Forbidden(
             "this group carries realm-wide roles: only a realm administrator or user manager adds its members".into(),
@@ -176,7 +174,7 @@ pub(crate) async fn ensure_may_join_group(
             .any(|r| !caller.realm_roles.contains(r))
             || g.client_roles
                 .iter()
-                .any(|(client, roles)| admin_client(client) && !roles.is_empty());
+                .any(|(client, roles)| is_admin_client(client) && !roles.is_empty());
         if realm_wide {
             return refused();
         }
@@ -207,14 +205,23 @@ pub(crate) async fn ensure_may_join_group(
 /// Refuses enrolling a credential on the own account through a token another application holds:
 /// a client the person signed into must not mint recovery codes or add an authenticator. Only
 /// the account console and the person's own `admin-cli` sign-in enrol (as the account REST).
-fn ensure_own_credential_client(ctx: &RequestCtx) -> Result<()> {
-    match ctx.principal.client_id.as_deref() {
-        Some("account-console" | "admin-cli") => Ok(()),
-        _ => Err(KaisatsuError::Forbidden(
-            "credentials are enrolled in the account console: sign in there and add it again"
-                .into(),
-        )),
+async fn ensure_own_credential_client(
+    ctx: &RequestCtx,
+    store: &dyn Store,
+    realm: &str,
+) -> Result<()> {
+    if let Some(id @ ("account-console" | "admin-cli")) = ctx.principal.client_id.as_deref()
+        // The name is trusted on the realm's own client, never on an Organization's.
+        && store
+            .get_client_by_client_id(realm, id)
+            .await?
+            .is_some_and(|c| c.org_id.is_none())
+    {
+        return Ok(());
     }
+    Err(KaisatsuError::Forbidden(
+        "credentials are enrolled in the account console: sign in there and add it again".into(),
+    ))
 }
 
 /// Runs registry operation `op` for `ctx`. `key` is the bound entity's key (or `None`),
@@ -713,7 +720,7 @@ pub async fn execute(
             if ctx.principal.subject.as_deref() != Some(user.id.as_str()) {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
-            ensure_own_credential_client(ctx)?;
+            ensure_own_credential_client(ctx, store.as_ref(), realm).await?;
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let (plain, hashes) = kaisatsu_crypto::generate_recovery_codes();
             for old in store
@@ -744,7 +751,7 @@ pub async fn execute(
             if ctx.principal.subject.as_deref() != Some(user.id.as_str()) {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
-            ensure_own_credential_client(ctx)?;
+            ensure_own_credential_client(ctx, store.as_ref(), realm).await?;
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
             let meta = json!({
@@ -804,7 +811,7 @@ pub async fn execute(
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
             if ctx.principal.subject.as_deref() == Some(user.id.as_str()) {
-                ensure_own_credential_client(ctx)?;
+                ensure_own_credential_client(ctx, store.as_ref(), realm).await?;
             }
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
