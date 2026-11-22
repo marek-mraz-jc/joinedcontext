@@ -647,3 +647,27 @@ fn user_codes_are_eight_letters_of_the_alphabet() {
         "vowels, digits and markup are no letters of a code"
     );
 }
+
+/// Every letter of a user code is equally likely (rejection sampling, no modulo bias): over 50 000
+/// codes each letter lands within 3 % of its share, about 4.4 standard deviations, while a biased
+/// draw (a limit that is no multiple of 20, or one more byte accepted) is off by 8 % or more.
+#[test]
+fn user_code_letters_are_uniform() {
+    use kaisatsu_crypto::{USER_CODE_ALPHABET, normalize_user_code, random_user_code};
+    let mut counts = [0u32; 256];
+    let codes = 50_000u32;
+    for _ in 0..codes {
+        for b in normalize_user_code(&random_user_code()).bytes() {
+            counts[usize::from(b)] += 1;
+        }
+    }
+    let expected = f64::from(codes * 8) / USER_CODE_ALPHABET.len() as f64;
+    for &letter in USER_CODE_ALPHABET {
+        let got = f64::from(counts[usize::from(letter)]);
+        assert!(
+            (got - expected).abs() < expected * 0.03,
+            "letter {} drawn {got} times, expected about {expected}",
+            letter as char
+        );
+    }
+}
