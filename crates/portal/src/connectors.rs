@@ -272,6 +272,8 @@ pub(crate) enum Over {
     /// No kinds list: every change the segments reach.
     Kinds,
     Writes,
+    /// Approving its own changes in this project.
+    Autonomous(String),
     /// Until this second of the Unix clock.
     Until(i64),
     Client(String),
@@ -315,6 +317,8 @@ pub struct Ceiling {
     /// The date an approval let one connector live to, past every `maxExpiry`
     /// ([`Self::with_approved`]).
     approved_until: Option<i64>,
+    /// The projects an approval let one connector be autonomous in.
+    approved_autonomous: Vec<String>,
 }
 
 /// The organization default as a policy: no `projects` list means every project the person reads.
@@ -329,6 +333,7 @@ fn default_policy() -> DelegationPolicySpec {
         kinds: None,
         endpoints: None,
         writes: false,
+        autonomous: false,
         personal_data: false,
         max_expiry: None,
         allowed_clients: None,
@@ -393,6 +398,17 @@ fn policy_offers(policy: &DelegationPolicySpec, kind: &str, verb: ConnectorVerb)
     offered && (policy.kinds.is_none() || verbs_allow(policy.verbs_for(kind), verb))
 }
 
+/// The projects a connector over `scope` writes in: those of its `write` items, or every one
+/// where no item says so.
+fn written_projects(scope: &[ScopeItem]) -> std::collections::BTreeSet<&str> {
+    let written = scope.iter().any(|item| item.access == ItemAccess::Write);
+    scope
+        .iter()
+        .filter(|item| !written || item.access == ItemAccess::Write)
+        .map(|item| item.project.as_str())
+        .collect()
+}
+
 /// The single verbs `verb` stands for: `propose` is create, edit and delete.
 fn each_verb(verb: ConnectorVerb) -> Vec<ConnectorVerb> {
     match verb {
@@ -449,7 +465,11 @@ fn widen(policy: &mut DelegationPolicySpec, over: &Over) {
             }
         }
         Over::AnyClient => policy.allowed_clients = None,
-        Over::Segment(_) | Over::Project(_) | Over::Endpoint { .. } | Over::Until(_) => {}
+        Over::Segment(_)
+        | Over::Project(_)
+        | Over::Endpoint { .. }
+        | Over::Autonomous(_)
+        | Over::Until(_) => {}
     }
 }
 
@@ -498,6 +518,7 @@ impl Ceiling {
             broken: Vec::new(),
             personal_data: false,
             approved_until: None,
+            approved_autonomous: Vec::new(),
         }
     }
 
@@ -576,6 +597,16 @@ impl Ceiling {
 
     pub fn writes(&self) -> bool {
         self.each().iter().any(|p| p.writes)
+    }
+
+    /// Whether a connector may approve its own changes in `project`: some policy over it says
+    /// `autonomous`, or an approval did for a project the ceiling still reaches (T-7541).
+    pub fn allows_autonomous(&self, project: &str) -> bool {
+        self.each()
+            .iter()
+            .any(|p| p.autonomous && p.writes && Self::allows_project(p, project))
+            || (self.approved_autonomous.iter().any(|p| p == project)
+                && self.allows_project_name(project))
     }
 
     /// Whether some policy (over `project`, when named) lets a connector `verb` on `kind`
@@ -734,6 +765,7 @@ impl Ceiling {
                 Over::Until(at) if connector.expires_at.as_second() <= *at => {
                     ceiling.approved_until = Some(*at);
                 }
+                Over::Autonomous(project) => ceiling.approved_autonomous.push(project.clone()),
                 // Judged below, once the approved projects are known.
                 Over::Until(_) | Over::Endpoint { .. } => {}
                 over => {
@@ -839,6 +871,13 @@ impl Ceiling {
         }
         if connector.writes && !self.writes() {
             marks.push("writes".to_owned());
+        }
+        if connector.autonomous {
+            for project in written_projects(&connector.scope) {
+                if !self.allows_autonomous(project) {
+                    marks.push(format!("autonomous in project {project}"));
+                }
+            }
         }
         if self.approved_until.is_none()
             && connector.expires_at
@@ -1861,6 +1900,17 @@ fn above(new: &NewConnector, ceiling: &Ceiling, now: TimestampTz) -> Vec<(Vec<Ov
             "writes".into(),
             format!("{named} lets a connector read only"),
         ));
+    }
+    if new.autonomous {
+        for project in written_projects(&new.scope) {
+            if !ceiling.allows_autonomous(project) {
+                above.push((
+                    vec![Over::Autonomous(project.to_owned())],
+                    "autonomous".into(),
+                    format!("{named} does not let a connector approve its own changes in project {project}"),
+                ));
+            }
+        }
     }
     let days = ceiling.max_days();
     if new.expires_at > now + jiff::SignedDuration::from_hours(24 * days) {
@@ -4146,6 +4196,65 @@ pub(crate) mod tests {
             .narrowing(&renewed)
             .iter()
             .any(|mark| mark.starts_with("expiry")));
+    }
+
+    /// T-7541 (S1-14): `autonomous` is the policy's to allow, as `writes` is.
+    #[test]
+    fn autonomous_is_above_a_policy_that_does_not_allow_it() {
+        let ceiling = Ceiling::of_policies(vec![(
+            "stewards".into(),
+            serde_json::from_value(json!({
+                "subjects": [{ "kind": "Group", "name": "stewards" }],
+                "projects": ["doprava"], "segments": ["context"], "writes": true,
+            }))
+            .expect("a policy"),
+        )]);
+        let mut ask = new(&["context"], true, 1);
+        assert!(validate(&ask, &ceiling, TimestampTz::now()).is_ok());
+        ask.autonomous = true;
+        match validate(&ask, &ceiling, TimestampTz::now()) {
+            Err(err) => assert!(format!("{err:?}").contains("autonomous"), "{err:?}"),
+            Ok(above) => panic!("autonomous passed the ceiling: {above:?}"),
+        }
+        let allowing = |projects: &[&str]| {
+            Ceiling::of_policies(vec![(
+                "stewards".into(),
+                serde_json::from_value(json!({
+                    "subjects": [{ "kind": "Group", "name": "stewards" }], "projects": projects,
+                    "segments": ["context"], "writes": true, "autonomous": true,
+                }))
+                .expect("a policy"),
+            )])
+        };
+        let allowed = allowing(&["doprava"]);
+        assert!(matches!(validate(&ask, &allowed, TimestampTz::now()), Ok(above) if above.is_empty()));
+        assert!(allowed.allows_autonomous("doprava") && !allowed.allows_autonomous("zdravie"));
+        let mut held = connector(&["context"], vec![item("doprava", None)]);
+        held.writes = true;
+        held.autonomous = true;
+        assert!(!allowed.narrowing(&held).iter().any(|m| m.starts_with("autonomous")));
+        assert!(ceiling.narrowing(&held).contains(&"autonomous in project doprava".to_owned()));
+    }
+
+    /// An approval of `autonomous` holds in the project it named, while that is reached.
+    #[test]
+    fn an_approved_autonomous_is_its_projects_alone() {
+        let mut policy = default_policy();
+        policy.projects = vec!["doprava".into(), "skoly".into()];
+        policy.writes = true;
+        policy.above_ceiling = AboveCeiling::Queue;
+        let mut approved = connector(&["data-read"], vec![item("doprava", None)]);
+        approved.approval = Some(Approval {
+            by: "sub-admin".into(),
+            at: TimestampTz::now(),
+        });
+        approved.over = vec![Over::Autonomous("doprava".into())];
+        let ceiling = Ceiling::of_policies(vec![("p".into(), policy.clone())]);
+        let widened = ceiling.with_approved(&approved);
+        assert!(widened.allows_autonomous("doprava") && !widened.allows_autonomous("skoly"));
+        policy.projects = vec!["skoly".into()];
+        let dropped = Ceiling::of_policies(vec![("p".into(), policy)]).with_approved(&approved);
+        assert!(!dropped.allows_autonomous("doprava"));
     }
 
     #[test]

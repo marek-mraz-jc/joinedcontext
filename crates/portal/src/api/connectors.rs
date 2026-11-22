@@ -845,6 +845,10 @@ fn within_own_rights(
             let mut verbs = vec![Verb::Read];
             if item.access == connectors::ItemAccess::Write {
                 verbs.push(Verb::Propose);
+                // Its changes are approved as they open, so its approver holds that too (PF-51).
+                if connector.autonomous {
+                    verbs.push(Verb::Approve);
+                }
                 if connector.may_verb(kind, "", ConnectorVerb::Delete).is_ok() {
                     verbs.push(Verb::Delete);
                 }

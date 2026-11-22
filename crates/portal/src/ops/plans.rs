@@ -1296,9 +1296,21 @@ async fn apply(
     }?;
     let mut opened = opened;
     if let (Some(connector), None) = (connector, workspace) {
-        let waiting = if connector.autonomous {
+        let waiting = if !connector.autonomous {
+            opened.clone()
+        } else if crate::connectors::Ceiling::of(&state.mirror, &caller.identity)
+            .with_approved(connector)
+            .allows_autonomous(project)
+        {
             approve_autonomously(state, caller, project, &connector.name, &mut opened).await
         } else {
+            // The ceiling as it is at this apply, not as it was when the connector was made
+            // (AG-150, T-7541).
+            for row in opened.iter_mut() {
+                row["waits"] = json!(format!(
+                    "autonomous: your DelegationPolicy does not let a connector approve its own changes in project {project}; an approver decides this one"
+                ));
+            }
             opened.clone()
         };
         notify_approvers(state, caller, project, &connector.name, &waiting).await;
