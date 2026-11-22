@@ -55,7 +55,7 @@ def in_view(events, asked):
     return [f for f in events if f["geometry"] and w <= f["geometry"]["coordinates"][0] <= e and s <= f["geometry"]["coordinates"][1] <= n]
 
 
-def serve(style_ok, events=EVENTS, cap=1000):
+def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True):
     # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
     missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
     if missing:
@@ -125,6 +125,8 @@ def serve(style_ok, events=EVENTS, cap=1000):
                 start = int(asked.get("offset", ["0"])[0])
                 page = found[start : start + min(cap, int(asked.get("limit", ["1000"])[0]))]
                 if "application/geo+json" in (self.headers.get("Accept") or ""):
+                    if not points_ok():
+                        return self.send(503, "application/json", b"{}")
                     return self.send(200, "application/geo+json", json.dumps({"type": "FeatureCollection", "features": page}).encode(), count)
                 rows = [{"id": e["id"], "type": "Event", **e["properties"], **({"location": e["geometry"]} if e["geometry"] else {})} for e in page]
                 return self.send(200, "application/json", json.dumps(rows).encode(), count)
@@ -308,6 +310,8 @@ def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, widt
         line = {"en": f"{n} in view · {n} of {n + none} with a location · {none} without", "sk": f"Vo výreze: {n} · s polohou: {n} z {n + none} · bez polohy: {none}"}[lang]
         assert page.locator("#map-count").inner_text() == line
         of = page.locator("#grid-count")
+        if of.is_visible():
+            assert not page.locator(".jc-grid-pager .jc-grid-total").is_visible()  # one count, named against its total
         if q:
             of.wait_for(state="visible", timeout=10_000)
             assert of.inner_text() == {"en": "200 of 234 records match the filter.", "sk": "Filtru vyhovuje 200 z 234 záznamov."}[lang]
@@ -343,10 +347,46 @@ def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
     try:
         page, errors = open_explorer(browser, srv, 1440)
         wait_drawn(page)
-        assert page.locator("#map-note").inner_text() == "The map opens on the first 200 of 234 records; zoom in for the rest."
+        assert page.locator("#map-note").inner_text() == "The map draws up to 200 records at a time; zoom in for the rest."
         drawn = sum(1 for e in PODUJATIA[:200] if e["geometry"])
         tail = f"{drawn} of 231 with a location drawn · 3 without"
         page.wait_for_function("(tail) => document.getElementById('map-count').textContent.endsWith(tail)", arg=tail, timeout=10_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_query_matching_nothing_says_so_in_place_of_the_map(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, [{**e, "properties": {**e["properties"], "upcoming": False}} for e in PODUJATIA])
+    try:
+        page, errors = open_explorer(browser, srv, 400, q="upcoming==true")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+        assert page.locator("#map-note").inner_text() == "No record matches this query, so there is nothing to map."
+        shot(page, "map-no-match-400")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [1440, 400])
+def test_a_failed_read_of_the_points_shows_no_empty_map_and_retries(pw, width):
+    browser = pw.chromium.launch(args=WEBGL)
+    ok = {"points": False}
+    srv = serve(lambda: True, PODUJATIA, points_ok=lambda: ok["points"])
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.locator("#map-off").wait_for(state="visible", timeout=40_000)
+        assert page.locator("#map").is_hidden()
+        assert "503" in page.locator("#map-off-text").inner_text()
+        shot(page, f"map-read-failed-{width}")
+        ok["points"] = True
+        page.locator("#map-retry").click()
+        page.wait_for_selector("#map", state="visible", timeout=20_000)
+        wait_drawn(page)
+        assert page.locator("#map-off").is_hidden()
         assert errors == []
     finally:
         browser.close()

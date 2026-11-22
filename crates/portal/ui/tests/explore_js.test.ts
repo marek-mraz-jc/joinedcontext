@@ -15,7 +15,7 @@ interface Explore {
   viewPlan(held: Feature[] | null, lastUrl: string | null, url: string, box: number[]): { local?: number; skip?: boolean; read?: string };
   countLine(t: object, c: { inView: number; total: number; none: number; drawn?: number; tiled?: boolean }): string;
   matchLine(t: object, matching: number, all: number): string;
-  capLine(t: object, read: number, total: number | null): string;
+  capLine(t: object, read: number): string;
   badges(points: Feature[], zoom: number, merge: boolean): Badge[];
   mapStart(maplibre: { Map: new (o: object) => FakeMap }, options: object, fail: (kind: string) => void): FakeMap | null;
   TEXT: Record<string, object>;
@@ -94,7 +94,7 @@ describe("explore.js map view", () => {
     expect(X.matchLine(en, upcoming.length, all)).toBe("200 of 234 records match the filter.");
     expect(X.matchLine({ ...X.TEXT.sk, locale: "sk-SK" }, upcoming.length, all)).toBe("Filtru vyhovuje 200 z 234 záznamov.");
     // A read cap below the total is named as one, never shown as the total.
-    expect(X.capLine(en, 200, all)).toBe("The map opens on the first 200 of 234 records; zoom in for the rest.");
+    expect(X.capLine(en, 200)).toBe("The map draws up to 200 records at a time; zoom in for the rest.");
   });
 
   it("says how many rows share a dot", () => {

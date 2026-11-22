@@ -121,7 +121,7 @@
  })(typeof self !== "undefined" ? self : globalThis);
 --- a/site/explore.css
 +++ site/explore.css
-@@ -23,6 +23,16 @@
+@@ -23,6 +23,18 @@
    .page-head .actions { flex: 1 1 100%; flex-wrap: nowrap; gap: 8px; }
    .page-head .actions .page-button { flex: 1 1 0; min-width: 0; }
  }
@@ -134,11 +134,13 @@
 +   44 px only for a finger, as the view's buttons. */
 +.page-head .actions .page-button, #map-panel-open { min-height: 0; height: var(--portal-control, 2rem); padding: 0 10px; font-size: var(--portal-text-caption, 0.8125rem); font-weight: 500; border-radius: var(--portal-radius-md, 6px); border-color: var(--portal-border, var(--line)); background: var(--portal-surface, var(--bg)); color: var(--portal-fg, var(--fg)); box-shadow: var(--portal-shadow-1, none); }
 +.page-head .actions .page-button:hover, #map-panel-open:hover { background: var(--portal-surface-subtle, var(--soft)); }
-+@media (pointer: coarse) { .page-head .actions .page-button, #map-panel-open { height: auto; min-height: 44px; } }
++@media (pointer: coarse), (max-width: 639.98px) { .page-head .actions .page-button, #map-panel-open { height: auto; min-height: 44px; } }
++/* While the line under the table names both counts, the pager's one number would read as the total (T-7503). */
++#grid:has(+ #grid-count:not([hidden])) .jc-grid-pager .jc-grid-total { display: none; }
  .inline #title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
  #title { font-size: 1.15rem; margin: 0; }
  #map-title { font-size: 1rem; margin: 16px 0 6px; }
-@@ -33,7 +43,21 @@
+@@ -33,7 +45,21 @@
  .status:empty { display: none; }
  .status.error { padding: 10px 12px; border-radius: 8px; background: var(--err-bg); color: var(--err); }
  #map { height: 420px; border: 1px solid var(--line); border-radius: 8px; }
@@ -161,7 +163,7 @@
  #detail, #embed { max-width: min(40rem, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); padding: 16px; box-sizing: border-box; }
  #detail::backdrop, #embed::backdrop { background: rgba(15, 23, 42, 0.5); }
  dialog a { color: var(--accent); overflow-wrap: break-word; }
-@@ -90,11 +114,22 @@
+@@ -90,11 +116,22 @@
  @media (max-width: 639px) {
    .jc-grid-detail { inset-block-start: var(--jc-vv-top, 0px); height: var(--jc-vv-height, 100dvh); max-height: var(--jc-vv-height, 100dvh); }
  }
@@ -184,7 +186,7 @@
  .map-panel { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
  .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
  .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }
-@@ -111,7 +146,13 @@
+@@ -111,7 +148,13 @@
  .chip { font: inherit; font-size: 0.9rem; min-height: 44px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); cursor: pointer; }
  .map-fallback { margin: 4px 0; }
  .map-box { position: relative; margin-top: 6px; }
@@ -309,8 +311,8 @@
        noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
        mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
 -      mapNone: "No entity of this query has a location.", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
-+      mapFirst: "The map opens on the first {n} of {total} records; zoom in for the rest.", matches: "{n} of {total} records match the filter.",
-+      mapNone: "No entity of this query has a location.", mapNoneOf: "None of the {n} records of this query has a location, so there is nothing to map. The table above lists them.",
++      mapFirst: "The map draws up to {n} records at a time; zoom in for the rest.", matches: "{n} of {total} records match the filter.",
++      mapNone: "No entity of this query has a location.", mapNoMatch: "No record matches this query, so there is nothing to map.", mapNoneOf: "None of the {n} records of this query has a location, so there is nothing to map. The table above lists them.",
 +      mapViewEmpty: "No point of this query is in view; zoom out to find them.", mapLoading: "Loading map…",
 +      mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table above lists the same rows.",
 +        start: "The map could not load. The table above lists the same rows.",
@@ -339,8 +341,8 @@
        noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
        mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
 -      mapNone: "Žiadna entita tohto dopytu nemá polohu.", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
-+      mapFirst: "Mapa sa otvára na prvých {n} z {total} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov.",
-+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapNoneOf: "Žiadny zo záznamov tohto dopytu ({n}) nemá polohu, preto ich mapa nemá kde ukázať. Uvádza ich tabuľka vyššie.",
++      mapFirst: "Mapa kreslí naraz najviac {n} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov.",
++      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapNoMatch: "Dopytu nevyhovuje žiadny záznam, preto mapa nemá čo ukázať.", mapNoneOf: "Žiadny zo záznamov tohto dopytu ({n}) nemá polohu, preto ich mapa nemá kde ukázať. Uvádza ich tabuľka vyššie.",
 +      mapViewEmpty: "Vo výreze nie je žiadny bod tohto dopytu; oddiaľte mapu.", mapLoading: "Načítavam mapu…",
 +      mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované. Zvyčajne ho vráti zapnutie hardvérovej akcelerácie v nastaveniach prehliadača. Tabuľka vyššie uvádza tie isté riadky.",
 +        start: "Mapu sa nepodarilo načítať. Tabuľka vyššie uvádza tie isté riadky.",
@@ -518,8 +520,8 @@
 +  }
 +
 +  // A first read that stopped short says so.
-+  function capLine(t, read, total) {
-+    return say(t.mapFirst, { n: number(t, read), total: total === null ? "…" : number(t, total) });
++  function capLine(t, read) {
++    return say(t.mapFirst, { n: number(t, read) });
    }
  
    // ---- the page ----
@@ -624,7 +626,7 @@
          // Only with the model in hand is a slot the address names known to be wrong: drop it, say so.
          if (card && picked.unknown.length) {
            picked.unknown.forEach(function (k) { delete state.mapRaw[k]; });
-@@ -615,11 +832,46 @@
+@@ -615,34 +832,104 @@
            address();
          }
          panel();
@@ -646,14 +648,14 @@
 +      typeInfo(type).then(function (info) {
 +        if (info && info.attributeDetails) ready(info);
 +        else if (listed) ready(listed);
-       });
++      });
 +      // The type's details can take seconds on a large type (GET /types/{type} counts every row's
 +      // attributes): one row tells already whether the query's rows have the core location.
 +      if (!state.mapping || state.mapping.type !== type) locationProbe(type).then(function (has) {
 +        if (has && (!state.mapping || state.mapping.type !== type)) ready({ attributeNames: ["location"] });
-+      });
-+    }
-+
+       });
+     }
+ 
 +    // Whether a row of the type has a `location`: one keyValues row as GeoJSON.
 +    function locationProbe(type) {
 +      state.probes = state.probes || {};
@@ -671,10 +673,10 @@
 +      if (on) $("map").setAttribute("data-loading", t.mapLoading);
 +      else $("map").removeAttribute("data-loading");
 +      if (on) $("map-note").textContent = "";
-     }
- 
++    }
++
      function startMap() {
-@@ -627,22 +879,46 @@
+       // One map: a second call while MapLibre still loads waits for the first (T-5192 drew two).
        if (state.mapLoading) return;
        state.mapLoading = true;
        // MapLibre and its tiles cost seconds of a phone's main thread (T-5794: 6.5 s of a dataset
@@ -718,6 +720,17 @@
 +      height();
 +    }
 +
++    // Points that could not be read: the reason and a retry, since a map without them reads as "none" (T-7503).
++    function pointsFailed(error) {
++      state.drawn = null; // the next change or the retry reads again
++      state.empty = true; // a hidden map counts no view
++      $("map-section").classList.add("map-off");
++      $("map-off-text").textContent = failure(error);
++      $("map-retry").hidden = false;
++      $("map-off").hidden = false;
++      height();
++    }
++
      function loadMap() {
 -      import(MAPLIBRE).then(function (maplibre) {
 -        maplibre.setWorkerUrl(WORKER);
@@ -728,7 +741,7 @@
          if (root.pmtiles) maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
          // The Endpoint's vector tiles, read like every other request here: anonymous, no referrer.
          maplibre.addProtocol("jc-tile", function (request, controller) {
-@@ -653,25 +929,37 @@
+@@ -653,25 +940,37 @@
                return r.arrayBuffer().then(function (data) { return { data: data }; });
              });
          });
@@ -774,7 +787,7 @@
            ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
              map.on("click", layer, function (e) {
                var f = (state.mapData || []).filter(function (x) { return x.id === e.features[0].properties.jcId; })[0];
-@@ -681,10 +969,8 @@
+@@ -681,10 +980,8 @@
              map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; if (state.popup) state.popup.remove(); });
            });
            map.on("click", "jc-cluster", function (e) {
@@ -787,7 +800,7 @@
            });
            map.on("mouseenter", "jc-cluster", function () { map.getCanvas().style.cursor = "pointer"; });
            map.on("mouseleave", "jc-cluster", function () { map.getCanvas().style.cursor = ""; });
-@@ -700,29 +986,73 @@
+@@ -700,29 +997,75 @@
              map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
            });
            map.on("moveend", mapMoved);
@@ -842,9 +855,11 @@
 +        if (asked !== state.mapAsk) return;
 +        // The query moved while MapLibre loaded: read the one now shown.
 +        if (got.key !== viewKey()) return firstView(firstRead());
-+        state.drawn = got.key;
 +        loading(false);
-+        if (got.error) { $("map-note").textContent = failure(got.error); return; }
++        if (got.error) return pointsFailed(got.error);
++        state.drawn = got.key;
++        $("map-off").hidden = true;
++        $("map-section").classList.remove("map-off");
 +        counts();
 +        state.mapData = got.features;
 +        state.held = got.whole ? got.features : null;
@@ -861,7 +876,7 @@
 +          else if (box) map.fitBounds(box, { padding: BADGE_ROOM, maxZoom: 15, animate: false });
 +        } finally { state.fitting = false; }
 +        if (state.empty) {
-+          $("map-note").textContent = got.total ? say(t.mapNoneOf, { n: number(t, got.total) }) : t.mapNone;
++          $("map-note").textContent = !got.rows ? t.mapNoMatch : got.total ? say(t.mapNoneOf, { n: number(t, got.total) }) : t.mapNone;
 +          state.inView = 0;
 +          height();
 +          return showCount();
@@ -870,7 +885,7 @@
 +        // The view now shows what the read held; its count in view comes from the query.
 +        var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 +        state.viewUrl = entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, bboxQuery(bb), ownGeo()));
-+        $("map-note").textContent = capLine(t, got.rows, got.total);
++        $("map-note").textContent = capLine(t, got.rows);
 +        get(entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: 0, count: "true" }, bboxQuery(bb), ownGeo()))).then(function (a) {
 +          if (asked === state.mapAsk && a.count !== null) { state.inView = +a.count; showCount(); }
 +        }, function () {});
@@ -879,7 +894,7 @@
      }
  
      // Past MAP_LIMIT and with no filter (a tile takes no query), the map draws the type's vector
-@@ -739,6 +1069,7 @@
+@@ -739,6 +1082,7 @@
        var known = state.tilesets[type] || (state.tilesets[type] = get(at).then(function (a) { return templateOf(a.body, at); }, function () { return null; }));
        return known.then(function (template) {
          var map = state.map;
@@ -887,7 +902,7 @@
          if (!template || state.type !== type || state.q || geoOf() !== "location" || state.tiled === type) return !!template && state.tiled === type;
          untile();
          var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };
-@@ -748,6 +1079,7 @@
+@@ -748,6 +1092,7 @@
          map.addLayer(of({ id: "jc-tile-line", type: "line", filter: ["!", is(["Point", "MultiPoint"])], paint: { "line-color": COLOUR, "line-width": 2 } }));
          map.addLayer(of({ id: "jc-tile-point", type: "circle", filter: is(["Point", "MultiPoint"]), paint: { "circle-color": COLOUR, "circle-radius": 5, "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } }));
          map.getSource("jc").setData({ type: "FeatureCollection", features: [] });
@@ -895,14 +910,15 @@
          map.getSource("jc-pts").setData({ type: "FeatureCollection", features: [] });
          legend([]);
          state.mapData = [];
-@@ -778,21 +1110,44 @@
+@@ -778,21 +1123,44 @@
      function showCount() {
        var ok = [state.inView, state.total, state.none].every(function (v) { return typeof v === "number" && isFinite(v); });
        $("map-count").hidden = !ok;
 -      if (ok) $("map-count").textContent = countLine(t, { inView: state.inView, total: state.total, none: state.none, tiled: !!state.tiled });
 +      if (ok) $("map-count").textContent = countLine(t, { inView: state.inView, total: state.total, none: state.none, drawn: (state.mapData || []).length, tiled: !!state.tiled });
-+    }
-+
+     }
+ 
+-    // The features of the view, coloured by the reader's field, points clustered when they are many.
 +    // The filter's count beside the type's: the pager says only the first (T-7503: 200 read as all of 234).
 +    function matched() {
 +      var type = state.type, q = state.q, key = type + "\u0000" + q, line = $("grid-count");
@@ -917,9 +933,8 @@
 +        line.hidden = false;
 +        height();
 +      }, function () {});
-     }
- 
--    // The features of the view, coloured by the reader's field, points clustered when they are many.
++    }
++
 +    // The features of the view, coloured by the reader's field, the points as badges.
      function paint(features) {
        var m = state.mapping, map = state.map;
@@ -947,7 +962,7 @@
      function legend(items) {
        var list = $("map-legend");
        list.textContent = "";
-@@ -825,27 +1180,37 @@
+@@ -825,27 +1193,37 @@
  
      function mapMoved() {
        var map = state.map;
@@ -993,7 +1008,7 @@
          if (total > features.length && !state.q) {
            tile(state.type).then(function (on) { if (on && asked === state.mapAsk) $("map-note").textContent = t.mapHint; });
          }
-@@ -919,6 +1284,16 @@
+@@ -919,6 +1297,17 @@
        $("map-panel-open").setAttribute("aria-expanded", String(open));
        height();
      });
@@ -1005,12 +1020,13 @@
 +      state.retried = true;
 +      loading(true);
 +      $("map").focus();
-+      loadMap();
++      if (state.map) firstView(firstRead()); // the map stands, only its points failed
++      else loadMap();
 +    });
      $("map-reset").addEventListener("click", function () {
        state.mapRaw = {};
        $("map-fallback").hidden = true;
-@@ -936,11 +1311,16 @@
+@@ -936,11 +1325,16 @@
        state.sort = next.sort || null;
        state.all = next.noDefault === true;
        address();
@@ -1029,7 +1045,7 @@
        $("detail-type").hidden = true;
        $("detail-title").textContent = t.dataApi;
        $("detail-list").textContent = "";
-@@ -950,12 +1330,13 @@
+@@ -950,12 +1344,13 @@
        $("detail-dev").open = true;
        linkList(null);
        placeMap(null);
@@ -1046,7 +1062,7 @@
        var line = $("attribution");
        var draw = function (title, href, publisher, licence, licenceHref) {
          line.textContent = "";
-@@ -992,8 +1373,9 @@
+@@ -992,8 +1387,9 @@
        $("embed-keep-hint").textContent = words.length ? say(t.keepHint, { view: words.join("; ") }) : t.keepNone;
        $("embed-copied").textContent = "";
        try {
@@ -1058,7 +1074,7 @@
          $("embed-error").hidden = true;
          $("embed-height").removeAttribute("aria-invalid");
          $("embed-copy").disabled = false;
-@@ -1006,11 +1388,13 @@
+@@ -1006,11 +1402,13 @@
        }
      }
  
@@ -1074,7 +1090,7 @@
      $("embed-form").addEventListener("input", embedCode);
      $("embed-form").addEventListener("change", embedCode);
      $("embed-form").addEventListener("submit", function (e) { e.preventDefault(); });
-@@ -1022,7 +1406,7 @@
+@@ -1022,7 +1420,7 @@
        else select();
      });
      $("embed-close").addEventListener("click", function () { $("embed").close(); });
@@ -1083,7 +1099,7 @@
      if (embedded) attribute();
      $("detail-close").addEventListener("click", function () { $("detail").close(); });
      // A click on the backdrop (the dialog box itself, outside its content) closes it, as Esc does.
-@@ -1052,13 +1436,14 @@
+@@ -1052,13 +1450,14 @@
      // The type list only says which types have a location, for the map; the view reads its own.
      get(api + "ngsi-ld/v1/types?details=true").then(function (answer) {
        state.types = (Array.isArray(answer.body) ? answer.body : []).filter(function (x) { return x && NAME.test(x.typeName || ""); });
@@ -1099,7 +1115,7 @@
          slug: where.slug,
          lang: lang,
          link: { type: where.type || undefined, q: where.q || undefined, sort: where.sort || undefined, noDefault: where.all || undefined },
-@@ -1068,15 +1453,21 @@
+@@ -1068,15 +1467,21 @@
            if (card && card.type === state.type) drawMap();
          },
          onOpenRow: openRow,
