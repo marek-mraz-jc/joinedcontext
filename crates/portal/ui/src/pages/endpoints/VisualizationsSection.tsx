@@ -477,7 +477,7 @@ export function VisualizationsSection({
           ref={editor}
           // In this form the hints, and what to do on a refusal, are read at body size.
           // At phone width what is typed or picked is 16 px, which iOS does not zoom into.
-          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-title"
+          className="rounded-lg border border-border bg-surface p-3 [&_[role=alert]]:break-words [&_[role=alert]]:text-body [&_p]:text-body [&_select:enabled]:bg-surface max-sm:[&:not([open])]:py-0 max-sm:[&_:is(input,select,textarea)]:text-title"
         >
           <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
