@@ -1925,8 +1925,8 @@
           "title": "The heading readers see above the chart, e.g. NO2 this week.",
           "description": "One sentence on what the chart shows, e.g. The daily peak of NO2 at each station.",
           "template": "The shape of the chart, e.g. Line over time for readings through a week.",
-          "type": "The kind of thing the chart reads, e.g. AirQualityObserved for air quality readings.",
-          "noTypes": "The data model lists no type yet. Add one to the model first, e.g. AirQualityObserved.",
+          "type": "What the chart reads, e.g. the type for air quality readings.",
+          "noTypes": "The data model lists no type yet. Add one to the model first, e.g. a type for air quality readings.",
           "noColumns": "The data model lists no column here. Add an attribute to the type first, e.g. no2.",
           "time": "The time each reading was taken, e.g. 14:00. A chart over time always uses observedAt.",
           "x": "The column along the bottom of the chart, e.g. dateObserved for time.",
@@ -1934,12 +1934,10 @@
           "y": "The number the chart draws, e.g. no2.",
           "color": "Optional. A colour for each value, e.g. name for one colour per station.",
           "facet": "A small chart for each value, e.g. name for one panel per station.",
-          "heatmap": {
-            "x": "The columns of the grid, e.g. dateObserved for one column per time.",
-            "y": "The rows of the grid, e.g. name for one row per station.",
-            "color": "The number that sets the colour of each cell, e.g. no2."
-          },
-          "spec": "Fill writes it from the fields above and you can edit it as JSON. It may read only this endpoint, e.g. {example}."
+          "spec": "Fill writes it from the fields above and you can edit it as JSON. It may read only this endpoint, e.g. {example}.",
+          "gridX": "The columns of the grid, e.g. dateObserved for one column per time.",
+          "gridY": "The rows of the grid, e.g. name for one row per station.",
+          "gridColor": "The number that sets the colour of each cell, e.g. no2."
         },
         "templates": {
           "bar": "Bar chart",

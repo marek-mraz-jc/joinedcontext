@@ -1925,8 +1925,8 @@
           "title": "Nadpis, který čtenáři vidí nad grafem, např. NO2 tento týden.",
           "description": "Jedna věta o tom, co graf ukazuje, např. Denní maximum NO2 na každé stanici.",
           "template": "Tvar grafu, např. Průběh v čase pro měření za týden.",
-          "type": "Druh věcí, které graf čte, např. AirQualityObserved pro měření kvality ovzduší.",
-          "noTypes": "Datový model zatím nemá žádný typ. Nejdřív ho do něj přidejte, např. AirQualityObserved.",
+          "type": "Co graf čte, např. typ pro měření kvality ovzduší.",
+          "noTypes": "Datový model zatím nemá žádný typ. Nejdřív ho do něj přidejte, např. typ pro měření kvality ovzduší.",
           "noColumns": "Datový model tu nemá žádný sloupec. Nejdřív přidejte typu atribut, např. no2.",
           "time": "Čas každého měření, např. 14:00. Graf v čase vždy používá observedAt.",
           "x": "Sloupec podél spodku grafu, např. dateObserved pro čas.",
@@ -1934,12 +1934,10 @@
           "y": "Číslo, které graf kreslí, např. no2.",
           "color": "Nepovinné. Barva pro každou hodnotu, např. name pro jednu barvu na stanici.",
           "facet": "Malý graf pro každou hodnotu, např. name pro jeden panel na stanici.",
-          "heatmap": {
-            "x": "Sloupce mřížky, např. dateObserved pro jeden sloupec na čas.",
-            "y": "Řádky mřížky, např. name pro jeden řádek na stanici.",
-            "color": "Číslo, které určuje barvu políčka, např. no2."
-          },
-          "spec": "Vyplnění ji zapíše z polí výše a můžete ji upravit jako JSON. Smí číst jen tento endpoint, např. {example}."
+          "spec": "Vyplnění ji zapíše z polí výše a můžete ji upravit jako JSON. Smí číst jen tento endpoint, např. {example}.",
+          "gridX": "Sloupce mřížky, např. dateObserved pro jeden sloupec na čas.",
+          "gridY": "Řádky mřížky, např. name pro jeden řádek na stanici.",
+          "gridColor": "Číslo, které určuje barvu políčka, např. no2."
         },
         "templates": {
           "bar": "Sloupcový graf",

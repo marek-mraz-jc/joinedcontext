@@ -313,7 +313,10 @@ export function VisualizationsSection({
   /** What a role's column is for, in the chart picked, or what to do when there is none. */
   const roleHint = (role: Role) => {
     if (offered(role).length === 0) return t("endpoints.page.visualizations.hint.noColumns");
-    if (template === "heatmap") return t(`endpoints.page.visualizations.hint.heatmap.${role}`);
+    if (template === "heatmap") {
+      const grid = { x: "gridX", y: "gridY", color: "gridColor", facet: "facet" }[role];
+      return t(`endpoints.page.visualizations.hint.${grid}`);
+    }
     if (role === "x" && source === "temporal") return t("endpoints.page.visualizations.hint.time");
     if (role === "x" && template === "bar") return t("endpoints.page.visualizations.hint.bars");
     return t(`endpoints.page.visualizations.hint.${role}`);

@@ -1925,8 +1925,8 @@
           "title": "Nadpis, ktorý čitatelia vidia nad grafom, napr. NO2 tento týždeň.",
           "description": "Jedna veta o tom, čo graf ukazuje, napr. Denné maximum NO2 na každej stanici.",
           "template": "Tvar grafu, napr. Priebeh v čase pre merania za týždeň.",
-          "type": "Druh vecí, ktoré graf číta, napr. AirQualityObserved pre merania kvality ovzdušia.",
-          "noTypes": "Dátový model zatiaľ nemá žiadny typ. Najprv ho doň pridajte, napr. AirQualityObserved.",
+          "type": "Čo graf číta, napr. typ pre merania kvality ovzdušia.",
+          "noTypes": "Dátový model zatiaľ nemá žiadny typ. Najprv ho doň pridajte, napr. typ pre merania kvality ovzdušia.",
           "noColumns": "Dátový model tu nemá žiadny stĺpec. Najprv pridajte typu atribút, napr. no2.",
           "time": "Čas každého merania, napr. 14:00. Graf v čase vždy používa observedAt.",
           "x": "Stĺpec pozdĺž spodku grafu, napr. dateObserved pre čas.",
@@ -1934,12 +1934,10 @@
           "y": "Číslo, ktoré graf kreslí, napr. no2.",
           "color": "Nepovinné. Farba pre každú hodnotu, napr. name pre jednu farbu na stanicu.",
           "facet": "Malý graf pre každú hodnotu, napr. name pre jeden panel na stanicu.",
-          "heatmap": {
-            "x": "Stĺpce mriežky, napr. dateObserved pre jeden stĺpec na čas.",
-            "y": "Riadky mriežky, napr. name pre jeden riadok na stanicu.",
-            "color": "Číslo, ktoré určuje farbu políčka, napr. no2."
-          },
-          "spec": "Vyplnenie ju zapíše z polí vyššie a môžete ju upraviť ako JSON. Smie čítať len tento endpoint, napr. {example}."
+          "spec": "Vyplnenie ju zapíše z polí vyššie a môžete ju upraviť ako JSON. Smie čítať len tento endpoint, napr. {example}.",
+          "gridX": "Stĺpce mriežky, napr. dateObserved pre jeden stĺpec na čas.",
+          "gridY": "Riadky mriežky, napr. name pre jeden riadok na stanicu.",
+          "gridColor": "Číslo, ktoré určuje farbu políčka, napr. no2."
         },
         "templates": {
           "bar": "Stĺpcový graf",

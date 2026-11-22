@@ -1925,8 +1925,8 @@
           "title": "Die Überschrift, die Lesende über dem Diagramm sehen, z. B. NO2 diese Woche.",
           "description": "Ein Satz dazu, was das Diagramm zeigt, z. B. Der Tageshöchstwert von NO2 je Station.",
           "template": "Die Form des Diagramms, z. B. Verlauf über die Zeit für Messungen einer Woche.",
-          "type": "Die Art der Dinge, die das Diagramm liest, z. B. AirQualityObserved für Luftmessungen.",
-          "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. AirQualityObserved.",
+          "type": "Was das Diagramm liest, z. B. der Typ für Luftmessungen.",
+          "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. einen Typ für Luftmessungen.",
           "noColumns": "Das Datenmodell hat hier keine Spalte. Fügen Sie dem Typ zuerst ein Attribut hinzu, z. B. no2.",
           "time": "Die Zeit jeder Messung, z. B. 14:00. Ein Zeitverlauf nutzt immer observedAt.",
           "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
@@ -1934,12 +1934,10 @@
           "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
           "color": "Optional. Eine Farbe je Wert, z. B. name für eine Farbe je Station.",
           "facet": "Ein kleines Diagramm je Wert, z. B. name für ein Feld je Station.",
-          "heatmap": {
-            "x": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
-            "y": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
-            "color": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
-          },
-          "spec": "Das Füllen schreibt sie aus den Feldern oben, und Sie können sie als JSON bearbeiten. Sie darf nur diesen Endpoint lesen, z. B. {example}."
+          "spec": "Das Füllen schreibt sie aus den Feldern oben, und Sie können sie als JSON bearbeiten. Sie darf nur diesen Endpoint lesen, z. B. {example}.",
+          "gridX": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
+          "gridY": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
+          "gridColor": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
         },
         "templates": {
           "bar": "Balkendiagramm",
