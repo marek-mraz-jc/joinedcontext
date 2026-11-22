@@ -303,38 +303,21 @@ fn check_scope(entity: &Value, constraints: &Constraints) -> Result<(), Refusal>
     let Some(granted) = constraints.granted_scopes.as_deref() else {
         return Ok(());
     };
-    let scopes = match entity.get("scope") {
+    let scopes: Option<Vec<&str>> = match entity.get("scope") {
         None => return Ok(()),
-        Some(Value::String(scope)) => vec![scope.as_str()],
-        Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),
-        Some(_) => return Err(Refusal::ScopeOutsideGrant(String::new())),
+        Some(Value::String(scope)) => Some(vec![scope.as_str()]),
+        Some(Value::Array(values)) => values.iter().map(Value::as_str).collect(),
+        Some(_) => None,
     };
-
-    for scope in scopes {
-        if !granted_scopes(granted).any(|prefix| covers(prefix, scope)) {
-            return Err(Refusal::ScopeOutsideGrant(scope.to_owned()));
-        }
+    let Some(scopes) = scopes else {
+        return Err(Refusal::ScopeOutsideGrant(String::new()));
+    };
+    let tree = antares_ql::scope::subtree_scope_q(granted);
+    if tree.is_some_and(|tree| antares_ql::scope::scopes_within(&tree, &scopes)) {
+        Ok(())
+    } else {
+        Err(Refusal::ScopeOutsideGrant(scopes.join(", ")))
     }
-    Ok(())
-}
-
-/// The individual scope paths of a `scopeQ`, whose operators (`;`, `|`, `(`, `)`) separate
-/// the paths themselves.
-fn granted_scopes(scope_q: &str) -> impl Iterator<Item = &str> {
-    scope_q
-        .split(['(', ')', ';', '|', ','])
-        .map(str::trim)
-        .filter(|path| path.starts_with('/'))
-}
-
-/// Whether a granted scope path covers a scope, as a path prefix rather than a string
-/// prefix: `/geo/SK/BB` covers `/geo/SK/BB/Sasova` but not `/geo/SK/BBB`.
-fn covers(granted: &str, scope: &str) -> bool {
-    let granted = granted.trim_end_matches("/#").trim_end_matches('/');
-    scope == granted
-        || scope
-            .strip_prefix(granted)
-            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 #[cfg(test)]
