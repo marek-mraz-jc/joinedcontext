@@ -63,7 +63,7 @@ or userinfo endpoint.
 | P13 | `DELETE /users/{id}` | | | 204 | people.rs:519 | people test |
 | G1 | `GET /groups?briefRepresentation=false&max=1000` | | id, name, attributes (managed-by, jc_org, jc_groups) | 200 | reconciler/groups.rs:207 | `the_group_wave_converges_as_the_reconciler` |
 | G2 | `POST /groups`, `GET /groups?search={name}&exact=true` | name, attributes | | 201 / 200 | groups.rs:331/:344 | group test |
-| G3 | `GET /groups/{id}/members?max=1000`, `PUT`/`DELETE /users/{u}/groups/{g}`, `GET /users/{u}` | | member ids; 404 absent | 200 / 204 | groups.rs:385/:403/:428/:486 | group test |
+| G3 | `GET /groups/{id}/members?first&max=1000`, `PUT`/`DELETE /users/{u}/groups/{g}`, `GET /users/{u}` | | member ids; 404 absent | 200 / 204 | groups.rs:385/:403/:428/:486 | group test |
 | G4 | `PUT /groups/{id}`, `DELETE /groups/{id}` | name, attributes | | 204 | groups.rs:471/:288 | group test |
 | G5 | `GET /groups/{id}/children?briefRepresentation=true&first&max=1000`, `POST /groups/{id}/children` | name `members` | id, name, path of each direct subgroup; 404 another realm's or organization's group | 200 / 201, 409 taken | groups.rs:466/:487 | admin `group_children_stay_within_their_realm_and_organization` |
 | A1 | `GET /groups?briefRepresentation=true&max=1000`, `GET /users/{id}` or `/users?exact=true&{email\|username}=` | | name→id; id, username, email | 200, 404 absent | app_clients.rs:799/:825/:841 | `the_app_wave_converges_an_app_client` |

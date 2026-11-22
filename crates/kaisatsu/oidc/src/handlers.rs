@@ -25,7 +25,7 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use regex::Regex;
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// Shared state for the OIDC protocol router.
@@ -307,12 +307,26 @@ pub async fn resolve_scopes_for_client(
     client: &ClientRepresentation,
     requested_scope_str: Option<&str>,
 ) -> Result<(Vec<ClientScopeRepresentation>, String)> {
-    let all_scopes = store.list_client_scopes(&realm.id).await?;
     let requested_tokens: Vec<&str> = requested_scope_str
         .unwrap_or("openid")
         .split_whitespace()
         .filter(|s| !s.is_empty())
         .collect();
+    // Only what this client and request can name (PRF-08): the defaults, each token and each
+    // token's family. The optional list is never read: it grows with the Endpoints.
+    let mut names: BTreeSet<&str> = client
+        .default_client_scopes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for token in &requested_tokens {
+        names.insert(token);
+        if let Some((family, _)) = token.split_once(':') {
+            names.insert(family);
+        }
+    }
+    let names: Vec<String> = names.into_iter().map(str::to_owned).collect();
+    let named_scopes = store.get_client_scopes(&realm.id, &names).await?;
 
     let mut active_scopes: Vec<ClientScopeRepresentation> = Vec::new();
     let mut granted_tokens: Vec<String> = Vec::new();
@@ -323,7 +337,7 @@ pub async fn resolve_scopes_for_client(
 
     // Include client's default scopes
     for def_name in &client.default_client_scopes {
-        if let Some(sc) = all_scopes.iter().find(|s| &s.name == def_name) {
+        if let Some(sc) = named_scopes.iter().find(|s| &s.name == def_name) {
             if sc.include_in_token_scope() && !granted_tokens.contains(def_name) {
                 granted_tokens.push(def_name.clone());
             }
@@ -370,7 +384,7 @@ pub async fn resolve_scopes_for_client(
         }
         // Parameterized scope check (`family:param`, e.g. `connector:abcdefghij2345672345672345`)
         if let Some((family, param)) = token.split_once(':')
-            && let Some(param_scope) = all_scopes
+            && let Some(param_scope) = named_scopes
                 .iter()
                 .find(|s| s.name == family && s.is_parameterized())
         {
@@ -402,7 +416,7 @@ pub async fn resolve_scopes_for_client(
         // Exact client scope check (e.g. `endpoint:{slug}`, `mcp:portal`, `gateway-hub`, `offline_access`)
         let allowed_on_client = client.default_client_scopes.iter().any(|s| s == token)
             || client.optional_client_scopes.iter().any(|s| s == token)
-            || all_scopes
+            || named_scopes
                 .iter()
                 .any(|s| s.name == token && client.has_optional_scope(s));
         // `jc:read-only` only takes rights away (the gateway refuses every write of its token):
@@ -418,7 +432,7 @@ pub async fn resolve_scopes_for_client(
                 "Invalid scopes: {token}"
             )));
         }
-        if let Some(sc) = all_scopes.iter().find(|s| s.name == token) {
+        if let Some(sc) = named_scopes.iter().find(|s| s.name == token) {
             if !active_scopes.iter().any(|s| s.id == sc.id) {
                 active_scopes.push(sc.clone());
             }

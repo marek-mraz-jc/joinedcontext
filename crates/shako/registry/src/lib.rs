@@ -119,6 +119,26 @@ fn oci_error_response(
         .into_response()
 }
 
+/// A failed write or read of the registry's store: the quota is the client's to resolve,
+/// anything else is ours and is never an absent image.
+fn oci_store_error(e: &ShakoError) -> Response {
+    if matches!(e, ShakoError::QuotaExceeded { .. }) {
+        return oci_error_response(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            "the organization's storage quota is used up",
+            None,
+        );
+    }
+    tracing::error!(error = %e, "registry storage failed");
+    oci_error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "UNKNOWN",
+        "storage error",
+        None,
+    )
+}
+
 fn authenticate_oci(
     state: &ShakoState,
     headers: &HeaderMap,
@@ -498,7 +518,9 @@ async fn oci_post_blob_upload(
                 size_bytes: existing.size_bytes,
                 created_at: TimestampTz::now(),
             };
-            let _ = state.store().upsert_blob(mounted).await;
+            if let Err(e) = state.store().upsert_blob(mounted).await {
+                return oci_store_error(&e);
+            }
             return (
                 StatusCode::CREATED,
                 [
@@ -542,7 +564,7 @@ async fn oci_post_blob_upload(
             &owner,
             &image,
             &clean_digest,
-            &bytes,
+            bytes,
         )
         .await;
     }
@@ -739,7 +761,7 @@ async fn oci_put_blob_upload(
         &owner,
         &image,
         &clean_digest,
-        &buf,
+        buf,
     )
     .await
 }
@@ -751,10 +773,10 @@ async fn finish_blob_store(
     owner: &str,
     image: &str,
     expected_digest: &str,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) -> Response {
     // Verify digest while streaming/storing (Threat T13)
-    let computed = format!("sha256:{}", sha256_hex(bytes));
+    let computed = format!("sha256:{}", sha256_hex(&bytes));
     if computed != expected_digest {
         return oci_error_response(
             StatusCode::BAD_REQUEST,
@@ -763,68 +785,9 @@ async fn finish_blob_store(
             None,
         );
     }
-    let instance = match state.instance_for(instance_id, org_id).await {
-        Ok(instance) => instance,
-        Err(e) => return gitea_error_response(state, &e),
-    };
-    let left = match state.store().get_quota_usage(instance_id, org_id).await {
-        Ok(usage) => instance
-            .max_storage_bytes
-            .saturating_sub(usage.total_bytes()),
-        Err(e) => return gitea_error_response(state, &e),
-    };
-    if bytes.len() as u64 > left {
-        return oci_error_response(
-            StatusCode::FORBIDDEN,
-            "DENIED",
-            "the organization's storage quota is used up",
-            None,
-        );
-    }
-    let disk_path = blob_disk_path(state, owner, &computed);
-    if let Some(parent) = disk_path.parent()
-        && tokio::fs::create_dir_all(parent).await.is_err()
+    if let Err(e) = service::store_image_blob(state, instance_id, org_id, owner, image, bytes).await
     {
-        return oci_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "UNKNOWN",
-            "storage error",
-            None,
-        );
-    }
-    if tokio::fs::write(&disk_path, bytes).await.is_err() {
-        return oci_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "UNKNOWN",
-            "storage write failed",
-            None,
-        );
-    }
-
-    let rec = BlobRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id,
-        org_id,
-        owner: owner.to_owned(),
-        repo_name: image.to_owned(),
-        digest: computed.clone(),
-        size_bytes: bytes.len() as u64,
-        created_at: TimestampTz::now(),
-    };
-    if state.store().upsert_blob(rec).await.is_err() {
-        return oci_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "UNKNOWN",
-            "storage write failed",
-            None,
-        );
-    }
-    if let Err(e) = state
-        .store()
-        .adjust_quota_usage(instance_id, org_id, 0, 0, bytes.len() as i64)
-        .await
-    {
-        tracing::warn!(error = %e, "package storage quota not adjusted after a blob upload");
+        return oci_store_error(&e);
     }
 
     let loc = format!("/v2/{owner}/{image}/blobs/{computed}");
@@ -926,6 +889,20 @@ async fn oci_put_manifest(
 
     let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
     let now = TimestampTz::now();
+    let size_bytes = manifest_bytes.len() as u64;
+    // The manifest first: its quota answer is the push's, and nothing signs what was refused.
+    if let Err(e) = service::store_image_blob(
+        &state,
+        ctx.instance_id,
+        target_org,
+        &owner,
+        &image,
+        manifest_bytes,
+    )
+    .await
+    {
+        return oci_store_error(&e);
+    }
     let pkg = match state
         .store()
         .upsert_package(PackageRecord {
@@ -940,7 +917,7 @@ async fn oci_put_manifest(
         .await
     {
         Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
+        Err(e) => return oci_store_error(&e),
     };
 
     let ver_rec = PackageVersionRecord {
@@ -954,10 +931,9 @@ async fn oci_put_manifest(
         version: reference.clone(),
         digest: computed_digest.clone(),
         media_type,
-        manifest_bytes: manifest_bytes.clone(),
         subject_digest,
         artifact_type,
-        size_bytes: manifest_bytes.len() as u64,
+        size_bytes,
         signed: false,
         created_at: now,
     };
@@ -984,13 +960,8 @@ async fn oci_put_manifest(
             }
         }
     }
-    if state.store().upsert_package_version(ver_rec).await.is_err() {
-        return oci_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "UNKNOWN",
-            "storage write failed",
-            None,
-        );
+    if let Err(e) = state.store().upsert_package_version(ver_rec).await {
+        return oci_store_error(&e);
     }
 
     let _ = emit_and_dispatch_event(
@@ -1050,28 +1021,8 @@ async fn store_cosign_signature_tag(
     // Store the simple-signing payload and the empty config (`{}`) the manifest names as blobs
     let config_bytes: &[u8] = b"{}";
     let config_digest = format!("sha256:{}", sha256_hex(config_bytes));
-    for (digest, bytes) in [
-        (&payload_digest, payload_bytes.as_slice()),
-        (&config_digest, config_bytes),
-    ] {
-        let disk_path = blob_disk_path(state, owner, digest);
-        if let Some(p) = disk_path.parent() {
-            let _ = tokio::fs::create_dir_all(p).await;
-        }
-        let _ = tokio::fs::write(&disk_path, bytes).await;
-        let _ = state
-            .store()
-            .upsert_blob(BlobRecord {
-                id: uuid::Uuid::now_v7(),
-                instance_id,
-                org_id,
-                owner: owner.to_owned(),
-                repo_name: image.to_owned(),
-                digest: digest.clone(),
-                size_bytes: bytes.len() as u64,
-                created_at: TimestampTz::now(),
-            })
-            .await;
+    for bytes in [payload_bytes.clone(), config_bytes.to_vec()] {
+        service::store_image_blob(state, instance_id, org_id, owner, image, bytes).await?;
     }
 
     let sig_tag = format!("sha256-{hex_digest}.sig");
@@ -1094,7 +1045,10 @@ async fn store_cosign_signature_tag(
     });
     let sig_manifest_bytes =
         serde_json::to_vec(&sig_manifest).map_err(|e| ShakoError::Internal(e.to_string()))?;
-    let sig_manifest_digest = format!("sha256:{}", sha256_hex(&sig_manifest_bytes));
+    let sig_manifest_size = sig_manifest_bytes.len() as u64;
+    let sig_manifest_digest =
+        service::store_image_blob(state, instance_id, org_id, owner, image, sig_manifest_bytes)
+            .await?;
 
     state
         .store()
@@ -1109,10 +1063,9 @@ async fn store_cosign_signature_tag(
             version: sig_tag,
             digest: sig_manifest_digest,
             media_type: "application/vnd.oci.image.manifest.v1+json".into(),
-            manifest_bytes: sig_manifest_bytes.clone(),
             subject_digest: Some(image_digest.to_owned()),
             artifact_type: Some("application/vnd.dev.cosign.simplesigning.v1+json".into()),
-            size_bytes: sig_manifest_bytes.len() as u64,
+            size_bytes: sig_manifest_size,
             signed: true,
             created_at: TimestampTz::now(),
         })
@@ -1141,7 +1094,15 @@ async fn oci_get_or_head_manifest(
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
     let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    let Some(ver) = state
+    let unknown = || {
+        oci_error_response(
+            StatusCode::NOT_FOUND,
+            "MANIFEST_UNKNOWN",
+            "manifest unknown",
+            None,
+        )
+    };
+    let ver = match state
         .store()
         .get_package_version(
             ctx.instance_id,
@@ -1152,21 +1113,35 @@ async fn oci_get_or_head_manifest(
             &reference,
         )
         .await
-        .ok()
-        .flatten()
-    else {
-        return oci_error_response(
-            StatusCode::NOT_FOUND,
-            "MANIFEST_UNKNOWN",
-            "manifest unknown",
-            None,
-        );
+    {
+        Ok(Some(ver)) => ver,
+        Ok(None) => return unknown(),
+        Err(e) => return oci_store_error(&e),
     };
+    // The file's path carries the owner's name, so the Organization's own blob row opens it.
+    match state
+        .store()
+        .get_blob(
+            ctx.instance_id,
+            target_org,
+            &owner,
+            Some(&image),
+            &ver.digest,
+        )
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => return unknown(),
+        Err(e) => return oci_store_error(&e),
+    }
 
     let body = if method == axum::http::Method::HEAD {
         Vec::new()
     } else {
-        ver.manifest_bytes
+        match read_manifest(&state, &owner, &ver.digest).await {
+            Ok(bytes) => bytes,
+            Err(e) => return oci_store_error(&e),
+        }
     };
     (
         StatusCode::OK,
@@ -1183,10 +1158,42 @@ async fn oci_get_or_head_manifest(
         .into_response()
 }
 
+/// A manifest's file, hashed again before it is sent.
+async fn read_manifest(state: &ShakoState, owner: &str, digest: &str) -> ShakoResult<Vec<u8>> {
+    use tokio::io::AsyncReadExt as _;
+    let broken = |what: &str| ShakoError::Storage(format!("manifest {digest}: {what}"));
+    let digest = validate_sha256_digest(digest)?;
+    let file = tokio::fs::File::open(blob_disk_path(state, owner, &digest))
+        .await
+        .map_err(|e| broken(&e.to_string()))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_OCI_MANIFEST_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| broken(&e.to_string()))?;
+    if format!("sha256:{}", sha256_hex(&bytes)) != digest {
+        return Err(broken("the stored bytes have another digest"));
+    }
+    Ok(bytes)
+}
+
+/// The most tags one answer holds; `Link` names the next page.
+const MAX_TAGS_PAGE: usize = 1000;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TagsQuery {
+    #[serde(default)]
+    pub n: Option<usize>,
+    #[serde(default)]
+    pub last: Option<String>,
+}
+
 async fn oci_list_tags(
     State(state): State<ShakoState>,
     headers: HeaderMap,
     Path((owner, image)): Path<(String, String)>,
+    Query(q): Query<TagsQuery>,
 ) -> Response {
     let ctx = match authenticate_oci(&state, &headers, Some(&owner)) {
         Ok(c) => c,
@@ -1203,24 +1210,42 @@ async fn oci_list_tags(
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
     let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    let versions = state
+    let count = q.n.unwrap_or(MAX_TAGS_PAGE).min(MAX_TAGS_PAGE);
+    let mut tags = match state
         .store()
-        .list_package_versions(
+        .list_package_tags(
             ctx.instance_id,
             target_org,
-            Some(&owner),
-            Some("container"),
-            Some(&image),
+            &owner,
+            &image,
+            q.last.as_deref(),
+            // One more than the page says whether a next one exists.
+            count + usize::from(count > 0),
         )
         .await
-        .unwrap_or_default();
-    let tags: Vec<String> = versions
-        .into_iter()
-        .map(|v| v.version)
-        .filter(|v| !v.starts_with("sha256:"))
-        .collect();
+    {
+        Ok(tags) => tags,
+        Err(e) => return oci_store_error(&e),
+    };
+    let more = tags.len() > count;
+    tags.truncate(count);
+    let mut link = HeaderMap::new();
+    if more && let Some(last) = tags.last() {
+        let encode =
+            |text| percent_encoding::utf8_percent_encode(text, percent_encoding::NON_ALPHANUMERIC);
+        let next = format!(
+            "</v2/{}/{}/tags/list?n={count}&last={}>; rel=\"next\"",
+            encode(owner.as_str()),
+            encode(image.as_str()),
+            encode(last.as_str())
+        );
+        if let Ok(next) = header::HeaderValue::from_str(&next) {
+            link.insert(header::LINK, next);
+        }
+    }
     (
         StatusCode::OK,
+        link,
         Json(json!({
             "name": format!("{owner}/{image}"),
             "tags": tags,
@@ -1249,20 +1274,16 @@ async fn oci_list_referrers(
         return oci_error_response(StatusCode::NOT_FOUND, "NAME_UNKNOWN", "not found", None);
     }
     let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    let versions = state
+    let versions = match state
         .store()
-        .list_package_versions(
-            ctx.instance_id,
-            target_org,
-            Some(&owner),
-            Some("container"),
-            Some(&image),
-        )
+        .list_referrers(ctx.instance_id, target_org, &owner, &image, &digest)
         .await
-        .unwrap_or_default();
+    {
+        Ok(versions) => versions,
+        Err(e) => return oci_store_error(&e),
+    };
     let manifests: Vec<Value> = versions
         .into_iter()
-        .filter(|v| v.subject_digest.as_deref() == Some(digest.as_str()))
         .map(|v| {
             json!({
                 "mediaType": v.media_type,

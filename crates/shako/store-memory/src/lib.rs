@@ -835,6 +835,68 @@ impl Store for MemoryStore {
         })
     }
 
+    fn list_package_tags(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> StoreFuture<'_, Vec<String>> {
+        let (ow, im) = (owner.to_owned(), image.to_owned());
+        let after = after.map(str::to_owned);
+        Box::pin(async move {
+            let guard = self.inner.read();
+            let Some(t) = guard.tenants.get(&(instance_id, org_id)) else {
+                return Ok(Vec::new());
+            };
+            let mut tags: Vec<String> = t
+                .package_versions
+                .values()
+                .filter(|v| {
+                    v.owner == ow
+                        && v.package_type == "container"
+                        && v.package_name == im
+                        && !v.version.starts_with("sha256:")
+                        && after.as_ref().is_none_or(|a| v.version > *a)
+                })
+                .map(|v| v.version.clone())
+                .collect();
+            tags.sort_unstable();
+            tags.truncate(limit);
+            Ok(tags)
+        })
+    }
+
+    fn list_referrers(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        subject_digest: &str,
+    ) -> StoreFuture<'_, Vec<PackageVersionRecord>> {
+        let (ow, im) = (owner.to_owned(), image.to_owned());
+        let subject = subject_digest.to_owned();
+        Box::pin(async move {
+            let guard = self.inner.read();
+            let Some(t) = guard.tenants.get(&(instance_id, org_id)) else {
+                return Ok(Vec::new());
+            };
+            Ok(t.package_versions
+                .values()
+                .filter(|v| {
+                    v.owner == ow
+                        && v.package_type == "container"
+                        && v.package_name == im
+                        && v.subject_digest.as_ref() == Some(&subject)
+                })
+                .cloned()
+                .collect())
+        })
+    }
+
     fn insert_package_file(&self, file: PackageFileRecord) -> StoreFuture<'_, PackageFileRecord> {
         Box::pin(async move {
             let mut guard = self.inner.write();
@@ -910,6 +972,42 @@ impl Store for MemoryStore {
                 ),
                 blob.clone(),
             );
+            Ok(blob)
+        })
+    }
+
+    fn store_blob(
+        &self,
+        blob: BlobRecord,
+        storage_limit: Option<u64>,
+    ) -> StoreFuture<'_, BlobRecord> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let t = guard
+                .tenants
+                .entry((blob.instance_id, blob.org_id))
+                .or_default();
+            let key = (
+                blob.owner.clone(),
+                blob.repo_name.clone(),
+                blob.digest.clone(),
+            );
+            if let Some(held) = t.blobs.get(&key) {
+                return Ok(held.clone());
+            }
+            if let Some(limit) = storage_limit
+                && t.quota.total_bytes().saturating_add(blob.size_bytes) > limit
+            {
+                return Err(ShakoError::QuotaExceeded {
+                    resource: "package storage".into(),
+                    limit,
+                });
+            }
+            t.quota.instance_id = blob.instance_id;
+            t.quota.org_id = blob.org_id;
+            t.quota.package_bytes = t.quota.package_bytes.saturating_add(blob.size_bytes);
+            t.quota.updated_at = TimestampTz::now();
+            t.blobs.insert(key, blob.clone());
             Ok(blob)
         })
     }

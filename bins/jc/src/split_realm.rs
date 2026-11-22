@@ -25,10 +25,6 @@ pub const RETIRED_ATTRIBUTE: &str = "jc.splitRealm.retiredTo";
 const MANAGED_BY: &str = "managed-by";
 const MANAGED_VALUE: &str = "joinedcontext";
 
-/// Groups and members read per group; an installation has a few hundred people.
-/// ponytail: one page of 100 000, page through `first` once a realm grows past it.
-const MAX_MEMBERS: usize = 100_000;
-
 #[derive(Parser, Debug)]
 #[command(
     name = "jc kaisatsu split-realm",
@@ -146,8 +142,7 @@ async fn placed(
         if !managed(&group) {
             continue;
         }
-        for user in store
-            .list_group_members(realm_id, None, &group.id, MAX_MEMBERS)
+        for user in kaisatsu_core::listing::all_group_members(store, realm_id, &group.id)
             .await
             .map_err(store_err)?
         {
@@ -227,8 +222,7 @@ pub async fn run(
         .await
         .map_err(store_err)?
     {
-        Some(group) => store
-            .list_group_members(&source, None, &group.id, MAX_MEMBERS)
+        Some(group) => kaisatsu_core::listing::all_group_members(store, &source, &group.id)
             .await
             .map_err(store_err)?
             .into_iter()
@@ -236,8 +230,7 @@ pub async fn run(
             .collect(),
         None => BTreeSet::new(),
     };
-    let people = store
-        .list_users(&source, None, None, None, None, false, 0, MAX_MEMBERS)
+    let people = kaisatsu_core::listing::all_users(store, &source)
         .await
         .map_err(store_err)?;
     for user in people
@@ -332,8 +325,7 @@ pub async fn run(
 
 async fn restore(store: &dyn Store, source: &str) -> Result<usize, SplitError> {
     let mut restored = 0;
-    for mut user in store
-        .list_users(source, None, None, None, None, false, 0, MAX_MEMBERS)
+    for mut user in kaisatsu_core::listing::all_users(store, source)
         .await
         .map_err(store_err)?
     {

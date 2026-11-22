@@ -7,6 +7,7 @@ pub mod branding;
 pub mod claims;
 pub mod error;
 pub mod i18n;
+pub mod listing;
 pub mod model;
 pub mod odata_defs;
 pub mod ops;
@@ -22,6 +23,9 @@ pub use claims::{
     known_mapper_kinds,
 };
 pub use error::{KaisatsuError, OAuthErrorResponse, ProblemDetails, Result};
+pub use listing::{
+    FieldMatch, GroupField, GroupWithMembers, ListPage, MAX_PAGE, MatchOp, PersonField,
+};
 pub use model::*;
 pub use odata_defs::{kaisatsu_odata_service, scope_for_context};
 pub use ops::{ODataKind, ODataOperation, ODataParam, OperationDef, OperationRegistry};
