@@ -526,6 +526,24 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    #[test]
+    fn a_fresh_catalogue_states_no_publisher_licence_or_country() {
+        let cat = new_catalogue(
+            OrgId::from_uuid(Uuid::from_u128(1)),
+            CatalogueId::from_uuid(Uuid::from_u128(2)),
+            "default",
+            "opendata.example.org",
+        );
+        assert_eq!(cat.publisher_uri, None, "an invented publisher");
+        assert_eq!(cat.default_licence, None, "an invented licence");
+        let pins: Vec<&str> = cat
+            .active_profiles
+            .iter()
+            .map(|p| p.profile_id.as_str())
+            .collect();
+        assert_eq!(pins, ["dcat-ap-3.0.1"], "a country nobody chose");
+    }
+
     #[tokio::test]
     async fn import_ckan_and_feed_check_work_end_to_end() {
         let org_id = OrgId::from_uuid(Uuid::from_u128(1));

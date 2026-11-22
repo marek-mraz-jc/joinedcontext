@@ -1,0 +1,78 @@
+{
+  "@context": "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld",
+  "distribúcia": [
+    {
+      "formát": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "iri": "https://data.gov.sk/set/vld/resource/csv",
+      "názov": {
+        "en": "JSON distribution in ZIP file",
+        "sk": "JSON distribúcia v ZIP súbore"
+      },
+      "podmienky_použitia": {
+        "autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáza_ako_autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáza_chránená_zvláštnými_právami": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "osobné_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
+        "typ": "Špecifikácia podmienok použitia"
+      },
+      "prístupové_url": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip",
+      "súbor_na_stiahnutie": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip",
+      "typ": "Distribúcia",
+      "typ_média": "http://www.iana.org/assignments/media-types/application/json"
+    },
+    {
+      "iri": "https://data.gov.sk/set/vld/resource/sparql",
+      "podmienky_použitia": {
+        "autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáza_ako_autorské_dielo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáza_chránená_zvláštnými_právami": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "osobné_údaje": "https://data.gov.sk/def/personal-data-occurence-type/2",
+        "typ": "Špecifikácia podmienok použitia"
+      },
+      "prístupové_url": "",
+      "typ": "Distribúcia"
+    }
+  ],
+  "geografické_územie": [
+    "https://data.gov.sk/id/nuts1/SK0"
+  ],
+  "iri": "https://data.gov.sk/set/vld",
+  "kontaktný_bod": {
+    "e-mail": "mailto:info@mindop.sk",
+    "jméno": {
+      "en": "Ministry of Transport",
+      "sk": "Ministerstvo dopravy, Odbor verejnej dopravy"
+    },
+    "meno": {
+      "en": "Ministry of Transport",
+      "sk": "Ministerstvo dopravy, Odbor verejnej dopravy"
+    },
+    "typ": "Organizácia"
+  },
+  "kľúčové_slovo": {
+    "en": [
+      "bus",
+      "public transport",
+      "timetable"
+    ],
+    "sk": [
+      "autobusy",
+      "cestovné poriadky",
+      "verejná linková doprava"
+    ]
+  },
+  "názov": {
+    "en": "Public transport timetables",
+    "sk": "Cestovné poriadky"
+  },
+  "periodicita_aktualizácie": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+  "popis": {
+    "en": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system.",
+    "sk": "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."
+  },
+  "poskytovateľ": "https://data.gov.sk/legal-subject/30416094",
+  "typ": "Dataset",
+  "téma": [
+    "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+  ]
+}

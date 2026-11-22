@@ -1,0 +1,482 @@
+{
+  "@context": {
+    "adms": "http://www.w3.org/ns/adms#",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dcatap": "http://data.europa.eu/r5r/",
+    "dct": "http://purl.org/dc/terms/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "hydra": "http://www.w3.org/ns/hydra/core#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "spdx": "http://spdx.org/rdf/terms#",
+    "vcard": "http://www.w3.org/2006/vcard/ns#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN",
+      "@type": "http://www.w3.org/2004/02/skos/core#Concept",
+      "http://www.w3.org/2004/02/skos/core#prefLabel": {
+        "@language": "en",
+        "@value": "Transport"
+      }
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "@type": "http://purl.org/dc/terms/MediaTypeOrExtent"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+      "@type": "http://purl.org/dc/terms/Frequency"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0",
+      "@type": "http://purl.org/dc/terms/LicenseDocument"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/json",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/zip",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "https://data.gov.sk/def/ontology/transport/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://data.gov.sk/id/nuts1/SK0",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "https://data.gov.sk/legal-subject/30416094",
+      "@type": "http://xmlns.com/foaf/0.1/Agent"
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld",
+      "@type": "http://www.w3.org/ns/dcat#Dataset",
+      "http://purl.org/dc/terms/accrualPeriodicity": {
+        "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://data.gov.sk/def/ontology/transport/"
+      },
+      "http://purl.org/dc/terms/description": [
+        {
+          "@language": "sk",
+          "@value": "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."
+        },
+        {
+          "@language": "en",
+          "@value": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."
+        }
+      ],
+      "http://purl.org/dc/terms/identifier": "vld",
+      "http://purl.org/dc/terms/issued": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/modified": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/publisher": {
+        "@id": "https://data.gov.sk/legal-subject/30416094"
+      },
+      "http://purl.org/dc/terms/spatial": {
+        "@id": "https://data.gov.sk/id/nuts1/SK0"
+      },
+      "http://purl.org/dc/terms/temporal": {
+        "@id": "_:b2"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "sk",
+          "@value": "Cestovné poriadky"
+        },
+        {
+          "@language": "en",
+          "@value": "Public transport timetables"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#contactPoint": {
+        "@id": "_:b1"
+      },
+      "http://www.w3.org/ns/dcat#distribution": [
+        {
+          "@id": "https://data.gov.sk/set/vld/resource/csv"
+        },
+        {
+          "@id": "https://data.gov.sk/set/vld/resource/sparql"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#keyword": [
+        {
+          "@language": "sk",
+          "@value": "autobusy"
+        },
+        {
+          "@language": "en",
+          "@value": "bus"
+        },
+        {
+          "@language": "sk",
+          "@value": "cestovné poriadky"
+        },
+        {
+          "@language": "en",
+          "@value": "public transport"
+        },
+        {
+          "@language": "en",
+          "@value": "timetable"
+        },
+        {
+          "@language": "sk",
+          "@value": "verejná linková doprava"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#landingPage": {
+        "@id": "https://opendata.mindop.sk/show/vld"
+      },
+      "http://www.w3.org/ns/dcat#spatialResolutionInMeters": {
+        "@type": "http://www.w3.org/2001/XMLSchema#decimal",
+        "@value": "12.0"
+      },
+      "http://www.w3.org/ns/dcat#temporalResolution": {
+        "@type": "http://www.w3.org/2001/XMLSchema#duration",
+        "@value": "P1D"
+      },
+      "http://www.w3.org/ns/dcat#theme": [
+        {
+          "@id": "http://eurovoc.europa.eu/4512"
+        },
+        {
+          "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+        }
+      ]
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld/resource/csv",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://opendata.middop.sk/schemy/json-schema.json"
+      },
+      "http://purl.org/dc/terms/format": {
+        "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP"
+      },
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "JSON distribution in ZIP file"
+        },
+        {
+          "@language": "sk",
+          "@value": "JSON distribúcia v ZIP súbore"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#compressFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      },
+      "http://www.w3.org/ns/dcat#downloadURL": {
+        "@id": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#mediaType": {
+        "@id": "http://www.iana.org/assignments/media-types/application/json"
+      },
+      "http://www.w3.org/ns/dcat#packageFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      }
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld/resource/sparql",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": ""
+      }
+    },
+    {
+      "@id": "https://opendata.middop.sk/schemy/json-schema.json",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://opendata.mindop.sk/show/vld",
+      "@type": "http://xmlns.com/foaf/0.1/Document"
+    },
+    {
+      "@id": "_:b1",
+      "@type": [
+        "http://www.w3.org/2006/vcard/ns#Kind",
+        "http://www.w3.org/2006/vcard/ns#Organization"
+      ],
+      "http://www.w3.org/2006/vcard/ns#fn": [
+        {
+          "@language": "sk",
+          "@value": "Ministerstvo dopravy, Odbor verejnej dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Ministry of Transport"
+        }
+      ],
+      "http://www.w3.org/2006/vcard/ns#hasEmail": {
+        "@id": "mailto:info@mindop.sk"
+      }
+    },
+    {
+      "@id": "_:b2",
+      "@type": "http://purl.org/dc/terms/PeriodOfTime",
+      "http://www.w3.org/ns/dcat#endDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2017-12-31"
+      },
+      "http://www.w3.org/ns/dcat#startDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2009-01-01"
+      }
+    }
+  ],
+  "@included": [
+    {
+      "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN",
+      "@type": "http://www.w3.org/2004/02/skos/core#Concept",
+      "http://www.w3.org/2004/02/skos/core#prefLabel": {
+        "@language": "en",
+        "@value": "Transport"
+      }
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "@type": "http://purl.org/dc/terms/MediaTypeOrExtent"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+      "@type": "http://purl.org/dc/terms/Frequency"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0",
+      "@type": "http://purl.org/dc/terms/LicenseDocument"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/json",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/zip",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "https://data.gov.sk/def/ontology/transport/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://data.gov.sk/id/nuts1/SK0",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "https://data.gov.sk/legal-subject/30416094",
+      "@type": "http://xmlns.com/foaf/0.1/Agent"
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld",
+      "@type": "http://www.w3.org/ns/dcat#Dataset",
+      "http://purl.org/dc/terms/accrualPeriodicity": {
+        "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://data.gov.sk/def/ontology/transport/"
+      },
+      "http://purl.org/dc/terms/description": [
+        {
+          "@language": "sk",
+          "@value": "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."
+        },
+        {
+          "@language": "en",
+          "@value": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."
+        }
+      ],
+      "http://purl.org/dc/terms/identifier": "vld",
+      "http://purl.org/dc/terms/issued": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/modified": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/publisher": {
+        "@id": "https://data.gov.sk/legal-subject/30416094"
+      },
+      "http://purl.org/dc/terms/spatial": {
+        "@id": "https://data.gov.sk/id/nuts1/SK0"
+      },
+      "http://purl.org/dc/terms/temporal": {
+        "@id": "_:b2"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "sk",
+          "@value": "Cestovné poriadky"
+        },
+        {
+          "@language": "en",
+          "@value": "Public transport timetables"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#contactPoint": {
+        "@id": "_:b1"
+      },
+      "http://www.w3.org/ns/dcat#distribution": [
+        {
+          "@id": "https://data.gov.sk/set/vld/resource/csv"
+        },
+        {
+          "@id": "https://data.gov.sk/set/vld/resource/sparql"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#keyword": [
+        {
+          "@language": "sk",
+          "@value": "autobusy"
+        },
+        {
+          "@language": "en",
+          "@value": "bus"
+        },
+        {
+          "@language": "sk",
+          "@value": "cestovné poriadky"
+        },
+        {
+          "@language": "en",
+          "@value": "public transport"
+        },
+        {
+          "@language": "en",
+          "@value": "timetable"
+        },
+        {
+          "@language": "sk",
+          "@value": "verejná linková doprava"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#landingPage": {
+        "@id": "https://opendata.mindop.sk/show/vld"
+      },
+      "http://www.w3.org/ns/dcat#spatialResolutionInMeters": {
+        "@type": "http://www.w3.org/2001/XMLSchema#decimal",
+        "@value": "12.0"
+      },
+      "http://www.w3.org/ns/dcat#temporalResolution": {
+        "@type": "http://www.w3.org/2001/XMLSchema#duration",
+        "@value": "P1D"
+      },
+      "http://www.w3.org/ns/dcat#theme": [
+        {
+          "@id": "http://eurovoc.europa.eu/4512"
+        },
+        {
+          "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+        }
+      ]
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld/resource/csv",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://opendata.middop.sk/schemy/json-schema.json"
+      },
+      "http://purl.org/dc/terms/format": {
+        "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP"
+      },
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "JSON distribution in ZIP file"
+        },
+        {
+          "@language": "sk",
+          "@value": "JSON distribúcia v ZIP súbore"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#compressFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      },
+      "http://www.w3.org/ns/dcat#downloadURL": {
+        "@id": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#mediaType": {
+        "@id": "http://www.iana.org/assignments/media-types/application/json"
+      },
+      "http://www.w3.org/ns/dcat#packageFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      }
+    },
+    {
+      "@id": "https://data.gov.sk/set/vld/resource/sparql",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": ""
+      }
+    },
+    {
+      "@id": "https://opendata.middop.sk/schemy/json-schema.json",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://opendata.mindop.sk/show/vld",
+      "@type": "http://xmlns.com/foaf/0.1/Document"
+    },
+    {
+      "@id": "_:b1",
+      "@type": [
+        "http://www.w3.org/2006/vcard/ns#Kind",
+        "http://www.w3.org/2006/vcard/ns#Organization"
+      ],
+      "http://www.w3.org/2006/vcard/ns#fn": [
+        {
+          "@language": "sk",
+          "@value": "Ministerstvo dopravy, Odbor verejnej dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Ministry of Transport"
+        }
+      ],
+      "http://www.w3.org/2006/vcard/ns#hasEmail": {
+        "@id": "mailto:info@mindop.sk"
+      }
+    },
+    {
+      "@id": "_:b2",
+      "@type": "http://purl.org/dc/terms/PeriodOfTime",
+      "http://www.w3.org/ns/dcat#endDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2017-12-31"
+      },
+      "http://www.w3.org/ns/dcat#startDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2009-01-01"
+      }
+    }
+  ]
+}
