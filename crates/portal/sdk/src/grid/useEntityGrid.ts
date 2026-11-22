@@ -793,7 +793,7 @@ function buildColumns(
     cols.push({ key: "entity:createdAt", attr: null, meta: null, label: labels.createdAt, pinned: false });
     cols.push({ key: "entity:modifiedAt", attr: null, meta: null, label: labels.modifiedAt, pinned: false });
   }
-  if (rows.some((row) => row.scope !== undefined)) {
+  if (!left.has("entity:scope") && rows.some((row) => row.scope !== undefined)) {
     cols.push({ key: "entity:scope", attr: null, meta: null, label: labels.scope, pinned: false });
   }
 

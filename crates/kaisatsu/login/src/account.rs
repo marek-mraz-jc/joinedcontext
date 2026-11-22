@@ -199,10 +199,8 @@ async fn console_origins(state: &OidcState, realm: &RealmConfig) -> Result<Vec<S
 
 fn origin_of(raw: &str) -> Option<String> {
     let url = url::Url::parse(raw.trim_end_matches('*')).ok()?;
-    match url.origin() {
-        url::Origin::Tuple(..) => Some(url.origin().ascii_serialization()),
-        url::Origin::Opaque(_) => None,
-    }
+    // Scheme first: Url::origin on a nested blob URL aborts url 2.5.8 (RUSTSEC-2026-0592).
+    matches!(url.scheme(), "http" | "https").then(|| url.origin().ascii_serialization())
 }
 
 /// `Ok(None)` without an `Origin` header, the origin when the console client names it, else
@@ -982,7 +980,22 @@ fn device_of(ua: &str) -> (&'static str, &'static str, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::device_of;
+    use super::{device_of, origin_of};
+
+    #[test]
+    fn only_http_origins_count_as_console_origins() {
+        assert_eq!(
+            origin_of("https://a.example/x*").as_deref(),
+            Some("https://a.example")
+        );
+        assert_eq!(
+            origin_of("http://a.example:8080/").as_deref(),
+            Some("http://a.example:8080")
+        );
+        // A nested blob URL makes url 2.5.8's Url::origin recurse (RUSTSEC-2026-0592): never reach it.
+        assert_eq!(origin_of("blob:blob:https://a.example/x"), None);
+        assert_eq!(origin_of("data:text/plain,a"), None);
+    }
 
     #[test]
     fn a_user_agent_names_browser_and_system() {

@@ -9,12 +9,16 @@ import gzip
 import json
 import os
 import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, quote, unquote
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from phone_check import phone_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 VIZ = ROOT / "vendor" / "viz"
@@ -30,9 +34,34 @@ EVENTS = [
 ]
 NO_WEBGL = ["--disable-gpu", "--disable-webgl", "--disable-3d-apis"]
 SHOTS = os.environ.get("SHOTS_DIR")
+# bbsk-podujatia as the broker answered it on 2026-11-22 (T-7503): [position or null, starts today or later].
+PODUJATIA = [
+    {"type": "Feature", "id": f"urn:ngsi-ld:Event:p{n}", "geometry": at and {"type": "Point", "coordinates": at},
+     "properties": {"type": "Event", "name": f"Podujatie {n}", "upcoming": later}}
+    for n, (at, later) in enumerate(json.loads((Path(__file__).parent / "fixtures" / "bbsk_podujatia.json").read_text()))
+]
 
 
-def serve(style_ok):
+def matching(events, q):
+    """The stub broker's q: the tests ask `upcoming==true` or a search, the map's counts add `!location`."""
+    if word := re.search(r'~="\(\?i\)([^"]*)"', q):
+        events = [e for e in events if word[1].lower() in str(e["properties"]["name"]).lower()]
+    if "!location" in q:
+        events = [e for e in events if not e["geometry"]]
+    if "upcoming" in q:
+        events = [e for e in events if e["properties"].get("upcoming")]
+    return events
+
+
+def in_view(events, asked):
+    if "coordinates" not in asked:
+        return events
+    ring = json.loads(asked["coordinates"][0])[0]
+    (w, s), (e, n) = ring[0], ring[2]
+    return [f for f in events if f["geometry"] and w <= f["geometry"]["coordinates"][0] <= e and s <= f["geometry"]["coordinates"][1] <= n]
+
+
+def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True, fields=()):
     # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
     missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
     if missing:
@@ -79,7 +108,7 @@ def serve(style_ok):
                 types = [{"id": "Event", "type": "EntityType", "typeName": "Event", "attributeNames": ["location", "name"]}]
                 return self.send(200, "application/json", json.dumps(types).encode())
             if path == api + "types/Event":
-                info = {"id": "Event", "typeName": "Event", "entityCount": 2, "attributeDetails": [
+                info = {"id": "Event", "typeName": "Event", "entityCount": len(events), "attributeDetails": [
                     {"attributeName": "location", "attributeTypes": ["GeoProperty"]},
                     {"attributeName": "name", "attributeTypes": ["Property"]}]}
                 return self.send(200, "application/json", json.dumps(info).encode())
@@ -89,18 +118,24 @@ def serve(style_ok):
             if path == f"/api/endpoint/{SLUG}/schema/index.json":
                 return self.send(200, "application/json", json.dumps({"endpoint": SLUG, "models": [{"name": "events", "version": 1, "types": ["Event"]}]}).encode())
             if path == f"/api/endpoint/{SLUG}/schema/v1/json-schema":
-                props = {"name": {"type": "string", "x-ngsi-ld-kind": "Property"}, "location": {"type": "object", "x-ngsi-ld-kind": "GeoProperty"}}
+                props = {"name": {"type": "string", "x-ngsi-ld-kind": "Property"}, "location": {"type": "object", "x-ngsi-ld-kind": "GeoProperty"},
+                         **{field: {"type": "string", "x-ngsi-ld-kind": "Property"} for field in fields}}
                 return self.send(200, "application/json", json.dumps({"definitions": {"Event": {"type": "object", "properties": props}}}).encode())
             if path.startswith(api + "entities/"):
                 id = unquote(path[len(api + "entities/"):])
-                row = [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS if e["id"] == id]
+                row = [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in events if e["id"] == id]
                 return self.send(200, "application/json", json.dumps(row[0]).encode()) if row else self.send(404, "application/json", b"{}")
             if path == api + "entities":
-                count = {"NGSILD-Results-Count": str(len(EVENTS))}
+                asked = parse_qs(query)
+                found = in_view(matching(events, asked.get("q", [""])[0]), asked)
+                count = {"NGSILD-Results-Count": str(len(found))}
+                start = int(asked.get("offset", ["0"])[0])
+                page = found[start : start + min(cap, int(asked.get("limit", ["1000"])[0]))]
                 if "application/geo+json" in (self.headers.get("Accept") or ""):
-                    fc = {"type": "FeatureCollection", "features": EVENTS[: 0 if "limit=0" in query else None]}
-                    return self.send(200, "application/geo+json", json.dumps(fc).encode(), count)
-                rows = [] if "limit=0" in query else [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS]
+                    if not points_ok():
+                        return self.send(503, "application/json", b"{}")
+                    return self.send(200, "application/geo+json", json.dumps({"type": "FeatureCollection", "features": page}).encode(), count)
+                rows = [{"id": e["id"], "type": "Event", **e["properties"], **({"location": e["geometry"]} if e["geometry"] else {})} for e in page]
                 return self.send(200, "application/json", json.dumps(rows).encode(), count)
             return self.send(404, "application/json", b"{}")
 
@@ -116,15 +151,16 @@ def pw():
         yield p
 
 
-def open_explorer(browser, srv, width, lang="en"):
-    page = browser.new_page(viewport={"width": width, "height": 900})
+def open_explorer(browser, srv, width, lang="en", q="", touch=False):
+    page = browser.new_page(viewport={"width": width, "height": 900}, has_touch=touch, is_mobile=touch)
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(f"http://127.0.0.1:{srv.server_port}/viz/explore.html#{SLUG}&type=Event&lang={lang}")
+    page.goto(f"http://127.0.0.1:{srv.server_port}/viz/explore.html#{SLUG}&type=Event&lang={lang}" + (f"&q={quote(q, safe='')}" if q else ""))
     page.wait_for_selector("#map-section:not([hidden])", timeout=20_000)
     # The map starts lazily, once it has stayed near the reader's view.
     page.locator("#map-section").scroll_into_view_if_needed()
-    page.mouse.wheel(0, 2000)
+    if not touch:  # a phone has no wheel
+        page.mouse.wheel(0, 2000)
     return page, errors
 
 
@@ -224,6 +260,319 @@ def test_a_map_whose_style_fails_offers_a_retry_that_draws_it(pw, width):
         page.wait_for_function("() => window.jcExploreMap && window.jcExploreMap.getSource('jc-pts')", timeout=20_000)
         assert page.locator("#map-off").is_hidden()
         assert page.locator("#map-from").is_visible() and page.locator("#map-panel-open").is_visible()
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+WEBGL = ["--disable-dev-shm-usage", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"]
+# The drawn badges and the view, in the map's own pixels.
+DRAWN = """() => {
+  const m = self.jcExploreMap;
+  const badges = m.getSource("jc-pts").serialize().data.features.map((f) => {
+    const p = m.project(f.geometry.coordinates);
+    return {x: p.x, y: p.y, r: f.properties.jcR, n: f.properties.jcStack};
+  });
+  const c = m.getContainer();
+  return {badges, bounds: m.getBounds().toArray(), w: c.clientWidth, h: c.clientHeight};
+}"""
+
+
+def wait_drawn(page):
+    page.wait_for_function("() => self.jcExploreMap && !document.getElementById('map-count').hidden && self.jcExploreMap.loaded()", timeout=40_000)
+
+
+def overlaps(badges):
+    return [(a, b) for i, a in enumerate(badges) for b in badges[i + 1:]
+            if abs(a["x"] - b["x"]) < a["r"] + b["r"] and abs(a["y"] - b["y"]) < a["r"] + b["r"]]
+
+
+@pytest.mark.parametrize("width, lang", [(1440, "en"), (400, "sk")])
+@pytest.mark.parametrize("case", ["all", "default-filter", "all-located", "none-located", "bratislava"])
+def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, width, lang, case):
+    """T-7503: the owner's page read "49 of 200" beside 234 Events, the badges one on another."""
+    events = {
+        "all-located": [e for e in PODUJATIA if e["geometry"]],
+        "none-located": [{**e, "geometry": None} for e in PODUJATIA[:7]],
+        "bratislava": EVENTS,
+    }.get(case, PODUJATIA)
+    q = "upcoming==true" if case == "default-filter" else ""
+    shown = matching(events, q)
+    points = [e["geometry"]["coordinates"] for e in shown if e["geometry"]]
+    n, none = len(points), len(shown) - len(points)
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, events)
+    try:
+        page, errors = open_explorer(browser, srv, width, lang, q)
+        if not points:
+            # No row has a place: the reason stands in the map's box, with no empty map above it.
+            page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+            note = page.locator("#map-note").inner_text()
+            assert note.startswith({"en": f"None of the {none} records", "sk": f"Žiadny zo záznamov tohto dopytu ({none}) nemá polohu"}[lang])
+            assert page.locator("#map").is_hidden() and page.locator("#map-count").is_hidden()
+            shot(page, f"map-{case}-open-{width}")
+            assert errors == []
+            return
+        wait_drawn(page)
+        line = {"en": f"{n} in view · {n} of {n + none} with a location · {none} without", "sk": f"Vo výreze: {n} · s polohou: {n} z {n + none} · bez polohy: {none}"}[lang]
+        assert page.locator("#map-count").inner_text() == line
+        of = page.locator("#grid-count")
+        if of.is_visible():
+            assert not page.locator(".jc-grid-pager .jc-grid-total").is_visible()  # one count, named against its total
+        if q:
+            of.wait_for(state="visible", timeout=10_000)
+            assert of.inner_text() == {"en": "200 of 234 records match the filter · 34 hidden", "sk": "Filtru vyhovuje 200 z 234 záznamov · skrytých: 34"}[lang]
+        else:
+            assert of.is_hidden()
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        assert all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
+        assert sum(b["n"] for b in view["badges"]) == n
+        assert all(b["r"] <= b["x"] <= view["w"] - b["r"] and b["r"] <= b["y"] <= view["h"] - b["r"] for b in view["badges"]), view
+        assert overlaps(view["badges"]) == []
+        page.wait_for_timeout(800)
+        shot(page, f"map-{case}-open-{width}")
+        zoom = page.evaluate("() => self.jcExploreMap.getZoom()")
+        for step in (1, 1.6, 3):
+            page.evaluate("(z) => self.jcExploreMap.jumpTo({zoom: z})", zoom + step)
+            page.wait_for_function("() => self.jcExploreMap.loaded()", timeout=20_000)
+            view = page.evaluate(DRAWN)
+            assert sum(b["n"] for b in view["badges"]) == n
+            assert overlaps(view["badges"]) == [], step
+            page.wait_for_timeout(500)
+            if step == 1:
+                shot(page, f"map-{case}-zoomed-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA, cap=200)
+    try:
+        page, errors = open_explorer(browser, srv, 1440)
+        wait_drawn(page)
+        assert page.locator("#map-note").inner_text() == "The map draws up to 200 records at a time; zoom in for the rest."
+        drawn = sum(1 for e in PODUJATIA[:200] if e["geometry"])
+        tail = f"{drawn} of 231 with a location drawn · 3 without"
+        page.wait_for_function("(tail) => document.getElementById('map-count').textContent.endsWith(tail)", arg=tail, timeout=10_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_query_matching_nothing_says_so_in_place_of_the_map(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, [{**e, "properties": {**e["properties"], "upcoming": False}} for e in PODUJATIA])
+    try:
+        page, errors = open_explorer(browser, srv, 400, q="upcoming==true")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+        assert page.locator("#map-note").inner_text() == "No record matches this query, so there is nothing to map."
+        shot(page, "map-no-match-400")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_search_narrows_the_map_and_both_counts_with_the_table(pw):
+    """T-7503: a search matched no row while the map drew all 231 points and said the table lists the same."""
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA)
+    try:
+        page, errors = open_explorer(browser, srv, 400)
+        wait_drawn(page)
+        box = page.locator('[data-testid="grid-toolbar"] > input[type="search"]')
+        box.fill("Podujatie 23")
+        found = [e for e in PODUJATIA if "podujatie 23" in e["properties"]["name"].lower()]
+        page.wait_for_function("(line) => document.getElementById('grid-count').textContent === line", arg=f"{len(found)} of 234 records match the filter · {234 - len(found)} hidden", timeout=15_000)
+        located = sum(1 for e in found if e["geometry"])
+        page.wait_for_function("(tail) => document.getElementById('map-count').textContent.includes(tail)", arg=f"{located} of {len(found)} with a location", timeout=15_000)
+        page.wait_for_timeout(1200)
+        shot(page, "map-search-400")
+        zoom = page.evaluate("""() => { const m = document.querySelector("#map").getBoundingClientRect(), c = document.querySelector("#map .maplibregl-ctrl-top-right .maplibregl-ctrl").getBoundingClientRect();
+                                       return {left: c.left - m.left, bottom: c.bottom - m.top}; }""")
+        under = [b for b in page.evaluate(DRAWN)["badges"] if b["x"] + b["r"] > zoom["left"] and b["y"] - b["r"] < zoom["bottom"]]
+        assert under == [], zoom  # the fit keeps a marker from under the zoom buttons
+        assert "~=" not in unquote(page.url.partition("&q=")[2])  # the search is never written as a query the reader typed
+        box.fill("qqqzzz")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=15_000)
+        assert page.locator("#map-note").inner_text() == "No record matches this query, so there is nothing to map."
+        shot(page, "map-search-none-400")
+        box.fill("")
+        page.wait_for_function("() => document.getElementById('map-count').textContent.includes('231 of 234 with a location')", timeout=15_000)
+        page.wait_for_function("() => document.getElementById('grid-count').hidden", timeout=15_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [1440, 400])
+def test_a_failed_read_of_the_points_shows_no_empty_map_and_retries(pw, width):
+    browser = pw.chromium.launch(args=WEBGL)
+    ok = {"points": False}
+    srv = serve(lambda: True, PODUJATIA, points_ok=lambda: ok["points"])
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.locator("#map-off").wait_for(state="visible", timeout=40_000)
+        assert page.locator("#map").is_hidden()
+        assert "503" in page.locator("#map-off-text").inner_text()
+        shot(page, f"map-read-failed-{width}")
+        ok["points"] = True
+        page.locator("#map-retry").click()
+        page.wait_for_selector("#map", state="visible", timeout=20_000)
+        wait_drawn(page)
+        assert page.locator("#map-off").is_hidden()
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_query_with_places_after_one_without_fits_its_points_again(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    placeless = [{**e, "geometry": e["geometry"] if not e["properties"]["upcoming"] else None} for e in PODUJATIA]
+    srv = serve(lambda: True, placeless)
+    try:
+        page, errors = open_explorer(browser, srv, 1440, q="upcoming==true")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+        page.get_by_role("button", name=re.compile("Clear (all )?filters", re.IGNORECASE)).first.click()
+        page.wait_for_selector("#map", state="visible", timeout=20_000)
+        wait_drawn(page)
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        points = [e["geometry"]["coordinates"] for e in placeless if e["geometry"]]
+        assert view["w"] > 0 and all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [1440, 400])
+def test_the_table_is_one_card_led_by_the_name_and_cuts_no_column(pw, width):
+    """T-7503, the owner's "this formating is odd": two button styles, a band for one button, a blank filter row, the id first."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    srv = serve(lambda: True)
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        look = page.evaluate("""() => {
+          const scroll = document.querySelector(".jc-grid-scroll"), bar = document.querySelector('[data-testid="grid-toolbar"]');
+          return {first: document.querySelector("#grid thead th").innerText, heads: document.querySelector("#grid thead tr").innerText,
+                  band: !!document.querySelector(".jc-grid .jc-grid-toolbar"), filterRow: !!document.querySelector(".jc-grid-filter-row"),
+                  arrange: !!bar.querySelector(".jc-grid-arrange-toggle"), select: !!bar.querySelector(":scope select"),
+                  borders: new Set([...bar.querySelectorAll(":scope > details > summary, :scope > button")].map((b) => getComputedStyle(b).borderTopStyle + getComputedStyle(b).borderTopWidth)).size,
+                  frame: getComputedStyle(document.querySelector(".jc-grid")).borderTopWidth,
+                  sw: scroll.scrollWidth, cw: scroll.clientWidth,
+                  cut: [...document.querySelectorAll("#grid tbody td .jc-grid-open")].filter((b) => b.scrollWidth > b.clientWidth + 1).length};
+        }""")
+        assert look["first"].lower().startswith("name") and not re.search(r"\bID\b|\bType\b", look["heads"]), look
+        assert not look["band"] and not look["filterRow"] and look["arrange"], look
+        assert not look["select"], look  # one type: nothing to pick
+        assert look["borders"] <= 1 and look["frame"] == "0px", look
+        assert look["sw"] <= look["cw"] and look["cut"] == 0, look
+        shot(page, f"table-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [360, 400])
+def test_a_phone_reads_at_body_size_counts_the_readers_hides_and_breaks_no_word(pw, width):
+    """T-7503, the review's four phone findings: 10 px labels, a badge of the phone's own hides, a second menu glyph, "Dokumentarn/y"."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    said = {"name": "Dokumentárny film ,,ZÓNY NIKOHO“", "start": "23. 11. 2026, 18:00",
+            "organizer": "Fakulta politických vied a medzinárodných vzťahov Univerzity Mateja Bela"}
+    # The table reads normalized rows.
+    events = [{**event, "properties": {field: {"type": "Property", "value": value} for field, value in said.items()}} for event in EVENTS]
+    srv = serve(lambda: True, events, fields=("start", "organizer"))
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        bar = page.locator('[data-testid="grid-toolbar"]')
+        body = page.evaluate("() => parseFloat(getComputedStyle(document.body).fontSize)")
+        sizes = page.evaluate("""() => [...document.querySelectorAll('[data-testid="grid-toolbar"] :is(summary, button, input, select, label, legend), #map-panel-open')]
+                                 .map((e) => [e.textContent.trim().slice(0, 30), parseFloat(getComputedStyle(e).fontSize)])""")
+        assert [each for each in sizes if each[1] < body] == []
+        tools = bar.locator(":scope > details > summary")
+        assert tools.inner_text().strip() == "Tools"  # the phone hid two columns, the reader none
+        icon = page.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.jc-arrange-slot .jc-grid-menu-icon')).fontSize)")
+        assert icon == 0  # a drawn columns icon, not the menu's three lines
+        shot(page, f"phone-open-{width}")
+        tools.click()
+        bar.get_by_text("Hide fields", exact=True).click()
+        bar.get_by_label(re.compile("^organizer$", re.IGNORECASE)).check()
+        page.wait_for_function("() => document.querySelectorAll('#grid tbody tr:first-child td').length >= 3")
+        assert tools.inner_text().strip() == "Tools"
+        shot(page, f"phone-menu-{width}")
+        page.keyboard.press("Escape")
+        page.evaluate("() => document.querySelectorAll('[data-testid=grid-toolbar] details[open]').forEach((d) => (d.open = false))")
+        look = page.evaluate("""() => {
+          const name = document.querySelector("#grid tbody .jc-grid-open"), scroll = document.querySelector(".jc-grid-scroll");
+          const text = document.createTreeWalker(name, NodeFilter.SHOW_TEXT).nextNode(), range = document.createRange(), broken = [];
+          for (const word of text.data.matchAll(/\\S+/g)) {
+            range.setStart(text, word.index); range.setEnd(text, word.index + word[0].length);
+            if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) broken.push(word[0]);
+          }
+          return {broken, name: name.closest("td").getBoundingClientRect().width, sw: scroll.scrollWidth, cw: scroll.clientWidth,
+                  cells: [...new Set([...document.querySelectorAll("#grid tbody td")].map((td) => getComputedStyle(td).backgroundColor))]};
+        }""")
+        assert look["broken"] == [] and look["name"] >= 120 and look["sw"] > look["cw"], look
+        assert look["cells"] == ["rgba(0, 0, 0, 0)"], look  # the edge's shadow shows through every row
+        shot(page, f"phone-restored-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_the_phone_check_finds_no_small_text_or_target(pw):
+    """T-7503, T-7512's page check: 28 px header buttons, 36 px pages and 20 px links were each a high finding."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    said = [{**e, "properties": {"name": {"type": "Property", "value": f"Event {n}"}}} for n, e in enumerate(PODUJATIA)]
+    srv = serve(lambda: True, said)
+    try:
+        page, errors = open_explorer(browser, srv, 400, touch=True)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        assert phone_hits(page) == []
+        assert min(page.eval_on_selector_all("#grid tbody tr", "rows => rows.map((r) => r.getBoundingClientRect().height)")) >= 43.5
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_the_wheel_scrolls_the_page_and_only_ctrl_with_it_zooms_the_map(pw):
+    """T-7503: a reader scrolling past the map found it zoomed into Banská Bystrica, "49 of 200"."""
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA)
+    try:
+        page, errors = open_explorer(browser, srv, 1440)
+        wait_drawn(page)
+        page.locator("#map").scroll_into_view_if_needed()
+        box = page.locator("#map").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        zoom, top = page.evaluate("() => [self.jcExploreMap.getZoom(), scrollY]")
+        for _ in range(4):
+            page.mouse.wheel(0, -240)
+            page.wait_for_timeout(100)
+        page.wait_for_timeout(700)
+        after, moved = page.evaluate("() => [self.jcExploreMap.getZoom(), scrollY]")
+        assert after == zoom and moved < top
+        page.locator("#map").scroll_into_view_if_needed()
+        box = page.locator("#map").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.keyboard.down("Control")
+        page.mouse.wheel(0, -240)
+        page.keyboard.up("Control")
+        page.wait_for_function("(z) => self.jcExploreMap.getZoom() > z", arg=zoom, timeout=5_000)
         assert errors == []
     finally:
         browser.close()
