@@ -1212,6 +1212,7 @@ mod tests {
         }));
         let hub = Hub::new("s", 10);
         let jana = Subject {
+            id: Some("0f5a".into()),
             user: Some("jana".into()),
             ..Subject::default()
         };
@@ -1236,13 +1237,15 @@ mod tests {
         );
         for named in [
             "WebSocket",
-            "jana",
+            "user:0f5a",
             "BikeTrip.rider",
             "urn:ngsi-ld:BikeTrip:t1",
         ] {
             assert!(text.contains(named), "{named} missing: {text}");
         }
         assert!(!text.contains("BikeTrip:t2"), "{text}");
+        // The person by id, never by username (OBS-01, T-7542).
+        assert!(!text.contains("jana"), "{text}");
     }
 
     /// S-3-12: a caller whose access ended closes with `access-ended`, its filters leave the
