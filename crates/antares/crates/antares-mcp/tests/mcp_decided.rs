@@ -126,9 +126,9 @@ async fn writes() -> Result<(TestBroker, Router), String> {
         std::env::set_var(antares_mcp::CONFIRM_URL_ENV, PAGE);
         std::env::set_var("ANTARES_POLICY_SUBJECT_HEADERS", "x-jc-subject");
     });
-    let broker = TestBroker::new()
-        .await?
-        .with_admin(antares_mcp::confirmations());
+    let broker = TestBroker::new().await?;
+    let routes = antares_mcp::confirmations(broker.confirmations());
+    let broker = broker.with_admin(routes);
     let app = broker.serve(antares_mcp::Mcp)?;
     let view = json!({"id": "writes", "tenant": "w", "selector": ["Car"],
         "rules": [{"types": ["Car"], "attributes": ["speed"]}],
@@ -256,6 +256,34 @@ async fn a_page_needs_a_client_that_opens_it_and_bounds_each_person() -> Result<
     Ok(())
 }
 
+/// T-7507: two replicas over one store: asked on the first, decided and
+/// written once through the second, which still answers with the first gone.
+#[tokio::test]
+async fn either_replica_decides_and_the_write_runs_once() -> Result<(), String> {
+    let (first, app) = writes().await?;
+    let second = first.sibling().await?;
+    let routes = antares_mcp::confirmations(second.confirmations());
+    let second = second.with_admin(routes);
+    let other = second.serve(antares_mcp::Mcp)?;
+    let car = json!({"id": "urn:ngsi-ld:Car:d4", "type": "Car",
+        "speed": {"type": "Property", "value": 8}});
+    let asked = create(&app, "dave", &car, &json!({})).await;
+    let id = asked
+        .pointer("/inputRequests/confirm/params/elicitationId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    drop((first, app));
+    assert_eq!(decide(&other, &id, "accept", "dave").await, StatusCode::OK);
+    let retry = json!({"requestState": asked.get("requestState")});
+    let written = create(&other, "dave", &car, &retry).await;
+    assert_eq!(refusal(&written), "", "{written}");
+    let again = create(&other, "dave", &car, &retry).await;
+    assert!(refusal(&again).contains("does not answer"), "{again}");
+    assert_eq!(cars(&other).await, 1);
+    Ok(())
+}
+
 /// The decision routes sit behind the admin credential like every other
 /// `/q` route: no secret, a wrong one or the bare secret is refused, the
 /// secret is served, and no other method is (`antares-icsr`'s
@@ -264,9 +292,10 @@ async fn a_page_needs_a_client_that_opens_it_and_bounds_each_person() -> Result<
 async fn the_decision_routes_refuse_a_caller_without_the_admin_secret() -> Result<(), String> {
     const SECRET: &str = "the-mcp-decision-secret-of-at-least-32-bytes";
     let auth = antares_ops::test_kit::AdminAuth::new(SECRET, false)?;
-    let app = TestBroker::new()
-        .await?
-        .with_admin(antares_mcp::confirmations())
+    let broker = TestBroker::new().await?;
+    let routes = antares_mcp::confirmations(broker.confirmations());
+    let app = broker
+        .with_admin(routes)
         .with_admin_auth(auth)
         .serve(antares_mcp::Mcp)?;
     let good = format!("Bearer {SECRET}");

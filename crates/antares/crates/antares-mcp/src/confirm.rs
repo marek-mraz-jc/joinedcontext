@@ -3,32 +3,44 @@
 //! call of a write tool answers an `InputRequiredResult` whose
 //! `requestState` is sealed with HMAC-SHA256 over the call (view, subject,
 //! tool and arguments) and expires after [`TTL`]; the retry that carries it
-//! back is run once, and a second retry with the same state is refused.
+//! back is run once on whichever replica (T-7507: the store holds what was
+//! spent), and a second retry with the same state is refused.
 
 use crate::REQUEST_STATE_KEY_FILE_ENV;
+use antares_ops::{Caps, NgsiError, TenantConfirmations, TenantId};
 use rmcp::model::{RequestStateCodec, SealOptions};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{LazyLock, OnceLock};
+use std::time::Duration;
 
 /// How long the person has to answer.
 pub(crate) const TTL: Duration = Duration::from_secs(600);
 
-/// The most confirmations spent within one [`TTL`]; past it a retry is
-/// refused until the oldest expire, so the spent set stays bounded.
-const MAX_SPENT: usize = 100_000;
+/// The most confirmations spent within one [`TTL`] in a Tenant, and by one
+/// subject in it, so one caller cannot lock every other caller out.
+const SPENT: Caps = Caps {
+    tenant: 100_000,
+    subject: 1000,
+};
 
-/// The most confirmations one subject spends within one [`TTL`], so one
-/// caller cannot fill [`MAX_SPENT`] and lock every other caller out.
-const MAX_SPENT_PER_SUBJECT: usize = MAX_SPENT / 100;
+/// The key a host hands over where the deployment names no key file.
+static HOSTED_KEY: OnceLock<Vec<u8>> = OnceLock::new();
 
-/// The codec of this process: the deployment's key, else one drawn at
-/// start. `None` when a key file is named and cannot be used: then no write
-/// is confirmed at all.
+/// See [`crate::default_request_state_key`].
+pub(crate) fn host_key(key: &[u8]) {
+    let _first_wins = HOSTED_KEY.set(key.to_vec());
+}
+
+/// The codec of this process: the deployment's key file, else the host's
+/// key, else one drawn at start. `None` when a key file is named and cannot
+/// be used: then no write is confirmed at all.
 fn codec() -> Option<&'static RequestStateCodec> {
-    static CODEC: LazyLock<Option<RequestStateCodec>> =
-        LazyLock::new(|| codec_of(key_file(std::env::var_os(REQUEST_STATE_KEY_FILE_ENV))));
+    static CODEC: LazyLock<Option<RequestStateCodec>> = LazyLock::new(|| {
+        codec_of(
+            key_file(std::env::var_os(REQUEST_STATE_KEY_FILE_ENV))
+                .or_else(|| HOSTED_KEY.get().cloned().map(Ok)),
+        )
+    });
     CODEC.as_ref()
 }
 
@@ -39,7 +51,7 @@ fn key_file(path: Option<std::ffi::OsString>) -> Option<Result<Vec<u8>, String>>
 }
 
 /// The codec of the key `read` from the deployment's file, or of a key
-/// drawn now when no file is named.
+/// drawn now when neither a file nor a host names one.
 fn codec_of(read: Option<Result<Vec<u8>, String>>) -> Option<RequestStateCodec> {
     let key = match read {
         // two v4 UUIDs: 244 bits from the operating system's generator
@@ -63,93 +75,91 @@ fn codec_of(read: Option<Result<Vec<u8>, String>>) -> Option<RequestStateCodec> 
     codec
 }
 
-/// The confirmations already spent, per subject, with when each expires.
-#[derive(Default)]
-struct Spent {
-    by_subject: HashMap<String, HashMap<String, Instant>>,
-    total: usize,
-}
-
-impl Spent {
-    /// Forget the nonces expired at `now`, and the subjects left without one.
-    fn forget_expired(&mut self, now: Instant) {
-        self.by_subject
-            .values_mut()
-            .for_each(|n| n.retain(|_, until| *until > now));
-        self.by_subject.retain(|_, n| !n.is_empty());
-        self.total = self.by_subject.values().map(HashMap::len).sum();
-    }
-}
-
-static SPENT: LazyLock<Mutex<Spent>> = LazyLock::new(Mutex::default);
-
-/// What a call is bound to: its view, the caller's subject, the tool and
-/// its arguments as sent (a `Map` serializes its members sorted).
+/// What a call is bound to: its Tenant, view, the caller's subject, the
+/// tool and its arguments as sent (a `Map` serializes its members sorted).
 pub(crate) fn bound_to(
+    tenant: &str,
     view: &str,
     subject: &[(String, Vec<u8>)],
     tool: &str,
     given: &Map<String, Value>,
 ) -> Vec<u8> {
-    json!([view, subject, tool, given]).to_string().into_bytes()
+    json!([tenant, view, subject, tool, given])
+        .to_string()
+        .into_bytes()
 }
 
-/// A fresh `requestState` for the call `bound` names and the nonce it
+/// A fresh `requestState` for the call `bound` names and the question id it
 /// seals, or `None` when the process has no usable key.
-pub(crate) fn seal(bound: &[u8]) -> Option<(String, String)> {
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let state = codec()?.seal_with(
-        nonce.as_bytes(),
+pub(crate) fn seal(tenant: &str, bound: &[u8]) -> Option<(String, String)> {
+    let id = id_of(&uuid::Uuid::new_v4().simple().to_string(), tenant);
+    Some((sealed(codec()?, &id, bound), id))
+}
+
+fn sealed(codec: &RequestStateCodec, id: &str, bound: &[u8]) -> String {
+    codec.seal_with(
+        id.as_bytes(),
         &SealOptions::new().associated_data(bound).ttl(TTL),
-    );
-    Some((state, nonce))
+    )
 }
 
-/// The nonce `state` seals when this process sealed it for the call
-/// `bound` names and it has not expired; spent or not.
+/// A question's id: the nonce, a hyphen and its Tenant in hex, so the admin
+/// route that gets the id alone works inside that Tenant and never reads
+/// across them.
+fn id_of(nonce: &str, tenant: &str) -> String {
+    use std::fmt::Write as _;
+    let hex = tenant.bytes().fold(String::new(), |mut hex, byte| {
+        // writing to a String cannot fail
+        let _written = write!(hex, "{byte:02x}");
+        hex
+    });
+    format!("{nonce}-{hex}")
+}
+
+/// The Tenant an id of [`id_of`] names; `None` for any other string.
+pub(crate) fn tenant_of(id: &str) -> Option<TenantId> {
+    let (nonce, hex) = id.split_once('-')?;
+    let lower_hex = |s: &str| s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let sized = nonce.len() == 32
+        && !hex.is_empty()
+        && hex.len().is_multiple_of(2)
+        && hex.len() <= TenantId::MAX_LEN.saturating_mul(2);
+    if !sized || !lower_hex(nonce) || !lower_hex(hex) {
+        return None;
+    }
+    let name: Vec<u8> = hex
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect::<Option<_>>()?;
+    TenantId::new(std::str::from_utf8(&name).ok()?).ok()
+}
+
+/// The id `state` seals when it was sealed under this deployment's key for
+/// the call `bound` names and it has not expired; spent or not.
 pub(crate) fn opened(state: &str, bound: &[u8]) -> Option<String> {
-    codec()
-        .and_then(|c| c.open_with(state, bound).ok())
-        .and_then(|n| String::from_utf8(n).ok())
+    codec().and_then(|c| opened_with(c, state, bound))
 }
 
-/// Whether `state` was sealed by this process for the call `bound` names,
-/// has not expired, and was not spent before; it is spent now. Every
-/// failure is the same `false` (rmcp: "map all token-opening failures to a
-/// single client-facing error").
-pub(crate) fn redeem(state: &str, bound: &[u8], subject: &[(String, Vec<u8>)]) -> bool {
-    let Some(nonce) = opened(state, bound) else {
-        return false;
-    };
-    spend(&SPENT, json!(subject).to_string(), nonce, Instant::now())
+fn opened_with(codec: &RequestStateCodec, state: &str, bound: &[u8]) -> Option<String> {
+    let id = codec.open_with(state, bound).ok()?;
+    String::from_utf8(id).ok()
 }
 
-/// Record `nonce` as spent by `subject` at `now`: `false` when it was spent
-/// before, or the subject's share or the whole set is full of unexpired ones.
-fn spend(spent: &Mutex<Spent>, subject: String, nonce: String, now: Instant) -> bool {
-    // a holder that panicked left the map whole: an insert is one step
-    let mut spent = spent
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let held = spent.by_subject.get(&subject);
-    if held.is_some_and(|n| n.contains_key(&nonce)) {
-        return false;
+/// Whether `state` was sealed for the call `bound` names, has not expired,
+/// and was not spent on any replica; it is spent now. Every refusal is the
+/// same `false` (rmcp: "map all token-opening failures to a single
+/// client-facing error").
+pub(crate) async fn redeem(
+    kept: &TenantConfirmations,
+    state: &str,
+    bound: &[u8],
+    subject: &[(String, Vec<u8>)],
+) -> Result<bool, NgsiError> {
+    match opened(state, bound) {
+        Some(id) => kept.spend(&id, &subject.to_vec(), TTL, SPENT).await,
+        None => Ok(false),
     }
-    if spent.total >= MAX_SPENT || held.is_some_and(|n| n.len() >= MAX_SPENT_PER_SUBJECT) {
-        spent.forget_expired(now);
-    }
-    let held = spent.by_subject.get(&subject).map_or(0, HashMap::len);
-    if spent.total >= MAX_SPENT || held >= MAX_SPENT_PER_SUBJECT {
-        return false;
-    }
-    let until = now.checked_add(TTL).unwrap_or(now);
-    spent
-        .by_subject
-        .entry(subject)
-        .or_default()
-        .insert(nonce, until);
-    spent.total = spent.total.saturating_add(1);
-    true
 }
 
 /// Whether the person accepted: the `confirm` answer is an accepted
@@ -238,58 +248,108 @@ fn listed(list: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use antares_ops::test_kit::TestBroker;
 
-    #[test]
-    fn a_state_opens_for_its_own_call_once() {
-        let call = bound_to("v", &[], "delete_entity", &Map::new());
-        let (state, _) = seal(&call).unwrap_or_default();
-        assert_ne!(state, "");
-        let other = bound_to("w", &[], "delete_entity", &Map::new());
-        assert!(!redeem(&state, &other, &[]));
-        assert!(redeem(&state, &call, &[]));
-        assert!(!redeem(&state, &call, &[]));
-        assert!(!redeem("rs1.x.y", &call, &[]));
+    fn tenant(name: &str) -> TenantId {
+        TenantId::new(name).unwrap_or_default()
     }
 
-    #[test]
-    fn the_spent_set_is_bounded_and_forgets_expired_nonces() {
-        let spent = Mutex::default();
-        let start = Instant::now();
-        for n in 0..MAX_SPENT {
-            let who = (n / MAX_SPENT_PER_SUBJECT).to_string();
-            assert!(spend(&spent, who, n.to_string(), start));
+    #[tokio::test]
+    async fn a_state_opens_for_its_own_call_once() -> Result<(), String> {
+        let kept = TestBroker::new().await?.confirmations().of(tenant("t"));
+        let bound = |tenant, view| bound_to(tenant, view, &[], "delete_entity", &Map::new());
+        let call = bound("t", "v");
+        let (state, id) = seal("t", &call).unwrap_or_default();
+        assert_eq!(opened(&state, &call), Some(id));
+        for other in [bound("t", "w"), bound("u", "v")] {
+            assert_eq!(redeem(&kept, &state, &other, &[]).await.ok(), Some(false));
         }
-        assert!(!spend(&spent, "new".into(), "full".into(), start));
-        assert!(!spend(&spent, "0".into(), "0".into(), start));
-        let later = start.checked_add(TTL.saturating_mul(2)).unwrap_or(start);
-        assert!(spend(&spent, "new".into(), "full".into(), later));
+        assert_eq!(redeem(&kept, &state, &call, &[]).await.ok(), Some(true));
+        assert_eq!(redeem(&kept, &state, &call, &[]).await.ok(), Some(false));
+        assert_eq!(redeem(&kept, "rs1.x.y", &call, &[]).await.ok(), Some(false));
+        Ok(())
     }
 
     /// T-7507: a nonce spent on one replica is spent on the other.
-    #[test]
-    fn a_nonce_redeems_once_across_replicas() {
-        let (one, other) = (Mutex::default(), Mutex::default());
-        let now = Instant::now();
+    #[tokio::test]
+    async fn a_nonce_redeems_once_across_replicas() -> Result<(), String> {
+        let one = TestBroker::new().await?;
+        let other = one.sibling().await?;
+        let (one, other) = (
+            one.confirmations().of(tenant("t")),
+            other.confirmations().of(tenant("t")),
+        );
+        let call = bound_to("t", "v", &[], "delete_entity", &Map::new());
+        let (state, _) = seal("t", &call).unwrap_or_default();
         assert_eq!(
             (
-                spend(&one, "a".into(), "n1".into(), now),
-                spend(&other, "a".into(), "n1".into(), now),
+                redeem(&one, &state, &call, &[]).await.ok(),
+                redeem(&other, &state, &call, &[]).await.ok(),
             ),
-            (true, false)
+            (Some(true), Some(false))
         );
+        Ok(())
+    }
+
+    /// T-7507: the same key opens after a restart, another key never does.
+    #[test]
+    fn a_restart_opens_what_the_same_key_sealed() {
+        let codec = |byte| codec_of(Some(Ok(vec![byte; 32])));
+        let (Some(before), Some(after), Some(other)) = (codec(7), codec(7), codec(8)) else {
+            unreachable!("32 bytes are a key");
+        };
+        let state = sealed(&before, "id", b"call");
+        assert_eq!(opened_with(&after, &state, b"call").as_deref(), Some("id"));
+        assert_eq!(opened_with(&other, &state, b"call"), None);
     }
 
     #[test]
-    fn one_subject_cannot_spend_the_share_of_another() {
-        let spent = Mutex::default();
-        let start = Instant::now();
-        for n in 0..MAX_SPENT_PER_SUBJECT {
-            assert!(spend(&spent, "a".into(), n.to_string(), start));
+    fn an_id_names_its_tenant_and_nothing_else_parses() {
+        let nonce = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
+        for name in ["default", "w", "city_a-1", &"t".repeat(TenantId::MAX_LEN)] {
+            let id = id_of(nonce, name);
+            assert_eq!(
+                tenant_of(&id).map(|t| t.as_str().to_owned()).as_deref(),
+                Some(name)
+            );
         }
-        assert!(!spend(&spent, "a".into(), "more".into(), start));
-        assert!(spend(&spent, "b".into(), "more".into(), start));
-        let later = start.checked_add(TTL.saturating_mul(2)).unwrap_or(start);
-        assert!(spend(&spent, "a".into(), "more".into(), later));
+        for bad in [
+            "q1".to_owned(),
+            nonce.to_owned(),
+            format!("{nonce}-"),
+            format!("{nonce}-7"),
+            format!("{nonce}-7A"),
+            format!("{nonce}-2a"),
+            format!("{nonce}-ff"),
+            format!("short-{}", "77"),
+            id_of(nonce, "antares-views"),
+            id_of(nonce, &"t".repeat(TenantId::MAX_LEN + 1)),
+        ] {
+            assert!(tenant_of(&bad).is_none(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_spent_set_is_bounded_and_forgets_expired_nonces() -> Result<(), String> {
+        assert_eq!((SPENT.tenant, SPENT.subject), (100_000, 1000));
+        let kept = TestBroker::new().await?.confirmations().of(tenant("t"));
+        let caps = Caps {
+            tenant: 3,
+            subject: 2,
+        };
+        let who = |n: u8| vec![("x-user".to_owned(), vec![n])];
+        for (id, n, ttl) in [("a", 1, Duration::ZERO), ("b", 1, TTL), ("c", 1, TTL)] {
+            assert_eq!(
+                kept.spend(id, &who(n), ttl, caps).await.ok(),
+                Some(true),
+                "{id}"
+            );
+        }
+        assert_eq!(kept.spend("b", &who(2), TTL, caps).await.ok(), Some(false));
+        assert_eq!(kept.spend("d", &who(1), TTL, caps).await.ok(), Some(false));
+        assert_eq!(kept.spend("d", &who(2), TTL, caps).await.ok(), Some(true));
+        assert_eq!(kept.spend("e", &who(3), TTL, caps).await.ok(), Some(false));
+        Ok(())
     }
 
     #[test]

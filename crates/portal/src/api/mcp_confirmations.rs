@@ -32,7 +32,7 @@ const SUBJECT: &str = "x-jc-subject";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Confirmation {
-    /// The question's id, 32 hex digits.
+    /// The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant.
     pub id: String,
     /// The broker view the write goes through, `bb-air`.
     pub view: String,
@@ -81,9 +81,17 @@ impl Asked {
     }
 }
 
-/// A broker question id is a UUID's 32 lowercase hex digits; anything else is asked nowhere.
+/// A broker question id is a UUID's 32 lowercase hex digits, followed since T-7507 by `-` and
+/// the hex of the question's Tenant (a name of at most 128 bytes); anything else is asked nowhere.
 fn well_formed(id: &str) -> bool {
-    id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    let hex = |s: &str| s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let (nonce, tenant) = match id.split_once('-') {
+        Some((nonce, tenant)) => (nonce, Some(tenant)),
+        None => (id, None),
+    };
+    nonce.len() == 32
+        && hex(nonce)
+        && tenant.is_none_or(|t| (2..=256).contains(&t.len()) && t.len() % 2 == 0 && hex(t))
 }
 
 fn not_open(id: &str) -> ApiError {
@@ -199,7 +207,7 @@ async fn find(state: &AppState, id: &str, subject: &str) -> Result<(String, Aske
     summary = "Read a Broker MCP Write's Question",
     description = "The question a context broker's MCP write tool asked, for the person whose client asked it: the view, the tool, the words the client showed, when it expires and the decision so far (T-5829). Another person's question, an answered or an expired one is 404; a bearer token is refused.",
     tag = "ops",
-    params(("id" = String, Path, description = "The question's id, 32 hex digits")),
+    params(("id" = String, Path, description = "The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant")),
     responses(
         (status = 200, description = "The open question", body = Confirmation),
         (status = 401, description = "Not signed in", body = crate::error::ProblemDetails),
@@ -224,7 +232,7 @@ pub(crate) async fn get_confirmation(
     summary = "Decide a Broker MCP Write's Question",
     description = "The person whose client asked records `accept` or `decline` on the broker, in the name of the Portal session's subject; the client's retry runs the write or ends it on that decision (T-5829). A decision may be changed until the retry. Another person's question, an answered or an expired one is 404; a bearer token is refused.",
     tag = "ops",
-    params(("id" = String, Path, description = "The question's id, 32 hex digits")),
+    params(("id" = String, Path, description = "The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant")),
     request_body(content = DecisionRequest, example = json!({"decision": "accept"})),
     responses(
         (status = 200, description = "The question with the decision recorded", body = Confirmation),
@@ -273,6 +281,18 @@ mod tests {
         assert!(!well_formed("0A1B2C3D4E5F60718293A4B5C6D7E8F9"));
         assert!(!well_formed("../../q/views"));
         assert!(!well_formed("0a1b2c3d4e5f60718293a4b5c6d7e8f"));
+    }
+
+    #[test]
+    fn an_id_may_end_in_the_hex_of_its_tenant_and_nothing_else() {
+        let nonce = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
+        for tenant in ["77".to_owned(), "64656661756c74".to_owned(), "74".repeat(128)] {
+            assert!(well_formed(&format!("{nonce}-{tenant}")), "{tenant}");
+        }
+        for bad in ["", "7", "7A", "77-77", "..%2f", "77/../../q/views", "7g"] {
+            assert!(!well_formed(&format!("{nonce}-{bad}")), "{bad}");
+        }
+        assert!(!well_formed(&format!("{nonce}-{}", "74".repeat(129))));
     }
 
     #[test]

@@ -2535,7 +2535,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The question's id, 32 hex digits",
+            "description": "The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant",
             "required": true,
             "schema": {
               "type": "string"
@@ -2608,7 +2608,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "The question's id, 32 hex digits",
+            "description": "The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant",
             "required": true,
             "schema": {
               "type": "string"
@@ -55052,7 +55052,7 @@
           },
           "id": {
             "type": "string",
-            "description": "The question's id, 32 hex digits."
+            "description": "The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant."
           },
           "message": {
             "type": "string",

@@ -35,6 +35,7 @@
 //! ```
 #![forbid(unsafe_code)]
 
+mod confirmations;
 mod error;
 pub mod guide;
 mod mapped;
@@ -86,6 +87,10 @@ pub mod policy {
 pub use antares_api::{build_message, DeliveryError, DeliveryFuture, NotificationSink, Outbound};
 /// The error a sink's endpoint check answers with.
 pub use antares_model::{EntityId, NgsiError, TenantId};
+
+/// What a surface keeps of a write confirmation (T-7507), and its handles.
+pub use antares_api::confirmations::{Caps, Confirmation, Subject as Confirming, Taken};
+pub use confirmations::{Confirmations, TenantConfirmations};
 
 /// The request bounds a surface applies to what it parses itself (a
 /// WebSocket message never passes the HTTP bounds layer).
@@ -741,6 +746,12 @@ impl ViewOps {
     #[must_use]
     pub fn tenant(&self) -> &str {
         self.tenant.as_str()
+    }
+
+    /// The write confirmations of the view's Tenant (T-7507).
+    #[must_use]
+    pub fn confirmations(&self) -> TenantConfirmations {
+        Confirmations::new(&self.inner.state).of(self.tenant.clone())
     }
 
     /// The view's `representations` member for surface `name` as written
@@ -1661,6 +1672,12 @@ pub mod test_kit {
             now: jiff::Timestamp,
         ) -> Vec<crate::views::quality::Changed> {
             self.reload.sweep_quality(now).await
+        }
+
+        /// The write confirmations in this broker's store.
+        #[must_use]
+        pub fn confirmations(&self) -> crate::Confirmations {
+            crate::Confirmations::new(&self.state)
         }
 
         /// Another pod over the same store: its own view table, loaded and

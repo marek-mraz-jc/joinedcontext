@@ -12,6 +12,8 @@
 //! broker per process.
 #![cfg_attr(not(test), warn(clippy::expect_used))]
 
+#[cfg(feature = "mcp")]
+mod mcp_relay;
 pub mod shutdown;
 pub mod telemetry;
 mod wiring;
@@ -414,6 +416,11 @@ pub struct BrokerConfig {
     /// ANTARES_REQUIRE_RLS: a database role that bypasses row-level
     /// security refuses the boot instead of a warning. A host may force it.
     pub require_rls: bool,
+    /// The key, at least 32 bytes, that seals an MCP write's `requestState`
+    /// where ANTARES_MCP_REQUEST_STATE_KEY_FILE names none: the same on
+    /// every replica and start of a host that gives it (T-7507). Never read
+    /// from the environment.
+    pub mcp_request_state_key: Option<Secret>,
     /// The pool size a host gives in place of ANTARES_PG_POOL (that
     /// variable is read when this is `None`).
     pub pg_pool: Option<u32>,
@@ -451,6 +458,19 @@ impl std::fmt::Debug for AdminToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("<redacted>")
     }
+}
+
+/// `<prefix><tenant>.<id>`, or `None` when either part is not one subject
+/// token of `[A-Za-z0-9_-]`: no `.`, `*` or `>` reaches a relay's subject.
+#[cfg(any(feature = "ws", feature = "mcp"))]
+fn relay_subject(prefix: &str, tenant: &str, id: &str) -> Option<String> {
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 128
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    };
+    (token(tenant) && token(id)).then(|| format!("{prefix}{tenant}.{id}"))
 }
 
 impl BrokerConfig {
@@ -558,6 +578,7 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         drain_deadline,
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
         admin_token: None,
+        mcp_request_state_key: None,
         defaults: std::collections::BTreeMap::new(),
         database_url: None,
         require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
@@ -1532,7 +1553,24 @@ pub async fn build_state(
     // The MCP write decisions a deployment's decision page records
     // (`/q/mcp-confirmations/{id}`, T-5816), behind the admin credential.
     #[cfg(feature = "mcp")]
-    state.views.add_admin(antares_mcp::confirmations());
+    {
+        match &cfg.mcp_request_state_key {
+            Some(key) => antares_mcp::default_request_state_key(key.expose().as_bytes()),
+            None if cfg.store_name != "memory"
+                && std::env::var_os(antares_mcp::REQUEST_STATE_KEY_FILE_ENV).is_none() =>
+            {
+                tracing::error!(
+                    env = antares_mcp::REQUEST_STATE_KEY_FILE_ENV,
+                    "no shared mcp confirmation key: a write confirmation is refused as stale on another replica and after a restart"
+                );
+            }
+            None => {}
+        }
+        let confirmations = antares_ops::Confirmations::new(&state);
+        state
+            .views
+            .add_admin(antares_mcp::confirmations(confirmations));
+    }
     // Internal context sources (ADR-0025): a registration whose endpoint is
     // a self URL is served in process under the target's export grant, and
     // `/q/grants` joins the admin surface. No self URL, no transport: every
@@ -1641,8 +1679,11 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
         // ADR-0026 rule 5: a notifier pod reaches the socket another pod
         // holds over core NATS request/reply.
         #[cfg(feature = "ws")]
-        antares_ws::Hub::process().set_relay(std::sync::Arc::new(ws_relay::NatsRelay::new(bus)));
-        #[cfg(not(feature = "ws"))]
+        antares_ws::Hub::process()
+            .set_relay(std::sync::Arc::new(ws_relay::NatsRelay::new(bus.clone())));
+        // The same for an MCP resource stream another pod holds (T-7507).
+        #[cfg(feature = "mcp")]
+        antares_mcp::set_relay(std::sync::Arc::new(mcp_relay::NatsRelay::new(bus.clone())));
         drop(bus);
     } else {
         antares_api::wire(state).await; // in-process matcher + notifier + interval firing

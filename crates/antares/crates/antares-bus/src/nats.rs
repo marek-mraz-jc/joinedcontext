@@ -152,23 +152,44 @@ impl NatsBus {
     {
         let client = self.client.clone();
         tokio::spawn(async move {
-            let mut requests = match client.subscribe(subject.clone()).await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!("reply subscription on {subject} failed: {e}");
-                    return;
-                }
-            };
-            while let Some(msg) = requests.next().await {
-                let Some(to) = msg.reply else { continue };
-                let Some(bytes) = answer(&msg.payload) else {
-                    return;
-                };
-                if let Err(e) = client.publish(to, bytes.into()).await {
-                    tracing::warn!("reply on {subject} failed: {e}");
-                }
+            match client.subscribe(subject.clone()).await {
+                Ok(requests) => answer_all(client, requests, subject, answer).await,
+                Err(e) => tracing::warn!("reply subscription on {subject} failed: {e}"),
             }
         })
+    }
+
+    /// [`Self::reply`], resolved once the server holds the subscription, so
+    /// a request sent by any client from then on is answered.
+    ///
+    /// # Errors
+    /// The subscription's or the round trip's.
+    pub async fn reply_ready<F>(
+        &self,
+        subject: String,
+        answer: F,
+    ) -> Result<tokio::task::JoinHandle<()>, BusError>
+    where
+        F: Fn(&[u8]) -> Option<Vec<u8>> + Send + 'static,
+    {
+        let client = self.client.clone();
+        let requests = client
+            .subscribe(subject.clone())
+            .await
+            .map_err(|e| BusError(e.to_string()))?;
+        // A flush only empties the write buffer. The server answers one
+        // connection in order, so once it says that nobody listens on a
+        // fresh inbox it holds the subscription sent before.
+        // ponytail: one server's word; in a NATS cluster interest reaches
+        // the other servers a moment later, and that change is not retried.
+        let probe = async_nats::Request::new().timeout(Some(READY_WITHIN));
+        match client.send_request(client.new_inbox(), probe).await {
+            Err(e) if e.kind() != async_nats::RequestErrorKind::NoResponders => {
+                return Err(BusError(e.to_string()));
+            }
+            _ => {}
+        }
+        Ok(tokio::spawn(answer_all(client, requests, subject, answer)))
     }
 
     /// Successful reconnects since startup. `Event::Connected` fires on
@@ -513,6 +534,29 @@ fn url_credentials(url: &str) -> Result<Option<(String, String)>, BusError> {
         }
     }
     Ok(None)
+}
+
+/// How long [`NatsBus::reply_ready`] waits for the server's word.
+const READY_WITHIN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Answers `requests` on `subject` until `answer` returns `None`.
+async fn answer_all<F>(
+    client: async_nats::Client,
+    mut requests: async_nats::Subscriber,
+    subject: String,
+    answer: F,
+) where
+    F: Fn(&[u8]) -> Option<Vec<u8>> + Send + 'static,
+{
+    while let Some(msg) = requests.next().await {
+        let Some(to) = msg.reply else { continue };
+        let Some(bytes) = answer(&msg.payload) else {
+            return;
+        };
+        if let Err(e) = client.publish(to, bytes.into()).await {
+            tracing::warn!("reply on {subject} failed: {e}");
+        }
+    }
 }
 
 #[cfg(test)]

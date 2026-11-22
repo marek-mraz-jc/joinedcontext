@@ -5,10 +5,14 @@
 //! as the caller (ADR-0023 rule 9), whose endpoint is this process's
 //! [`Sink`]; a notification becomes `notifications/resources/updated` with
 //! the URI only, and the client reads the Entity again through the gate.
+//! Where several replicas deliver, the one that took the change asks the
+//! one holding the stream through its [`Relay`] (S10-19).
 
 use antares_ops::{DeliveryError, DeliveryFuture, NgsiError, NotificationSink, Outbound};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -58,6 +62,40 @@ pub(crate) async fn creating<F: std::future::Future>(stream: &str, f: F) -> F::O
     CREATING.scope(stream.to_owned(), f).await
 }
 
+/// What a [`Relay`] returns.
+pub type RelayFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// What the replica holding a stream answers a relayed change with; `None`
+/// once it holds no streams at all.
+pub type Answer = Box<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync>;
+
+/// The way to a stream another replica holds (NATS request/reply in the
+/// broker). Each request and listen names the stream's Tenant.
+pub trait Relay: Send + Sync {
+    /// Ask whoever holds `stream` of `tenant`; `None` when nobody answers.
+    fn request<'a>(
+        &'a self,
+        tenant: &'a str,
+        stream: &'a str,
+        payload: Vec<u8>,
+    ) -> RelayFuture<'a, Option<Vec<u8>>>;
+
+    /// Answer for `stream` of `tenant` by `answer`; resolved once a request
+    /// sent from then on is heard.
+    fn listen<'a>(
+        &'a self,
+        tenant: &'a str,
+        stream: &'a str,
+        answer: Answer,
+    ) -> RelayFuture<'a, ()>;
+
+    /// Answer for `stream` no longer.
+    fn unlisten(&self, stream: &str);
+}
+
+/// A relayed change the holder flagged; anything else is none.
+const FLAGGED: &[u8] = b"1";
+
 /// One open stream.
 struct Stream {
     owner: (String, Vec<(String, Vec<u8>)>),
@@ -71,18 +109,28 @@ struct Stream {
 
 /// Every open stream of this process, by id.
 #[derive(Default)]
-pub(crate) struct Streams(Mutex<HashMap<String, Stream>>);
+pub(crate) struct Streams {
+    open: Mutex<HashMap<String, Stream>>,
+    relay: OnceLock<Arc<dyn Relay>>,
+}
 
 /// This process's streams.
-pub(crate) fn streams() -> &'static Streams {
-    static STREAMS: LazyLock<Streams> = LazyLock::new(Streams::default);
+pub(crate) fn streams() -> &'static Arc<Streams> {
+    static STREAMS: LazyLock<Arc<Streams>> = LazyLock::new(Arc::default);
     &STREAMS
+}
+
+/// Deliver to the streams of other replicas through `relay`, and answer
+/// theirs for this one's: a broker calls it once at start, where several
+/// may deliver a notification. The first relay stays.
+pub fn set_relay(relay: Arc<dyn Relay>) {
+    streams().use_relay(relay);
 }
 
 impl Streams {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Stream>> {
         // a holder that panicked left the map whole: each change is one step
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.open.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Open a stream for `subject` in `tenant` within `caps`: its id and
@@ -132,6 +180,48 @@ impl Streams {
         }
     }
 
+    fn use_relay(&self, relay: Arc<dyn Relay>) {
+        let _first_wins = self.relay.set(relay);
+    }
+
+    /// Answer the other replicas for `stream` of `tenant`, if they deliver.
+    pub(crate) async fn relayed(self: &Arc<Self>, stream: &str, tenant: &str) {
+        let Some(relay) = self.relay.get() else {
+            return;
+        };
+        let (here, id, of) = (Arc::downgrade(self), stream.to_owned(), tenant.to_owned());
+        let answer: Answer = Box::new(move |sub| {
+            let here = here.upgrade()?;
+            let flagged = std::str::from_utf8(sub).is_ok_and(|sub| {
+                // the subject named this Tenant; the stream must be its own
+                here.held_by(&id, &of) && here.changed(&id, sub)
+            });
+            Some(if flagged {
+                FLAGGED.to_vec()
+            } else {
+                b"0".to_vec()
+            })
+        });
+        relay.listen(tenant, stream, answer).await;
+    }
+
+    fn held_by(&self, stream: &str, tenant: &str) -> bool {
+        self.lock().get(stream).is_some_and(|s| s.owner.0 == tenant)
+    }
+
+    /// Deliver a change of `sub` in `tenant` to `stream`, here or on the
+    /// replica that holds it.
+    pub(crate) async fn reach(&self, tenant: &str, stream: &str, sub: &str) -> bool {
+        if self.held_by(stream, tenant) {
+            return self.changed(stream, sub);
+        }
+        let Some(relay) = self.relay.get() else {
+            return false;
+        };
+        let reply = relay.request(tenant, stream, sub.as_bytes().to_vec()).await;
+        reply.as_deref() == Some(FLAGGED)
+    }
+
     /// A notification of Subscription `sub` for `stream`: flag its URI and
     /// wake the stream. `false` when the stream is not open here or did
     /// not make `sub`.
@@ -158,6 +248,9 @@ impl Streams {
 
     /// Close `stream`: the ids of the Subscriptions it made.
     pub(crate) fn close(&self, stream: &str) -> Vec<String> {
+        if let Some(relay) = self.relay.get() {
+            relay.unlisten(stream);
+        }
         self.lock()
             .remove(stream)
             .map(|s| s.watching.into_keys().collect())
@@ -190,7 +283,7 @@ impl NotificationSink for Sink {
         }
     }
 
-    /// It flags a URI of a stream this process holds and opens no socket.
+    /// It flags a URI of a stream and opens no socket of its own.
     fn network(&self) -> bool {
         false
     }
@@ -203,14 +296,27 @@ impl NotificationSink for Sink {
     ) -> DeliveryFuture<'a> {
         let stream = uri.strip_prefix(SCHEME).and_then(|r| r.strip_prefix(':'));
         let sub = out.body.get("subscriptionId").and_then(|v| v.as_str());
-        let delivered =
-            matches!((stream, sub), (Some(stream), Some(sub)) if streams().changed(stream, sub));
-        Box::pin(std::future::ready(if delivered {
-            Ok(())
-        } else {
-            Err(DeliveryError::failed("no such MCP stream"))
-        }))
+        Box::pin(async move {
+            let delivered = match (stream, sub) {
+                (Some(stream), Some(sub)) => streams().reach(tenant_of(out), stream, sub).await,
+                _ => false,
+            };
+            if delivered {
+                Ok(())
+            } else {
+                Err(DeliveryError::failed("no such MCP stream"))
+            }
+        })
     }
+}
+
+/// The Tenant the broker marked `out` with, read as WebSocket reads it.
+fn tenant_of(out: &Outbound) -> &str {
+    out.receiver_info
+        .iter()
+        .rev()
+        .find(|(k, _)| k.eq_ignore_ascii_case("NGSILD-Tenant"))
+        .map_or("default", |(_, v)| v.as_str())
 }
 
 /// `now` plus `after`, as an NGSI-LD `DateTime` (UTC, seconds).
@@ -310,13 +416,66 @@ mod tests {
         s.unwatch(&id, "sub-4");
     }
 
-    /// T-7507 (S10-19): a change delivered by one replica reaches the stream another holds.
-    #[test]
-    fn a_change_on_one_replica_reaches_the_stream_of_another() {
-        let (holds, delivers) = (Streams::default(), Streams::default());
+    /// Request/reply between the replicas of one test.
+    #[derive(Default)]
+    struct Wire(Mutex<HashMap<(String, String), Answer>>);
+
+    impl Wire {
+        fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Answer>> {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    impl Relay for Wire {
+        fn request<'a>(
+            &'a self,
+            tenant: &'a str,
+            stream: &'a str,
+            payload: Vec<u8>,
+        ) -> RelayFuture<'a, Option<Vec<u8>>> {
+            let key = (tenant.to_owned(), stream.to_owned());
+            let reply = self.lock().get(&key).and_then(|answer| answer(&payload));
+            Box::pin(std::future::ready(reply))
+        }
+
+        fn listen<'a>(
+            &'a self,
+            tenant: &'a str,
+            stream: &'a str,
+            answer: Answer,
+        ) -> RelayFuture<'a, ()> {
+            let key = (tenant.to_owned(), stream.to_owned());
+            self.lock().insert(key, answer);
+            Box::pin(std::future::ready(()))
+        }
+
+        fn unlisten(&self, stream: &str) {
+            self.lock().retain(|(_, s), _| s != stream);
+        }
+    }
+
+    /// T-7507 (S10-19): a change delivered by one replica reaches the stream
+    /// another holds, of that Tenant alone and only while it is open.
+    #[tokio::test]
+    async fn a_change_on_one_replica_reaches_the_stream_of_another() {
+        let (holds, delivers) = (Arc::new(Streams::default()), Arc::new(Streams::default()));
+        let wire = Arc::new(Wire::default());
+        holds.use_relay(wire.clone());
+        delivers.use_relay(wire.clone());
         let (id, _) = holds.open("a", who(1), SMALL).unwrap_or_default();
+        holds.relayed(&id, "a").await;
         holds.watch(&id, "sub-1", "ngsi-ld://v/entities/x");
-        assert!(delivers.changed(&id, "sub-1"));
+        assert!(delivers.reach("a", &id, "sub-1").await);
+        assert_eq!(holds.take(&id), vec!["ngsi-ld://v/entities/x".to_owned()]);
+        assert!(!delivers.reach("a", &id, "sub-2").await);
+        assert!(!delivers.reach("b", &id, "sub-1").await);
+        assert!(!holds.reach("b", &id, "sub-1").await);
+        // a request on another Tenant's subject for this stream flags nothing
+        holds.relayed(&id, "b").await;
+        assert!(!delivers.reach("b", &id, "sub-1").await);
+        holds.close(&id);
+        assert!(!delivers.reach("a", &id, "sub-1").await);
+        assert!(wire.lock().is_empty());
     }
 
     #[tokio::test]
@@ -345,7 +504,7 @@ mod tests {
             body: serde_json::json!({"subscriptionId": sub}),
             accept: "application/json".into(),
             link: String::new(),
-            receiver_info: Vec::new(),
+            receiver_info: vec![("NGSILD-Tenant".into(), "t".into())],
             notifier_info: Vec::new(),
         };
         let mine = out(serde_json::json!("urn:ngsi-ld:Subscription:s"));

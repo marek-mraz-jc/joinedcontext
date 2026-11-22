@@ -62,8 +62,9 @@ pub const ALLOWED_ORIGINS_ENV: &str = "ANTARES_MCP_ALLOWED_ORIGINS";
 pub const MAX_RESULT_BYTES_ENV: &str = "ANTARES_MCP_MAX_RESULT_BYTES";
 
 /// A file holding the key that seals a write's `requestState` (MCP 3.4),
-/// at least 32 bytes, mounted from a Secret; unset, each process draws its
-/// own and a confirmation answers only the process that asked.
+/// at least 32 bytes, mounted from a Secret; unset, the host's key
+/// ([`default_request_state_key`]), else each process draws its own and a
+/// confirmation answers only the process that asked.
 pub const REQUEST_STATE_KEY_FILE_ENV: &str = "ANTARES_MCP_REQUEST_STATE_KEY_FILE";
 
 /// Adaptive summary budget environment variables (T-4680).
@@ -111,8 +112,15 @@ pub const ENV_KEYS: &[&str] = &[
 
 pub use antares_ops::PRIMER;
 pub use decided::{routes as confirmations, CONFIRM_URL_ENV};
-pub use listen::Sink;
+pub use listen::{set_relay, Answer, Relay, RelayFuture, Sink};
 pub use schema::SUBSCRIPTION_ENDPOINTS_ENV;
+
+/// Seal `requestState` under `key` where [`REQUEST_STATE_KEY_FILE_ENV`]
+/// names no file: a host hands the key every replica and every start shares
+/// (T-7507). Only the first call counts, and only before the first write.
+pub fn default_request_state_key(key: &[u8]) {
+    confirm::host_key(key);
+}
 
 /// The largest request body the endpoint reads (`MCP_MAX_REQUEST_BYTES`).
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;

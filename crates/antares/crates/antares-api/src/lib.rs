@@ -122,6 +122,8 @@ mod tests;
 pub mod views;
 
 pub use antares_notifier::DeliveryPolicy;
+// What a write confirmation keeps, so a surface names no antares-store (M2).
+pub use antares_store::confirmations;
 // The sink contract, so a surface reaches it through this crate and names no
 // antares-notifier (ADR-0027 section 1, rule M2).
 pub use antares_notifier::{

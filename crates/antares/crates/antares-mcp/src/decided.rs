@@ -4,19 +4,23 @@
 //! (MCP URL-mode elicitation) instead of a form, and its retry runs only on
 //! the decision the page recorded through the admin route
 //! `PUT /q/mcp-confirmations/{id}`. A client's own `accept` counts for
-//! nothing: an AI client cannot approve its own write.
+//! nothing: an AI client cannot approve its own write. The question and the
+//! decision live in the store (T-7507), so any replica serves either and a
+//! restart loses neither.
 
-use crate::confirm::TTL;
-use antares_ops::ngsi_problem;
+use crate::confirm::{self, TTL};
+use antares_ops::{
+    ngsi_problem, Caps, Confirmation, Confirmations, Confirming, NgsiError, Taken,
+    TenantConfirmations,
+};
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
-use std::time::Instant;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 /// The decision page the person is sent to, `{id}` standing for the
 /// question's id: `https://portal.example.org/mcp-confirmations/{id}`.
@@ -25,12 +29,12 @@ pub const CONFIRM_URL_ENV: &str = "ANTARES_MCP_CONFIRM_URL";
 /// The placeholder of [`CONFIRM_URL_ENV`].
 const ID: &str = "{id}";
 
-/// The most open questions; past it a write is refused until some expire.
-const MAX_OPEN: usize = 10_000;
-
-/// The most open questions of one subject, so one caller cannot fill
-/// [`MAX_OPEN`].
-const MAX_OPEN_PER_SUBJECT: usize = 100;
+/// The most open questions in a Tenant, past which a write is refused until
+/// some expire, and of one subject in it, so one caller cannot fill them.
+const OPEN: Caps = Caps {
+    tenant: 10_000,
+    subject: 100,
+};
 
 /// The largest decision body the admin route reads.
 const MAX_DECISION_BYTES: usize = 4096;
@@ -75,17 +79,68 @@ pub(crate) fn asking_of(raw: Option<&str>) -> Asking {
 /// its view, tool and message opened when `asking` is a page: `false` for
 /// a broken page, or when the open questions or the subject's share of
 /// them are full.
-pub(crate) fn opens(
+pub(crate) async fn opens(
+    kept: &TenantConfirmations,
     asking: &Asking,
     id: &str,
     subject: &[(String, Vec<u8>)],
     about: (&str, &str, &str),
-) -> bool {
+) -> Result<bool, NgsiError> {
     match asking {
-        Asking::Form => true,
-        Asking::Page(_) => ask_in(&QUESTIONS, id, subject, about, Instant::now()),
-        Asking::Broken => false,
+        Asking::Form => Ok(true),
+        Asking::Broken => Ok(false),
+        Asking::Page(_) => kept.ask(id, &question(subject, about, TTL), OPEN).await,
     }
+}
+
+fn question(
+    subject: &[(String, Vec<u8>)],
+    (view, tool, message): (&str, &str, &str),
+    left: Duration,
+) -> Confirmation {
+    Confirmation {
+        view: view.to_owned(),
+        tool: tool.to_owned(),
+        message: message.to_owned(),
+        subject: subject.to_vec(),
+        left,
+        decision: None,
+    }
+}
+
+/// Why the retry carrying `state` may not run, or `Ok` once: with a page
+/// the decision it recorded is taken, which spends it; with a form the
+/// state is spent. A decline or an open question spends nothing more.
+pub(crate) async fn answered(
+    kept: &TenantConfirmations,
+    asking: &Asking,
+    (state, bound): (&str, &[u8]),
+    subject: &[(String, Vec<u8>)],
+    form_accepted: bool,
+) -> Result<(), &'static str> {
+    let found = match (asking, confirm::opened(state, bound)) {
+        (Asking::Page(_), Some(id)) => Some(
+            kept.take(&id, &subject.to_vec())
+                .await
+                .map_err(|e| unavailable(&e))?,
+        ),
+        _ => None,
+    };
+    confirms(asking, found, form_accepted)?;
+    if *asking != Asking::Form {
+        return Ok(());
+    }
+    match confirm::redeem(kept, state, bound, subject).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(STALE),
+        Err(e) => Err(unavailable(&e)),
+    }
+}
+
+/// The refusal while the store cannot say what was asked or decided.
+pub(crate) fn unavailable(e: &NgsiError) -> &'static str {
+    tracing::error!(error = %e, "the store of mcp write confirmations failed");
+    "the confirmation could not be read or kept now; nothing was written, call again shortly"
 }
 
 /// Whether the retry of a write is confirmed: by the decision a page
@@ -94,7 +149,7 @@ pub(crate) fn opens(
 /// broken page confirms nothing.
 pub(crate) fn confirms(
     asking: &Asking,
-    found: Option<Found>,
+    found: Option<Taken>,
     form_accepted: bool,
 ) -> Result<(), &'static str> {
     const DECLINED: &str = "the person did not confirm; nothing was written";
@@ -103,9 +158,9 @@ pub(crate) fn confirms(
         Asking::Form => Err(DECLINED),
         Asking::Broken => Err(BROKEN),
         Asking::Page(_) => match found {
-            Some(Found::Accepted) => Ok(()),
-            Some(Found::Waiting) => Err("the person has not decided on the page yet; call again with the same requestState once they have"),
-            Some(Found::Declined) => Err(DECLINED),
+            Some(Taken::Accepted) => Ok(()),
+            Some(Taken::Waiting) => Err("the person has not decided on the page yet; call again with the same requestState once they have"),
+            Some(Taken::Declined) => Err(DECLINED),
             _ => Err(STALE),
         },
     }
@@ -123,117 +178,26 @@ pub(crate) fn page_of(template: &str, id: &str) -> String {
     template.replacen(ID, id, 1)
 }
 
-/// What the person decided on the page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Decision {
-    Accept,
-    Decline,
-}
-
-impl Decision {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Accept => "accept",
-            Self::Decline => "decline",
-        }
+/// The word of a decision.
+fn word(accept: bool) -> &'static str {
+    if accept {
+        "accept"
+    } else {
+        "decline"
     }
 }
 
-/// One open question.
-struct Question {
-    /// The subject headers of the call that asked.
-    subject: Vec<(String, Vec<u8>)>,
-    view: String,
-    tool: String,
-    message: String,
-    until: Instant,
-    decision: Option<Decision>,
-}
-
-/// What the retry of a write finds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Found {
-    Accepted,
-    Declined,
-    /// Open, and the person has not decided yet.
-    Waiting,
-    /// Expired, answered before, or never asked.
-    Unknown,
-}
-
-/// Subject headers and their values, as [`antares_ops::Caller::subject`] lists them.
-type Subject = Vec<(String, Vec<u8>)>;
-
-/// The open questions, by id.
-type Questions = Mutex<HashMap<String, Question>>;
-
-static QUESTIONS: LazyLock<Questions> = LazyLock::new(Questions::default);
-
-fn locked(q: &Questions) -> std::sync::MutexGuard<'_, HashMap<String, Question>> {
-    // a holder that panicked left the map whole: each change is one step
-    q.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-fn ask_in(
-    questions: &Questions,
-    id: &str,
-    subject: &[(String, Vec<u8>)],
-    (view, tool, message): (&str, &str, &str),
-    now: Instant,
-) -> bool {
-    let mut map = locked(questions);
-    map.retain(|_, q| q.until > now);
-    let held = map.values().filter(|q| q.subject == subject).count();
-    if map.len() >= MAX_OPEN || held >= MAX_OPEN_PER_SUBJECT {
-        return false;
-    }
-    map.insert(
-        id.to_owned(),
-        Question {
-            subject: subject.to_vec(),
-            view: view.to_owned(),
-            tool: tool.to_owned(),
-            message: message.to_owned(),
-            until: now.checked_add(TTL).unwrap_or(now),
-            decision: None,
-        },
-    );
-    true
-}
-
-/// What the retry of `subject` finds for question `id`. A decision ends
-/// the question; a waiting one stays open for the next retry.
-pub(crate) fn take(id: &str, subject: &[(String, Vec<u8>)]) -> Found {
-    take_in(&QUESTIONS, id, subject, Instant::now())
-}
-
-fn take_in(questions: &Questions, id: &str, subject: &[(String, Vec<u8>)], now: Instant) -> Found {
-    let mut map = locked(questions);
-    let Some(q) = map
-        .get(id)
-        .filter(|q| q.until > now && q.subject == subject)
-    else {
-        return Found::Unknown;
-    };
-    let found = match q.decision {
-        None => return Found::Waiting,
-        Some(Decision::Accept) => Found::Accepted,
-        Some(Decision::Decline) => Found::Declined,
-    };
-    map.remove(id);
-    found
-}
-
-/// The admin routes of the decision page, relative to `/q`:
-/// `GET /mcp-confirmations/{id}` reads a question, `PUT` records the
-/// person's decision on it.
-pub fn routes() -> Router {
+/// The admin routes of the decision page, relative to `/q`, over the store
+/// `all` reads: `GET /mcp-confirmations/{id}` reads a question, `PUT`
+/// records the person's decision on it.
+pub fn routes(all: Confirmations) -> Router {
+    let deciding = all.clone();
     Router::new().route(
         "/mcp-confirmations/{id}",
-        get(|Path(id): Path<String>| async move { read(&QUESTIONS, &id, Instant::now()) })
+        get(move |Path(id): Path<String>| async move { read(&all, &id).await })
             .put(
-                |Path(id): Path<String>, body: axum::body::Bytes| async move {
-                    decide(&QUESTIONS, &id, &body, Instant::now())
+                move |Path(id): Path<String>, body: axum::body::Bytes| async move {
+                    decide(&deciding, &id, &body).await
                 },
             )
             .layer(axum::extract::DefaultBodyLimit::max(MAX_DECISION_BYTES)),
@@ -242,7 +206,7 @@ pub fn routes() -> Router {
 
 /// The question's JSON: what the page shows the person, and the subject
 /// headers it checks against the person signed in.
-fn shown(id: &str, q: &Question, now: Instant) -> Value {
+fn shown(id: &str, q: &Confirmation) -> Value {
     let mut subject: std::collections::BTreeMap<&str, Vec<String>> =
         std::collections::BTreeMap::default();
     for (name, value) in &q.subject {
@@ -257,16 +221,32 @@ fn shown(id: &str, q: &Question, now: Instant) -> Value {
         "tool": q.tool,
         "message": q.message,
         "subject": subject,
-        "expiresInSeconds": q.until.saturating_duration_since(now).as_secs(),
-        "decision": q.decision.map(Decision::as_str),
+        "expiresInSeconds": q.left.as_secs(),
+        "decision": q.decision.map(word),
     })
 }
 
-fn read(questions: &Questions, id: &str, now: Instant) -> Response {
-    let map = locked(questions);
-    match map.get(id).filter(|q| q.until > now) {
-        Some(q) => axum::Json(shown(id, q, now)).into_response(),
-        None => ngsi_problem(StatusCode::NOT_FOUND, "no such open question"),
+fn not_open() -> Response {
+    ngsi_problem(StatusCode::NOT_FOUND, "no such open question")
+}
+
+/// A store that cannot answer is never "no such question".
+fn failed(e: &NgsiError) -> Response {
+    tracing::error!(error = %e, "the store of mcp write confirmations failed");
+    ngsi_problem(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the questions cannot be read or kept now; try again shortly",
+    )
+}
+
+async fn read(all: &Confirmations, id: &str) -> Response {
+    let Some(tenant) = confirm::tenant_of(id) else {
+        return not_open();
+    };
+    match all.of(tenant).find(id).await {
+        Ok(Some(q)) => axum::Json(shown(id, &q)).into_response(),
+        Ok(None) => not_open(),
+        Err(e) => failed(&e),
     }
 }
 
@@ -274,35 +254,47 @@ fn read(questions: &Questions, id: &str, now: Instant) -> Response {
 /// "subject": {"<header>": "<value>"}}`: the page names who decided by the
 /// subject headers it vouches for, and each must be one of the asking
 /// call's. Anyone else's decision is the same 404 as an unknown id.
-fn decide(questions: &Questions, id: &str, body: &[u8], now: Instant) -> Response {
-    let (decision, by) = match parse(body) {
+async fn decide(all: &Confirmations, id: &str, body: &[u8]) -> Response {
+    let (accept, by) = match parse(body) {
         Ok(parsed) => parsed,
         Err(why) => return ngsi_problem(StatusCode::BAD_REQUEST, why),
     };
-    let mut map = locked(questions);
-    let Some(q) = map.get_mut(id).filter(|q| {
-        // the person, never only a header many callers share
-        let names_person = by.iter().any(|(name, _)| name == "x-jc-subject");
-        q.until > now && names_person && by.iter().all(|pair| q.subject.contains(pair))
-    }) else {
-        return ngsi_problem(StatusCode::NOT_FOUND, "no such open question");
+    // the person, never only a header many callers share
+    if !by.iter().any(|(name, _)| name == "x-jc-subject") {
+        return not_open();
+    }
+    let Some(kept) = confirm::tenant_of(id).map(|tenant| all.of(tenant)) else {
+        return not_open();
     };
-    q.decision = Some(decision);
-    tracing::info!(view = %q.view, tool = %q.tool, decision = decision.as_str(), "mcp write decided");
-    axum::Json(shown(id, q, now)).into_response()
+    let asked = match kept.find(id).await {
+        Ok(asked) => asked,
+        Err(e) => return failed(&e),
+    };
+    // a question's subject never changes, so it may be checked before the write
+    if !asked.is_some_and(|q| by.iter().all(|pair| q.subject.contains(pair))) {
+        return not_open();
+    }
+    match kept.decide(id, accept).await {
+        Ok(Some(q)) => {
+            tracing::info!(view = %q.view, tool = %q.tool, decision = word(accept), "mcp write decided");
+            axum::Json(shown(id, &q)).into_response()
+        }
+        Ok(None) => not_open(),
+        Err(e) => failed(&e),
+    }
 }
 
 /// The decision and the subject pairs of a decision body.
-fn parse(body: &[u8]) -> Result<(Decision, Subject), &'static str> {
+fn parse(body: &[u8]) -> Result<(bool, Confirming), &'static str> {
     let Ok(Value::Object(body)) = serde_json::from_slice::<Value>(body) else {
         return Err("the body is no JSON object");
     };
     if body.keys().any(|k| k != "decision" && k != "subject") {
         return Err("the body holds only decision and subject");
     }
-    let decision = match body.get("decision").and_then(Value::as_str) {
-        Some("accept") => Decision::Accept,
-        Some("decline") => Decision::Decline,
+    let accept = match body.get("decision").and_then(Value::as_str) {
+        Some("accept") => true,
+        Some("decline") => false,
         _ => return Err("decision: accept or decline"),
     };
     let Some(Value::Object(subject)) = body.get("subject") else {
@@ -318,26 +310,60 @@ fn parse(body: &[u8]) -> Result<(Decision, Subject), &'static str> {
     if by.is_empty() {
         return Err("subject: name the person who decided");
     }
-    Ok((decision, by))
+    Ok((accept, by))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use antares_ops::test_kit::TestBroker;
+    use antares_ops::TenantId;
 
-    fn person(sub: &str) -> Vec<(String, Vec<u8>)> {
+    const ABOUT: (&str, &str, &str) = ("v", "delete_entity", "Allow?");
+
+    fn person(sub: &str) -> Confirming {
         vec![("x-jc-subject".to_owned(), sub.as_bytes().to_vec())]
     }
 
-    fn asked(q: &Questions, id: &str, sub: &str, now: Instant) {
-        assert!(ask_in(
-            q,
-            id,
-            &person(sub),
-            ("v", "delete_entity", "Allow?"),
-            now
-        ));
+    /// The questions of one replica, and those of Tenant `t` on it.
+    struct Replica {
+        all: Confirmations,
+        kept: TenantConfirmations,
+    }
+
+    impl Replica {
+        fn of(broker: &TestBroker) -> Self {
+            let all = broker.confirmations();
+            let kept = all.of(TenantId::new("t").unwrap_or_default());
+            Self { all, kept }
+        }
+
+        async fn new() -> Result<Self, String> {
+            Ok(Self::of(&TestBroker::new().await?))
+        }
+
+        async fn asked(&self, subject: &Confirming, left: Duration, caps: Caps) -> (String, bool) {
+            let (_, id) = confirm::seal(self.kept.tenant(), b"call").unwrap_or_default();
+            let opened = self
+                .kept
+                .ask(&id, &question(subject, ABOUT, left), caps)
+                .await;
+            (id, matches!(opened, Ok(true)))
+        }
+
+        async fn open(&self, sub: &str) -> String {
+            let (id, opened) = self.asked(&person(sub), TTL, OPEN).await;
+            assert!(opened);
+            id
+        }
+
+        async fn decide(&self, id: &str, body: &[u8]) -> StatusCode {
+            decide(&self.all, id, body).await.status()
+        }
+
+        async fn take(&self, id: &str, subject: &Confirming) -> Option<Taken> {
+            self.kept.take(id, subject).await.ok()
+        }
     }
 
     fn body(decision: &str, sub: &str) -> Vec<u8> {
@@ -372,64 +398,86 @@ mod tests {
         assert_eq!(asking_of(Some(plain)), Asking::Page(plain.to_owned()));
     }
 
-    #[test]
-    fn only_the_asking_person_decides_and_the_retry_takes_it_once() {
-        let q = Questions::default();
-        let now = Instant::now();
-        asked(&q, "n1", "alice", now);
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Waiting);
-        let other = decide(&q, "n1", &body("accept", "mallory"), now);
-        assert_eq!(other.status(), StatusCode::NOT_FOUND);
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Waiting);
-        let ok = decide(&q, "n1", &body("accept", "alice"), now);
-        assert_eq!(ok.status(), StatusCode::OK);
-        assert_eq!(take_in(&q, "n1", &person("mallory"), now), Found::Unknown);
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Accepted);
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Unknown);
-    }
-
-    /// T-7507: each replica's state is what a process starts with; a question asked on one is
-    /// decided and taken on the other.
-    #[test]
-    fn a_question_asked_on_one_replica_is_decided_on_the_other() {
-        let (one, other) = (Questions::default(), Questions::default());
-        let now = Instant::now();
-        asked(&one, "n1", "alice", now);
+    #[tokio::test]
+    async fn only_the_asking_person_decides_and_the_retry_takes_it_once() -> Result<(), String> {
+        let r = Replica::new().await?;
+        let id = r.open("alice").await;
+        let alice = person("alice");
+        assert_eq!(r.take(&id, &alice).await, Some(Taken::Waiting));
+        let other = r.decide(&id, &body("accept", "mallory")).await;
+        assert_eq!(other, StatusCode::NOT_FOUND);
+        assert_eq!(r.take(&id, &alice).await, Some(Taken::Waiting));
         assert_eq!(
-            (
-                decide(&other, "n1", &body("accept", "alice"), now).status(),
-                take_in(&other, "n1", &person("alice"), now),
-            ),
-            (StatusCode::OK, Found::Accepted)
-        );
-    }
-
-    #[test]
-    fn a_decline_ends_the_question_and_an_expired_one_is_gone() {
-        let q = Questions::default();
-        let now = Instant::now();
-        asked(&q, "n1", "alice", now);
-        assert_eq!(
-            decide(&q, "n1", &body("decline", "alice"), now).status(),
+            r.decide(&id, &body("accept", "alice")).await,
             StatusCode::OK
         );
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Declined);
-        asked(&q, "n2", "alice", now);
-        let later = now + TTL + Duration::from_secs(1);
-        assert_eq!(read(&q, "n2", later).status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            decide(&q, "n2", &body("accept", "alice"), later).status(),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(take_in(&q, "n2", &person("alice"), later), Found::Unknown);
-        assert_eq!(read(&q, "n3", now).status(), StatusCode::NOT_FOUND);
+        assert_eq!(r.take(&id, &person("mallory")).await, Some(Taken::Unknown));
+        assert_eq!(r.take(&id, &alice).await, Some(Taken::Accepted));
+        assert_eq!(r.take(&id, &alice).await, Some(Taken::Unknown));
+        Ok(())
     }
 
-    #[test]
-    fn a_decision_body_names_a_decision_and_the_person() {
-        let q = Questions::default();
-        let now = Instant::now();
-        asked(&q, "n1", "alice", now);
+    /// T-7507: a question asked on one replica is decided and taken on the
+    /// other, also once the asking one is gone.
+    #[tokio::test]
+    async fn a_question_asked_on_one_replica_is_decided_on_the_other() -> Result<(), String> {
+        let one = TestBroker::new().await?;
+        let id = Replica::of(&one).open("alice").await;
+        let other = Replica::of(&one.sibling().await?);
+        drop(one);
+        assert_eq!(
+            (
+                other.decide(&id, &body("accept", "alice")).await,
+                other.take(&id, &person("alice")).await,
+            ),
+            (StatusCode::OK, Some(Taken::Accepted))
+        );
+        Ok(())
+    }
+
+    /// T-7507: an id naming another Tenant reaches no question of this one.
+    #[tokio::test]
+    async fn a_question_answers_in_its_own_tenant_alone() -> Result<(), String> {
+        let r = Replica::new().await?;
+        let id = r.open("alice").await;
+        let nonce = id.split('-').next().unwrap_or_default();
+        let forged = format!("{nonce}-75"); // Tenant "u"
+        assert_eq!(read(&r.all, &forged).await.status(), StatusCode::NOT_FOUND);
+        let decided = r.decide(&forged, &body("accept", "alice")).await;
+        assert_eq!(decided, StatusCode::NOT_FOUND);
+        let u = r.all.of(TenantId::new("u").map_err(|e| e.to_string())?);
+        assert_eq!(
+            u.take(&id, &person("alice")).await.ok(),
+            Some(Taken::Unknown)
+        );
+        assert_eq!(r.take(&id, &person("alice")).await, Some(Taken::Waiting));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_decline_ends_the_question_and_an_expired_one_is_gone() -> Result<(), String> {
+        let r = Replica::new().await?;
+        let alice = person("alice");
+        let id = r.open("alice").await;
+        assert_eq!(
+            r.decide(&id, &body("decline", "alice")).await,
+            StatusCode::OK
+        );
+        assert_eq!(r.take(&id, &alice).await, Some(Taken::Declined));
+        let (late, opened) = r.asked(&alice, Duration::ZERO, OPEN).await;
+        assert!(opened);
+        assert_eq!(read(&r.all, &late).await.status(), StatusCode::NOT_FOUND);
+        let decided = r.decide(&late, &body("accept", "alice")).await;
+        assert_eq!(decided, StatusCode::NOT_FOUND);
+        assert_eq!(r.take(&late, &alice).await, Some(Taken::Unknown));
+        assert_eq!(read(&r.all, "n3").await.status(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_decision_body_names_a_decision_and_the_person() -> Result<(), String> {
+        let r = Replica::new().await?;
+        let id = r.open("alice").await;
         for bad in [
             json!([]),
             json!({"decision": "maybe", "subject": {"x-jc-subject": "alice"}}),
@@ -438,126 +486,96 @@ mod tests {
             json!({"decision": "accept", "subject": {"x-jc-subject": 1}}),
             json!({"decision": "accept", "subject": {"x-jc-subject": "alice"}, "by": "x"}),
         ] {
-            let answer = decide(&q, "n1", bad.to_string().as_bytes(), now);
-            assert_eq!(answer.status(), StatusCode::BAD_REQUEST, "{bad}");
+            let answer = r.decide(&id, bad.to_string().as_bytes()).await;
+            assert_eq!(answer, StatusCode::BAD_REQUEST, "{bad}");
         }
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Waiting);
+        assert_eq!(r.take(&id, &person("alice")).await, Some(Taken::Waiting));
+        Ok(())
     }
 
-    #[test]
-    fn every_subject_pair_the_page_names_must_be_the_askers() {
-        let q = Questions::default();
-        let now = Instant::now();
-        asked(&q, "n1", "alice", now);
+    #[tokio::test]
+    async fn every_subject_pair_the_page_names_must_be_the_askers() -> Result<(), String> {
+        let r = Replica::new().await?;
+        let id = r.open("alice").await;
         let wider = json!({"decision": "accept",
             "subject": {"x-jc-subject": "alice", "x-jc-group": "admins"}});
-        let answer = decide(&q, "n1", wider.to_string().as_bytes(), now);
-        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
-        assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Waiting);
+        let answer = r.decide(&id, wider.to_string().as_bytes()).await;
+        assert_eq!(answer, StatusCode::NOT_FOUND);
+        assert_eq!(r.take(&id, &person("alice")).await, Some(Taken::Waiting));
+        Ok(())
     }
 
-    #[test]
-    fn a_decision_names_the_person_and_not_only_a_shared_header() {
-        let q = Questions::default();
-        let now = Instant::now();
+    #[tokio::test]
+    async fn a_decision_names_the_person_and_not_only_a_shared_header() -> Result<(), String> {
+        let r = Replica::new().await?;
         let mut subject = person("alice");
         subject.push(("x-jc-org".to_owned(), b"city".to_vec()));
-        assert!(ask_in(
-            &q,
-            "n1",
-            &subject,
-            ("v", "delete_entity", "Allow?"),
-            now
-        ));
+        let (id, opened) = r.asked(&subject, TTL, OPEN).await;
+        assert!(opened);
         let shared = json!({"decision": "accept", "subject": {"x-jc-org": "city"}});
-        let answer = decide(&q, "n1", shared.to_string().as_bytes(), now);
-        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
-        assert_eq!(take_in(&q, "n1", &subject, now), Found::Waiting);
+        let answer = r.decide(&id, shared.to_string().as_bytes()).await;
+        assert_eq!(answer, StatusCode::NOT_FOUND);
+        assert_eq!(r.take(&id, &subject).await, Some(Taken::Waiting));
+        Ok(())
     }
 
-    #[test]
-    fn the_open_questions_are_bounded_per_subject() {
-        let q = Questions::default();
-        let now = Instant::now();
-        for n in 0..MAX_OPEN_PER_SUBJECT {
-            asked(&q, &format!("a{n}"), "alice", now);
+    #[tokio::test]
+    async fn the_open_questions_are_bounded_per_subject() -> Result<(), String> {
+        let r = Replica::new().await?;
+        for _ in 0..OPEN.subject {
+            r.open("alice").await;
         }
-        assert!(!ask_in(
-            &q,
-            "a-more",
-            &person("alice"),
-            ("v", "t", "m"),
-            now
-        ));
-        asked(&q, "b0", "bob", now);
-        let later = now + TTL + Duration::from_secs(1);
-        assert!(ask_in(
-            &q,
-            "a-later",
-            &person("alice"),
-            ("v", "t", "m"),
-            later
-        ));
+        assert!(!r.asked(&person("alice"), TTL, OPEN).await.1);
+        r.open("bob").await;
+        Ok(())
     }
 
-    #[test]
-    fn only_a_recorded_accept_confirms_where_a_page_decides() {
+    #[tokio::test]
+    async fn only_a_recorded_accept_confirms_where_a_page_decides() -> Result<(), String> {
         let page = Asking::Page("https://p/{id}".to_owned());
-        assert_eq!(confirms(&page, Some(Found::Accepted), false), Ok(()));
+        assert_eq!(confirms(&page, Some(Taken::Accepted), false), Ok(()));
         for found in [
-            Some(Found::Waiting),
-            Some(Found::Declined),
-            Some(Found::Unknown),
+            Some(Taken::Waiting),
+            Some(Taken::Declined),
+            Some(Taken::Unknown),
             None,
         ] {
             assert!(confirms(&page, found, true).is_err());
         }
         assert_eq!(confirms(&Asking::Form, None, true), Ok(()));
-        assert!(confirms(&Asking::Form, Some(Found::Accepted), false).is_err());
+        assert!(confirms(&Asking::Form, Some(Taken::Accepted), false).is_err());
         assert_eq!(
-            confirms(&Asking::Broken, Some(Found::Accepted), true),
+            confirms(&Asking::Broken, Some(Taken::Accepted), true),
             Err(BROKEN)
         );
+        let r = Replica::new().await?;
         let who = person("alice");
-        assert!(opens(&Asking::Form, "f1", &who, ("v", "t", "m")));
-        assert!(!opens(&Asking::Broken, "b1", &who, ("v", "t", "m")));
-        assert!(opens(&page, "p1", &who, ("v", "t", "m")));
-        assert_eq!(take("p1", &who), Found::Waiting);
+        let opens = |asking, id| opens(&r.kept, asking, id, &who, ABOUT);
+        assert_eq!(opens(&Asking::Form, "f1").await.ok(), Some(true));
+        assert_eq!(opens(&Asking::Broken, "b1").await.ok(), Some(false));
+        assert_eq!(opens(&page, "p1").await.ok(), Some(true));
+        assert_eq!(r.take("p1", &who).await, Some(Taken::Waiting));
+        Ok(())
     }
 
-    #[test]
-    fn every_open_question_counts_toward_the_whole_bound() {
-        let q = Questions::default();
-        let now = Instant::now();
-        for n in 0..MAX_OPEN {
-            let sub = format!("s{}", n / MAX_OPEN_PER_SUBJECT);
-            assert!(ask_in(
-                &q,
-                &format!("q{n}"),
-                &person(&sub),
-                ("v", "t", "m"),
-                now
-            ));
+    #[tokio::test]
+    async fn every_open_question_counts_toward_the_whole_bound() -> Result<(), String> {
+        assert_eq!((OPEN.tenant, OPEN.subject), (10_000, 100));
+        let r = Replica::new().await?;
+        let three = Caps {
+            tenant: 3,
+            subject: 2,
+        };
+        for sub in ["a", "a", "b"] {
+            assert!(r.asked(&person(sub), TTL, three).await.1);
         }
-        assert!(!ask_in(
-            &q,
-            "one-more",
-            &person("new"),
-            ("v", "t", "m"),
-            now
-        ));
+        assert!(!r.asked(&person("new"), TTL, three).await.1);
+        Ok(())
     }
 
     #[test]
     fn the_page_reads_the_question_and_who_asked() {
-        let q = Questions::default();
-        let now = Instant::now();
-        asked(&q, "n1", "alice", now);
-        let map = locked(&q);
-        let shown = map
-            .get("n1")
-            .map(|one| shown("n1", one, now))
-            .unwrap_or_default();
+        let shown = shown("n1", &question(&person("alice"), ABOUT, TTL));
         assert_eq!(
             shown.get("subject"),
             Some(&json!({"x-jc-subject": ["alice"]}))

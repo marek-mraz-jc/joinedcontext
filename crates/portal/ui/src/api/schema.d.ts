@@ -10724,7 +10724,7 @@ export interface components {
              * @description Unix seconds after which the broker no longer takes a decision.
              */
             expiresAt: number;
-            /** @description The question's id, 32 hex digits. */
+            /** @description The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant. */
             id: string;
             /** @description The words the client was handed, shown again on the page. */
             message: string;
@@ -18239,7 +18239,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The question's id, 32 hex digits */
+                /** @description The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant */
                 id: string;
             };
             cookie?: never;
@@ -18298,7 +18298,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The question's id, 32 hex digits */
+                /** @description The question's id, 32 hex digits, or those, a hyphen and the hex of its Tenant */
                 id: string;
             };
             cookie?: never;
