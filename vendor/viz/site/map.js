@@ -10,11 +10,11 @@
   var STYLES = ["sk", "cs", "en", "fi"];
   var COLOUR = "#1f5fae";
   var TEXT = {
-    sk: { detail: "Detail", hint: "Kliknite na bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené {n} z {total}", unlocated: "{none} bez polohy" },
-    cs: { detail: "Detail", hint: "Klikněte na bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno {n} z {total}", unlocated: "{none} bez polohy" },
-    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
-    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
-    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
+    sk: { detail: "Detail", hint: "Vyberte bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené: {n}, spolu {total}", unlocated: "{none} bez polohy" },
+    cs: { detail: "Detail", hint: "Vyberte bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno: {n}, celkem {total}", unlocated: "{none} bez polohy" },
+    de: { detail: "Details", hint: "Punkt auswählen oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
+    fi: { detail: "Tiedot", hint: "Valitse kohde tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
+    en: { detail: "Details", hint: "Select a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
   };
 
   // Every position of a geometry, however deep it nests.
@@ -186,6 +186,7 @@
     if (message.type !== "jc-viz-render") return;
     var lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
     document.documentElement.lang = lang;
+    document.documentElement.dataset.theme = message.theme === "dark" ? "dark" : "light";
     draw(message.spec, lang).then(height, function (error) {
       tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
     });

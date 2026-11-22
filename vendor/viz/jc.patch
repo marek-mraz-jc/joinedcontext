@@ -2214,7 +2214,7 @@
  </main>
 --- a/site/map.css
 +++ site/map.css
-@@ -1,6 +1,9 @@
+@@ -1,9 +1,16 @@
  /* T-4811: the map and its hint fill the frame the host gives them and never scroll inside it. */
  html, body { height: 100%; overflow: hidden; margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1b1f24; }
 -body { display: flex; flex-direction: column; }
@@ -2225,6 +2225,13 @@
  #map { flex: 1; min-height: 0; width: 100%; }
  #map:focus-within { outline: 2px solid #1f5fae; outline-offset: -2px; }
  .hint { flex: none; margin: 4px 8px; font-size: 12px; color: #555; }
++@media (max-width: 600px) { .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in, .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out { width: 44px; height: 44px; } }
++/* T-7504: the strip under the map follows the chat's scheme. */
++html[data-theme="dark"], html[data-theme="dark"] body { background: #16191d; }
++html[data-theme="dark"] .hint { color: #b4bac2; }
+ .jc-pop { min-width: 10em; }
+ .jc-pop strong { display: block; margin-bottom: 4px; }
+ .jc-pop dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px 10px; }
 --- a/site/map.html
 +++ site/map.html
 @@ -8,14 +8,15 @@
@@ -2256,11 +2263,11 @@
 -    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein" },
 -    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei" },
 -    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no" }
-+    sk: { detail: "Detail", hint: "Kliknite na bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené {n} z {total}", unlocated: "{none} bez polohy" },
-+    cs: { detail: "Detail", hint: "Klikněte na bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno {n} z {total}", unlocated: "{none} bez polohy" },
-+    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
-+    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
-+    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
++    sk: { detail: "Detail", hint: "Vyberte bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené: {n}, spolu {total}", unlocated: "{none} bez polohy" },
++    cs: { detail: "Detail", hint: "Vyberte bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno: {n}, celkem {total}", unlocated: "{none} bez polohy" },
++    de: { detail: "Details", hint: "Punkt auswählen oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
++    fi: { detail: "Tiedot", hint: "Valitse kohde tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
++    en: { detail: "Details", hint: "Select a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
    };
  
    // Every position of a geometry, however deep it nests.
@@ -2314,6 +2321,14 @@
      return;
    }
    window.addEventListener("message", function (event) {
+@@ -172,6 +186,7 @@
+     if (message.type !== "jc-viz-render") return;
+     var lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
+     document.documentElement.lang = lang;
++    document.documentElement.dataset.theme = message.theme === "dark" ? "dark" : "light";
+     draw(message.spec, lang).then(height, function (error) {
+       tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
+     });
 --- a/site/refuse.js
 +++ site/refuse.js
 @@ -108,7 +108,7 @@
@@ -2343,7 +2358,7 @@
        var at = "/data/features/" + i;
 --- a/site/render.css
 +++ site/render.css
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,10 @@
  html { color-scheme: light; }
 +html[data-theme="dark"] { color-scheme: dark; }
  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: #fff; }
@@ -2351,6 +2366,9 @@
  #chart .vega-embed { width: 100%; }
 +/* T-7490: the export menu's button reads at rest, not only under a pointer. */
 +#chart summary { opacity: 1; }
++/* T-7504: the menu's button is no white disc on a dark chart. */
++html[data-theme="dark"] #chart summary { background: #24282e; color: #e6e8eb; border-color: #4a5058; }
++html[data-theme="dark"] #chart summary svg { fill: currentColor; }
 --- a/site/render.html
 +++ site/render.html
 @@ -9,7 +9,9 @@
@@ -2381,7 +2399,7 @@
    }
  
    function height() {
-@@ -23,34 +24,98 @@
+@@ -23,34 +24,106 @@
    };
    var loader = { load: refused, sanitize: refused, http: refused, file: refused };
  
@@ -2406,6 +2424,13 @@
 +    return Object.assign({ dateTime: "%-d. %-m. %Y %H:%M:%S", date: "%-d. %-m. %Y", time: "%H:%M:%S", periods: ["", ""] }, names);
 +  }
 +
++  // T-7504: numbers too, or a Slovak reader takes "1,037" bridges for one.
++  function numberLocale(lang) {
++    var comma = { sk: "\u00a0", cs: "\u00a0", fi: "\u00a0", de: "." };
++    if (!Object.prototype.hasOwnProperty.call(comma, lang)) return undefined;
++    return { decimal: ",", thousands: comma[lang], grouping: [3], currency: ["", ""] };
++  }
++
    function draw(message) {
 +    // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
 +    var mode = message.theme === "dark" ? "dark" : "light";
@@ -2425,6 +2450,7 @@
        expr: vega.expressionInterpreter,
        loader: loader,
        renderer: "svg",
++      formatLocale: numberLocale(document.documentElement.lang),
 +      timeFormatLocale: timeLocale(document.documentElement.lang),
        // Export only: no source, no compiled spec, no "open in the editor" (which posts the spec
        // to another site).
@@ -2485,7 +2511,7 @@
        }
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
-@@ -61,12 +126,14 @@
+@@ -61,12 +134,14 @@
    }
  
    window.addEventListener("message", function (event) {

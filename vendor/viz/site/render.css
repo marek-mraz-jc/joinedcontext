@@ -5,3 +5,6 @@ body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-seri
 #chart .vega-embed { width: 100%; }
 /* T-7490: the export menu's button reads at rest, not only under a pointer. */
 #chart summary { opacity: 1; }
+/* T-7504: the menu's button is no white disc on a dark chart. */
+html[data-theme="dark"] #chart summary { background: #24282e; color: #e6e8eb; border-color: #4a5058; }
+html[data-theme="dark"] #chart summary svg { fill: currentColor; }
