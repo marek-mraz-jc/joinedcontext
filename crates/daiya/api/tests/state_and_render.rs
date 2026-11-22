@@ -112,6 +112,13 @@ fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
 
 /// [`daiya_api::resolve_request_ctx`], which asks the store for the organization (T-7509).
 fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> daiya_model::RequestCtx {
+    try_request_ctx(state, headers).expect("a request that names its Organization")
+}
+
+fn try_request_ctx(
+    state: &DaiyaState,
+    headers: &HeaderMap,
+) -> daiya_model::CrResult<daiya_model::RequestCtx> {
     tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("runtime")
@@ -121,7 +128,12 @@ fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> daiya_model::
 #[test]
 fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
     let w = world();
-    let actor = |h: &HeaderMap| resolve_request_ctx(&w.state, h).subject.actor_id;
+    // Named, so that the subject alone decides what these answer.
+    let actor = |h: &HeaderMap| {
+        let mut named = h.clone();
+        named.insert("x-grafana-org-id", HeaderValue::from_static("1"));
+        resolve_request_ctx(&w.state, &named).subject.actor_id
+    };
 
     assert_eq!(
         actor(&headers(&[("authorization", "Bearer admin")])).as_deref(),
@@ -169,20 +181,25 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
         OTHER_ORG
     );
     assert_eq!(pick(&[("x-grafana-org-id", "1")]), ORG);
+    let refused = |pairs: &[(&'static str, &str)]| {
+        try_request_ctx(&w.state, &headers(pairs))
+            .expect_err("no Organization")
+            .status_code()
+    };
     assert_eq!(
-        pick(&[
+        refused(&[
             ("x-grafana-org-id", "99"),
             ("authorization", "Bearer outsider")
         ]),
-        OrgId::from_u128(0),
+        404,
         "an unknown number is no fallback to the caller's own organization"
     );
     assert_eq!(
-        pick(&[("x-grafana-org-id", "main")]),
-        OrgId::from_u128(0),
+        refused(&[("x-grafana-org-id", "main")]),
+        404,
         "nor to the main one"
     );
-    assert_eq!(pick(&[]), ORG, "anonymous, no header: default org");
+    assert_eq!(refused(&[]), 401, "anonymous, no header: no default org");
 
     // The read-only header only narrows.
     for v in ["true", "1"] {

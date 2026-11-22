@@ -1,0 +1,14 @@
+[package]
+name = "jc-limits"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Weighted budgets of jc (ARCH/LIM-01, LIM-03): one capacity per process, fair between Organizations, bounded waiting"
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

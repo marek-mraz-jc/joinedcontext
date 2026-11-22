@@ -18,7 +18,8 @@ use crate::render::{
     PanelTimeRange, execute_targets_and_expressions, panel_view, parse_time_str_ms,
 };
 use crate::sets;
-use crate::state::{DaiyaState, audit, error_response, resolve_request_ctx, unit};
+use crate::state::{DaiyaState, OrgCtx, audit, error_response, unit};
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -605,11 +606,10 @@ pub struct ODataPublicQueryActionBody {
 
 async fn handle_odata_single_segment_get(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(segment): Path<String>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let (name, parens) = split_paren_segment(&segment);
 
     // Unbound function `Allowed(operation=..., object=...)`
@@ -704,11 +704,10 @@ async fn get_set(
 
 async fn handle_odata_two_segment_get(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path((seg1, seg2)): Path<(String, String)>,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let (set_name, key_parens) = split_paren_segment(&seg1);
     let (sub_op, sub_parens) = split_paren_segment(&seg2);
     let op_short = sub_op
@@ -813,16 +812,65 @@ async fn handle_odata_two_segment_get(
     }
 }
 
+async fn odata_public_query(
+    state: &DaiyaState,
+    client: Option<&ClientAddr>,
+    body: Value,
+) -> Response {
+    let parsed: ODataPublicQueryActionBody = match serde_json::from_value(body) {
+        Ok(b) => b,
+        Err(e) => {
+            return error_response(&CrError::BadRequest(format!(
+                "invalid PublicDashboard/Query body: {e}"
+            )));
+        }
+    };
+    match execute_public_dashboard_query(
+        state,
+        crate::public::public_caller_of(client),
+        &parsed.access_token,
+        parsed.panel_id,
+        parsed.query,
+    )
+    .await
+    {
+        Ok(sets) => (
+            StatusCode::OK,
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            Json(json!({
+                "@odata.context": "$metadata#Collection(JoinedContext.Daiya.FrameSet)",
+                "value": sets,
+            })),
+        )
+            .into_response(),
+        Err(e) => error_response(&e),
+    }
+}
+
 async fn handle_odata_single_segment_post(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    ctx: Result<OrgCtx, Response>,
     client: Option<Extension<ClientAddr>>,
     Path(segment): Path<String>,
-    Json(body): Json<Value>,
+    body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let (name, _) = split_paren_segment(&segment);
     let op_short = name.strip_prefix("JoinedContext.Daiya.").unwrap_or(name);
+    // The access token names the Organization of a public query, so it needs no context.
+    if matches!(op_short, "PublicDashboard.Query" | "PublicDashboard_Query") {
+        return match body {
+            Ok(Json(body)) => odata_public_query(&state, client.as_deref(), body).await,
+            Err(e) => e.into_response(),
+        };
+    }
+    let OrgCtx(ctx) = match ctx {
+        Ok(ctx) => ctx,
+        Err(refused) => return refused,
+    };
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(e) => return e.into_response(),
+    };
 
     match op_short {
         "Datasource.Query" | "Datasource_Query" => {
@@ -882,36 +930,6 @@ async fn handle_odata_single_segment_post(
                 Err(e) => error_response(&e),
             }
         }
-        "PublicDashboard.Query" | "PublicDashboard_Query" => {
-            let parsed: ODataPublicQueryActionBody = match serde_json::from_value(body) {
-                Ok(b) => b,
-                Err(e) => {
-                    return error_response(&CrError::BadRequest(format!(
-                        "invalid PublicDashboard/Query body: {e}"
-                    )));
-                }
-            };
-            match execute_public_dashboard_query(
-                &state,
-                crate::public::public_caller_of(client.as_deref()),
-                &parsed.access_token,
-                parsed.panel_id,
-                parsed.query,
-            )
-            .await
-            {
-                Ok(sets) => (
-                    StatusCode::OK,
-                    [(axum::http::header::CACHE_CONTROL, "private, no-store")],
-                    Json(json!({
-                        "@odata.context": "$metadata#Collection(JoinedContext.Daiya.FrameSet)",
-                        "value": sets,
-                    })),
-                )
-                    .into_response(),
-                Err(e) => error_response(&e),
-            }
-        }
         "PublicDashboard.Rotate" | "PublicDashboard_Rotate" => {
             let uid = body.get("uid").and_then(Value::as_str).unwrap_or("");
             match rotate_public_dashboard_token(&state, &ctx, uid).await {
@@ -927,11 +945,10 @@ async fn handle_odata_single_segment_post(
 
 async fn handle_odata_two_segment_post(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path((seg1, seg2)): Path<(String, String)>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let (set_name, key_parens) = split_paren_segment(&seg1);
     let uid = key_parens.map_or_else(String::new, unquote_odata_key);
     let op_short = seg2.strip_prefix("JoinedContext.Daiya.").unwrap_or(&seg2);
@@ -996,10 +1013,9 @@ pub struct ODataBatchSubResponse {
 
 async fn odata_batch(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Json(batch): Json<ODataBatchRequest>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     if batch.requests.len() > MAX_BATCH_REQUESTS {
         return error_response(&CrError::BadRequest(format!(
             "$batch carries {} requests, the limit is {MAX_BATCH_REQUESTS}",

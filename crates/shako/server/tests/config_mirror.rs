@@ -211,9 +211,15 @@ async fn a_merged_change_is_pushed_to_the_mirror_and_nothing_but_main() {
         (vec!["main".to_owned()], main)
     );
 
-    // Merged after: the forge pushes on the merge, before any pass.
+    // Merged after: the forge pushes as a job behind the merge, before any pass (T-7522).
     merge_change(&installation, "change/2", "endpoints/two.yaml").await;
     let main = installation.branch_head("main").await.unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    while heads(&remote, "off-configuration").await.1 != main
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert_eq!(
         heads(&remote, "off-configuration").await,
         (vec!["main".to_owned()], main)

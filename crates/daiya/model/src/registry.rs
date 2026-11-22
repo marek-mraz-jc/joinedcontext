@@ -8,7 +8,7 @@
 //! `Dashboard/RenderPanel`, `Dashboard/Export`, `Import`, `Plan`, `Apply`,
 //! `PublicDashboard/Rotate`, `PublicDashboard/Query`, `Allowed`).
 //!
-//! CSDL `$metadata` XML/JSON, MCP tool schemas, and CLI subcommands are all generated from this
+//! CSDL `$metadata` XML/JSON and CLI subcommands are all generated from this
 //! single declaration table, and `check_allowed` runs the exact same [`Authorizer`] decision as
 //! the real call.
 
@@ -312,14 +312,12 @@ pub struct OperationParam {
     pub description: String,
 }
 
-/// Declaration of one bound or unbound operation across OData, MCP, and CLI (R10, R10a).
+/// Declaration of one bound or unbound operation across OData and CLI (R10, R10a).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionDef {
     /// Canonical OData name (e.g. `Datasource/Query`, `Dashboard/RenderPanel`, `Import`).
     pub name: String,
-    /// MCP tool name (e.g. `daiya_datasource_query`).
-    pub mcp_tool: String,
     /// CLI subcommand name (e.g. `query`, `render-panel`, `import`).
     pub cli_command: String,
     pub kind: OperationKind,
@@ -344,7 +342,6 @@ pub fn daiya_registry() -> OperationRegistry {
     let operations = vec![
         ActionDef {
             name: "Datasource/Query".into(),
-            mcp_tool: "daiya_datasource_query".into(),
             cli_command: "query".into(),
             kind: OperationKind::Action,
             bound_to: Some("Datasource".into()),
@@ -377,7 +374,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Datasource/Health".into(),
-            mcp_tool: "daiya_datasource_health".into(),
             cli_command: "datasource-health".into(),
             kind: OperationKind::Function,
             bound_to: Some("Datasource".into()),
@@ -394,7 +390,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Datasource/EditorSchema".into(),
-            mcp_tool: "daiya_datasource_editor_schema".into(),
             cli_command: "editor-schema".into(),
             kind: OperationKind::Function,
             bound_to: Some("Datasource".into()),
@@ -411,7 +406,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Datasource/Resource".into(),
-            mcp_tool: "daiya_datasource_resource".into(),
             cli_command: "datasource-resource".into(),
             kind: OperationKind::Function,
             bound_to: Some("Datasource".into()),
@@ -437,7 +431,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Dashboard/RenderPanel".into(),
-            mcp_tool: "daiya_render_panel".into(),
             cli_command: "render-panel".into(),
             kind: OperationKind::Function,
             bound_to: Some("Dashboard".into()),
@@ -477,7 +470,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Dashboard/Export".into(),
-            mcp_tool: "daiya_export_dashboard".into(),
             cli_command: "export".into(),
             kind: OperationKind::Function,
             bound_to: Some("Dashboard".into()),
@@ -494,7 +486,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Import".into(),
-            mcp_tool: "daiya_import".into(),
             cli_command: "import".into(),
             kind: OperationKind::Action,
             bound_to: None,
@@ -527,7 +518,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Plan".into(),
-            mcp_tool: "daiya_plan".into(),
             cli_command: "plan".into(),
             kind: OperationKind::Function,
             bound_to: None,
@@ -544,7 +534,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Apply".into(),
-            mcp_tool: "daiya_apply".into(),
             cli_command: "apply".into(),
             kind: OperationKind::Action,
             bound_to: None,
@@ -561,7 +550,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "PublicDashboard/Rotate".into(),
-            mcp_tool: "daiya_rotate_public_dashboard".into(),
             cli_command: "rotate-public-token".into(),
             kind: OperationKind::Action,
             bound_to: Some("PublicDashboard".into()),
@@ -578,7 +566,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "PublicDashboard/Query".into(),
-            mcp_tool: "daiya_public_dashboard_query".into(),
             cli_command: "public-query".into(),
             kind: OperationKind::Action,
             bound_to: None,
@@ -604,7 +591,6 @@ pub fn daiya_registry() -> OperationRegistry {
         },
         ActionDef {
             name: "Allowed".into(),
-            mcp_tool: "daiya_allowed".into(),
             cli_command: "allowed".into(),
             kind: OperationKind::Function,
             bound_to: None,
@@ -637,13 +623,11 @@ pub fn daiya_registry() -> OperationRegistry {
 }
 
 impl OperationRegistry {
-    /// Looks up an operation by its OData name, MCP tool name, or CLI subcommand name.
+    /// Looks up an operation by its OData name or CLI subcommand name.
     #[must_use]
     pub fn find_operation(&self, name: &str) -> Option<&ActionDef> {
         self.operations.iter().find(|op| {
-            op.name.eq_ignore_ascii_case(name)
-                || op.mcp_tool.eq_ignore_ascii_case(name)
-                || op.cli_command.eq_ignore_ascii_case(name)
+            op.name.eq_ignore_ascii_case(name) || op.cli_command.eq_ignore_ascii_case(name)
         })
     }
 
@@ -908,7 +892,6 @@ impl OperationRegistry {
             .map(|op| {
                 json!({
                     "name": op.name,
-                    "mcpTool": op.mcp_tool,
                     "cliCommand": op.cli_command,
                     "kind": op.kind,
                     "boundTo": op.bound_to,

@@ -2,6 +2,8 @@
 //! Shared application state and request context extraction for `daiya-api`.
 
 use crate::public::PublicRateLimiter;
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use daiya_model::{
@@ -103,10 +105,6 @@ pub const MIN_SERVER_ADMIN_PASSWORD: usize = 16;
 
 /// The main organization's name unless the operator names it.
 const MAIN_ORG_NAME: &str = "Main Org.";
-
-/// The active organization of a request whose Organization header names none it may use: nobody
-/// is a member of it.
-const NO_ORGANIZATION: OrgId = OrgId::from_u128(0);
 
 impl DaiyaState {
     #[must_use]
@@ -230,6 +228,11 @@ impl DaiyaState {
         self.store.find_org(self.installation_id, key).await
     }
 
+    /// The context of `subject` in organization `org`.
+    pub(crate) fn ctx_in(&self, subject: Subject, org: OrgId) -> RequestCtx {
+        RequestCtx::new(self.installation_id, org, self.default_instance_id, subject)
+    }
+
     /// Accepts these API credentials (hashed bindings).
     #[must_use]
     pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
@@ -324,6 +327,22 @@ impl DaiyaState {
         self.driver_for_record(&record).await.map(Some)
     }
 
+    /// The outbound settings a driver of a stored record is built with.
+    fn driver_policy(&self) -> OutboundPolicy {
+        let mut policy = self.outbound_policy.clone();
+        policy.own_reach.clone_from(&self.own_reach);
+        policy.endpoint_bases.clone_from(&self.endpoint_bases);
+        policy
+    }
+
+    /// Whether `record` reads one of the host's own gateway Endpoints: an NGSI-LD or OData
+    /// datasource at such a URL ([`daiya_query::OutboundGuard::token_endpoint`]), which, read with
+    /// no token, answers what the Endpoint's public Policy allows.
+    pub(crate) fn reads_endpoint(&self, record: &DatasourceRecord) -> bool {
+        guard_for(record, &self.driver_policy(), 443)
+            .is_ok_and(|guard| guard.token_endpoint(&record.url).is_some())
+    }
+
     /// The URL of `record` checked before it is stored, as the guard its driver gets checks it
     /// before any lookup (scheme, allow-list, address literal): 422 naming `url`. A Postgres
     /// datasource names `host:port`, which its pool checks when it resolves and connects.
@@ -337,10 +356,7 @@ impl DaiyaState {
         {
             return Ok(());
         }
-        let mut policy = self.outbound_policy.clone();
-        policy.own_reach.clone_from(&self.own_reach);
-        policy.endpoint_bases.clone_from(&self.endpoint_bases);
-        guard_for(record, &policy, 443)
+        guard_for(record, &self.driver_policy(), 443)
             .and_then(|guard| guard.validate_url(&record.url))
             .map(|_| ())
             .map_err(|e| {
@@ -368,13 +384,10 @@ impl DaiyaState {
         {
             return Ok(driver.clone());
         }
-        let mut policy = self.outbound_policy.clone();
-        policy.own_reach.clone_from(&self.own_reach);
-        policy.endpoint_bases.clone_from(&self.endpoint_bases);
         let deps = DriverDeps {
             secrets: self.secret_resolver.clone(),
             token_exchanger: self.token_exchanger.clone(),
-            policy,
+            policy: self.driver_policy(),
         };
         let driver = build_driver(record, &deps).await?;
         self.built_drivers
@@ -388,7 +401,7 @@ impl DaiyaState {
     pub fn for_standalone(store: Arc<dyn DaiyaStore>, default_org_id: OrgId) -> Self {
         let authz = Arc::new(PolicyAuthorizer::allow_org_members(default_org_id, "admin"));
         Self::new(
-            InstallationId::from_u128(1),
+            InstallationId::SINGLE,
             default_org_id,
             InstanceId::from_u128(1),
             store,
@@ -550,6 +563,20 @@ pub async fn refuse_unknown_credential(
     next.run(request).await
 }
 
+/// Answers a path daiya does not serve: 401 to a caller who is nobody, 404 to a signed one.
+pub(crate) async fn unknown_path(
+    axum::extract::State(state): axum::extract::State<DaiyaState>,
+    headers: HeaderMap,
+) -> Response {
+    error_response(&match caller(&state, &headers).await {
+        Ok((subject, _)) if subject.is_anonymous() => {
+            CrError::Unauthorized("sign in: the request carries no accepted credential".into())
+        }
+        Ok(_) => CrError::NotFound("no such path".into()),
+        Err(e) => e,
+    })
+}
+
 /// The Organization `X-Daiya-Org-Id` (a UUID) or else `X-Grafana-Org-Id` (a UUID or a Grafana
 /// numeric id) chooses; `None` when neither is sent. A number names a live Organization of the
 /// store. A UUID never names a retired one, and the server administrator's only a live one (I-18:
@@ -593,17 +620,26 @@ async fn requested_org(
     held.map(|row| Some(row.org_id)).ok_or_else(unknown)
 }
 
-/// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
-/// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
-/// constant-time). Anything else is anonymous: no organization, no role. Client headers never
-/// grant identity or membership; `X-Daiya-Org-Id` / `X-Grafana-Org-Id` only choose which
-/// of the subject's organizations is active (authorization still checks membership), and
+/// The verified caller of a request and the Organization it is in. The subject comes only from
+/// verified sources: the mounting host's [`SubjectResolver`], then an API credential in
+/// `Authorization` (hashed, constant-time). Anything else is anonymous: no organization, no role.
+/// Client headers never grant identity or membership; `X-Daiya-Org-Id` / `X-Grafana-Org-Id` only
+/// choose the active Organization (authorization still checks membership), and
 /// `X-Daiya-Readonly: true` can only narrow the caller.
-pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
+///
+/// The Organization is the one a header names, else the caller's only one, else none: no
+/// Organization stands in for a missing one (WRK-04). The server administrator is a member of
+/// the live Organization it names and of no other.
+///
+/// # Errors
+/// A header that names no Organization it may use, or a directory that cannot answer.
+pub(crate) async fn caller(
+    state: &DaiyaState,
+    headers: &HeaderMap,
+) -> CrResult<(Subject, Option<OrgId>)> {
     let admin = state.is_server_admin(headers);
     let mut subject = if admin {
-        let admin =
-            Subject::authenticated(SERVER_ADMIN_ACTOR, vec![state.default_org_id], Vec::new());
+        let admin = Subject::authenticated(SERVER_ADMIN_ACTOR, Vec::new(), Vec::new());
         on_behalf_of(admin, headers)
     } else {
         let subject = state
@@ -619,24 +655,6 @@ pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> Req
             subject
         }
     };
-
-    let active_org = match requested_org(state, headers, admin).await {
-        Ok(Some(org)) => {
-            // The server administrator is a member of the live organization it names, no other.
-            if admin && org != state.default_org_id {
-                subject.organizations.push(org);
-            }
-            org
-        }
-        Ok(None) => subject
-            .organizations
-            .first()
-            .copied()
-            .unwrap_or(state.default_org_id),
-        // The router refused it already; whoever asks here is nobody's member.
-        Err(_) => NO_ORGANIZATION,
-    };
-
     if headers
         .get("x-daiya-readonly")
         .and_then(|v| v.to_str().ok())
@@ -644,13 +662,70 @@ pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> Req
     {
         subject.read_only = true;
     }
+    let org = match requested_org(state, headers, admin).await? {
+        Some(org) => {
+            if admin {
+                subject.organizations.push(org);
+            }
+            Some(org)
+        }
+        None => match subject.organizations.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        },
+    };
+    Ok((subject, org))
+}
 
-    RequestCtx::new(
-        state.installation_id,
-        active_org,
-        state.default_instance_id,
-        subject,
-    )
+/// Builds the [`RequestCtx`] of a request that works inside one Organization.
+///
+/// # Errors
+/// When the request names no Organization and its caller has not exactly one: 401 to a caller
+/// who is nobody, 400 to a verified one (its credential is fine, a 401 would say otherwise).
+/// Otherwise as the Organization header is refused (404) or the directory fails.
+pub async fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> CrResult<RequestCtx> {
+    let (subject, org) = caller(state, headers).await?;
+    let Some(org) = org else {
+        let missing = "name the Organization in X-Grafana-Org-Id: the request carries none";
+        return Err(if subject.is_anonymous() {
+            CrError::Unauthorized(missing.into())
+        } else {
+            CrError::BadRequest(missing.into())
+        });
+    };
+    Ok(state.ctx_in(subject, org))
+}
+
+/// The context of an installation act (create, retire or look up an Organization), which is
+/// decided in the main Organization by name: the server administrator is a member of it here.
+///
+/// # Errors
+/// As [`caller`].
+pub(crate) async fn installation_ctx(
+    state: &DaiyaState,
+    headers: &HeaderMap,
+) -> CrResult<RequestCtx> {
+    let (mut subject, _) = caller(state, headers).await?;
+    let main = state.default_org_id;
+    if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) && !subject.is_member_of(main) {
+        subject.organizations.push(main);
+    }
+    Ok(state.ctx_in(subject, main))
+}
+
+/// The [`RequestCtx`] of a route that works inside one Organization ([`resolve_request_ctx`]),
+/// as an extractor: such a request is refused before its body is read.
+pub struct OrgCtx(pub RequestCtx);
+
+impl FromRequestParts<DaiyaState> for OrgCtx {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &DaiyaState) -> Result<Self, Response> {
+        resolve_request_ctx(state, &parts.headers)
+            .await
+            .map(Self)
+            .map_err(|e| error_response(&e))
+    }
 }
 
 /// Converts a [`CrError`] into an OData 4.01 / RFC 9457 JSON HTTP response with `Cache-Control: private, no-store`.

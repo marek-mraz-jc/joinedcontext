@@ -41,6 +41,7 @@ hmac = "0.12"
 jsonwebtoken = "9"
 p256 = { version = "0.13", features = ["pkcs8", "jwk"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+gix-hash = "0.28"
 http-body-util = "0.1"
 ipnet = "2.12"
 parking_lot = "0.12"

@@ -770,7 +770,15 @@ async fn a_failure_after_the_folders_leaves_nothing_written() {
     // The datasource quota refuses the bundle's datasource after its folder was written.
     let mut quotas = store.get_quotas(ORG).await.unwrap();
     quotas.max_datasources = 0;
-    store.set_quotas(ORG, quotas).await.unwrap();
+    store
+        .set_quotas(
+            InstallationId::SINGLE,
+            ORG,
+            InstanceId::from_u128(1),
+            quotas,
+        )
+        .await
+        .unwrap();
     let bundle = DesiredBundle {
         folders: vec![folder("f", "Folder")],
         datasources: vec![datasource("prom")],

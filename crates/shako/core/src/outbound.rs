@@ -5,24 +5,29 @@
 //! - `https` only (except configured in-cluster hosts or explicit test loopback).
 //! - Mandatory host allow-list where configured.
 //! - No userinfo (`user:pass@`) in URLs.
-//! - DNS resolved once and checked against private, loopback, link-local, CGNAT, ULA, multicast,
-//!   IPv4-mapped/compatible IPv6, NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`), and cloud metadata
-//!   (`169.254.169.254`) ranges.
-//! - Validated `SocketAddr` pinned on the HTTP client (`reqwest::ClientBuilder::resolve`) so DNS
-//!   rebinding cannot switch the target on connect.
-//! - Redirects refused (`redirect::Policy::none()`), 5 s timeout, 1 MiB response body cap.
+//! - Resolution, the address classes, pinning, no proxy, no redirect and the caps are `jc-http`'s
+//!   (SEC-04); this module keeps shako's allow-list and in-cluster admission.
 
 use crate::error::{ShakoError, ShakoResult};
-use ipnet::IpNet;
+use jc_http::Method;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
 pub const MAX_OUTBOUND_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(5);
+/// A mirror's pack travels within this.
+pub const OUTBOUND_UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// What an outbound request sends.
+pub enum OutboundBody {
+    Bytes(Vec<u8>),
+    /// A spooled file, streamed from its start.
+    File(std::fs::File),
+}
 
 pub type MockOutboundHandler =
     Arc<dyn Fn(&str, &str, &[(String, String)], &[u8]) -> Option<(u16, Vec<u8>)> + Send + Sync>;
@@ -73,6 +78,13 @@ impl OutboundGuard {
             .insert(url.into(), (status, body.into()));
     }
 
+    /// An in-cluster host skips the address classes; nothing opens cloud metadata.
+    fn admits(&self, in_cluster: bool, ip: IpAddr) -> bool {
+        !jc_http::is_cloud_metadata(ip)
+            && (in_cluster
+                || jc_http::check_address(ip, self.policy.allow_loopback_for_tests).is_ok())
+    }
+
     fn is_in_cluster_host(&self, host: &str) -> bool {
         let lower = host.to_ascii_lowercase();
         self.policy.in_cluster_hosts.iter().any(|allowed| {
@@ -82,81 +94,6 @@ impl OutboundGuard {
                 &lower == allowed
             }
         })
-    }
-
-    /// Checks whether an IP address is private, loopback, link-local, metadata (`169.254.169.254`),
-    /// unspecified, multicast, or reserved (Threat T3).
-    #[must_use]
-    pub fn is_forbidden_ip(ip: IpAddr, allow_loopback_for_tests: bool) -> bool {
-        // Cloud metadata 169.254.169.254 is ALWAYS forbidden, even in test mode!
-        if ip == IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)) {
-            return true;
-        }
-        if allow_loopback_for_tests && ip.is_loopback() {
-            return false;
-        }
-        const V4_RESERVED: &[&str] = &[
-            "0.0.0.0/8",
-            "100.64.0.0/10",
-            "192.0.0.0/24",
-            "198.18.0.0/15",
-            "240.0.0.0/4",
-        ];
-        const V6_RESERVED: &[&str] = &[
-            "fc00::/7",
-            "fe80::/10",
-            "fec0::/10",
-            "100::/64",
-            "2001:db8::/32",
-            "2001::/32",
-        ];
-        let in_any = |list: &[&str]| {
-            list.iter()
-                .filter_map(|n| n.parse::<IpNet>().ok())
-                .any(|net| net.contains(&ip))
-        };
-        match ip {
-            IpAddr::V4(v4) => {
-                v4.is_private()
-                    || v4.is_loopback()
-                    || v4.is_link_local()
-                    || v4.is_broadcast()
-                    || v4.is_documentation()
-                    || v4.is_unspecified()
-                    || v4.is_multicast()
-                    || in_any(V4_RESERVED)
-            }
-            IpAddr::V6(v6) => {
-                if let Some(mapped) = v6.to_ipv4_mapped() {
-                    return Self::is_forbidden_ip(IpAddr::V4(mapped), allow_loopback_for_tests);
-                }
-                let segs = v6.segments();
-                let embedded_low = Ipv4Addr::new(
-                    (segs[6] >> 8) as u8,
-                    segs[6] as u8,
-                    (segs[7] >> 8) as u8,
-                    segs[7] as u8,
-                );
-                if (segs[..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified())
-                    || segs[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
-                {
-                    return Self::is_forbidden_ip(
-                        IpAddr::V4(embedded_low),
-                        allow_loopback_for_tests,
-                    );
-                }
-                if segs[0] == 0x2002 {
-                    let v4 = Ipv4Addr::new(
-                        (segs[1] >> 8) as u8,
-                        segs[1] as u8,
-                        (segs[2] >> 8) as u8,
-                        segs[2] as u8,
-                    );
-                    return Self::is_forbidden_ip(IpAddr::V4(v4), allow_loopback_for_tests);
-                }
-                v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || in_any(V6_RESERVED)
-            }
-        }
     }
 
     /// Validates a URL against scheme, userinfo, allow-list, and IP literal rules before DNS/connect.
@@ -190,8 +127,7 @@ impl OutboundGuard {
         }
 
         if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
-            && !in_cluster
-            && Self::is_forbidden_ip(ip, self.policy.allow_loopback_for_tests)
+            && !self.admits(in_cluster, ip)
         {
             return Err(ShakoError::SsrfBlocked(format!(
                 "outbound IP {ip} is private, loopback, or metadata and refused by SSRF guard"
@@ -210,128 +146,102 @@ impl OutboundGuard {
         Ok(parsed)
     }
 
-    async fn read_capped(mut resp: reqwest::Response) -> ShakoResult<Vec<u8>> {
-        if resp
-            .content_length()
-            .is_some_and(|n| n > MAX_OUTBOUND_RESPONSE_BYTES as u64)
-        {
-            return Err(ShakoError::SsrfBlocked(
-                "upstream response exceeds 1 MiB cap".into(),
-            ));
-        }
-        let mut out = Vec::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| ShakoError::SsrfBlocked(e.without_url().to_string()))?
-        {
-            if out.len().saturating_add(chunk.len()) > MAX_OUTBOUND_RESPONSE_BYTES {
-                return Err(ShakoError::SsrfBlocked(
-                    "upstream response exceeds 1 MiB cap".into(),
-                ));
-            }
-            out.extend_from_slice(&chunk);
-        }
-        Ok(out)
-    }
-
     /// Sends an HTTP request through the SSRF guard with DNS resolution pinning, no redirects,
     /// 5 s timeout, and 1 MiB response body cap.
     pub async fn request(
         &self,
-        method: reqwest::Method,
+        method: Method,
         raw_url: &str,
         headers: &[(String, String)],
         body: Vec<u8>,
         extra_allowed: Option<&[String]>,
     ) -> ShakoResult<(u16, Vec<u8>)> {
-        let url = self.validate_url(raw_url, extra_allowed)?;
-        if let Some(handler) = &self.policy.mock_handler
-            && let Some((status, resp_body)) =
-                handler(method.as_str(), url.as_str(), headers, &body)
-        {
-            if (300..400).contains(&status) {
-                return Err(ShakoError::SsrfBlocked(format!(
-                    "upstream redirect ({status}) refused by SSRF guard"
-                )));
-            }
-            if resp_body.len() > MAX_OUTBOUND_RESPONSE_BYTES {
-                return Err(ShakoError::SsrfBlocked(
-                    "upstream response exceeds 1 MiB cap".into(),
-                ));
-            }
-            return Ok((status, resp_body));
-        }
-        if let Some((status, resp_body)) =
-            self.policy.mock_responses.read().get(url.as_str()).cloned()
-        {
-            if (300..400).contains(&status) {
-                return Err(ShakoError::SsrfBlocked(format!(
-                    "upstream redirect ({status}) refused by SSRF guard"
-                )));
-            }
-            if resp_body.len() > MAX_OUTBOUND_RESPONSE_BYTES {
-                return Err(ShakoError::SsrfBlocked(
-                    "upstream response exceeds 1 MiB cap".into(),
-                ));
-            }
-            return Ok((status, resp_body));
-        }
-
-        let host = url.host_str().unwrap_or_default().to_owned();
-        let port = url.port_or_known_default().unwrap_or(443);
-        let in_cluster = self.is_in_cluster_host(&host);
-
-        let addrs: Vec<SocketAddr> = tokio::time::timeout(
-            OUTBOUND_TIMEOUT,
-            tokio::net::lookup_host((host.as_str(), port)),
-        )
-        .await
-        .map_err(|_| ShakoError::SsrfBlocked("DNS resolution timed out".into()))?
-        .map_err(|e| ShakoError::SsrfBlocked(format!("DNS resolution failed: {e}")))?
-        .collect();
-
-        let Some(&first_addr) = addrs.first() else {
-            return Err(ShakoError::SsrfBlocked("DNS returned no addresses".into()));
-        };
-        for addr in &addrs {
-            if !in_cluster && Self::is_forbidden_ip(addr.ip(), self.policy.allow_loopback_for_tests)
-            {
-                return Err(ShakoError::SsrfBlocked(format!(
-                    "resolved address {} is private, loopback, or metadata",
-                    addr.ip()
-                )));
-            }
-        }
-
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(OUTBOUND_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .resolve(&host, first_addr)
-            .build()
-            .map_err(|e| ShakoError::SsrfBlocked(e.to_string()))?;
-
-        let mut req = client.request(method, url);
-        for (k, v) in headers {
-            req = req.header(k, v);
-        }
-        if !body.is_empty() {
-            req = req.body(body);
-        }
-        let resp = req
-            .send()
+        let body = OutboundBody::Bytes(body);
+        self.send(method, raw_url, headers, body, extra_allowed)
             .await
-            .map_err(|e| ShakoError::SsrfBlocked(e.without_url().to_string()))?;
-        let status = resp.status();
-        if status.is_redirection() {
-            return Err(ShakoError::SsrfBlocked(format!(
-                "upstream redirect ({}) refused by SSRF guard",
-                status.as_u16()
-            )));
+    }
+
+    /// [`Self::request`] with a body that may be a spooled file, which gets
+    /// [`OUTBOUND_UPLOAD_TIMEOUT`].
+    pub async fn send(
+        &self,
+        method: Method,
+        raw_url: &str,
+        headers: &[(String, String)],
+        body: OutboundBody,
+        extra_allowed: Option<&[String]>,
+    ) -> ShakoResult<(u16, Vec<u8>)> {
+        let blocked = |e: &dyn std::fmt::Display| ShakoError::SsrfBlocked(e.to_string());
+        let url = self.validate_url(raw_url, extra_allowed)?;
+        if let Some((status, resp_body)) = self.mocked(&method, &url, headers, &body)? {
+            if (300..400).contains(&status) {
+                return Err(ShakoError::SsrfBlocked(format!(
+                    "upstream redirect ({status}) refused by SSRF guard"
+                )));
+            }
+            if resp_body.len() > MAX_OUTBOUND_RESPONSE_BYTES {
+                return Err(ShakoError::SsrfBlocked(
+                    "upstream response exceeds 1 MiB cap".into(),
+                ));
+            }
+            return Ok((status, resp_body));
         }
-        let bytes = Self::read_capped(resp).await?;
-        Ok((status.as_u16(), bytes))
+
+        let in_cluster = self.is_in_cluster_host(url.host_str().unwrap_or_default());
+        let (body, timeout) = match body {
+            OutboundBody::Bytes(bytes) => (
+                (!bytes.is_empty()).then(|| jc_http::Body::from(bytes)),
+                OUTBOUND_TIMEOUT,
+            ),
+            OutboundBody::File(file) => {
+                let mut file = tokio::fs::File::from_std(file);
+                tokio::io::AsyncSeekExt::rewind(&mut file)
+                    .await
+                    .map_err(|e| ShakoError::Storage(format!("outbound spool: {e}")))?;
+                (Some(jc_http::Body::from(file)), OUTBOUND_UPLOAD_TIMEOUT)
+            }
+        };
+        let request = jc_http::Request {
+            method,
+            // validate_url let plain http through for the hosts it names alone.
+            plain_http: url.scheme() == "http",
+            url,
+            headers: headers.to_vec(),
+            body,
+            timeout,
+            max_response_bytes: MAX_OUTBOUND_RESPONSE_BYTES,
+        };
+        let response = jc_http::send(request, |ip| self.admits(in_cluster, ip))
+            .await
+            .map_err(|e| blocked(&e))?;
+        Ok((response.status, response.body))
+    }
+
+    fn mocked(
+        &self,
+        method: &Method,
+        url: &Url,
+        headers: &[(String, String)],
+        body: &OutboundBody,
+    ) -> ShakoResult<Option<(u16, Vec<u8>)>> {
+        if let Some(handler) = &self.policy.mock_handler {
+            let mut read = Vec::new();
+            let sent = match body {
+                OutboundBody::Bytes(bytes) => bytes,
+                OutboundBody::File(file) => {
+                    use std::io::{Read as _, Seek as _};
+                    let mut file = file;
+                    file.rewind()
+                        .and_then(|()| file.read_to_end(&mut read))
+                        .map_err(|e| ShakoError::Storage(format!("outbound spool: {e}")))?;
+                    &read
+                }
+            };
+            if let Some(answer) = handler(method.as_str(), url.as_str(), headers, sent) {
+                return Ok(Some(answer));
+            }
+        }
+        Ok(self.policy.mock_responses.read().get(url.as_str()).cloned())
     }
 }
 
@@ -406,7 +316,7 @@ mod tests {
         assert!(
             guard
                 .request(
-                    reqwest::Method::GET,
+                    Method::GET,
                     "https://github.com/redirect",
                     &[],
                     Vec::new(),
@@ -424,7 +334,7 @@ mod tests {
         assert!(
             guard
                 .request(
-                    reqwest::Method::GET,
+                    Method::GET,
                     "https://github.com/huge",
                     &[],
                     Vec::new(),

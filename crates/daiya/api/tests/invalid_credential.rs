@@ -62,7 +62,10 @@ async fn folders(authorization: Option<String>) -> (StatusCode, Value) {
         ),
         ..w
     };
-    let mut req = Request::builder().method("GET").uri("/api/folders");
+    let mut req = Request::builder()
+        .method("GET")
+        .uri("/api/folders")
+        .header("x-grafana-org-id", "1");
     if let Some(value) = authorization {
         req = req.header("authorization", value);
     }

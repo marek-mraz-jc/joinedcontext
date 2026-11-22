@@ -34,6 +34,16 @@ fn catalog_validation_refuses_unforced_rls_and_bypassrls_and_table_ownership() {
         .collect();
     assert!(validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &valid).is_ok());
 
+    // A table a later release added, forced RLS like the rest -> that release rolls back (STO-11)
+    let mut with_later = valid.clone();
+    with_later.push(TableRlsStatus {
+        table_name: "a_later_release".into(),
+        rls_enabled: true,
+        rls_forced: true,
+        policy_count: 1,
+    });
+    assert!(validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &with_later).is_ok());
+
     // BYPASSRLS -> refused
     assert!(validate_rls_catalog_rows("shako_app_login", true, false, 0, 0, &valid).is_err());
     // SUPERUSER -> refused

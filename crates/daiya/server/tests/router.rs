@@ -1,8 +1,7 @@
 #![forbid(unsafe_code)]
-//! The mountable router's own routes (R10, R11): `GET /mcp/tools` and `POST /mcp/call` answer
-//! with the same tools and decisions as the in-process MCP dispatcher, errors keep their HTTP
-//! status and OData error body, every answer carries the security headers, and the CLI
-//! dispatcher refuses a command the registry does not know.
+//! The mountable router's own routes (R10, R11): `/mount-info`, the security headers on every
+//! answer, no MCP door of daiya's own, and the CLI dispatcher refuses a command the registry
+//! does not know.
 
 use axum::body::Body;
 use axum::http::Request;
@@ -59,14 +58,31 @@ async fn send(
 }
 
 #[tokio::test]
-async fn mcp_over_http_lists_tools_and_calls_them_as_the_caller() {
-    let (state, app) = app();
-    let (st, headers, tools) = send(&app, "GET", "/mcp/tools", None, None).await;
+async fn daiya_serves_no_mcp_of_its_own() {
+    let (_, app) = app();
+    for (method, uri) in [
+        ("POST", "/mcp"),
+        ("GET", "/mcp/tools"),
+        ("POST", "/mcp/call"),
+    ] {
+        let call = json!({ "name": "allowed", "arguments": { "operation": "apply" } });
+        let (st, _, err) = send(&app, method, uri, None, Some(call.clone())).await;
+        assert_eq!(st, 401, "{method} {uri}: {err}");
+        let (st, _, err) = send(&app, method, uri, Some("forged"), Some(call.clone())).await;
+        assert_eq!(st, 401, "{method} {uri}: {err}");
+        let (st, headers, err) = send(&app, method, uri, Some("t"), Some(call)).await;
+        assert_eq!(st, 404, "{method} {uri}: {err}");
+        assert!(err["error"]["message"].is_string(), "{err}");
+        assert_eq!(headers["cache-control"], "private, no-store");
+    }
+}
+
+#[tokio::test]
+async fn mount_info_reports_the_default_mount() {
+    let (_, app) = app();
+    let (st, headers, info) = send(&app, "GET", "/mount-info", None, None).await;
     assert_eq!(st, 200);
-    assert_eq!(
-        tools["tools"].as_array().unwrap().len(),
-        state.registry.operations.len() + 1
-    );
+    assert_eq!(info["module"], "daiya");
     assert_eq!(headers["x-content-type-options"], "nosniff");
     assert_eq!(headers["x-frame-options"], "SAMEORIGIN");
     // Every answer defaults to not being stored by an intermediary.
@@ -82,58 +98,6 @@ async fn mcp_over_http_lists_tools_and_calls_them_as_the_caller() {
             .unwrap()
             .contains("frame-ancestors 'self'")
     );
-
-    let (st, _, decision) = send(
-        &app,
-        "POST",
-        "/mcp/call",
-        Some("t"),
-        Some(json!({ "name": "daiya_allowed", "arguments": { "operation": "apply" } })),
-    )
-    .await;
-    assert_eq!(st, 200, "{decision}");
-    assert_eq!(decision["allowed"], true, "{decision}");
-
-    // The same call without the token runs as the anonymous subject.
-    let (st, _, decision) = send(
-        &app,
-        "POST",
-        "/mcp/call",
-        None,
-        Some(json!({ "name": "daiya_allowed", "arguments": { "operation": "apply" } })),
-    )
-    .await;
-    assert_eq!(st, 200);
-    assert_eq!(decision["allowed"], false, "{decision}");
-
-    // Errors keep their status and an OData error body; `arguments` may be left out.
-    let (st, _, err) = send(
-        &app,
-        "POST",
-        "/mcp/call",
-        Some("t"),
-        Some(json!({ "name": "daiya_export_dashboard" })),
-    )
-    .await;
-    assert_eq!(st, 400, "{err}");
-    assert!(err["error"]["message"].is_string(), "{err}");
-    let (st, _, err) = send(
-        &app,
-        "POST",
-        "/mcp/call",
-        Some("t"),
-        Some(json!({ "name": "nope", "arguments": {} })),
-    )
-    .await;
-    assert_eq!(st, 404, "{err}");
-}
-
-#[tokio::test]
-async fn mount_info_reports_the_default_mount() {
-    let (_, app) = app();
-    let (st, headers, info) = send(&app, "GET", "/mount-info", None, None).await;
-    assert_eq!(st, 200);
-    assert_eq!(info["module"], "daiya");
     assert_eq!(info["pathPrefix"], "/d");
     assert_eq!(info["odataUrl"], "https://dash.example/d/odata/v4");
     assert_eq!(

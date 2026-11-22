@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 shako-core = { path = "../core" }
 shako-git = { path = "../git" }
+jc-limits = { path = "../../shared/jc-limits" }
 jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
@@ -23,13 +24,14 @@ odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-
 odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
 parking_lot = "0.12"
 percent-encoding = "2.3"
+rustix = { version = "1.1", features = ["fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
 tempfile = "3.27"
-tokio = { version = "1.54", features = ["fs", "io-util", "sync", "time"] }
+tokio = { version = "1.54", features = ["fs", "io-util", "rt", "sync", "time"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 url = "2.5"

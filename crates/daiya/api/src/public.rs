@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 //! Public dashboards implementation (R7, `GF pkg/services/publicdashboards`):
 //! - Per-dashboard opt-in (`is_enabled: false` by default).
+//! - A panel reads only the host's gateway Endpoints, with no credential, so it shows what their
+//!   public Policy allows (WRK-04): publishing data is the Endpoint's Change, never this opt-in.
 //! - 256-bit random access token (32 bytes = 64 hex chars), stored only as SHA-256 hash in the store.
 //! - Anonymous viewers can only execute the saved queries of a panel on the saved dashboard:
 //!   any caller-supplied `targets`, `queries`, `datasource`, `expr`, `rawSql`, `expressions`, or
@@ -16,16 +18,17 @@
 use crate::render::{
     datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
 };
-use crate::state::{DaiyaState, audit, error_response, resolve_request_ctx, unit};
+use crate::state::{DaiyaState, OrgCtx, audit, error_response, unit};
 use axum::extract::{Extension, Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use daiya_expr::apply_transformations;
+use daiya_expr::{apply_transformations, is_expression_datasource_uid};
 use daiya_model::{
-    Action, CanonicalJson, CrError, CrResult, DashboardDocument, FrameSet, ObjectTarget,
-    PublicDashboardAuthorizer, PublicDashboardRecord, RequestCtx, ShareType, Subject, sha256_hex,
+    Action, CanonicalJson, CrError, CrResult, DashboardDocument, DashboardRecord, FrameSet,
+    ObjectTarget, PanelSpec, PublicDashboardAuthorizer, PublicDashboardRecord, RequestCtx,
+    ShareType, Subject, sha256_hex,
 };
 use daiya_query::PublicCacheKey;
 use jc_router::ClientAddr;
@@ -151,11 +154,16 @@ pub fn public_caller_of(client: Option<&ClientAddr>) -> Option<PublicCaller> {
     client.map(|c| PublicCaller::Addr(c.0))
 }
 
+/// What an anonymous viewer is told of a panel whose source is no Endpoint.
+pub(crate) const SOURCE_REFUSED: &str =
+    "this panel is not published: a public dashboard reads only a public Endpoint";
+
 /// An anonymous viewer gets a fixed text for a failed saved query: the datasource's own error
 /// (upstream body, database message, refused address) stays with the dashboard's members.
 fn public_query_error(err: CrError) -> CrError {
     match err {
         CrError::RateLimited(_) => err,
+        CrError::Forbidden(_) => CrError::Forbidden(SOURCE_REFUSED.into()),
         _ => CrError::OutboundFailed("the panel's saved query failed".into()),
     }
 }
@@ -215,6 +223,66 @@ pub struct PublicDashboardViewDto {
     pub dashboard: Value,
 }
 
+fn unprocessable(field: &str, why: String) -> CrError {
+    CrError::Unprocessable {
+        errors: vec![format!("/{field}: {why}")],
+        detail: format!("{field}: {why}"),
+    }
+}
+
+/// The datasources the saved targets of `panels` read, rows unfolded.
+fn panel_sources(panels: &[PanelSpec], out: &mut BTreeSet<String>) {
+    for panel in panels {
+        let panel_source = panel.datasource.as_ref().and_then(|d| d.uid.as_deref());
+        for target in panel.targets.iter().flatten() {
+            let target = serde_json::to_value(target).unwrap_or_default();
+            let named = &target["datasource"];
+            let uid = named
+                .get("uid")
+                .unwrap_or(named)
+                .as_str()
+                .or(panel_source)
+                .unwrap_or_default();
+            let kind = named["type"].as_str().unwrap_or_default();
+            if !uid.is_empty()
+                && uid != "-- Mixed --"
+                && !is_expression_datasource_uid(uid)
+                && !is_expression_datasource_uid(kind)
+            {
+                out.insert(uid.to_owned());
+            }
+        }
+        panel_sources(panel.panels.as_deref().unwrap_or(&[]), out);
+    }
+}
+
+/// Refuses (422) to publish a dashboard with a panel its viewers would only be refused, naming
+/// the datasources to change. The reads check again: a dashboard or datasource can change later.
+async fn check_publishable(state: &DaiyaState, dash: &DashboardRecord) -> CrResult<()> {
+    let doc: DashboardDocument = serde_json::from_value(dash.data.clone())
+        .map_err(|e| CrError::Internal(format!("invalid stored dashboard JSON: {e}")))?;
+    let mut sources = BTreeSet::new();
+    panel_sources(doc.panels.as_deref().unwrap_or(&[]), &mut sources);
+    let mut refused = Vec::new();
+    for uid in sources {
+        let record = state.store.get_datasource(dash.org_id, &uid).await?;
+        if !record.is_some_and(|record| state.reads_endpoint(&record)) {
+            refused.push(uid);
+        }
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(unprocessable(
+        "isEnabled",
+        format!(
+            "a public dashboard reads only Endpoints of this installation, by their public Policy; \
+             point these datasources at an Endpoint or remove their panels: {}",
+            refused.join(", ")
+        ),
+    ))
+}
+
 /// Creates or updates a public dashboard opt-in record for `dashboard_uid` (R7: off by default unless `is_enabled` is true).
 /// [`create_or_update_public_dashboard_in_unit`] as one unit (jc-audit): its writes and its audit row commit together.
 pub async fn create_or_update_public_dashboard(
@@ -247,15 +315,25 @@ async fn create_or_update_public_dashboard_in_unit(
         },
     );
     decision.into_result(format!("Dashboard '{dashboard_uid}' not found"))?;
-    if state
+    let Some(dash) = state
         .store
         .get_dashboard(req_ctx.org_id, dashboard_uid)
         .await?
-        .is_none()
-    {
+    else {
         return Err(CrError::NotFound(format!(
             "Dashboard '{dashboard_uid}' not found"
         )));
+    };
+    if dto.share == Some(ShareType::Email) {
+        return Err(unprocessable(
+            "share",
+            "sharing by e-mail is not enforced here; use \"public\", or leave the dashboard \
+             unpublished and share it with members"
+                .into(),
+        ));
+    }
+    if dto.is_enabled == Some(true) {
+        check_publishable(state, &dash).await?;
     }
 
     let existing = state
@@ -575,8 +653,30 @@ async fn in_retired_org(state: &DaiyaState, org: daiya_model::OrgId) -> CrResult
     Ok(held.is_some_and(|row| row.retired))
 }
 
+/// The public dashboard `access_token` opens, with its dashboard: enabled, shared as public and
+/// in a live Organization; anything else is the same 404.
+async fn opened_by(
+    state: &DaiyaState,
+    access_token: &str,
+) -> CrResult<(PublicDashboardRecord, DashboardRecord)> {
+    let token_hash = sha256_hex(access_token.as_bytes());
+    let not_found = || CrError::NotFound("Public dashboard not found".into());
+    let (pubdash, dash) = state
+        .store
+        .get_public_dashboard_by_token_hash(&token_hash)
+        .await?
+        .ok_or_else(not_found)?;
+    if !pubdash.is_enabled
+        || pubdash.share != ShareType::Public
+        || in_retired_org(state, pubdash.org_id).await?
+    {
+        return Err(not_found());
+    }
+    Ok((pubdash, dash))
+}
+
 /// Anonymous view of a public dashboard by `access_token` (R7).
-/// Unknown, disabled, or rotated tokens return the exact same 404 error.
+/// Unknown, disabled, e-mail shared, or rotated tokens return the exact same 404 error.
 pub async fn view_public_dashboard(
     state: &DaiyaState,
     caller: Option<PublicCaller>,
@@ -589,18 +689,7 @@ pub async fn view_public_dashboard(
         return Err(CrError::NotFound("Public dashboard not found".into()));
     }
 
-    let token_hash = sha256_hex(access_token.as_bytes());
-    let Some((pubdash, dash)) = state
-        .store
-        .get_public_dashboard_by_token_hash(&token_hash)
-        .await?
-    else {
-        return Err(CrError::NotFound("Public dashboard not found".into()));
-    };
-
-    if !pubdash.is_enabled || in_retired_org(state, pubdash.org_id).await? {
-        return Err(CrError::NotFound("Public dashboard not found".into()));
-    }
+    let (pubdash, dash) = opened_by(state, access_token).await?;
 
     let sanitized = sanitize_dashboard_for_public_view(
         &dash.data,
@@ -635,7 +724,8 @@ pub async fn view_public_dashboard(
 /// 4. Caps time range (`max_public_range_seconds`) and interval (`min_public_interval_ms`), and
 ///    ignores caller time range when `time_selection_enabled == false`.
 /// 5. Caches results per `(org_id, instance_id, dashboard_uid, dashboard_version, panel_id, range_bucket)`.
-/// 6. Sanitizes returned frames (`sanitize_for_public(pubdash.show_query_text)`): frames only,
+/// 6. Reads only the host's gateway Endpoints, with no credential ([`DaiyaState::reads_endpoint`]).
+/// 7. Sanitizes returned frames (`sanitize_for_public(pubdash.show_query_text)`): frames only,
 ///    never datasource UID, URL, credentials, or query text (unless `show_query_text == true`).
 pub async fn execute_public_dashboard_query(
     state: &DaiyaState,
@@ -670,18 +760,7 @@ pub async fn execute_public_dashboard_query(
         }
     }
 
-    let token_hash = sha256_hex(access_token.as_bytes());
-    let Some((pubdash, dash)) = state
-        .store
-        .get_public_dashboard_by_token_hash(&token_hash)
-        .await?
-    else {
-        return Err(CrError::NotFound("Public dashboard not found".into()));
-    };
-
-    if !pubdash.is_enabled || in_retired_org(state, pubdash.org_id).await? {
-        return Err(CrError::NotFound("Public dashboard not found".into()));
-    }
+    let (pubdash, dash) = opened_by(state, access_token).await?;
 
     let doc: DashboardDocument = serde_json::from_value(dash.data.clone())
         .map_err(|e| CrError::Internal(format!("invalid stored dashboard JSON: {e}")))?;
@@ -945,11 +1024,10 @@ async fn http_query_public_dashboard(
 
 async fn http_create_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(dashboard_uid): Path<String>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     match create_or_update_public_dashboard(&state, &ctx, &dashboard_uid, dto).await {
         Ok(rec) => (StatusCode::OK, Json(rec)).into_response(),
         Err(e) => error_response(&e),
@@ -958,11 +1036,10 @@ async fn http_create_public_dashboard(
 
 async fn http_update_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path((dashboard_uid, uid)): Path<(String, String)>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     // As Grafana, the record is the one the path names: another uid is 404, never a new record.
     match state
         .store
@@ -981,10 +1058,9 @@ async fn http_update_public_dashboard(
 
 async fn http_get_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(dashboard_uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,

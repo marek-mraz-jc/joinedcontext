@@ -821,7 +821,7 @@ impl DaiyaStore for PgStore {
             .bind(name)
             .bind(number)
             .bind(first_id.as_uuid())
-            .bind(OrgId::new().as_uuid())
+            .bind(OrgId::generate().as_uuid())
             .fetch_optional(&mut *tx)
             .await
             .map_err(db_err)?;
@@ -922,7 +922,13 @@ impl DaiyaStore for PgStore {
         })
     }
 
-    fn set_quotas(&self, org_id: OrgId, q: OrgQuotas) -> StoreFuture<'_, ()> {
+    fn set_quotas(
+        &self,
+        installation: InstallationId,
+        org_id: OrgId,
+        instance: InstanceId,
+        q: OrgQuotas,
+    ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
             sqlx::query(
@@ -942,9 +948,9 @@ impl DaiyaStore for PgStore {
                     min_public_interval_ms = EXCLUDED.min_public_interval_ms,
                     updated_at = NOW()",
             )
-            .bind(InstallationId::from_u128(1).as_uuid())
+            .bind(installation.as_uuid())
             .bind(org_id.as_uuid())
-            .bind(InstanceId::from_u128(1).as_uuid())
+            .bind(instance.as_uuid())
             .bind(q.max_dashboards as i64)
             .bind(q.max_panels_per_dashboard as i64)
             .bind(q.max_datasources as i64)
@@ -1584,14 +1590,18 @@ impl DaiyaStore for PgStore {
         })
     }
 
-    fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()> {
+    fn insert_import_report(
+        &self,
+        installation: InstallationId,
+        report: ImportReportRecord,
+    ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(report.org_id).await?;
             sqlx::query(
                 "INSERT INTO cr_import_report (installation_id, org_id, instance_id, id, dry_run, status, dashboard_count, refused_count, mapped_count, summary, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             )
-            .bind(InstallationId::from_u128(1).as_uuid())
+            .bind(installation.as_uuid())
             .bind(report.org_id.as_uuid())
             .bind(report.instance_id.as_uuid())
             .bind(&report.id)

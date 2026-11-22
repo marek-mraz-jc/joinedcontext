@@ -3,8 +3,9 @@
 //! thin-pack completion, object size and delta-depth limits, connectivity check,
 //! secret scanning, ref policy evaluation, and `report-status` / `report-status-v2` (Contract S4, S5, T5, T7, T9).
 
+use crate::pack::{Admit, BYTES_PER_OBJECT};
 use crate::pktline::{
-    MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line, write_flush,
+    MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line_from, write_flush,
     write_sideband_chunks, write_text_line,
 };
 use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
@@ -22,8 +23,13 @@ use shako_core::{
     RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_full_ref_name, validate_tree_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{BufReader, Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, atomic::AtomicBool};
+
+/// The commands in front of a pushed pack: a thousand refs with long names fit.
+pub const MAX_COMMAND_BYTES: usize = 1024 * 1024;
 
 pub const RECEIVE_PACK_CAPABILITIES: &str = "report-status report-status-v2 delete-refs side-band-64k quiet atomic ofs-delta object-format=sha1 agent=shako/0.1.0";
 
@@ -119,23 +125,25 @@ impl Drop for QuarantineDir {
     }
 }
 
-static SECRET_SCAN_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
-    vec![
-        (
-            "private-key",
-            Regex::new(r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")
-                .expect("static regex"),
-        ),
-        (
-            "aws-access-key",
-            Regex::new(r"AKIA[0-9A-Z]{16}").expect("static regex"),
-        ),
-        (
-            "github-token",
-            Regex::new(r"ghp_[A-Za-z0-9]{36}").expect("static regex"),
-        ),
-    ]
-});
+static SECRET_SCAN_PATTERNS: LazyLock<Vec<(&'static str, regex::bytes::Regex)>> =
+    LazyLock::new(|| {
+        use regex::bytes::Regex;
+        vec![
+            (
+                "private-key",
+                Regex::new(r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----")
+                    .expect("static regex"),
+            ),
+            (
+                "aws-access-key",
+                Regex::new(r"AKIA[0-9A-Z]{16}").expect("static regex"),
+            ),
+            (
+                "github-token",
+                Regex::new(r"ghp_[A-Za-z0-9]{36}").expect("static regex"),
+            ),
+        ]
+    });
 
 /// The field names a manifest writes a credential under: the Portal's `SECRET_KEYS`
 /// (`crates/portal/src/api/mutate.rs`, MF-24), which refuses the same names at every Portal door.
@@ -242,17 +250,20 @@ fn literal_secret_field(text: &str) -> Option<(String, Option<usize>)> {
 /// shapes of [`SECRET_SCAN_PATTERNS`] in any file, and a literal under a secret field in a YAML
 /// manifest. The refusal names the path, the line and the rule, never the value.
 pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(bytes);
     for (rule_name, regex) in SECRET_SCAN_PATTERNS.iter() {
-        if let Some(found) = regex.find(&text) {
-            let line = text[..found.start()].matches('\n').count() + 1;
+        if let Some(found) = regex.find(bytes) {
+            let line = bytes[..found.start()]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count()
+                + 1;
             return Some(format!(
                 "{SECRET_REFUSAL} {rule_name} in '{path}' line {line}"
             ));
         }
     }
     if (path.ends_with(".yaml") || path.ends_with(".yml"))
-        && let Some((field, line)) = literal_secret_field(&text)
+        && let Some((field, line)) = literal_secret_field(&String::from_utf8_lossy(bytes))
     {
         let at = line.map(|n| format!(" line {n}")).unwrap_or_default();
         return Some(format!(
@@ -272,25 +283,34 @@ pub struct PushGuard<'a> {
     pub policy: &'a RefPolicy,
 }
 
-/// Processes a `POST {repo}.git/git-receive-pack` request (S4, S5, T5, T7, T9).
+/// Processes a `POST {repo}.git/git-receive-pack` request held in `body` (S4, S5, T5, T7, T9);
+/// `admit` is asked after the pack's scan, before anything inflates it.
 pub fn handle_receive_pack(
     repo_path: &Path,
     guard: &PushGuard<'_>,
     max_push_bytes: u64,
-    body: &[u8],
+    mut body: &File,
+    admit: Admit<'_>,
 ) -> ShakoResult<ReceivePackOutcome> {
-    // 1. Parse command list up to Flush (0000), leaving `rest` at the start of the raw PACK stream
-    let mut rest = body;
+    // 1. Parse command list up to Flush (0000), leaving `body` at the start of the raw PACK stream
+    let unreadable = |e: std::io::Error| ShakoError::Storage(format!("read push: {e}"));
+    body.seek(SeekFrom::Start(0)).map_err(unreadable)?;
+    let mut read = 0usize;
     let mut commands = Vec::new();
     let mut caps = BTreeSet::new();
 
     loop {
-        let Some((line, used)) = read_pkt_line(rest)? else {
+        let Some((line, used)) = read_pkt_line_from(body)? else {
             return Err(ShakoError::BadRequest(
                 "receive-pack missing flush packet after commands".into(),
             ));
         };
-        rest = &rest[used..];
+        read += used;
+        if read > MAX_COMMAND_BYTES {
+            return Err(ShakoError::BadRequest(format!(
+                "receive-pack commands exceed {MAX_COMMAND_BYTES} bytes"
+            )));
+        }
         match line {
             PktLine::Flush => break,
             PktLine::Data(raw) => {
@@ -338,17 +358,27 @@ pub fn handle_receive_pack(
         }
     }
 
+    let body_len = body.metadata().map_err(unreadable)?.len();
     if commands.is_empty() {
+        // git asks with a lone flush packet before it sends a push over http.postBuffer.
+        if read == 4 && body_len == 4 {
+            return Ok(ReceivePackOutcome {
+                response_bytes: Vec::new(),
+                updated_refs: Vec::new(),
+                pack_size_bytes: 0,
+            });
+        }
         return Err(ShakoError::BadRequest(
             "receive-pack requires at least one command".into(),
         ));
     }
 
     let atomic = caps.contains("atomic");
-    let pack_data = rest;
+    let pack_start = read as u64;
+    let pack_len = body_len.saturating_sub(pack_start);
 
     // 2. Enforce streaming push byte limit / quota BEFORE storing anything (S4, S6, Threat T5)
-    if pack_data.len() as u64 > max_push_bytes {
+    if pack_len > max_push_bytes {
         return format_unpack_error("quota", &commands, &caps);
     }
 
@@ -358,14 +388,23 @@ pub fn handle_receive_pack(
     let mut written_idx_path: Option<PathBuf> = None;
 
     // 3. Unpack and validate incoming packfile in quarantine (`objects/incoming-<uuid>/`)
-    if has_non_delete || !pack_data.is_empty() {
-        if !pack_data.starts_with(b"PACK") {
+    if has_non_delete || pack_len > 0 {
+        let mut magic = Vec::new();
+        body.take(4).read_to_end(&mut magic).map_err(unreadable)?;
+        if magic != b"PACK" {
             return format_unpack_error("missing PACK header", &commands, &caps);
         }
-        if let Err(reason) = validate_and_index_pack_in_quarantine(
+        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        let (held, count) = match scan_pack(body, pack_start) {
+            Ok(scanned) => scanned,
+            Err(reason) => return format_unpack_error(&reason, &commands, &caps),
+        };
+        admit(held.saturating_add(count.saturating_mul(BYTES_PER_OBJECT)))?;
+        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        if let Err(reason) = index_pack_in_quarantine(
             repo_path,
             &quarantine.path,
-            pack_data,
+            body,
             &mut written_pack_path,
             &mut written_idx_path,
         ) {
@@ -507,7 +546,7 @@ pub fn handle_receive_pack(
         }
         0
     } else {
-        pack_data.len() as u64
+        pack_len
     };
 
     let response_bytes = format_report_status("ok", &final_results, &caps)?;
@@ -518,33 +557,27 @@ pub fn handle_receive_pack(
     })
 }
 
-fn validate_and_index_pack_in_quarantine(
-    repo_path: &Path,
-    quarantine_dir: &Path,
-    pack_data: &[u8],
-    out_pack: &mut Option<PathBuf>,
-    out_idx: &mut Option<PathBuf>,
-) -> Result<(), String> {
-    // 1. Streaming pre-scan of pack entries with `BytesToEntriesIter` to enforce:
-    //    - `decompressed_size <= MAX_SINGLE_OBJECT_BYTES` (100 MiB)
-    //    - `delta_chain_depth <= MAX_DELTA_CHAIN_DEPTH` (50) (Threat T5)
-    let cursor = std::io::Cursor::new(pack_data);
+/// Streaming pre-scan of pack entries with `BytesToEntriesIter`, enforcing an object size
+/// (a delta's result included) `<= MAX_SINGLE_OBJECT_BYTES` (100 MiB) and
+/// `delta_chain_depth <= MAX_DELTA_CHAIN_DEPTH` (50) (Threat T5). Answers what indexing holds at
+/// its largest and the number of entries. `pack_start` is the pack's offset in `pack`.
+fn scan_pack(pack: &File, pack_start: u64) -> Result<(u64, u64), String> {
     let entries_iter = BytesToEntriesIter::new_from_header(
-        cursor,
+        BufReader::new(pack),
         InputMode::Verify,
         EntryDataMode::Ignore,
         gix_hash::Kind::Sha1,
     )
     .map_err(|e| format!("invalid pack header: {e}"))?;
 
+    let too_large =
+        |size: u64| format!("object size {size} exceeds limit {MAX_SINGLE_OBJECT_BYTES}");
     let mut depth_by_offset: BTreeMap<u64, usize> = BTreeMap::new();
+    let mut held = 0;
     for entry_res in entries_iter {
         let entry = entry_res.map_err(|e| format!("corrupt pack entry: {e}"))?;
         if entry.decompressed_size > MAX_SINGLE_OBJECT_BYTES {
-            return Err(format!(
-                "object size {} exceeds limit {MAX_SINGLE_OBJECT_BYTES}",
-                entry.decompressed_size
-            ));
+            return Err(too_large(entry.decompressed_size));
         }
         let depth = match entry.header {
             gix_pack::data::entry::Header::OfsDelta { base_distance } => {
@@ -560,12 +593,69 @@ fn validate_and_index_pack_in_quarantine(
             ));
         }
         depth_by_offset.insert(entry.pack_offset, depth);
+        // A whole object is held inflated and compressed. A delta's size is the delta's: its
+        // base, its result and the result's compressed form (a thin pack's base is appended)
+        // are held while it is resolved, measured at 3 x 80 MiB for one appended line.
+        let cost = if depth == 0 {
+            entry.decompressed_size.saturating_mul(2)
+        } else {
+            let at = pack_start + entry.pack_offset + u64::from(entry.header_size);
+            let (base, result) = delta_sizes(pack, at, entry.compressed_size)?;
+            if base.max(result) > MAX_SINGLE_OBJECT_BYTES {
+                return Err(too_large(base.max(result)));
+            }
+            base.saturating_add(result.saturating_mul(2))
+                .saturating_add(entry.decompressed_size)
+        };
+        held = held.max(cost);
     }
+    Ok((held, depth_by_offset.len() as u64))
+}
 
-    // 2. Index and thicken thin pack in `quarantine_dir` using `Bundle::write_to_directory`
+/// The base and result sizes a delta's data starts with (two little-endian base-128 numbers),
+/// read from its zlib stream of `len` bytes at `at` in `pack` without moving the file's position.
+/// A dynamic Huffman block's tables come before its first byte, so up to 4 KiB are read.
+fn delta_sizes(pack: &File, at: u64, len: u64) -> Result<(u64, u64), String> {
+    use std::os::unix::fs::FileExt as _;
+    let unreadable = |e: &dyn std::fmt::Display| format!("unreadable delta at {at}: {e}");
+    let mut compressed = vec![0u8; usize::try_from(len.min(4096)).unwrap_or(4096)];
+    pack.read_exact_at(&mut compressed, at)
+        .map_err(|e| unreadable(&e))?;
+    let mut header = [0u8; 20];
+    let mut inflate = flate2::Decompress::new(true);
+    inflate
+        .decompress(&compressed, &mut header, flate2::FlushDecompress::Sync)
+        .map_err(|e| unreadable(&e))?;
+    let header = &header[..usize::try_from(inflate.total_out()).unwrap_or(0)];
+    let mut sizes = header.iter().copied();
+    let mut size = || {
+        let mut value = 0u64;
+        for shift in (0..64).step_by(7) {
+            let byte = sizes.next()?;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Some(value);
+            }
+        }
+        None
+    };
+    match (size(), size()) {
+        (Some(base), Some(result)) => Ok((base, result)),
+        _ => Err(unreadable(&"truncated delta header")),
+    }
+}
+
+/// Indexes and thickens a thin pack in `quarantine_dir` using `Bundle::write_to_directory`.
+fn index_pack_in_quarantine(
+    repo_path: &Path,
+    quarantine_dir: &Path,
+    pack: &File,
+    out_pack: &mut Option<PathBuf>,
+    out_idx: &mut Option<PathBuf>,
+) -> Result<(), String> {
     let repo = open_isolated(repo_path).map_err(|e| e.to_string())?;
     let odb = repo.objects.clone();
-    let mut pack_reader = std::io::Cursor::new(pack_data);
+    let mut pack_reader = BufReader::new(pack);
     let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
 
@@ -697,8 +787,11 @@ fn verify_tip_connectivity_and_tree(
         validate_tree_path(path).map_err(|e| e.to_string())?;
         // A gitlink's commit lives in the submodule's repository, not in this pack.
         if *kind != EntryKind::Commit {
-            repo.find_blob(*blob_oid)
-                .map_err(|_| "missing necessary objects".to_owned())?;
+            // The header answers: the index pass verified the bytes.
+            repo.find_header(*blob_oid)
+                .ok()
+                .filter(|h| h.kind() == gix_object::Kind::Blob)
+                .ok_or_else(|| "missing necessary objects".to_owned())?;
         }
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {

@@ -32,7 +32,7 @@ async fn a_write_commits_with_its_audit_row_or_neither_stands() {
     let db = connect_test_database(&format!("{base}/{name}"))
         .await
         .expect("database");
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let pool = db.app.pool().clone();
     let state = DaiyaState::new(
         InstallationId::from_u128(1),

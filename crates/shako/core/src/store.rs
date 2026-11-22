@@ -69,6 +69,9 @@ impl SecretStore for MemorySecretStore {
     }
 }
 
+/// How long a claimed mirror sync is another replica's to leave alone; longer than a sync runs.
+pub const MIRROR_LEASE: std::time::Duration = std::time::Duration::from_secs(11 * 60);
+
 /// Storage interface for all `shako` metadata, scoped per `(InstanceId, OrgId)` (S2).
 pub trait Store: Send + Sync {
     /// Verifies that forced RLS is active on every table in `shako` and the request role
@@ -230,6 +233,38 @@ pub trait Store: Send + Sync {
     ) -> StoreFuture<'_, Vec<DeliveryRecord>>;
 
     // Push Mirrors
+    /// Records that the repository's push mirrors are behind its refs (T-7522) and returns the
+    /// mark a sync answers for.
+    fn mark_mirror_due(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+    ) -> StoreFuture<'_, i64>;
+    /// Whether a sync that ended answered for `mark`.
+    fn mirror_synced(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, bool>;
+    /// Takes one due repository (`repo_id`'s alone when named) under a lease of
+    /// [`MIRROR_LEASE`], with the mark it answers for.
+    fn claim_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: Option<RepoId>,
+    ) -> StoreFuture<'_, Option<(RepoId, i64)>>;
+    /// Ends a claimed sync; a mark set since the claim stays due.
+    fn finish_mirror_sync(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        repo_id: RepoId,
+        mark: i64,
+    ) -> StoreFuture<'_, ()>;
     fn upsert_push_mirror(&self, mirror: PushMirrorRecord) -> StoreFuture<'_, PushMirrorRecord>;
     fn list_push_mirrors(
         &self,

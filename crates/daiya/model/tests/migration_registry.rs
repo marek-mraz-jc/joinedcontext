@@ -526,14 +526,10 @@ fn ctx(subject: Subject) -> RequestCtx {
 }
 
 #[test]
-fn operations_are_found_by_odata_mcp_and_cli_names() {
+fn operations_are_found_by_odata_and_cli_names() {
     let reg = daiya_registry();
     let by_odata = reg.find_operation("datasource/query").unwrap();
     assert_eq!(by_odata.name, "Datasource/Query");
-    assert_eq!(
-        reg.find_operation(&by_odata.mcp_tool).unwrap().name,
-        by_odata.name
-    );
     assert_eq!(
         reg.find_operation(&by_odata.cli_command).unwrap().name,
         by_odata.name

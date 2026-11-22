@@ -9,7 +9,7 @@ use crate::odata::{
 };
 use crate::render::{PanelTimeRange, panel_view};
 use crate::sets::readable_rows;
-use crate::state::{DaiyaState, audit, error_response, resolve_request_ctx, unit};
+use crate::state::{DaiyaState, OrgCtx, audit, error_response, installation_ctx, unit};
 use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -72,10 +72,10 @@ async fn compat_create_org(
     Json(req): Json<CreateOrgReq>,
 ) -> Response {
     // Creating an organization is an installation admin act: admin of the main organization.
-    let ctx = ctx_in_org(
-        &resolve_request_ctx(&state, &headers).await,
-        state.default_org_id,
-    );
+    let ctx = match installation_ctx(&state, &headers).await {
+        Ok(ctx) => ctx,
+        Err(e) => return error_response(&e),
+    };
     let dec = state.authorizer.check(
         &ctx,
         Action::Admin,
@@ -125,10 +125,10 @@ async fn compat_delete_org(
     headers: HeaderMap,
     Path(number): Path<i64>,
 ) -> Response {
-    let ctx = ctx_in_org(
-        &resolve_request_ctx(&state, &headers).await,
-        state.default_org_id,
-    );
+    let ctx = match installation_ctx(&state, &headers).await {
+        Ok(ctx) => ctx,
+        Err(e) => return error_response(&e),
+    };
     let dec = state.authorizer.check(
         &ctx,
         Action::Admin,
@@ -225,7 +225,10 @@ async fn compat_get_org_by_name(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
+    let ctx = match installation_ctx(&state, &headers).await {
+        Ok(ctx) => ctx,
+        Err(e) => return error_response(&e),
+    };
     let not_found = CrError::NotFound("Organization not found".into());
     let org = match state.organization_held(OrgKey::Name(name.clone())).await {
         Ok(Some(org)) => org,
@@ -245,7 +248,7 @@ async fn compat_get_org_by_name(
     let installation_admin = state
         .authorizer
         .check(
-            &ctx_in_org(&ctx, state.default_org_id),
+            &ctx,
             Action::Admin,
             &ObjectTarget::Organization {
                 org_id: state.default_org_id,
@@ -279,8 +282,7 @@ async fn compat_get_org_by_name(
         .into_response()
 }
 
-async fn compat_get_current_org(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
+async fn compat_get_current_org(State(state): State<DaiyaState>, OrgCtx(ctx): OrgCtx) -> Response {
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,
@@ -305,8 +307,7 @@ async fn compat_get_current_org(State(state): State<DaiyaState>, headers: Header
         .into_response()
 }
 
-async fn compat_list_datasources(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
+async fn compat_list_datasources(State(state): State<DaiyaState>, OrgCtx(ctx): OrgCtx) -> Response {
     match state.store.list_datasources(ctx.org_id).await {
         Ok(list) => {
             let items: Vec<Value> = list
@@ -486,10 +487,9 @@ fn answer(result: CrResult<Value>) -> Response {
 
 async fn compat_add_datasource(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(unit(add_datasource(&state, &ctx, req)).await)
 }
 
@@ -550,11 +550,10 @@ async fn add_datasource(
 
 async fn compat_update_datasource_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(unit(update_datasource(&state, &ctx, uid, req)).await)
 }
 
@@ -615,10 +614,9 @@ async fn update_datasource(
 
 async fn compat_get_datasource_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,
@@ -639,10 +637,9 @@ async fn compat_get_datasource_by_uid(
 
 async fn compat_delete_datasource_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Delete,
@@ -681,10 +678,9 @@ async fn compat_delete_datasource_by_uid(
 
 async fn compat_datasource_health(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_health(&state, &ctx, &uid).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => error_response(&e),
@@ -693,11 +689,10 @@ async fn compat_datasource_health(
 
 async fn compat_datasource_resource(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path((uid, path)): Path<(String, String)>,
     AxumQuery(params): AxumQuery<BTreeMap<String, String>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_resource(&state, &ctx, &uid, &path, params).await {
         Ok(v) => (StatusCode::OK, Json(v)).into_response(),
         Err(e) => error_response(&e),
@@ -716,10 +711,9 @@ struct CreateFolderReq {
 
 async fn compat_create_folder(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Json(req): Json<CreateFolderReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(unit(create_folder(&state, &ctx, req)).await)
 }
 
@@ -773,8 +767,7 @@ async fn create_folder(
     }))
 }
 
-async fn compat_list_folders(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
+async fn compat_list_folders(State(state): State<DaiyaState>, OrgCtx(ctx): OrgCtx) -> Response {
     match state.store.list_folders(ctx.org_id).await {
         Ok(list) => {
             let hits: Vec<Value> = list
@@ -798,10 +791,9 @@ async fn compat_list_folders(State(state): State<DaiyaState>, headers: HeaderMap
 
 async fn compat_get_folder_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     if !can_read_folder(&state, &ctx, &uid) {
         return error_response(&CrError::NotFound("Folder not found".into()));
     }
@@ -824,10 +816,9 @@ async fn compat_get_folder_by_uid(
 
 async fn compat_delete_folder_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Delete,
@@ -856,10 +847,9 @@ async fn compat_delete_folder_by_uid(
 
 async fn compat_post_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Json(body): Json<Value>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let folder_uid = body
         .get("folderUid")
         .and_then(Value::as_str)
@@ -900,10 +890,9 @@ async fn compat_post_dashboard(
 
 async fn compat_get_dashboard_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let Some(rec) = (match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(r) => r,
         Err(e) => return error_response(&e),
@@ -955,10 +944,9 @@ async fn compat_get_dashboard_by_uid(
 
 async fn compat_delete_dashboard_by_uid(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let Some(rec) = (match state.store.get_dashboard(ctx.org_id, &uid).await {
         Ok(r) => r,
         Err(e) => return error_response(&e),
@@ -1002,10 +990,9 @@ async fn compat_delete_dashboard_by_uid(
 
 async fn compat_get_dashboard_versions(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     answer(dashboard_versions(&state, &ctx, &uid).await)
 }
 
@@ -1042,10 +1029,9 @@ struct SearchParams {
 
 async fn compat_search(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     AxumQuery(params): AxumQuery<SearchParams>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let q_lower = params.query.as_deref().unwrap_or("").to_ascii_lowercase();
     let mut hits = Vec::new();
 
@@ -1109,10 +1095,9 @@ async fn compat_search(
 
 async fn compat_ds_query(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Json(body): Json<ODataQueryActionBody>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     match exec_odata_datasource_query(&state, &ctx, None, body).await {
         Ok(odata_val) => {
             let sets: Vec<daiya_model::FrameSet> = odata_val
@@ -1166,11 +1151,10 @@ fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
 
 async fn compat_render_dashboard_panel(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(uid): Path<String>,
     AxumQuery(params): AxumQuery<Vec<(String, String)>>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let (panel_id, range) = render_range(params);
     match panel_view(&state, &ctx.subject, ctx.org_id, &uid, panel_id, range).await {
         Ok(pv) => (

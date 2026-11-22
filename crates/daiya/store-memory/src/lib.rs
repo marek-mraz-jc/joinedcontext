@@ -4,8 +4,8 @@
 //! verification (R8, §5.3).
 
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
-    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
+    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
     LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
     PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, org_state_etag,
     store::StoreFuture,
@@ -331,7 +331,7 @@ impl DaiyaStore for MemoryStore {
             let row = OrgRow {
                 number: number.unwrap_or_else(|| last.max(1).saturating_add(1)),
                 org_id: if rows.iter().any(|row| row.name == name) {
-                    OrgId::new()
+                    OrgId::generate()
                 } else {
                     first_id
                 },
@@ -384,7 +384,13 @@ impl DaiyaStore for MemoryStore {
         })
     }
 
-    fn set_quotas(&self, org_id: OrgId, quotas: OrgQuotas) -> StoreFuture<'_, ()> {
+    fn set_quotas(
+        &self,
+        _installation: InstallationId,
+        org_id: OrgId,
+        _instance: InstanceId,
+        quotas: OrgQuotas,
+    ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             self.inner.write().orgs.entry(org_id).or_default().quotas = quotas;
             Ok(())
@@ -768,7 +774,11 @@ impl DaiyaStore for MemoryStore {
         })
     }
 
-    fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()> {
+    fn insert_import_report(
+        &self,
+        _installation: InstallationId,
+        report: ImportReportRecord,
+    ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let mut guard = self.inner.write();
             guard

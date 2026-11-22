@@ -5,9 +5,9 @@
 
 use daiya_model::store::StoreFuture;
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas,
-    PlanRecord, PublicDashboardRecord,
+    ApplyBundle, AuditRecord, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
+    FolderRecord, ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, OrgId,
+    OrgQuotas, PlanRecord, PublicDashboardRecord,
 };
 use daiya_store_memory::MemoryStore;
 use std::collections::BTreeSet;
@@ -72,7 +72,14 @@ impl DaiyaStore for FailingStore {
     delegate!(retire_org(installation: daiya_model::InstallationId, number: i64) -> bool);
     delegate!(verify_rls_enforced() -> ());
     delegate!(get_quotas(org_id: OrgId) -> OrgQuotas);
-    delegate!(set_quotas(org_id: OrgId, quotas: OrgQuotas) -> ());
+    delegate!(
+        set_quotas(
+            installation: InstallationId,
+            org_id: OrgId,
+            instance: InstanceId,
+            quotas: OrgQuotas,
+        ) -> ()
+    );
     delegate!(list_folders(org_id: OrgId) -> Vec<FolderRecord>);
     delegate!(get_folder(org_id: OrgId, uid: &str) -> Option<FolderRecord>);
     delegate!(upsert_folder(folder: FolderRecord) -> FolderRecord);
@@ -117,7 +124,7 @@ impl DaiyaStore for FailingStore {
     delegate!(delete_public_dashboard(org_id: OrgId, uid: &str) -> bool);
     delegate!(read_rows(org_id: OrgId, query: daiya_model::RowQuery) -> daiya_model::RowPage);
     delegate!(list_import_reports(org_id: OrgId) -> Vec<ImportReportRecord>);
-    delegate!(insert_import_report(report: ImportReportRecord) -> ());
+    delegate!(insert_import_report(installation: InstallationId, report: ImportReportRecord) -> ());
     delegate!(append_audit(row: AuditRecord) -> ());
     delegate!(list_audit(org_id: OrgId) -> Vec<AuditRecord>);
     delegate!(insert_plan(plan: PlanRecord) -> ());
