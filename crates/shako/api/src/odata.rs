@@ -1660,6 +1660,7 @@ fn write_file_answer(
     let mut encoded = base64::write::EncoderWriter::new(&mut *out, &STANDARD);
     encoded.write_all(bytes)?;
     encoded.finish()?;
+    drop(encoded);
     out.write_all(br#""}"#)
 }
 
