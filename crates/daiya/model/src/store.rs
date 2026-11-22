@@ -4,7 +4,7 @@
 use crate::entities::{
     ApplyBundle, DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord,
     ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
-    QueryCacheStatRecord,
+    
 };
 use crate::error::CrResult;
 use crate::ids::{InstallationId, OrgId};
@@ -139,8 +139,6 @@ pub trait DaiyaStore: Send + Sync {
     fn delete_public_dashboard(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, bool>;
 
     // Query Cache Stats & Import Reports
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>>;
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()>;
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>>;
     fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()>;
 

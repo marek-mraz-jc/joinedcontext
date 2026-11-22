@@ -229,13 +229,7 @@ async fn build_entity_table(
             })
             .collect(),
         "QueryCacheStats" => {
-            let mut stats = state.query_cache.stats_for_org(ctx.org_id, ctx.instance_id);
-            let stored = state.store.list_query_cache_stats(ctx.org_id).await?;
-            for s in stored {
-                if !stats.iter().any(|x| x.id == s.id) {
-                    stats.push(s);
-                }
-            }
+            let stats = state.query_cache.stats_for_org(ctx.org_id, ctx.instance_id);
             stats
                 .into_iter()
                 .map(|s| {

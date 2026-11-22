@@ -1,16 +1,19 @@
 #![forbid(unsafe_code)]
-//! Per-organization query cache (R3, R7, §2.6, §4.3 CVE-2022-23498, §5.3 test 5):
-//! - Keyed by `(org_id, instance_id, subject_scope_hash, datasource_uid, canonical_query_hash, aligned_from_ms, aligned_to_ms, interval_ms)`.
-//! - Public dashboard cache key: `(org_id, instance_id, dashboard_uid, dashboard_version, panel_id, from_bucket_ms, to_bucket_ms)`.
+//! The query cache (R3, R7, §2.6, §4.3 CVE-2022-23498, §5.3 test 5), a [`BoundedCache`]:
+//! - Keyed by `(org_id, instance_id, subject_scope_hash, datasource_uid, datasource_revision, canonical_query_hash, aligned_from_ms, aligned_to_ms, interval_ms)`.
+//! - Public dashboard cache key: `(org_id, instance_id, dashboard_uid, dashboard_version, revision, panel_id, from_bucket_ms, to_bucket_ms)`.
+//!   daiya has no project id, so neither key carries one.
 //! - Never shares cache entries across organizations or across different subject permission scopes!
-//! - Enforces per-organization byte ceiling (`max_cache_bytes`) with FIFO/LRU eviction and tracks
-//!   per-datasource hit/miss/byte statistics (`QueryCacheStatRecord`).
+//! - One byte budget per process, whatever the number of organizations, and per-datasource
+//!   hit/miss/byte statistics (`QueryCacheStatRecord`).
 
 use daiya_model::{CanonicalJson, FrameSet, InstanceId, OrgId, QueryCacheStatRecord, sha256_hex};
+use jc_types::{BoundedCache, OrgKeyed};
 use parking_lot::Mutex;
 use serde_json::Value;
-use std::collections::{BTreeMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Cache key for authenticated datasource queries (§2.6, §4.3 CVE-2022-23498).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -19,6 +22,8 @@ pub struct CacheKey {
     pub instance_id: InstanceId,
     pub subject_scope_hash: String,
     pub datasource_uid: String,
+    /// The datasource's settings, hashed: a changed datasource never answers from the old one.
+    pub datasource_revision: String,
     pub canonical_query_hash: String,
     pub aligned_from_ms: i64,
     pub aligned_to_ms: i64,
@@ -33,6 +38,7 @@ impl CacheKey {
         instance_id: InstanceId,
         subject_principals: &[&str],
         datasource_uid: &str,
+        datasource_revision: &str,
         query_json: &Value,
         from_ms: i64,
         to_ms: i64,
@@ -55,6 +61,7 @@ impl CacheKey {
             instance_id,
             subject_scope_hash,
             datasource_uid: datasource_uid.to_owned(),
+            datasource_revision: datasource_revision.to_owned(),
             canonical_query_hash,
             aligned_from_ms,
             aligned_to_ms,
@@ -72,6 +79,8 @@ pub struct PublicCacheKey {
     pub instance_id: InstanceId,
     pub dashboard_uid: String,
     pub dashboard_version: i32,
+    /// The panel's datasources and what its sanitisation depends on, hashed.
+    pub revision: String,
     pub panel_id: u32,
     pub from_bucket_ms: i64,
     pub to_bucket_ms: i64,
@@ -87,6 +96,7 @@ impl PublicCacheKey {
         instance_id: InstanceId,
         dashboard_uid: impl Into<String>,
         dashboard_version: i32,
+        revision: &str,
         panel_id: u32,
         from_ms: i64,
         to_ms: i64,
@@ -99,6 +109,7 @@ impl PublicCacheKey {
             instance_id,
             dashboard_uid: dashboard_uid.into(),
             dashboard_version,
+            revision: revision.to_owned(),
             panel_id,
             from_bucket_ms: from_ms.div_euclid(b) * b,
             to_bucket_ms: to_ms.div_euclid(b) * b,
@@ -108,48 +119,139 @@ impl PublicCacheKey {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    value: Vec<FrameSet>,
-    expires_at: Instant,
-    bytes: usize,
-    datasource_uid: String,
+/// The two kinds of key share one budget.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Key {
+    Query(CacheKey),
+    Public(PublicCacheKey),
 }
 
-#[derive(Debug, Default)]
-struct OrgCacheBucket {
-    entries: BTreeMap<CacheKey, CacheEntry>,
-    order: VecDeque<CacheKey>,
-    public_entries: BTreeMap<PublicCacheKey, CacheEntry>,
-    public_order: VecDeque<PublicCacheKey>,
-    bytes_used: usize,
-    stats: BTreeMap<String, (u64, u64)>, // datasource_uid -> (hits, misses)
-}
+impl Key {
+    fn instance_id(&self) -> InstanceId {
+        match self {
+            Self::Query(key) => key.instance_id,
+            Self::Public(key) => key.instance_id,
+        }
+    }
 
-impl OrgCacheBucket {
-    /// Evicts the oldest entries, authenticated first and then public (both share the
-    /// organization's ceiling), until `incoming` more bytes fit under `max`.
-    fn make_room(&mut self, incoming: usize, max: usize) {
-        while self.bytes_used + incoming > max {
-            let evicted = if let Some(key) = self.order.pop_front() {
-                self.entries.remove(&key)
-            } else if let Some(key) = self.public_order.pop_front() {
-                self.public_entries.remove(&key)
-            } else {
-                break;
-            };
-            if let Some(e) = evicted {
-                self.bytes_used = self.bytes_used.saturating_sub(e.bytes);
-            }
+    /// What the statistics count this key under.
+    fn source(&self) -> String {
+        match self {
+            Self::Query(key) => key.datasource_uid.clone(),
+            Self::Public(key) => format!("public:{}", key.dashboard_uid),
         }
     }
 }
 
-/// Thread-safe per-organization query cache (R3, R7, R10).
+impl OrgKeyed for Key {
+    type Org = OrgId;
+
+    fn org_id(&self) -> OrgId {
+        match self {
+            Self::Query(key) => key.org_id,
+            Self::Public(key) => key.org_id,
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Query(key) => {
+                key.subject_scope_hash.len()
+                    + key.datasource_uid.len()
+                    + key.datasource_revision.len()
+                    + key.canonical_query_hash.len()
+            }
+            Self::Public(key) => key.dashboard_uid.len() + key.revision.len(),
+        }
+    }
+}
+
+/// What a value holds on the heap. Its JSON is a third of that for columns of numbers.
+fn value_bytes(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.len(),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| size_of::<Value>() + value_bytes(item))
+            .sum(),
+        Value::Object(members) => members
+            .iter()
+            .map(|(name, member)| 2 * size_of::<Value>() + name.len() + value_bytes(member))
+            .sum(),
+        Value::Null | Value::Bool(_) | Value::Number(_) => 0,
+    }
+}
+
+/// What a map entry with `String` keys costs beside the bytes of its key and value.
+const MAP_ENTRY: usize = 64;
+
+fn frame_set_bytes(set: &FrameSet) -> usize {
+    let text = |t: &Option<String>| t.as_ref().map_or(0, String::len);
+    let frames: usize = set
+        .frames
+        .iter()
+        .map(|frame| {
+            let fields: usize = frame
+                .fields
+                .iter()
+                .map(|field| {
+                    let labels: usize = field
+                        .labels
+                        .iter()
+                        .map(|(k, v)| MAP_ENTRY + k.len() + v.len())
+                        .sum();
+                    let values: usize = field
+                        .values
+                        .iter()
+                        .map(|v| size_of::<Value>() + value_bytes(v))
+                        .sum();
+                    size_of_val(field)
+                        + field.name.len()
+                        + text(&field.unit)
+                        + text(&field.display_name)
+                        + labels
+                        + values
+                })
+                .sum();
+            let custom: usize = frame
+                .meta
+                .custom
+                .iter()
+                .map(|(k, v)| MAP_ENTRY + size_of::<Value>() + k.len() + value_bytes(v))
+                .sum();
+            let notices: usize = frame
+                .meta
+                .notices
+                .iter()
+                .map(|notice| size_of_val(notice) + notice.text.len())
+                .sum();
+            size_of_val(frame)
+                + frame.name.len()
+                + text(&frame.ref_id)
+                + text(&frame.meta.executed_query_string)
+                + text(&frame.meta.preferred_visualisation_type)
+                + fields
+                + custom
+                + notices
+        })
+        .sum();
+    size_of_val(set) + set.ref_id.len() + frames
+}
+
+/// How many (organization, instance, datasource) counters are kept; past it a datasource is
+/// served from the cache and not counted.
+const MAX_COUNTERS: usize = 10_000;
+
+/// How often an idle process gives expired entries back.
+const SWEEP_EVERY: Duration = Duration::from_secs(30);
+
+type Counters = BTreeMap<(OrgId, InstanceId, String), (u64, u64)>;
+
+/// Thread-safe query cache of the process (R3, R7, R10).
 #[derive(Debug)]
 pub struct QueryCache {
-    max_bytes_per_org: usize,
-    orgs: Mutex<BTreeMap<(OrgId, InstanceId), OrgCacheBucket>>,
+    cache: BoundedCache<Key, Arc<Vec<FrameSet>>>,
+    counters: Mutex<Counters>, // (org, instance, datasource_uid) -> (hits, misses)
 }
 
 impl Default for QueryCache {
@@ -159,119 +261,91 @@ impl Default for QueryCache {
 }
 
 impl QueryCache {
+    /// A cache of `max_bytes` for the whole process.
     #[must_use]
-    pub fn new(max_bytes_per_org: usize) -> Self {
+    pub fn new(max_bytes: usize) -> Self {
         Self {
-            max_bytes_per_org: max_bytes_per_org.max(1024),
-            orgs: Mutex::new(BTreeMap::new()),
+            cache: BoundedCache::new(max_bytes.max(1024)),
+            counters: Mutex::new(Counters::new()),
         }
     }
 
-    /// Looks up a cached result for `key` within `key.org_id`'s isolated bucket.
+    /// Sweeps the cache on a timer for as long as it lives. Without a runtime there is no timer
+    /// and the entries leave on the next use.
+    pub fn sweep_on_timer(self: &Arc<Self>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let cache = Arc::downgrade(self);
+        runtime.spawn(async move {
+            loop {
+                tokio::time::sleep(SWEEP_EVERY).await;
+                let Some(cache) = cache.upgrade() else {
+                    return;
+                };
+                cache.sweep();
+            }
+        });
+    }
+
+    /// Drops what has expired, and the counters of every organization left without an entry.
+    pub fn sweep(&self) {
+        self.cache.sweep();
+        self.counters
+            .lock()
+            .retain(|(org, _, _), _| self.cache.holds(*org));
+    }
+
+    /// How many entries the cache holds, expired ones included until they are swept.
+    #[must_use]
+    pub fn entries_held(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// How many bytes the cache holds.
+    #[must_use]
+    pub fn bytes_held(&self) -> usize {
+        self.cache.bytes()
+    }
+
+    fn lookup(&self, key: &Key) -> Option<Vec<FrameSet>> {
+        let found = self.cache.get(key);
+        {
+            let mut counters = self.counters.lock();
+            let counted = (key.org_id(), key.instance_id(), key.source());
+            if counters.len() < MAX_COUNTERS || counters.contains_key(&counted) {
+                let (hits, misses) = counters.entry(counted).or_default();
+                *(if found.is_some() { hits } else { misses }) += 1;
+            }
+        }
+        found.map(|value| value.as_ref().clone())
+    }
+
+    fn store(&self, key: Key, value: Vec<FrameSet>, ttl: Duration) {
+        let bytes = value.iter().map(frame_set_bytes).sum();
+        self.cache.insert(key, Arc::new(value), bytes, ttl);
+    }
+
+    /// Looks up a cached result for `key`.
     #[must_use]
     pub fn get(&self, key: &CacheKey) -> Option<Vec<FrameSet>> {
-        let mut guard = self.orgs.lock();
-        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
-        let now = Instant::now();
-        if let Some(entry) = bucket.entries.get(key)
-            && entry.expires_at > now
-        {
-            let res = entry.value.clone();
-            let stat = bucket.stats.entry(key.datasource_uid.clone()).or_default();
-            stat.0 += 1;
-            return Some(res);
-        }
-        if let Some(expired) = bucket.entries.remove(key) {
-            bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
-            bucket.order.retain(|k| k != key);
-        }
-        let stat = bucket.stats.entry(key.datasource_uid.clone()).or_default();
-        stat.1 += 1;
-        None
+        self.lookup(&Key::Query(key.clone()))
     }
 
-    /// Inserts `value` for `key` with `ttl`, evicting older entries in the same organization if needed.
+    /// Inserts `value` for `key` with `ttl`.
     pub fn insert(&self, key: CacheKey, value: Vec<FrameSet>, ttl: Duration) {
-        let approx_bytes = serde_json::to_vec(&value).map_or(256, |b| b.len());
-        if approx_bytes > self.max_bytes_per_org {
-            return;
-        }
-        let mut guard = self.orgs.lock();
-        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
-
-        if let Some(old) = bucket.entries.remove(&key) {
-            bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
-            bucket.order.retain(|k| k != &key);
-        }
-        bucket.make_room(approx_bytes, self.max_bytes_per_org);
-
-        bucket.bytes_used += approx_bytes;
-        bucket.order.push_back(key.clone());
-        bucket.entries.insert(
-            key.clone(),
-            CacheEntry {
-                value,
-                expires_at: Instant::now() + ttl,
-                bytes: approx_bytes,
-                datasource_uid: key.datasource_uid,
-            },
-        );
+        self.store(Key::Query(key), value, ttl);
     }
 
     /// Looks up a public dashboard cached result (R7).
     #[must_use]
     pub fn get_public(&self, key: &PublicCacheKey) -> Option<Vec<FrameSet>> {
-        let mut guard = self.orgs.lock();
-        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
-        let now = Instant::now();
-        if let Some(entry) = bucket.public_entries.get(key)
-            && entry.expires_at > now
-        {
-            let res = entry.value.clone();
-            let stat = bucket
-                .stats
-                .entry(format!("public:{}", key.dashboard_uid))
-                .or_default();
-            stat.0 += 1;
-            return Some(res);
-        }
-        if let Some(expired) = bucket.public_entries.remove(key) {
-            bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
-            bucket.public_order.retain(|k| k != key);
-        }
-        let stat = bucket
-            .stats
-            .entry(format!("public:{}", key.dashboard_uid))
-            .or_default();
-        stat.1 += 1;
-        None
+        self.lookup(&Key::Public(key.clone()))
     }
 
     /// Inserts a public dashboard cached result (R7).
     pub fn insert_public(&self, key: PublicCacheKey, value: Vec<FrameSet>, ttl: Duration) {
-        let approx_bytes = serde_json::to_vec(&value).map_or(256, |b| b.len());
-        if approx_bytes > self.max_bytes_per_org {
-            return;
-        }
-        let mut guard = self.orgs.lock();
-        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
-        if let Some(old) = bucket.public_entries.remove(&key) {
-            bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
-            bucket.public_order.retain(|k| k != &key);
-        }
-        bucket.make_room(approx_bytes, self.max_bytes_per_org);
-        bucket.bytes_used += approx_bytes;
-        let ds_tag = format!("public:{}", key.dashboard_uid);
-        bucket.public_order.push_back(key.clone());
-        bucket.public_entries.insert(
-            key,
-            CacheEntry {
-                value,
-                expires_at: Instant::now() + ttl,
-                bytes: approx_bytes,
-                datasource_uid: ds_tag,
-            },
-        );
+        self.store(Key::Public(key), value, ttl);
     }
 
     /// Returns per-datasource cache statistics for `org_id` (`QueryCacheStats` entity set, R10).
@@ -281,20 +355,20 @@ impl QueryCache {
         org_id: OrgId,
         instance_id: InstanceId,
     ) -> Vec<QueryCacheStatRecord> {
-        let guard = self.orgs.lock();
-        let Some(bucket) = guard.get(&(org_id, instance_id)) else {
-            return Vec::new();
-        };
-        bucket
-            .stats
-            .iter()
-            .map(|(ds_uid, (hits, misses))| {
-                let (entries, bytes) = bucket
-                    .entries
-                    .values()
-                    .chain(bucket.public_entries.values())
-                    .filter(|e| &e.datasource_uid == ds_uid)
-                    .fold((0u64, 0u64), |(c, b), e| (c + 1, b + e.bytes as u64));
+        let mut held: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        for (key, bytes) in self.cache.entries_of(org_id) {
+            if key.instance_id() == instance_id {
+                let (entries, total) = held.entry(key.source()).or_default();
+                *entries += 1;
+                *total += bytes as u64;
+            }
+        }
+        self.counters
+            .lock()
+            .range((org_id, instance_id, String::new())..)
+            .take_while(|((org, instance, _), _)| *org == org_id && *instance == instance_id)
+            .map(|((_, _, ds_uid), (hits, misses))| {
+                let (entries, bytes) = held.get(ds_uid).copied().unwrap_or_default();
                 QueryCacheStatRecord {
                     id: format!("{org_id}:{ds_uid}"),
                     org_id,

@@ -8,7 +8,7 @@
 use daiya_model::{
     ApplyBundle, DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
     InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag, sha256_hex,
+    PublicDashboardRecord, ShareType, org_state_etag, sha256_hex,
 };
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
@@ -641,28 +641,6 @@ async fn contract_public_dashboards(store: &dyn DaiyaStore) {
 
 async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
     let org = OrgId::new();
-    let mut stat = QueryCacheStatRecord {
-        id: "prom".into(),
-        org_id: org,
-        instance_id: INSTANCE,
-        datasource_uid: "prom".into(),
-        hits: 1,
-        misses: 2,
-        entries: 3,
-        bytes_used: 4,
-    };
-    store.upsert_query_cache_stat(stat.clone()).await.unwrap();
-    stat.hits = 10;
-    store.upsert_query_cache_stat(stat.clone()).await.unwrap();
-    assert_eq!(store.list_query_cache_stats(org).await.unwrap(), vec![stat]);
-    assert!(
-        store
-            .list_query_cache_stats(OrgId::new())
-            .await
-            .unwrap()
-            .is_empty()
-    );
-
     let base = TimestampTz(TimestampTz::now().0 - SignedDuration::from_mins(5));
     for (i, id) in ["older", "newer"].into_iter().enumerate() {
         store
@@ -1314,7 +1292,6 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
             .await
             .unwrap_err(),
         store.delete_public_dashboard(org, "p").await.unwrap_err(),
-        store.list_query_cache_stats(org).await.unwrap_err(),
         store.list_import_reports(org).await.unwrap_err(),
     ];
     let now = TimestampTz::now();
@@ -1333,21 +1310,6 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
                 version: 1,
                 created_at: now,
                 updated_at: now,
-            })
-            .await
-            .unwrap_err(),
-    );
-    errors.push(
-        store
-            .upsert_query_cache_stat(QueryCacheStatRecord {
-                id: "q".into(),
-                org_id: org,
-                instance_id: INSTANCE,
-                datasource_uid: "d".into(),
-                hits: 0,
-                misses: 0,
-                entries: 0,
-                bytes_used: 0,
             })
             .await
             .unwrap_err(),

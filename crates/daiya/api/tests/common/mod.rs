@@ -10,7 +10,7 @@ use daiya_model::{
     ApplyBundle, Authorizer, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, GrafanaRole, ImportReportRecord, InstallationId, InstanceId,
     LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord, PolicyAuthorizer, PublicDashboardRecord,
-    QueryCacheStatRecord, RoleBinding, Subject,
+    RoleBinding, Subject,
 };
 use daiya_query::{OpenedNetwork, OutboundPolicy};
 use daiya_store_memory::MemoryStore;
@@ -298,20 +298,6 @@ impl DaiyaStore for FlakyStore {
             self,
             "delete_public_dashboard",
             self.inner.delete_public_dashboard(org_id, uid)
-        )
-    }
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>> {
-        guarded!(
-            self,
-            "list_query_cache_stats",
-            self.inner.list_query_cache_stats(org_id)
-        )
-    }
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()> {
-        guarded!(
-            self,
-            "upsert_query_cache_stat",
-            self.inner.upsert_query_cache_stat(stat)
         )
     }
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>> {

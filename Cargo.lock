@@ -2760,6 +2760,7 @@ dependencies = [
  "ipnet",
  "jc-pool",
  "jc-time",
+ "jc-types",
  "jiff",
  "parking_lot",
  "percent-encoding",

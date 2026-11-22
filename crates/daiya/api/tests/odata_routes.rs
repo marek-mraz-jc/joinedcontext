@@ -44,20 +44,18 @@ async fn organization_wide_sets_need_read_on_the_organization() {
         })
         .await
         .unwrap();
-    w.store
-        .inner
-        .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
-            id: "stat-1".into(),
-            org_id: ORG,
-            instance_id: daiya_model::InstanceId::from_u128(1),
-            datasource_uid: "prom".into(),
-            hits: 1,
-            misses: 1,
-            entries: 1,
-            bytes_used: 10,
-        })
-        .await
-        .unwrap();
+    let key = daiya_query::CacheKey::new(
+        ORG,
+        w.state.default_instance_id,
+        &[],
+        "prom",
+        "r1",
+        &json!("up"),
+        0,
+        60_000,
+        15_000,
+    );
+    assert!(w.state.query_cache.get(&key).is_none(), "one counted miss");
     for set in ["ImportReports", "QueryCacheStats"] {
         for who in [None, Some("outsider"), Some("ops-viewer")] {
             for path in [set.to_owned(), format!("{set}/$count")] {
@@ -778,7 +776,6 @@ async fn store_failures_are_errors_in_every_set_and_action() {
             "GET",
             "/odata/v4/PublicDashboards",
         ),
-        ("list_query_cache_stats", "GET", "/odata/v4/QueryCacheStats"),
         ("list_import_reports", "GET", "/odata/v4/ImportReports"),
         ("list_dashboards", "GET", "/odata/v4/Dashboards/$count"),
         (
@@ -922,28 +919,11 @@ async fn paging_keys_cache_stats_and_refused_exports() {
         })),
     )
     .await;
-    {
-        use daiya_model::DaiyaStore;
-        w.store
-            .inner
-            .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
-                id: "stored-1".into(),
-                org_id: ORG,
-                instance_id: daiya_model::InstanceId::from_u128(1),
-                datasource_uid: "prom".into(),
-                hits: 3,
-                misses: 1,
-                entries: 1,
-                bytes_used: 10,
-            })
-            .await
-            .unwrap();
-    }
     let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
     let rows = stats["value"].as_array().unwrap();
-    assert!(rows.iter().any(|r| r["id"] == "stored-1"), "{stats}");
     assert!(
-        rows.len() >= 2,
-        "a live entry beside the stored one: {stats}"
+        rows.iter()
+            .any(|r| r["datasourceUid"] == "prom" && r["entries"] == 1),
+        "the live entry: {stats}"
     );
 }

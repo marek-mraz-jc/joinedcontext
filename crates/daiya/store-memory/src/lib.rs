@@ -7,7 +7,7 @@ use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, LibraryPanelRecord,
     MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord,
-    QueryCacheStatRecord, constant_time_eq, org_state_etag, store::StoreFuture,
+    constant_time_eq, org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
@@ -22,7 +22,6 @@ struct OrgState {
     datasources: BTreeMap<String, DatasourceRecord>,
     library_panels: BTreeMap<String, LibraryPanelRecord>,
     public_dashboards: BTreeMap<String, PublicDashboardRecord>,
-    cache_stats: BTreeMap<String, QueryCacheStatRecord>,
     import_reports: Vec<ImportReportRecord>,
     plans: BTreeMap<String, PlanRecord>,
 }
@@ -735,30 +734,6 @@ impl DaiyaStore for MemoryStore {
                 .orgs
                 .get_mut(&org_id)
                 .is_some_and(|o| o.public_dashboards.remove(&uid).is_some()))
-        })
-    }
-
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>> {
-        Box::pin(async move {
-            let guard = self.inner.read();
-            Ok(guard
-                .orgs
-                .get(&org_id)
-                .map(|o| o.cache_stats.values().cloned().collect())
-                .unwrap_or_default())
-        })
-    }
-
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()> {
-        Box::pin(async move {
-            let mut guard = self.inner.write();
-            guard
-                .orgs
-                .entry(stat.org_id)
-                .or_default()
-                .cache_stats
-                .insert(stat.id.clone(), stat);
-            Ok(())
         })
     }
 

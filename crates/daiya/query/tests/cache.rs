@@ -19,6 +19,7 @@ fn key(org: OrgId, principals: &[&str], ds: &str, expr: &str) -> CacheKey {
         INST,
         principals,
         ds,
+        "r1",
         &json!({ "expr": expr }),
         1_700_000_000_000,
         1_700_000_600_000,
@@ -27,10 +28,10 @@ fn key(org: OrgId, principals: &[&str], ds: &str, expr: &str) -> CacheKey {
 }
 
 fn pkey(uid: &str, version: i32) -> PublicCacheKey {
-    PublicCacheKey::new(ORG, INST, uid, version, 1, 0, 60_000, 30_000, 100)
+    PublicCacheKey::new(ORG, INST, uid, version, "r1", 1, 0, 60_000, 30_000, 100)
 }
 
-/// A result whose JSON form is about `n` bytes.
+/// A result that holds about `n` bytes.
 fn sized(n: usize) -> Vec<FrameSet> {
     vec![FrameSet::new(
         "A",
@@ -52,6 +53,7 @@ fn keys_separate_organizations_scopes_queries_and_ranges() {
         INST,
         &["user:a", "group:x"],
         "prom",
+        "r1",
         &json!({ "b": 1, "expr": "up" }),
         1_700_000_000_000,
         1_700_000_600_000,
@@ -62,6 +64,7 @@ fn keys_separate_organizations_scopes_queries_and_ranges() {
         INST,
         &["user:a", "group:x"],
         "prom",
+        "r1",
         &json!({ "expr": "up", "b": 1 }),
         1_700_000_000_000,
         1_700_000_600_000,
@@ -72,12 +75,16 @@ fn keys_separate_organizations_scopes_queries_and_ranges() {
     assert_ne!(a, key(ORG, &["user:a"], "prom", "up"));
     assert_ne!(a, key(ORG, &["user:a", "group:x"], "prom2", "up"));
     assert_ne!(a, key(ORG, &["user:a", "group:x"], "prom", "down"));
+    let mut changed = a.clone();
+    changed.datasource_revision = "r2".into();
+    assert_ne!(a, changed, "a changed datasource is a new key");
     // The range is aligned to the interval, never below one second.
     let k = CacheKey::new(
         ORG,
         INST,
         &[],
         "p",
+        "r1",
         &json!({}),
         1_700_000_007_123,
         1_700_000_014_999,
@@ -87,15 +94,15 @@ fn keys_separate_organizations_scopes_queries_and_ranges() {
         (k.aligned_from_ms, k.aligned_to_ms),
         (1_700_000_007_000, 1_700_000_014_000)
     );
-    let k = CacheKey::new(ORG, INST, &[], "p", &json!({}), -1, 29_999, 15_000);
+    let k = CacheKey::new(ORG, INST, &[], "p", "r1", &json!({}), -1, 29_999, 15_000);
     assert_eq!((k.aligned_from_ms, k.aligned_to_ms), (-15_000, 15_000));
 
-    let p = PublicCacheKey::new(ORG, INST, "d", 3, 2, 61_000, 119_999, 30_000, 500);
+    let p = PublicCacheKey::new(ORG, INST, "d", 3, "r1", 2, 61_000, 119_999, 30_000, 500);
     assert_eq!(
         (p.from_bucket_ms, p.to_bucket_ms, p.interval_ms),
         (60_000, 90_000, 30_000)
     );
-    let p = PublicCacheKey::new(ORG, INST, "d", 3, 2, 1_500, 2_500, 0, 500);
+    let p = PublicCacheKey::new(ORG, INST, "d", 3, "r1", 2, 1_500, 2_500, 0, 500);
     assert_eq!((p.from_bucket_ms, p.interval_ms), (1_000, 1_000));
     assert_ne!(
         pkey("d", 1),
@@ -152,26 +159,26 @@ fn hits_misses_and_statistics_per_datasource() {
 
 #[test]
 fn expired_entries_are_misses_and_free_their_bytes() {
-    let cache = QueryCache::new(2_000);
+    let cache = QueryCache::new(200_000);
     let k = key(ORG, &[], "prom", "up");
-    cache.insert(k.clone(), sized(600), Duration::ZERO);
+    cache.insert(k.clone(), sized(60_000), Duration::ZERO);
     assert!(cache.get(&k).is_none());
     let p = pkey("pub", 1);
-    cache.insert_public(p.clone(), sized(600), Duration::ZERO);
+    cache.insert_public(p.clone(), sized(60_000), Duration::ZERO);
     assert!(cache.get_public(&p).is_none());
     // Both expired entries gave their bytes back: two fresh ones fit without evicting.
     let a = key(ORG, &[], "prom", "a");
     let b = key(ORG, &[], "prom", "b");
-    cache.insert(a.clone(), sized(800), TTL);
-    cache.insert(b.clone(), sized(800), TTL);
+    cache.insert(a.clone(), sized(80_000), TTL);
+    cache.insert(b.clone(), sized(80_000), TTL);
     assert!(cache.get(&a).is_some() && cache.get(&b).is_some());
 
     // A key that expired and came back is the newest, not the next to go.
-    cache.insert(k.clone(), sized(10), Duration::ZERO);
+    cache.insert(k.clone(), sized(1_000), Duration::ZERO);
     assert!(cache.get(&k).is_none());
-    cache.insert(k.clone(), sized(10), TTL);
+    cache.insert(k.clone(), sized(1_000), TTL);
     let c = key(ORG, &[], "prom", "c");
-    cache.insert(c.clone(), sized(800), TTL);
+    cache.insert(c.clone(), sized(80_000), TTL);
     assert!(cache.get(&k).is_some(), "the refreshed key stayed");
     assert!(cache.get(&a).is_none(), "the oldest went");
 }
@@ -180,65 +187,62 @@ fn expired_entries_are_misses_and_free_their_bytes() {
 fn the_ceiling_evicts_the_oldest_and_refuses_what_never_fits() {
     let cache = QueryCache::new(10); // floors at 1024 bytes
     let huge = key(ORG, &[], "prom", "huge");
-    cache.insert(huge.clone(), sized(2_000), TTL);
+    cache.insert(huge.clone(), sized(200_000), TTL);
     assert!(
         cache.get(&huge).is_none(),
         "larger than the ceiling: not stored"
     );
-    cache.insert_public(pkey("huge", 1), sized(2_000), TTL);
+    cache.insert_public(pkey("huge", 1), sized(200_000), TTL);
     assert!(cache.get_public(&pkey("huge", 1)).is_none());
 
-    let cache = QueryCache::new(2_000);
+    let cache = QueryCache::new(200_000);
     let a = key(ORG, &[], "prom", "a");
     let b = key(ORG, &[], "prom", "b");
     let c = key(ORG, &[], "prom", "c");
-    cache.insert(a.clone(), sized(700), TTL);
-    cache.insert(b.clone(), sized(700), TTL);
+    cache.insert(a.clone(), sized(70_000), TTL);
+    cache.insert(b.clone(), sized(70_000), TTL);
     // Writing `a` again makes it the newest: `b` goes first.
-    cache.insert(a.clone(), sized(700), TTL);
-    cache.insert(c.clone(), sized(700), TTL);
+    cache.insert(a.clone(), sized(70_000), TTL);
+    cache.insert(c.clone(), sized(70_000), TTL);
     assert!(cache.get(&a).is_some(), "the rewritten entry stayed");
     assert!(cache.get(&b).is_none(), "the oldest went");
     assert!(cache.get(&c).is_some());
 
-    // One organization filling its bucket never evicts another's.
+    // One organization filling the cache never evicts another's.
     let foreign = key(OTHER, &[], "prom", "a");
-    cache.insert(foreign.clone(), sized(700), TTL);
+    cache.insert(foreign.clone(), sized(70_000), TTL);
     for i in 0..5 {
-        cache.insert(key(ORG, &[], "prom", &format!("n{i}")), sized(700), TTL);
+        cache.insert(key(ORG, &[], "prom", &format!("n{i}")), sized(70_000), TTL);
     }
     assert!(cache.get(&foreign).is_some());
 
     // Public rewrite keeps its place too.
-    let cache = QueryCache::new(2_000);
-    cache.insert_public(pkey("p", 1), sized(700), TTL);
-    cache.insert_public(pkey("p", 2), sized(700), TTL);
-    cache.insert_public(pkey("p", 1), sized(700), TTL);
-    cache.insert_public(pkey("p", 3), sized(700), TTL);
+    let cache = QueryCache::new(200_000);
+    cache.insert_public(pkey("p", 1), sized(70_000), TTL);
+    cache.insert_public(pkey("p", 2), sized(70_000), TTL);
+    cache.insert_public(pkey("p", 1), sized(70_000), TTL);
+    cache.insert_public(pkey("p", 3), sized(70_000), TTL);
     assert!(cache.get_public(&pkey("p", 1)).is_some());
     assert!(cache.get_public(&pkey("p", 2)).is_none());
 }
 
 #[test]
 fn public_and_authenticated_entries_share_one_ceiling() {
-    let cache = QueryCache::new(2_000);
+    let cache = QueryCache::new(200_000);
     let p = pkey("pub", 1);
-    cache.insert_public(p.clone(), sized(700), TTL);
+    cache.insert_public(p.clone(), sized(70_000), TTL);
     let a = key(ORG, &[], "prom", "a");
-    cache.insert(a.clone(), sized(700), TTL);
-    // A third entry fits only when the oldest of either kind goes.
+    cache.insert(a.clone(), sized(70_000), TTL);
+    // A third entry fits only when the least recently used of either kind goes.
     let b = key(ORG, &[], "prom", "b");
-    cache.insert(b.clone(), sized(700), TTL);
-    assert!(cache.get(&a).is_none(), "authenticated entries go first");
-    assert!(cache.get_public(&p).is_some());
-    // With no authenticated entry left to evict, the public one makes room.
-    let cache = QueryCache::new(2_000);
-    cache.insert_public(p.clone(), sized(1_200), TTL);
-    cache.insert(a.clone(), sized(1_200), TTL);
-    assert!(cache.get(&a).is_some());
+    cache.insert(b.clone(), sized(70_000), TTL);
     assert!(cache.get_public(&p).is_none(), "the ceiling held");
-    let p2 = pkey("pub", 2);
-    cache.insert_public(p2.clone(), sized(1_200), TTL);
-    assert!(cache.get_public(&p2).is_some());
-    assert!(cache.get(&a).is_none());
+    assert!(cache.get(&a).is_some() && cache.get(&b).is_some());
+    cache.insert_public(p.clone(), sized(70_000), TTL);
+    assert!(cache.get_public(&p).is_some());
+    assert!(
+        cache.get(&a).is_none(),
+        "the same ceiling for a public entry"
+    );
+    assert!(cache.bytes_held() <= 200_000);
 }
