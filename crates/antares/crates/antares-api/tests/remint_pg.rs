@@ -352,10 +352,6 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
     // one range reads the entity_values of its own ids, not the Tenant's:
     // 0034's Merge Join read every row from the Tenant's first id (jc-dev
     // praha-mesto: 9.66 M rows for 16.9 k renamed, 40 s a range)
-    sqlx::query("ANALYZE entity_values")
-        .execute(&mut *conn)
-        .await
-        .expect("analyze");
     let total = count(
         &pool,
         "SELECT count(*) FROM entity_values WHERE tenant_id = $1",
@@ -363,6 +359,24 @@ async fn remint_batched_commits_each_range_and_ends_as_one_transaction_would() {
     )
     .await;
     let mut tx = sqlx::Connection::begin(&mut *conn).await.expect("begin");
+    // the Tenant beside nine times its size of other Tenants' rows, as on a
+    // shared database: alone in the table (a fresh test database, or one
+    // whose other tests cleaned up) a sequential scan is the cheaper plan and
+    // reads the whole Tenant. The rollback takes these rows and the
+    // statistics with it.
+    sqlx::query(
+        "INSERT INTO entity_values (tenant_id, id, attr, f)
+         SELECT $1 || 'n', 'urn:ngsi-ld:KPI:n:e' || g, 'kpiValue', g FROM generate_series(1, 9 * $2) g",
+    )
+    .bind(t)
+    .bind(total)
+    .execute(&mut *tx)
+    .await
+    .expect("neighbour rows");
+    sqlx::query("ANALYZE entity_values")
+        .execute(&mut *tx)
+        .await
+        .expect("analyze");
     let ends: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM entities WHERE tenant_id = $1 ORDER BY id OFFSET 900 LIMIT 2 * 125 + 1",
     )
