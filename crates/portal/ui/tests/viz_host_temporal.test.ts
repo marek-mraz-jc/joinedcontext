@@ -21,6 +21,7 @@ type Host = {
   temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number) => Plan;
   measure: (attr: string, unitCode: string | null, lang: string, values: unknown[]) => { title: string; percent: boolean };
   interactive: (spec: unknown, opts: Record<string, unknown>) => Record<string, unknown>;
+  load: (view: unknown, api: string, lang: string, fetcher: (url: string) => Promise<Response>, now: number) => Promise<{ partial?: string }>;
   gapped: (rows: Record<string, unknown>[], attr: string, factor?: number) => Record<string, unknown>[];
 };
 const module = { exports: {} as Host };
@@ -34,6 +35,36 @@ const NOW = Date.parse("2026-11-21T16:00:00Z");
 const SOURCE = { source: "temporal", type: "WeatherObserved", attrs: ["temperature"], last: "P7D" };
 const base = `${API}/api/endpoint/${SLUG}/ngsi-ld/v1/temporal/entities?`;
 const params = (url: string) => Object.fromEntries(new URL(url).searchParams);
+
+describe("a cut answer", () => {
+  const view = { endpoint: SLUG, source: JSON.stringify(SOURCE) };
+  const entities = (from: number, count: number, readings: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `urn:ngsi-ld:WeatherObserved:s${from + i}`,
+      temperature: { values: Array.from({ length: readings }, (_, j) => [j, new Date(NOW - (readings - j) * 60000).toISOString()]) },
+    }));
+  const load = (answer: (url: URL) => Response) =>
+    host.load(view, API, "en", async (url) => (url.includes("/temporal/") ? answer(new URL(url)) : Response.json([])), NOW);
+
+  it("names newer data when a station's later window was cut", async () => {
+    const data = await load((url) =>
+      Response.json(entities(0, 2, 3), { status: 206, headers: { Link: `<${url.href}>; rel="intervalafter"` } }));
+    expect(data.partial).toContain("newer data");
+    expect(data.partial).not.toContain("stations");
+  });
+
+  it("names a 206 that gives no next window as cut", async () => {
+    const data = await load(() => Response.json(entities(0, 2, 3), { status: 206 }));
+    expect(data.partial).toContain("newer data");
+  });
+
+  it("names more stations when their page went over the limit", async () => {
+    // 30,000 instances a page of stations: the second passes the page's 50,000.
+    const data = await load((url) => Response.json(entities(Number(url.searchParams.get("offset") ?? 0), 1000, 30)));
+    expect(data.partial).toContain("more stations");
+    expect(data.partial).not.toContain("newer data");
+  });
+});
 
 describe("the toolbar's reads", () => {
   it("reads a preset range `after` now minus the range, raw", () => {
@@ -190,11 +221,43 @@ describe("the interactive chart", () => {
     expect(detail.params[0]).toMatchObject({ name: "pick", bind: "legend" });
     expect(detail.encoding.tooltip[1].title).toBe("Relatívna vlhkosť (%)");
     expect(detail.encoding.tooltip[0].title).toBe("Čas");
-    expect(strip.params[0]).toEqual({ name: "brush", select: { type: "interval", encodings: ["x"] } });
+    expect(strip.params[0]).toMatchObject({ name: "brush", select: { type: "interval", encodings: ["x"] } });
     const vega = vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec;
     expect(vega.data?.some((d) => d.name === "source")).toBe(true);
     // The authored spec is left as it was.
     expect((SPEC.encoding.y as Record<string, unknown>).title).toBeUndefined();
+  });
+
+  it("gives each of more than four stations a row of its own, with the legend where it fits", () => {
+    const names = ["A", "B", "C", "D", "E", "F", "G"];
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    type Rows = { title: { text: string }; columns: number; facet: { field: string }; spec: { params?: unknown; encoding: { x: { scale: { domain: unknown } } } } };
+    for (const width of [1200, 270]) {
+      const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width, names, shown: names });
+      const [detail] = spec.vconcat as Rows[];
+      expect(detail.facet.field).toBe("name");
+      expect(detail.columns).toBe(width > 480 ? 2 : 1);
+      expect(detail.title.text).toBe("Relatívna vlhkosť (%)");
+      expect(detail.spec.encoding.x.scale.domain).toEqual({ param: "brush" });
+      expect(!!detail.spec.params).toBe(width > 480);
+      expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec).toBeTruthy();
+    }
+  });
+
+  it("shades and names time without a value, and still zooms", () => {
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    const band = { text: "nenačítané", from: "2026-11-20T00:00:00Z", middle: "2026-11-20T12:00:00Z", to: "2026-11-21T00:00:00Z" };
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, bands: [band] });
+    const [detail] = spec.vconcat as { layer: { mark: { type: string }; data?: { values: { text: string }[] } }[] }[];
+    expect(detail.layer.map((l) => l.mark.type)).toEqual(["rect", "text", "line"]);
+    expect(detail.layer[1].data?.values[0].text).toBe("nenačítané");
+    expect(vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec).toBeTruthy();
+  });
+
+  it("draws daily values as points, none joined", () => {
+    const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, daily: true });
+    for (const part of spec.vconcat as { mark: { type: string } }[]) expect(part.mark.type).toBe("point");
   });
 
   it("breaks a series' line at a gap over three steps, and only there", () => {

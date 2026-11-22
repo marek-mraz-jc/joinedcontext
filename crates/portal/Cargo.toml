@@ -187,8 +187,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 rsa = "0.9"
 tower = { version = "0.5", features = ["util"] }
 wiremock = "0.6"
+# The TLS front of the test Postgres in db_pool_tests (T-7494); already in the tree under hyper-rustls.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 # A paused clock, so a timeout test proves the bound without waiting it out.
-tokio = { version = "1", features = ["test-util"] }
+tokio = { version = "1", features = ["test-util", "io-util"] }
 
 # ponytail: line tables only, no full debuginfo — several agents compile on one machine
 [profile.dev]

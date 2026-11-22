@@ -205,6 +205,40 @@ impl Trims {
     }
 }
 
+/// Deletes what is beyond the pipeline's kept lines and runs, in a transaction of its own. The cut
+/// reads `pipeline_log_kept` alone, the key's columns with it (migration 0094).
+async fn trim(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    project: &str,
+    pipeline: &str,
+) -> Result<(), sqlx::Error> {
+    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+        return Ok(());
+    };
+    sqlx::query(
+        "DELETE FROM pipeline_log WHERE project = $1 AND pipeline = $2 AND id < \
+         (SELECT coalesce(min(id), 0) FROM (SELECT id FROM pipeline_log \
+          WHERE project = $1 AND pipeline = $2 ORDER BY id DESC LIMIT $3) AS kept)",
+    )
+    .bind(project)
+    .bind(pipeline)
+    .bind(LINES_KEPT as i64)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM pipeline_runs WHERE project = $1 AND pipeline = $2 AND run NOT IN \
+         (SELECT run FROM pipeline_runs WHERE project = $1 AND pipeline = $2 \
+          ORDER BY last_at DESC LIMIT $3)",
+    )
+    .bind(project)
+    .bind(pipeline)
+    .bind(RUNS_KEPT as i64)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
+}
+
 /// The runs and logs of every pipeline.
 pub struct LogStore {
     inner: Inner,
@@ -593,30 +627,15 @@ impl LogStore {
                     lines.len(),
                     Instant::now(),
                 );
-                if !due {
-                    return tx.commit().await;
+                tx.commit().await?;
+                // The history is kept before the trim starts: a trim that fails or is cut off
+                // loses no run, and holds no run's row while it works (T-7494).
+                if due {
+                    if let Err(error) = trim(pool, mirror, project, pipeline).await {
+                        tracing::warn!(project, pipeline, %error, "a pipeline's log was not trimmed; a later write trims it");
+                    }
                 }
-                sqlx::query(
-                    "DELETE FROM pipeline_log WHERE project = $1 AND pipeline = $2 AND id < \
-                     (SELECT coalesce(min(id), 0) FROM (SELECT id FROM pipeline_log \
-                      WHERE project = $1 AND pipeline = $2 ORDER BY id DESC LIMIT $3) AS kept)",
-                )
-                .bind(project)
-                .bind(pipeline)
-                .bind(LINES_KEPT as i64)
-                .execute(&mut *tx)
-                .await?;
-                sqlx::query(
-                    "DELETE FROM pipeline_runs WHERE project = $1 AND pipeline = $2 AND run NOT IN \
-                     (SELECT run FROM pipeline_runs WHERE project = $1 AND pipeline = $2 \
-                      ORDER BY last_at DESC LIMIT $3)",
-                )
-                .bind(project)
-                .bind(pipeline)
-                .bind(RUNS_KEPT as i64)
-                .execute(&mut *tx)
-                .await?;
-                tx.commit().await
+                Ok(())
             }
             Inner::Memory(map) => {
                 let mut map = map.write().unwrap_or_else(|e| e.into_inner());

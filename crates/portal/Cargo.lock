@@ -2883,6 +2883,7 @@ dependencies = [
  "tikv-jemallocator",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tower-http 0.7.1",

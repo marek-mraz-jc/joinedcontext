@@ -194,7 +194,14 @@ impl DraftHub {
             return;
         };
         let hub = self.clone();
-        runtime.spawn(async move { hub.listen(pool).await });
+        runtime.spawn(async move {
+            // Its own session, which still ends with the pool it was built beside (T-7494).
+            let sessions = crate::db::session_pool(&pool);
+            tokio::select! {
+                _ = pool.close_event() => {}
+                () = hub.listen(sessions) => {}
+            }
+        });
     }
 
     pub async fn broadcast(&self, event: &DraftEvent) {
