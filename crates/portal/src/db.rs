@@ -297,6 +297,25 @@ pub async fn enter(
     Ok(())
 }
 
+/// What a pass over the projects does with one project's outcome: a failure is logged and the
+/// pass goes on, with the first one in `failed` for the caller to report (T-7497). A pool with no
+/// connection to give ends the pass, because each project after would wait for the same answer.
+pub(crate) fn next_project(
+    project: &str,
+    done: Result<(), sqlx::Error>,
+    failed: &mut Option<sqlx::Error>,
+) -> Result<(), sqlx::Error> {
+    match done {
+        Ok(()) => Ok(()),
+        Err(error @ (sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed)) => Err(error),
+        Err(error) => {
+            tracing::warn!(project, %error, "this project's cleanup failed; the pass goes on with the next");
+            failed.get_or_insert(error);
+            Ok(())
+        }
+    }
+}
+
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more
 /// often than sqlx's 10 min default, so all five stayed open all day, ~19 MiB of Postgres each.
 ///

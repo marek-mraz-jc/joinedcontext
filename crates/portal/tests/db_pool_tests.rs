@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use joinedcontext_portal::pipeline_log::{LogStore, NewLine, Outcome, LINES_KEPT};
+use joinedcontext_portal::pipeline_log::{LogStore, NewLine, Outcome, FORGET_ROWS, LINES_KEPT};
 use joinedcontext_portal::pipeline_outcomes::{Reason, RejectedStore};
 use p256::pkcs8::EncodePrivateKey;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -202,7 +202,7 @@ async fn a_trim_that_times_out_after_the_caller_left_leaves_the_pool_at_full_siz
     }
 }
 
-/// One project's failed delete rolls that project back and the pass goes on to the next one, in
+/// One project's failed delete keeps that project's rows and the pass goes on to the next one, in
 /// the run logs and in the refused records alike (T-7497).
 #[tokio::test]
 async fn one_projects_failed_cleanup_leaves_the_projects_after_it_cleaned() {
@@ -260,8 +260,8 @@ async fn one_projects_failed_cleanup_leaves_the_projects_after_it_cleaned() {
 
     assert!(logs_forgotten.is_err(), "the failure is still reported");
     assert!(rejected_forgotten.is_err(), "the failure is still reported");
-    let kept = log.lines(&failing, "gone", "r", 10, None).await;
-    assert_eq!(kept.expect("lines").len(), 1);
+    let kept = log.runs(&failing, "gone", 10).await;
+    assert_eq!(kept.expect("runs").len(), 1);
     let cleaned = log.lines(&next, "gone", "r", 10, None).await;
     assert!(
         cleaned.expect("lines").is_empty(),
@@ -276,7 +276,7 @@ async fn one_projects_failed_cleanup_leaves_the_projects_after_it_cleaned() {
 }
 
 /// `forget_gone` drops exactly the pipelines a project no longer holds, whichever table still has
-/// their rows, and no other project's (T-7494: it now steps the index by pipeline name).
+/// their rows, and no other project's (T-7497: it steps the index by pipeline name).
 #[tokio::test]
 async fn forgetting_gone_pipelines_drops_theirs_alone_in_every_table() {
     let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -312,6 +312,13 @@ async fn forgetting_gone_pipelines_drops_theirs_alone_in_every_table() {
             .await
             .expect("hashed");
     }
+    // More than one statement's worth, some of it a second pipeline's.
+    let many: Vec<(String, String)> = (0..2 * FORGET_ROWS + 7)
+        .map(|n| (format!("urn:{n}"), "h".to_owned()))
+        .collect();
+    log.record_changes(&project, "m-gone", "r", &many)
+        .await
+        .expect("hashed");
     let held = |project: &str| {
         let (pool, mirror, project) = (pool.clone(), mirror.clone(), project.to_owned());
         async move {

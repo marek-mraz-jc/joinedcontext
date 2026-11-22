@@ -345,22 +345,28 @@ impl RejectedStore {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 // Project by project, each in its own key (STO-07).
+                let mut failed = None;
                 for (project, names) in loaded {
-                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await?
-                    else {
-                        continue;
-                    };
                     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-                    sqlx::query(
-                        "DELETE FROM pipeline_rejected WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                    )
-                    .bind(project)
-                    .bind(&names)
-                    .execute(&mut *tx)
-                    .await?;
-                    tx.commit().await?;
+                    let done = async {
+                        let Some(mut tx) =
+                            crate::project_ids::tx_of(pool, mirror, project).await?
+                        else {
+                            return Ok(());
+                        };
+                        sqlx::query(
+                            "DELETE FROM pipeline_rejected WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                        )
+                        .bind(project)
+                        .bind(&names)
+                        .execute(&mut *tx)
+                        .await?;
+                        tx.commit().await
+                    }
+                    .await;
+                    crate::db::next_project(project, done, &mut failed)?;
                 }
-                Ok(())
+                failed.map_or(Ok(()), Err)
             }
             Inner::Memory(map) => {
                 map.write()
