@@ -397,7 +397,7 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
   const { t } = useTranslation();
   const [tab, setTab] = useState<PortalTab>("settings");
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-phone-floors>
       <Tabs<PortalTab>
         id="portal"
         label={t("portals.tabs.label")}
@@ -501,6 +501,7 @@ function PortalForm({
   return (
     <form
       noValidate
+      data-phone-floors
       aria-labelledby="portal-form-title"
       className="max-w-3xl space-y-4"
       onSubmit={(event) => {
