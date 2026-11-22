@@ -789,7 +789,6 @@ fn identifiers_limits_quotas_and_share_types() {
 
 #[test]
 fn public_dashboard_subjects_read_only_their_dashboard_and_saved_datasources() {
-    use daiya_model::rows::RowSet;
     use daiya_model::{PUBLIC_DASHBOARD_ACTOR_PREFIX, PublicDashboardAuthorizer};
     let subject = Subject::public_dashboard(ORG, "pub");
     assert!(subject.read_only);
