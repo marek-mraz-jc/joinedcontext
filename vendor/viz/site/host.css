@@ -14,7 +14,8 @@ iframe { display: block; width: 100%; height: 360px; border: 0; }
 a { color: #1d4ed8; }
 /* In the catalogue the dataset page shows the title, the description and the link itself; they
    stay in the document as its text alternative. */
-.inline main { padding: 0; }
+/* T-7491: flow-root keeps the first note's margin inside the height the frame is sized by. */
+.inline main { padding: 0; display: flow-root; }
 /* T-4811: pinned to the top with no margin, so the hidden caption below the frame adds no scroll height. */
 .inline .caption { position: absolute; top: 0; left: 0; margin: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* T-7490: hidden wins over any display rule (the frame of a refused read, a control not in use). */

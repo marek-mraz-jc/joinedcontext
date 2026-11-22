@@ -1107,6 +1107,7 @@ fn series_chart(kind: &str, attr: &str, last: String, title: Texts) -> Option<Vi
             last,
             aggr_method: None,
             aggr_period: None,
+            controls: None,
         },
         spec,
     })

@@ -3002,6 +3002,45 @@ pub(crate) fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
     }
 }
 
+/// The data source of each chart in `spec.catalog.visualizations`, before the kind's own parse
+/// (T-7491): a 422 naming the member, e.g. `/spec/catalog/visualizations/0/data/last`, so the
+/// chart editor marks the field. `aggrMethod` and `controls` are named here, as serde's message
+/// names only the value; the rest is jc-core's `check_source`.
+pub(crate) fn check_visualization_sources(spec: &Value) -> Result<(), ApiError> {
+    use jc_core::kinds::visualization::{check_source, AggrMethod, VisualizationData};
+    let Some(Value::Array(items)) = spec.pointer("/catalog/visualizations") else {
+        return Ok(());
+    };
+    let mut gaps = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        // A chart without `data` is the kind's parse to refuse.
+        let Some(data) = item.get("data") else {
+            continue;
+        };
+        let at = format!("/spec/catalog/visualizations/{i}/data");
+        if let Some(method) = data
+            .get("aggrMethod")
+            .filter(|m| serde_json::from_value::<AggrMethod>((*m).clone()).is_err())
+        {
+            gaps.push(format!(
+                "{at}/aggrMethod: {method} is not an NGSI-LD aggregation method, e.g. \"avg\""
+            ));
+        } else if let Some(controls) = data.get("controls").filter(|c| !c.is_boolean()) {
+            gaps.push(format!("{at}/controls: {controls} is not true or false"));
+        } else {
+            match serde_json::from_value::<VisualizationData>(data.clone()) {
+                Ok(source) => gaps.extend(check_source(&at, &source).err().map(|e| e.to_string())),
+                Err(e) => gaps.push(format!("{at}: {e}")),
+            }
+        }
+    }
+    if gaps.is_empty() {
+        Ok(())
+    } else {
+        Err(unprocessable(gaps))
+    }
+}
+
 async fn check_projection(state: &AppState, project: &str, spec: &Value) -> Result<(), ApiError> {
     use jc_core::kinds::{DataModelSpec, ModelProjectionSpec};
     // The kind's own parse ran above; a spec it accepted parses here too.
