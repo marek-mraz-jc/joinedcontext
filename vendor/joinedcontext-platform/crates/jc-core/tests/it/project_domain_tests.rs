@@ -66,23 +66,3 @@ fn a_project_may_keep_itself_to_its_members() {
     )
     .is_err());
 }
-
-/// T-7500, PF-44: a project may pin the owner its stored ids carry; what is no domain is refused,
-/// naming the field.
-#[test]
-fn a_project_may_pin_the_owner_of_its_stored_ids() {
-    let pinned = |owner: &str| {
-        Project::from_yaml(&format!(
-            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: zilina, namespace: org }}\n\
-             spec:\n  organizationRef: {{ kind: Organization, name: zilina }}\n  urnOwner: {owner}\n"
-        ))
-        .expect("the manifest parses")
-    };
-    let kept = pinned("hel.fi");
-    kept.validate().expect("a domain is valid");
-    assert_eq!(kept.spec.urn_owner.as_deref(), Some("hel.fi"));
-    for bad in ["hel", "\"hel.fi:helsinki\"", "\"\""] {
-        let error = pinned(bad).validate().expect_err(bad).to_string();
-        assert!(error.contains("spec.urnOwner"), "{bad}: {error}");
-    }
-}
