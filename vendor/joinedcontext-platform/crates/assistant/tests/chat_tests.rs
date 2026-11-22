@@ -760,6 +760,118 @@ async fn an_air_question_about_one_town_is_answered_in_one_data_call() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-7504: jc-prod answered "which bridge is the longest" and "how many bridges" beside a page
+/// of the first bridges of 1,651. The one that answers is the table, whether the router or the
+/// model's own read ranked it, with the count of all it was ranked among; a count attaches none.
+#[tokio::test]
+async fn a_superlative_shows_its_entity_and_a_count_no_page_of_the_register() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = vec!["list_types".into(), "query_entities".into()];
+    let w = world("chatshape", d).await;
+    let mcp = || Mock::given(method("POST")).and(path(format!("/api/endpoint/{SLUG}/mcp")));
+    let said = |text: Value| {
+        ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "content": [{"type": "text", "text": text.to_string()}]
+        }}))
+    };
+    mcp().and(body_string_contains("tools/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+            {"name": "list_types", "description": "Lists the entity types.", "inputSchema": {"type": "object"}},
+            {"name": "query_entities", "description": "Reads entities.", "inputSchema": {"type": "object", "properties": {
+                "type": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "attrs": {"type": "array", "items": {"enum": ["name", "bridgedLength"]}},
+                "q": {"type": "string"}, "orderBy": {"type": "string"}, "count": {"type": "boolean"},
+                "limit": {"type": "integer", "minimum": 0, "maximum": 1000}}}}
+        ]}})))
+        .with_priority(1).mount(&w.gateway).await;
+    mcp()
+        .and(body_string_contains("\"list_types\""))
+        .respond_with(said(json!({"entityTypes": {"id": "urn:ngsi-ld:EntityTypeList:1", "type": "EntityTypeList", "typeList": ["Bridge"]}})))
+        .with_priority(1)
+        .mount(&w.gateway)
+        .await;
+    let bridge = |name: &str, metres: f64| json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge", "name": name, "bridgedLength": metres});
+    // Ranked descending, the read keeps the bridges that have a length: 1,649 of 1,651.
+    mcp()
+        .and(body_string_contains("\"q\":\"bridgedLength\""))
+        .respond_with(said(json!({"entities": [bridge("50_178", 710.0), bridge("R2_240", 556.0), bridge("R2_241", 513.4)], "total": 1649})))
+        .with_priority(2)
+        .mount(&w.gateway)
+        .await;
+    mcp()
+        .and(body_string_contains("\"query_entities\""))
+        .respond_with(said(
+            json!({"entities": [bridge("M21", 9.46), bridge("M22", 4.0)], "total": 1651}),
+        ))
+        .with_priority(3)
+        .mount(&w.gateway)
+        .await;
+    let routed = |read: Value| {
+        completion(
+            json!({"role": "assistant", "content": json!({"route": "data", "queries": [], "data": [read]}).to_string()}),
+            400,
+        )
+    };
+    let judged = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"answers\": true}"}),
+            100,
+        )
+    };
+    script_routed(
+        &w.proxy,
+        vec![
+            routed(json!({"endpoint": "ovzdusie", "type": "Bridge", "order": "bridgedLength;desc"})),
+            routed(json!({"endpoint": "ovzdusie", "type": "Bridge", "count": true})),
+            routed(json!({"endpoint": "ovzdusie", "type": "Bridge"})),
+        ],
+        vec![judged(), judged(), judged()],
+        vec![
+            completion(json!({"role": "assistant", "content": "Najdlhší je 50_178, 710 m [1]."}), 300),
+            completion(json!({"role": "assistant", "content": "Register kraja má 1 651 mostov [1]."}), 300),
+            completion(
+                tool_call("c1", "query_entities", json!({"endpoint": "ovzdusie", "type": ["Bridge"], "orderBy": "bridgedLength;desc", "limit": 1})),
+                300,
+            ),
+            completion(json!({"role": "assistant", "content": "Najdlhší je 50_178, 710 m [2]."}), 300),
+        ],
+    )
+    .await;
+    let mut shown = Vec::new();
+    for question in [
+        "Ktorý most je najdlhší?",
+        "Koľko je v kraji mostov?",
+        "Ktorý most v kraji premosťuje najviac?",
+    ] {
+        let (status, events, _) =
+            answer_of(&w.app, ask(json!({"message": question}), Some(ORIGIN))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+        let tables: Vec<Value> = events
+            .into_iter()
+            .filter(|(n, _)| n == "data")
+            .map(|(_, d)| d)
+            .collect();
+        shown.push(tables);
+    }
+    for (answer, why) in [(&shown[0], "the router's"), (&shown[2], "the model's")] {
+        assert_eq!(answer.len(), 1, "{why}: {answer:?}");
+        assert_eq!(answer[0]["rows"].as_array().map(Vec::len), Some(1), "{why}");
+        assert!(answer[0]["rows"][0].to_string().contains("50_178"), "{why}");
+        assert_eq!(
+            (&answer[0]["top"], &answer[0]["total"]),
+            (&json!(1), &json!(1651)),
+            "{why}"
+        );
+    }
+    assert!(
+        shown[1].is_empty(),
+        "a count attaches no page: {:?}",
+        shown[1]
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4746: "which organizations publish?" reads the catalogue's Organizations; a catalogue that
 /// lists none answers "none" in the question's language, and no answer call guesses at it.
 #[tokio::test]
@@ -6387,9 +6499,10 @@ async fn a_filtered_count_is_read_exactly_not_from_the_profile_sample() {
         .filter(|(n, _)| n == "data")
         .map(|(_, d)| d)
         .collect();
-    let mut totals: Vec<u64> = tables.iter().filter_map(|t| t["total"].as_u64()).collect();
-    totals.sort_unstable();
-    assert_eq!(totals, [37, 1651], "{events:?}");
+    // The whole register's count reached the model above; of its rows no page is shown beside
+    // the 37 that answer (T-7504).
+    let totals: Vec<u64> = tables.iter().filter_map(|t| t["total"].as_u64()).collect();
+    assert_eq!(totals, [37], "{events:?}");
     assert!(
         events
             .iter()
