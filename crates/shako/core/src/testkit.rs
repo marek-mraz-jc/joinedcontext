@@ -298,4 +298,38 @@ pub async fn run_isolation_suite(store: &dyn Store) {
             .expect("undispatched after")
             .is_empty()
     );
+
+    // A mirror sync (T-7522): one claim, a mark during it stays due, no other Organization's.
+    let mark = store
+        .mark_mirror_due(inst, org_a, repo_a_id)
+        .await
+        .expect("mark due");
+    let claimed = |org, repo| store.claim_mirror_sync(inst, org, repo);
+    assert_eq!(claimed(org_b, None).await.expect("claim b"), None);
+    assert_eq!(
+        claimed(org_a, None).await.expect("claim a"),
+        Some((repo_a_id, mark))
+    );
+    assert_eq!(claimed(org_a, None).await.expect("claimed"), None);
+    let during = store
+        .mark_mirror_due(inst, org_a, repo_a_id)
+        .await
+        .expect("mark during");
+    assert!(during > mark);
+    store
+        .finish_mirror_sync(inst, org_a, repo_a_id, mark)
+        .await
+        .expect("finish");
+    for (org, at, synced) in [
+        (org_a, mark, true),
+        (org_a, during, false),
+        (org_b, mark, false),
+    ] {
+        let found = store.mirror_synced(inst, org, repo_a_id, at).await;
+        assert_eq!(found.expect("synced"), synced);
+    }
+    assert_eq!(
+        claimed(org_a, Some(repo_a_id)).await.expect("claim again"),
+        Some((repo_a_id, during))
+    );
 }

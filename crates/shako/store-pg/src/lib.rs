@@ -43,7 +43,7 @@ pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/000
 /// an event is sent once, or again when its sender died or took longer.
 const OUTBOX_LEASE: Duration = Duration::from_secs(300);
 
-/// All 17 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
+/// All 18 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "instance",
     "repo",
@@ -62,6 +62,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "outbox",
     "store_log",
     "projection",
+    "mirror_sync",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

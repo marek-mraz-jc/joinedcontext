@@ -12550,6 +12550,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
+ "gix-hash",
  "hex",
  "hmac 0.12.1",
  "http-body-util",

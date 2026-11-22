@@ -3,7 +3,8 @@
 //!
 //! Compaction rules:
 //! 1. Runs under the per-repository write lock (`RepoLocks`).
-//! 2. Refuses to run if any quarantine directory (`objects/incoming-*`) exists.
+//! 2. Refuses to run while a quarantine directory (`objects/incoming-*`) younger than a day
+//!    exists; an older one is a crashed push's and is removed.
 //! 3. Copies reachable objects plus any unreachable packed objects from packs younger than the
 //!    14-day prune grace into one new consolidated packfile (`delta reuse`), writes its `.idx`,
 //!    and removes old packs only after the new pack and index are on disk.
@@ -22,6 +23,8 @@ use std::time::{Duration, SystemTime};
 
 pub const DEFAULT_PRUNE_GRACE: Duration = Duration::from_secs(14 * 24 * 3600);
 pub const AUTO_COMPACT_PACK_THRESHOLD: usize = 16;
+/// A push lives minutes (30 for its transfer); a quarantine this old was left by a crash.
+const STALE_QUARANTINE: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactOutcome {
@@ -50,6 +53,28 @@ pub fn has_active_quarantine(repo_path: &Path) -> bool {
     false
 }
 
+/// Removes the quarantines crashed pushes left. One that cannot be read or removed stays and
+/// holds compaction back.
+fn remove_stale_quarantines(repo_path: &Path) {
+    let Ok(rd) = std::fs::read_dir(repo_path.join("objects")) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let stale = entry.file_name().to_string_lossy().starts_with("incoming-")
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|at| at.elapsed().ok())
+                .is_some_and(|age| age >= STALE_QUARANTINE);
+        if stale {
+            // One left standing shows in the outcome, as `skipped_due_to_quarantine`.
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 fn list_pack_files(pack_dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(pack_dir) else {
         return Vec::new();
@@ -71,6 +96,7 @@ pub fn compact_repository(
     prune_grace: Duration,
     admit: Admit<'_>,
 ) -> ShakoResult<CompactOutcome> {
+    remove_stale_quarantines(repo_path);
     if has_active_quarantine(repo_path) {
         return Ok(CompactOutcome {
             packs_before: 0,

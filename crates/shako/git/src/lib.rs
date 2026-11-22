@@ -49,7 +49,7 @@ mod tests {
         Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, RefPolicy, RepoId,
         RequestCtx, RoleBinding, Subject,
     };
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     /// Pushes `main` of `source` into a new empty repository and answers the report-status text.
     fn push_main(tmp: &std::path::Path, source: &std::path::Path, tip: &str) -> String {
@@ -605,6 +605,16 @@ mod tests {
         let targz_bytes = archived(ArchiveFormat::TarGz).expect("targz");
         assert!(!targz_bytes.is_empty());
 
+        // A push that runs holds compaction back; what a crash left a day ago does not.
+        let incoming = repo_path.join("objects/incoming-left");
+        std::fs::create_dir_all(&incoming).expect("quarantine");
+        let compact = || compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()));
+        assert!(compact().expect("compact").skipped_due_to_quarantine);
+        std::fs::File::open(&incoming)
+            .and_then(|dir| dir.set_modified(SystemTime::now() - Duration::from_secs(25 * 3600)))
+            .expect("age");
+        assert!(!compact().expect("compact").skipped_due_to_quarantine);
+        assert!(!incoming.exists());
         let compact_out =
             compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()))
                 .expect("compact");

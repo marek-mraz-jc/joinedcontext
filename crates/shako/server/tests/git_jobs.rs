@@ -8,6 +8,7 @@ mod git_world;
 use git_world::{World, commit_random, git, working_copy};
 use serde_json::json;
 use shako_core::OutboundPolicy;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt as _;
@@ -150,4 +151,81 @@ async fn a_mirror_follows_the_push_and_sends_only_the_new_objects() {
         3,
         "sync now answered before the sync it waits for ended"
     );
+}
+
+/// Every object git wants for the new refs is in the delta: a merge of an older branch, content
+/// that returns to an earlier state, a tag of a tag, tags of a tree and of a blob.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_delta_is_complete_to_git() {
+    let work = tempfile::tempdir().expect("work");
+    let dir = work.path();
+    working_copy(dir, "unused").await;
+    std::fs::create_dir(dir.join("kept")).expect("mkdir");
+    for (path, text) in [("kept/a", "a"), ("b", "one")] {
+        std::fs::write(dir.join(path), text).expect("write");
+    }
+    git(dir, &["add", "."]).await;
+    git(dir, &["commit", "-q", "-m", "held"]).await;
+    git(dir, &["branch", "older"]).await;
+    std::fs::write(dir.join("b"), "two").expect("write");
+    git(dir, &["commit", "-q", "-am", "held too"]).await;
+    git(dir, &["clone", "-q", "--bare", ".", "remote.git"]).await;
+    let remote = dir.join("remote.git");
+    let held = refs_of(&remote).await;
+
+    std::fs::write(dir.join("b"), "one").expect("write");
+    git(dir, &["commit", "-q", "-am", "back"]).await;
+    git(dir, &["checkout", "-q", "older"]).await;
+    std::fs::write(dir.join("kept/c"), "c").expect("write");
+    git(dir, &["add", "kept"]).await;
+    git(dir, &["commit", "-q", "-m", "beside"]).await;
+    git(dir, &["checkout", "-q", "main"]).await;
+    git(dir, &["merge", "-q", "--no-ff", "-m", "merge", "older"]).await;
+    for (tag, of) in [
+        ("inner", "HEAD"),
+        ("outer", "inner"),
+        ("tree", "HEAD^{tree}"),
+        ("blob", "HEAD:kept/c"),
+    ] {
+        git(dir, &["tag", "-a", "-m", tag, tag, of]).await;
+    }
+    git(dir, &["clone", "-q", "--mirror", ".", "forge.git"]).await;
+
+    let mut body = Vec::new();
+    shako_git::write_send_pack(&dir.join("forge.git"), &held, None, &mut body, &mut |_| {
+        Ok(())
+    })
+    .expect("delta");
+    let start = body
+        .windows(4)
+        .position(|bytes| bytes == b"PACK")
+        .expect("a pack");
+    std::fs::write(remote.join("objects/pack/pack-delta.pack"), &body[start..]).expect("write");
+    git(
+        &remote,
+        &["index-pack", "--strict", "objects/pack/pack-delta.pack"],
+    )
+    .await;
+    for (name, new) in &refs_of(&dir.join("forge.git")).await {
+        git(&remote, &["update-ref", name, &new.to_string()]).await;
+    }
+    git(&remote, &["fsck", "--strict", "--no-dangling"]).await;
+    assert_eq!(
+        refs_of(&remote).await,
+        refs_of(&dir.join("forge.git")).await
+    );
+}
+
+async fn refs_of(repo: &std::path::Path) -> BTreeMap<String, gix_hash::ObjectId> {
+    git(repo, &["pack-refs", "--all", "--no-prune"]).await;
+    std::fs::read_to_string(repo.join("packed-refs"))
+        .expect("packed-refs")
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(id, _)| !id.starts_with('#'))
+        .map(|(id, name)| {
+            let id = gix_hash::ObjectId::from_hex(id.as_bytes()).expect("an object id");
+            (name.to_owned(), id)
+        })
+        .collect()
 }
