@@ -439,7 +439,11 @@ export function ActivityFeed({
                     </div>
                     {/* A URL or an id in the sentence breaks where it must: unbroken, it widened the whole
                         table past a phone's edge and cut every row's text (judge, 400 px). */}
-                    <span data-testid="activity-sentence" className="[overflow-wrap:anywhere]">
+                    <span
+                      data-testid="activity-sentence"
+                      className="[overflow-wrap:anywhere]"
+                      title={peopleOf(event).join(", ") || undefined}
+                    >
                       {withPeople(sentence, peopleOf(event), names)}
                     </span>
                     {reason ? (

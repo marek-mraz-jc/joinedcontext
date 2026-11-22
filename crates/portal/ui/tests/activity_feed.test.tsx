@@ -5,7 +5,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
-import { ActivityFeed } from "../src/components/ActivityFeed";
+import { ActivityFeed, peopleOf, withPeople } from "../src/components/ActivityFeed";
 import { mergeActivity, objectOf, TAIL_WINDOW } from "../src/api/activity";
 
 // The links are the router's; its address is what a test reads (T-6230).
@@ -137,6 +137,28 @@ describe("the activity feed (UI-31)", () => {
     expect(
       within(shown[0]).getByRole("link", { name: "endpoints/public-air" }),
     ).toHaveAttribute("href", "/projects/helsinki/endpoints/public-air");
+  });
+
+  it("writes the person ids an event names as names, and no other id (T-7542)", async () => {
+    const jana = "3f1c9a52-6b1e-4d0a-9a4e-0c8d1b7e2f10";
+    const eva = "9d2b7c10-11aa-4c3d-8e5f-6a7b8c9d0e1f";
+    const run = "11111111-2222-4333-8444-555555555555";
+    const merged = event({
+      summary: `Change chg-1 merged, approved by ${jana}; run ${run}.`,
+      details: { approvedBy: jana },
+    });
+    const called = event({ summary: `user:${eva} called query_entities on air.`, details: {} });
+    expect(peopleOf(merged)).toEqual([jana]);
+    expect(peopleOf(called)).toEqual([eva]);
+    expect(withPeople(merged.summary, peopleOf(merged), new Map([[jana, "Jana Kováčová"]]))).toBe(
+      `Change chg-1 merged, approved by Jana Kováčová; run ${run}.`,
+    );
+
+    renderFeed([merged]);
+    const sentence = within((await rows())[0]).getByTestId("activity-sentence");
+    // A reader who may not read names gets words, with the id on hover, never the bare id.
+    expect(sentence).toHaveTextContent(`approved by Unknown person; run ${run}.`);
+    expect(sentence).toHaveAttribute("title", jana);
   });
 
   it("gives the sentence the row's width on a phone: time, kind and source fold into one line above it (T-4165)", async () => {
