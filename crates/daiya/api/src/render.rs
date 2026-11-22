@@ -152,7 +152,7 @@ fn date_math(now_ms: i64, math: &str, round_up: bool) -> Option<i64> {
     let mut ms = now_ms;
     let mut rest = math;
     while let Some(op) = rest.chars().next() {
-        rest = &rest[1..];
+        rest = &rest[op.len_utf8()..];
         if op == '/' {
             let unit = rest.chars().next()?;
             rest = &rest[unit.len_utf8()..];
@@ -318,20 +318,21 @@ pub fn transform_panel_frames(
     if txs.is_empty() {
         return frame_sets;
     }
-    // A query that answered no frame keeps its (empty) set; one whose frames a combining step
-    // consumed leaves no empty set behind.
+    // The sets stay in query order. A query that answered no frame keeps its (empty) set; one
+    // whose frames a combining step consumed leaves no empty set behind.
     let mut sets: Vec<FrameSet> = Vec::with_capacity(frame_sets.len());
+    let mut consumed = BTreeSet::new();
     let mut frames = Vec::new();
     for fs in frame_sets {
-        if fs.frames.is_empty() {
-            sets.push(fs);
-            continue;
+        if !fs.frames.is_empty() {
+            consumed.insert(fs.ref_id.clone());
         }
-        let ref_id = fs.ref_id;
+        let ref_id = fs.ref_id.clone();
         frames.extend(fs.frames.into_iter().map(|mut f| {
             f.ref_id.get_or_insert_with(|| ref_id.clone());
             f
         }));
+        sets.push(FrameSet::new(ref_id, Vec::new()));
     }
     for frame in apply_transformations(frames, txs).frames {
         let ref_id = frame.ref_id.clone().unwrap_or_default();
@@ -340,6 +341,7 @@ pub fn transform_panel_frames(
             None => sets.push(FrameSet::new(ref_id, vec![frame])),
         }
     }
+    sets.retain(|s| !s.frames.is_empty() || !consumed.contains(&s.ref_id));
     sets
 }
 
@@ -791,13 +793,18 @@ pub async fn panel_view(
     // to the default with a notice on the answer. A panel's `timeFrom` ("2h") is Grafana's
     // relative override: the last two hours.
     let mut notices = Vec::new();
-    let panel_from = panel.time_from.as_deref().map(str::trim).map(|t| {
-        if t.starts_with("now") {
-            t.to_owned()
-        } else {
-            format!("now-{t}")
-        }
-    });
+    let panel_from = panel
+        .time_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            if t.starts_with("now") {
+                t.to_owned()
+            } else {
+                format!("now-{t}")
+            }
+        });
     let from_ms = match range.from.as_deref() {
         Some(own) => parse_time_str_ms(Some(own), TimeEdge::From)?,
         None => saved_time_ms(

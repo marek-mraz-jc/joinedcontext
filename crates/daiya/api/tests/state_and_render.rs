@@ -420,6 +420,9 @@ fn an_unreadable_time_is_a_400_naming_the_field() {
         ("now-", TimeEdge::From, "from"),
         ("now*2d", TimeEdge::From, "from"),
         ("now-500ms", TimeEdge::From, "from"),
+        ("now\u{20ac}1d", TimeEdge::From, "from"),
+        ("now-1\u{20ac}", TimeEdge::To, "to"),
+        ("now/\u{20ac}", TimeEdge::To, "to"),
     ] {
         let err = parse_time_str_ms(Some(raw), edge).unwrap_err();
         assert_eq!(err.status_code(), 400, "{raw}");
