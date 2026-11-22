@@ -1220,4 +1220,7 @@ test("an aggregation names its method and says when it is part of the data (T-75
   assert.equal(table(made, "sk").caption, "Kvalita ovzdušia — Priemer za deň (UTC)");
   const rows = vizRows([{ label: "_other", value: 42 }, { label: "SSC", value: 422 }], "sk", { _other: { sk: "Ostatné" } });
   assert.deepEqual(rows, [{ label: "Ostatné", value: 42 }, { label: "SSC", value: 422 }]);
+  const years = { ...made, aggregation: { ...made.aggregation, per: "year" } };
+  assert.equal(table(years, "sk").rows[0][1], "2026");
+  assert.equal(table({ ...made, aggregation: { ...made.aggregation, per: "month" } }, "en").rows[0][1], "October 2026");
 });

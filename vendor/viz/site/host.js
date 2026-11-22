@@ -389,7 +389,9 @@
 
   // A day, a month or a year as the granularity names it, in the page's language.
   function dated(ms, gran, lang, zone) {
-    var options = gran === "P1Y" ? { year: "numeric" } : gran === "P1M" ? { month: "numeric", year: "numeric" } : { day: "numeric", month: "numeric", year: "numeric" };
+    // In English 10/12/2026 reads as two dates: the month is its name.
+    var month = lang === "en" ? "short" : "numeric";
+    var options = gran === "P1Y" ? { year: "numeric" } : gran === "P1M" ? { month: month, year: "numeric" } : { day: "numeric", month: month, year: "numeric" };
     if (zone) options.timeZone = zone;
     return nb(new Date(ms).toLocaleDateString(lang, options));
   }
@@ -550,6 +552,8 @@
     // Room round the plot keeps a point and a label on its edge whole.
     enc.x.scale = Object.assign({ padding: EDGE }, enc.x.scale, { domain: { param: "brush" } });
     if (enc.y) enc.y.scale = Object.assign({ padding: 8 }, enc.y.scale);
+    // 5,600,000 would push the plot off a phone: such an axis says 5.6M, the tooltip the number.
+    if (opts.big && enc.y && enc.y.axis !== null) enc.y.axis = Object.assign({ format: "~s" }, enc.y.axis);
     var color = enc.color && enc.color.field;
     // Every station keeps its colour whichever of them are picked.
     if (color && Array.isArray(opts.names) && opts.names.length) enc.color.scale = Object.assign({ domain: opts.names }, enc.color.scale);
@@ -1206,6 +1210,7 @@
         var attr = plan.attrs.length === 1 ? plan.attrs[0] : null;
         var rows = picked();
         var values = attr ? all.map(function (row) { return row[attr]; }) : [];
+        var big = values.some(function (v) { return Math.abs(v) >= 100000; });
         var m = attr ? measure(attr, units[attr], lang, values) : null;
         if (m && m.percent) {
           rows = rows.map(function (row) {
@@ -1263,7 +1268,7 @@
         var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 74;
         var names = Object.keys(all.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
         var shownNames = Object.keys(rows.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
-        var key = [attr, m && m.title, what, span, JSON.stringify(bands), dense, daily, plan.gran, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
+        var key = [attr, m && m.title, what, span, JSON.stringify(bands), dense, big, daily, plan.gran, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
         // An empty answer keeps the last station list, so the reader can still change it.
         if (bar && all.length) {
           listed = true;
@@ -1293,7 +1298,7 @@
         }
         drawn = key;
         reset.hidden = true; // a new drawing starts unzoomed
-        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, period: plan.gran, years: !!years && years[0] !== years[1], what: what, span: span, bands: bands, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
+        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, big: big, daily: daily, period: plan.gran, years: !!years && years[0] !== years[1], what: what, span: span, bands: bands, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
         frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
         var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         zoom.textContent = (plan.gran === "P1Y" ? t.utcYears : plan.gran === "P1M" ? t.utcMonths : daily ? t.utcDays : t.local.replace("{tz}", zone)) + (shown.vconcat && JSON.stringify(shown.vconcat[0]).indexOf('"bind":"legend"') >= 0 ? " " + t.legend : "");
@@ -1314,6 +1319,11 @@
         skeleton.hidden = !frame.hidden;
         var p;
         try {
+          // What is asked shows at once, so a read that fails does not pass for readings.
+          if (bar) {
+            var asking = temporalPlan(source, state, view.endpoint, h.api, Date.now());
+            bar.gran(asking.gran, asking.least);
+          }
           p = load(view, h.api, lang, fetcher, Date.now(), null, state, function (map) {
             var ids = Object.keys(map);
             if (mine !== controller || !bar || listed || !ids.length) return;
