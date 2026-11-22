@@ -297,5 +297,16 @@ mod tests {
                 name: "JCBIN_X".into()
             }
         );
+        assert_eq!(e.to_string(), "JCBIN_X is set and empty");
+    }
+
+    #[test]
+    fn a_source_reads_as_its_start_report_word() {
+        let words: Vec<String> = [Source::Env, Source::File, Source::Generated]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(words, ["env", "file", "generated"]);
+        assert_eq!(Source::File.as_str(), "file");
     }
 }

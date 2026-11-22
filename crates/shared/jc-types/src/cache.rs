@@ -280,6 +280,25 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_or_unbounded_ttl_stores_nothing_and_an_unknown_org_holds_nothing() {
+        let cache = BoundedCache::new(10_000);
+        let org = OrgId::mint();
+        cache.insert(Key(org, 0), 0, 16, Duration::ZERO);
+        cache.insert(Key(org, 1), 1, 16, Duration::MAX);
+        assert!(cache.is_empty());
+        assert!(cache.entries_of(org).is_empty());
+        cache.insert(Key(org, 2), 2, 16, TTL);
+        assert_eq!(cache.entries_of(OrgId::mint()), Vec::new());
+        assert_eq!(
+            format!("{cache:?}"),
+            format!(
+                "BoundedCache {{ budget: 10000, entries: 1, bytes: {} }}",
+                cache.bytes()
+            )
+        );
+    }
+
+    #[test]
     fn expired_entries_leave_without_being_asked_for() {
         let cache = BoundedCache::new(1 << 20);
         let org = OrgId::mint();

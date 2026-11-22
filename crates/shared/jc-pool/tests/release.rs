@@ -1,6 +1,7 @@
 //! The release rule against a real server (T-7538): a healthy released connection stays in the
 //! pool, one whose session the server ended is closed instead of handed out again.
 //! `JC_POOL_TEST_DATABASE_URL` names the server; unset, the test says so and passes.
+#![allow(clippy::disallowed_methods)] // The test reads its database URL; jc runs none of this.
 
 use sqlx::Connection;
 use sqlx::postgres::{PgConnection, PgPool};
