@@ -286,7 +286,7 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
     await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
-    const alert = await screen.findByText(/“NO2 now” was not removed, because “NO2 week”/);
+    const alert = await screen.findByText(/“NO2 now” was not removed, because the saved chart “NO2 week”/);
     expect(screen.getByText(/^7 days is not an allowed range/).closest("li")).toHaveTextContent("no2-week");
     expect(alert).toBeVisible();
     expect(alert.closest("details")).toBeNull();
