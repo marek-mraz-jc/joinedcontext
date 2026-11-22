@@ -135,7 +135,46 @@ pub async fn through_view<F: Future>(id: &str, f: F) -> F::Output {
     VIEW.scope(std::sync::Arc::from(id), f).await
 }
 
+/// The name of the reserved pair in [`Subject::headers`] that says the
+/// broker acts for a stored identity (S4-17): a Channel's write names who
+/// bound it, and their roles, groups and membership are unknown now. An
+/// engine grants nothing by those and takes every prohibition by them as
+/// applying. As [`VIEW_PAIR`], no request can carry it.
+pub const IDENTITY_PAIR: &str = "@identity";
+
+tokio::task_local! {
+    static BY_IDENTITY: ();
+}
+
+/// Runs `f` as requests of a stored identity: every [`Subject`] built in it
+/// carries the [`IDENTITY_PAIR`].
+#[cfg(feature = "channels")]
+pub(crate) async fn as_identity<F: Future>(f: F) -> F::Output {
+    BY_IDENTITY.scope((), f).await
+}
+
+/// [`PolicyEngine::identity`], guarded as every hook is: an engine that
+/// panics names nobody.
+#[cfg(feature = "channels")]
+pub(crate) fn identity(
+    engine: &dyn PolicyEngine,
+    subject: &Subject,
+) -> Option<Vec<(String, String)>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.identity(subject)))
+        .unwrap_or_else(|_| {
+            tracing::error!("policy engine {} panicked; naming nobody", engine.name());
+            metrics::counter!("antares_policy_failures_total", "reason" => "panic").increment(1);
+            None
+        })
+}
+
 impl Subject {
+    /// Whether the broker acts for a stored identity ([`IDENTITY_PAIR`]).
+    #[must_use]
+    pub fn by_identity(&self) -> bool {
+        self.headers.iter().any(|(name, _)| name == IDENTITY_PAIR)
+    }
+
     /// The view the request came through, if it came through one.
     #[must_use]
     pub fn view(&self) -> Option<&str> {
@@ -1248,6 +1287,15 @@ pub trait PolicyEngine: Send + Sync {
         self.pre_notify(subject, sub, notification)
     }
 
+    /// Who `subject` is, without what it holds at the moment: the pairs the
+    /// broker may keep and act as later, when the caller is gone (a Channel,
+    /// S4-17). A name that stays the caller's, and any limit of the caller;
+    /// never a role, a group or a membership. `None`, the default, is nobody
+    /// that can be acted for: the broker binds no Channel for it.
+    fn identity(&self, _subject: &Subject) -> Option<Vec<(String, String)>> {
+        None
+    }
+
     /// Whether the engine reads rule documents through
     /// [`load`](Self::load) (ADR-0020 amendment). No by default: `/q/policy`
     /// then answers 404, as it does for a broker without an engine.
@@ -1615,6 +1663,9 @@ pub fn subject_of(tenant: &antares_model::TenantId, headers: &HeaderMap) -> Subj
     }
     if let Ok(view) = VIEW.try_with(std::sync::Arc::clone) {
         carried.push((VIEW_PAIR.to_owned(), view.to_string()));
+    }
+    if BY_IDENTITY.try_with(|()| ()).is_ok() {
+        carried.push((IDENTITY_PAIR.to_owned(), String::new()));
     }
     Subject {
         tenant: tenant.clone(),

@@ -29,6 +29,10 @@ struct NoSecret {
 }
 
 impl PolicyEngine for NoSecret {
+    fn identity(&self, _s: &Subject) -> Option<Vec<(String, String)>> {
+        Some(Vec::new())
+    }
+
     fn name(&self) -> &str {
         "no-secret"
     }

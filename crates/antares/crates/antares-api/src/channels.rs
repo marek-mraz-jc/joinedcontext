@@ -17,6 +17,7 @@
 
 use crate::attrs::{Intent, INTENT};
 use crate::negotiate::{tenant_from, ApiError, ApiResult};
+use crate::policy::Subject;
 use crate::state::AppState;
 use antares_model::{NgsiError, TenantId};
 use antares_store::Kind;
@@ -592,7 +593,7 @@ async fn write(
         .body(axum::body::Body::from(body))
         .unwrap_or_default();
     *req.headers_mut() = headers;
-    st.call(&HeaderMap::new(), req).await
+    crate::policy::as_identity(st.call(&HeaderMap::new(), req)).await
 }
 
 /// What a sample's payload is to the Channel: a value to write, or why it
@@ -922,8 +923,15 @@ async fn restore(st: &AppState, shared: &Shared) {
                 continue;
             }
             started = started.saturating_add(1);
+            let Some(subject) = acting(st, &crate::policy::stored_subject(&tenant, &doc)) else {
+                tracing::warn!(
+                    channel = %ch.id, tenant = tenant.as_str(),
+                    "channels: a stored channel names nobody it can act as (only roles, groups or nothing): not restored; its binder binds it again as a named person or client"
+                );
+                continue;
+            };
             let bound = Bind {
-                subject: crate::policy::stored_subject(&tenant, &doc).headers,
+                subject,
                 tenant: tenant.clone(),
                 doc: Arc::new(doc),
                 ch,
@@ -1018,6 +1026,30 @@ fn tenant_of(headers: &HeaderMap) -> ApiResult<(TenantId, Option<String>)> {
 
 /// The stored Channel `id` of this tenant, when this subject bound it: a
 /// Channel another subject bound answers as an absent one.
+/// Who a Channel of `subject` acts as: the identity the engine names and
+/// nothing else it held (S4-17). Without an engine the subject decides
+/// nothing, so the write carries none, unless the API requires one.
+fn acting(st: &AppState, subject: &Subject) -> Option<Vec<(String, String)>> {
+    match &st.policy {
+        Some(engine) => crate::policy::identity(engine.as_ref(), subject),
+        None => (!st.subject_required).then(Vec::new),
+    }
+}
+
+/// Whether `caller` is who bound `doc`: the same identity, whatever either
+/// holds; the same subject where the document names no identity.
+fn owns(st: &AppState, tenant: &TenantId, doc: &Value, caller: &Subject) -> bool {
+    let who = |subject: &Subject| {
+        st.policy
+            .as_ref()
+            .and_then(|engine| crate::policy::identity(engine.as_ref(), subject))
+    };
+    match who(&crate::policy::stored_subject(tenant, doc)) {
+        Some(binder) => who(caller) == Some(binder),
+        None => crate::policy::belongs_to(doc, caller),
+    }
+}
+
 async fn owned(
     st: &AppState,
     tenant: &TenantId,
@@ -1029,7 +1061,7 @@ async fn owned(
         .store
         .get(tenant, Kind::View, id)
         .await?
-        .filter(|d| crate::policy::belongs_to(d, &crate::policy::subject_of(tenant, headers)))
+        .filter(|d| owns(st, tenant, d, &crate::policy::subject_of(tenant, headers)))
         .ok_or_else(|| NgsiError::ResourceNotFound(format!("channel {id} not found")))?;
     Ok((k, doc))
 }
@@ -1087,13 +1119,16 @@ async fn bind_inner(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     let subject = crate::policy::subject_of(&tenant, headers);
-    // The bind is the write it stands for, decided by the policy seam as
-    // this subject: refused here, refused for every sample.
-    let probe = INTENT
-        .scope(
-            Intent::Bind,
-            write(st, &ch, &subject.headers, json!(0), None),
+    let Some(acts_as) = acting(st, &subject) else {
+        return Err(NgsiError::OperationNotSupported(
+            "a Channel writes later as who bound it, and this caller names no person or client: a role, a group or a membership alone cannot bind one; bind it signed in, or as a client".to_owned(),
         )
+        .into());
+    };
+    // The bind is the write it stands for, decided by the policy seam as
+    // the identity each sample carries: refused here, refused for every sample.
+    let probe = INTENT
+        .scope(Intent::Bind, write(st, &ch, &acts_as, json!(0), None))
         .await;
     if !probe.status().is_success() {
         return Ok(probe);
@@ -1101,7 +1136,7 @@ async fn bind_inner(
     let k = key(&tenant, id);
     let old = st.store.get(&tenant, Kind::View, id).await?;
     if let Some(old) = &old {
-        if !crate::policy::belongs_to(old, &subject) {
+        if !owns(st, &tenant, old, &subject) {
             return Err(NgsiError::AlreadyExists(format!(
                 "channel {id} is bound by another subject"
             ))
@@ -1113,7 +1148,17 @@ async fn bind_inner(
         return Err(NgsiError::TooManyResults(refused_by_replica()).into());
     }
     let mut doc = serde_json::to_value(&ch).map_err(|e| NgsiError::InternalError(e.to_string()))?;
-    if let (Some(o), Some(s)) = (doc.as_object_mut(), crate::policy::subject_member(&subject)) {
+    // with an engine the identity alone is kept; without one the subject,
+    // which then tells owners apart and is never acted as
+    let kept = Subject {
+        tenant: tenant.clone(),
+        headers: if st.policy.is_some() {
+            acts_as.clone()
+        } else {
+            subject.headers.clone()
+        },
+    };
+    if let (Some(o), Some(s)) = (doc.as_object_mut(), crate::policy::subject_member(&kept)) {
         o.insert(crate::policy::SUBJECT_MEMBER.into(), s);
     }
     // stored before it replaces the running Channel: a refused write leaves
@@ -1142,7 +1187,7 @@ async fn bind_inner(
         tenant: tenant.clone(),
         doc: Arc::new(doc),
         ch,
-        subject: subject.headers,
+        subject: acts_as,
     };
     if let Err(e) = start(st, shared, bound, true).await {
         match old {
@@ -1213,7 +1258,7 @@ async fn list(State(st): State<AppState>, shared: Shared, headers: HeaderMap) ->
             let running = lock(&shared.running);
             let out: Vec<Value> = docs
                 .into_iter()
-                .filter(|d| crate::policy::belongs_to(d, &subject))
+                .filter(|d| owns(&st, &tenant, d, &subject))
                 .filter_map(|d| {
                     let id = d.get("id")?.as_str()?.to_owned();
                     let k = format!("{prefix}{id}");

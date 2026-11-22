@@ -39,12 +39,15 @@ Three questions decide whether such a binding is safe here:
    about a 5.6.3 Append Attributes of that Attribute on that Entity, as the
    binding subject, through `AppState::call` with a task-local bind intent
    that stops the write after the decision: a refusal is the seam's own 403
-   and nothing is bound; an absent Entity is 404. The subject's headers are
-   stored with the Channel as a Subscription stores its creator's
-   (`__subject`, never served), and only that subject reads or unbinds it.
+   and nothing is bound; an absent Entity is 404. The identity of the
+   subject (`PolicyEngine::identity`: who it is, never a role, group or
+   membership) is stored with the Channel (`__subject`, never served) and
+   the bind is decided as that identity; only that identity reads or unbinds
+   it (amended 2026-11-22, S4-17).
 3. **Every sample is decided again.** A sample is a 5.6.3 Append Attributes
-   through `AppState::call` with the binder's tenant, `Link` and subject
-   headers: negotiation, the bounds wall, the policy seam and views apply as
+   through `AppState::call` with the binder's tenant, `Link` and identity,
+   marked `@identity` (membership unknown: no grant by it, every prohibition
+   by it): negotiation, the bounds wall, the policy seam and views apply as
    for a client. A grant withdrawn after the bind stops the samples; they
    count as `refused`.
 4. **Retention.** `mirror` is that write: current state, history by the

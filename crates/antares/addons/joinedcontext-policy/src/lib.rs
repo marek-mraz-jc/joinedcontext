@@ -121,6 +121,10 @@ impl PolicyEngine for JoinedcontextPolicy {
         Box::pin(std::future::ready(self.decide_now(subject, op)))
     }
 
+    fn identity(&self, subject: &Subject) -> Option<Vec<(String, String)>> {
+        subject::identity(subject)
+    }
+
     fn offers_each<'a>(
         &'a self,
         subject: &'a Subject,

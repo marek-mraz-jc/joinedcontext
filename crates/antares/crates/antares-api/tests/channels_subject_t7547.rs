@@ -35,22 +35,39 @@ impl PolicyEngine for Seen {
         Box::pin(std::future::ready(Decision::Allow))
     }
 
+    fn identity(&self, s: &Subject) -> Option<Vec<(String, String)>> {
+        let who = s.headers.iter().find(|(n, _)| n == "x-jc-subject")?;
+        Some(vec![who.clone()])
+    }
+
     fn pre_notify(&self, _s: &Subject, _sub: &Value, _n: &mut Value) -> NotifyDecision {
         NotifyDecision::Deliver
     }
 }
 
 async fn send(st: &AppState, method: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+    send_as(st, method, uri, body, Some("ana"), "writer").await
+}
+
+async fn send_as(
+    st: &AppState,
+    method: &str,
+    uri: &str,
+    body: Value,
+    subject: Option<&str>,
+    roles: &str,
+) -> (StatusCode, Value) {
     let body = body.to_string();
-    let req = Request::builder()
+    let mut req = Request::builder()
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
         .header("content-length", body.len())
-        .header("x-jc-subject", "ana")
-        .header("x-jc-roles", "writer")
-        .body(Body::from(body))
-        .expect("request");
+        .header("x-jc-roles", roles);
+    if let Some(name) = subject {
+        req = req.header("x-jc-subject", name);
+    }
+    let req = req.body(Body::from(body)).expect("request");
     let resp = antares_api::router(st.clone())
         .oneshot(req)
         .await
@@ -82,6 +99,22 @@ async fn a_sample_carries_no_stored_role_of_the_binder() {
                          "topic": "bus/s/speed", "retention": "mirror"});
     let (status, body) = send(&st, "PUT", "/x/channels/s", channel).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+    let nobody = json!({"entity": BUS, "attribute": "speed", "broker": "lo",
+                        "topic": "bus/n/speed", "retention": "mirror"});
+    let (status, body) = send_as(&st, "PUT", "/x/channels/n", nobody, None, "writer").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    for (who, want) in [("ana", StatusCode::OK), ("bob", StatusCode::NOT_FOUND)] {
+        let (status, body) = send_as(
+            &st,
+            "GET",
+            "/x/channels/s",
+            Value::Null,
+            Some(who),
+            "reader",
+        )
+        .await;
+        assert_eq!(status, want, "{who}, whatever their roles are now: {body}");
+    }
     engine.0.lock().expect("seen").clear();
     lo.publish("bus/s/speed", "7");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -96,5 +129,11 @@ async fn a_sample_carries_no_stored_role_of_the_binder() {
     assert!(
         acted.iter().flatten().all(|(name, _)| name != "x-jc-roles"),
         "{acted:?}"
+    );
+    assert!(
+        acted.iter().all(|headers| headers
+            .iter()
+            .any(|(name, _)| name == antares_api::policy::IDENTITY_PAIR)),
+        "the engine is not told the membership is unknown: {acted:?}"
     );
 }
