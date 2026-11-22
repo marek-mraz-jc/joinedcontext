@@ -1397,6 +1397,19 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .post(&app, &[("webauthn_assertion_response", &assertion_json)])
         .await;
     assert!(is_code(st_pk_ok, &h_pk_ok));
+
+    // S3-26: the registered passkey is this person's second factor after a password.
+    let second = start(&app, "").await;
+    let (_, _, html_second) = second.password(&app, MEMBER, "ResetByLinkPass789!").await;
+    assert_eq!(
+        page_id(&html_second),
+        "webauthn-authenticate",
+        "{html_second}"
+    );
+    // Also where a second factor is required: the passkey answers it, no TOTP enrolment.
+    let required = start(&app, "&acr_values=mfa").await;
+    let (_, _, html_req) = required.password(&app, MEMBER, "ResetByLinkPass789!").await;
+    assert_eq!(page_id(&html_req), "webauthn-authenticate", "{html_req}");
 }
 
 #[tokio::test]

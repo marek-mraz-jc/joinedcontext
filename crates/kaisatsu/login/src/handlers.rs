@@ -316,9 +316,14 @@ async fn build_policy_context(
     let store = &state.store;
     let creds = store.list_credentials(&realm.id, &user.id).await?;
     let has_totp = creds.iter().any(|c| c.credential_type == "otp");
+    // A passkey lives in its own table; a legacy row in the credential table counts too.
     let has_webauthn = creds
         .iter()
-        .any(|c| c.credential_type.starts_with("webauthn"));
+        .any(|c| c.credential_type.starts_with("webauthn"))
+        || !store
+            .list_webauthn_credentials(&realm.id, &user.id)
+            .await?
+            .is_empty();
     let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
     let realm_requires = second_factor_required(state, realm, user).await?;
     let step_up = auth_session.acr_requested.as_deref() == Some("mfa");

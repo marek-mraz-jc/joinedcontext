@@ -1081,6 +1081,57 @@ async fn userinfo_refuses_tokens_of_an_ended_session_or_revoked() {
     );
 }
 
+/// S3-26: a passkey is a second factor the password grant cannot check, so its holder gets no
+/// password-only token there; a person without one still does.
+#[tokio::test]
+async fn a_passkey_holder_gets_no_password_only_token() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let app = router(state, mount());
+    let grant = [
+        ("grant_type", "password"),
+        ("client_id", "apisix-gateway"),
+        ("client_secret", concat!("apisix-", "secret-123")),
+        ("username", "demo.orgmember@hel.fi"),
+        ("password", "MemberPass123!Valid"),
+        ("scope", "openid"),
+    ];
+    let (st, _, body) = post_form(&app, TOKEN, &grant, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .insert_webauthn_credential(WebAuthnCredentialRecord {
+            id: "pk-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: member.id.clone(),
+            user_handle: "handle-1".into(),
+            credential_id: "cred-1".into(),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: true,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "idm.dev.example.test".into(),
+            user_label: None,
+            created_at: jc_time::TimestampTz::now(),
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+    let (st, _, body) = post_form(&app, TOKEN, &grant, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(json_body(&body)["error"], "invalid_grant");
+    assert!(body.contains("through the browser"), "{body}");
+}
+
 /// K2: Proved red against the code before K2, where `organization:<alias>` in `scope` was
 /// accepted without checking the person's memberships and injected into `jc_org` via
 /// `active_org`.
