@@ -4,50 +4,10 @@
 //! No plugin may decide authorization (`IAuthFunctions`, `IPermissionLabels`, `IAuthenticator`,
 //! `IApiToken`, `IMiddleware` are intentionally not offered, D4).
 
-use dataroom_core::{DataroomError, Dataset, Distribution, ResourceView, Result};
+use dataroom_core::{Dataset, Distribution, ResourceView};
 use serde_json::{json, Value};
 
-/// Validates that a `resource_view_create` or `resource_view_update` payload contains no
-/// undeclared `__extras` fields (matching `ours/platform/jcctl-publish/ckan.rs` `VIEW_PAYLOAD`, EP-144).
-pub fn validate_view_payload(payload: &Value) -> Result<()> {
-    const CORE_FIELDS: [&str; 6] = [
-        "id",
-        "resource_id",
-        "view_type",
-        "title",
-        "description",
-        "order",
-    ];
-    const JC_VIS_FIELDS: [&str; 4] = ["jc_name", "spec", "source", "endpoint"];
-
-    let Some(obj) = payload.as_object() else {
-        return Err(DataroomError::field_error(
-            "view",
-            "payload must be a JSON object",
-        ));
-    };
-    let view_type = obj.get("view_type").and_then(Value::as_str).unwrap_or("");
-    for key in obj.keys() {
-        if CORE_FIELDS.contains(&key.as_str()) {
-            continue;
-        }
-        if view_type == "jc_visualization" && JC_VIS_FIELDS.contains(&key.as_str()) {
-            continue;
-        }
-        if matches!(
-            view_type,
-            "datatables_view" | "image_view" | "text_view" | "map_view"
-        ) && matches!(key.as_str(), "image_url" | "page_url" | "filterable")
-        {
-            continue;
-        }
-        return Err(DataroomError::field_error(
-            "__extras",
-            format!("unexpected view field '{key}' for view_type '{view_type}'"),
-        ));
-    }
-    Ok(())
-}
+pub use dataroom_core::ckan_compat::validate_view_payload;
 
 /// Tags a view plugin may return; anything else escapes the whole fragment.
 const VIEW_TAGS: &[&str] = &[
