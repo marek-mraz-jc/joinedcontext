@@ -748,21 +748,48 @@ mod policy_tests {
         );
     }
 
+    /// `from_env` reads the three documented variables. The process
+    /// environment is shared by every test, so the check runs in a child
+    /// copy of this test binary with the variables set there only.
+    #[test]
+    fn from_env_reads_the_documented_variables() {
+        if std::env::var_os("ANTARES_NOTIFY_TEST_CHILD").is_some() {
+            let p = DeliveryPolicy::from_env().expect("valid values");
+            assert_eq!(p.attempts, 3);
+            assert_eq!(p.backoff, Duration::from_millis(250));
+            assert_eq!(p.max_age, Duration::from_secs(30));
+            return;
+        }
+        let run = |attempts: &str| {
+            std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "policy_tests::from_env_reads_the_documented_variables",
+                ])
+                .env("ANTARES_NOTIFY_TEST_CHILD", "1")
+                .env("ANTARES_NOTIFY_ATTEMPTS", attempts)
+                .env("ANTARES_NOTIFY_BACKOFF_MS", "250")
+                .env("ANTARES_NOTIFY_MAX_AGE_SECS", "30")
+                .output()
+                .expect("child test run")
+        };
+        let ok = run("3");
+        let said = String::from_utf8_lossy(&ok.stdout);
+        assert!(ok.status.success() && said.contains("1 passed"), "{said}");
+        // a present but invalid value is a startup error, never the default
+        let bad = run("0");
+        assert!(
+            !bad.status.success(),
+            "{}",
+            String::from_utf8_lossy(&bad.stdout)
+        );
+    }
+
     #[test]
     fn env_parsing_rejects_garbage_and_zero_attempts() {
         let parse =
             |a: Option<&str>, b: Option<&str>, m: Option<&str>| DeliveryPolicy::parse(a, b, m);
         assert_eq!(parse(None, None, None), Ok(DeliveryPolicy::default()));
-        // from_env reads exactly the three documented variables
-        let env = |k: &str| std::env::var(k).ok();
-        assert_eq!(
-            DeliveryPolicy::from_env(),
-            parse(
-                env("ANTARES_NOTIFY_ATTEMPTS").as_deref(),
-                env("ANTARES_NOTIFY_BACKOFF_MS").as_deref(),
-                env("ANTARES_NOTIFY_MAX_AGE_SECS").as_deref()
-            )
-        );
         let p = parse(Some("3"), Some("250"), Some("30")).expect("valid");
         assert_eq!(p.attempts, 3);
         assert_eq!(p.backoff, Duration::from_millis(250));
