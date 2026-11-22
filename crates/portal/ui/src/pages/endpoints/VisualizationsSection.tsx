@@ -40,7 +40,7 @@ import type {
   Visualization,
 } from "./visualizations";
 
-/** What the specification's hint and refusal show as an example. */
+/** What the specification's hint shows as an example. */
 const SPEC_EXAMPLE = '"data": {"name": "source"}';
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -82,6 +82,10 @@ export function VisualizationsSection({
   const [picks, setPicks] = useState<Partial<Record<Role, string>>>({});
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
+  // What Fill wrote last: while the box still holds it, nothing typed by hand is in there.
+  const [filled, setFilled] = useState("");
+  const [filling, setFilling] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const editor = useRef<HTMLDetailsElement>(null);
   const proposal = useProposal(project, "endpoints", (proposed) => {
@@ -96,6 +100,7 @@ export function VisualizationsSection({
     setType("");
     setPicks({});
     setSpecText("");
+    setAdvanced(false);
     setTemporal(DEFAULT_TEMPORAL);
     if (editor.current) editor.current.open = false;
   });
@@ -118,30 +123,45 @@ export function VisualizationsSection({
     });
   };
 
-  const fill = async () => {
+  const fill = async (): Promise<string | undefined> => {
     setFailed(null);
+    setFilling(true);
     try {
       const spec = await door("portal_visualization_template", {
         template,
         ...columns,
       });
-      setSpecText(JSON.stringify(spec, null, 2));
+      const text = JSON.stringify(spec, null, 2);
+      setSpecText(text);
+      setFilled(text);
+      return text;
     } catch (error) {
       setFailed(
         error instanceof ApiError
           ? (error.problem?.detail ?? error.message)
           : String(error),
       );
+      return undefined;
+    } finally {
+      setFilling(false);
     }
   };
+  // A filled specification names the columns it was filled from: another pick writes it again.
+  const repick = (next: Partial<Record<Role, string>>) => {
+    setPicks(next);
+    if (specText === filled) setSpecText("");
+  };
 
-  const add = () => {
+  const add = async () => {
     setFailed(null);
+    const text = specText.trim() ? specText : await fill();
+    if (!text) return;
     let spec: Visualization["spec"];
     try {
-      spec = JSON.parse(specText) as Visualization["spec"];
+      spec = JSON.parse(text) as Visualization["spec"];
     } catch {
       setFailed(t("endpoints.page.visualizations.badJson"));
+      setAdvanced(true);
       return;
     }
     const data = defaultData(template, type, columns.y ?? "", served, temporal);
@@ -265,7 +285,11 @@ export function VisualizationsSection({
       >
         {failed ?? refusal}
         {!failed && blocking ? (
-          <span className="mt-1 block">{t("endpoints.page.visualizations.removeFirst")}</span>
+          <span className="mt-1 block">
+            {sent.removed
+              ? t("endpoints.page.visualizations.removeThenRemove", { chart: titleOf(blocking), removed: titleOf(sent.removed) })
+              : t("endpoints.page.visualizations.removeFirst", { chart: titleOf(blocking) })}
+          </span>
         ) : null}
       </Alert>
     ) : null;
@@ -323,11 +347,22 @@ export function VisualizationsSection({
   };
   const nameOk = DNS_LABEL.test(name) && !list.some((one) => one.name === name);
   const badName = name !== "" && !nameOk;
-  const ready =
-    nameOk &&
-    title.trim() !== "" &&
-    description.trim() !== "" &&
-    specText.trim() !== "";
+  const required = TEMPLATES[template].required as readonly Role[];
+  // The history is read for its measure, and a specification nobody wrote needs each axis's column.
+  const missing = [
+    nameOk ? "" : t("endpoints.page.visualizations.name"),
+    title.trim() ? "" : t("endpoints.page.visualizations.chartTitle"),
+    description.trim() ? "" : t("endpoints.page.visualizations.description"),
+    ...required.map((role) =>
+      !columns[role] && (!specText.trim() || (source === "temporal" && role === "y"))
+        ? t(`endpoints.page.visualizations.roles.${role}`)
+        : "",
+    ),
+  ].filter(Boolean);
+  const ready = missing.length === 0;
+  const incomplete = t("endpoints.page.visualizations.incomplete", {
+    fields: new Intl.ListFormat(language).format(missing),
+  });
 
   return (
     <div className="space-y-3" data-testid="visualizations">
@@ -405,12 +440,13 @@ export function VisualizationsSection({
           // In this form the hints, and what to do on a refusal, are read at body size.
           className="rounded-lg border border-border p-3 [&_[role=alert]]:text-body [&_p]:text-body"
         >
-          <summary className="cursor-pointer text-body font-semibold text-fg">
+          <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
           </summary>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field
               id="viz-name"
+              required
               label={t("endpoints.page.visualizations.name")}
               help={badName ? undefined : t("endpoints.page.visualizations.hint.name")}
               errors={badName ? [t("endpoints.page.visualizations.hint.name")] : undefined}
@@ -423,6 +459,7 @@ export function VisualizationsSection({
             </Field>
             <Field
               id="viz-title"
+              required
               label={t("endpoints.page.visualizations.chartTitle")}
               help={t("endpoints.page.visualizations.hint.title")}
             >
@@ -434,6 +471,7 @@ export function VisualizationsSection({
             </Field>
             <Field
               id="viz-description"
+              required
               label={t("endpoints.page.visualizations.description")}
               help={t("endpoints.page.visualizations.hint.description")}
               className="sm:col-span-2"
@@ -466,7 +504,7 @@ export function VisualizationsSection({
             </Field>
             <Field
               id="viz-type"
-              label={t("endpoints.field.types")}
+              label={t("endpoints.page.visualizations.type")}
               help={t(
                 types.length
                   ? "endpoints.page.visualizations.hint.type"
@@ -478,7 +516,7 @@ export function VisualizationsSection({
                 value={type}
                 onChange={(event) => {
                   setType(event.target.value);
-                  setPicks({});
+                  repick({});
                 }}
               >
                 {types.map((one) => (
@@ -492,6 +530,7 @@ export function VisualizationsSection({
               <Field
                 key={role}
                 id={`viz-${role}`}
+                required={required.includes(role)}
                 label={t(`endpoints.page.visualizations.roles.${role}`)}
                 help={roleHint(role)}
               >
@@ -499,17 +538,23 @@ export function VisualizationsSection({
                   id={`viz-${role}`}
                   value={columns[role] ?? ""}
                   onChange={(event) =>
-                    setPicks({ ...picks, [role]: event.target.value })
+                    repick({ ...picks, [role]: event.target.value })
                   }
                 >
                   {source === "temporal" && role === "x" ? null : (
                     <option value="">
-                      {t("endpoints.page.visualizations.noColumn")}
+                      {t(
+                        required.includes(role)
+                          ? "endpoints.page.visualizations.chooseColumn"
+                          : "endpoints.page.visualizations.noColumn",
+                      )}
                     </option>
                   )}
                   {offered(role).map((column) => (
                     <option key={column} value={column}>
-                      {column}
+                      {column === "observedAt" && source === "temporal"
+                        ? t("endpoints.page.visualizations.readingTime")
+                        : column}
                     </option>
                   ))}
                 </Select>
@@ -637,58 +682,62 @@ export function VisualizationsSection({
               )}
             </fieldset>
           ) : null}
-          <Button
-            size="sm"
-            variant="secondary"
+          <details
             className="mt-3"
-            disabled={!complete(template, columns)}
-            disabledReason={t("endpoints.page.visualizations.pickRoles")}
-            onClick={() => void fill()}
+            open={advanced || ownSpec !== undefined}
+            onToggle={(event) => setAdvanced(event.currentTarget.open)}
           >
-            {t("endpoints.page.visualizations.fill")}
-          </Button>
-          {complete(template, columns) ? null : (
-            <p className="mt-1 text-caption text-fg-muted">
-              {t("endpoints.page.visualizations.pickRoles")}
-            </p>
-          )}
-          <Field
-            id="viz-spec"
-            label={t("endpoints.page.visualizations.spec")}
-            help={ownSpec ? undefined : t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
-            errors={
-              ownSpec
-                ? [
-                    t("endpoints.page.visualizations.fix.spec", {
-                      at: ownSpec.member || t("endpoints.page.visualizations.spec"),
-                      example: SPEC_EXAMPLE,
-                    }),
-                  ]
-                : undefined
-            }
-            className="mt-3"
-          >
-            <Textarea
+            <summary className="cursor-pointer content-center text-body font-medium text-fg">
+              {t("endpoints.page.visualizations.advanced")}
+            </summary>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-3"
+              disabled={!complete(template, columns)}
+              disabledReason={t("endpoints.page.visualizations.pickRoles")}
+              onClick={() => void fill()}
+            >
+              {t("endpoints.page.visualizations.fill")}
+            </Button>
+            {complete(template, columns) ? null : (
+              <p className="mt-1 text-caption text-fg-muted">
+                {t("endpoints.page.visualizations.pickRoles")}
+              </p>
+            )}
+            <Field
               id="viz-spec"
-              // Short until Fill or a paste puts something to read in it.
-              rows={specText ? 12 : 4}
-              className="font-mono text-caption"
-              value={specText}
-              onChange={(event) => setSpecText(event.target.value)}
-            />
-          </Field>
+              label={t("endpoints.page.visualizations.spec")}
+              help={ownSpec ? undefined : t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
+              errors={
+                ownSpec
+                  ? [t(`endpoints.page.visualizations.fix.${ownSpec.why}`)]
+                  : undefined
+              }
+              className="mt-3"
+            >
+              <Textarea
+                id="viz-spec"
+                // Short until Fill or a paste puts something to read in it.
+                rows={specText ? 12 : 4}
+                className="font-mono text-caption"
+                value={specText}
+                onChange={(event) => setSpecText(event.target.value)}
+              />
+            </Field>
+          </details>
           {removing ? null : alert}
           {ready ? null : (
             <p className="mt-3 text-caption text-fg-muted">
-              {t("endpoints.page.visualizations.incomplete")}
+              {incomplete}
             </p>
           )}
           <Button
             variant="primary"
             className="mt-3"
-            disabled={!ready || proposal.mutation.isPending}
-            disabledReason={t("endpoints.page.visualizations.incomplete")}
-            onClick={add}
+            disabled={!ready || filling || proposal.mutation.isPending}
+            disabledReason={ready ? t("app.busyReason") : incomplete}
+            onClick={() => void add()}
           >
             {t("endpoints.page.visualizations.propose")}
           </Button>

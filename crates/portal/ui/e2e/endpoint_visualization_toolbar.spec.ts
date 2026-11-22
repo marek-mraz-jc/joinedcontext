@@ -110,7 +110,7 @@ async function stub(page: Page, s: Stub) {
 /** The whole form in one picture, in a window tall enough that nothing floats over it. */
 async function shootForm(page: Page, file: string, width: number) {
   await page.setViewportSize({ width, height: 2600 });
-  await page.getByTestId("visualizations").locator("details").screenshot({ path: join(DIR, file) });
+  await page.getByTestId("visualizations").locator("details").first().screenshot({ path: join(DIR, file) });
   await page.setViewportSize({ width, height: 1000 });
 }
 
@@ -152,11 +152,11 @@ for (const width of [1440, 400]) {
 
     await expect(page.getByLabel("Horizontal axis")).toHaveValue("observedAt");
     await page.getByLabel("Measure").selectOption("no2");
-    await page.getByRole("button", { name: "Fill from the chart" }).click();
-    await expect(page.getByLabel("Vega-Lite specification")).toHaveValue(/observedAt/);
-    await page.getByLabel("Name", { exact: true }).fill("no2-week");
-    await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
-    await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
+    // Nobody has to open the JSON: proposing writes it.
+    await expect(page.getByLabel("Vega-Lite specification")).toBeHidden();
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("no2-week");
+    await page.getByRole("textbox", { name: "Title", exact: true }).fill("NO2 this week");
+    await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await shootForm(page, `toolbar-filled-${width}.png`, width);
 
     await page.getByRole("button", { name: "Propose the chart" }).click();
@@ -176,20 +176,23 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await section.getByText("Add a chart").click();
     await page.getByLabel("Measure").selectOption("no2");
+    await section.getByText("Advanced: edit the chart's specification").click();
     await page.getByRole("button", { name: "Fill from the chart" }).click();
     const spec = page.getByLabel("Vega-Lite specification");
     await expect(spec).toHaveValue(/observedAt/);
     // Edited by hand to read another server: the one refusal this form can get for a new chart.
     await spec.fill(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }, null, 2));
-    await page.getByLabel("Name", { exact: true }).fill("no2-week");
-    await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
-    await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("no2-week");
+    await page.getByRole("textbox", { name: "Title", exact: true }).fill("NO2 this week");
+    await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
     await expect(alert).toContainText("Nothing was proposed. Correct “Vega-Lite specification” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
-    await expect(spec).toHaveAccessibleDescription(/did not accept “data\.url”/);
+    await expect(spec).toHaveAccessibleDescription(/takes data or a link from another address/);
+    // The shots show the member that was refused, at the top of the box.
+    await spec.evaluate((box) => (box.scrollTop = 0));
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
@@ -223,6 +226,8 @@ for (const width of [1440, 400]) {
     await expect(section).not.toContainText("/spec/catalog");
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-sk-${width}.png`) });
+    await section.locator("summary").first().click();
+    await shootForm(page, `toolbar-form-sk-${width}.png`, width);
   });
 
   test(`a chart that does not read the history has no toolbar settings at ${width} px (T-7491)`, async ({ page }) => {

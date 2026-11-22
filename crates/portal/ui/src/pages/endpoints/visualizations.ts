@@ -125,17 +125,20 @@ export function refusedSettings(lines: readonly string[]): RefusedSetting[] {
   return out;
 }
 
-/** A refused specification: the chart's place in the list that was sent, and the member inside it. */
+/** A refused specification: the chart's place in the list that was sent, and what is wrong in words' key. */
 export interface RefusedSpec {
   index: number;
-  member: string;
+  why: "outside" | "spec";
 }
+
+/** The rules of `check_spec` that refuse reaching outside the Endpoint. */
+const OUTSIDE = ["data-source", "url", "href", "loader"];
 
 /** The specification a refusal names (jc-core's `check_spec`), so the page says it on that field. */
 export function refusedSpec(sentence: string): RefusedSpec | undefined {
   const at =
-    /^(?:spec is not a valid Endpoint: )?(?:invalid )?\/spec\/catalog\/visualizations\/(\d+)\/spec(\/\S*?)?: /.exec(sentence);
-  return at ? { index: Number(at[1]), member: (at[2] ?? "").slice(1).replaceAll("/", ".") } : undefined;
+    /^(?:spec is not a valid Endpoint: )?(?:invalid )?\/spec\/catalog\/visualizations\/(\d+)\/spec(?:\/\S*?)?: ([a-z-]+): /.exec(sentence);
+  return at ? { index: Number(at[1]), why: OUTSIDE.includes(at[2]) ? "outside" : "spec" } : undefined;
 }
 
 /** Whether every role the template needs has a column. */

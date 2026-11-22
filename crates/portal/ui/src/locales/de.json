@@ -1865,7 +1865,7 @@
         "spec": "Vega-Lite-Spezifikation",
         "badJson": "Die Spezifikation ist kein gültiges JSON.",
         "noSource": "Dieser Endpoint liefert keine der Quellen, die das Diagramm liest.",
-        "incomplete": "Geben Sie dem Diagramm einen Namen, einen Titel, eine Beschreibung und eine Spezifikation.",
+        "incomplete": "Füllen Sie zum Vorschlagen aus: {fields}.",
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Was Lesende sehen",
@@ -1892,7 +1892,8 @@
           "granularity": "Der Server hat die Auflösung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
-          "spec": "Die Prüfung hat „{at}“ nicht angenommen. Nutzen Sie gültiges Vega-Lite, das nur diesen Endpoint liest, z. B. {example}, oder füllen Sie erneut."
+          "spec": "Daraus lässt sich kein Diagramm zeichnen. Schreiben Sie es mit „Aus dem Diagramm füllen“ aus den Feldern oben neu.",
+          "outside": "Das Diagramm nimmt Daten oder einen Link von einer anderen Adresse und darf nur die Daten dieses Endpoints zeigen. Schreiben Sie es mit „Aus dem Diagramm füllen“ neu."
         },
         "range": "Standardzeitraum",
         "ranges": {
@@ -1918,7 +1919,7 @@
           "granularity": "Wie oft ein Punkt gezeichnet wird, z. B. täglich ein Punkt pro Tag.",
           "method": "Wie die Messungen einer Stunde oder eines Tages ein Punkt werden, z. B. Maximum für die Spitze.",
           "controls": "Mit der Leiste über dem Diagramm ändern Lesende diese Einstellungen, z. B. den Zeitraum.",
-          "locked": "Lesende sehen immer die Einstellungen unten, z. B. den gewählten Zeitraum, und können sie nicht ändern.",
+          "locked": "Lesende sehen immer die Einstellungen unten und können sie nicht ändern, z. B. immer die letzten 7 Tage.",
           "raw": "Zeichnet jede Messung, z. B. alle zehn Minuten. Keine Berechnung nötig.",
           "fixedRange": "Der Zeitraum, den Lesende immer sehen, z. B. 7 Tage für die letzte Woche.",
           "name": "Kleinbuchstaben, Ziffern und Bindestriche, an diesem Endpoint eindeutig, z. B. no2-week.",
@@ -1928,13 +1929,13 @@
           "type": "Was das Diagramm liest, z. B. der Typ für Luftmessungen.",
           "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. einen Typ für Luftmessungen.",
           "noColumns": "Das Datenmodell hat hier keine Spalte. Fügen Sie dem Typ zuerst ein Attribut hinzu, z. B. no2.",
-          "time": "Die Zeit jeder Messung, z. B. 14:00. Ein Zeitverlauf nutzt immer observedAt.",
+          "time": "Die Zeit jeder Messung, z. B. 14:00. Ein Zeitverlauf hat keine andere Zeit.",
           "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
           "bars": "Die Spalte, die jeden Balken benennt, z. B. name für einen Balken je Station.",
           "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
           "color": "Optional. Eine Farbe je Wert, z. B. name für eine Farbe je Station.",
           "facet": "Ein kleines Diagramm je Wert, z. B. name für ein Feld je Station.",
-          "spec": "Das Füllen schreibt sie aus den Feldern oben, und Sie können sie als JSON bearbeiten. Sie darf nur diesen Endpoint lesen, z. B. {example}.",
+          "spec": "Optional. Das Diagramm wird beim Vorschlagen aus den Feldern oben geschrieben. Eine Änderung darf nur diesen Endpoint lesen, z. B. {example}.",
           "gridX": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
           "gridY": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
           "gridColor": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
@@ -1952,8 +1953,13 @@
           "color": "Farbe",
           "facet": "Feld je"
         },
-        "removeFirst": "Entfernen Sie zuerst dieses Diagramm. Versuchen Sie es nach der Genehmigung erneut.",
-        "removeBlocking": "„{chart}“ entfernen"
+        "removeFirst": "Entfernen Sie zuerst „{chart}“. Schlagen Sie Ihr Diagramm nach der Genehmigung erneut vor. Danach können Sie „{chart}“ mit zulässigen Einstellungen neu hinzufügen.",
+        "removeBlocking": "„{chart}“ entfernen",
+        "advanced": "Erweitert: Spezifikation des Diagramms bearbeiten",
+        "type": "Entitätstyp",
+        "readingTime": "Zeit der Messung (observedAt)",
+        "chooseColumn": "Spalte wählen",
+        "removeThenRemove": "Entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“. Danach können Sie „{chart}“ mit zulässigen Einstellungen neu hinzufügen."
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

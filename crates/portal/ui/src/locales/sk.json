@@ -1865,7 +1865,7 @@
         "spec": "Špecifikácia Vega-Lite",
         "badJson": "Špecifikácia nie je platný JSON.",
         "noSource": "Tento endpoint neposkytuje žiadny zo zdrojov, ktoré graf číta.",
-        "incomplete": "Zadajte grafu názov, nadpis, popis a špecifikáciu.",
+        "incomplete": "Na návrh grafu vyplňte: {fields}.",
         "propose": "Navrhnúť graf",
         "remove": "Odstrániť",
         "toolbar": "Čo uvidia čitatelia",
@@ -1892,7 +1892,8 @@
           "granularity": "Server neprijal podrobnosť „{value}“. Vyberte {choices}.",
           "method": "Server neprijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova.",
-          "spec": "Kontrola neprijala „{at}“. Použite platný Vega-Lite, ktorý číta len tento endpoint, napr. {example}, alebo špecifikáciu vyplňte znova."
+          "spec": "Z tohto sa graf nedá nakresliť. Tlačidlom „Vyplniť podľa grafu“ ho zapíšte znova z polí vyššie.",
+          "outside": "Graf berie dáta alebo odkaz z inej adresy a smie ukazovať len dáta tohto endpointu. Tlačidlom „Vyplniť podľa grafu“ ho zapíšte znova."
         },
         "range": "Predvolené obdobie",
         "ranges": {
@@ -1918,7 +1919,7 @@
           "granularity": "Ako často sa kreslí bod, napr. po dňoch jeden bod za deň.",
           "method": "Ako sa z meraní hodiny alebo dňa stane jeden bod, napr. maximum pre špičku.",
           "controls": "Panelom nad grafom si čitatelia menia tieto nastavenia, napr. vyberú iné obdobie.",
-          "locked": "Čitatelia vždy vidia nastavenia nižšie, napr. vybrané obdobie, a nemôžu ich meniť.",
+          "locked": "Čitatelia vždy vidia nastavenia nižšie a nemôžu ich meniť, napr. vždy posledných 7 dní.",
           "raw": "Kreslí každé zapísané meranie, napr. každých desať minút. Výpočet netreba.",
           "fixedRange": "Obdobie, ktoré čitatelia vždy vidia, napr. 7 dní pre posledný týždeň.",
           "name": "Malé písmená, číslice a pomlčky, jedinečné v tomto endpointe, napr. no2-week.",
@@ -1928,13 +1929,13 @@
           "type": "Čo graf číta, napr. typ pre merania kvality ovzdušia.",
           "noTypes": "Dátový model zatiaľ nemá žiadny typ. Najprv ho doň pridajte, napr. typ pre merania kvality ovzdušia.",
           "noColumns": "Dátový model tu nemá žiadny stĺpec. Najprv pridajte typu atribút, napr. no2.",
-          "time": "Čas každého merania, napr. 14:00. Graf v čase vždy používa observedAt.",
+          "time": "Čas každého merania, napr. 14:00. Graf v čase iný čas nemá.",
           "x": "Stĺpec pozdĺž spodku grafu, napr. dateObserved pre čas.",
           "bars": "Stĺpec, ktorý pomenuje každý pruh, napr. name pre jeden pruh na stanicu.",
           "y": "Číslo, ktoré graf kreslí, napr. no2.",
           "color": "Nepovinné. Farba pre každú hodnotu, napr. name pre jednu farbu na stanicu.",
           "facet": "Malý graf pre každú hodnotu, napr. name pre jeden panel na stanicu.",
-          "spec": "Vyplnenie ju zapíše z polí vyššie a môžete ju upraviť ako JSON. Smie čítať len tento endpoint, napr. {example}.",
+          "spec": "Nepovinné. Graf sa pri návrhu zapíše z polí vyššie. Úprava smie čítať len tento endpoint, napr. {example}.",
           "gridX": "Stĺpce mriežky, napr. dateObserved pre jeden stĺpec na čas.",
           "gridY": "Riadky mriežky, napr. name pre jeden riadok na stanicu.",
           "gridColor": "Číslo, ktoré určuje farbu políčka, napr. no2."
@@ -1952,8 +1953,13 @@
           "color": "Farba",
           "facet": "Panel podľa"
         },
-        "removeFirst": "Najprv odstráňte ten graf. Po schválení zmeny to skúste znova.",
-        "removeBlocking": "Odstrániť „{chart}“"
+        "removeFirst": "Najprv odstráňte „{chart}“. Po schválení navrhnite svoj graf znova. Graf „{chart}“ potom môžete pridať znova s povolenými nastaveniami.",
+        "removeBlocking": "Odstrániť „{chart}“",
+        "advanced": "Pokročilé: upraviť špecifikáciu grafu",
+        "type": "Typ entity",
+        "readingTime": "Čas merania (observedAt)",
+        "chooseColumn": "Vyberte stĺpec",
+        "removeThenRemove": "Najprv odstráňte „{chart}“. Po schválení znova odstráňte „{removed}“. Graf „{chart}“ potom môžete pridať znova s povolenými nastaveniami."
       },
       "firstCall": "Prvé volanie",
       "firstCallOpen": "Otvoriť v prehliadači",
