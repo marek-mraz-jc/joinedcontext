@@ -2661,7 +2661,8 @@ impl Store for MemoryStore {
                     "pending" | "sending" => {
                         row.status = "sending".into();
                         row.attempts = row.attempts.saturating_add(1);
-                        row.next_attempt_at = now + SignedDuration::try_from(lease).unwrap_or(SignedDuration::MAX);
+                        row.next_attempt_at =
+                            now + SignedDuration::try_from(lease).unwrap_or(SignedDuration::MAX);
                         claimed.push(row.clone());
                     }
                     _ => {}

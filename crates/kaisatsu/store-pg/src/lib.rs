@@ -3950,9 +3950,8 @@ impl Store for PgStore {
                     rec.status = "failed".into();
                 } else {
                     rec.status = "pending".into();
-                    rec.next_attempt_at = next_attempt_at.unwrap_or_else(|| {
-                        TimestampTz::now() + jiff::SignedDuration::from_secs(5)
-                    });
+                    rec.next_attempt_at = next_attempt_at
+                        .unwrap_or_else(|| TimestampTz::now() + jiff::SignedDuration::from_secs(5));
                 }
             }
             sqlx::query(

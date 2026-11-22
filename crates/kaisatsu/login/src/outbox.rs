@@ -239,17 +239,15 @@ impl OutboxDispatcher {
                 Some(name) => name,
                 None => realm_name.insert(self.realm_display_name(realm_id).await?),
             };
-            let delivery = tokio::time::timeout(
-                OUTBOX_SEND_DEADLINE,
-                self.deliver(mount, &row, name),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                Err(Failure {
-                    detail: "the mail server did not answer in time".into(),
-                    retry_in: SignedDuration::from_secs(10),
-                })
-            });
+            let delivery =
+                tokio::time::timeout(OUTBOX_SEND_DEADLINE, self.deliver(mount, &row, name))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(Failure {
+                            detail: "the mail server did not answer in time".into(),
+                            retry_in: SignedDuration::from_secs(10),
+                        })
+                    });
             let completed = match delivery {
                 Ok(()) => {
                     let done = self

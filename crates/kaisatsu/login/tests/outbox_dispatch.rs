@@ -63,7 +63,10 @@ async fn a_killed_claimers_row_is_sent_by_another_dispatcher_after_the_lease() {
     let kek = Kek::generate_for_tests();
     let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
     realm(&store, &kek, "alpha", None).await;
-    store.enqueue_outbox(row("alpha", "ob-killed")).await.unwrap();
+    store
+        .enqueue_outbox(row("alpha", "ob-killed"))
+        .await
+        .unwrap();
     // The killed dispatcher's claim, with a lease that has run out.
     let claimed = store
         .claim_outbox_batch("alpha", 1, std::time::Duration::from_millis(1), 5)
@@ -81,7 +84,10 @@ async fn a_killed_claimers_row_is_sent_by_another_dispatcher_after_the_lease() {
     assert_eq!(failed[0].attempts, 2);
     assert!(failed[0].last_error.is_some());
     // Due again after the backoff: the next pass sends it.
-    store.retry_outbox_row("alpha", None, "ob-killed").await.unwrap();
+    store
+        .retry_outbox_row("alpha", None, "ob-killed")
+        .await
+        .unwrap();
     assert_eq!(other.dispatch_all_realms(&mount()).await.unwrap(), 1);
     let sent: Vec<_> = sink.drain().into_iter().map(|m| m.to_address).collect();
     assert_eq!(sent, ["person@example.test"]);

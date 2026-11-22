@@ -263,7 +263,10 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
         .enqueue_outbox(outbox_row("ob-a", "ann"))
         .await
         .unwrap();
-    let claimed = store.claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5).await.unwrap();
+    let claimed = store
+        .claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5)
+        .await
+        .unwrap();
     assert_eq!(claimed.len(), 1);
     // A failed send under the attempt cap goes back to pending with a default backoff.
     let before = TimestampTz::now();
@@ -283,7 +286,13 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
     assert_eq!(row.last_error.as_deref(), Some("421 try later"));
     assert!(row.next_attempt_at > before, "backed off into the future");
     // Not due yet: nothing to claim.
-    assert!(store.claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5).await.unwrap().is_empty());
+    assert!(
+        store
+            .claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Retrying a row nobody knows is a 404 (None).
     assert!(
         store
@@ -309,7 +318,12 @@ async fn outbox_lapsed_claims(store: &Arc<dyn Store>) {
     let first = a.claim_outbox_batch(R, 10, held, 5).await.unwrap();
     assert_eq!(first.len(), 1);
     // A live lease is not claimed by a second dispatcher.
-    assert!(b.claim_outbox_batch(R, 10, held, 5).await.unwrap().is_empty());
+    assert!(
+        b.claim_outbox_batch(R, 10, held, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     // The first claimer dies after a claim whose lease runs out.
     store.retry_outbox_row(R, None, "ob-lease").await.unwrap();
@@ -327,7 +341,11 @@ async fn outbox_lapsed_claims(store: &Arc<dyn Store>) {
             .await
             .unwrap()
     );
-    assert!(b.complete_outbox_row(&taken[0], true, None, None, 5).await.unwrap());
+    assert!(
+        b.complete_outbox_row(&taken[0], true, None, None, 5)
+            .await
+            .unwrap()
+    );
     let row = store
         .list_outbox_rows(R, None)
         .await
@@ -338,7 +356,11 @@ async fn outbox_lapsed_claims(store: &Arc<dyn Store>) {
     assert_eq!(row.status, "sent");
     assert_eq!(row.last_error, None);
     // Completing the same claim twice records nothing the second time.
-    assert!(!b.complete_outbox_row(&taken[0], true, None, None, 5).await.unwrap());
+    assert!(
+        !b.complete_outbox_row(&taken[0], true, None, None, 5)
+            .await
+            .unwrap()
+    );
 
     // A claim that lapses at the last attempt is failed, never sent again.
     store
@@ -348,7 +370,12 @@ async fn outbox_lapsed_claims(store: &Arc<dyn Store>) {
     let last = a.claim_outbox_batch(R, 10, lapsed, 1).await.unwrap();
     assert_eq!(last.len(), 1);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    assert!(b.claim_outbox_batch(R, 10, held, 1).await.unwrap().is_empty());
+    assert!(
+        b.claim_outbox_batch(R, 10, held, 1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let row = store
         .list_outbox_rows(R, None)
         .await

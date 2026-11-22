@@ -172,8 +172,7 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         s1.claim_outbox_batch("dev", 10, LEASE, 5),
         s2.claim_outbox_batch("dev", 10, LEASE, 5)
     );
-    let mut claimed: Vec<EmailOutboxRecord> =
-        b1.unwrap().into_iter().chain(b2.unwrap()).collect();
+    let mut claimed: Vec<EmailOutboxRecord> = b1.unwrap().into_iter().chain(b2.unwrap()).collect();
     claimed.sort_by(|a, b| a.id.cmp(&b.id));
     let claimed_ids: Vec<&str> = claimed.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(claimed_ids, ["ob-1", "ob-2"]);
