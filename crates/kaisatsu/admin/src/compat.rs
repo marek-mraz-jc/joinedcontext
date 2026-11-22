@@ -2144,7 +2144,7 @@ async fn compat_update_group(
     {
         group.managed_by = Some(first.clone());
     }
-    let updated = state.oidc.store.upsert_group(group).await?;
+    let updated = state.oidc.store.update_group(group).await?;
     record_admin_write(
         &state,
         &ctx,

@@ -768,7 +768,15 @@ async fn the_mfa_required_role_ends_a_password_only_session_at_refresh() {
         .unwrap()
         .unwrap();
     analyst.realm_roles.push("mfa-required".into());
-    store.update_user(analyst).await.unwrap();
+    store
+        .set_user_grants(
+            &analyst.realm_id,
+            &analyst.id,
+            &analyst.realm_roles,
+            &analyst.client_roles,
+        )
+        .await
+        .unwrap();
     let (st, body) = refresh_grant(&app, &refresh).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "invalid_grant");

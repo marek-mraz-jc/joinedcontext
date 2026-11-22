@@ -53,6 +53,37 @@ fn members_of(
         .collect()
 }
 
+/// Drops what belongs to a person who is gone.
+fn drop_person_rows(st: &mut State, realm_id: &str, user_id: &str) {
+    st.credentials
+        .retain(|c| !(c.realm_id == realm_id && c.user_id == user_id));
+    st.group_members
+        .retain(|gm| !(gm.realm_id == realm_id && gm.user_id == user_id));
+    st.sso_sessions
+        .retain(|s| !(s.realm_id == realm_id && s.user_id == user_id));
+    st.webauthn_credentials
+        .retain(|w| !(w.realm_id == realm_id && w.user_id == user_id));
+    st.idp_links
+        .retain(|l| !(l.realm_id == realm_id && l.user_id == user_id));
+    st.role_mappings.retain(|rm| {
+        !(rm.realm_id == realm_id && rm.principal_kind == "user" && rm.principal_id == user_id)
+    });
+}
+
+/// Every place a document grants client roles in the realm: people, groups and composites.
+fn client_grants<'s>(
+    st: &'s mut State,
+    realm_id: &'s str,
+) -> impl Iterator<Item = &'s mut HashMap<String, Vec<String>>> {
+    let people = st.users.iter_mut().filter(move |u| u.realm_id == realm_id);
+    let groups = st.groups.iter_mut().filter(move |g| g.realm_id == realm_id);
+    let roles = st.roles.iter_mut().filter(move |r| r.realm_id == realm_id);
+    people
+        .map(|u| &mut u.client_roles)
+        .chain(groups.map(|g| &mut g.client_roles))
+        .chain(roles.map(|r| &mut r.composites.client))
+}
+
 #[derive(Default)]
 struct State {
     realms: HashMap<String, RealmConfig>,
@@ -614,8 +645,30 @@ impl Store for MemoryStore {
                     "another user already holds that username or email".into(),
                 ));
             }
+            user.realm_roles.clone_from(&st.users[pos].realm_roles);
+            user.client_roles.clone_from(&st.users[pos].client_roles);
             st.users[pos] = user.clone();
             Ok(user)
+        })
+    }
+
+    fn set_user_grants<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+        realm_roles: &'a [String],
+        client_roles: &'a HashMap<String, Vec<String>>,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let user = st
+                .users
+                .iter_mut()
+                .find(|u| u.realm_id == realm_id && u.id == user_id)
+                .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+            user.realm_roles = realm_roles.to_vec();
+            user.client_roles.clone_from(client_roles);
+            Ok(())
         })
     }
 
@@ -638,16 +691,7 @@ impl Store for MemoryStore {
                 return Ok(false);
             }
             st.users.remove(pos);
-            st.credentials
-                .retain(|c| !(c.realm_id == realm_id && c.user_id == user_id));
-            st.group_members
-                .retain(|gm| !(gm.realm_id == realm_id && gm.user_id == user_id));
-            st.sso_sessions
-                .retain(|s| !(s.realm_id == realm_id && s.user_id == user_id));
-            st.webauthn_credentials
-                .retain(|w| !(w.realm_id == realm_id && w.user_id == user_id));
-            st.idp_links
-                .retain(|l| !(l.realm_id == realm_id && l.user_id == user_id));
+            drop_person_rows(&mut st, realm_id, user_id);
             Ok(true)
         })
     }
@@ -927,6 +971,35 @@ impl Store for MemoryStore {
         })
     }
 
+    fn update_group<'a>(
+        &'a self,
+        mut group: GroupRepresentation,
+    ) -> StoreFuture<'a, GroupRepresentation> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let pos = st
+                .groups
+                .iter()
+                .position(|g| g.realm_id == group.realm_id && g.id == group.id)
+                .ok_or_else(|| KaisatsuError::NotFound("group not found".into()))?;
+            if st
+                .groups
+                .iter()
+                .enumerate()
+                .any(|(idx, g)| idx != pos && g.realm_id == group.realm_id && g.path == group.path)
+            {
+                return Err(KaisatsuError::Conflict(
+                    "another group already holds that path".into(),
+                ));
+            }
+            group.realm_roles.clone_from(&st.groups[pos].realm_roles);
+            group.client_roles.clone_from(&st.groups[pos].client_roles);
+            group.sub_groups.clear();
+            st.groups[pos] = group.clone();
+            Ok(group)
+        })
+    }
+
     fn get_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -1109,9 +1182,36 @@ impl Store for MemoryStore {
             if !Self::org_allowed(allowed_orgs, st.groups[pos].org_id.as_deref()) {
                 return Ok(false);
             }
-            st.groups.remove(pos);
+            let mut tree = vec![(st.groups[pos].id.clone(), st.groups[pos].path.clone())];
+            let mut next = 0;
+            while let Some((id, path)) = tree.get(next).cloned() {
+                next += 1;
+                let below = format!("{path}/");
+                for g in st.groups.iter().filter(|g| g.realm_id == realm_id) {
+                    let child = match &g.parent_id {
+                        Some(parent) => *parent == id,
+                        None => g.path.starts_with(&below),
+                    };
+                    if !child || tree.iter().any(|(seen, _)| *seen == g.id) {
+                        continue;
+                    }
+                    if !Self::org_allowed(allowed_orgs, g.org_id.as_deref()) {
+                        return Err(KaisatsuError::Conflict(
+                            "a group below this one is outside your organizations: a realm admin deletes it"
+                                .into(),
+                        ));
+                    }
+                    tree.push((g.id.clone(), g.path.clone()));
+                }
+            }
+            let gone = |id: &str| tree.iter().any(|(g, _)| g == id);
+            st.groups
+                .retain(|g| !(g.realm_id == realm_id && gone(&g.id)));
             st.group_members
-                .retain(|gm| !(gm.realm_id == realm_id && gm.group_id == group_id));
+                .retain(|gm| !(gm.realm_id == realm_id && gone(&gm.group_id)));
+            st.role_mappings.retain(|rm| {
+                !(rm.realm_id == realm_id && rm.principal_kind == "group" && gone(&rm.principal_id))
+            });
             Ok(true)
         })
     }
@@ -1130,6 +1230,13 @@ impl Store for MemoryStore {
                 .find(|g| g.realm_id == realm_id && g.id == group_id)
                 .cloned()
                 .ok_or_else(|| KaisatsuError::NotFound("group not found".into()))?;
+            if !st
+                .users
+                .iter()
+                .any(|u| u.realm_id == realm_id && u.id == user_id)
+            {
+                return Err(KaisatsuError::NotFound("user not found".into()));
+            }
             if !st.group_members.iter().any(|gm| {
                 gm.realm_id == realm_id && gm.user_id == user_id && gm.group_id == group_id
             }) {
@@ -1270,12 +1377,46 @@ impl Store for MemoryStore {
                     && r.name == role_name
                     && r.container_id.as_deref() == container_id)
             });
+            if st.roles.len() == before {
+                return Ok(false);
+            }
+            match container_id {
+                None => {
+                    let keep = |names: &mut Vec<String>| names.retain(|n| n != role_name);
+                    for u in st.users.iter_mut().filter(|u| u.realm_id == realm_id) {
+                        keep(&mut u.realm_roles);
+                    }
+                    for g in st.groups.iter_mut().filter(|g| g.realm_id == realm_id) {
+                        keep(&mut g.realm_roles);
+                    }
+                    for r in st.roles.iter_mut().filter(|r| r.realm_id == realm_id) {
+                        keep(&mut r.composites.realm);
+                    }
+                    for r in st.realms.values_mut().filter(|r| r.id == realm_id) {
+                        keep(&mut r.default_roles);
+                    }
+                }
+                Some(uuid) => {
+                    let client_id = st
+                        .clients
+                        .iter()
+                        .find(|c| c.realm_id == realm_id && c.id == uuid)
+                        .map(|c| c.client_id.clone());
+                    if let Some(client_id) = client_id {
+                        for grants in client_grants(&mut st, realm_id) {
+                            if let Some(names) = grants.get_mut(&client_id) {
+                                names.retain(|n| n != role_name);
+                            }
+                        }
+                    }
+                }
+            }
             st.role_mappings.retain(|rm| {
                 !(rm.realm_id == realm_id
                     && rm.role_name == role_name
                     && rm.client_uuid.as_deref() == container_id)
             });
-            Ok(st.roles.len() < before)
+            Ok(true)
         })
     }
 
@@ -1294,6 +1435,18 @@ impl Store for MemoryStore {
                     .any(|c| c.realm_id == mapping.realm_id && &c.id == uuid)
             {
                 return Err(KaisatsuError::NotFound("client not found".into()));
+            }
+            let (realm, id) = (&mapping.realm_id, &mapping.principal_id);
+            if mapping.principal_kind == "user" {
+                if !st.users.iter().any(|u| &u.realm_id == realm && &u.id == id) {
+                    return Err(KaisatsuError::NotFound("user not found".into()));
+                }
+            } else if !st
+                .groups
+                .iter()
+                .any(|g| &g.realm_id == realm && &g.id == id)
+            {
+                return Err(KaisatsuError::NotFound("group not found".into()));
             }
             st.role_mappings.retain(|rm| {
                 !(rm.realm_id == mapping.realm_id
@@ -1444,12 +1597,45 @@ impl Store for MemoryStore {
             if let Some(existing) = st
                 .clients
                 .iter()
-                .find(|c| {
-                    c.realm_id == client.realm_id
-                        && (c.id == client.id || c.client_id == client.client_id)
+                .find(|c| c.realm_id == client.realm_id && c.id == client.id)
+                .or_else(|| {
+                    st.clients
+                        .iter()
+                        .find(|c| c.realm_id == client.realm_id && c.client_id == client.client_id)
                 })
                 .cloned()
             {
+                if existing.client_id != client.client_id {
+                    let (realm, new) = (client.realm_id.as_str(), client.client_id.as_str());
+                    let account = format!("service-account-{new}").to_ascii_lowercase();
+                    if st
+                        .clients
+                        .iter()
+                        .any(|c| c.realm_id == realm && c.client_id == new)
+                        || st
+                            .users
+                            .iter()
+                            .any(|u| u.realm_id == realm && u.username == account)
+                    {
+                        return Err(KaisatsuError::Conflict(
+                            "another client or person already holds that client id".into(),
+                        ));
+                    }
+                    let old = existing.client_id.as_str();
+                    for grants in client_grants(&mut st, realm) {
+                        if let Some(names) = grants.remove(old) {
+                            grants.insert(new.to_owned(), names);
+                        }
+                    }
+                    for u in st.users.iter_mut().filter(|u| {
+                        u.realm_id == realm && u.service_account_client_id.as_deref() == Some(old)
+                    }) {
+                        u.username.clone_from(&account);
+                        u.service_account_client_id = Some(new.to_owned());
+                    }
+                    st.consents
+                        .retain(|c| !(c.realm_id == realm && c.client_id == old));
+                }
                 client.id = existing.id;
                 if client.secret.is_none() {
                     client.secret = existing.secret;
@@ -1570,13 +1756,28 @@ impl Store for MemoryStore {
                 return Ok(false);
             }
             let removed = st.clients.remove(pos);
+            for grants in client_grants(&mut st, realm_id) {
+                grants.remove(&removed.client_id);
+            }
+            st.roles.retain(|r| {
+                !(r.realm_id == realm_id
+                    && r.client_role
+                    && r.container_id.as_deref() == Some(uuid))
+            });
+            st.consents
+                .retain(|c| !(c.realm_id == realm_id && c.client_id == removed.client_id));
+            st.role_mappings
+                .retain(|rm| !(rm.realm_id == realm_id && rm.client_uuid.as_deref() == Some(uuid)));
             let sa_user = format!("service-account-{}", removed.client_id);
             // Only the client's own service account goes with it, never a person of that name.
-            st.users.retain(|u| {
-                !(u.realm_id == realm_id
+            if let Some(pos) = st.users.iter().position(|u| {
+                u.realm_id == realm_id
                     && u.username.eq_ignore_ascii_case(&sa_user)
-                    && u.service_account_client_id.as_deref() == Some(removed.client_id.as_str()))
-            });
+                    && u.service_account_client_id.as_deref() == Some(removed.client_id.as_str())
+            }) {
+                let account = st.users.remove(pos);
+                drop_person_rows(&mut st, realm_id, &account.id);
+            }
             Ok(true)
         })
     }
@@ -2582,6 +2783,8 @@ impl Store for MemoryStore {
                     "another user already holds that username or email".into(),
                 ));
             }
+            user.realm_roles.clone_from(&st.users[pos].realm_roles);
+            user.client_roles.clone_from(&st.users[pos].client_roles);
             st.users[pos] = user.clone();
             st.email_outbox.push(outbox);
             Ok(user)

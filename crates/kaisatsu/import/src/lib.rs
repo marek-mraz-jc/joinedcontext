@@ -1503,7 +1503,17 @@ pub async fn apply_realm_files(
             });
             if !opts.dry_run {
                 let saved = if prev.is_some() {
-                    store.update_user(user.clone()).await?
+                    let saved = store.update_user(user.clone()).await?;
+                    // A profile write keeps the stored grants: the file's are written by name.
+                    store
+                        .set_user_grants(
+                            &realm_id,
+                            &saved.id,
+                            &user.realm_roles,
+                            &user.client_roles,
+                        )
+                        .await?;
+                    saved
                 } else {
                     store.create_user(user.clone()).await?
                 };

@@ -59,7 +59,18 @@ pub trait Store: Send + Sync {
 
     // People (Users)
     fn create_user<'a>(&'a self, user: UserRepresentation) -> StoreFuture<'a, UserRepresentation>;
+    /// Writes the profile. The grants stay the stored ones (a write of a person read before a
+    /// delete never restores one): they change through role mappings, memberships and
+    /// [`Store::set_user_grants`].
     fn update_user<'a>(&'a self, user: UserRepresentation) -> StoreFuture<'a, UserRepresentation>;
+    /// Replaces the person's role grants: the realm importer's one write of a file's roles.
+    fn set_user_grants<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+        realm_roles: &'a [String],
+        client_roles: &'a std::collections::HashMap<String, Vec<String>>,
+    ) -> StoreFuture<'a, ()>;
     fn delete_user<'a>(
         &'a self,
         realm_id: &'a str,
@@ -121,6 +132,12 @@ pub trait Store: Send + Sync {
         &'a self,
         group: GroupRepresentation,
     ) -> StoreFuture<'a, GroupRepresentation>;
+    /// An edit of a stored group: `NotFound` once it is deleted, and its grants stay the stored
+    /// ones.
+    fn update_group<'a>(
+        &'a self,
+        group: GroupRepresentation,
+    ) -> StoreFuture<'a, GroupRepresentation>;
     fn get_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -156,6 +173,8 @@ pub trait Store: Send + Sync {
         first: usize,
         max: usize,
     ) -> StoreFuture<'a, ListPage<GroupWithMembers>>;
+    /// Deletes the group with the groups below it, their memberships and their mappings.
+    /// `Conflict` when one below is outside `allowed_orgs`.
     fn delete_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -197,6 +216,8 @@ pub trait Store: Send + Sync {
         realm_id: &'a str,
         container_id: Option<&'a str>,
     ) -> StoreFuture<'a, Vec<RoleRepresentation>>;
+    /// Deletes the role and every grant of it: mappings, person and group documents, composites
+    /// and, for a realm role, the realm's default roles.
     fn delete_role<'a>(
         &'a self,
         realm_id: &'a str,
@@ -250,6 +271,8 @@ pub trait Store: Send + Sync {
         client_id_filter: Option<&'a str>,
         search: bool,
     ) -> StoreFuture<'a, Vec<ClientRepresentation>>;
+    /// Deletes the client with its roles, every grant of them, its consents and its service
+    /// account.
     fn delete_client<'a>(
         &'a self,
         realm_id: &'a str,
