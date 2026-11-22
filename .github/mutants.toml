@@ -6,5 +6,5 @@
 exclude_re = [
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
-  'ekiben-js/src/lib\.rs:.*in fuzzing::run$',
+  'ekiben-js/src/lib\.rs:.*fuzzing::run',
 ]
