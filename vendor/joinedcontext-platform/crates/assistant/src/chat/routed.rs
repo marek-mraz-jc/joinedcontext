@@ -6484,7 +6484,7 @@ mod tests {
         };
         let sent = [
             stage("understanding", None),
-            Event::Data(table.clone()),
+            Event::Data(Box::new(table.clone())),
             Event::Delta("NO2 ".into()),
             Event::Answer("NO2 je 21 [1].".into()),
             Event::Citations(Vec::new()),
@@ -6540,7 +6540,7 @@ mod tests {
             rows: vec![vec![json!(1), json!(2)]; KEPT_CELLS / 2 + 1],
             ..table
         };
-        assert!(!small_enough(&[Event::Data(big)]));
+        assert!(!small_enough(&[Event::Data(Box::new(big))]));
         // A whole answer is kept for the life it is told; nothing told keeps nothing.
         let keep = Keep::default();
         assert_eq!(keep.life(), None);

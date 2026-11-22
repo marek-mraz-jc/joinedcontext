@@ -132,7 +132,7 @@ pub enum Event {
     /// The next characters of the answer as the answering model streams them (T-4139).
     Delta(String),
     /// Rows a data round read from a connector, for the person to see as a table (T-4140).
-    Data(Table),
+    Data(Box<Table>),
     /// A chart or a map the model asked for, built by code from a table's rows (T-4657).
     Visualization(Value),
     /// Up to three questions to offer after the answer (T-4174).

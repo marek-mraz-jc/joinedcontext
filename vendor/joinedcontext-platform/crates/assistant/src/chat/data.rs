@@ -414,7 +414,7 @@ pub(super) async fn tables_read(
 ) {
     let selected = super::view::selected(tables, cited);
     for table in &selected {
-        send(events, Event::Data((*table).clone())).await;
+        send(events, Event::Data(Box::new((*table).clone()))).await;
     }
     if chart.is_some() {
         if let Some(drawn) = selected.iter().find_map(|t| super::viz::aggregated(t)) {
@@ -598,7 +598,7 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
         if let Some(table) = table.as_mut() {
             table.counted = *counts;
             if !counts {
-                let read = (&*arguments, &sent);
+                let read = (arguments, &sent);
                 super::view::finish(ask, connector, schema, table, read, top).await;
             }
             table.map = table.map.take().filter(|_| !counts);

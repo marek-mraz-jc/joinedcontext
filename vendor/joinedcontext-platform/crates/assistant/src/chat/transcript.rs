@@ -710,7 +710,7 @@ mod tests {
             },
             Event::Delta("Dnes ".into()),
             Event::Delta("prší.".into()),
-            Event::Data(Table {
+            Event::Data(Box::new(Table {
                 endpoint: "pocasie".into(),
                 entity_type: "WeatherObserved".into(),
                 columns: vec!["name".into()],
@@ -728,7 +728,7 @@ mod tests {
                 profile: None,
                 filter: None,
                 ..Default::default()
-            }),
+            })),
             Event::Citations(vec![Citation {
                 n: 1,
                 url: Some("https://x.sk".into()),

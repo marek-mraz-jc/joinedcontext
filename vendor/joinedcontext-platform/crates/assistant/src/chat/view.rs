@@ -654,9 +654,12 @@ pub struct History {
 /// The NGSI-LD methods a history is drawn of, the first one present wins.
 const METHODS: &[&str] = &["avg", "sum", "max", "min", "totalCount"];
 
+/// The method the broker aggregated by, and each instant's number.
+type Points = (Option<&'static str>, Vec<(OffsetDateTime, f64)>);
+
 /// The numbers of one attribute's history in any of the three temporal forms, with the method
 /// the broker aggregated them by.
-fn points(attribute: &Value) -> Option<(Option<&'static str>, Vec<(OffsetDateTime, f64)>)> {
+fn points(attribute: &Value) -> Option<Points> {
     let pair = |value: &Value, at: &Value| {
         let at = OffsetDateTime::parse(at.as_str()?, &Rfc3339).ok()?;
         Some((at.to_offset(UtcOffset::UTC), value.as_f64()?))
