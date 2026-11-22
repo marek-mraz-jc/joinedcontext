@@ -21,6 +21,7 @@ type Host = {
   temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number) => Plan;
   measure: (attr: string, unitCode: string | null, lang: string, values: unknown[]) => { title: string; percent: boolean };
   interactive: (spec: unknown, opts: Record<string, unknown>) => Record<string, unknown>;
+  load: (view: unknown, api: string, lang: string, fetcher: (url: string) => Promise<Response>, now: number) => Promise<{ partial?: string }>;
   gapped: (rows: Record<string, unknown>[], attr: string, factor?: number) => Record<string, unknown>[];
 };
 const module = { exports: {} as Host };
@@ -34,6 +35,36 @@ const NOW = Date.parse("2026-11-21T16:00:00Z");
 const SOURCE = { source: "temporal", type: "WeatherObserved", attrs: ["temperature"], last: "P7D" };
 const base = `${API}/api/endpoint/${SLUG}/ngsi-ld/v1/temporal/entities?`;
 const params = (url: string) => Object.fromEntries(new URL(url).searchParams);
+
+describe("a cut answer", () => {
+  const view = { endpoint: SLUG, source: JSON.stringify(SOURCE) };
+  const entities = (from: number, count: number, readings: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `urn:ngsi-ld:WeatherObserved:s${from + i}`,
+      temperature: { values: Array.from({ length: readings }, (_, j) => [j, new Date(NOW - (readings - j) * 60000).toISOString()]) },
+    }));
+  const load = (answer: (url: URL) => Response) =>
+    host.load(view, API, "en", async (url) => (url.includes("/temporal/") ? answer(new URL(url)) : Response.json([])), NOW);
+
+  it("names newer data when a station's later window was cut", async () => {
+    const data = await load((url) =>
+      Response.json(entities(0, 2, 3), { status: 206, headers: { Link: `<${url.href}>; rel="intervalafter"` } }));
+    expect(data.partial).toContain("newer data");
+    expect(data.partial).not.toContain("stations");
+  });
+
+  it("names a 206 that gives no next window as cut", async () => {
+    const data = await load(() => Response.json(entities(0, 2, 3), { status: 206 }));
+    expect(data.partial).toContain("newer data");
+  });
+
+  it("names more stations when their page went over the limit", async () => {
+    // 30,000 instances a page of stations: the second passes the page's 50,000.
+    const data = await load((url) => Response.json(entities(Number(url.searchParams.get("offset") ?? 0), 1000, 30)));
+    expect(data.partial).toContain("more stations");
+    expect(data.partial).not.toContain("newer data");
+  });
+});
 
 describe("the toolbar's reads", () => {
   it("reads a preset range `after` now minus the range, raw", () => {

@@ -25,6 +25,7 @@ a { color: #1d4ed8; }
 .control { display: flex; flex-direction: column; gap: 2px; min-width: 9rem; flex: 1 1 9rem; max-width: 16rem; }
 .control label { font-weight: 600; font-size: 0.85rem; }
 .control select, .control input { font: inherit; padding: 4px 6px; border: 1px solid #94a3b8; border-radius: 6px; background: #fff; color: inherit; }
+#c-stations option { padding: 4px 2px; }
 .control select:focus-visible, .control input:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 1px; }
 .hint { font-size: 0.78rem; color: #475569; margin: 0; }
 #controls-note { flex: 1 1 100%; }
@@ -32,7 +33,11 @@ a { color: #1d4ed8; }
 #status.loading { background: #eff6ff; color: #1e3a8a; }
 html[data-theme="dark"] .control select, html[data-theme="dark"] .control input { background: #1f2329; border-color: #4b5563; }
 html[data-theme="dark"] .hint { color: #a0a8b3; }
-@media (max-width: 480px) { .control { max-width: none; flex-basis: 40%; } }
+@media (max-width: 480px) {
+  .controls { gap: 6px 12px; margin-bottom: 6px; }
+  .control { max-width: none; min-width: 0; flex-basis: 40%; }
+  #status { margin: 6px 0; padding: 6px 10px; font-size: 0.85rem; }
+}
 .retry { font: inherit; margin: 0 0 8px; padding: 6px 14px; border: 1px solid #1d4ed8; border-radius: 6px; background: #1d4ed8; color: #fff; cursor: pointer; }
 .skeleton { height: 320px; margin: 8px 0; border-radius: 8px; background: #f1f5f9; }
 html[data-theme="dark"] .skeleton { background: #22272e; }

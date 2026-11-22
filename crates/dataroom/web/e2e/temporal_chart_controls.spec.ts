@@ -1,16 +1,17 @@
 import { readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type FrameLocator, type Page, type Route } from "@playwright/test";
 
 // A temporal chart's toolbar (T-7490) in jc slug mode, served as slug_chart_host.spec.ts serves it:
 // the chart host and the renderer sandboxed to opaque origins under jc's CSP, every address
-// answered here. The temporal answers are praha-pocasi's (jc-prod Endpoint fudnrvyz…, three
-// stations, relativeHumidity, read 2026-11-21 15:15Z): raw readings, hourly averages, daily maxima
-// per UTC day (read again ~16:40Z with lastN 1000, whole days; the data starts on 2026-11-14). The hourly answer leaves out the
-// buckets of 2026-11-19 00:00..2026-11-20 06:00Z: the broker filled them with the last reading
-// (the 06:00Z average mixes that fill with the one reading at 06:50Z)
-// while the raw answer has none there (chyby.md), and the chart must show that gap as a gap; the
-// daily answer leaves out 2026-11-19, a UTC day without a reading, for the same reason.
+// answered here. The temporal answers are praha-pocasi's (jc-prod Endpoint fudnrvyz…, three of its
+// stations, relativeHumidity), every bucket as the Endpoint answered it:
+// - raw and hourly averages: read 2026-11-21 15:15Z, 168 buckets per station;
+// - daily maxima per UTC day: read 2026-11-21 ~16:40Z, its 2026-11-19 bucket from the same read
+//   repeated 2026-11-22 08:25Z (the other whole days still stored answer the same).
+// The source measured nothing from 2026-11-19 00:00Z to 2026-11-20 06:50Z: the raw answer has no
+// reading there, the aggregates carry the last one over that time (a plateau), and the chart draws
+// both as answered and says that an aggregate may carry a value.
 //   node <portal ui>/node_modules/@playwright/test/cli.js test -c crates/dataroom/web/e2e temporal_chart_controls
 // SHOTS=<dir> also writes the 1440 and 400 shots of each state.
 
@@ -29,7 +30,8 @@ const CSP = {
   render: `default-src 'none'; script-src ${JC}; style-src ${JC} 'unsafe-inline'; img-src ${JC} data:; connect-src 'none'; ${TAIL}`,
 };
 // A Slovak reader in Prague: native date fields and the axis in their own format and time.
-test.use({ locale: "sk-SK", timezoneId: "Europe/Prague" });
+// A date field takes its format from the browser's own language, not the context's.
+test.use({ locale: "sk-SK", timezoneId: "Europe/Prague", launchOptions: { args: ["--lang=sk-SK"], env: { ...process.env, LANG: "sk_SK.UTF-8", LANGUAGE: "sk" } } });
 
 const META = `<meta name="jc-viz" content="${JSON.stringify({ api: JC, tiles: "", catalogue: `${JC}/opendata` }).replace(/"/g, "&quot;")}">\n`;
 
@@ -64,6 +66,8 @@ const VIEW_JSON = {
 };
 
 type Mode = "normal" | "empty" | "error" | "cut" | "slow";
+// The buckets a cut answer brings before the page's limit: up to 2026-11-20 00:00Z.
+const CUT = 129;
 const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
 
 // The temporal answer for a request: the recorded one of its format, its value key the method asked.
@@ -100,9 +104,11 @@ async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPag
       if (state.mode === "error") return route.fulfill({ status: 503, headers: opaque, contentType: "application/json", body: "{}" });
       if (state.mode === "empty") return route.fulfill({ status: 200, headers: opaque, contentType: "application/json", body: "[]" });
       if (state.mode === "slow") await new Promise((r) => setTimeout(r, 4000));
-      const body = JSON.stringify(answer(url));
+      let body = JSON.stringify(answer(url));
       if (state.mode === "cut") {
-        // A 206 whose next window is the same address: the host stops there and says so.
+        // A 206 with the oldest CUT buckets whose next window is the same address: the host stops
+        // there and says that the newer ones are missing.
+        body = JSON.stringify(JSON.parse(body, (key, value) => (key === "avg" ? value.slice(0, CUT) : value)));
         const link = `<${url.href}>; rel="intervalafter"`;
         return route.fulfill({ status: 206, headers: { ...opaque, link, "access-control-expose-headers": "Link" }, contentType: "application/json", body });
       }
@@ -133,6 +139,10 @@ async function open(page: Page, state: { mode: Mode; asked: URL[] }, hash = "") 
   return { host, chart: host.frameLocator("iframe#frame") };
 }
 
+// How many separate strokes each station's line has in the chart over the strip.
+const strokes = (chart: FrameLocator) =>
+  chart.locator("g.concat_0_group g.mark-line path").evaluateAll((paths) => paths.map((p) => (p.getAttribute("d") ?? "").split("M").length - 1));
+
 const shot = async (page: Page, name: string, width: number) => {
   // The catalogue frame takes the host's new height by message: let it land before the shot.
   if (process.env.SHOTS) await page.waitForTimeout(500);
@@ -140,6 +150,8 @@ const shot = async (page: Page, name: string, width: number) => {
 };
 
 for (const width of [1440, 400]) {
+  test.describe(`${width} px`, () => {
+  test.use({ hasTouch: width < 480 });
   test(`a reader switches range, granularity, method and stations and zooms with the brush (${width})`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
@@ -154,7 +166,19 @@ for (const width of [1440, 400]) {
     await expect(chart.locator("text", { hasText: "Relatívna vlhkosť (%)" }).first()).toBeVisible();
     await expect(host.getByLabel("Obdobie")).toHaveValue("P7D");
     await expect(host.getByLabel("Výpočet")).toBeHidden();
+    await expect(host.locator("#c-stations option:checked")).toHaveText(["Všetky stanice"]);
+    await expect(host.locator("#controls-note")).not.toContainText("prenášať");
+    // Readings have none from 19. 11. 00:00Z to 20. 11. 06:50Z: each line breaks there.
+    for (const count of await strokes(chart)) expect(count).toBeGreaterThan(1);
     await shot(page, "normal", width);
+
+    // Hourly, the same days: drawn as answered, the held value included, and said so in one line.
+    await host.getByLabel("Podrobnosť").selectOption("PT1H");
+    await expect(host.locator("#controls-note")).toContainText("prenášať");
+    await expect(host.locator("#controls-note")).toContainText("časy meraní");
+    await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
+    await expect(host.locator("#axis-note")).toContainText("v miestnom čase");
+    await shot(page, "hourly", width);
 
     // 24 h hourly maxima: one read, the rows swapped into the running view.
     await host.getByLabel("Obdobie").selectOption("PT24H");
@@ -181,8 +205,21 @@ for (const width of [1440, 400]) {
     expect(walk.length).toBeGreaterThanOrEqual(2);
     for (const u of walk) expect(u.searchParams.get("timerel")).toBe("between");
     // The walk's earlier windows came back empty: the chart says where the data starts.
-    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14.\u00a011.\u00a02026");
+    await expect(host.locator("#status")).toContainText("Prvé uložené údaje v zobrazenom období sú z 14.\u00a011.\u00a02026");
     await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
+    await expect(host.locator("#status")).toContainText("skoršie v ňom uložené nie sú");
+    // Daily buckets are UTC days: the axis says that in place of local time.
+    await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
+    await expect(host.locator("#axis-note")).not.toContainText("miestnom");
+    await expect(host.locator("#controls-note")).toContainText("prenášať");
+    await expect(host.locator("#c-from-hint")).toContainText("1. septembra 2026");
+    await expect(host.locator("#c-to-hint")).toContainText("20. novembra 2026");
+    await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
+    // No tick label runs out of the chart.
+    expect(await chart.locator("svg.marks g.role-axis-label text").evaluateAll((labels) => labels.filter((l) => {
+      const svg = (l as SVGTextElement).ownerSVGElement!.getBoundingClientRect();
+      return getComputedStyle(l).opacity !== "0" && l.getBoundingClientRect().right > svg.right;
+    }).map((l) => l.textContent))).toEqual([]);
     await expect(chart.locator("g.concat_0_group g.role-axis-label text").first()).toHaveText(/^\d+\. \d+\.$/);
     await shot(page, "daily-walk", width);
 
@@ -224,24 +261,35 @@ for (const width of [1440, 400]) {
     const state = { mode: "empty" as Mode, asked: [] as URL[] };
     const { host } = await open(page, state);
     await expect(host.locator("#status")).toContainText("žiadne údaje", { timeout: 20_000 });
+    // The stations stay to change with no answer to read them from, and the pick is kept.
+    const stations = host.locator("#c-stations");
+    await expect(stations.locator("option")).toHaveText(["Všetky stanice", "Praha, Karlov", "Praha, Libuš", "Praha, Ruzyně"]);
     await shot(page, "empty", width);
+    const karlov = "urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11519";
+    await stations.selectOption(karlov);
 
     state.mode = "slow";
     await host.getByLabel("Obdobie").selectOption("PT24H");
     await expect(host.locator("#status")).toContainText("Načítavam");
+    await expect(stations).toBeVisible();
     await shot(page, "loading", width);
     await expect(host.locator("#status")).toBeHidden({ timeout: 10_000 });
+    await expect(stations).toHaveValues([karlov]);
+    await stations.selectOption("");
 
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14.\u00a011.\u00a02026");
-    await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 21\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
+    await expect(host.locator("#status")).toContainText("Skoršie údaje v tomto období uložené nie sú");
+    await expect(host.locator("#status")).toContainText("novšie údaje");
+    await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
+    await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
     await shot(page, "cut", width);
 
     state.mode = "error";
     await host.getByLabel("Obdobie").selectOption("P7D");
     await expect(host.locator("#status")).toContainText("HTTP 503", { timeout: 20_000 });
+    await expect(stations).toBeVisible();
     await shot(page, "error", width);
 
     // The reader retries once the Endpoint answers again.
@@ -254,6 +302,15 @@ for (const width of [1440, 400]) {
     const src = await page.locator("iframe").getAttribute("src");
     expect(src).toContain(VIEW);
     expect(errors).toEqual([]);
+  });
+
+  test(`the first read shows every control while it loads (${width})`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { host } = await open(page, { mode: "slow", asked: [] });
+    await expect(host.locator("#status")).toContainText("Načítavam", { timeout: 20_000 });
+    await expect(host.locator("#c-stations option")).toHaveCount(4);
+    await shot(page, "first-loading", width);
+  });
   });
 }
 
