@@ -251,18 +251,18 @@ describe("VisualizationsSection", () => {
   }
 
   it.each([
-    ["last", "range"],
-    ["aggrPeriod", "granularity"],
-    ["aggrMethod", "method"],
-    ["controls", "controls"],
-  ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field) => {
+    ["last", "range", "24 hours was not accepted as the range. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "Hourly was not accepted as the granularity. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "Average was not accepted as the method. Pick Minimum or Maximum."],
+    ["controls", "controls", V.fix.controls],
+  ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
     mount(endpoint({ visualizations: [BAR] }), true);
     doorsAsRest();
     refusal = [`invalid /spec/catalog/visualizations/1/data/${member}: source: not allowed`];
     await proposeLine();
     const control = screen.getByLabelText(V[field]);
     await waitFor(() => expect(control).toHaveAttribute("aria-invalid", "true"));
-    expect(control).toHaveAccessibleDescription(expect.stringContaining(V.fix[field]));
+    expect(control).toHaveAccessibleDescription(expect.stringContaining(says));
     expect(document.body.textContent).not.toContain("/spec/catalog");
     expect(screen.getAllByText(new RegExp(`Nothing was proposed.*${V[field]}`))).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: V.showField }));
@@ -274,7 +274,8 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     refusal = ["/spec/catalog/visualizations/1/data/last: source: not allowed"];
     await proposeLine();
-    expect(await screen.findByText(/Nothing was proposed.*NO2 week.*Default range/)).toBeVisible();
+    expect(await screen.findByText(/Nothing was proposed.*NO2 week/)).toBeVisible();
+    expect(screen.getByText(V.invalid.range)).toBeVisible();
     expect(screen.getByLabelText(V.range)).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByRole("button", { name: V.showField })).toBeNull();
   });
@@ -284,7 +285,8 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
     await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
-    const alert = await screen.findByText(/Nothing was proposed.*NO2 week.*Default range/);
+    const alert = await screen.findByText(/“NO2 now” was not removed, because “NO2 week”/);
+    expect(screen.getByText(V.invalid.range).closest("li")).toHaveTextContent("no2-week");
     expect(alert).toBeVisible();
     expect(alert.closest("details")).toBeNull();
     expect(screen.getByLabelText(V.range, { selector: "select" })).not.toHaveAttribute("aria-invalid");
@@ -316,8 +318,10 @@ describe("VisualizationsSection", () => {
   });
 
   it("lists what readers start from, and what they are locked to without the toolbar (T-7491)", () => {
+    const long = { ...WEEK, name: "no2-long", data: { ...WEEK.data, last: "P14D" } };
     const raw = { ...WEEK, name: "no2-raw", data: { source: "temporal", type: "T", attrs: ["no2"], last: "PT24H", controls: false } };
-    mount(endpoint({ visualizations: [WEEK, raw] }), false);
+    mount(endpoint({ visualizations: [WEEK, raw, long] }), false);
+    expect(screen.getByText("Readers start with: 14 days · Daily · Maximum")).toBeVisible();
     expect(screen.getByText("Readers start with: 7 days · Daily · Maximum")).toBeVisible();
     expect(screen.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();
   });
@@ -326,9 +330,18 @@ describe("VisualizationsSection", () => {
     mount(endpoint(), true);
     await userEvent.click(screen.getByText(V.add));
     await userEvent.click(screen.getByLabelText(V.controls));
+    expect(screen.getByLabelText(V.fixed.range)).toBeInTheDocument();
     const box = screen.getByLabelText(V.controls);
     expect(box).toHaveAccessibleDescription(/cannot change.*24 hours · Hourly · Average/);
     expect(box).not.toHaveAccessibleDescription(/Readers can change/);
+  });
+
+  it("empties the form once the chart is proposed, so it is not proposed twice (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await proposeLine();
+    await waitFor(() => expect(screen.getByLabelText(V.name)).toHaveValue(""));
+    expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("offers no toolbar defaults for a chart that does not read the history", async () => {

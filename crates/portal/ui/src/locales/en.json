@@ -1869,16 +1869,29 @@
         "propose": "Propose the chart",
         "remove": "Remove",
         "toolbar": "Reader's chart settings",
-        "toolbarHidden": "Toolbar hidden from readers",
+        "toolbarHidden": "Fixed",
         "startsWith": "Readers start with: {settings}",
         "lockedTo": "Readers see only: {settings}",
         "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
-        "refusedOther": "Nothing was proposed: the chart “{chart}” already on this endpoint has a setting that is not allowed ({fields}). Remove that chart or correct it in the endpoint's YAML, then try again.",
+        "refusedOther": "Nothing was proposed: “{chart}”, already on this endpoint, has a setting that is not allowed. Remove “{chart}” first, then try again.",
+        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed. Remove “{chart}” first, then try again.",
+        "days": "{count, plural, one {# day} other {# days}}",
+        "fixed": {
+          "range": "Range",
+          "granularity": "Granularity",
+          "method": "Method"
+        },
+        "invalid": {
+          "range": "This range is not allowed. A range can be 31 days at most.",
+          "granularity": "This granularity is not allowed. It needs a period and a method.",
+          "method": "This method is not allowed. Add the chart again with average, minimum or maximum.",
+          "controls": "This toolbar switch is not allowed. It is either on or off."
+        },
         "showField": "Go to the field",
         "fix": {
-          "range": "This range was not accepted. Pick another: 24 hours, 7 days or 31 days.",
-          "granularity": "This granularity was not accepted. Pick another: raw readings, hourly or daily.",
-          "method": "This method was not accepted. Pick another: average, minimum or maximum.",
+          "range": "{value} was not accepted as the range. Pick {choices}.",
+          "granularity": "{value} was not accepted as the granularity. Pick {choices}.",
+          "method": "{value} was not accepted as the method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again."
         },
         "range": "Default range",
@@ -1905,7 +1918,8 @@
           "granularity": "Raw draws every reading; hourly and daily draw one point per hour or day, e.g. daily for 31 days.",
           "method": "How the readings of one hour or day become one point, e.g. maximum for the day's peak.",
           "controls": "Readers can change the range, granularity and method themselves, e.g. switch to 31 days. Untick it for a fixed chart.",
-          "locked": "Readers get a fixed chart and cannot change it, e.g. it always opens on {settings}. Tick it to let them choose."
+          "locked": "Readers cannot change this chart. They always see: {settings}. Tick it to let them choose, e.g. another range.",
+          "raw": "Every reading is drawn as measured, so there is no method to pick, e.g. for the last 24 hours."
         },
         "templates": {
           "bar": "Bar chart",

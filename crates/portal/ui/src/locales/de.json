@@ -1869,16 +1869,29 @@
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Diagrammeinstellungen für Lesende",
-        "toolbarHidden": "Einstellungsleiste für Lesende ausgeblendet",
+        "toolbarHidden": "Fest",
         "startsWith": "Lesende beginnen mit: {settings}",
         "lockedTo": "Lesende sehen nur: {settings}",
         "refusedOwn": "Es wurde nichts vorgeschlagen. Korrigieren Sie „{fields}“ oben und schlagen Sie erneut vor.",
-        "refusedOther": "Es wurde nichts vorgeschlagen: Das Diagramm „{chart}“ an diesem Endpoint hat eine unzulässige Einstellung ({fields}). Entfernen Sie es oder korrigieren Sie es im YAML des Endpoints und versuchen Sie es erneut.",
+        "refusedOther": "Es wurde nichts vorgeschlagen: „{chart}“ an diesem Endpoint hat eine unzulässige Einstellung. Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
+        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat. Entfernen Sie zuerst „{chart}“ und versuchen Sie es erneut.",
+        "days": "{count, plural, one {# Tag} other {# Tage}}",
+        "fixed": {
+          "range": "Zeitraum",
+          "granularity": "Auflösung",
+          "method": "Berechnung"
+        },
+        "invalid": {
+          "range": "Dieser Zeitraum ist nicht zulässig. Er umfasst höchstens 31 Tage.",
+          "granularity": "Diese Auflösung ist nicht zulässig. Sie braucht eine Periode und eine Berechnung.",
+          "method": "Diese Berechnung ist nicht zulässig. Fügen Sie das Diagramm mit Mittelwert, Minimum oder Maximum neu hinzu.",
+          "controls": "Dieser Schalter der Leiste ist nicht zulässig. Er ist entweder an oder aus."
+        },
         "showField": "Zum Feld",
         "fix": {
-          "range": "Dieser Zeitraum wurde nicht angenommen. Wählen Sie einen anderen: 24 Stunden, 7 Tage oder 31 Tage.",
-          "granularity": "Diese Auflösung wurde nicht angenommen. Wählen Sie eine andere: Rohwerte, stündlich oder täglich.",
-          "method": "Diese Berechnung wurde nicht angenommen. Wählen Sie eine andere: Mittelwert, Minimum oder Maximum.",
+          "range": "Der Zeitraum „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
+          "granularity": "Die Auflösung „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
+          "method": "Die Berechnung „{value}“ wurde nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
         },
         "range": "Standardzeitraum",
@@ -1905,7 +1918,8 @@
           "granularity": "Rohwerte zeichnen jede Messung; stündlich und täglich einen Punkt pro Stunde oder Tag, z. B. täglich für 31 Tage.",
           "method": "Wie die Messungen einer Stunde oder eines Tages zu einem Punkt werden, z. B. Maximum für die Tagesspitze.",
           "controls": "Lesende können Zeitraum, Auflösung und Berechnung selbst ändern, z. B. auf 31 Tage wechseln. Deaktivieren für ein festes Diagramm.",
-          "locked": "Lesende erhalten ein festes Diagramm und können es nicht ändern, z. B. öffnet es immer mit: {settings}. Aktivieren, damit sie selbst wählen können."
+          "locked": "Lesende können das Diagramm nicht ändern. Sie sehen immer: {settings}. Aktivieren, damit sie selbst wählen, z. B. einen anderen Zeitraum.",
+          "raw": "Jede Messung wird gezeichnet, daher gibt es keine Berechnung zu wählen, z. B. für die letzten 24 Stunden."
         },
         "templates": {
           "bar": "Balkendiagramm",

@@ -1869,16 +1869,29 @@
         "propose": "Navrhnout graf",
         "remove": "Odebrat",
         "toolbar": "Nastavení grafu pro čtenáře",
-        "toolbarHidden": "Panel nastavení je čtenářům skrytý",
+        "toolbarHidden": "Pevný",
         "startsWith": "Čtenáři začínají s: {settings}",
         "lockedTo": "Čtenáři vidí pouze: {settings}",
         "refusedOwn": "Nic se nenavrhlo. Opravte „{fields}“ výše a navrhněte znovu.",
-        "refusedOther": "Nic se nenavrhlo: graf „{chart}“, který už je na tomto endpointu, má nepovolené nastavení ({fields}). Odeberte ho nebo ho opravte v YAML endpointu a zkuste to znovu.",
+        "refusedOther": "Nic se nenavrhlo: graf „{chart}“, který už je na tomto endpointu, má nepovolené nastavení. Nejdřív odeberte „{chart}“ a zkuste to znovu.",
+        "refusedRemoval": "Graf „{removed}“ se neodebral, protože „{chart}“ má nepovolené nastavení. Nejdřív odeberte „{chart}“ a zkuste to znovu.",
+        "days": "{count, plural, one {# den} few {# dny} other {# dní}}",
+        "fixed": {
+          "range": "Období",
+          "granularity": "Podrobnost",
+          "method": "Výpočet"
+        },
+        "invalid": {
+          "range": "Toto období není povoleno. Může mít nejvýše 31 dní.",
+          "granularity": "Tato podrobnost není povolena. Potřebuje periodu a výpočet.",
+          "method": "Tento výpočet není povolen. Přidejte graf znovu s průměrem, minimem nebo maximem.",
+          "controls": "Tento přepínač panelu není povolen. Může být jen zapnutý nebo vypnutý."
+        },
         "showField": "Přejít na pole",
         "fix": {
-          "range": "Toto období nebylo přijato. Vyberte jiné: 24 hodin, 7 dní nebo 31 dní.",
-          "granularity": "Tato podrobnost nebyla přijata. Vyberte jinou: surové hodnoty, po hodinách nebo po dnech.",
-          "method": "Tento výpočet nebyl přijat. Vyberte jiný: průměr, minimum nebo maximum.",
+          "range": "Období „{value}“ nebylo přijato. Vyberte {choices}.",
+          "granularity": "Podrobnost „{value}“ nebyla přijata. Vyberte {choices}.",
+          "method": "Výpočet „{value}“ nebyl přijat. Vyberte {choices}.",
           "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu."
         },
         "range": "Výchozí období",
@@ -1905,7 +1918,8 @@
           "granularity": "Surové hodnoty kreslí každé měření; po hodinách a po dnech jeden bod za hodinu nebo den, např. po dnech pro 31 dní.",
           "method": "Jak se měření jedné hodiny nebo dne sloučí do bodu, např. maximum pro denní špičku.",
           "controls": "Čtenáři si mohou sami změnit období, podrobnost a výpočet, např. přepnout na 31 dní. Zrušte zaškrtnutí pro pevný graf.",
-          "locked": "Čtenáři dostanou pevný graf a nemohou ho měnit, např. se vždy otevře s: {settings}. Zaškrtněte, pokud si mají vybírat sami."
+          "locked": "Čtenáři graf nemohou měnit. Vždy vidí: {settings}. Zaškrtněte, pokud si mají sami vybrat např. jiné období.",
+          "raw": "Kreslí se každé měření, proto se výpočet nevybírá, např. za posledních 24 hodin."
         },
         "templates": {
           "bar": "Sloupcový graf",

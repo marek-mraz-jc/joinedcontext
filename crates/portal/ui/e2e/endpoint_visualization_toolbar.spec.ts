@@ -43,6 +43,9 @@ const FIXED = {
   data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "PT24H", controls: false },
 };
 
+// Written by hand, before the check refused it: a range over 31 days.
+const BROKEN = { ...CHART, name: "no2-quarter", title: { en: "NO2 this quarter" }, data: { ...CHART.data, last: "P90D" } };
+
 function endpoint(visualizations: unknown[]) {
   return {
     apiVersion: API,
@@ -122,9 +125,10 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Default granularity").selectOption("daily");
     await page.getByLabel("Default range").selectOption("week");
     await page.getByLabel("Default method").selectOption("max");
-    await page.getByLabel("Show the toolbar to readers").uncheck();
-    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change.*7 days · Daily · Maximum/);
     await expect(page.getByLabel("Default range")).toHaveAccessibleDescription(/e\.g\. 7 days/);
+    await page.getByLabel("Show the toolbar to readers").uncheck();
+    await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
+    await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/cannot change.*always see: 7 days · Daily · Maximum/);
 
     await page.getByLabel("Horizontal axis").selectOption("dateObserved");
     await page.getByLabel("Measure").selectOption("no2");
@@ -163,7 +167,7 @@ for (const width of [1440, 400]) {
     await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/Pick another: 24 hours, 7 days or 31 days/);
+    await expect(range).toHaveAccessibleDescription(/24 hours was not accepted as the range. Pick 7 days or 31 days/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
@@ -174,13 +178,15 @@ for (const width of [1440, 400]) {
 
   test(`a saved chart that blocks a removal is named at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, CHART], puts: [], refuse: 0 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: 0 });
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
-    await expect(section.getByRole("alert")).toContainText("“NO2 this week”");
+    await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
+    await expect(section.getByText("Readers see only: 90 days · Daily · Maximum")).toBeVisible();
+    await expect(section.getByText("This range is not allowed.")).toBeVisible();
     await expect(section).not.toContainText("/spec/catalog");
-    await section.getByRole("alert").scrollIntoViewIfNeeded();
+    await section.getByRole("alert").filter({ hasText: "was not removed" }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-other-${width}.png`) });
   });
 
@@ -203,7 +209,7 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
-    await expect(section.getByText("Toolbar hidden from readers")).toHaveCount(2);
+    await expect(section.getByText("Fixed", { exact: true })).toHaveCount(2);
     await expect(section.getByText("Readers start with: 24 hours · Hourly · Average")).toBeVisible();
     await expect(section.getByText("Readers see only: 7 days · Daily · Maximum")).toBeVisible();
     await expect(section.getByText("Readers see only: 24 hours · Raw readings")).toBeVisible();

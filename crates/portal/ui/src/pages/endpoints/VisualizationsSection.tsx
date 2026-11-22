@@ -12,6 +12,7 @@ import {
   Button,
   Checkbox,
   Field,
+  InlineError,
   Input,
   Select,
   Textarea,
@@ -64,7 +65,9 @@ export function VisualizationsSection({
   const language = (i18n.resolvedLanguage ?? i18n.language ?? "en").slice(0, 2);
   const list = visualizationsOf(manifest);
   const [change, setChange] = useState<Change | null>(null);
-  const proposal = useProposal(project, "endpoints", setChange);
+  // A refusal names a chart by its place in the list that was sent: `added` is the new one's
+  // place, `removed` the one a removal left out.
+  const [sent, setSent] = useState<{ charts: Visualization[]; added?: number; removed?: Visualization }>({ charts: [] });
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -76,12 +79,18 @@ export function VisualizationsSection({
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
   const [failed, setFailed] = useState<string | null>(null);
-  // A refusal names a chart by its place in the list that was sent; `added` is the new one's.
-  const [sent, setSent] = useState<{ charts: Visualization[]; added?: number }>({ charts: [] });
-
-  const propose = (next: Visualization[], added?: number) => {
+  const proposal = useProposal(project, "endpoints", (proposed) => {
+    setChange(proposed);
+    if (sent.added === undefined) return;
+    // The chart is proposed: an emptied form does not offer to propose it a second time.
+    setName("");
+    setTitle("");
+    setDescription("");
+    setSpecText("");
+  });
+  const propose = (next: Visualization[], at: { added?: number; removed?: Visualization }) => {
     setFailed(null);
-    setSent({ charts: next, added });
+    setSent({ charts: next, ...at });
     proposal.mutation.mutate({
       body: withVisualizations(manifest, next) as unknown as ResourceProposal,
       create: false,
@@ -130,12 +139,16 @@ export function VisualizationsSection({
           spec,
         },
       ],
-      list.length,
+      { added: list.length },
     );
   };
 
   const titleOf = (chart: Visualization) =>
     chart.title[language] ?? Object.values(chart.title)[0] ?? chart.name;
+
+  // Without the toolbar the settings are what readers get, no longer defaults.
+  const label = (field: "range" | "granularity" | "method") =>
+    t(`endpoints.page.visualizations.${temporal.controls ? "" : "fixed."}${field}`);
 
   // A refused setting of the chart being added is said on its field; one of a chart already on
   // the endpoint is said by that chart's title. The pointer stays in the API's answer.
@@ -147,18 +160,36 @@ export function VisualizationsSection({
     : [];
   const own = refused.filter((one) => one.index === sent.added);
   const other = refused.find((one) => one.index !== sent.added);
-  const errorsOf = (field: RefusedSetting["field"]) =>
-    own.some((one) => one.field === field)
-      ? [t(`endpoints.page.visualizations.fix.${field}`)]
-      : undefined;
+  const errorsOf = (field: RefusedSetting["field"]) => {
+    if (!own.some((one) => one.field === field)) return undefined;
+    if (field === "controls") return [t("endpoints.page.visualizations.fix.controls")];
+    // The value that was refused is named and is not among the ones to pick instead.
+    const data = sent.charts[sent.added ?? 0].data;
+    const [member, group, values] = {
+      range: ["last", "ranges", RANGES],
+      granularity: ["aggrPeriod", "granularities", GRANULARITIES],
+      method: ["aggrMethod", "methods", Object.fromEntries(METHODS.map((one) => [one, one]))],
+    }[field] as [string, string, Record<string, string | undefined>];
+    const others = Object.keys(values).filter((key) => values[key] !== data[member]);
+    return [
+      t(`endpoints.page.visualizations.fix.${field}`, {
+        value: word(group, values, data[member]),
+        choices: new Intl.ListFormat(language, { type: "disjunction" }).format(
+          others.map((key) => t(`endpoints.page.visualizations.${group}.${key}`)),
+        ),
+      }),
+    ];
+  };
   const fieldsOf = (settings: RefusedSetting[]) =>
-    [...new Set(settings.map((one) => t(`endpoints.page.visualizations.${one.field}`)))].join(", ");
+    [...new Set(settings.map((one) => (one.field === "controls" ? t("endpoints.page.visualizations.controls") : label(one.field))))].join(", ");
   const blocking = other ? sent.charts[other.index] : undefined;
   const refusal = blocking
-    ? t("endpoints.page.visualizations.refusedOther", {
-        chart: titleOf(blocking),
-        fields: fieldsOf(refused.filter((one) => one.index === other?.index)),
-      })
+    ? sent.removed
+      ? t("endpoints.page.visualizations.refusedRemoval", {
+          removed: titleOf(sent.removed),
+          chart: titleOf(blocking),
+        })
+      : t("endpoints.page.visualizations.refusedOther", { chart: titleOf(blocking) })
     : own.length > 0
       ? t("endpoints.page.visualizations.refusedOwn", { fields: fieldsOf(own) })
       : proposal.error;
@@ -186,12 +217,15 @@ export function VisualizationsSection({
   // A refused removal is said under the list: the editor is closed then.
   const removing = !failed && proposal.error !== null && sent.added === undefined;
 
-  /** A temporal source's defaults in words; a value from outside the lists shows as written. */
+  /** A setting in words: whole days are counted, another value outside the lists shows as written. */
+  function word(group: string, values: Record<string, string | undefined>, value: unknown) {
+    const key = Object.keys(values).find((one) => values[one] === value);
+    if (key) return t(`endpoints.page.visualizations.${group}.${key}`);
+    const days = /^P(\d+)D$/.exec(String(value))?.[1];
+    return days ? t("endpoints.page.visualizations.days", { count: Number(days) }) : String(value);
+  }
+  /** A temporal source's defaults in words. */
   const settingsOf = (data: Visualization["data"]) => {
-    const word = (group: string, values: Record<string, string | undefined>, value: unknown) => {
-      const key = Object.keys(values).find((one) => values[one] === value);
-      return key ? t(`endpoints.page.visualizations.${group}.${key}`) : String(value);
-    };
     const aggregated = Boolean(data.aggrMethod && data.aggrPeriod);
     return [
       word("ranges", RANGES, data.last),
@@ -226,7 +260,9 @@ export function VisualizationsSection({
           {list.map((one) => (
             <li
               key={one.name}
-              className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3"
+              className={`flex flex-wrap items-center gap-2 rounded-md border p-3 ${
+                one.name === blocking?.name ? "border-danger" : "border-border"
+              }`}
             >
               <span className="text-sm font-medium text-fg">
                 {titleOf(one)}
@@ -244,14 +280,14 @@ export function VisualizationsSection({
                   disabled={proposal.mutation.isPending}
                   disabledReason={t("app.busyReason")}
                   onClick={() =>
-                    propose(list.filter((other) => other.name !== one.name))
+                    propose(list.filter((other) => other.name !== one.name), { removed: one })
                   }
                 >
                   {t("endpoints.page.visualizations.remove")}
                 </Button>
               ) : null}
               {one.data.source === "temporal" ? (
-                <p className="w-full text-caption text-fg-muted">
+                <p className="w-full text-body text-fg">
                   {t(
                     one.data.controls === false
                       ? "endpoints.page.visualizations.lockedTo"
@@ -260,6 +296,15 @@ export function VisualizationsSection({
                   )}
                 </p>
               ) : null}
+              {one.name === blocking?.name
+                ? refused
+                    .filter((at) => at.index === other?.index)
+                    .map(({ field }) => (
+                      <InlineError key={field} className="w-full">
+                        {t(`endpoints.page.visualizations.invalid.${field}`)}
+                      </InlineError>
+                    ))
+                : null}
             </li>
           ))}
         </ul>
@@ -380,7 +425,7 @@ export function VisualizationsSection({
               <Field
                 id="viz-range"
                 errors={errorsOf("range")}
-                label={t("endpoints.page.visualizations.range")}
+                label={label("range")}
                 help={t("endpoints.page.visualizations.hint.range")}
               >
                 <Select
@@ -405,8 +450,12 @@ export function VisualizationsSection({
               <Field
                 id="viz-granularity"
                 errors={errorsOf("granularity")}
-                label={t("endpoints.page.visualizations.granularity")}
-                help={t("endpoints.page.visualizations.hint.granularity")}
+                label={label("granularity")}
+                help={t(
+                  temporal.granularity === "raw"
+                    ? "endpoints.page.visualizations.hint.raw"
+                    : "endpoints.page.visualizations.hint.granularity",
+                )}
               >
                 <Select
                   id="viz-granularity"
@@ -432,7 +481,7 @@ export function VisualizationsSection({
                 <Field
                   id="viz-method"
                   errors={errorsOf("method")}
-                  label={t("endpoints.page.visualizations.method")}
+                  label={label("method")}
                   help={t("endpoints.page.visualizations.hint.method")}
                 >
                   <Select
