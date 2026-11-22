@@ -494,9 +494,13 @@ pub enum FileWrite {
 
 /// Runs a file store call off the async workers.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| DataroomError::Storage(format!("file store call stopped: {e}")))?
+    match tokio::task::spawn_blocking(f).await {
+        Ok(answer) => answer,
+        // Only a file store call that panicked ends here.
+        Err(e) => Err(DataroomError::Storage(format!(
+            "file store call stopped: {e}"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -687,8 +691,8 @@ mod tests {
             "visibility": "public", "state": "active", "tags": [], "distributions": [],
             "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
         });
-        if let (Some(v), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
-            v.extend(extra.clone());
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            v[key] = value.clone();
         }
         serde_json::from_value(v).expect("a dataset")
     }
@@ -866,9 +870,13 @@ mod tests {
         let mut renamed = kraj.clone();
         renamed.title = BTreeMap::from([("sk".into(), "Iný".into())]);
         writer
-            .upsert_harvest_source(org, cat, source, Some(renamed))
+            .upsert_harvest_source(org, cat, source.clone(), Some(renamed))
             .await
             .expect("saved again");
+        writer
+            .upsert_harvest_source(org, cat, source, None)
+            .await
+            .expect("saved without a publisher to make");
         let kept = store
             .get_publisher(&ctx, "kraj")
             .await
@@ -1002,6 +1010,7 @@ mod tests {
             .expect("a publisher only the source holds");
         for (name, extra) in [
             ("air", json!({"publisherId": "kraj"})),
+            ("solo", json!({"publisherId": "nikto"})),
             ("bus", json!({})),
             ("taken", json!({})),
             ("old", json!({"state": "withdrawn"})),
@@ -1024,7 +1033,15 @@ mod tests {
             .list_from(org, (from.id, base), to.id, marker, keep_air)
             .await
             .expect("listed");
-        assert_eq!(listed, ["air"]);
+        assert_eq!(listed, ["air", "solo"]);
+        assert!(
+            store
+                .get_publisher(&target, "nikto")
+                .await
+                .expect("read")
+                .is_none(),
+            "a publisher the source lacks is not made up"
+        );
         let air = store
             .get_dataset(&target, "air")
             .await
@@ -1054,7 +1071,7 @@ mod tests {
             .list_from(org, (from.id, base), to.id, marker, keep_air)
             .await
             .expect("listed again");
-        assert_eq!(again, ["air"]);
+        assert_eq!(again, ["air", "solo"]);
         let none = writer
             .list_from(org, (from.id, base), to.id, marker, |_| false)
             .await
@@ -1080,6 +1097,38 @@ mod tests {
             RecordState::Active,
             "another marker's record stays"
         );
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_without_a_portal_route_or_base_is_unrouted_and_its_base_forgotten() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store);
+        let routed = mobility(Some("mobility.city.test"));
+        writer.upsert(routed.clone()).await.expect("routed");
+        assert_eq!(
+            state.portals.host("mobility.city.test"),
+            Some((routed.org_id, routed.id))
+        );
+        assert!(read(&state.catalogue_bases).contains_key(&routed.id));
+        // Back on its own host, then away again: each host it left keeps answering.
+        writer
+            .upsert(mobility(Some("data.city.test")))
+            .await
+            .expect("moved");
+        writer.upsert(routed.clone()).await.expect("moved back");
+        assert_eq!(
+            state.portals.host("data.city.test"),
+            Some((routed.org_id, routed.id))
+        );
+
+        let plain = CatalogueSpec {
+            base: None,
+            portal: None,
+            ..routed.clone()
+        };
+        writer.upsert(plain).await.expect("served without a route");
+        assert_eq!(state.portals.host("mobility.city.test"), None);
+        assert!(!read(&state.catalogue_bases).contains_key(&routed.id));
     }
 
     #[tokio::test]

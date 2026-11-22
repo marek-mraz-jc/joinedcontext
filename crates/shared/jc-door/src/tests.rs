@@ -329,6 +329,19 @@ async fn capped_reads_up_to_the_cap_and_refuses_one_byte_more() {
         .await
         .unwrap_err();
     assert_eq!(err, "larger than 9 bytes");
+
+    // A peer that promises 100 bytes and hangs up after 3: the read fails, nothing is kept.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut head = [0u8; 1024];
+        let _ = sock.read(&mut head);
+        let _ = sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nabc");
+    });
+    let cut = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    assert!(capped(cut, 1_000).await.is_err());
 }
 
 #[tokio::test]

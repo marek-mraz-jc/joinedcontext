@@ -34,7 +34,10 @@ impl Secret {
     /// `bytes` random bytes as lower-case hex (`2 * bytes` characters).
     pub fn generate(bytes: usize) -> Result<Self, String> {
         let mut buf = Zeroizing::new(vec![0u8; bytes]);
-        getrandom::fill(&mut buf).map_err(|e| format!("no randomness: {e}"))?;
+        if let Err(e) = getrandom::fill(&mut buf) {
+            // Only an operating system without a random source fails here.
+            return Err(format!("no randomness: {e}"));
+        }
         Ok(Self::new(hex::encode(&*buf)))
     }
 
