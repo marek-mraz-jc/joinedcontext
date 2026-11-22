@@ -257,6 +257,39 @@ pub fn stray_policy_refs(
     lines
 }
 
+/// Why a Project manifest with `pinned` as its `spec.urnOwner` may not take `project` to
+/// Organization `to` yet (T-7500): its Pipelines would mint another owner than its stored ids
+/// carry, so the next run would write every entity a second time and find none it references.
+/// The manifest says which it is: the owner minted today, kept until the re-mint, or the
+/// target's, when no stored id carries another. `None` when the owner does not change.
+pub fn owner_switch(
+    mirror: &Mirror,
+    project: &str,
+    from: Option<&str>,
+    to: &str,
+    pinned: Option<&str>,
+) -> Option<String> {
+    if mirror
+        .list(project, "Pipeline", &ListOptions::default())
+        .items
+        .is_empty()
+    {
+        return None;
+    }
+    let today = crate::permissions::urn_owner(mirror, project)
+        .or_else(|| from.and_then(|from| domain_of(mirror, "Organization", from)))?;
+    let then = domain_of(mirror, "Organization", to)?;
+    let kept = match pinned {
+        Some(pinned) => pinned == today || pinned == then,
+        None => today == then,
+    };
+    (!kept).then(|| {
+        format!(
+            "spec.urnOwner: the Pipelines of project '{project}' mint {today} in their ids and would mint {then} under Organization '{to}', a second id for every stored entity; in the same Project Change write urnOwner: {today}, re-mint the stored ids to {then} (antares_remint) and remove it then (an enforcing gateway refuses their creates and upserts until that re-mint), or write urnOwner: {then} when no stored id carries {today}"
+        )
+    })
+}
+
 /// The domains of the Organizations a proposed `ProjectMove` takes `project` to, for [`MOVING`];
 /// empty without a database or a proposal.
 pub async fn moving_domains(
@@ -320,6 +353,17 @@ pub async fn plan(
         waits.push(format!(
             "organization: Project '{project}' names Organization '{}' in its manifest; with this move asked for, set its spec.organizationRef to '{to}' (a Project Change) and approve the move once it is synced",
             manifest_organization.as_deref().unwrap_or("none")
+        ));
+        // What that Change holds beside the organizationRef: the owner its ids keep (T-7500).
+        let pinned = mirror
+            .get(ORG_NAMESPACE, "Project", project)
+            .and_then(|env| env.spec["urnOwner"].as_str().map(str::to_owned));
+        waits.extend(owner_switch(
+            mirror,
+            project,
+            found.organization.as_deref(),
+            to,
+            pinned.as_deref(),
         ));
     }
     // The Project Change naming `to` waits for these, and so does the approval.
@@ -425,10 +469,17 @@ pub async fn check_manifest(
         // Its Endpoints keep granting once the manifest names the target: the gateway binds
         // their policyRefs on the target's domain from the next load on.
         let stray = stray_policy_refs(mirror, project, Some(&filed), &named);
-        return Ok(match stray.is_empty() {
-            true => Ok(()),
-            false => Err(format!("spec.organizationRef: {}", stray.join("; "))),
-        });
+        if !stray.is_empty() {
+            return Ok(Err(format!("spec.organizationRef: {}", stray.join("; "))));
+        }
+        // And its Pipelines keep upserting what they stored.
+        let pinned = spec.get("urnOwner").and_then(serde_json::Value::as_str);
+        return Ok(
+            match owner_switch(mirror, project, Some(&filed), &named, pinned) {
+                Some(line) => Err(line),
+                None => Ok(()),
+            },
+        );
     }
     Ok(Err(format!(
         "spec.organizationRef: the registry files project '{project}' under Organization \

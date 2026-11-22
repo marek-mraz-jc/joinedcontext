@@ -403,7 +403,7 @@ async fn kpi_compute(
         }
         None => (kpi_value(&input.rows.unwrap_or_default(), &params)?, None),
     };
-    let org_domain = assistant::project_org_domain(state, project);
+    let org_domain = assistant::project_urn_owner(state, project);
     // The Endpoint read, or for rows the indicator space's, as the provenance's source.
     let (ep_slug, ep_name) = read
         .or_else(|| kpi::kpi_endpoint(state, project))

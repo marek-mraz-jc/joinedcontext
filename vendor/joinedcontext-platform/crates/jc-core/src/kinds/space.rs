@@ -21,6 +21,12 @@ pub struct ProjectSpec {
     /// `JC_ORG_DOMAIN` (PF-44).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// The domain the project's Pipelines and indicators keep minting as the owner of entity ids
+    /// while its stored ids carry it, so a project that changes Organization upserts what it
+    /// stored; absent, its Organization's. Removed once the ids are re-minted. It grants nothing
+    /// and the gateway's owner check does not read it (PF-44, ADR-N-068).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urn_owner: Option<String>,
     /// The body that publishes the project's data in a national catalogue: the project's own
     /// catalogue names it, and so does every record whose Endpoint names none (EP-127).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,6 +116,12 @@ impl ProjectSpec {
         if let Some(domain) = &self.domain {
             names::validate_org_domain(domain).map_err(|e| Error::Invalid {
                 field: "spec.domain".to_owned(),
+                reason: e.to_string(),
+            })?;
+        }
+        if let Some(owner) = &self.urn_owner {
+            names::validate_org_domain(owner).map_err(|e| Error::Invalid {
+                field: "spec.urnOwner".to_owned(),
                 reason: e.to_string(),
             })?;
         }

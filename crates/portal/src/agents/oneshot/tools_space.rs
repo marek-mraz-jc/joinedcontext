@@ -241,7 +241,7 @@ impl Driver {
         };
         let now = now_rfc3339();
         let provenance = kpi::Provenance {
-            org_domain: &crate::api::assistant::project_org_domain(&self.state, &self.project),
+            org_domain: &crate::api::assistant::project_urn_owner(&self.state, &self.project),
             project: &self.project,
             endpoint_space: &endpoint_space,
             endpoint_name: &endpoint_name,

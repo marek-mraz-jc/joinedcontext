@@ -2,6 +2,7 @@
 //! GOAL-multiorg target 1, TEN-06): from the next request on it is the new Organization's alone,
 //! its Pipelines' next render mints the new owner segment (ADR-N-068), and moving it back restores
 //! both. The move is one Project manifest in the mirror, as the reconciler applies the Change.
+//! A move that pins `urnOwner` keeps minting the stored ids until they are re-minted (T-7500).
 
 mod common;
 
@@ -212,6 +213,54 @@ async fn pipelines_of_a_moved_project_mint_the_new_owner_segment() {
     assert_eq!(minted_owner(&state.mirror).await, json!("fi_hel"));
     move_to(&state.mirror, "bbsk");
     assert_eq!(minted_owner(&state.mirror).await, json!("sk_bbsk"));
+}
+
+/// T-7500, jc-prod barcelona: the project stored `urn:ngsi-ld:X:hel.fi:...` and Relationships to
+/// those ids, then came under `bbsk`. With the owner pinned the next run's stream is the one that
+/// wrote them, so it upserts the stored id and its `refArea` names the area stored before the
+/// move; dropping the pin after the re-mint mints the new owner in both places.
+#[tokio::test]
+async fn a_pinned_move_upserts_the_stored_ids_and_names_the_stored_relationship_targets() {
+    let state = world();
+    let mut pipeline = state
+        .mirror
+        .get(MOVED, "Pipeline", "senzory")
+        .expect("the pipeline");
+    pipeline.spec["compute"]["bloblang"] = json!(
+        "root.id = \"urn:ngsi-ld:X:\" + env(\"JC_ORG_DOMAIN\") + \":\" + env(\"JC_SPACE\") + \":\" + this.id\n\
+         root.refArea.type = \"Relationship\"\n\
+         root.refArea.object = \"urn:ngsi-ld:AdministrativeArea:\" + env(\"JC_ORG_DOMAIN\") + \":\" + env(\"JC_SPACE\") + \":district-10\"\n\
+         root.refOwner = \"urn:ngsi-ld:Organization:\" + env(\"JC_ORG_ID\") + \":city\""
+    );
+    state.mirror.upsert(pipeline);
+    let stored_by = rendered(&state.mirror).await;
+    assert!(stored_by[0].contains("hel.fi") && stored_by[0].contains("fi_hel"));
+
+    state.mirror.upsert(envelope(
+        "Project",
+        MOVED,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "bbsk", "urnOwner": "hel.fi" }),
+    ));
+    assert_eq!(
+        rendered(&state.mirror).await,
+        stored_by,
+        "the next run writes the same ids and the same Relationship targets"
+    );
+    assert!(
+        refused(project_as(&state, hel_admin()).await),
+        "the pin gives the old Organization no right"
+    );
+    assert_eq!(project_as(&state, bbsk_admin()).await, StatusCode::OK);
+
+    move_to(&state.mirror, "bbsk");
+    let reminted = rendered(&state.mirror).await;
+    assert!(
+        reminted[0].contains("sk_bbsk")
+            && !reminted[0].contains("fi_hel")
+            && reminted[0].matches("hel.fi").count() < stored_by[0].matches("hel.fi").count(),
+        "{reminted:?}"
+    );
 }
 
 /// T-6852: the rollback is the move back, the same one Change: `hel` holds `bbsk` again, its

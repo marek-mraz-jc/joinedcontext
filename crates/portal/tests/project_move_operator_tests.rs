@@ -879,6 +879,80 @@ async fn a_move_waits_for_endpoints_whose_policy_refs_name_the_old_domain() {
     );
 }
 
+/// T-7500: a move to an Organization of another domain does not change the owner a Pipeline
+/// mints by itself. The plan waits for the decision, the Project Change is refused without it or
+/// with a third domain, and is accepted with the owner minted today (kept until the re-mint) or
+/// the target's (nothing stored carries another).
+#[tokio::test]
+async fn a_move_waits_until_the_manifest_says_which_owner_its_ids_keep() {
+    let state = world().await;
+    let from = run("hel");
+    let to = run("ctlb");
+    let project = run("ids");
+    people(&state, &from, &to);
+    placed(&state, &project, &from, &to).await;
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let (today, then) = (format!("{from}.example"), format!("{to}.example"));
+    let check = |spec: Value| {
+        let (state, project) = (state.clone(), project.clone());
+        async move {
+            joinedcontext_portal::project_move::check_manifest(
+                pool(&state),
+                &state.mirror,
+                &project,
+                &spec,
+            )
+            .await
+            .expect("registry")
+        }
+    };
+    let moved = json!({ "organizationRef": to });
+    assert_eq!(check(moved.clone()).await, Ok(()), "no Pipeline mints");
+
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "statistics",
+        &project,
+        json!({ "class": "scheduled" }),
+    ));
+    let refused = check(moved.clone()).await.expect_err("a second id each");
+    assert!(
+        refused.starts_with("spec.urnOwner:")
+            && refused.contains(&today)
+            && refused.contains(&then),
+        "{refused}"
+    );
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        planned["waits"].to_string().contains("spec.urnOwner"),
+        "{planned}"
+    );
+
+    for (owner, accepted) in [
+        (&today, true),
+        (&then, true),
+        (&"other.example".to_owned(), false),
+    ] {
+        let pinned = json!({ "organizationRef": to, "urnOwner": owner });
+        assert_eq!(check(pinned).await.is_ok(), accepted, "{owner}");
+    }
+
+    state.mirror.upsert(envelope(
+        "Project",
+        &project,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": to, "urnOwner": today }),
+    ));
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        !planned["waits"].to_string().contains("urnOwner"),
+        "{planned}"
+    );
+}
+
 /// A forge holding one open Change of `project`, #5, which adds the Context Space `air`.
 async fn forge_with_open_change(project: &str) -> MockServer {
     let shako = common::forge().await;
