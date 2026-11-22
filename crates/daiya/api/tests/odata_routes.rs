@@ -584,7 +584,8 @@ async fn every_write_operation_leaves_one_audit_row() {
             "SavePublicDashboard",
             "POST",
             "/api/dashboards/uid/edge/public-dashboards".into(),
-            Some(json!({ "isEnabled": true })),
+            // Disabled: an enabled one needs Endpoint datasources.
+            Some(json!({ "isEnabled": false })),
         ),
         (
             "DeleteDashboard",
@@ -657,7 +658,7 @@ async fn every_write_operation_leaves_one_audit_row() {
                     "SavePublicDashboard",
                     "PATCH",
                     format!("/api/dashboards/uid/edge/public-dashboards/{uid}"),
-                    Some(json!({ "isEnabled": false })),
+                    Some(json!({ "timeSelectionEnabled": true })),
                 ));
             }
             "DeleteFolder" => {

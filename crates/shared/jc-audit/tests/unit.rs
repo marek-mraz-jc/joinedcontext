@@ -257,14 +257,16 @@ async fn work_after_the_commit_runs_only_when_the_unit_commits() {
         Ok(())
     })
     .await
-    .expect("unit");
+    .expect("unit")
+    .expect("insert");
     scope(|_: &Result<(), sqlx::Error>| false, async {
         insert(&pool, &t, "b").await?;
         jc_audit::after_commit(watch(&pool, &t, &seen)).await;
         Ok(())
     })
     .await
-    .expect("unit");
+    .expect("unit")
+    .expect("insert");
     assert_eq!(
         *seen.lock().expect("lock"),
         vec![vec!["a".to_owned()]],
