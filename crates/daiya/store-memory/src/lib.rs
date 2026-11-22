@@ -7,8 +7,8 @@ use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
     LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, folder_content_refusal, org_state_etag,
-    store::StoreFuture,
+    PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, folder_content_refusal,
+    org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;

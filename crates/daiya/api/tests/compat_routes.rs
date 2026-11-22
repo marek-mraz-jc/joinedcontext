@@ -574,7 +574,8 @@ async fn deleting_a_folder_with_content_is_refused_naming_it() {
     let (url, _) = prometheus().await;
     w.add_prometheus("prom", &url).await;
     w.add_folder("ops", "Ops").await;
-    w.add_dashboard(dashboard("edge", "prom"), Some("ops")).await;
+    w.add_dashboard(dashboard("edge", "prom"), Some("ops"))
+        .await;
     w.ok(
         "POST",
         "/api/folders",
@@ -587,7 +588,10 @@ async fn deleting_a_folder_with_content_is_refused_naming_it() {
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "{body}");
     let text = body.to_string();
-    assert!(text.contains("edge") && text.contains("ops-night"), "{text}");
+    assert!(
+        text.contains("edge") && text.contains("ops-night"),
+        "{text}"
+    );
     w.ok("GET", "/api/dashboards/uid/edge", None).await;
     w.ok("GET", "/api/folders/ops-night", None).await;
 
@@ -595,7 +599,11 @@ async fn deleting_a_folder_with_content_is_refused_naming_it() {
     let (st, body) = w
         .call("DELETE", "/api/folders/ops", Some("admin"), None)
         .await;
-    assert_eq!(st, StatusCode::CONFLICT, "the subfolder still holds it: {body}");
+    assert_eq!(
+        st,
+        StatusCode::CONFLICT,
+        "the subfolder still holds it: {body}"
+    );
     w.ok("DELETE", "/api/folders/ops-night", None).await;
     let del = w.ok("DELETE", "/api/folders/ops", None).await;
     assert_eq!(del["message"], "Folder deleted");

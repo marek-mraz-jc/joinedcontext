@@ -194,7 +194,11 @@ pub fn folder_content_refusal(
         uids.sort();
         uids.truncate(REFUSAL_NAMES);
         let more = total - uids.len();
-        let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
+        let tail = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
         format!("{total} {kind} ({}{tail})", uids.join(", "))
     })
     .collect();

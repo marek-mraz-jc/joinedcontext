@@ -15,7 +15,7 @@ use crate::public::{
     PublicDashboardQueryReq, execute_public_dashboard_query, rotate_public_dashboard_token,
 };
 use crate::render::{
-    PanelTimeRange, execute_targets_and_expressions, panel_view, parse_time_str_ms,
+    PanelTimeRange, TimeEdge, execute_targets_and_expressions, panel_view, parse_time_str_ms,
 };
 use crate::sets;
 use crate::state::{DaiyaState, OrgCtx, error_response};
@@ -231,8 +231,8 @@ pub async fn exec_odata_datasource_query(
     bound_ds_uid: Option<&str>,
     body: ODataQueryActionBody,
 ) -> CrResult<Value> {
-    let from_ms = parse_time_str_ms(body.from.as_deref(), -6 * 3_600_000);
-    let to_ms = parse_time_str_ms(body.to.as_deref(), 0);
+    let from_ms = parse_time_str_ms(body.from.as_deref(), TimeEdge::From)?;
+    let to_ms = parse_time_str_ms(body.to.as_deref(), TimeEdge::To)?;
     let frame_sets = execute_targets_and_expressions(
         state,
         ctx,

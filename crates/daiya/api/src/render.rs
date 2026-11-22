@@ -5,15 +5,16 @@
 use crate::state::DaiyaState;
 use daiya_expr::{
     ExprNodeSpec, apply_transformations, evaluate_pipeline, is_expression_datasource_uid,
-    parse_duration_ms,
 };
 use daiya_model::{
     Action, Authorizer, CrError, CrResult, DashboardDocument, DataTransformerConfig,
-    DatasourceRecord, FieldType, Frame, FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec,
-    RequestCtx, Subject, sanitize_markdown_to_html, sha256_hex, validation::html_escape,
+    DatasourceRecord, FieldType, Frame, FrameSet, GridPos, Notice, NoticeSeverity, ObjectTarget,
+    OrgId, PanelSpec, RequestCtx, Subject, sanitize_markdown_to_html, sha256_hex,
+    validation::html_escape,
 };
 use daiya_query::{CacheKey, Query, QueryCtx};
 use jc_time::TimestampTz;
+use jiff::{Span, civil, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -91,31 +92,255 @@ pub struct PanelView {
 const MIN_TIME_MS: i64 = -62_167_219_200_000;
 const MAX_TIME_MS: i64 = 253_402_300_799_999;
 
-/// Parses a Grafana time string (`"now"`, `"now-6h"`, `"now-30d"`, ISO 8601, or epoch ms string)
-/// into epoch milliseconds, clamped to the years 0..=9999 so no range arithmetic downstream
-/// can overflow.
-#[must_use]
-pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
-    let now_ms = TimestampTz::now().as_millis();
-    let parsed = raw
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .and_then(|s| {
-            if s == "now" {
-                return Some(now_ms);
-            }
-            if let Some(rest) = s.strip_prefix("now-") {
-                let clean = rest.split('/').next().unwrap_or(rest);
-                if let Ok(dur_ms) = parse_duration_ms(clean) {
-                    return Some(now_ms.saturating_sub(dur_ms));
-                }
-            }
-            s.parse::<i64>()
-                .ok()
-                .or_else(|| jc_time::parse_rfc3339(s).map(|dt| dt.as_millisecond()))
+/// Which end of a time range a string names: `from` defaults to six hours ago and rounds
+/// `/unit` down to the unit's start, `to` defaults to now and rounds up to the unit's last
+/// millisecond, as Grafana's `dateMath.parse(text, roundUp)` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeEdge {
+    From,
+    To,
+}
+
+impl TimeEdge {
+    fn field(self) -> &'static str {
+        match self {
+            Self::From => "from",
+            Self::To => "to",
+        }
+    }
+
+    /// Six hours ago for `from`, now for `to`.
+    fn default_ms(self) -> i64 {
+        let offset_ms = match self {
+            Self::From => -6 * 3_600_000,
+            Self::To => 0,
+        };
+        TimestampTz::now().as_millis().saturating_add(offset_ms)
+    }
+}
+
+/// Parses a Grafana time string into epoch milliseconds, clamped to the years 0..=9999 so no
+/// range arithmetic downstream can overflow: `now`, date math such as `now-6h`, `now-1M/M`,
+/// `now/d` or `now-7d/d` (units `y M w d h m s`, rounding in UTC, weeks from Monday), epoch
+/// milliseconds or RFC 3339. Absent or blank is the edge's default. A string it cannot read is a
+/// 400 naming the field: it never turns into another range silently (S9-21).
+pub fn parse_time_str_ms(raw: Option<&str>, edge: TimeEdge) -> CrResult<i64> {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(edge.default_ms());
+    };
+    let parsed = match s.strip_prefix("now") {
+        Some(math) => date_math(TimestampTz::now().as_millis(), math, edge == TimeEdge::To),
+        None => s
+            .parse::<i64>()
+            .ok()
+            .or_else(|| jc_time::parse_rfc3339(s).map(|dt| dt.as_millisecond())),
+    };
+    parsed
+        .map(|ms| ms.clamp(MIN_TIME_MS, MAX_TIME_MS))
+        .ok_or_else(|| {
+            CrError::BadRequest(format!(
+                "{}: cannot read the time '{s}'; write now, now-6h, now-1M/M, now/d, epoch \
+                 milliseconds or RFC 3339 (units y M w d h m s)",
+                edge.field()
+            ))
         })
-        .unwrap_or_else(|| now_ms.saturating_add(default_offset_ms));
-    parsed.clamp(MIN_TIME_MS, MAX_TIME_MS)
+}
+
+/// Applies Grafana date math after `now` (`-6h`, `+1d`, `-1M/M`, `/d`) to `now_ms`; `None` for
+/// a string it cannot read.
+fn date_math(now_ms: i64, math: &str, round_up: bool) -> Option<i64> {
+    let mut ms = now_ms;
+    let mut rest = math;
+    while let Some(op) = rest.chars().next() {
+        rest = &rest[1..];
+        if op == '/' {
+            let unit = rest.chars().next()?;
+            rest = &rest[unit.len_utf8()..];
+            ms = round_to_unit(ms, unit, round_up)?;
+            continue;
+        }
+        let sign = match op {
+            '+' => 1,
+            '-' => -1,
+            _ => return None,
+        };
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let n: i64 = if digits == 0 {
+            1
+        } else {
+            rest[..digits].parse().ok()?
+        };
+        rest = &rest[digits..];
+        let unit = rest.chars().next()?;
+        rest = &rest[unit.len_utf8()..];
+        let n = n.saturating_mul(sign);
+        let moved = match unit {
+            'y' => add_months(ms, n.saturating_mul(12)),
+            'M' => add_months(ms, n),
+            'w' => ms.saturating_add(n.saturating_mul(7 * 86_400_000)),
+            'd' => ms.saturating_add(n.saturating_mul(86_400_000)),
+            'h' | 'H' => ms.saturating_add(n.saturating_mul(3_600_000)),
+            'm' => ms.saturating_add(n.saturating_mul(60_000)),
+            's' => ms.saturating_add(n.saturating_mul(1_000)),
+            _ => return None,
+        };
+        ms = moved.clamp(MIN_TIME_MS, MAX_TIME_MS);
+    }
+    Some(ms)
+}
+
+/// `ms` moved by `months` calendar months in UTC (the day clamped to the month's last), or the
+/// edge of the years 0..=9999 when that leaves them.
+fn add_months(ms: i64, months: i64) -> i64 {
+    let past_edge = if months < 0 { MIN_TIME_MS } else { MAX_TIME_MS };
+    let Ok(span) = Span::new().try_months(months) else {
+        return past_edge;
+    };
+    utc_datetime(ms)
+        .and_then(|dt| dt.checked_add(span).ok())
+        .and_then(utc_millis)
+        .unwrap_or(past_edge)
+}
+
+/// `ms` rounded down to the start of `unit` in UTC (weeks start on Monday), or up to its last
+/// millisecond; `None` for a unit date math does not know.
+fn round_to_unit(ms: i64, unit: char, round_up: bool) -> Option<i64> {
+    if !"yMwdhHms".contains(unit) {
+        return None;
+    }
+    // Only the clamped edges of the years 0..=9999 lie outside jiff's range: they stay put.
+    let Some(dt) = utc_datetime(ms) else {
+        return Some(ms);
+    };
+    let day = dt.date();
+    let (start, step) = match unit {
+        'y' => (
+            civil::date(dt.year(), 1, 1).at(0, 0, 0, 0),
+            Span::new().years(1),
+        ),
+        'M' => (
+            civil::date(dt.year(), dt.month(), 1).at(0, 0, 0, 0),
+            Span::new().months(1),
+        ),
+        'w' => (
+            day.checked_sub(Span::new().days(dt.weekday().to_monday_zero_offset()))
+                .ok()?
+                .at(0, 0, 0, 0),
+            Span::new().weeks(1),
+        ),
+        'd' => (day.at(0, 0, 0, 0), Span::new().days(1)),
+        'h' | 'H' => (day.at(dt.hour(), 0, 0, 0), Span::new().hours(1)),
+        'm' => (day.at(dt.hour(), dt.minute(), 0, 0), Span::new().minutes(1)),
+        's' => (
+            day.at(dt.hour(), dt.minute(), dt.second(), 0),
+            Span::new().seconds(1),
+        ),
+        _ => return None,
+    };
+    if !round_up {
+        return utc_millis(start);
+    }
+    Some(
+        start
+            .checked_add(step)
+            .ok()
+            .and_then(utc_millis)
+            .map_or(MAX_TIME_MS, |next| next - 1),
+    )
+}
+
+fn utc_datetime(ms: i64) -> Option<civil::DateTime> {
+    Some(
+        jiff::Timestamp::from_millisecond(ms)
+            .ok()?
+            .to_zoned(TimeZone::UTC)
+            .datetime(),
+    )
+}
+
+fn utc_millis(dt: civil::DateTime) -> Option<i64> {
+    Some(TimeZone::UTC.to_timestamp(dt).ok()?.as_millisecond())
+}
+
+/// A saved time (the dashboard's or the panel's) the parser refuses: the edge's default, and a
+/// notice saying so, where a caller's own value is a 400 (S9-21).
+pub(crate) fn saved_time_ms(raw: Option<&str>, edge: TimeEdge, notices: &mut Vec<String>) -> i64 {
+    parse_time_str_ms(raw, edge).unwrap_or_else(|e| {
+        let instead = match edge {
+            TimeEdge::From => "starting six hours ago",
+            TimeEdge::To => "ending now",
+        };
+        notices.push(format!(
+            "The saved time range is not readable ({e}); this answer shows the range {instead} instead."
+        ));
+        edge.default_ms()
+    })
+}
+
+/// Puts each notice on the first frame of the answer, as Grafana's panel header shows frame
+/// notices; an answer with no frame gets one empty frame to carry them.
+pub(crate) fn attach_notices(frame_sets: &mut Vec<FrameSet>, notices: Vec<String>) {
+    if notices.is_empty() {
+        return;
+    }
+    if frame_sets.is_empty() {
+        frame_sets.push(FrameSet::new("", Vec::new()));
+    }
+    let Some(set) = frame_sets.first_mut() else {
+        return;
+    };
+    if set.frames.is_empty() {
+        set.frames.push(Frame::default());
+    }
+    let Some(first) = set.frames.first_mut() else {
+        return;
+    };
+    first
+        .meta
+        .notices
+        .extend(notices.into_iter().map(|text| Notice {
+            severity: NoticeSeverity::Warning,
+            text,
+        }));
+}
+
+/// Runs a panel's transformations once over the frames of all its queries, as Grafana does, so
+/// `merge`, `joinByField` and `seriesToRows` combine queries (S9-20). Each frame keeps the refId
+/// of the query it came from, and the result is grouped back by refId in first-seen order: a
+/// combined frame lands in the set its transformation names (`merge`, `joinByField`, ...).
+#[must_use]
+pub fn transform_panel_frames(
+    frame_sets: Vec<FrameSet>,
+    txs: &[DataTransformerConfig],
+) -> Vec<FrameSet> {
+    if txs.is_empty() {
+        return frame_sets;
+    }
+    // A query that answered no frame keeps its (empty) set; one whose frames a combining step
+    // consumed leaves no empty set behind.
+    let mut sets: Vec<FrameSet> = Vec::with_capacity(frame_sets.len());
+    let mut frames = Vec::new();
+    for fs in frame_sets {
+        if fs.frames.is_empty() {
+            sets.push(fs);
+            continue;
+        }
+        let ref_id = fs.ref_id;
+        frames.extend(fs.frames.into_iter().map(|mut f| {
+            f.ref_id.get_or_insert_with(|| ref_id.clone());
+            f
+        }));
+    }
+    for frame in apply_transformations(frames, txs).frames {
+        let ref_id = frame.ref_id.clone().unwrap_or_default();
+        match sets.iter_mut().find(|s| s.ref_id == ref_id) {
+            Some(set) => set.frames.push(frame),
+            None => sets.push(FrameSet::new(ref_id, vec![frame])),
+        }
+    }
+    sets
 }
 
 /// Renders a list of [`Frame`]s into a safe, accessible server-side HTML `<table>` for no-JS and
@@ -562,15 +787,29 @@ pub async fn panel_view(
 
     let dash_from = doc.time.as_ref().map(|t| t.from.as_str());
     let dash_to = doc.time.as_ref().map(|t| t.to.as_str());
-    let from_ms = parse_time_str_ms(
-        range
-            .from
-            .as_deref()
-            .or(panel.time_from.as_deref())
-            .or(dash_from),
-        -6 * 3_600_000,
-    );
-    let to_ms = parse_time_str_ms(range.to.as_deref().or(dash_to), 0);
+    // A caller's own range that does not parse is a 400 naming the field; a saved one falls back
+    // to the default with a notice on the answer. A panel's `timeFrom` ("2h") is Grafana's
+    // relative override: the last two hours.
+    let mut notices = Vec::new();
+    let panel_from = panel.time_from.as_deref().map(str::trim).map(|t| {
+        if t.starts_with("now") {
+            t.to_owned()
+        } else {
+            format!("now-{t}")
+        }
+    });
+    let from_ms = match range.from.as_deref() {
+        Some(own) => parse_time_str_ms(Some(own), TimeEdge::From)?,
+        None => saved_time_ms(
+            panel_from.as_deref().or(dash_from),
+            TimeEdge::From,
+            &mut notices,
+        ),
+    };
+    let to_ms = match range.to.as_deref() {
+        Some(own) => parse_time_str_ms(Some(own), TimeEdge::To)?,
+        None => saved_time_ms(dash_to, TimeEdge::To, &mut notices),
+    };
 
     // Merge dashboard default variable values with caller-supplied variable values
     let mut vars = BTreeMap::new();
@@ -626,12 +865,8 @@ pub async fn panel_view(
 
     // Apply panel transformations (R4)
     let txs: &[DataTransformerConfig] = panel.transformations.as_deref().unwrap_or(&[]);
-    if !txs.is_empty() {
-        for fs in &mut frame_sets {
-            let outcome = apply_transformations(std::mem::take(&mut fs.frames), txs);
-            fs.frames = outcome.frames;
-        }
-    }
+    frame_sets = transform_panel_frames(frame_sets, txs);
+    attach_notices(&mut frame_sets, notices);
 
     // Apply table panel options.sortBy if configured (`bbsk.json:145`, `helsinki.json:274`)
     if let Some(sort_by) = panel

@@ -259,7 +259,13 @@ async fn contract_folders(store: &dyn DaiyaStore) {
     assert!(store.delete_dashboard(org, "in-folder").await.unwrap());
     assert!(store.delete_folder(org, "f-a").await.unwrap());
     assert!(!store.delete_folder(org, "f-a").await.unwrap());
-    assert!(store.get_library_panel(org, "lp-b").await.unwrap().is_some());
+    assert!(
+        store
+            .get_library_panel(org, "lp-b")
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(!store.delete_folder(OrgId::generate(), "f-b").await.unwrap());
 }
 

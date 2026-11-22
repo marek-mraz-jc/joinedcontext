@@ -11,7 +11,8 @@ use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
     LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, ShareType, folder_content_refusal, org_state_etag, store::StoreFuture,
+    PublicDashboardRecord, RowPage, RowQuery, ShareType, folder_content_refusal, org_state_etag,
+    store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
@@ -1298,8 +1299,13 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(panel.org_id).await?;
             // The organization lock, so a folder delete never misses a panel saved beside it.
-            Self::lock_org_quotas(&mut tx, panel.installation_id, panel.org_id, panel.instance_id)
-                .await?;
+            Self::lock_org_quotas(
+                &mut tx,
+                panel.installation_id,
+                panel.org_id,
+                panel.instance_id,
+            )
+            .await?;
             let row = sqlx::query(
                 "INSERT INTO cr_library_panel (installation_id, org_id, instance_id, folder_uid, uid, name, panel_type, description, model, version)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
@@ -1706,11 +1712,11 @@ async fn uids_held(
     folder_uid: &str,
 ) -> CrResult<Vec<String>> {
     sqlx::query_scalar::<_, String>(sql)
-    .bind(org_id.as_uuid())
-    .bind(folder_uid)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(db_err)
+        .bind(org_id.as_uuid())
+        .bind(folder_uid)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)
 }
 
 /// Refuses a parent chain that loops back (also to the folder itself) or nests deeper than

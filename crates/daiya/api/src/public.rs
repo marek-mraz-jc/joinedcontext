@@ -16,7 +16,8 @@
 //! - Revoke = token rotation (`rotate_public_dashboard_token`): old token immediately answers 404.
 
 use crate::render::{
-    datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
+    TimeEdge, attach_notices, datasource_revision, execute_targets_with_authorizer,
+    find_panel_in_slice, parse_time_str_ms, saved_time_ms, transform_panel_frames,
 };
 use crate::state::{DaiyaState, OrgCtx, error_response};
 use axum::extract::{Extension, Path, State};
@@ -24,7 +25,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use daiya_expr::{apply_transformations, is_expression_datasource_uid};
+use daiya_expr::is_expression_datasource_uid;
 use daiya_model::{
     Action, CanonicalJson, CrError, CrResult, DashboardDocument, DashboardRecord, FrameSet,
     ObjectTarget, PanelSpec, PublicDashboardAuthorizer, PublicDashboardRecord, RequestCtx,
@@ -774,28 +775,22 @@ pub async fn execute_public_dashboard_query(
     let dash_from = doc.time.as_ref().map(|t| t.from.as_str());
     let dash_to = doc.time.as_ref().map(|t| t.to.as_str());
 
-    let (mut from_ms, to_ms) = if pubdash.time_selection_enabled {
-        let f_str = req
-            .time_range
-            .as_ref()
-            .map(|tr| tr.from.as_str())
-            .filter(|s| !s.is_empty())
-            .or(dash_from);
-        let t_str = req
-            .time_range
-            .as_ref()
-            .map(|tr| tr.to.as_str())
-            .filter(|s| !s.is_empty())
-            .or(dash_to);
-        (
-            parse_time_str_ms(f_str, -6 * 3_600_000),
-            parse_time_str_ms(t_str, 0),
-        )
-    } else {
-        (
-            parse_time_str_ms(dash_from, -6 * 3_600_000),
-            parse_time_str_ms(dash_to, 0),
-        )
+    // A viewer's own range that does not parse is a 400 naming the field; a saved one falls back
+    // to the default with a notice on the answer (S9-21).
+    let mut notices = Vec::new();
+    let own = req
+        .time_range
+        .as_ref()
+        .filter(|_| pubdash.time_selection_enabled);
+    let own_from = own.map(|tr| tr.from.as_str()).filter(|s| !s.is_empty());
+    let own_to = own.map(|tr| tr.to.as_str()).filter(|s| !s.is_empty());
+    let mut from_ms = match own_from {
+        Some(t) => parse_time_str_ms(Some(t), TimeEdge::From)?,
+        None => saved_time_ms(dash_from, TimeEdge::From, &mut notices),
+    };
+    let to_ms = match own_to {
+        Some(t) => parse_time_str_ms(Some(t), TimeEdge::To)?,
+        None => saved_time_ms(dash_to, TimeEdge::To, &mut notices),
     };
 
     if to_ms <= from_ms {
@@ -910,14 +905,9 @@ pub async fn execute_public_dashboard_query(
     .await
     .map_err(public_query_error)?;
 
-    if let Some(txs) = &panel.transformations
-        && !txs.is_empty()
-    {
-        for fs in &mut frame_sets {
-            let outcome = apply_transformations(std::mem::take(&mut fs.frames), txs);
-            fs.frames = outcome.frames;
-        }
-    }
+    frame_sets =
+        transform_panel_frames(frame_sets, panel.transformations.as_deref().unwrap_or(&[]));
+    attach_notices(&mut frame_sets, notices);
 
     // Sanitize frames for public viewer (R7: strip query text unless show_query_text is true)
     for fs in &mut frame_sets {
