@@ -141,6 +141,8 @@ fn the_sanitizer_keeps_plain_markup() {
         "<table><thead><tr><th colspan=2>A</th></tr></thead></table>",
         "<A HREF=\"#top\">up</A>",
         "<td data-sort aria-hidden>x</td>",
+        "<abbr title=\"1 > 0\">gt</abbr>",
+        "<p data-x=<>x</p>",
     ] {
         assert_eq!(sanitize_view_html(ok), ok, "{ok}");
     }
