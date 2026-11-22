@@ -37,7 +37,7 @@ describe("a map's count", () => {
   it("says how many it shows of all and how many have no location", () => {
     expect(M.countText(spec({ total: 151 }, 50), "en")).toBe("50 shown of 151");
     expect(M.countText(spec({ total: 1651, unlocated: 11 }, 1), "en")).toBe("1 shown of 1,651 · 11 without a location");
-    expect(M.countText(spec({ total: 151, unlocated: 3 }, 50), "sk")).toBe("Zobrazené 50 z 151 · 3 bez polohy");
+    expect(M.countText(spec({ total: 151, unlocated: 3 }, 50), "sk")).toBe("Zobrazené: 50, spolu 151 · 3 bez polohy");
     expect(M.countText(spec(), "en")).toBe("");
   });
 

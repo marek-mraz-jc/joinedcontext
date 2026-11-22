@@ -439,6 +439,7 @@ pub fn aggregated(table: &Table) -> Option<Value> {
         return None;
     }
     let counts = made.method == "count";
+    let mut series = None;
     let mut event = if counts {
         chart(table, Kind::Bar, 0, 1, None, "")
     } else {
@@ -447,13 +448,14 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     let spec = &mut event["spec"];
     if !counts {
         spec["encoding"]["x"]["scale"] = json!({"type": "utc"});
+        if made.per == "day" {
+            spec["encoding"]["x"]["axis"] = json!({"format": "%-d %b", "labelOverlap": true});
+        }
         let first = table.rows.first()?.first();
         if table.rows.iter().all(|row| row.first() == first) {
             spec["encoding"]["color"]["legend"] = Value::Null;
-            // The one series is named over its line, as a legend would.
-            if let Some(name) = first.and_then(Value::as_str).and_then(titled) {
-                spec["title"] = json!(name);
-            }
+            // The one series is named over its line by the chat, whole, as a legend would.
+            series = first.and_then(Value::as_str);
         } else {
             spec["encoding"]["color"]["legend"] = json!({"orient": "bottom", "columns": 1});
         }
@@ -475,13 +477,17 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     } else {
         // Periods read left to right, in time.
         spec["encoding"] = json!({
-            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -45, "labelOverlap": true}},
+            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -90, "labelFontSize": 10, "labelOverlap": "greedy"}},
             "y": spec["encoding"]["x"].clone(),
         });
         spec["mark"] = json!({"type": "bar", "tooltip": true});
         spec.as_object_mut()?.remove("layer");
     }
     event["aggregation"] = json!(made);
+    event["type"] = json!(table.entity_type);
+    if let Some(series) = series {
+        event["series"] = json!(series);
+    }
     // What was split is named with the model's own words, as in the table's caption.
     if let (true, Some(Some(words))) = (counts, table.labels.first()) {
         if !event["labels"].is_object() {

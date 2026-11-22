@@ -202,9 +202,16 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
 .jc-record td:first-child::before { content: none; }
 .jc-record .jc-num { white-space: normal; }
 .jc-record .jc-viz-box { margin-top: 8px; }
-.jc-pager { position: sticky; bottom: 0; left: 0; display: flex; gap: 8px; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--line); background: var(--bg); }
+.jc-pager { display: flex; gap: 8px; justify-content: flex-end; padding: 0 0 6px; }
+.jc-pager[hidden] { display: none; }
 .jc-pager .jc-tab { min-height: 36px; opacity: 1; }
 .jc-pager .jc-tab[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.jc-data.jc-fallback > summary { width: fit-content; min-height: 44px; color: var(--link); text-decoration: underline; }
+.jc-record td:nth-child(2) { font-weight: 600; }
+@media (max-width: 599px) {
+  .jc-data > summary { min-height: 44px; }
+  .jc-tabs .jc-tab, .jc-pager .jc-tab { min-height: 44px; }
+}
 .jc-viz-note { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
 .jc-data-chart { display: block; width: 100%; height: auto; margin: 6px 0 0; }
 .jc-chart-axis { stroke: var(--line); }

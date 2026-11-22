@@ -988,7 +988,7 @@
     if (!VIZ || !data || !data.spec || typeof data.spec !== "object") return;
     var figure = el("figure", "jc-data jc-viz-card");
     var made = data.aggregation;
-    var said = made ? JCRender.aggregated(made, lang, data.labels && data.labels[made.of]) : "";
+    var said = made ? JCRender.chartNote(data, lang) : "";
     var title = typeof data.spec.title === "string" && data.spec.title ? data.spec.title : said || w.chart;
     if (said) figure.appendChild(el("figcaption", "jc-viz-note", said));
     figure.appendChild(vizFrame(data, title, function () {
@@ -1060,7 +1060,7 @@
     var shown = JCRender.table(data, lang);
     if (!shown || !JCRender.firstTable(item.tables = item.tables || [], data)) return;
     var answers = typeof data.top === "number";
-    var figure = el("details", answers ? "jc-data jc-record" : "jc-data");
+    var figure = el("details", answers ? "jc-data jc-record" : VIZ && data.aggregation ? "jc-data jc-fallback" : "jc-data");
     figure.open = true;
     // Folded under its chart, an aggregated table says that it is the table.
     var named = VIZ && data.aggregation && shown.caption ? w.tabTable + ": " + shown.caption : shown.caption;
@@ -1105,9 +1105,10 @@
     // The renderer draws what code aggregated, and one entity needs no bars.
     var drawn = answers || (VIZ && data.aggregation) ? null : plot(JCRender.chart(data));
     if (drawn) figure.appendChild(drawn);
+    var pager = null;
     if (shown.pages > 1) {
       // Twenty rows a page (T-7504); a button that has nothing more stays in place, off.
-      var pager = el("div", "jc-pager");
+      pager = el("div", "jc-pager");
       var back = pager.appendChild(el("button", "jc-tab", shown.turn[0]));
       var next = pager.appendChild(el("button", "jc-tab", shown.turn[1]));
       back.type = next.type = "button";
@@ -1126,12 +1127,16 @@
       back.setAttribute("aria-disabled", "true");
       back.addEventListener("click", function () { if (shown.page > 0) turn(shown.page - 1); });
       next.addEventListener("click", function () { if (shown.page < shown.pages - 1) turn(shown.page + 1); });
-      scroll.appendChild(pager);
     }
     if (VIZ && data.map && typeof data.map === "object") {
       if (answers) mapUnder(figure, scroll, data);
-      else mapTabs(figure, scroll, drawn, data, function (map) { summary.textContent = (map ? shown.mapCaption : shown.caption) || w.table; });
+      else mapTabs(figure, scroll, drawn, data, function (map) {
+        summary.textContent = (map ? shown.mapCaption : shown.caption) || w.table;
+        if (pager) pager.hidden = map;
+      });
     }
+    // Over the rows and under the tabs: below twenty cards nobody on a phone found it.
+    if (pager) figure.insertBefore(pager, scroll);
     if (shown.dataset || shown.download || shown.geojson) {
       var links = el("p", "jc-data-links");
       // More rows than the panel shows: the dataset holds them all (T-4682).

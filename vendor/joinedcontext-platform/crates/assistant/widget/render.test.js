@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
 
@@ -1182,7 +1182,7 @@ test("a list pages twenty rows with the total, a superlative is one of all (T-75
   const list = { type: "Bridge", total: 151, columns: ["name", "yearBuilt"], rows };
   assert.equal(table(list, "en").caption, "Bridges — 1–20 of 151");
   const last = table(list, "en", undefined, 2);
-  assert.deepEqual([last.caption, last.rows.length, last.pages, last.listed], ["Bridges — 41–50 of 151", 10, 3, 50]);
+  assert.deepEqual([last.caption, last.rows.length, last.pages, last.listed], ["Bridges — 41–50 of 151 · the first 50 are listed here", 10, 3, 50]);
   assert.equal(last.rows[0][0], "Most 40");
   const one = { type: "Bridge", total: 1651, top: 1, columns: ["name", "yearBuilt"], rows: [["50_178", 1996]] };
   assert.equal(table(one, "en").caption, "Bridges — 1 of 1,651");
@@ -1195,6 +1195,8 @@ test("a list pages twenty rows with the total, a superlative is one of all (T-75
 test("an aggregation names its method and says when it is part of the data (T-7504)", () => {
   const count = { method: "count", per: "decade", of: "yearBuilt", shown: 1651, total: 1651 };
   assert.equal(aggregated(count, "en"), "Count per decade");
+  assert.equal(chartNote({ type: "Bridge", aggregation: count }, "en"), "Bridges — Count per decade");
+  assert.equal(chartNote({ series: "BB", aggregation: { method: "avg", per: "day", of: "pm10" } }, "en"), "BB · PM10 — Average per day (UTC)");
   assert.equal(aggregated({ ...count, shown: 1200 }, "en"), "Count per decade · 1,200 of 1,651");
   assert.equal(aggregated({ method: "avg", per: "day", of: "pm10", shown: 1, total: 1 }, "sk"), "Priemer za deň (UTC)");
   assert.equal(aggregated({ method: "constructor", per: "day" }, "en"), "");

@@ -561,11 +561,11 @@ pub fn show_split(table: &mut Table, attribute: &str, split: &Split, counted: u6
                 ("fi", "Ei ilmoitettu"),
             ],
             BEFORE => &[
-                ("sk", "Pred 1800"),
-                ("cs", "Před 1800"),
-                ("en", "Before 1800"),
-                ("de", "Vor 1800"),
-                ("fi", "Ennen 1800"),
+                ("sk", "<1800, neoverené"),
+                ("cs", "<1800, neověřené"),
+                ("en", "<1800, unverified"),
+                ("de", "<1800, ungeprüft"),
+                ("fi", "<1800, vahvistamaton"),
             ],
             _ => continue,
         };

@@ -410,6 +410,7 @@ var JCRender = (function () {
     hour: { sk: "za hodinu", cs: "za hodinu", en: "per hour", de: "pro Stunde" },
     period: { sk: "za interval", cs: "za interval", en: "per interval", de: "pro Intervall" }
   };
+  var ONLY = { sk: "v chate je prvých {n}", cs: "v chatu je prvních {n}", en: "the first {n} are listed here", de: "hier stehen die ersten {n}" };
   var PART = { sk: "len časť obdobia", cs: "jen část období", en: "only part of the period", de: "nur ein Teil des Zeitraums" };
   // A row measured a day or more before the table's newest says so beside its time (T-4682).
   var STALE = { sk: "neaktuálne", cs: "neaktuální", en: "out of date", de: "veraltet" };
@@ -475,6 +476,21 @@ var JCRender = (function () {
       said += " · " + numbers.format(made.shown) + " " + OF[lang] + " " + numbers.format(made.total);
     }
     return made.partial === true ? said + " · " + PART[lang] : said;
+  }
+
+  /**
+   * The line over an aggregated chart (T-7504): what is counted or measured, then how, as
+   * "Bridges — Count per decade" or "Banská Bystrica · PM10 — Average per day (UTC)".
+   */
+  function chartNote(data, lang) {
+    var made = data && data.aggregation;
+    var labels = data && data.labels && made ? data.labels[made.of] : null;
+    var said = aggregated(made, lang, labels);
+    if (!said) return "";
+    var what = made.method === "count" ? (typeof data.type === "string" ? word(TYPES, data.type, lang) : "")
+      : (labels ? entry(labels, lang) || entry(labels, "en") : "") || word(LABELS, String(made.of || ""), lang);
+    if (typeof data.series === "string" && data.series) what = data.series + " · " + what;
+    return what ? what + " — " + said : said;
   }
 
   /** A chart's rows with the words of their categories in `lang` (T-7504). A copy. */
@@ -546,6 +562,8 @@ var JCRender = (function () {
       if (c !== "id" && filled.length > 0 && filled.every(function (row) { return urn(row[i]); })) return;
       keep.push(i);
     });
+    // Tied answers are short cards, so their map is in view: the name and what decides first.
+    if (typeof data.top === "number" && raw.length > 1) keep = keep.slice(0, 4);
     var plain = function (column) { return /year|code$/i.test(String(column)) || /Id$|^id$/.test(String(column)); };
     var cell = function (v, column, i) {
       if (v === null || v === undefined || v === "") return "";
@@ -600,6 +618,8 @@ var JCRender = (function () {
       caption = named + " — " + numbers.format(rows.length) + " " + OF[lang] + " " + numbers.format(total);
     } else if (named && pages > 1) {
       caption = named + " — " + numbers.format(first + 1) + "–" + numbers.format(first + rows.length) + " " + OF[lang] + " " + numbers.format(total);
+      // The last page says why it is the last; the dataset's link under it has the rest.
+      if (page === pages - 1 && total > raw.length) caption += " · " + ONLY[lang].replace("{n}", numbers.format(raw.length));
     } else if (named && typeof data.total === "number" && data.total > rows.length) {
       caption = named + " — " + FIRST[lang] + " " + numbers.format(rows.length) + " " + OF[lang] + " " + numbers.format(data.total);
     } else if (named) {
@@ -608,7 +628,7 @@ var JCRender = (function () {
     return {
       caption: caption,
       // Over the map, which draws what is listed and says so on itself, the caption names them all.
-      mapCaption: named && pages > 1 ? named + " (" + numbers.format(total) + ")" : caption,
+      mapCaption: named && pages > 1 ? named + " — " + numbers.format(raw.length) + " " + OF[lang] + " " + numbers.format(total) : caption,
       columns: columns,
       numeric: numeric,
       rows: rows,
@@ -1312,7 +1332,7 @@ var JCRender = (function () {
     markdown: markdown, streamable: streamable, sources: sources, label: label, unlisted: unlisted, linkHost: linkHost,
     safeUrl: safeUrl, events: events, language: language, table: table, chart: chart, greeting: greeting, title: title,
     suggestions: suggestions, trouble: trouble, retryable: retryable, said: said, retry: retry,
-    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, mapFirst: mapFirst
+    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, chartNote: chartNote, mapFirst: mapFirst
   };
 })();
 if (typeof module !== "undefined") module.exports = JCRender;
