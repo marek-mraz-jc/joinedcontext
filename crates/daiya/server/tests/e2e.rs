@@ -1263,17 +1263,22 @@ async fn security_forged_identity_headers_grant_nothing() {
     let (st, _, _) = send_req(&app, forged).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
-    // No credential at all: the default organization is not writable either.
-    let (st, _, _) = send_req(
-        &app,
+    // No credential at all: no Organization stands in, and a named one is not writable either.
+    let anon = || {
         req(
             "POST",
             "/odata/v4/Import",
             None,
             Some(json!({ "dryRun": false, "dashboard": simple_dash("anon") })),
-        ),
-    )
-    .await;
+        )
+    };
+    let (st, _, _) = send_req(&app, anon()).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let mut named = anon();
+    named
+        .headers_mut()
+        .insert("x-grafana-org-id", "1".parse().unwrap());
+    let (st, _, _) = send_req(&app, named).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
     // An unknown bearer token is refused 401, as Grafana refuses an invalid API key.

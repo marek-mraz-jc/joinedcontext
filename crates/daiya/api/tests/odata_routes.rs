@@ -30,18 +30,21 @@ async fn organization_wide_sets_need_read_on_the_organization() {
     let w = seeded().await;
     w.store
         .inner
-        .insert_import_report(daiya_model::ImportReportRecord {
-            id: "report-1".into(),
-            org_id: ORG,
-            instance_id: daiya_model::InstanceId::from_u128(1),
-            dry_run: false,
-            status: "applied".into(),
-            dashboard_count: 1,
-            refused_count: 0,
-            mapped_count: 1,
-            summary: json!({}),
-            created_at: jc_time::TimestampTz::now(),
-        })
+        .insert_import_report(
+            daiya_model::InstallationId::SINGLE,
+            daiya_model::ImportReportRecord {
+                id: "report-1".into(),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                dry_run: false,
+                status: "applied".into(),
+                dashboard_count: 1,
+                refused_count: 0,
+                mapped_count: 1,
+                summary: json!({}),
+                created_at: jc_time::TimestampTz::now(),
+            },
+        )
         .await
         .unwrap();
     let key = daiya_query::CacheKey::new(

@@ -18,9 +18,9 @@
 use crate::render::{
     datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
 };
-use crate::state::{DaiyaState, error_response, resolve_request_ctx};
+use crate::state::{DaiyaState, OrgCtx, error_response};
 use axum::extract::{Extension, Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
@@ -983,11 +983,10 @@ async fn http_query_public_dashboard(
 
 async fn http_create_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(dashboard_uid): Path<String>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     match create_or_update_public_dashboard(&state, &ctx, &dashboard_uid, dto).await {
         Ok(rec) => (StatusCode::OK, Json(rec)).into_response(),
         Err(e) => error_response(&e),
@@ -996,11 +995,10 @@ async fn http_create_public_dashboard(
 
 async fn http_update_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path((dashboard_uid, uid)): Path<(String, String)>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     // As Grafana, the record is the one the path names: another uid is 404, never a new record.
     match state
         .store
@@ -1019,10 +1017,9 @@ async fn http_update_public_dashboard(
 
 async fn http_get_public_dashboard(
     State(state): State<DaiyaState>,
-    headers: HeaderMap,
+    OrgCtx(ctx): OrgCtx,
     Path(dashboard_uid): Path<String>,
 ) -> Response {
-    let ctx = resolve_request_ctx(&state, &headers).await;
     let dec = state.authorizer.check(
         &ctx,
         Action::Read,

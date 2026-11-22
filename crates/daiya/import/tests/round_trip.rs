@@ -80,9 +80,9 @@ fn all_known_datasources() -> Vec<DataSourceInfo> {
 #[tokio::test]
 async fn all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point() {
     let store = MemoryStore::new();
-    let inst = InstallationId::new();
-    let org = OrgId::new();
-    let instance = InstanceId::new();
+    let inst = InstallationId::generate();
+    let org = OrgId::generate();
+    let instance = InstanceId::generate();
     let now = TimestampTz::now();
 
     for ds in all_known_datasources() {
@@ -279,9 +279,9 @@ async fn all_9_dashboards_match_inventory_and_import_export_import_is_fixed_poin
 #[tokio::test]
 async fn plan_and_apply_refuse_stale_plan_and_provisioning_guards_work() {
     let store = MemoryStore::new();
-    let inst = InstallationId::new();
-    let org = OrgId::new();
-    let instance = InstanceId::new();
+    let inst = InstallationId::generate();
+    let org = OrgId::generate();
+    let instance = InstanceId::generate();
     let now = TimestampTz::now();
 
     let desired = DesiredBundle {

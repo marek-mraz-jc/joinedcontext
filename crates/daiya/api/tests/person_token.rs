@@ -159,6 +159,7 @@ impl World {
         let mut req = Request::builder()
             .method(method)
             .uri(uri)
+            .header("x-grafana-org-id", "1")
             .header("authorization", authorization)
             .extension(jc_router::ClientAddr("203.0.113.9".parse().unwrap()));
         for (name, value) in headers {

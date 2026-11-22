@@ -94,7 +94,7 @@ async fn mcp_over_http_lists_tools_and_calls_them_as_the_caller() {
     assert_eq!(st, 200, "{decision}");
     assert_eq!(decision["allowed"], true, "{decision}");
 
-    // The same call without the token runs as the anonymous subject.
+    // The same call without the token names no Organization.
     let (st, _, decision) = send(
         &app,
         "POST",
@@ -103,8 +103,7 @@ async fn mcp_over_http_lists_tools_and_calls_them_as_the_caller() {
         Some(json!({ "name": "daiya_allowed", "arguments": { "operation": "apply" } })),
     )
     .await;
-    assert_eq!(st, 200);
-    assert_eq!(decision["allowed"], false, "{decision}");
+    assert_eq!(st, 401, "{decision}");
 
     // Errors keep their status and an OData error body; `arguments` may be left out.
     let (st, _, err) = send(

@@ -118,8 +118,19 @@ impl DaiyaStore for FlakyStore {
     fn get_quotas(&self, org_id: OrgId) -> StoreFuture<'_, OrgQuotas> {
         guarded!(self, "get_quotas", self.inner.get_quotas(org_id))
     }
-    fn set_quotas(&self, org_id: OrgId, quotas: OrgQuotas) -> StoreFuture<'_, ()> {
-        guarded!(self, "set_quotas", self.inner.set_quotas(org_id, quotas))
+    fn set_quotas(
+        &self,
+        installation: InstallationId,
+        org_id: OrgId,
+        instance: InstanceId,
+        quotas: OrgQuotas,
+    ) -> StoreFuture<'_, ()> {
+        guarded!(
+            self,
+            "set_quotas",
+            self.inner
+                .set_quotas(installation, org_id, instance, quotas)
+        )
     }
     fn list_folders(&self, org_id: OrgId) -> StoreFuture<'_, Vec<FolderRecord>> {
         guarded!(self, "list_folders", self.inner.list_folders(org_id))
@@ -314,11 +325,15 @@ impl DaiyaStore for FlakyStore {
             self.inner.list_import_reports(org_id)
         )
     }
-    fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()> {
+    fn insert_import_report(
+        &self,
+        installation: InstallationId,
+        report: ImportReportRecord,
+    ) -> StoreFuture<'_, ()> {
         guarded!(
             self,
             "insert_import_report",
-            self.inner.insert_import_report(report)
+            self.inner.insert_import_report(installation, report)
         )
     }
     fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()> {
