@@ -866,6 +866,7 @@ async fn widget_rows(
             last,
             aggr_method,
             aggr_period,
+            ..
         } => {
             let window = duration_seconds(last)
                 .ok_or_else(|| invalid(format!("{AT}/last"), "an ISO 8601 duration, e.g. P7D"))?;

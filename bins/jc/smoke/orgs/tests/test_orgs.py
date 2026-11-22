@@ -703,6 +703,9 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
 
     def fake(cfg, *args, timeout=60):
         calls.append(args)
+        if "exec" in args:
+            # the server's statement limit ends before kubectl's (T-7506)
+            assert f"SET statement_timeout = '{watch.QUERY_SECONDS}s'" in args and timeout > watch.QUERY_SECONDS
         if args[-1] == watch.EMBED_ERROR_SQL:
             return "SET\n" + json.dumps({"embedError": embed_error})
         if args[-1] == watch.HELD_SQL:

@@ -244,14 +244,18 @@ pub(crate) fn spec(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Resu
     }
 }
 
-/// An Endpoint's representation outputs, member by member (API/11 EP-159).
+/// An Endpoint's representation outputs, member by member (API/11 EP-159), and the data source
+/// of each chart (T-7491).
 fn endpoint_representations(
     _: &Ground<'_>,
     _: &str,
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
     match envelope.kind.as_str() {
-        "Endpoint" => mutate::check_representation_shape(&envelope.spec),
+        "Endpoint" => {
+            mutate::check_representation_shape(&envelope.spec)?;
+            mutate::check_visualization_sources(&envelope.spec)
+        }
         _ => Ok(()),
     }
 }
