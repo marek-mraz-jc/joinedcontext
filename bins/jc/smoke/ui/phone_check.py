@@ -26,7 +26,7 @@ def phone_hits(page):
     if width > 430 or not page.evaluate("() => matchMedia('(pointer: coarse)').matches"):
         raise RuntimeError("the phone check needs a phone: viewport 400 px wide, has_touch and is_mobile")
     axe = (UI / "node_modules" / "axe-core" / "axe.min.js").read_text()
-    check = re.sub(r"^/\*.*?\*/\s*", "", (UI / "e2e" / "phoneCheck.browser.js").read_text(), flags=re.S).strip()
+    check = re.sub(r"^/\*.*?\*/\s*", "", (UI / "e2e" / "phoneCheck.browser.js").read_text(), flags=re.DOTALL).strip()
     hits = []
     for frame in page.frames:
         if not on_screen(frame):
