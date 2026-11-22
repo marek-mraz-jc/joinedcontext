@@ -433,3 +433,20 @@
     min-height: 44px;
   }
 }
+/* The root is 80 % of 16 px, so the rem text tokens fall under their floors (tokens.css: body 14 px,
+   caption 12 px); a phone keeps the floors (T-7521). */
+@media (max-width: 639.98px) {
+  :root {
+    --portal-text-caption: 12px;
+    --portal-text-caption--line-height: 16px;
+    --portal-text-body: 14px;
+    --portal-text-body--line-height: 20px;
+    --jc-font-size-md: 14px;
+    --jc-font-size-sm: 12px;
+  }
+}
+@media (pointer: coarse) {
+  html .jc-data-grid--stack .jc-grid-arrange-toggle {
+    min-height: 44px;
+  }
+}

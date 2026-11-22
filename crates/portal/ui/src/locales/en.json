@@ -13549,7 +13549,7 @@
       "notIn": "Not in {profile}",
       "lacks": "Missing or not valid: {fields}",
       "noPublisherTitle": "Missing publisher",
-      "noPublisher": "These feeds are unavailable until the Organization declares its publisher IRI in spec.catalog.publisher.uri: {profiles}."
+      "noPublisher": "These feeds are unavailable until the Organization declares its publisher IRI in its settings (Catalogue, Publisher, URI): {profiles}."
     },
     "hosts": {
       "title": "Portal hosts",

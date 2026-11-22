@@ -13549,7 +13549,7 @@
       "notIn": "Nicht in {profile}",
       "lacks": "Fehlt oder ist ungültig: {fields}",
       "noPublisherTitle": "Herausgeber fehlt",
-      "noPublisher": "Diese Feeds sind nicht verfügbar, bis die Organisation ihre Herausgeber-IRI in spec.catalog.publisher.uri angibt: {profiles}."
+      "noPublisher": "Diese Feeds sind nicht verfügbar, bis die Organisation ihre Herausgeber-IRI in den Einstellungen (Katalog, Herausgeber, URI) angibt: {profiles}."
     },
     "hosts": {
       "title": "Portal-Adressen",

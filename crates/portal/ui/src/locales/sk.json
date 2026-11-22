@@ -13549,7 +13549,7 @@
       "notIn": "Nie je v {profile}",
       "lacks": "Chýba alebo je neplatné: {fields}",
       "noPublisherTitle": "Chýba poskytovateľ",
-      "noPublisher": "Tieto feedy sú nedostupné, kým organizácia neuvedie IRI poskytovateľa v spec.catalog.publisher.uri: {profiles}."
+      "noPublisher": "Tieto feedy sú nedostupné, kým organizácia neuvedie IRI poskytovateľa v nastaveniach (katalóg, poskytovateľ, URI): {profiles}."
     },
     "hosts": {
       "title": "Adresy portálov",

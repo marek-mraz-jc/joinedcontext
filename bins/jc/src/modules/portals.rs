@@ -20,6 +20,7 @@
 use dataroom_core::files::FileEntry;
 use dataroom_core::{
     CatalogueDeclaration, CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher,
+    RecordState,
 };
 use dataroom_server::{CatalogueSpec, CatalogueWriter, FileWrite, PortalRoute};
 use jc_core::kinds::{OrganizationSpec, PortalSource, PortalSourceType, PortalSpec, http_url_host};
@@ -185,6 +186,7 @@ fn declaration_of(spec: &OrganizationSpec, title: serde_json::Value) -> Catalogu
                 identifier: None,
             }
         }),
+        ..CatalogueDeclaration::default()
     }
 }
 

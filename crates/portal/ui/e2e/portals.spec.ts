@@ -63,6 +63,8 @@ interface Stub {
   hostsBody?: unknown;
   /** What a write of a portal host answers; the default is the hosts answer. */
   hostWrite?: (route: Route) => Promise<void>;
+  /** Takes the body of each proposed write, as its REST door reads it. */
+  written?: unknown[];
   /** The datasets read of a portal (T-7520); 503 when false. */
   datasets?: unknown;
 }
@@ -94,6 +96,7 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
     if (path.startsWith("/api/v1/projects/org/portals")) {
       if (request.method() !== "GET") {
         sent.push(`${request.method()} ${path}${url.search}`);
+        if (request.method() !== "DELETE" && !url.searchParams.get("dryRun")) options.written?.push(request.postDataJSON());
         if (options.write) return options.write(route);
         return url.searchParams.get("dryRun") ? json({ valid: true, verdict: { ok: true, findings: [] } }) : json(CHANGE, 202);
       }
@@ -251,7 +254,8 @@ for (const width of [1440, 400]) {
 
 test("create, edit and delete a portal: each write a checked proposal", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const sent = await stub(page, { portals: FILLED });
+  const written: { metadata: { name: string }; spec: Record<string, unknown> }[] = [];
+  const sent = await stub(page, { portals: FILLED, written });
   await page.goto("/portals?lang=en");
   await page.getByRole("link", { name: "New portal" }).first().click();
   await page.getByLabel(/Name in the address/).fill("mobility2");
@@ -260,9 +264,9 @@ test("create, edit and delete a portal: each write a checked proposal", async ({
   await page.getByLabel(/^Domain/).selectOption("skoly.bbsk.sk");
   await page.getByLabel("Also keep the usual slug address").check();
   await expect(page.getByText("The portal will answer at https://skoly.bbsk.sk/")).toBeVisible();
-  const created = page.waitForRequest((r) => r.method() === "POST" && !r.url().includes("dryRun"));
   await page.getByRole("button", { name: "Propose the portal" }).click();
-  const body = (await created).postDataJSON() as { metadata: { name: string }; spec: Record<string, unknown> };
+  await expect.poll(() => written.length).toBe(1);
+  const body = written[0];
   expect(body.metadata.name).toBe("bbsk-mobility2");
   expect(body.spec).toMatchObject({ organizationRef: "bbsk", path: "mobility2", host: "skoly.bbsk.sk", slug: "keep", title: { sk: "Doprava 2" } });
   await expect(page.getByText(/waiting|approv/i).first()).toBeVisible();
@@ -314,21 +318,24 @@ const CATALOGUE = {
 
 for (const width of [1440, 400]) {
   test.describe(`profiles at ${width} px`, () => {
-    test.use({ viewport: { width, height: 900 }, hasTouch: width === 400, isMobile: width === 400 });
+    test.use({ viewport: { width, height: width === 400 ? 2300 : 900 }, hasTouch: width === 400, isMobile: width === 400 });
 
     test("the choice with none, some, a refusal and no answer, and the datasets out of a feed", async ({ page }, info) => {
       const state = async (name: string) => {
         const dir = process.env.JC_EVIDENCE_DIR;
         const shot = dir ? `${dir}/${name}-${width}.png` : info.outputPath(`${name}-${width}.png`);
-        await shoot(page, name, width, shot);
+        // A phone scales a taller viewport down, so it takes the whole page instead.
+        // A resize or a full page shot drops the touch emulation: the phone is tall from the start.
+        if (width === 400) await page.screenshot({ path: shot });
+        else await shoot(page, name, width, shot);
         if (width === 400) expect(await writePhoneReport(page, shot)).toEqual([]);
         expect(await axeViolations(page)).toEqual([]);
-        await page.setViewportSize({ width, height: 900 });
+        if (width !== 400) await page.setViewportSize({ width, height: 900 });
       };
+      await page.emulateMedia({ reducedMotion: "reduce" });
       const field = page.getByRole("group", { name: "Catalogue profiles" });
       const open = async (options: Partial<Stub>) => {
         await page.unrouteAll();
-        await manifestReadsAsRest(page);
         const sent = await stub(page, { portals: [HELSINKI], hostsBody: profileHosts(PROFILES), ...options });
         await page.goto("/portals/bbsk-helsinki?lang=en");
         await expect(field).toBeVisible();
@@ -343,23 +350,25 @@ for (const width of [1440, 400]) {
       await expect(field.getByText(/could not be read/)).toBeVisible();
       await state("profiles-error");
 
-      const refuse = (route: Route) =>
-        route.fulfill({
+      const asked: { spec: { profiles?: string[] } }[] = [];
+      const refuse = (route: Route) => {
+        asked.push(route.request().postDataJSON() as (typeof asked)[number]);
+        return route.fulfill({
           status: 422,
           contentType: "application/problem+json",
           body: JSON.stringify({ type: "about:blank", title: "Unprocessable", status: 422, detail: "refused", errors: ["spec.profiles[0]: dcat-ap-fi-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki"] }),
         });
+      };
       const sent = await open({ datasets: { total: 0, missingPublisher: [], profiles: [], items: [] }, write: refuse });
       const fi = field.getByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
       await expect(fi).toBeEnabled();
       await expect(field.getByRole("checkbox", { name: "DCAT-AP-SK 2.0 (SK)" })).toBeDisabled();
       await state("profiles-choice");
       await fi.check();
-      const write = page.waitForRequest((request) => request.method() === "PUT");
       await page.getByRole("button", { name: "Propose the changes" }).click();
-      expect(((await write).postDataJSON() as { spec: { profiles: string[] } }).spec.profiles).toEqual(["dcat-ap-fi-2.0"]);
       await expect(field.getByRole("alert")).toContainText("needs the publisher's IRI");
       expect(sent.length).toBeGreaterThan(0);
+      expect(asked[0].spec.profiles).toEqual(["dcat-ap-fi-2.0"]);
       await state("profiles-refusal");
 
       await open({ datasets: CATALOGUE });

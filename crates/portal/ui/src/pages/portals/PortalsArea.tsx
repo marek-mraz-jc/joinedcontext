@@ -352,7 +352,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   });
   const portals = useReadableList(ORG_NAMESPACE, "portals", "Portal", creating && hosts.isSuccess);
   const title = creating ? t("portals.editor.newTitle") : t("portals.editor.editTitle", { name });
-  const header = <PageHeader title={title} description={creating ? t("portals.editor.description") : t("portals.editor.descriptionTabs")} breadcrumb={<Link to="/portals" className="focus-ring underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
+  const header = <PageHeader title={title} description={creating ? t("portals.editor.description") : t("portals.editor.descriptionTabs")} breadcrumb={<Link to="/portals" className="focus-ring touch-target underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
   if (hosts.isPending || (!creating && stored.isPending)) return <>{header}<PageLoading label={t("app.loading")} /></>;
   if (hosts.isError) return <>{header}{refused(hosts.error) ? <NotAdmin /> : <PageFailed error={hosts.error} onRetry={() => void hosts.refetch()} />}</>;
   const manifest = stored.data as unknown as PortalManifest | undefined;
@@ -439,7 +439,12 @@ function PortalForm({
   organizations: PortalOrganization[];
   taken: string[];
 }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // A stored portal may be in a language the editor does not offer, e.g. fi.
+  const languageName = (lang: string) =>
+    (PORTAL_LANGUAGES as readonly string[]).includes(lang)
+      ? t(`portals.language.${lang}`)
+      : (new Intl.DisplayNames([i18n.resolvedLanguage ?? i18n.language], { type: "language" }).of(lang) ?? lang);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const creating = name === undefined;
@@ -557,7 +562,7 @@ function PortalForm({
             {PORTAL_LANGUAGES.map((lang) => (
               <Checkbox
                 key={lang}
-                label={t(`portals.language.${lang}`)}
+                label={languageName(lang)}
                 checked={draft.languages.includes(lang)}
                 onChange={(event) =>
                   set({ languages: event.target.checked ? PORTAL_LANGUAGES.filter((l) => l === lang || draft.languages.includes(l)) : draft.languages.filter((l) => l !== lang) })
@@ -571,7 +576,7 @@ function PortalForm({
           <Field
             key={lang}
             id={index === 0 ? "portal-title" : `portal-title-${lang}`}
-            label={t("portals.field.titleIn", { language: t(`portals.language.${lang}`) })}
+            label={t("portals.field.titleIn", { language: languageName(lang) })}
             description={t("portals.hint.title")}
             required={index === 0}
             errors={index === 0 ? errorOf("title") : undefined}
@@ -662,7 +667,7 @@ function PortalForm({
         <Button type="submit" variant="primary" loading={mutation.isPending}>
           {creating ? t("portals.editor.create") : t("portals.editor.save")}
         </Button>
-        {!creating && address ? <ExternalLink href={address}>{t("portals.editor.open")}</ExternalLink> : null}
+        {!creating && address ? <ExternalLink href={address} className="touch-target">{t("portals.editor.open")}</ExternalLink> : null}
         {!creating && name && !isDefault ? (
           <span className="sm:ml-auto">
           <DeleteResourceAction target={{ project: ORG_NAMESPACE, kind: "Portal", plural: "portals", name, label: draft.title[draft.languages[0]] || name }} label={t("portals.editor.delete")} />

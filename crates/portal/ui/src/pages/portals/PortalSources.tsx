@@ -817,7 +817,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
           return (
             <Button
               variant="secondary"
-              className="min-h-11 sm:min-h-0"
+              className="touch-size"
               loading={propose.isPending && propose.variables?.hidden?.includes(d.name) !== isHidden}
               aria-label={t(isHidden ? "portals.datasets.unhideNamed" : "portals.datasets.hideNamed", { name: d.title || d.name })}
               onClick={() => toggle(d.name)}
