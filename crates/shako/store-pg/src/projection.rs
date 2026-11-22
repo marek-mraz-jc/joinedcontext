@@ -85,17 +85,8 @@ pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> Sh
     .await
     .map_err(failed)?;
     let after = held.unwrap_or(0);
-    let pending: Vec<(i64, String, Value)> = sqlx::query_as(
-        "SELECT seq, to_jsonb(created_at) #>> '{}', op FROM shako.store_log
-         WHERE instance_id = $1 AND org_id = $2 AND seq > $3 ORDER BY seq",
-    )
-    .bind(tenant.0.as_uuid())
-    .bind(tenant.1.as_uuid())
-    .bind(after)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(|e| ShakoError::Storage(format!("store log read failed: {e}")))?;
-    if pending.is_empty() && held.is_some() {
+    let mut next = entry_after(tx, tenant, after).await?;
+    if next.is_none() && held.is_some() {
         return Ok(0);
     }
     // An earlier release wrote repository rows beside their entries, so the table holds their
@@ -113,9 +104,8 @@ pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> Sh
     .execute(&mut **tx)
     .await
     .map_err(failed)?;
-    let count = pending.len();
-    let mut last = after;
-    for (seq, time, doc) in pending {
+    let (mut count, mut last) = (0, after);
+    while let Some((seq, time, doc)) = next {
         let op: Op = serde_json::from_value(doc)
             .map_err(|e| ShakoError::Storage(format!("store log entry unreadable: {e}")))?;
         sqlx::query("SAVEPOINT op")
@@ -132,7 +122,8 @@ pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> Sh
             Err(e) => return Err(e),
         };
         sqlx::query(end).execute(&mut **tx).await.map_err(failed)?;
-        last = seq;
+        (count, last) = (count + 1, seq);
+        next = entry_after(tx, tenant, seq).await?;
     }
     if held.is_none() {
         // The first projection: an event without an entry was never to be sent from here.
@@ -148,6 +139,25 @@ pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> Sh
     }
     projected(tx, tenant, last).await?;
     Ok(count)
+}
+
+/// The first log entry past `seq`. One at a time: an entry of an earlier release holds up to
+/// 4 MiB of manifest, five times that as JSON.
+async fn entry_after(
+    tx: &mut Tx<'_>,
+    tenant: (InstanceId, OrgId),
+    seq: i64,
+) -> ShakoResult<Option<(i64, String, Value)>> {
+    sqlx::query_as(
+        "SELECT seq, to_jsonb(created_at) #>> '{}', op FROM shako.store_log
+         WHERE instance_id = $1 AND org_id = $2 AND seq > $3 ORDER BY seq LIMIT 1",
+    )
+    .bind(tenant.0.as_uuid())
+    .bind(tenant.1.as_uuid())
+    .bind(seq)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| ShakoError::Storage(format!("store log read failed: {e}")))
 }
 
 fn record(value: impl serde::Serialize) -> ShakoResult<Value> {
@@ -340,7 +350,9 @@ pub(crate) async fn apply(
             .ok_or_else(|| ShakoError::Conflict("package id already taken".into()))
         }
         Op::UpsertPackageVersion(r) => {
-            let doc = hidden_record(hidden::package_version::serialize(&r, ser))?;
+            let mut doc = record(r.record)?;
+            // Always written, empty for a new version: the release before reads a NULL as broken.
+            doc["manifestBytes"] = json!(r.manifest_bytes);
             replace(tx, &tables::PACKAGE_VERSION, doc).await
         }
         Op::InsertPackageFile(r) => {

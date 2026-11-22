@@ -62,9 +62,19 @@ mod tests {
         updates: &[(&str, &str)],
     ) -> (String, std::path::PathBuf) {
         let inst = InstanceId::from_u128(1);
-        let org = OrgId::from_u128(1);
         let dest = init_bare_repo(tmp, inst, RepoId::from_u128(201), "main", false, "Dest")
             .expect("init dest");
+        (receive_refs(&dest, source, updates), dest)
+    }
+
+    /// One receive-pack of `source`'s `main` into `dest`; answers the report-status text.
+    fn receive_refs(
+        dest: &std::path::Path,
+        source: &std::path::Path,
+        updates: &[(&str, &str)],
+    ) -> String {
+        let inst = InstanceId::from_u128(1);
+        let org = OrgId::from_u128(1);
         let bundle = create_single_ref_bundle(source, "main").expect("bundle");
         let pack = bundle
             .windows(2)
@@ -101,12 +111,34 @@ mod tests {
             repo_name: "dest",
             policy: &RefPolicy::default(),
         };
-        let out =
-            handle_receive_pack(&dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
-        (
-            String::from_utf8_lossy(&out.response_bytes).into_owned(),
-            dest,
+        let out = handle_receive_pack(dest, &guard, 10 * 1024 * 1024, &body).expect("receive-pack");
+        String::from_utf8_lossy(&out.response_bytes).into_owned()
+    }
+
+    /// Contract S4: a pack is named by its content, so a refused repeat of an accepted push
+    /// carries the stored pack's name. Refusing it keeps what the accepted push stored.
+    #[test]
+    fn a_refused_repeat_of_a_push_keeps_the_accepted_objects() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(200),
+            "main",
+            true,
+            "Source",
         )
+        .expect("init source");
+        let tip = resolve_commit_oid(&open_isolated(&source).expect("open"), "main")
+            .expect("tip")
+            .to_string();
+        let updates = [(tip.as_str(), "refs/heads/main")];
+        let (accepted, dest) = push_refs(tmp.path(), &source, &updates);
+        assert!(accepted.contains("ok refs/heads/main"), "{accepted}");
+        let repeated = receive_refs(&dest, &source, &updates);
+        assert!(repeated.contains("ng refs/heads/main"), "{repeated}");
+        let (_, files) = list_tree_entries(&dest, "main", true).expect("main still reads");
+        assert!(files.iter().any(|f| f.path == "README.md"));
     }
 
     /// SEC-06, P-19 (T-6713): a credential committed and removed again inside one push is still

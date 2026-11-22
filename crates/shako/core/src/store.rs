@@ -273,6 +273,25 @@ pub trait Store: Send + Sync {
         package_type: Option<&str>,
         package_name: Option<&str>,
     ) -> StoreFuture<'_, Vec<PackageVersionRecord>>;
+    /// At most `limit` tags of an image after `after`, in byte order: names only.
+    fn list_package_tags(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> StoreFuture<'_, Vec<String>>;
+    /// The versions of an image that name `subject_digest` as their subject.
+    fn list_referrers(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        owner: &str,
+        image: &str,
+        subject_digest: &str,
+    ) -> StoreFuture<'_, Vec<PackageVersionRecord>>;
     fn insert_package_file(&self, file: PackageFileRecord) -> StoreFuture<'_, PackageFileRecord>;
     fn get_package_file(
         &self,
@@ -290,6 +309,13 @@ pub trait Store: Send + Sync {
     ) -> StoreFuture<'_, Vec<PackageFileRecord>>;
 
     fn upsert_blob(&self, blob: BlobRecord) -> StoreFuture<'_, BlobRecord>;
+    /// Records a stored blob and counts it, as one step: a key already held stays as it is and
+    /// counts nothing; a new one past `storage_limit` is `QuotaExceeded` and leaves no row.
+    fn store_blob(
+        &self,
+        blob: BlobRecord,
+        storage_limit: Option<u64>,
+    ) -> StoreFuture<'_, BlobRecord>;
     fn get_blob(
         &self,
         instance_id: InstanceId,

@@ -22,6 +22,72 @@ async fn seeded() -> World {
     w
 }
 
+/// The two sets that hang off no dashboard, folder or datasource follow the Organization's read
+/// decision: a caller outside it, and one bound to a folder, reads no row and no count.
+#[tokio::test]
+async fn organization_wide_sets_need_read_on_the_organization() {
+    use daiya_model::DaiyaStore as _;
+    let w = seeded().await;
+    w.store
+        .inner
+        .insert_import_report(daiya_model::ImportReportRecord {
+            id: "report-1".into(),
+            org_id: ORG,
+            instance_id: daiya_model::InstanceId::from_u128(1),
+            dry_run: false,
+            status: "applied".into(),
+            dashboard_count: 1,
+            refused_count: 0,
+            mapped_count: 1,
+            summary: json!({}),
+            created_at: jc_time::TimestampTz::now(),
+        })
+        .await
+        .unwrap();
+    w.store
+        .inner
+        .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
+            id: "stat-1".into(),
+            org_id: ORG,
+            instance_id: daiya_model::InstanceId::from_u128(1),
+            datasource_uid: "prom".into(),
+            hits: 1,
+            misses: 1,
+            entries: 1,
+            bytes_used: 10,
+        })
+        .await
+        .unwrap();
+    for set in ["ImportReports", "QueryCacheStats"] {
+        for who in [None, Some("outsider"), Some("ops-viewer")] {
+            for path in [set.to_owned(), format!("{set}/$count")] {
+                let mut request = Request::builder()
+                    .uri(format!("/odata/v4/{path}"))
+                    .header("x-daiya-org-id", ORG.to_string());
+                if let Some(who) = who {
+                    request = request.header("authorization", format!("Bearer {who}"));
+                }
+                let (st, body) = w
+                    .send(request.body(axum::body::Body::empty()).unwrap())
+                    .await;
+                assert_eq!(st, StatusCode::OK, "{path} as {who:?}");
+                let none = if path.ends_with("$count") {
+                    body == json!(0)
+                } else {
+                    body["value"] == json!([])
+                };
+                assert!(none, "{path} as {who:?} answers {body}");
+            }
+        }
+        let page = w.ok("GET", &format!("/odata/v4/{set}"), None).await;
+        assert_ne!(
+            page["value"],
+            json!([]),
+            "a reader of the Organization keeps {set}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn service_document_and_metadata() {
     let w = world();

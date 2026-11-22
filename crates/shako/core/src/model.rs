@@ -405,9 +405,6 @@ pub struct PackageVersionRecord {
     pub version: String,
     pub digest: String,
     pub media_type: String,
-    /// Kept out of every API answer; the store log still writes it (shako-store-pg `hidden`).
-    #[serde(skip_serializing, default)]
-    pub manifest_bytes: Vec<u8>,
     pub subject_digest: Option<String>,
     pub artifact_type: Option<String>,
     pub size_bytes: u64,

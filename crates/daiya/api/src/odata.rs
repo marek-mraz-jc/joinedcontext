@@ -58,6 +58,8 @@ async fn build_entity_table(
         .ok_or_else(|| CrError::NotFound(format!("unknown OData entity set '{set_name}'")))?;
 
     let rows: Vec<Value> = match set_name {
+        // These hang off no dashboard, folder or datasource: the Organization's read decides.
+        "QueryCacheStats" | "ImportReports" if !can_read_organization(state, ctx) => Vec::new(),
         "Dashboards" => state
             .store
             .list_dashboards(ctx.org_id)
@@ -293,6 +295,18 @@ fn can_read_dashboard(
                 dashboard_uid: uid.to_owned(),
                 folder_uid: folder_uid.map(str::to_owned),
             },
+        )
+        .allowed
+}
+
+/// Read decision on the Organization itself, for the sets that list what is its own.
+fn can_read_organization(state: &DaiyaState, ctx: &RequestCtx) -> bool {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
         )
         .allowed
 }
