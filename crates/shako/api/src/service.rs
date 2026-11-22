@@ -51,7 +51,7 @@ pub fn caller_as_author(ctx: &RequestCtx) -> CommitAuthor {
             .subject
             .email
             .clone()
-            .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
+            .unwrap_or_else(|| format!("{}@local", ctx.subject.login())),
     }
 }
 
@@ -793,7 +793,7 @@ pub async fn commit_files(
         &format!("refs/heads/{branch}"),
         "",
         &commit_sha,
-        &ctx.subject.username,
+        ctx.subject.login(),
     );
     let _ = emit_and_dispatch_event(
         state,
@@ -923,7 +923,7 @@ pub async fn open_pull_request(
             mergeable: Some(m.mergeable),
             merged: false,
             merge_commit_sha: String::new(),
-            author_login: ctx.subject.username.clone(),
+            author_login: ctx.subject.login().to_owned(),
             author_name: ctx.subject.full_name.clone(),
             author_email: ctx.subject.email.clone(),
             created_at: now,
@@ -931,7 +931,7 @@ pub async fn open_pull_request(
             closed_at: None,
         })
         .await?;
-    let payload = build_pr_webhook_payload(&repo, &saved, "opened", &ctx.subject.username);
+    let payload = build_pr_webhook_payload(&repo, &saved, "opened", ctx.subject.login());
     let _ = emit_and_dispatch_event(
         state,
         repo.org_id,
@@ -1039,7 +1039,7 @@ pub async fn create_review(
     };
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, needed).await?;
     let pr = load_pull(state, &repo, number).await?;
-    if verdict == ReviewVerdict::Approved && ctx.subject.username == pr.author_login {
+    if verdict == ReviewVerdict::Approved && ctx.subject.login() == pr.author_login {
         let policy = state
             .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
             .await?;
@@ -1062,7 +1062,7 @@ pub async fn create_review(
             pr_number: number,
             verdict,
             body,
-            author_login: ctx.subject.username.clone(),
+            author_login: ctx.subject.login().to_owned(),
             commit_id: commit_id
                 .filter(|c| !c.is_empty())
                 .unwrap_or_else(|| pr.head_sha.clone()),
@@ -1302,7 +1302,7 @@ pub async fn merge_pull_request(
     pr.closed_at = Some(TimestampTz::now());
     let saved = state.store().update_pull_request(pr).await?;
     record_repo_size(state, &mut repo, &disk_path).await;
-    let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
+    let payload = build_pr_webhook_payload(&repo, &saved, "closed", ctx.subject.login());
     let _ = emit_and_dispatch_event(
         state,
         repo.org_id,
@@ -1846,7 +1846,7 @@ pub async fn redeliver_webhook(
         &format!("refs/heads/{}", repo.default_branch),
         "",
         "",
-        &ctx.subject.username,
+        ctx.subject.login(),
     );
     deliver_webhook_with_retries(state, &hook, "push", &payload).await
 }

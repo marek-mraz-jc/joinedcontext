@@ -15,8 +15,8 @@ use jc_router::Mount;
 use serde_json::{Value, json};
 use shako_api::verify_gitea_signature;
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -46,7 +46,7 @@ async fn world() -> World {
     let org_b = OrgId::from_u128(20);
     let binding = |org_id, principal: &str, actions: Vec<Action>, repo: Option<&str>| RoleBinding {
         org_id,
-        principal: principal.into(),
+        principal: Principal::User(principal.into()),
         actions,
         project_id: None,
         repo: repo.map(str::to_owned),
@@ -73,13 +73,21 @@ async fn world() -> World {
         ),
         binding(org_b, "admin-b", vec![Action::Admin, Action::Write], None),
     ]));
-    let person = |login: &str, org| Subject::authenticated(login, login, vec![org], vec![]);
+    let person = |login: &str, org| Subject::authenticated(login, login, vec![org]);
     let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
         .with_static_tokens(vec![
             StaticTokenBinding::new("portal-token", person("jc-portal", org_a)),
             StaticTokenBinding::new("bob-token", person("reader-bob", org_a)),
             StaticTokenBinding::new("carol-token", person("scoped-carol", org_a)),
             StaticTokenBinding::new("org-b-token", person("admin-b", org_b)),
+            StaticTokenBinding::new(
+                "renamed-token",
+                Subject::authenticated("jc-portal", "renamed", vec![org_a]),
+            ),
+            StaticTokenBinding::new(
+                "namesake-token",
+                Subject::authenticated("u-namesake", "jc-portal", vec![org_a]),
+            ),
         ]);
     let delivered: Delivered = Arc::default();
     let sink = delivered.clone();
@@ -1052,6 +1060,45 @@ async fn pull_request_parts_check_the_repository_read() {
         .await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{part}: {body}");
     }
+}
+
+/// An account is its subject id: renamed it is the same author, and its namesake is nobody.
+#[tokio::test]
+async fn an_account_is_its_subject_id() {
+    let w = world().await;
+    create_repo(&w, "helsinki").await;
+    let (st, me, _) = call(&w.app, "GET", "/odata/Me()", Some("renamed-token"), None).await;
+    assert_eq!((st, &me["Login"]), (StatusCode::OK, &json!("jc-portal")));
+    let (st, _, _) = call(&w.app, "GET", R, Some("namesake-token"), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let files = json!([{"operation": "create", "path": "f.yaml", "content": b64("f\n")}]);
+    let post = |path: &str, token: &'static str, body: Value| {
+        let (app, path) = (w.app.clone(), format!("{R}/{path}"));
+        async move { call(&app, "POST", &path, Some(token), Some(body)).await.0 }
+    };
+    let branch = json!({"NewBranchName": "f"});
+    assert_eq!(
+        post("Shako.CreateBranch", "portal-token", branch).await,
+        StatusCode::OK
+    );
+    assert_eq!(commit(&w, R, "f", files).await.0, StatusCode::OK);
+    let open = json!({"Head": "f", "Base": "main", "Title": "t"});
+    assert_eq!(
+        post("Shako.OpenPullRequest", "portal-token", open).await,
+        StatusCode::OK
+    );
+    let rule = json!({"Rule": {"rule_name": "main", "required_approvals": 1}});
+    assert_eq!(
+        post("Shako.Protect", "portal-token", rule).await,
+        StatusCode::OK
+    );
+    let approve = json!({"Event": "APPROVED"});
+    assert_eq!(
+        post("PullRequests(1)/Shako.Review", "renamed-token", approve).await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the author approving under another display name"
+    );
 }
 
 /// T-7508: a store that cannot say what protects a branch protects it: no merge and no

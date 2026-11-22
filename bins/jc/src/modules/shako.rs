@@ -13,8 +13,8 @@ use axum::Router;
 use jc_router::Mount;
 use kaisatsu_crypto::Kek;
 use shako_core::{
-    Action, LocalAuthorizer, MemorySecretStore, OrgId, RoleBinding, SecretStore, ShakoSigningKey,
-    StaticTokenBinding, Subject, TokenVerifier,
+    Action, LocalAuthorizer, MemorySecretStore, OrgId, Principal, RoleBinding, SecretStore,
+    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{PortalBase, ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
@@ -125,7 +125,7 @@ pub async fn build_state(
     let (store, secrets) = open_store(cfg, org_id, &root, setup).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
-        principal: "admin".into(),
+        principal: Principal::User("admin".into()),
         actions: vec![
             Action::Admin,
             Action::Write,
@@ -142,7 +142,7 @@ pub async fn build_state(
     if let Some(token) = setup.value(crate::setup::Secret::ShakoToken) {
         static_tokens.push(StaticTokenBinding::new(
             token,
-            Subject::authenticated("admin", "admin", vec![org_id], vec![]),
+            Subject::authenticated("admin", "admin", vec![org_id]),
         ));
     }
 

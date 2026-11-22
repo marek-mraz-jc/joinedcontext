@@ -271,7 +271,7 @@ async fn handle_post_receive_pack(
                 &cmd.refname,
                 &cmd.old_oid.to_string(),
                 &cmd.new_oid.to_string(),
-                &ctx.subject.username,
+                ctx.subject.login(),
             );
             // Each ref move is one event: a branch can return to a commit it held before.
             let idem = format!(

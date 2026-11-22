@@ -15,8 +15,8 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -55,7 +55,7 @@ impl World {
         ];
         let binding = |org_id, principal: &str| RoleBinding {
             org_id,
-            principal: principal.into(),
+            principal: Principal::User(principal.into()),
             actions: all.clone(),
             project_id: None,
             repo: None,
@@ -68,11 +68,11 @@ impl World {
             .with_static_tokens(vec![
                 StaticTokenBinding::new(
                     PORTAL_TOKEN,
-                    Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+                    Subject::authenticated("jc-portal", "jc-portal", vec![org]),
                 ),
                 StaticTokenBinding::new(
                     APPS_TOKEN,
-                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org], vec![]),
+                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org]),
                 ),
             ]);
         let guard = OutboundGuard::new(OutboundPolicy {

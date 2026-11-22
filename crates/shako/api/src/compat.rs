@@ -451,7 +451,7 @@ async fn compat_get_current_user(State(state): State<ShakoState>, headers: Heade
         StatusCode::OK,
         Json(json!({
             "id": 1,
-            "login": ctx.subject.username,
+            "login": ctx.subject.login(),
             "full_name": ctx.subject.full_name,
             "email": ctx.subject.email.unwrap_or_default(),
         })),

@@ -14,8 +14,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_pg::PgStore;
@@ -124,7 +124,7 @@ impl Registry {
             Arc::new(LocalAuthorizer::new(
                 orgs.map(|(name, org_id)| RoleBinding {
                     org_id,
-                    principal: name.into(),
+                    principal: Principal::User(name.into()),
                     actions: vec![Action::Admin, Action::Write, Action::Publish],
                     project_id: None,
                     repo: None,
@@ -135,7 +135,7 @@ impl Registry {
                 orgs.map(|(name, org)| {
                     StaticTokenBinding::new(
                         &format!("{name}-token"),
-                        Subject::authenticated(name, name, vec![org], vec![]),
+                        Subject::authenticated(name, name, vec![org]),
                     )
                 })
                 .to_vec(),

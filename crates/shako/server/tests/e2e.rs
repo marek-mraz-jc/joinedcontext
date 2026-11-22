@@ -34,8 +34,8 @@ use serde_json::{Value, json};
 use shako_api::verify_gitea_signature;
 use shako_core::{
     Action, BranchProtectionRule, InstanceId, LocalAuthorizer, OrgId, OutboundGuard,
-    OutboundPolicy, RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject,
-    TokenVerifier,
+    OutboundPolicy, Principal, RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding,
+    Subject, TokenVerifier,
 };
 use shako_git::{create_full_backup_bundle, restore_from_bundle};
 use shako_mcp::{call_mcp_tool, list_mcp_tools};
@@ -73,7 +73,20 @@ async fn setup_world() -> TestWorld {
     let authz = Arc::new(LocalAuthorizer::new(vec![
         RoleBinding {
             org_id: org_a,
-            principal: "jc-portal".into(),
+            principal: Principal::User("jc-portal".into()),
+            actions: vec![
+                Action::Admin,
+                Action::Write,
+                Action::Approve,
+                Action::Publish,
+            ],
+            project_id: None,
+            repo: None,
+        },
+        // Its username is the Portal's; its rights are the ones its own id is bound to.
+        RoleBinding {
+            org_id: org_a,
+            principal: Principal::User("apps-bot".into()),
             actions: vec![
                 Action::Admin,
                 Action::Write,
@@ -85,46 +98,46 @@ async fn setup_world() -> TestWorld {
         },
         RoleBinding {
             org_id: org_a,
-            principal: "writer-alice".into(),
+            principal: Principal::User("writer-alice".into()),
             actions: vec![Action::Write, Action::Approve],
             project_id: None,
             repo: None,
         },
         RoleBinding {
             org_id: org_a,
-            principal: "reader-bob".into(),
+            principal: Principal::User("reader-bob".into()),
             actions: vec![Action::Read],
             project_id: None,
             repo: None,
         },
         RoleBinding {
             org_id: org_b,
-            principal: "admin-b".into(),
+            principal: Principal::User("admin-b".into()),
             actions: vec![Action::Admin, Action::Write],
             project_id: None,
             repo: None,
         },
     ]));
 
-    let mut apps_only_subj = Subject::authenticated("apps-bot", "jc-portal", vec![org_a], vec![]);
+    let mut apps_only_subj = Subject::authenticated("apps-bot", "jc-portal", vec![org_a]);
     apps_only_subj.connector_segments = Some(vec!["apps".into()]);
 
     let tokens = vec![
         StaticTokenBinding::new(
             "portal-token",
-            Subject::authenticated("jc-portal", "jc-portal", vec![org_a], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "alice-token",
-            Subject::authenticated("writer-alice", "writer-alice", vec![org_a], vec![]),
+            Subject::authenticated("writer-alice", "writer-alice", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "bob-token",
-            Subject::authenticated("reader-bob", "reader-bob", vec![org_a], vec![]),
+            Subject::authenticated("reader-bob", "reader-bob", vec![org_a]),
         ),
         StaticTokenBinding::new(
             "org-b-token",
-            Subject::authenticated("admin-b", "admin-b", vec![org_b], vec![]),
+            Subject::authenticated("admin-b", "admin-b", vec![org_b]),
         ),
         StaticTokenBinding::new("apps-only-token", apps_only_subj),
     ];
@@ -1537,7 +1550,7 @@ async fn advertised_forge_tools_answer() {
     let ctx = RequestCtx::new(
         InstanceId::from_u128(1),
         world.org_a,
-        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a]),
     );
     let mount = Mount::default();
     let (st, _) = send_json(
@@ -2089,7 +2102,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
     let ctx = RequestCtx::new(
         world.state.default_instance_id,
         world.org_a,
-        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a]),
     );
     let mount = Mount::default();
     let cli_res = execute_cli_operation(&world.state, &ctx, &mount, "repos", json!({}))
