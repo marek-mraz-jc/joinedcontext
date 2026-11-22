@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, quote, unquote
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from phone_check import phone_hits, write_phone_report
+from phone_check import phone_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 VIZ = ROOT / "vendor" / "viz"
@@ -411,8 +411,6 @@ def test_a_capped_query_opens_on_every_point(pw, width, lang, case, size):
             assert "zoom in for the rest" not in note and "ostatné" not in note, note
         page.wait_for_timeout(800)
         shot(page, f"map-capped-{case}-{width}")
-        if SHOTS and width < 640:
-            write_phone_report(page, f"{SHOTS}/map-capped-{case}-{width}.png")
         assert errors == []
     finally:
         browser.close()
@@ -452,8 +450,6 @@ def test_a_capped_query_without_a_location_says_so_in_place_of_the_map(pw, width
         assert page.locator("#map").is_hidden() and page.locator("#map-count").is_hidden()
         page.wait_for_timeout(500)
         shot(page, f"map-capped-none-{size}-{width}")
-        if SHOTS and width < 640:
-            write_phone_report(page, f"{SHOTS}/map-capped-none-{size}-{width}.png")
         assert errors == []
     finally:
         browser.close()
