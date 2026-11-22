@@ -16,7 +16,7 @@ use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub use shako_api::service::{blob_path, write_blob_file};
-pub use shako_api::{ShakoState, dispatch_pending_outbox};
+pub use shako_api::{ShakoState, dispatch_pending_outbox, drain_mirrors};
 use shako_api::{api_router, authenticate_request, exec_odata_operation, odata_error_response};
 use shako_core::{
     BranchProtectionRule, InstanceRecord, OrgId, ProtectionRuleRecord, PushMirrorRecord, RepoId,
