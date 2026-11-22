@@ -17,3 +17,56 @@ a { color: #1d4ed8; }
 .inline main { padding: 0; }
 /* T-4811: pinned to the top with no margin, so the hidden caption below the frame adds no scroll height. */
 .inline .caption { position: absolute; top: 0; left: 0; margin: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* T-7490: hidden wins over any display rule (the frame of a refused read, a control not in use). */
+[hidden] { display: none !important; }
+/* T-7490: the toolbar of a temporal chart: labelled native controls that wrap on a phone. */
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; margin: 0 0 8px; }
+.controls[aria-busy="true"] { cursor: progress; }
+.control { display: flex; flex-direction: column; gap: 2px; flex: 0 1 13.5rem; min-width: 9rem; }
+.control label { font-weight: 600; font-size: 0.85rem; }
+.control select, .control input, .control summary { box-sizing: border-box; width: 100%; min-height: 2.2rem; font: inherit; padding: 4px 6px; border: 1px solid #94a3b8; border-radius: 6px; background: #fff; color: inherit; }
+.control input { height: 2.2rem; }
+.control summary { cursor: pointer; display: block; height: 2.2rem; line-height: 1.5rem; padding-inline: 10px 24px; position: relative; list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control summary::-webkit-details-marker { display: none; }
+.control summary::after { content: ""; position: absolute; right: 10px; top: 0.75rem; width: 5px; height: 5px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+#c-stations { margin-top: 4px; }
+#c-stations option { padding: 4px 2px; }
+/* One left edge, with room for a focus ring. */
+.inline main:has(.controls) { padding: 3px; }
+.control select:focus-visible, .control input:focus-visible, .control summary:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 1px; }
+.hint { font-size: 0.78rem; color: #475569; margin: 0; }
+#controls-note { margin: 4px 0; }
+#controls-note:empty { display: none; }
+/* Laid over the chart it replaces, so nothing under it moves. */
+#status.loading { position: absolute; z-index: 1; left: 50%; transform: translateX(-50%); margin-top: 180px; white-space: nowrap; background: #eff6ff; color: #1e3a8a; }
+iframe[aria-busy="true"] { opacity: 0.2; }
+#status.blank { box-sizing: border-box; min-height: 420px; display: flex; align-items: center; justify-content: center; text-align: center; }
+#status.note:not(.blank) { margin: 6px 0; padding: 5px 10px; border-left: 3px solid #d97706; border-radius: 0; font-size: 0.85rem; }
+#status.note.blank { background: #f8fafc; color: #334155; }
+html[data-theme="dark"] #status.note.blank { background: #22272e; color: #e5e7eb; }
+#data-note { margin: 6px 0; }
+.link { font: inherit; padding: 0; border: 0; background: none; color: inherit; font-weight: 600; text-align: start; text-decoration: underline; cursor: pointer; }
+.link:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+figure:has(iframe[aria-busy="true"]) :is(#data-note, #controls-note, #axis-note) { opacity: 0.55; }
+#data-note.carried { padding: 5px 10px; border-left: 3px solid #d97706; background: #fffbeb; color: #78350f; font-size: 0.85rem; }
+html[data-theme="dark"] #data-note.carried { background: #422006; color: #fde68a; }
+html[data-theme="dark"] .control select, html[data-theme="dark"] .control input, html[data-theme="dark"] .control summary { background: #1f2329; border-color: #4b5563; }
+html[data-theme="dark"] .hint { color: #a0a8b3; }
+@media (max-width: 480px) {
+  .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin-bottom: 6px; }
+  .control { min-width: 0; gap: 1px; }
+  .control select, .control input, .control summary { min-height: 2rem; height: 2rem; }
+  .control select[multiple] { height: auto; }
+  .control summary { line-height: 1.4rem; padding-block: 3px; }
+  .control.first { grid-column: 1; }
+  .hint { font-size: 0.75rem; }
+  #data-note.carried, #status.note:not(.blank) { padding: 4px 8px; font-size: 0.76rem; line-height: 1.35; }
+  #status { margin: 6px 0; padding: 6px 10px; font-size: 0.85rem; }
+}
+.retry { font: inherit; margin: 0 0 8px; padding: 6px 14px; border: 1px solid #1d4ed8; border-radius: 6px; background: #1d4ed8; color: #fff; cursor: pointer; }
+.skeleton { height: 420px; margin: 8px 0; border-radius: 8px; background: #f1f5f9; }
+html[data-theme="dark"] .skeleton { background: #22272e; }
+.retry.reset { margin: 4px 0; padding: 4px 12px; background: transparent; color: #1d4ed8; }
+/* The retry sits in the panel that says what failed. */
+#status.blank + .retry { display: block; position: relative; top: -178px; margin: 0 auto; }
+.retry:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }

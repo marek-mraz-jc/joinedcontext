@@ -28,12 +28,135 @@
     fi: "Tämän kaavion tiedot eivät ole nyt saatavilla.",
     en: "The data of this chart is not available now."
   };
-  // T-5414: a temporal chart cut at a limit says so instead of passing for the whole window.
+  // T-5414: a temporal chart cut at a limit says so instead of passing for the whole window, and
+  // names what was cut: newer data, more stations, or both.
   var PARTIAL = {
-    sk: "Graf je neúplný: zobrazuje údaje do {at}, zvyšok presahuje limity stránky.",
-    cs: "Graf je neúplný: ukazuje data do {at}, zbytek přesahuje limity stránky.",
-    fi: "Kaavio on vajaa: se näyttää tiedot {at} asti, loput ylittävät sivun rajat.",
-    en: "Partial chart: it shows data up to {at}; the rest is over the page's limits."
+    sk: { note: "Graf je neúplný, nenačítali sa {what}. Zobrazuje údaje od {from} do {to}; skúste kratšie obdobie.",
+      newer: "novšie údaje", more: "ďalšie stanice", both: "novšie údaje a ďalšie stanice" },
+    cs: { note: "Graf je neúplný, nenačetla se {what}. Ukazuje data od {from} do {to}; zkuste kratší období.",
+      newer: "novější data", more: "data dalších stanic", both: "novější data a data dalších stanic" },
+    fi: { note: "Kaavio on vajaa, lataamatta jäi {what}. Se näyttää tiedot {from}–{to}; kokeile lyhyempää aikaväliä.",
+      newer: "uudempia tietoja", more: "muita asemia", both: "uudempia tietoja ja muita asemia" },
+    en: { note: "Partial chart, not loaded: {what}. It shows data from {from} to {to}; try a shorter range.",
+      newer: "newer data", more: "more stations", both: "newer data and more stations" }
+  };
+
+  // T-7490: the toolbar of a temporal chart. Its state lives in the fragment after the view id, so
+  // a link or an embed keeps the reader's choice: `r` range, `from`/`to` days of a custom range,
+  // `g` granularity, `m` method, `a` attribute, `s` stations (comma-separated entity ids).
+  var RANGES = ["PT24H", "P7D", "P31D"];
+  var GRANS = ["raw", "PT1H", "P1D"];
+  var METHODS = ["avg", "min", "max"];
+  var AGGR = /^(avg|min|max|sum|totalCount|distinctCount|stddev|sumsq)$/;
+  var DAY = 86400000;
+  // Raw readings past a week come back hourly: a week of ten-minute readings of eight stations is
+  // already 8,000 instances (payload bound).
+  var RAW_DAYS = 7;
+  // A window longer than the gateway's anonymous 31 days is read as consecutive 31-day daily
+  // windows, at most WALK of them (the newest), never by asking the gateway for more.
+  var WALK = 12;
+  // The room at both ends of the time axis that keeps a centred label inside the chart.
+  var EDGE = 22;
+  // Past four series (two on a phone) one plot is a bundle, and two that coincide hide each other:
+  // each station gets a plot of its own, up to the ROWS the frame's height holds.
+  var ROWS = 10;
+  var DATE = /^\d{4}-\d\d-\d\d$/;
+  var ENTITY = /^urn:[A-Za-z0-9][A-Za-z0-9:._~%+-]{0,254}$/;
+  var TEXT = {
+    sk: {
+      controls: "Nastavenia grafu", range: "Obdobie", rangeHint: "Časový rozsah, napr. 7 dní.",
+      PT24H: "24 hodín", P7D: "7 dní", P31D: "31 dní", custom: "Vlastné", from: "Od", to: "Do", dateHint: "Napr. 1. nov. 2026 (UTC).",
+      gran: "Podrobnosť", granHint: "Interval, napr. denne.", raw: "Merania", PT1H: "Hodinovo", P1D: "Denne",
+      method: "Výpočet", methodHint: "Za interval, napr. maximum.", avg: "Priemer", min: "Minimum", max: "Maximum",
+      stations: "Stanice", stationsHint: "Pre viac staníc podržte Ctrl alebo Cmd.",
+      attr: "Veličina", attrHint: "Napr. Teplota: graf ukáže iba ju.", all: "Všetky",
+      loading: "Načítavam údaje…", empty: "Za toto obdobie nie sú žiadne údaje. Skúste dlhšie obdobie alebo inú podrobnosť.",
+      hourly: "Obdobia dlhšie ako 7 dní sa zobrazujú po hodinách.", daily: "Obdobia dlhšie ako 31 dní sa zobrazujú po dňoch.",
+      capped: "Zobrazuje sa posledných {n} dní vybraného obdobia (limit stránky).", badDates: "Dátum Od musí byť najneskôr Do a nie v budúcnosti.",
+      zoom: "Potiahnutím v páse priblížite časť obdobia",
+      time: "Čas", station: "Stanica", retry: "Skúsiť znova", resetZoom: "Zobraziť celé obdobie", firstData: "Pred {d} v tomto období nie sú uložené údaje.",
+      stationsTouch: "Pre viac staníc ťuknite na každú.", allStations: "Všetky stanice", slow: "Údaje sa nenačítali do 15 sekúnd.",
+      held: "Bod či rovná čiara nemusí byť meranie: bez meraní sa môže opakovať posledná hodnota.", measured: "Zobraziť časy meraní („Merania“)", local: "Časy na osi sú v miestnom čase ({tz}).", utcDays: "Dni sú v UTC, krajný deň môže byť neúplný.",
+      gap: "Medzera v čiare: v tom čase nie sú merania.", legend: "Kliknutím alebo ťuknutím na stanicu v legende ju zvýrazníte.",
+      utcAxis: "Deň (UTC)", dateHintTo: "Napr. 20. nov. 2026 (UTC).",
+      stationsExample: "Napr. {names}.", twoStations: "dve stanice", missing: "nenačítané",
+      measuredWeek: " za posledných 7 dní", noReadings: "bez meraní", stored: "Údaje: "
+    },
+    cs: {
+      controls: "Nastavení grafu", range: "Období", rangeHint: "Časový rozsah, např. 7 dní.",
+      PT24H: "24 hodin", P7D: "7 dní", P31D: "31 dní", custom: "Vlastní", from: "Od", to: "Do", dateHint: "Např. 1. lis. 2026 (UTC).",
+      gran: "Podrobnost", granHint: "Interval, např. po dnech.", raw: "Měření", PT1H: "Po hodinách", P1D: "Po dnech",
+      method: "Výpočet", methodHint: "Za interval, např. maximum.", avg: "Průměr", min: "Minimum", max: "Maximum",
+      stations: "Stanice", stationsHint: "Pro více stanic podržte Ctrl nebo Cmd.",
+      attr: "Veličina", attrHint: "Např. Teplota: graf ukáže jen ji.", all: "Všechny",
+      loading: "Načítám data…", empty: "Za toto období nejsou žádná data. Zkuste delší období nebo jinou podrobnost.",
+      hourly: "Období delší než 7 dní se zobrazují po hodinách.", daily: "Období delší než 31 dní se zobrazují po dnech.",
+      capped: "Zobrazuje se posledních {n} dní vybraného období (limit stránky).", badDates: "Datum Od musí být nejpozději Do a ne v budoucnosti.",
+      zoom: "Tažením v pásu přiblížíte část období",
+      time: "Čas", station: "Stanice", retry: "Zkusit znovu", resetZoom: "Zobrazit celé období", firstData: "Před {d} v tomto období nejsou uložena data.",
+      stationsTouch: "Pro více stanic klepněte na každou.", allStations: "Všechny stanice", slow: "Data se nenačetla do 15 sekund.",
+      held: "Bod či rovná čára nemusí být měření: bez měření se může opakovat poslední hodnota.", measured: "Zobrazit časy měření („Měření“)", local: "Časy na ose jsou v místním čase ({tz}).", utcDays: "Dny jsou v UTC, krajní den může být neúplný.",
+      gap: "Mezera v čáře: v tu dobu nejsou měření.", legend: "Kliknutím nebo klepnutím na stanici v legendě ji zvýrazníte.",
+      utcAxis: "Den (UTC)", dateHintTo: "Např. 20. lis. 2026 (UTC).",
+      stationsExample: "Např. {names}.", twoStations: "dvě stanice", missing: "nenačteno",
+      measuredWeek: " za posledních 7 dní", noReadings: "bez měření", stored: "Data: "
+    },
+    fi: {
+      controls: "Kaavion asetukset", range: "Aikaväli", rangeHint: "Miltä ajalta, esim. 7 päivää.",
+      PT24H: "24 tuntia", P7D: "7 päivää", P31D: "31 päivää", custom: "Oma", from: "Alkaen", to: "Asti", dateHint: "Esim. 1.11.2026 (UTC).",
+      gran: "Tarkkuus", granHint: "Väli, esim. päivittäin.", raw: "Mittaukset", PT1H: "Tunneittain", P1D: "Päivittäin",
+      method: "Laskenta", methodHint: "Väliltä, esim. maksimi.", avg: "Keskiarvo", min: "Minimi", max: "Maksimi",
+      stations: "Asemat", stationsHint: "Useampi asema: pidä Ctrl tai Cmd.",
+      attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
+      loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista tarkkuutta.",
+      hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivää näytetään päivittäin.",
+      capped: "Näytetään valitun aikavälin viimeiset {n} päivää (sivun raja).", badDates: "Alkupäivän on oltava viimeistään loppupäivä eikä tulevaisuudessa.",
+      zoom: "Vedä kaistassa lähentääksesi",
+      time: "Aika", station: "Asema", retry: "Yritä uudelleen", resetZoom: "Näytä koko aikaväli", firstData: "Ennen päivää {d} tältä aikaväliltä ei ole tallennettuja tietoja.",
+      stationsTouch: "Useampi asema: napauta kutakin.", allStations: "Kaikki asemat", slow: "Tietoja ei saatu 15 sekunnissa.",
+      held: "Piste tai suora viiva ei aina ole mittaus: ilman mittauksia edellinen arvo voi toistua.", measured: "Näytä mittausajat (”Mittaukset”)", local: "Akselin ajat ovat paikallista aikaa ({tz}).", utcDays: "Päivät ovat UTC-ajassa, reunimmainen päivä voi olla vajaa.",
+      gap: "Aukko viivassa: ajalta ei ole mittauksia.", legend: "Napsauta tai napauta asemaa selitteessä korostaaksesi sen.",
+      utcAxis: "Päivä (UTC)", dateHintTo: "Esim. 20.11.2026 (UTC).",
+      stationsExample: "Esim. {names}.", twoStations: "kaksi asemaa", missing: "ei ladattu",
+      measuredWeek: " viimeisiltä 7 päivältä", noReadings: "ei mittauksia", stored: "Tiedot: "
+    },
+    en: {
+      controls: "Chart settings", range: "Range", rangeHint: "How long, e.g. 7 days.",
+      PT24H: "24 hours", P7D: "7 days", P31D: "31 days", custom: "Custom", from: "From", to: "To", dateHint: "E.g. 1 Nov 2026 (UTC).",
+      gran: "Granularity", granHint: "Interval, e.g. daily.", raw: "Readings", PT1H: "Hourly", P1D: "Daily",
+      method: "Method", methodHint: "Per interval, e.g. maximum.", avg: "Average", min: "Minimum", max: "Maximum",
+      stations: "Stations", stationsHint: "For more stations hold Ctrl or Cmd.",
+      attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
+      loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another granularity.",
+      hourly: "Over 7 days, readings are shown hourly.", daily: "Over 31 days, values are shown daily.",
+      capped: "Showing the last {n} days of the range picked (the page's limit).", badDates: "From must be on or before To and not in the future.",
+      zoom: "Drag in the strip to zoom into part of the range",
+      time: "Time", station: "Station", retry: "Try again", resetZoom: "Show the whole range", firstData: "No readings before {d} are stored in this range.",
+      stationsTouch: "For more stations tap each.", allStations: "All stations", slow: "The data did not load within 15 seconds.",
+      held: "A point or a flat line may be no measurement: without measurements the last value may be repeated.", measured: "Show measured times (\"Readings\")", local: "Times on the axis are local ({tz}).", utcDays: "Days are in UTC, the first or last may be incomplete.",
+      gap: "A gap in a line: no readings at that time.", legend: "Click or tap a station in the legend to highlight it.",
+      utcAxis: "Day (UTC)", dateHintTo: "E.g. 20 Nov 2026 (UTC).",
+      stationsExample: "E.g. {names}.", twoStations: "two stations", missing: "not loaded",
+      measuredWeek: " of the last 7 days", noReadings: "no readings", stored: "Data: "
+    }
+  };
+  // UN/CEFACT unit codes an answer's unitCode may carry, as a reader writes them.
+  var UNITS = { CEL: "°C", KEL: "K", P1: "%", HPA: "hPa", A97: "hPa", PAL: "Pa", MMT: "mm", MTS: "m/s", KMH: "km/h", DD: "°",
+    GQ: "µg/m³", GP: "mg/m³", "59": "ppm", "61": "ppb", WTT: "W", KWT: "kW", KWH: "kWh", LUX: "lx", DB: "dB", MTR: "m", CMT: "cm" };
+  // The Smart Data Models units of the attributes the catalogue's weather and air charts draw, for
+  // an answer without unitCode; `fraction`: the model stores 0..1 and a reader reads percent.
+  var KNOWN = {
+    temperature: { unit: "CEL", sk: "Teplota", cs: "Teplota", fi: "Lämpötila", en: "Temperature" },
+    relativeHumidity: { unit: "P1", fraction: true, sk: "Relatívna vlhkosť", cs: "Relativní vlhkost", fi: "Suhteellinen kosteus", en: "Relative humidity" },
+    atmosphericPressure: { unit: "HPA", sk: "Tlak vzduchu", cs: "Tlak vzduchu", fi: "Ilmanpaine", en: "Air pressure" },
+    precipitation: { unit: "MMT", sk: "Zrážky", cs: "Srážky", fi: "Sademäärä", en: "Precipitation" },
+    windSpeed: { unit: "MTS", sk: "Rýchlosť vetra", cs: "Rychlost větru", fi: "Tuulen nopeus", en: "Wind speed" },
+    windDirection: { unit: "DD", sk: "Smer vetra", cs: "Směr větru", fi: "Tuulen suunta", en: "Wind direction" },
+    pm10: { unit: "GQ", sk: "PM10", cs: "PM10", fi: "PM10", en: "PM10" },
+    pm25: { unit: "GQ", sk: "PM2,5", cs: "PM2,5", fi: "PM2,5", en: "PM2.5" },
+    no2: { unit: "GQ", sk: "NO₂", cs: "NO₂", fi: "NO₂", en: "NO₂" },
+    o3: { unit: "GQ", sk: "O₃", cs: "O₃", fi: "O₃", en: "O₃" },
+    so2: { unit: "GQ", sk: "SO₂", cs: "SO₂", fi: "SO₂", en: "SO₂" }
   };
 
   // `#{viewId}`, then `&inline` (the catalogue shows title and description itself) and
@@ -148,6 +271,343 @@
       default:
         throw new Error("unknown source");
     }
+  }
+
+  // The toolbar's defaults: what the view itself asks for. A `last`, an aggrPeriod or an aggrMethod
+  // the toolbar does not list stays as an extra option, so no authored chart changes on its own.
+  function defaults(source) {
+    var s = source || {};
+    var aggregated = !!s.aggrMethod && !!duration(s.aggrPeriod);
+    return {
+      range: duration(s.last) ? s.last : "P7D",
+      from: null,
+      to: null,
+      gran: aggregated ? s.aggrPeriod : "raw",
+      method: aggregated && AGGR.test(s.aggrMethod) ? s.aggrMethod : "avg",
+      attr: null,
+      stations: []
+    };
+  }
+
+  // The fragment's toolbar state over the view's defaults. A part that is not one of the allowed
+  // values is dropped, never repaired, so a link cannot put a value of its own into a URL.
+  function parseState(hash, source) {
+    var state = defaults(source);
+    var own = defaults(source);
+    var attrs = Array.isArray(source && source.attrs) ? source.attrs : [];
+    String(hash || "").replace(/^#/, "").split("&").slice(1).forEach(function (part) {
+      var at = part.indexOf("=");
+      if (at < 1) return;
+      var key = part.slice(0, at);
+      var value;
+      try { value = decodeURIComponent(part.slice(at + 1)); } catch (e) { return; }
+      if (key === "r" && (RANGES.indexOf(value) >= 0 || value === own.range || value === "custom")) state.range = value;
+      if ((key === "from" || key === "to") && day(value) !== null) state[key] = value;
+      if (key === "g" && (GRANS.indexOf(value) >= 0 || value === own.gran)) state.gran = value;
+      if (key === "m" && (METHODS.indexOf(value) >= 0 || value === own.method)) state.method = value;
+      if (key === "a" && attrs.length > 1 && attrs.indexOf(value) >= 0) state.attr = value;
+      if (key === "s") state.stations = value.split(",").filter(function (id) { return ENTITY.test(id); }).slice(0, 50);
+    });
+    if (state.range === "custom" && (!state.from || !state.to)) state.range = own.range;
+    if (state.range !== "custom") state.from = state.to = null;
+    return state;
+  }
+
+  // The fragment parts of a state that differ from the view's defaults, in a fixed order.
+  function stateHash(state, source) {
+    var own = defaults(source);
+    var out = [];
+    if (state.range !== own.range) out.push("r=" + encodeURIComponent(state.range));
+    if (state.range === "custom") out.push("from=" + state.from, "to=" + state.to);
+    if (state.gran !== own.gran) out.push("g=" + encodeURIComponent(state.gran));
+    if (state.method !== own.method) out.push("m=" + encodeURIComponent(state.method));
+    if (state.attr) out.push("a=" + encodeURIComponent(state.attr));
+    if (state.stations.length) out.push("s=" + state.stations.map(encodeURIComponent).join(","));
+    return out.join("&");
+  }
+
+  // A `YYYY-MM-DD` day as the UTC midnight it starts at, or null.
+  function day(text) {
+    if (!DATE.test(String(text || ""))) return null;
+    var ms = Date.parse(text + "T00:00:00Z");
+    return isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== text ? null : ms;
+  }
+
+  // A date keeps its parts on one line ("14. 11. 2026").
+  function nb(text) {
+    return String(text).replace(/ /g, "\u00a0");
+  }
+
+  function iso(ms) {
+    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  // The reads of a temporal chart in the toolbar's state: one window for a range up to 31 days,
+  // else consecutive daily windows of at most 31 days, the newest WALK of them. A preset range is
+  // read `after` now minus the range (a cut answer continues by Content-Range), a custom or walked
+  // one `between`. Throws on a source or a state no read may come from.
+  function temporalPlan(source, state, endpoint, api, now) {
+    firstRequest(source, endpoint, api, now);
+    var s = source;
+    var attrs = state.attr ? [state.attr] : s.attrs;
+    var start;
+    var end;
+    var custom = state.range === "custom";
+    if (custom) {
+      start = day(state.from);
+      end = day(state.to);
+      if (start === null || end === null || start > end || start > now) throw new Error("dates");
+      end = Math.min(end + DAY, now);
+    } else {
+      var span = duration(state.range);
+      if (!span) throw new Error("range");
+      start = now - span;
+      end = now;
+    }
+    var gran = state.gran;
+    var forced = null;
+    if (gran !== "raw" && !duration(gran)) throw new Error("granularity");
+    if (end - start > MAX_DAYS * DAY && gran !== "P1D") {
+      gran = "P1D";
+      forced = "daily";
+    } else if (gran === "raw" && end - start > RAW_DAYS * DAY) {
+      gran = "PT1H";
+      forced = "hourly";
+    }
+    var method = gran === "raw" ? null : state.method;
+    if (method !== null && !AGGR.test(method)) throw new Error("method");
+    // An aggregated read starts on a whole hour or UTC day, so each bucket is one hour or one day
+    // (the broker counts its periods from timeAt); a preset range whose whole day would pass the
+    // gateway's 31 days starts on the next one.
+    if (method) {
+      var step = duration(gran);
+      var floor = Math.floor(start / step) * step;
+      start = !custom && end - floor > MAX_DAYS * DAY ? Math.ceil(start / step) * step : floor;
+    }
+    // Windows counted forward from the start keep that alignment; the newest WALK of them are read.
+    var windows = [];
+    for (var from = start; from < end; from += MAX_DAYS * DAY) windows.push({ from: from, to: Math.min(from + MAX_DAYS * DAY, end) });
+    var capped = windows.length > WALK;
+    windows = windows.slice(-WALK);
+    var base = api + "/api/endpoint/" + endpoint + "/ngsi-ld/v1/temporal/entities?";
+    var between = custom || windows.length > 1;
+    return {
+      kind: "temporal",
+      type: s.type,
+      attrs: attrs,
+      method: method,
+      gran: gran,
+      forced: forced,
+      start: windows[0].from,
+      end: end,
+      capped: capped ? Math.round((end - windows[0].from) / DAY) : 0,
+      urls: windows.map(function (w) {
+        return base + query({
+          type: s.type,
+          attrs: attrs.join(","),
+          timerel: between ? "between" : "after",
+          timeAt: iso(w.from),
+          endTimeAt: between ? iso(w.to) : undefined,
+          format: method ? "aggregatedValues" : "temporalValues",
+          aggrMethods: method || undefined,
+          aggrPeriodDuration: method ? gran : undefined,
+          firstN: method ? undefined : PAGE,
+          limit: PAGE
+        });
+      })
+    };
+  }
+
+  // An attribute's axis title in the page's language with its unit, and whether its 0..1 values
+  // are drawn as percent: the answer's unitCode first, else the model's.
+  function measure(attr, unitCode, lang, values) {
+    var known = KNOWN[attr] || {};
+    var label = known[lang] || known.en || attr.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, function (c) { return c.toUpperCase(); });
+    var code = typeof unitCode === "string" ? unitCode : known.unit;
+    var percent = !!known.fraction && code === "P1" && values.every(function (v) { return typeof v !== "number" || Math.abs(v) <= 1.5; });
+    var unit = UNITS[code] || "";
+    return { label: label, unit: unit, percent: percent, title: unit ? label + " (" + unit + ")" : label };
+  }
+
+  // The interactive form of a single-view temporal spec (a `mark`, an x of type temporal, nothing
+  // composed and no params of its own): the authored chart at `width` with the y title and the
+  // tooltip naming the measure and its unit, a legend that toggles a station (when colour is a
+  // field), and a strip under it whose x-interval brush zooms the chart. Any other spec only gets
+  // the titles and the full width.
+  function interactive(spec, opts) {
+    var copy = JSON.parse(JSON.stringify(spec));
+    var enc = copy.encoding || {};
+    var t = TEXT[opts.lang] || TEXT.en;
+    if (opts.from && opts.to && opts.from !== opts.to) rename(copy, opts.from, opts.to);
+    if (enc.y && enc.y.field === opts.attr && enc.y.title === undefined) enc.y.title = opts.measure.title;
+    (Array.isArray(enc.tooltip) ? enc.tooltip : []).forEach(function (tip) {
+      if (!tip || typeof tip !== "object" || tip.title !== undefined) return;
+      if (tip.field === opts.attr) tip.title = opts.measure.title;
+      else if (tip.type === "temporal") {
+        tip.title = t.time;
+        if (!tip.format) tip.format = opts.daily ? "%d.%m.%Y" : "%d.%m.%Y %H:%M";
+      } else if (tip.field === "name") tip.title = t.station;
+    });
+    var single = copy.mark && enc.x && enc.x.type === "temporal" && enc.x.field &&
+      !copy.layer && !copy.vconcat && !copy.hconcat && !copy.concat && !copy.facet && !copy.repeat && !copy.params && !enc.row && !enc.column;
+    if (!single) {
+      if (copy.width === undefined && !copy.vconcat && !copy.hconcat && !copy.concat && !copy.facet && !copy.repeat) copy.width = "container";
+      return copy;
+    }
+    var outer = { $schema: copy.$schema, data: copy.data };
+    ["datasets", "config", "title", "description"].forEach(function (key) {
+      if (copy[key] !== undefined) outer[key] = copy[key];
+      delete copy[key];
+    });
+    delete copy.$schema;
+    delete copy.data;
+    var width = Math.max(Math.round(opts.width), 200);
+    copy.width = width;
+    // A gap in the readings breaks the line (gapped() puts a null there) instead of passing for
+    // readings; past 60 points a series draws without its markers.
+    copy.mark = Object.assign({}, typeof copy.mark === "string" ? { type: copy.mark } : copy.mark, { invalid: "break-paths-show-domains" });
+    var line = copy.mark.type === "line";
+    // A daily value is a point of its own: a line through it draws a fall and a rise over a day
+    // that may hold the value of the day before.
+    var dots = !!opts.daily && line;
+    if (dots) copy.mark = { type: "point", filled: false, strokeWidth: 2, opacity: 1, size: opts.dense ? 24 : 70, invalid: "break-paths-show-domains" };
+    if (opts.dense && copy.mark.point) copy.mark.point = false;
+    // On a phone the lines of several stations merge at the theme's width.
+    if (line && !dots && opts.dense && opts.width < 480 && copy.mark.strokeWidth === undefined) copy.mark.strokeWidth = 1.25;
+    // Daily points sit on their day and the ticks are days; finer data labels each tick with its
+    // time and the first tick and each midnight with the day too, so a zoomed axis says its days.
+    var ticks = opts.daily
+      ? { format: "%-d.%-m.", tickMinStep: DAY, labelFlush: false, labelSeparation: 2, tickCount: Math.max(Math.floor(opts.width / 40), 2) }
+      : {
+          labelFlush: false,
+          tickCount: Math.max(Math.floor(opts.width / 90), 2),
+          labelExpr: "hours(datum.value) === 0 && minutes(datum.value) === 0 || datum.index === 0 ? [timeFormat(datum.value, '%H:%M'), timeFormat(datum.value, '%-d. %-m.')] : timeFormat(datum.value, '%H:%M')"
+        };
+    enc.x.axis = enc.x.axis === null ? null : Object.assign({ labelOverlap: "greedy", labelSeparation: 8 }, ticks, enc.x.axis);
+    if (copy.height === undefined) copy.height = 260;
+    // Room round the plot keeps a point and a label on its edge whole.
+    enc.x.scale = Object.assign({ padding: EDGE }, enc.x.scale, { domain: { param: "brush" } });
+    if (enc.y) enc.y.scale = Object.assign({ padding: 8 }, enc.y.scale);
+    var color = enc.color && enc.color.field;
+    // Every station keeps its colour whichever of them are picked.
+    if (color && Array.isArray(opts.names) && opts.names.length) enc.color.scale = Object.assign({ domain: opts.names }, enc.color.scale);
+    if (color && !enc.opacity) {
+      copy.params = [{ name: "pick", select: { type: "point", fields: [color] }, bind: "legend" }];
+      enc.opacity = { condition: { param: "pick", value: 1 }, value: 0.15 };
+      enc.color.legend = Object.assign({ orient: "bottom", symbolType: dots ? "circle" : "stroke", symbolStrokeWidth: 3, symbolSize: dots ? 70 : 250, columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, Array.isArray(opts.shown) && opts.shown.length ? { values: opts.shown } : {}, enc.color.legend);
+    }
+    var count = color && Array.isArray(opts.shown) ? opts.shown.length : 0;
+    var rows = line && count <= ROWS && count > (opts.width < 480 ? 2 : 4);
+    var head = opts.what
+      ? { text: opts.measure.title + " · " + opts.what, subtitle: opts.span || "", subtitleFontSize: 12, subtitleColor: "#64748b", fontSize: 12, anchor: "start", frame: "bounds" }
+      : { text: opts.measure.title, fontSize: 12, anchor: "start", frame: "bounds" };
+    if (opts.what) copy.title = head;
+    if (opts.daily) enc.x.title = t.utcAxis;
+    var strip = {
+      title: { text: t.zoom, fontSize: 12, fontWeight: "normal", color: "#64748b", offset: 4 },
+      view: { stroke: "#94a3b8" },
+      width: width,
+      height: 44,
+      mark: dots
+        ? { type: "point", filled: true, opacity: 1, size: 16, invalid: "break-paths-show-domains" }
+        : { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains", point: opts.dense ? false : { size: 8, filled: true } },
+      params: [{ name: "brush", select: { type: "interval", encodings: ["x"], mark: { fill: "#1d4ed8", fillOpacity: 0.12, stroke: "#1d4ed8" } } }],
+      encoding: {
+        x: { field: enc.x.field, type: "temporal", title: null, scale: { padding: EDGE }, axis: { format: "%-d. %-m.", labelFlush: false, labelOverlap: "greedy", labelSeparation: 8, tickMinStep: DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
+        y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
+      }
+    };
+    delete strip.encoding.y.sort;
+    if (color) strip.encoding.color = { field: color, type: enc.color.type || "nominal", scale: enc.color.scale, legend: null };
+    if (color && enc.detail) strip.encoding.detail = enc.detail;
+    if (rows) {
+      // Named plots over one time axis and one scale, in two columns where they fit. The legend that
+      // highlights a station stays while it is short or the chart is wide; else the names and the list do.
+      var columns = opts.width < 480 ? 1 : 2;
+      if (columns === 1 && count > 4 && copy.params) {
+        delete copy.params;
+        delete enc.opacity;
+        enc.color.legend = null;
+      }
+      delete copy.title;
+      copy.width = Math.floor((width - (columns - 1) * 24) / columns);
+      copy.height = columns === 1 && count > 4 ? 60 : 84;
+      if (enc.y) {
+        enc.y.title = null;
+        enc.y.axis = Object.assign({ tickCount: 3 }, enc.y.axis);
+      }
+      if (columns > 1 && enc.x.axis && enc.x.axis.tickCount) enc.x.axis.tickCount = Math.max(Math.floor(copy.width / 90), 2);
+      // The plots carry the colours; under them the strip is one quiet band.
+      if (strip.encoding.color) {
+        strip.encoding.detail = { field: color, type: "nominal" };
+        delete strip.encoding.color;
+        strip.mark.color = "#94a3b8";
+      }
+    }
+    if (Array.isArray(opts.bands) && opts.bands.length) {
+      // Time the chart has no value for is shaded and named: a cut, or no readings.
+      // A band narrower than its name carries it in two lines.
+      var narrow = opts.width < 480;
+      var bands = { values: opts.bands.map(function (b) { return narrow ? Object.assign({}, b, { text: String(b.text).replace(" ", "\n") }) : b; }) };
+      var main = { mark: copy.mark, encoding: copy.encoding };
+      if (copy.params) main.params = copy.params;
+      copy.layer = [
+        { data: bands, mark: { type: "rect", color: "#94a3b8", opacity: 0.15, clip: true }, encoding: { x: { field: "from", type: "temporal", title: null }, x2: { field: "to" } } },
+        { data: bands, mark: { type: "text", baseline: "top", lineBreak: "\n", color: "#64748b", fontSize: narrow ? 10 : 11, clip: true }, encoding: { x: { field: "middle", type: "temporal", title: null }, y: { value: 6 }, text: { field: "text", type: "nominal" } } },
+        main
+      ];
+      delete copy.mark;
+      delete copy.encoding;
+      delete copy.params;
+    }
+    if (rows) {
+      var header = { title: null, labelOrient: "top", labelAnchor: "start", labelPadding: 2, labelFontSize: 12 };
+      var plots = { title: head, facet: { field: color, type: "nominal", header: header }, columns: columns, spacing: { row: 8, column: 24 }, spec: copy };
+      // Each plot of two columns has its own dates, so none hangs under the empty cell of an odd count.
+      if (columns > 1) plots.resolve = { axis: { x: "independent" } };
+      outer.vconcat = [plots, strip];
+      return outer;
+    }
+    outer.vconcat = [copy, strip];
+    return outer;
+  }
+
+  // Rows of each series (name and datasetId) in time order, with a row whose value is null
+  // inside every gap over `factor` (default 3) times the series' median step, which breaks the
+  // drawn line there. Aggregated buckets are regular, so there one missing bucket is a gap.
+  function gapped(rows, attr, factor) {
+    var over = factor || 3;
+    var series = {};
+    rows.forEach(function (row) {
+      var key = row.name + "\n" + (row.datasetId || "");
+      (series[key] = series[key] || []).push(row);
+    });
+    var out = [];
+    Object.keys(series).forEach(function (key) {
+      var list = series[key].slice().sort(function (a, b) { return a.observedAt < b.observedAt ? -1 : a.observedAt > b.observedAt ? 1 : 0; });
+      var times = list.map(function (row) { return Date.parse(row.observedAt); });
+      var steps = times.slice(1).map(function (t, i) { return t - times[i]; }).filter(function (d) { return d > 0; }).sort(function (a, b) { return a - b; });
+      var step = steps.length ? steps[Math.floor(steps.length / 2)] : 0;
+      list.forEach(function (row, i) {
+        if (i && step && times[i] - times[i - 1] > over * step) {
+          var hole = Object.assign({}, row, { observedAt: iso(times[i - 1] + step) });
+          hole[attr] = null;
+          out.push(hole);
+        }
+        out.push(row);
+      });
+    });
+    return out;
+  }
+
+  // Every `field` naming one attribute names another (the toolbar's attribute picker).
+  function rename(node, from, to) {
+    if (Array.isArray(node)) return node.forEach(function (n) { rename(n, from, to); });
+    if (!node || typeof node !== "object") return;
+    Object.keys(node).forEach(function (key) {
+      if (key === "field" && node[key] === from) node[key] = to;
+      else rename(node[key], from, to);
+    });
   }
 
   // A LanguageProperty read with `lang`, or its map: the page's language, else the first text.
@@ -354,8 +814,10 @@
     var byId = {};
     var byPart = {};
     var seen = {};
+    var units = {};
     return {
       entities: entities,
+      units: units,
       add: function (body) {
         (Array.isArray(body) ? body : []).forEach(function (entity) {
           if (!entity || typeof entity.id !== "string") return;
@@ -364,6 +826,7 @@
           request.attrs.forEach(function (attr) {
             parts(entity, attr).forEach(function (p) {
               if (!Array.isArray(p[key])) return;
+              if (typeof p.unitCode === "string" && !units[attr]) units[attr] = p.unitCode;
               var dataset = typeof p.datasetId === "string" ? p.datasetId : "";
               var at = entity.id + "\n" + attr + "\n" + dataset;
               var part = byPart[at];
@@ -387,8 +850,10 @@
   }
 
   // `deadline`: past it no further window is asked for, so a slow read still draws before the
-  // page's 15 s timeout; by default 3 s short of it.
-  function load(view, api, lang, fetcher, now, deadline) {
+  // page's 15 s timeout; by default 3 s short of it. `state`: the toolbar's (T-7490), else the
+  // view's own defaults. `onNames` gets the stations' names, read beside a temporal answer, so the
+  // toolbar lists them before it lands and when it is empty or refused.
+  function load(view, api, lang, fetcher, now, deadline, state, onNames) {
     var source = JSON.parse(view.source || "{}");
     var request = firstRequest(source, view.endpoint, api, now);
     var budget = { rows: LIMIT_ROWS, bytes: LIMIT_BYTES };
@@ -419,11 +884,14 @@
       });
     }
     if (request.kind === "temporal") {
+      var plan = temporalPlan(source, state || defaults(source), view.endpoint, api, now);
+      request = { kind: "temporal", type: plan.type, attrs: plan.attrs, method: plan.method, url: plan.urls[0] };
       var merged = merger(request);
+      var cut = { newer: false, stations: false };
       var partial = false;
       // `block`: the entities the first window of this entity page listed; a full one (PAGE)
       // continues with the next entities once its windows are read.
-      var windowOf = function (url, offset, block) {
+      var windowOf = function (base, url, offset, block) {
         return open(url).then(function (page) {
           var body = JSON.parse(page.text);
           count(new Array(instances(body, request)), budget);
@@ -431,26 +899,64 @@
         }).catch(function (error) {
           if (!merged.entities.length || !(error.limit || error.name === "AbortError")) throw error;
           partial = true;
+          // The first window of a later entity page is more stations; any other is newer data,
+          // before the stations of the pages still to come.
+          if (block === null && offset) cut.stations = true;
+          else {
+            cut.newer = true;
+            if (block === PAGE) cut.stations = true;
+          }
           return null;
         }).then(function (got) {
           if (!got) return null;
           merged.add(got.body);
           if (block === null) block = Array.isArray(got.body) ? got.body.length : 0;
           var next = nextWindow(got.page.response, url, request);
-          if (next && (next === url || Date.now() > stopAt)) partial = true;
-          else if (next) return windowOf(next, offset, block);
-          if (!partial && block === PAGE) return windowOf(request.url + "&offset=" + (offset + PAGE), offset + PAGE, null);
+          if (next ? next === url || Date.now() > stopAt : got.page.response.status === 206) {
+            partial = cut.newer = true;
+            if (block === PAGE) cut.stations = true;
+          } else if (next) return windowOf(base, next, offset, block);
+          if (!partial && block === PAGE) return windowOf(base, base + "&offset=" + (offset + PAGE), offset + PAGE, null);
           return null;
         });
       };
-      return windowOf(request.url, 0, null).then(function () {
-        return names(request.type);
+      // The windows of a walk one after another, oldest first; a cut one ends the walk.
+      var walk = plan.urls.reduce(function (done, url) {
+        return done.then(function () {
+          if (partial) {
+            cut.newer = true;
+            return null;
+          }
+          if (Date.now() > stopAt && merged.entities.length) {
+            partial = cut.newer = true;
+            return null;
+          }
+          return windowOf(url, url, 0, null);
+        });
+      }, Promise.resolve());
+      var named = names(request.type).then(function (map) {
+        if (onNames) onNames(map);
+        return map;
+      });
+      return walk.then(function () {
+        return named;
       }).then(function (map) {
         var out = rowsFromTemporal(merged.entities, request, map);
-        var data = { format: "json", rows: count(out, { rows: LIMIT_ROWS }) };
+        var data = { format: "json", rows: count(out, { rows: LIMIT_ROWS }), plan: plan, units: merged.units };
         if (partial) {
-          var at = out.reduce(function (m, row) { return row.observedAt > m ? row.observedAt : m; }, "");
-          data.partial = (PARTIAL[lang] || PARTIAL.en).replace("{at}", at ? at.slice(0, 16).replace("T", " ") + " UTC" : "?");
+          // The span the rows cover: a cut answer can miss either end of the range picked.
+          var times = out.map(function (row) { return row.observedAt; }).sort();
+          var format = plan.gran === "P1D"
+            ? { day: "numeric", month: "numeric", year: "numeric", timeZone: "UTC" }
+            : { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+          var stamp = function (at) {
+            return at ? nb(new Date(at).toLocaleString(lang, format)) : "?";
+          };
+          var words = PARTIAL[lang] || PARTIAL.en;
+          var what = cut.newer && cut.stations ? words.both : cut.stations ? words.more : words.newer;
+          data.partial = words.note.replace("{what}", what).replace("{from}", stamp(times[0])).replace("{to}", stamp(times[times.length - 1]));
+          data.moreStations = cut.stations;
+          data.newer = cut.newer;
         }
         return data;
       });
@@ -484,27 +990,40 @@
     var status = document.getElementById("status");
     var frame = document.getElementById("frame");
     var lang = (where && where.lang) || (navigator.language || "en").slice(0, 2);
-    var fail = function (message) {
+    var say = function (message, kind) {
       status.textContent = message;
-      status.className = "";
-      status.hidden = false;
-      frame.hidden = true;
+      status.className = kind || "";
+      status.hidden = !message;
       resize();
+    };
+    var fail = function (message) {
+      say(message, "");
+      frame.hidden = true;
     };
     function resize() {
       // The content, not the viewport: a frame grows and shrinks with its chart.
       var height = Math.ceil(document.body.getBoundingClientRect().height);
       if (window.parent !== window) window.parent.postMessage({ type: "jc-viz-height", height: height }, "*");
     }
+    // A note, the toolbar or the reset button changes the height as much as the chart does.
+    if (typeof ResizeObserver === "function") new ResizeObserver(resize).observe(document.body);
     if (location.hash === "#show") return show(h, frame, fail);
     if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
     if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
     if (where.inline) document.body.classList.add("inline");
-    var controller = new AbortController();
-    var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
+    // One controller and one 15 s timer per read: a toolbar change aborts the read before it.
+    var controller = null;
+    var timer = null;
     var fetcher = function (url, options) {
       options.signal = controller.signal;
       return fetch(url, options);
+    };
+    var fresh = function () {
+      if (controller) controller.abort();
+      clearTimeout(timer);
+      var mine = controller = new AbortController();
+      timer = setTimeout(function () { mine.abort(); }, TIMEOUT_MS);
+      return mine;
     };
     var ready = new Promise(function (resolve) {
       window.addEventListener("message", function (event) {
@@ -518,8 +1037,14 @@
           resize();
         }
         if (data.type === "jc-viz-error") fail(String(data.message || "The chart could not be drawn."));
+        if (data.type === "jc-viz-zoom") document.dispatchEvent(new CustomEvent("jc-viz-zoom", { detail: data.zoomed === true }));
       });
     });
+    var failed = function (error) {
+      if (error && error.status) return fail(unreadable(error.status, lang));
+      fail(error && error.name === "AbortError" ? "The data took longer than 15 seconds." : String(error.message || error));
+    };
+    fresh();
     fetcher(h.data + "/api/3/action/resource_view_show?" + query({ id: where.id }), { credentials: "omit", referrerPolicy: "no-referrer" })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("The chart is not published.")); })
       .then(function (body) {
@@ -537,23 +1062,445 @@
         var table = document.getElementById("table");
         table.textContent = LINK[lang] || LINK.en;
         table.href = h.data + "/dataset/" + encodeURIComponent(view.package_id || "");
+        var source = JSON.parse(view.source || "{}");
+        if (source.source === "temporal") return temporal(view, spec, source);
         return load(view, h.api, lang, fetcher, Date.now()).then(function (data) {
-          if (data.partial) {
-            status.textContent = data.partial;
-            status.className = "note";
-            status.hidden = false;
-          }
+          if (data.partial) say(data.partial, "note");
           return ready.then(function () {
             frame.contentWindow.postMessage({ type: "jc-viz-render", spec: spec, data: data, lang: lang }, "*");
           });
         });
       })
-      .catch(function (error) {
-        if (error && error.status) return fail(unreadable(error.status, lang));
-        fail(error && error.name === "AbortError" ? "The data took longer than 15 seconds." : String(error.message || error));
-      })
+      .catch(failed)
       .then(function () { clearTimeout(timer); });
     window.addEventListener("resize", resize);
+
+    // A temporal chart (T-7490): the toolbar over the frame, each change a new read whose rows go
+    // into the running view; a change of attribute or width draws the spec again.
+    function temporal(view, spec, source) {
+      var t = TEXT[lang] || TEXT.en;
+      var state = parseState(location.hash, source);
+      var bar = source.controls === false ? null : toolbar(document, source, state, t, lang, function (next) {
+        state = next;
+        remember();
+        read();
+      });
+      var all = [];
+      var units = {};
+      var plan = null;
+      var drawn = null; // the key of the spec in the frame
+      var notes = []; // what the line under the chart says of the rows read
+      var short = false; // the answer was cut before the end of the range
+      var listed = false; // the stations of an answer are in the list
+      var note = document.createElement("p");
+      note.id = "controls-note";
+      note.setAttribute("role", "status");
+      note.className = "hint";
+      // Under the chart, so the plot stays near the toolbar: how the rows are read and what is stored.
+      frame.parentNode.insertBefore(note, frame.nextSibling);
+      var retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "retry";
+      retry.textContent = t.retry;
+      retry.hidden = true;
+      retry.addEventListener("click", function () { read(); });
+      status.parentNode.insertBefore(retry, status.nextSibling);
+      var skeleton = document.createElement("div");
+      skeleton.className = "skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      skeleton.hidden = true;
+      frame.parentNode.insertBefore(skeleton, frame);
+      // Beside the plot: what an aggregate may hide, or what a broken line means.
+      var caveat = document.createElement("p");
+      caveat.id = "data-note";
+      caveat.hidden = true;
+      frame.parentNode.insertBefore(caveat, frame);
+      var zoom = document.createElement("p");
+      zoom.id = "axis-note";
+      zoom.className = "hint";
+      // Drawing the chart again clears the brush (a double click is hard to find on a phone).
+      var reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "retry reset";
+      reset.textContent = t.resetZoom;
+      reset.hidden = true;
+      document.addEventListener("jc-viz-zoom", function (event) { reset.hidden = !event.detail; });
+      reset.addEventListener("click", function () {
+        drawn = null;
+        draw();
+      });
+      function remember() {
+        var extra = stateHash(state, source);
+        var parts = location.hash.replace(/^#/, "").split("&").filter(function (p) { return p.indexOf("=") < 0 || /^lang=/.test(p); });
+        try { history.replaceState(null, "", "#" + parts.concat(extra ? [extra] : []).join("&")); } catch (e) { /* the hash stays */ }
+      }
+      function picked() {
+        // A picked station the answer lacks is dropped: the rest still draw. An answer with no
+        // station at all keeps the pick for the next one.
+        if (!all.length) return all;
+        state.stations = state.stations.filter(function (id) { return all.some(function (row) { return row.id === id; }); });
+        if (!state.stations.length) return all;
+        return all.filter(function (row) { return state.stations.indexOf(row.id) >= 0; });
+      }
+      function draw() {
+        var attr = plan.attrs.length === 1 ? plan.attrs[0] : null;
+        var rows = picked();
+        var values = attr ? all.map(function (row) { return row[attr]; }) : [];
+        var m = attr ? measure(attr, units[attr], lang, values) : null;
+        if (m && m.percent) {
+          rows = rows.map(function (row) {
+            var copy = Object.assign({}, row);
+            if (typeof copy[attr] === "number") copy[attr] = Math.round(copy[attr] * 1000) / 10;
+            return copy;
+          });
+        }
+        var daily = plan.gran === "P1D";
+        // A daily bucket starts at its UTC midnight: drawn at that day's local midnight, it sits on
+        // the day's tick in any time zone.
+        if (daily) rows = rows.map(function (row) { return Object.assign({}, row, { observedAt: String(row.observedAt).slice(0, 10) + "T00:00:00" }); });
+        var authored = spec.encoding && spec.encoding.y && source.attrs.indexOf(spec.encoding.y.field) >= 0 ? spec.encoding.y.field : null;
+        var measured = rows.length;
+        if (attr) rows = gapped(rows, attr, plan.method ? 1.5 : 3);
+        // The answer does not mark a bucket the broker filled with a held value, so every
+        // aggregated chart says it may hold one.
+        var said = plan.method ? [t.held] : [];
+        note.textContent = notes.concat(!plan.method && rows.length > measured ? [t.gap] : []).join(" ");
+        // A cut answer keeps the axis to the end of the range picked: what is missing shows as missing.
+        if (short && attr && rows.length) {
+          var end = { id: rows[rows.length - 1].id, name: rows[rows.length - 1].name, observedAt: daily ? iso(plan.end).slice(0, 10) + "T00:00:00" : iso(plan.end) };
+          end[attr] = null;
+          rows.push(end);
+        }
+        // The chart names what it draws: a cropped shot of maxima does not pass for readings.
+        var times = rows.filter(function (row) { return attr && row[attr] !== null; }).map(function (row) { return Date.parse(row.observedAt); }).sort(function (a, b) { return a - b; });
+        var date = function (ms) { return nb(new Date(ms).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })); };
+        var ends = times.length ? [date(times[0]), date(times[times.length - 1])] : null;
+        var span = ends ? t.stored + ends[0] + " – " + ends[1] : "";
+        var bands = [];
+        var band = function (from, to, text) {
+          bands.push({ from: iso(from), middle: iso((from + to) / 2), to: iso(to), text: text });
+        };
+        if (short && times.length) {
+          band(times[times.length - 1], plan.end, t.missing);
+        }
+        if (!plan.method && times.length) {
+          // Where no station drawn has a reading for a twentieth of the span or longer.
+          var least = Math.max((times[times.length - 1] - times[0]) / 20, DAY / 12);
+          times.forEach(function (at, i) {
+            if (i && at - times[i - 1] > least && bands.length < 20) band(times[i - 1], at, t.noReadings);
+          });
+        }
+        var what = plan.method ? (t[plan.gran] || plan.gran) + ": " + (t[plan.method] || plan.method).toLowerCase() : t.raw;
+        var series = {};
+        rows.forEach(function (row) { series[row.name] = (series[row.name] || 0) + 1; });
+        var dense = Object.keys(series).some(function (k) { return series[k] > 60; });
+        var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 74;
+        var names = Object.keys(all.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
+        var shownNames = Object.keys(rows.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
+        var key = [attr, m && m.title, what, span, JSON.stringify(bands), dense, daily, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
+        // An empty answer keeps the last station list, so the reader can still change it.
+        if (bar && all.length) {
+          listed = true;
+          bar.stations(all, state.stations);
+        }
+        caveat.textContent = said.join(" ");
+        if (said.length && bar) {
+          // The one step that shows the measured times: readings, over a range that has them raw.
+          // An aggregated read starts up to one step before the range picked.
+          var long = plan.end - plan.start > RAW_DAYS * DAY + duration(plan.gran);
+          var toReadings = document.createElement("button");
+          toReadings.type = "button";
+          toReadings.className = "link";
+          toReadings.textContent = t.measured + (long ? t.measuredWeek : "");
+          toReadings.addEventListener("click", function () { bar.readings(long); });
+          caveat.appendChild(document.createTextNode(" "));
+          caveat.appendChild(toReadings);
+        }
+        caveat.className = "carried";
+        caveat.hidden = !rows.length || !said.length;
+        frame.hidden = zoom.hidden = !rows.length;
+        if (!rows.length) reset.hidden = true;
+        if (!rows.length) return say(t.empty, "note blank");
+        if (drawn === key) {
+          frame.contentWindow.postMessage({ type: "jc-viz-rows", rows: rows }, "*");
+          return;
+        }
+        drawn = key;
+        reset.hidden = true; // a new drawing starts unzoomed
+        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, what: what, span: span, bands: bands, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
+        frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
+        var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        zoom.textContent = (daily ? t.utcDays : t.local.replace("{tz}", zone)) + (shown.vconcat && JSON.stringify(shown.vconcat[0]).indexOf('"bind":"legend"') >= 0 ? " " + t.legend : "");
+        if (!zoom.parentNode) {
+          frame.parentNode.insertBefore(reset, frame.nextSibling);
+          frame.parentNode.insertBefore(zoom, note.nextSibling);
+        }
+      }
+      function read() {
+        var mine = fresh();
+        if (bar) bar.busy(true);
+        frame.setAttribute("aria-busy", "true");
+        say(t.loading.replace("…", ": " + (t[state.range] || state.range) + "…"), "loading");
+        retry.hidden = true;
+        // The chart's place stays taken while the first rows load, so the page does not jump.
+        if (!plan) frame.hidden = true;
+        if (frame.hidden) caveat.hidden = true;
+        skeleton.hidden = !frame.hidden;
+        var p;
+        try {
+          p = load(view, h.api, lang, fetcher, Date.now(), null, state, function (map) {
+            var ids = Object.keys(map);
+            if (mine !== controller || !bar || listed || !ids.length) return;
+            bar.stations(ids.map(function (id) { return { id: id, name: map[id] }; }), state.stations);
+            resize();
+          });
+        } catch (error) {
+          p = Promise.reject(error);
+        }
+        return p.then(function (data) {
+          if (mine !== controller) return null;
+          all = data.rows;
+          units = data.units || {};
+          plan = data.plan;
+          // A brush over the rows before this read would hold the axis to their range.
+          if (!reset.hidden) drawn = null;
+          notes = [];
+          if (plan.forced) {
+            // The toolbar shows what is drawn: the forced granularity becomes the choice.
+            if (plan.forced === "hourly") notes.push(t.hourly);
+            state.gran = plan.gran;
+            if (bar) bar.gran(plan.gran);
+            remember();
+          }
+          // A walk is daily on every read of it, also once the toolbar already shows that.
+          if (plan.end - plan.start > MAX_DAYS * DAY) notes.push(t.daily);
+          var span = plan.end - plan.start;
+          var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
+          // An answer is read oldest first, so a cut one misses its end: a late first reading is
+          // still where the source starts, and both notes hold.
+          if (first !== Infinity && !data.moreStations && first - plan.start > Math.max(span > DAY ? DAY / 2 : DAY, span / 20)) {
+            notes.push(t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric", timeZone: plan.gran === "P1D" ? "UTC" : undefined }))));
+          }
+          if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
+          // The line under the chart says what is drawn; the notice is left to what is missing.
+          short = !!data.newer;
+          note.textContent = notes.join(" ");
+          say(data.partial || "", "note");
+          frame.hidden = zoom.hidden = false;
+          return ready.then(draw);
+        }).catch(function (error) {
+          if (mine !== controller) return null;
+          note.textContent = "";
+          zoom.hidden = reset.hidden = true;
+          // Nothing is left to redraw under an error, whatever the reader picks.
+          plan = drawn = null;
+          frame.hidden = caveat.hidden = true;
+          if (error && error.message === "dates") return say(t.badDates, "");
+          if (error && error.name === "AbortError") fail(t.slow);
+          else failed(error);
+          if (error && error.status) status.textContent = status.textContent.replace("HTTP ", "HTTP\u00a0");
+          status.className = "blank";
+          retry.hidden = false;
+        }).then(function () {
+          if (mine !== controller) return;
+          skeleton.hidden = true;
+          clearTimeout(timer);
+          frame.removeAttribute("aria-busy");
+          if (bar) bar.busy(false);
+        });
+      }
+      if (bar) bar.onStations(function (ids) {
+        state.stations = ids;
+        remember();
+        if (plan) draw();
+      });
+      var resizing = null;
+      window.addEventListener("resize", function () {
+        clearTimeout(resizing);
+        resizing = setTimeout(function () { if (plan && !frame.hidden) draw(); }, 200);
+      });
+      return read();
+    }
+  }
+
+  // The toolbar: labelled native selects, each with a hint line, in the page's language. `change`
+  // gets a new state for a change that needs a new read; stations filter the rows already read.
+  function toolbar(doc, source, state, t, lang, change) {
+    var own = defaults(source);
+    var form = doc.createElement("form");
+    form.className = "controls";
+    form.setAttribute("aria-label", t.controls);
+    form.addEventListener("submit", function (event) { event.preventDefault(); });
+    var figure = doc.getElementById("status").parentNode;
+    figure.insertBefore(form, doc.getElementById("status"));
+    function field(id, label, hint, control) {
+      var box = doc.createElement("div");
+      box.className = "control";
+      var l = doc.createElement("label");
+      l.htmlFor = id;
+      l.textContent = label;
+      control.id = id;
+      var small = doc.createElement("small");
+      small.id = id + "-hint";
+      small.className = "hint";
+      small.textContent = hint;
+      control.setAttribute("aria-describedby", small.id);
+      box.appendChild(l);
+      box.appendChild(control);
+      box.appendChild(small);
+      form.appendChild(box);
+      return box;
+    }
+    function select(values, labels, value) {
+      var el = doc.createElement("select");
+      values.forEach(function (v, i) {
+        var o = doc.createElement("option");
+        o.value = v;
+        o.textContent = labels[i];
+        el.appendChild(o);
+      });
+      el.value = value;
+      return el;
+    }
+    function label(v) {
+      return t[v] || v;
+    }
+    var ranges = RANGES.indexOf(own.range) >= 0 ? RANGES.slice() : RANGES.concat([own.range]);
+    ranges.push("custom");
+    var range = select(ranges, ranges.map(label), state.range);
+    field("c-range", t.range, t.rangeHint, range);
+    var stations = doc.createElement("select");
+    stations.multiple = true;
+    var touch = !!root.matchMedia && root.matchMedia("(pointer: coarse)").matches;
+    var stationsBox = field("c-stations", t.stations, "", stations);
+    // The list opens under a line that names the pick, so no pick hides in a scrolled list and the
+    // chart stays near the top.
+    var picker = doc.createElement("details");
+    picker.id = "c-stations-picker";
+    var summary = doc.createElement("summary");
+    summary.setAttribute("aria-describedby", "c-stations-hint");
+    picker.appendChild(summary);
+    stationsBox.replaceChild(picker, stations);
+    picker.appendChild(stations);
+    // How to pick several is said where the list is open, an example of a pick under it.
+    var how = doc.createElement("small");
+    how.className = "hint";
+    how.textContent = touch ? t.stationsTouch : t.stationsHint;
+    picker.appendChild(how);
+    var example = stationsBox.querySelector("#c-stations-hint");
+    var today = new Date().toISOString().slice(0, 10);
+    var from = doc.createElement("input");
+    var to = doc.createElement("input");
+    [from, to].forEach(function (input) {
+      input.type = "date";
+      input.max = today;
+      input.required = true;
+    });
+    from.value = state.from || new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
+    to.value = state.to || today;
+    var grans = GRANS.indexOf(own.gran) >= 0 ? GRANS : GRANS.concat([own.gran]);
+    var gran = select(grans, grans.map(label), state.gran);
+    field("c-gran", t.gran, t.granHint, gran);
+    var methods = METHODS.indexOf(own.method) >= 0 ? METHODS : METHODS.concat([own.method]);
+    var method = select(methods, methods.map(label), state.method);
+    var methodBox = field("c-method", t.method, t.methodHint, method);
+    var attr = null;
+    if (source.attrs.length > 1) {
+      attr = select([""].concat(source.attrs), [t.all].concat(source.attrs.map(function (a) { return measure(a, null, lang, []).label; })), state.attr || "");
+      field("c-attr", t.attr, t.attrHint, attr);
+    }
+    // The fields that come and go are last, so the others stay where they are.
+    var fromBox = field("c-from", t.from, t.dateHint, from);
+    var toBox = field("c-to", t.to, t.dateHintTo, to);
+    fromBox.className += " first";
+    // None picked is every station, which the list shows as its first option selected.
+    var chosen = state.stations.slice();
+    function mark() {
+      Array.prototype.forEach.call(stations.options, function (o) {
+        o.selected = o.value ? chosen.indexOf(o.value) >= 0 : !chosen.length;
+      });
+      var known = Array.prototype.filter.call(stations.options, function (o) { return o.value; });
+      var picks = known.filter(function (o) { return o.selected; }).map(function (o) { return o.textContent; });
+      var all = t.allStations + (known.length ? " (" + known.length + ")" : "");
+      // One line: the names and their count, without the town they all start with.
+      var town = known.length ? known[0].textContent.split(", ")[0] + ", " : "";
+      var shared = known.length > 1 && known.every(function (o) { return o.textContent.indexOf(town) === 0; });
+      var bare = function (name) { return shared ? name.slice(town.length) : name; };
+      var short = picks.map(bare).join(", ");
+      var two = known.slice(0, 2).map(function (o) { return bare(o.textContent); }).join(", ");
+      example.textContent = t.stationsExample.replace("{names}", known.length > 1 && two.length < 28 ? two : t.twoStations);
+      summary.textContent = picks.length ? short + (picks.length > 1 ? " (" + picks.length + ")" : "") : all;
+      summary.title = picks.length ? picks.join("; ") : all;
+      summary.setAttribute("aria-label", t.stations + ": " + summary.title);
+    }
+    function list(entries) {
+      stations.textContent = "";
+      [{ id: "", name: t.allStations }].concat(entries).forEach(function (s) {
+        var o = doc.createElement("option");
+        o.value = s.id;
+        o.textContent = s.name;
+        stations.appendChild(o);
+      });
+      stations.size = Math.min(Math.max(entries.length + 1, 2), 10);
+      mark();
+    }
+    list([]);
+    function shape() {
+      var custom = range.value === "custom";
+      fromBox.hidden = toBox.hidden = !custom;
+      methodBox.hidden = gran.value === "raw";
+    }
+    shape();
+    function changed() {
+      shape();
+      if (range.value === "custom" && (!from.checkValidity() || !to.checkValidity() || day(from.value) === null || day(to.value) === null)) return;
+      change({
+        range: range.value,
+        from: range.value === "custom" ? from.value : null,
+        to: range.value === "custom" ? to.value : null,
+        gran: gran.value,
+        method: method.value,
+        attr: attr && attr.value ? attr.value : null,
+        stations: chosen
+      });
+    }
+    [range, from, to, gran, method].concat(attr ? [attr] : []).forEach(function (el) { el.addEventListener("change", changed); });
+    var onStations = function () {};
+    stations.addEventListener("change", function () {
+      var ids = Array.prototype.filter.call(stations.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
+      // "All stations" picked beside others clears them; a station picked beside it replaces it.
+      var all = ids.indexOf("") >= 0;
+      chosen = all && chosen.length ? [] : ids.filter(Boolean);
+      mark();
+      onStations(chosen.slice());
+    });
+    return {
+      form: form,
+      busy: function (on) { form.setAttribute("aria-busy", on ? "true" : "false"); },
+      onStations: function (f) { onStations = f; },
+      gran: function (value) {
+        gran.value = value;
+        shape();
+      },
+      // The carried-value notice's button: raw readings, of the last week when the range is longer.
+      readings: function (week) {
+        if (week) range.value = "P7D";
+        gran.value = "raw";
+        changed();
+      },
+      // The stations of the rows read, by name; a picked one the answer lacks is dropped.
+      stations: function (rows, picked) {
+        var seen = {};
+        var found = [];
+        rows.forEach(function (row) {
+          if (!seen[row.id]) found.push(seen[row.id] = { id: row.id, name: String(row.name || row.id) });
+        });
+        found.sort(function (a, b) { return a.name.localeCompare(b.name); });
+        chosen = picked.slice();
+        list(found);
+        stationsBox.hidden = found.length < 2;
+      }
+    };
   }
 
   // `#show`: the assistant's widget hands one spec and its rows by message (ADR-N-053 §2.9). A
@@ -637,6 +1584,13 @@
     firstRequest: firstRequest,
     rowsFromTemporal: rowsFromTemporal,
     nextWindow: nextWindow,
+    defaults: defaults,
+    parseState: parseState,
+    stateHash: stateHash,
+    temporalPlan: temporalPlan,
+    measure: measure,
+    interactive: interactive,
+    gapped: gapped,
     rowsFromOgc: rowsFromOgc,
     named: named,
     load: load
