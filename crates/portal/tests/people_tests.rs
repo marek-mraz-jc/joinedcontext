@@ -1596,7 +1596,7 @@ async fn people_nothing_names_are_removed_at_once_each_on_the_feed() {
     let seen = person_changes(&mut feed);
     assert_eq!(seen.len(), 2, "{seen:?}");
     for entry in &seen {
-        assert_eq!(entry["actor"], "ada", "{entry}");
+        assert_eq!(entry["actor"], "sub-ada", "{entry}");
         assert_eq!(entry["action"], "deleted", "{entry}");
     }
 }
@@ -1712,7 +1712,7 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     }
     let seen = person_changes(&mut feed);
     assert_eq!(seen.len(), 3, "{seen:?}");
-    assert!(seen.iter().all(|e| e["actor"] == "ada"), "{seen:?}");
+    assert!(seen.iter().all(|e| e["actor"] == "sub-ada"), "{seen:?}");
 
     // A second removal naming one of them is refused while the Change is open.
     let again = send(

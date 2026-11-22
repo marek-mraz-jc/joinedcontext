@@ -485,7 +485,7 @@ async fn the_reads_answer_in_the_shapes_the_pages_draw() {
     assert!(
         rows.items.iter().any(
             |row| row.details["object"] == "repositories/ovzdusie-config"
-                && row.details["actor"] == "jana"
+                && row.details["actor"] == "f:1:jana"
         ),
         "{:?}",
         rows.items

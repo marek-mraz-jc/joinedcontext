@@ -10760,7 +10760,7 @@ export interface components {
             target?: string | null;
             /** @description The tool, or the MCP method of a call that names none. */
             tool: string;
-            /** @description `allowed`, `refused: <why>` or `error`. */
+            /** @description `allowed`, `refused: <why>`, `error`, or `started` where the outcome was not recorded. */
             verdict: string;
         };
         ConnectorCalls: {

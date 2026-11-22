@@ -1384,7 +1384,7 @@ spec:
     assert_eq!(event.correlation_id.as_deref(), Some("chg-00000003"));
     assert_eq!(
         event.details["approvedBy"],
-        json!("jana.approver@banskabystrica.sk")
+        json!("sub-jana.approver")
     );
     assert_eq!(event.details["object"], json!("spaces/sandbox-space"));
     assert_eq!(event.details["operation"], json!("create"));

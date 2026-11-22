@@ -1459,7 +1459,8 @@ async fn a_persons_rows_answer_only_in_their_organization() {
         .fetch_one(&mut *tx)
         .await
         .expect("counts");
-        let expected = if key.is_some() { (1, 1, 1) } else { (0, 0, 0) };
+        // The call recorded first and the newer of the run's two audit rows, which the trim kept.
+        let expected = if key.is_some() { (1, 2, 1) } else { (0, 0, 0) };
         assert_eq!(seen, expected, "rows seen under {key:?}");
         if key.is_none() {
             assert!(

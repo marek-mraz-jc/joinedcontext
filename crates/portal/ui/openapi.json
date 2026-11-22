@@ -55145,7 +55145,7 @@
           },
           "verdict": {
             "type": "string",
-            "description": "`allowed`, `refused: <why>` or `error`."
+            "description": "`allowed`, `refused: <why>`, `error`, or `started` where the outcome was not recorded."
           }
         }
       },

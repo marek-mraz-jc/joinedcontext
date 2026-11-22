@@ -418,9 +418,9 @@ async fn every_look_is_recorded() {
     };
     assert_eq!(
         event.summary,
-        "anna looked at what helsinki-sensors can access: 2 Endpoints"
+        "sub-anna looked at what helsinki-sensors can access: 2 Endpoints"
     );
-    assert_eq!(event.details["actor"], "anna");
+    assert_eq!(event.details["actor"], "sub-anna");
 }
 
 /// Revoke removes one consent through the realm's admin API and is recorded; it needs the
