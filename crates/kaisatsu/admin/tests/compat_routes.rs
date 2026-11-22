@@ -1680,8 +1680,23 @@ async fn realm_partial_import_and_native_routes() {
         })
         .await
         .unwrap();
+    // The operator holds the new realm's `stage2-realm` grant in master and signed in with a
+    // second factor.
+    f.store
+        .create_user(UserRepresentation {
+            id: "root".into(),
+            realm_id: "master".into(),
+            username: "root".into(),
+            client_roles: HashMap::from([("stage2-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let master_keys = f.store.list_signing_keys("master").await.unwrap();
-    let mut master_claims = claims("root", json!({"realm_access": {"roles": ["admin"]}}));
+    let mut master_claims = claims(
+        "root",
+        json!({"realm_access": {"roles": ["admin"]}, "acr": "mfa"}),
+    );
     master_claims["iss"] = json!("https://idm.localhost/realms/master");
     let master = token(f.store.kek(), &master_keys[0], master_claims);
     let (st, _, ans) = call(

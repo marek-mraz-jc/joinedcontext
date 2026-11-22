@@ -608,57 +608,150 @@ async fn roles_never_leak_across_realms_or_from_role_names() {
         );
     }
 
-    // Keycloak's cross-realm admin: master `admin` administers dev ...
-    let master_admin = f
-        .token(
-            "master",
-            "root",
-            json!({ "realm_access": { "roles": ["admin"] } }),
-        )
-        .await;
-    let st = f
-        .send(
-            Method::PUT,
-            "/admin/realms/dev",
-            &master_admin,
-            Some(realm_body()),
-        )
-        .await;
-    assert_eq!(st, StatusCode::NO_CONTENT);
-    // ... master's own realm-management does not reach dev ...
-    let master_rm = f
+    // Master `admin` and master's own realm-management stay in master (S3-13) ...
+    for extra in [
+        json!({ "realm_access": { "roles": ["admin"] }, "acr": "mfa" }),
+        json!({ "resource_access": { "realm-management": { "roles": ["realm-admin"] } }, "acr": "mfa" }),
+    ] {
+        let t = f.token("master", "root", extra).await;
+        let st = f
+            .send(Method::PUT, "/admin/realms/dev", &t, Some(realm_body()))
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+    // ... a `dev-realm` role in a token alone is no grant ...
+    let claimed = f
         .token(
             "master",
             "ops",
-            json!({ "resource_access": { "realm-management": { "roles": ["realm-admin"] } } }),
+            json!({ "resource_access": { "dev-realm": { "roles": ["realm-admin"] } }, "acr": "mfa" }),
         )
         .await;
     let st = f
         .send(
             Method::PUT,
             "/admin/realms/dev",
-            &master_rm,
+            &claimed,
             Some(realm_body()),
         )
         .await;
-    assert_ne!(st, StatusCode::NO_CONTENT);
-    // ... but the `dev-realm` client roles do.
-    let master_dev = f
-        .token(
-            "master",
-            "ops2",
-            json!({ "resource_access": { "dev-realm": { "roles": ["realm-admin"] } } }),
-        )
-        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    // ... the `dev-realm` role ops holds in master is, with a second factor ...
+    f.store
+        .create_user(UserRepresentation {
+            id: "ops".into(),
+            realm_id: "master".into(),
+            username: "ops".into(),
+            client_roles: std::collections::HashMap::from([(
+                "dev-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let st = f
         .send(
             Method::PUT,
             "/admin/realms/dev",
-            &master_dev,
+            &claimed,
             Some(realm_body()),
         )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+    let password_only = f.token("master", "ops", json!({ "amr": ["pwd"] })).await;
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev",
+            &password_only,
+            Some(realm_body()),
+        )
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "a password alone administers dev"
+    );
+    // ... it reaches dev only, and ends when the grant is revoked.
+    let st = f
+        .send(Method::GET, "/admin/realms/espoo-city", &claimed, None)
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    f.store
+        .set_user_grants("master", "ops", &[], &Default::default())
+        .await
+        .unwrap();
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev",
+            &claimed,
+            Some(realm_body()),
+        )
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "a revoked grant still administers dev"
+    );
+    // A service account with the grant needs no second factor.
+    f.store
+        .create_user(UserRepresentation {
+            id: "svc".into(),
+            realm_id: "master".into(),
+            username: "service-account-ops".into(),
+            service_account_client_id: Some("ops-client".into()),
+            client_roles: std::collections::HashMap::from([(
+                "dev-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let svc = f.token("master", "svc", json!({})).await;
+    let st = f
+        .send(Method::PUT, "/admin/realms/dev", &svc, Some(realm_body()))
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+/// A grant on one realm name creates no realm under another (id and name are both judged).
+#[tokio::test]
+async fn a_realm_grant_creates_that_realm_only() {
+    let f = Fixture::new().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "svc".into(),
+            realm_id: "master".into(),
+            username: "service-account-ops".into(),
+            service_account_client_id: Some("ops-client".into()),
+            client_roles: std::collections::HashMap::from([(
+                "fresh-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let svc = f.token("master", "svc", json!({})).await;
+    let create = async |body: Value| {
+        f.send(Method::POST, "/admin/realms", &svc, Some(body))
+            .await
+    };
+    assert_eq!(
+        create(json!({ "id": "fresh", "realm": "other" })).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        create(json!({ "id": "other", "realm": "fresh" })).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        create(json!({ "realm": "fresh" })).await,
+        StatusCode::CREATED
+    );
 }
 
 #[tokio::test]
@@ -1795,6 +1888,22 @@ async fn org_admin_post_creates_no_role_mappings() {
     assert!(u.groups.is_empty(), "{:?}", u.groups);
     assert_ne!(u.id, "esp-person", "an organization admin picks no id");
     assert_eq!(f.user("esp-person").await.username, "esp-person");
+}
+
+#[tokio::test]
+async fn a_master_admin_without_a_grant_on_the_realm_is_refused() {
+    let f = Fixture::new().await;
+    let t = f
+        .token(
+            "master",
+            "root",
+            json!({ "realm_access": { "roles": ["admin"] } }),
+        )
+        .await;
+    let st = f
+        .send(Method::PUT, "/admin/realms/dev", &t, Some(realm_body()))
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

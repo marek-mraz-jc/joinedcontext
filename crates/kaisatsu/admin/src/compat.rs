@@ -342,12 +342,23 @@ pub async fn extract_admin_ctx(
             "invalid admin bearer token".into(),
         ));
     }
-    // A token from `master` acting on another realm is Keycloak's cross-realm admin: only the
-    // master `admin` role and the `{realm}-realm` client roles carry over (as `realm-management`).
+    // A token from `master` acting on another realm carries only the `{realm}-realm` client roles
+    // its holder has in master now (as `realm-management`), never a role of the token alone and
+    // never the master `admin` role (S3-13).
     let cross_realm = token_realm != realm_id;
 
     let sub = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
     let azp = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
+
+    let acr = claims.get("acr").and_then(Value::as_str);
+    let second_factor = acr == Some("mfa")
+        || claims
+            .get("amr")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("otp")));
+    if cross_realm {
+        return cross_realm_ctx(state, realm_id, sub, azp, second_factor).await;
+    }
 
     let mut realm_roles: Vec<String> = claims
         .pointer("/realm_access/roles")
@@ -406,16 +417,6 @@ pub async fn extract_admin_ctx(
     if token_realm == "master" && realm_roles.iter().any(|r| r == "admin") {
         realm_roles.push("realm-admin".into());
     }
-    if cross_realm {
-        realm_roles.retain(|r| r == "realm-admin");
-        let per_realm = client_roles
-            .remove(&format!("{realm_id}-realm"))
-            .unwrap_or_default();
-        client_roles.clear();
-        if !per_realm.is_empty() {
-            client_roles.insert("realm-management".into(), per_realm);
-        }
-    }
 
     let mut organizations: Vec<String> = claims
         .get("jc_org")
@@ -430,10 +431,8 @@ pub async fn extract_admin_ctx(
 
     let mut org_roles: HashMap<String, Vec<String>> = HashMap::new();
 
-    // Organization memberships of the person in this realm (a cross-realm admin has none here).
-    if let Some(uid) = &sub
-        && !cross_realm
-    {
+    // Organization memberships of the person in this realm.
+    if let Some(uid) = &sub {
         if let Ok(Some(u)) = state.oidc.store.get_user_by_id(realm_id, None, uid).await
             && let Some(u_org) = u.org_id
             && !organizations.contains(&u_org)
@@ -454,16 +453,6 @@ pub async fn extract_admin_ctx(
             }
         }
     }
-    if cross_realm {
-        organizations.clear();
-    }
-
-    let acr = claims.get("acr").and_then(Value::as_str);
-    let second_factor = acr == Some("mfa")
-        || claims
-            .get("amr")
-            .and_then(Value::as_array)
-            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("otp")));
 
     let mut ctx = RequestCtx::new(
         realm_id,
@@ -485,6 +474,62 @@ pub async fn extract_admin_ctx(
     }
 
     Ok(ctx)
+}
+
+/// The context of a `master` token on `realm_id`: the `{realm_id}-realm` client roles its holder
+/// has in master now, directly or by group, and a second factor for a person (a service account
+/// has none to give). Without them 403 before anything of `realm_id` is read, so an absent realm
+/// answers the same.
+async fn cross_realm_ctx(
+    state: &AdminState,
+    realm_id: &str,
+    sub: Option<String>,
+    azp: Option<String>,
+    second_factor: bool,
+) -> Result<RequestCtx> {
+    let refused = || {
+        KaisatsuError::Forbidden(format!(
+            "a master token administers realm {realm_id} only with a {realm_id}-realm role in master"
+        ))
+    };
+    let store = &state.oidc.store;
+    let holder = match &sub {
+        Some(uid) => store.get_user_by_id("master", None, uid).await?,
+        None => None,
+    };
+    let holder = holder.ok_or_else(refused)?;
+    if !holder.enabled {
+        return Err(KaisatsuError::Unauthorized(
+            "invalid admin bearer token".into(),
+        ));
+    }
+    let grant = format!("{realm_id}-realm");
+    let mut roles: Vec<String> = holder.client_roles.get(&grant).cloned().unwrap_or_default();
+    for group in store.list_user_groups("master", &holder.id).await? {
+        roles.extend(group.client_roles.get(&grant).cloned().unwrap_or_default());
+    }
+    roles.sort();
+    roles.dedup();
+    if roles.is_empty() {
+        return Err(refused());
+    }
+    if holder.service_account_client_id.is_none() && !second_factor {
+        return Err(KaisatsuError::Forbidden(format!(
+            "administering realm {realm_id} from master needs a sign-in with a second factor"
+        )));
+    }
+    Ok(RequestCtx::new(
+        realm_id,
+        Principal {
+            subject: sub,
+            client_id: azp,
+            realm_roles: Vec::new(),
+            client_roles: HashMap::from([("realm-management".to_owned(), roles)]),
+            organizations: Vec::new(),
+            org_roles: HashMap::new(),
+            second_factor,
+        },
+    ))
 }
 
 /// Role mappings of a client may be granted or removed only by someone who may write that client:
@@ -799,14 +844,22 @@ async fn compat_create_realm(
     {
         realm.id = realm.realm.clone();
     }
-    let ctx = extract_admin_ctx(&state, &mount, &realm.id, &headers).await?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Apply,
-        &ObjectTarget::Realm {
-            realm_id: realm.id.clone(),
-        },
-    ))?;
+    // The id and the name are both judged: a grant on one may not create the other.
+    let mut names = vec![realm.id.clone()];
+    if realm.realm != realm.id {
+        names.push(realm.realm.clone());
+    }
+    let mut ctx = None;
+    for name in names {
+        let judged = extract_admin_ctx(&state, &mount, &name, &headers).await?;
+        check_decision(state.authorizer.check(
+            &judged,
+            Action::Apply,
+            &ObjectTarget::Realm { realm_id: name },
+        ))?;
+        ctx.get_or_insert(judged);
+    }
+    let ctx = ctx.ok_or_else(|| KaisatsuError::BadRequest("realm is required".into()))?;
     if state.oidc.store.get_realm(&realm.realm).await?.is_some()
         || state.oidc.store.get_realm(&realm.id).await?.is_some()
     {

@@ -12,6 +12,7 @@ use kaisatsu_crypto::{Kek, sign_jwt};
 use kaisatsu_oidc::{OidcState, OutboundGuard};
 use kaisatsu_store_memory::MemoryStore;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -152,6 +153,18 @@ async fn row_01_02_03_realms_and_partial_import() {
         })
         .await
         .unwrap();
+    // The operator holds `stage-realm` in master (an explicit grant) and signed in with a
+    // second factor; master `admin` alone reaches no other realm.
+    store
+        .create_user(UserRepresentation {
+            id: "master-admin-1".into(),
+            realm_id: "master".into(),
+            username: "master-admin-1".into(),
+            client_roles: HashMap::from([("stage-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let master_keys = store.list_signing_keys("master").await.unwrap();
     let now = jc_time::TimestampTz::now().as_second();
     let master_admin_token = sign_jwt(
@@ -163,6 +176,7 @@ async fn row_01_02_03_realms_and_partial_import() {
             "sub": "master-admin-1",
             "azp": "admin-cli",
             "typ": "Bearer",
+            "acr": "mfa",
             "iat": now,
             "exp": now + 3600,
             "realm_access": { "roles": ["admin"] }
