@@ -122,10 +122,10 @@
       stations: "Asemat", stationsHint: "Useampi asema: pidä Ctrl tai Cmd.",
       attr: "Suure", attrHint: "Esim. Lämpötila: kaavio näyttää vain sen.", all: "Kaikki",
       loading: "Ladataan tietoja…", empty: "Tältä aikaväliltä ei ole tietoja. Kokeile pidempää aikaväliä tai toista tarkkuutta.",
-      hourly: "Yli 7 päivän mittaukset näytetään tunneittain.", daily: "Yli 31 päivää näytetään päivittäin.",
+      hourly: "Yli 7 päivän jaksot näytetään tunneittain.", daily: "Yli 31 päivän jaksot näytetään päivittäin.",
       badDates: "Alkupäivän on oltava viimeistään loppupäivä eikä tulevaisuudessa.",
       rP1Y: "1 vuosi", rP10Y: "10 vuotta", rwhole: "Koko saatavilla oleva", P1M: "Kuukausittain", P1Y: "Vuosittain",
-      monthly: "Yli 2 vuotta näytetään kuukausittain.", yearly: "Yli 40 vuotta näytetään vuosittain.",
+      monthly: "Yli 2 vuoden jaksot näytetään kuukausittain.", yearly: "Yli 40 vuoden jaksot näytetään vuosittain.",
       avgP1M: "Kuukausikeskiarvot", avgP1Y: "Vuosikeskiarvot", utcMonth: "Kuukausi (UTC)", utcYear: "Vuosi (UTC)",
       utcMonths: "Kuukaudet ovat UTC-ajassa, reunimmainen kuukausi voi olla vajaa.", utcYears: "Vuodet ovat UTC-ajassa, reunimmainen vuosi voi olla vajaa.",
       firstData: "Tiedot saatavilla alkaen {d}.",
@@ -146,10 +146,10 @@
       stations: "Stations", stationsHint: "For more stations hold Ctrl or Cmd.",
       attr: "Measure", attrHint: "E.g. Temperature: the chart shows it alone.", all: "All",
       loading: "Loading data…", empty: "The chart has no data for this range. Try a longer range or another granularity.",
-      hourly: "Over 7 days, readings are shown hourly.", daily: "Over 31 days, values are shown daily.",
+      hourly: "Ranges longer than 7 days are shown hourly.", daily: "Ranges longer than 31 days are shown daily.",
       badDates: "From must be on or before To and not in the future.",
       rP1Y: "1 year", rP10Y: "10 years", rwhole: "All available", P1M: "Monthly", P1Y: "Yearly",
-      monthly: "Over 2 years, values are shown monthly.", yearly: "Over 40 years, values are shown yearly.",
+      monthly: "Ranges longer than 2 years are shown monthly.", yearly: "Ranges longer than 40 years are shown yearly.",
       avgP1M: "Monthly averages", avgP1Y: "Yearly averages", utcMonth: "Month (UTC)", utcYear: "Year (UTC)",
       utcMonths: "Months are in UTC, the first or last may be incomplete.", utcYears: "Years are in UTC, the first or last may be incomplete.",
       firstData: "Data available from {d}.",
@@ -539,7 +539,7 @@
     // Daily points sit on their day and the ticks are days; finer data labels each tick with its
     // time and the first tick and each midnight with the day too, so a zoomed axis says its days.
     var ticks = calendar
-      ? { format: calendar.axis, tickMinStep: calendar.step, labelFlush: false, labelSeparation: 8, tickCount: Math.max(Math.floor(opts.width / 80), 2) }
+      ? { format: calendar.axis, tickMinStep: calendar.step, labelFlush: false, labelBound: true, labelSeparation: 8, tickCount: Math.max(Math.floor(opts.width / 80), 2) }
       : opts.daily
       ? { format: dayFormat, tickMinStep: opts.years ? 28 * DAY : DAY, labelFlush: false, labelSeparation: 2, tickCount: Math.max(Math.floor(opts.width / (opts.years ? 80 : 40)), 2) }
       : {
@@ -580,7 +580,7 @@
         : { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains", point: opts.dense ? false : { size: 8, filled: true } },
       params: [{ name: "brush", select: { type: "interval", encodings: ["x"], mark: { fill: "#1d4ed8", fillOpacity: 0.12, stroke: "#1d4ed8" } } }],
       encoding: {
-        x: { field: enc.x.field, type: "temporal", title: null, scale: { padding: EDGE }, axis: { format: calendar ? calendar.axis : opts.years ? dayFormat : "%-d. %-m.", labelFlush: false, labelOverlap: "greedy", labelSeparation: 8, tickMinStep: calendar ? calendar.step : opts.years ? 28 * DAY : DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
+        x: { field: enc.x.field, type: "temporal", title: null, scale: { padding: EDGE }, axis: { format: calendar ? calendar.axis : opts.years ? dayFormat : "%-d. %-m.", labelFlush: false, labelBound: true, labelOverlap: "greedy", labelSeparation: 8, tickMinStep: calendar ? calendar.step : opts.years ? 28 * DAY : DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
         y: Object.assign({}, enc.y, { title: null, axis: null, scale: { zero: false } })
       }
     };
