@@ -268,8 +268,12 @@ async fn attach_req_info(req: axum::extract::Request, next: axum::middleware::Ne
     resp
 }
 
+/// Wraps the protected APIs: DPoP request info, and one transaction per write request, so an
+/// admin event commits with its change and a change whose event fails does not stand (AUD-02).
 pub fn with_dpop_req_info(router: Router) -> Router {
-    router.layer(axum::middleware::from_fn(attach_req_info))
+    router
+        .layer(axum::middleware::from_fn(jc_audit::layer))
+        .layer(axum::middleware::from_fn(attach_req_info))
 }
 
 /// Extracts and verifies the admin token (`Bearer` or `DPoP`, either from the target realm or
@@ -737,6 +741,25 @@ pub(crate) fn check_decision(dec: Decision) -> Result<()> {
     }
 }
 
+/// Removes, at any depth, every key that names a secret: `secret`, `clientSecret`, `password`,
+/// `credentials`, a mapper's `pairwiseSubAlgorithmSalt` (SEC-02). An admin event keeps ids and
+/// the shape of the change, never a value that grants access.
+pub(crate) fn strip_secret_keys(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            map.retain(|k, _| {
+                let k = k.to_ascii_lowercase();
+                !["secret", "password", "credential", "salt"]
+                    .iter()
+                    .any(|word| k.contains(word))
+            });
+            map.values_mut().for_each(strip_secret_keys);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_secret_keys),
+        _ => {}
+    }
+}
+
 pub(crate) async fn record_admin_write(
     state: &AdminState,
     ctx: &RequestCtx,
@@ -747,10 +770,11 @@ pub(crate) async fn record_admin_write(
 ) -> Result<()> {
     let mut sanitized = representation;
     if let Some(Value::Object(ref mut map)) = sanitized {
-        map.remove("secret");
-        map.remove("password");
+        // A credential representation's top-level `value` is the secret itself.
         map.remove("value");
-        map.remove("credentials");
+    }
+    if let Some(v) = sanitized.as_mut() {
+        strip_secret_keys(v);
     }
     state
         .oidc

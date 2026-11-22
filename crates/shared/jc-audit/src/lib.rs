@@ -150,6 +150,13 @@ pub async fn begin(pool: &PgPool) -> Result<Tx, sqlx::Error> {
     }))
 }
 
+/// Opens a transaction of its own even inside a unit, for a write that must stand whatever the
+/// request's outcome: a replay guard (a used DPoP proof, a spent challenge) rolled back with a
+/// failed request would accept the same proof again.
+pub async fn begin_own(pool: &PgPool) -> Result<Tx, sqlx::Error> {
+    Ok(Tx(Inner::Own(pool.begin().await?)))
+}
+
 /// Ends a store call's transaction: commits it outside a unit, releases its savepoint inside one
 /// (the unit commits at its end). A `Tx` dropped without this rolls back its own statements.
 pub async fn commit(tx: Tx) -> Result<(), sqlx::Error> {

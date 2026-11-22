@@ -7568,6 +7568,7 @@ dependencies = [
  "hickory-resolver",
  "http",
  "http-body-util",
+ "jc-audit",
  "jc-router",
  "jc-time",
  "jiff",
@@ -7701,6 +7702,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "jc-audit",
  "jc-router",
  "kaisatsu-admin",
  "kaisatsu-core",
@@ -7812,6 +7814,7 @@ dependencies = [
 name = "kaisatsu-store-pg"
 version = "0.1.0"
 dependencies = [
+ "jc-audit",
  "jc-pool",
  "jc-time",
  "jiff",

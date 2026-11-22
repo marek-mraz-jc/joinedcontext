@@ -187,3 +187,24 @@ async fn a_unit_without_a_store_call_takes_no_connection() {
     assert!(matches!(scope(|_: &u8| true, async { 7u8 }).await, Ok(7)));
     assert_eq!(pool.num_idle(), idle);
 }
+
+#[tokio::test]
+async fn a_replay_mark_stands_when_its_request_fails() {
+    let Some((pool, t)) = pool("own").await else {
+        return;
+    };
+    let out = scope(|_: &()| false, async {
+        insert(&pool, &t, "change").await.unwrap();
+        let mut tx = jc_audit::begin_own(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {t} VALUES ('mark')"
+        )))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        commit(tx).await.unwrap();
+    })
+    .await;
+    assert!(out.is_ok());
+    assert_eq!(keys(&pool, &t).await, ["mark"]);
+}
