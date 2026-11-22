@@ -1428,10 +1428,12 @@ message All {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let big = std::fs::File::create(dir.path().join("a.proto")).expect("creates");
-        // Exactly the cap is read (and fails as a schema, not on its size).
-        big.set_len(MAX_SCHEMA_BYTES).expect("sparse file");
-        let err = load_descriptors(&[dir.path().to_path_buf()], None).unwrap_err();
-        assert!(!err.contains("exceed"), "{err}");
+        // 2 MiB and exactly the cap are read (and fail as a schema, not on their size).
+        for len in [2 << 20, MAX_SCHEMA_BYTES] {
+            big.set_len(len).expect("sparse file");
+            let err = load_descriptors(&[dir.path().to_path_buf()], None).unwrap_err();
+            assert!(!err.contains("exceed"), "{len}: {err}");
+        }
         big.set_len(MAX_SCHEMA_BYTES + 1).expect("sparse file");
         assert_eq!(
             load_descriptors(&[dir.path().to_path_buf()], None).err(),
