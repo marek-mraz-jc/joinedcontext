@@ -3027,6 +3027,7 @@ dependencies = [
  "oxrdf",
  "oxrdfxml",
  "oxttl",
+ "rust-embed",
  "serde",
  "serde_json",
  "uuid",
@@ -3078,6 +3079,7 @@ dependencies = [
  "linkml-model",
  "regex",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 

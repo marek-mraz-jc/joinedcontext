@@ -1,0 +1,34 @@
+{
+  "id": "dcat-ap-3.0.1",
+  "version": "3.0.1",
+  "uri": "https://semiceu.github.io/DCAT-AP/releases/3.0.1",
+  "source": "DCAT-AP 3.0.1 SHACL of https://semiceu.github.io/DCAT-AP/releases/3.0.1 (specs/dcat-ap-3.0.1) and shapes.ttl beside this file",
+  "title": {
+    "en": "DCAT-AP 3.0.1 (European Union)"
+  },
+  "languages": [
+    "en"
+  ],
+  "aliases": [
+    "eu",
+    "euro_dcat_ap_3",
+    "https://semiceu.github.io/DCAT-AP/releases/3.0.1/"
+  ],
+  "selectable": true,
+  "serialisations": [
+    "turtle",
+    "json-ld",
+    "rdf-xml",
+    "n-triples"
+  ],
+  "shapes": [
+    "../../specs/dcat-ap-3.0.1/dcat-ap-SHACL.ttl",
+    "shapes.ttl"
+  ],
+  "render": {
+    "identifier": true,
+    "issuedModified": true,
+    "licence": true,
+    "inheritLegislation": false
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "@context": "https://ofn.gov.cz/dcat-ap-cz/2026-09-23/datová-sada/kontext.jsonld",
+  "distribuce": [
+    {
+      "formát": "http://publications.europa.eu/resource/authority/file-type/CSV",
+      "iri": "https://opendata.example.org/dataset/air/resource/res-1",
+      "název": {
+        "sk": "CSV súbor"
+      },
+      "podmínky_užití": {
+        "autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáze_chráněná_zvláštními_právy": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "databáze_jako_autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
+        "osobní_údaje": "https://example.org/personal-data/declared",
+        "typ": "Podmínky užití"
+      },
+      "přístupové_url": "https://files.example.org/air",
+      "soubor_ke_stažení": "https://files.example.org/air.csv",
+      "typ": "Distribuce",
+      "typ_média": "http://www.iana.org/assignments/media-types/text/csv"
+    }
+  ],
+  "geografické_území": [
+    "http://data.europa.eu/nuts/code/SK032"
+  ],
+  "iri": "https://opendata.example.org/dataset/air",
+  "klíčové_slovo": {
+    "cs": [
+      "ovzduší"
+    ],
+    "en": [
+      "air"
+    ],
+    "sk": [
+      "ovzdušie",
+      "PM10"
+    ]
+  },
+  "kontaktní_bod": {
+    "e-mail": "mailto:data@city.example",
+    "jméno": {
+      "sk": "Oddelenie"
+    },
+    "typ": "Organizace"
+  },
+  "název": {
+    "cs": "Kvalita ovzduší",
+    "en": "Air quality",
+    "sk": "Kvalita ovzdušia"
+  },
+  "periodicita_aktualizace": "http://publications.europa.eu/resource/authority/frequency/DAILY",
+  "popis": {
+    "cs": "Měření",
+    "en": "Measurements",
+    "sk": "Merania"
+  },
+  "poskytovatel": "https://publisher.example.org/id/city",
+  "typ": "Datová sada",
+  "téma": [
+    "http://publications.europa.eu/resource/authority/data-theme/ENVI"
+  ]
+}
