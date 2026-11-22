@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use dataroom_core::{Catalogue, Dataset};
 use dataroom_rdf::{
-    parse_datasets_from_rdf, serialize_catalogue, serialize_dataset, DcatProfileKind, RdfFormat,
+    parse_datasets_from_rdf, serialize_catalogue, serialize_dataset, DcatProfile, RdfFormat,
     RdfLimits,
 };
 
@@ -54,9 +54,15 @@ fn feeds_match_their_golden_files() {
     fs::create_dir_all(&actual_dir).expect("scratch directory");
     let mut differs = Vec::new();
     for (label, profile) in [
-        ("eu", DcatProfileKind::Eu301),
-        ("cz", DcatProfileKind::Cz),
-        ("sk", DcatProfileKind::Sk20),
+        ("eu", DcatProfile::eu()),
+        (
+            "cz",
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+        ),
+        (
+            "sk",
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+        ),
     ] {
         for (extension, format) in [("ttl", RdfFormat::Turtle), ("jsonld", RdfFormat::JsonLd)] {
             let mut feeds: Vec<(String, String)> = datasets

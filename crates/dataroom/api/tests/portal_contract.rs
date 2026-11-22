@@ -50,10 +50,16 @@ fn catalogue(org_id: OrgId, id: CatalogueId) -> Catalogue {
         default_language: "sk".into(),
         languages: vec!["sk".into(), "en".into()],
         main_profile: "dcat-ap-3.0.1".into(),
-        active_profiles: vec![ProfilePin {
-            profile_id: "dcat-ap-3.0.1".into(),
-            version: "3.0.1".into(),
-        }],
+        active_profiles: [
+            ("dcat-ap-3.0.1", "3.0.1"),
+            ("dcat-ap-sk-2.0", "2.0.1"),
+            ("dcat-ap-cz", "2026-09-23"),
+        ]
+        .map(|(id, version)| ProfilePin {
+            profile_id: id.into(),
+            version: version.into(),
+        })
+        .to_vec(),
         default_licence: None,
         publisher_uri: None,
         publisher_name: None,
@@ -292,9 +298,10 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
         ("dcat-ap-sk-2.0", "personal-data-occurence-type/2"),
         ("dcat-ap-cz", "neobsahuje-osobní-údaje"),
     ] {
+        // Negotiated, so the rendering is read whatever the record still misses for that feed.
         let ttl = reqwest::Client::new()
             .get(format!("{base}/dataset/{PUBLIC_DATASET}.ttl"))
-            .query(&[("_profile", profile)])
+            .header("accept-profile", profile)
             .send()
             .await
             .expect("dataroom answers")

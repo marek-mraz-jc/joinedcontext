@@ -396,6 +396,7 @@ pub async fn import_ckan_json(
 
 /// Runs the CLI command and returns a JSON summary.
 pub async fn run_cli(cli: Cli) -> Result<Value> {
+    dataroom_api::check_profiles()?;
     let org_id = OrgId::parse_verified(&cli.org_id)?;
     let catalogue_id = CatalogueId::parse_verified(&cli.catalogue_id)?;
 

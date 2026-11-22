@@ -36,7 +36,8 @@ use dataroom_core::{
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_mcp::handle_mcp_jsonrpc;
-use dataroom_rdf::{negotiate_profile, negotiate_rdf_format};
+use dataroom_rdf::negotiate_rdf_format;
+pub use dataroom_rdf::profile::check as check_profiles;
 use dataroom_search::search_datasets;
 use dataroom_shacl::ProfileRegistry;
 use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};
@@ -638,12 +639,8 @@ pub fn router(state: DataroomState) -> Router {
         .route("/catalog.xml", get(feeds::handle_catalog_rdf))
         .route("/catalog.nt", get(feeds::handle_catalog_nt))
         .route(
-            "/profiles/{profile}/catalog.ttl",
-            get(feeds::handle_profile_catalog_ttl),
-        )
-        .route(
-            "/profiles/{profile}/catalog.jsonld",
-            get(feeds::handle_profile_catalog_jsonld),
+            "/profiles/{profile}/{file}",
+            get(feeds::handle_profile_catalog),
         )
         .route(
             "/publisher/{publisher}/catalog.ttl",
@@ -920,6 +917,19 @@ async fn handle_upload_profile(
         if !dec.allowed {
             return problem_response(DataroomError::Forbidden(dec.reason));
         }
+        // An upload that renders through a national base needs what that feed needs.
+        let national = req
+            .profile
+            .base_profile
+            .as_deref()
+            .and_then(dataroom_rdf::DcatProfile::by_id)
+            .is_some_and(dataroom_rdf::DcatProfile::requires_publisher);
+        if national && cat.declared_publisher_uri().is_none() {
+            return problem_response(DataroomError::field_error(
+                "publisherUri",
+                "this profile's base needs the catalogue's publisher IRI; declare it first",
+            ));
+        }
     }
 
     // A published version is immutable (C17: catalogues pin versions): neither a built-in
@@ -1039,6 +1049,17 @@ async fn handle_activate_profile(
         Err(e) => return problem_response(e),
     };
 
+    let held = cat.main_profile == id || cat.active_profiles.iter().any(|p| p.profile_id == id);
+    if !held {
+        if let Err(e) = dataroom_core::ops::DatasetValidator::check_profile_choice(
+            state.profiles.as_ref(),
+            &cat,
+            &[id.as_str()],
+            state.sources_by_portal,
+        ) {
+            return problem_response(e);
+        }
+    }
     cat.active_profiles.retain(|p| p.profile_id != id);
     cat.active_profiles.push(ProfilePin {
         profile_id: id.clone(),
@@ -2116,14 +2137,29 @@ async fn dispatch_ui_route(
             if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {
                 let accept_profile = headers.get("Accept-Profile").and_then(|v| v.to_str().ok());
                 let q_prof = q_params.get("_profile").map(String::as_str);
-                let (prof_kind, prof_uri) =
-                    negotiate_profile(q_prof, accept_profile, &cat.main_profile);
+                let selected =
+                    match feeds::select_profile(&state, &ctx, &cat, q_prof, accept_profile).await {
+                        Ok(selected) => selected,
+                        Err(e) => return problem_response(e),
+                    };
+                if q_prof.is_some() && !selected.stack.renderer.is_base() {
+                    let missing =
+                        feeds::dataset_gaps(&state, &cat, &ds, pub_rec.as_ref(), &selected.stack);
+                    if !missing.is_empty() {
+                        return problem_response(DataroomError::NotFound(format!(
+                            "dataset '{ds_name}' is not in the {} feed; missing or not valid: {}",
+                            selected.stack.record.id,
+                            missing.join(", ")
+                        )));
+                    }
+                }
+                let prof_uri = selected.uri();
                 let body = dataroom_rdf::serialize_dataset(
                     &ds,
                     &cat,
                     pub_rec.as_ref(),
                     rdf_fmt,
-                    prof_kind,
+                    selected.stack.renderer,
                 );
                 return (
                     StatusCode::OK,

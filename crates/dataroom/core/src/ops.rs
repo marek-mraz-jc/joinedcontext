@@ -54,6 +54,22 @@ pub trait DatasetValidator: Send + Sync {
     ) {
     }
 
+    /// Refuses a profile upload that takes a built-in's id or whose shapes do not parse.
+    fn check_profile(&self, _profile: &crate::model::ProfileRecord) -> Result<()> {
+        Ok(())
+    }
+
+    /// Refuses profiles a catalogue may not take up: not installed, needing a publisher it does
+    /// not declare, or, where a Portal manages the choice (`managed`), a built-in one.
+    fn check_profile_choice(
+        &self,
+        _catalogue: &Catalogue,
+        _added: &[&str],
+        _managed: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -858,7 +874,24 @@ pub async fn execute_operation(
                 .authorizer
                 .check(req_ctx, Action::Admin, &target)
                 .allowed;
+            let held: Vec<String> = stored
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.clone())
+                .chain([stored.main_profile.clone()])
+                .collect();
             keep_admin_fields(&mut cat, stored, admin)?;
+            let added: Vec<&str> = cat
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.as_str())
+                .chain([cat.main_profile.as_str()])
+                .filter(|id| !held.iter().any(|h| h == id))
+                .collect();
+            if let Some(validator) = op_ctx.validator.as_ref().filter(|_| !added.is_empty()) {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
+                validator.check_profile_choice(&cat, &added, op_ctx.sources_by_portal)?;
+            }
             let saved = op_ctx.store.upsert_catalogue(cat).await?;
             op_ctx
                 .store
@@ -1740,6 +1773,9 @@ pub async fn execute_operation(
                     "profile.builtIn",
                     "a built-in profile ships with the release; upload under an id of your own",
                 ));
+            }
+            if let Some(validator) = &op_ctx.validator {
+                validator.check_profile(&profile)?;
             }
             if op_ctx
                 .store

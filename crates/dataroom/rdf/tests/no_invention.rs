@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use dataroom_core::{Catalogue, Dataset};
 use dataroom_rdf::{
-    parse_rdf_graph, serialize_catalogue, serialize_dataset, DcatProfileKind, RdfFormat, RdfLimits,
+    parse_rdf_graph, serialize_catalogue, serialize_dataset, DcatProfile, RdfFormat, RdfLimits,
 };
 use serde_json::{json, Value};
 
@@ -53,7 +53,7 @@ const UNDECLARED: &[(&str, &str)] = &[
     ("checksum algorithm", "checksumAlgorithm_sha256"),
 ];
 
-fn inventions(profile: DcatProfileKind) -> Vec<String> {
+fn inventions(profile: DcatProfile) -> Vec<String> {
     let (catalogue, dataset) = bare();
     let mut found = Vec::new();
     for format in [
@@ -90,18 +90,18 @@ fn inventions(profile: DcatProfileKind) -> Vec<String> {
 
 #[test]
 fn eu_renders_no_undeclared_value() {
-    let found = inventions(DcatProfileKind::Eu301);
+    let found = inventions(DcatProfile::eu());
     assert!(found.is_empty(), "{found:#?}");
 }
 
 #[test]
 fn cz_renders_no_undeclared_value() {
-    let found = inventions(DcatProfileKind::Cz);
+    let found = inventions(DcatProfile::from_token("dcat-ap-cz").expect("installed"));
     assert!(found.is_empty(), "{found:#?}");
 }
 
 #[test]
 fn sk_renders_no_undeclared_value() {
-    let found = inventions(DcatProfileKind::Sk20);
+    let found = inventions(DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"));
     assert!(found.is_empty(), "{found:#?}");
 }

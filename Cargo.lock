@@ -3093,6 +3093,7 @@ dependencies = [
  "linkml-model",
  "regex",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 

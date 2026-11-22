@@ -3,7 +3,7 @@ name = "dataroom-rdf"
 version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
-description = "DCAT-AP 3.0.1, DCAT-AP-CZ and DCAT-AP-SK 2.0 RDF mapping and serializers (Turtle, JSON-LD, RDF/XML, N-Triples)"
+description = "DCAT-AP RDF mapping under profiles read as data, and serializers (Turtle, JSON-LD, RDF/XML, N-Triples)"
 publish = false
 
 [dependencies]
@@ -17,3 +17,6 @@ oxttl = "0.1.8"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
+
+[build-dependencies]
+serde_json = "1.0.140"

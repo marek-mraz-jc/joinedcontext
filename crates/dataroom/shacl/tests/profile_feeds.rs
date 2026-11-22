@@ -2,7 +2,7 @@
 //! field the profile requires (C17). The EU feed keeps what its own shapes allow.
 
 use dataroom_core::{Catalogue, Dataset};
-use dataroom_rdf::{dataset_to_graph, DcatProfileKind};
+use dataroom_rdf::{dataset_to_graph, DcatProfile};
 use dataroom_shacl::{validate_graph_against_shapes, ProfileRegistry};
 use serde_json::Value;
 
@@ -24,14 +24,15 @@ fn complete() -> (Catalogue, Dataset) {
 }
 
 /// The paths of `dataset`'s violations in `profile`; empty when it stays in that feed.
-fn violations(catalogue: &Catalogue, dataset: &Dataset, profile: DcatProfileKind) -> Vec<String> {
-    let (_, shapes) = ProfileRegistry::new()
-        .stacked_shapes((catalogue.org_id, catalogue.id), profile.id(), None)
+fn violations(catalogue: &Catalogue, dataset: &Dataset, profile: DcatProfile) -> Vec<String> {
+    let stack = ProfileRegistry::new()
+        .stack((catalogue.org_id, catalogue.id), profile.id(), None)
         .expect("a built-in profile");
+    let shapes = &stack.shapes;
     let graph = dataset_to_graph(dataset, catalogue, None, profile);
     let report = validate_graph_against_shapes(
         &graph,
-        &shapes,
+        shapes,
         catalogue.org_id,
         catalogue.id,
         &dataset.id,
@@ -48,9 +49,9 @@ fn violations(catalogue: &Catalogue, dataset: &Dataset, profile: DcatProfileKind
 fn a_complete_dataset_passes_every_profiles_shapes() {
     let (catalogue, dataset) = complete();
     for profile in [
-        DcatProfileKind::Eu301,
-        DcatProfileKind::Cz,
-        DcatProfileKind::Sk20,
+        DcatProfile::eu(),
+        DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+        DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
     ] {
         let found = violations(&catalogue, &dataset, profile);
         assert!(found.is_empty(), "{}: {found:#?}", profile.id());
@@ -60,33 +61,48 @@ fn a_complete_dataset_passes_every_profiles_shapes() {
 #[test]
 fn an_undeclared_required_field_leaves_the_national_feeds_only() {
     type Undeclare = fn(&mut Dataset);
-    let cases: [(&str, Undeclare, &[DcatProfileKind]); 6] = [
+    let cases: [(&str, Undeclare, &[DcatProfile]); 6] = [
         (
             "personal data",
             |d| {
                 d.extras.remove("personal_data");
             },
-            &[DcatProfileKind::Cz, DcatProfileKind::Sk20],
+            &[
+                DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+                DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            ],
         ),
         (
             "licence",
             |d| d.licence_id = None,
-            &[DcatProfileKind::Cz, DcatProfileKind::Sk20],
+            &[
+                DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+                DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            ],
         ),
         (
             "theme",
             |d| d.themes.clear(),
-            &[DcatProfileKind::Cz, DcatProfileKind::Sk20],
+            &[
+                DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+                DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            ],
         ),
         (
             "frequency",
             |d| d.frequency = None,
-            &[DcatProfileKind::Cz, DcatProfileKind::Sk20],
+            &[
+                DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+                DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            ],
         ),
         (
             "publisher",
             |d| d.publisher = None,
-            &[DcatProfileKind::Cz, DcatProfileKind::Sk20],
+            &[
+                DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+                DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            ],
         ),
         (
             "legislation",
@@ -94,16 +110,16 @@ fn an_undeclared_required_field_leaves_the_national_feeds_only() {
                 d.applicable_legislation.clear();
                 d.distributions[0].applicable_legislation.clear();
             },
-            &[DcatProfileKind::Cz],
+            &[DcatProfile::from_token("dcat-ap-cz").expect("installed")],
         ),
     ];
     for (what, undeclare, leaves) in cases {
         let (catalogue, mut dataset) = complete();
         undeclare(&mut dataset);
         for profile in [
-            DcatProfileKind::Eu301,
-            DcatProfileKind::Cz,
-            DcatProfileKind::Sk20,
+            DcatProfile::eu(),
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
             let found = violations(&catalogue, &dataset, profile);
             assert_eq!(
