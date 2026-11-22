@@ -2,8 +2,10 @@
 """Per-crate coverage table and ratchet (T-7529): no crate's line or function coverage may drop.
 
 `cargo llvm-cov report --json` exports (one per workspace or shard, plain or .gz) are folded per
-crate: each source file belongs to the package of the nearest Cargo.toml above it. A crate's
-percent is covered/count of its files, truncated to two decimals.
+crate: each source file belongs to the package of the nearest Cargo.toml above it, and files
+under a crate's tests/, benches/ or examples/ (test fixtures and helpers, not the code the
+floors guard) are left out. A crate's percent is covered/count of its files, truncated to two
+decimals.
 
 Lines and functions are merged across a function's instances: a crate compiled twice (two crate
 hashes, as a dev-dependency of two test binaries) or a generic monomorphised in several binaries
@@ -41,6 +43,7 @@ import tomllib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RATCHET = ROOT / ".github/coverage-ratchet.toml"
 METRICS = ("lines", "functions")
+NOT_MEASURED = {"tests", "benches", "examples"}
 # A crate is red only when it measures more than this many points below its floor: an async or
 # timing-dependent branch can move a crate by a line between two runs of the same commit.
 TOLERANCE = 0.1
@@ -140,7 +143,7 @@ def per_crate(exports, root):
         if not path.is_relative_to(root):
             continue
         crate = package_of(path, root, cache)
-        if crate is None:
+        if crate is None or NOT_MEASURED & set(path.relative_to(root).parts):
             continue
         acc = crates.setdefault(crate, {m: [0, 0] for m in METRICS})
         for m in METRICS:
@@ -296,7 +299,7 @@ def selftest():
         a, b = root / "alpha/src/lib.rs", root / "beta/src/lib.rs"
         first, second = root / "one.json", root / "two.json"
         export(first, {a: (200, 199, 10, 10), "/home/x/.cargo/registry/dep.rs": (5, 0, 1, 0)})
-        export(second, {b: (3, 2, 3, 3), a: (200, 150, 10, 9)})
+        export(second, {b: (3, 2, 3, 3), a: (200, 150, 10, 9), root / "beta/tests/it.rs": (9, 0, 2, 0)})
         ratchet = root / "ratchet.toml"
 
         def judge(name, got, want):
@@ -306,7 +309,7 @@ def selftest():
                 failed.append(f"{name}: got {got!r}, want {want!r}")
 
         crates = per_crate([first, second], root)
-        judge("two exports fold per crate, better record wins, foreign file dropped", crates,
+        judge("two exports fold per crate, better record wins, foreign and tests/ files dropped", crates,
               {"alpha": {"lines": (200, 199), "functions": (10, 10)}, "beta": {"lines": (3, 2), "functions": (3, 3)}})
         judge("percent truncates 199/200 to 99.50", percent(200, 199), 99.5)
         judge("percent never rounds 2/3 up", percent(3, 2), 66.66)
