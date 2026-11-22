@@ -2214,7 +2214,7 @@
  </main>
 --- a/site/map.css
 +++ site/map.css
-@@ -1,9 +1,16 @@
+@@ -1,9 +1,17 @@
  /* T-4811: the map and its hint fill the frame the host gives them and never scroll inside it. */
  html, body { height: 100%; overflow: hidden; margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1b1f24; }
 -body { display: flex; flex-direction: column; }
@@ -2229,6 +2229,7 @@
 +/* T-7504: the strip under the map follows the chat's scheme. */
 +html[data-theme="dark"], html[data-theme="dark"] body { background: #16191d; }
 +html[data-theme="dark"] .hint { color: #b4bac2; }
++.jc-name { max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.94); color: #1b1f24; font-size: 12px; pointer-events: none; }
  .jc-pop { min-width: 10em; }
  .jc-pop strong { display: block; margin-bottom: 4px; }
  .jc-pop dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px 10px; }
@@ -2312,7 +2313,21 @@
      await new Promise(function (resolve) { map.once("load", resolve); });
      map.addSource("jc", { type: "geojson", data: { type: "FeatureCollection", features: features } });
      var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };
-@@ -163,7 +177,7 @@
+@@ -159,11 +173,21 @@
+       var i = nearest(features, [c.lng, c.lat]);
+       open(i, flat(features[i].geometry.coordinates)[0]);
+     });
++    // A few answers on one map are told apart by name; textContent alone, as in the popup.
++    var dots = features.filter(function (f) { return f.geometry.type === "Point"; });
++    if (dots.length > 1 && dots.length <= 3 && dots.length === features.length) {
++      dots.forEach(function (f) {
++        var at = f.geometry.coordinates;
++        var east = at[0] > (box[0][0] + box[1][0]) / 2;
++        var name = node("span", "jc-name", lines(spec, f.properties, lang).title);
++        new maplibre.Marker({ element: name, anchor: east ? "right" : "left", offset: [east ? -12 : 12, 0] }).setLngLat(at).addTo(map);
++      });
++    }
+     root.jcMapReady = true; // for the browser journey
    }
  
    if (typeof module === "object" && module.exports) {
@@ -2321,7 +2336,7 @@
      return;
    }
    window.addEventListener("message", function (event) {
-@@ -172,6 +186,7 @@
+@@ -172,6 +196,7 @@
      if (message.type !== "jc-viz-render") return;
      var lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
      document.documentElement.lang = lang;

@@ -173,6 +173,16 @@
       var i = nearest(features, [c.lng, c.lat]);
       open(i, flat(features[i].geometry.coordinates)[0]);
     });
+    // A few answers on one map are told apart by name; textContent alone, as in the popup.
+    var dots = features.filter(function (f) { return f.geometry.type === "Point"; });
+    if (dots.length > 1 && dots.length <= 3 && dots.length === features.length) {
+      dots.forEach(function (f) {
+        var at = f.geometry.coordinates;
+        var east = at[0] > (box[0][0] + box[1][0]) / 2;
+        var name = node("span", "jc-name", lines(spec, f.properties, lang).title);
+        new maplibre.Marker({ element: name, anchor: east ? "right" : "left", offset: [east ? -12 : 12, 0] }).setLngLat(at).addTo(map);
+      });
+    }
     root.jcMapReady = true; // for the browser journey
   }
 
