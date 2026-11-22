@@ -7396,6 +7396,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus 0.17.2",
  "mime_guess",
+ "ngsild-ql",
  "odata-csdl 0.3.0",
  "odata-table 0.3.0",
  "odata-url 0.3.0",
