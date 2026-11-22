@@ -200,11 +200,12 @@ pub(crate) async fn declare(
         let Some(declaration) = declared.get(&org.name) else {
             continue;
         };
-        let mut catalogues = vec![((org.org_id, org.catalogue_id), &[][..])];
+        let mut catalogues = vec![((org.org_id, org.catalogue_id), None)];
         for portal in served.values().filter(|p| p.organization_ref == org.name) {
+            let chosen = portal.profile_choice();
             match further_catalogue(portal, orgs) {
-                Some(key) => catalogues.push((key, &portal.profiles[..])),
-                None => catalogues[0].1 = &portal.profiles[..],
+                Some(key) => catalogues.push((key, chosen)),
+                None => catalogues[0].1 = chosen,
             }
         }
         for ((org_id, id), chosen) in catalogues {
@@ -674,6 +675,7 @@ impl SourceDesk for Desk {
             Ok(DeskCatalogue {
                 total: report.total,
                 missing_publisher: report.missing_publisher,
+                profiles: report.served,
                 datasets: report
                     .datasets
                     .into_iter()

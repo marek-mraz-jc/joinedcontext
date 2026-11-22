@@ -20,6 +20,8 @@ pub struct CatalogueReport {
     pub total: usize,
     /// The profiles with no feed until the catalogue declares its publisher.
     pub missing_publisher: Vec<String>,
+    /// The profiles it serves beside EU DCAT-AP.
+    pub served: Vec<String>,
     /// Each dataset with the profiles it is absent from and the fields that keep it out.
     pub datasets: Vec<DatasetGaps>,
 }
@@ -216,14 +218,14 @@ impl CatalogueWriter {
     }
 
     /// Writes what the manifests declare of the catalogue, only on a difference; whether it
-    /// wrote. `chosen` is `Portal.spec.profiles`: empty keeps the stored pins (T-7521 C1), else
+    /// wrote. `chosen` is the Portal's choice: `None` keeps the stored pins (T-7521 C1), else
     /// the pins are EU DCAT-AP, the chosen ones and the catalogue's own uploads it pins.
     pub async fn declare(
         &self,
         org: OrgId,
         id: CatalogueId,
         declared: &CatalogueDeclaration,
-        chosen: &[String],
+        chosen: Option<&[String]>,
     ) -> Result<bool> {
         let _serial = self.serial.lock().await;
         let store = self.state.store.as_ref();
@@ -234,7 +236,7 @@ impl CatalogueWriter {
             return Ok(false);
         }
         let mut declared = declared.clone();
-        if !chosen.is_empty() {
+        if let Some(chosen) = chosen {
             let mut pins: Vec<ProfilePin> = Vec::new();
             for name in
                 std::iter::once(dataroom_api::BASE_PROFILE).chain(chosen.iter().map(String::as_str))
@@ -391,6 +393,17 @@ impl CatalogueWriter {
             ids.dedup();
             ids
         };
+        let mut served: Vec<String> = Vec::new();
+        for id in cat
+            .active_profiles
+            .iter()
+            .map(|pin| &pin.profile_id)
+            .chain([&cat.main_profile])
+        {
+            if id != dataroom_api::BASE_PROFILE && !served.contains(id) {
+                served.push(id.clone());
+            }
+        }
         let state = self.state.clone();
         // SHACL over up to a page of records for each profile: off the async workers.
         let datasets = tokio::task::spawn_blocking(move || {
@@ -402,6 +415,7 @@ impl CatalogueWriter {
         Ok(CatalogueReport {
             total,
             missing_publisher,
+            served,
             datasets,
         })
     }
@@ -704,16 +718,16 @@ mod tests {
             ..CatalogueDeclaration::default()
         };
         assert!(writer
-            .declare(spec.org_id, spec.id, &declared, &[])
+            .declare(spec.org_id, spec.id, &declared, None)
             .await
             .unwrap());
         assert!(!writer
-            .declare(spec.org_id, spec.id, &declared, &[])
+            .declare(spec.org_id, spec.id, &declared, None)
             .await
             .unwrap());
         let empty = CatalogueDeclaration::default();
         assert!(!writer
-            .declare(spec.org_id, spec.id, &empty, &[])
+            .declare(spec.org_id, spec.id, &empty, None)
             .await
             .unwrap());
         let got = store
@@ -727,15 +741,15 @@ mod tests {
         // T-7521: the Portal's choice becomes the pins, and an empty one keeps them.
         let chosen = ["geodcat-ap-3.1.0".to_owned(), "dcat-ap-fi-2.0".to_owned()];
         assert!(writer
-            .declare(spec.org_id, spec.id, &empty, &chosen)
+            .declare(spec.org_id, spec.id, &empty, Some(&chosen))
             .await
             .unwrap());
         assert!(!writer
-            .declare(spec.org_id, spec.id, &empty, &chosen)
+            .declare(spec.org_id, spec.id, &empty, Some(&chosen))
             .await
             .unwrap());
         assert!(!writer
-            .declare(spec.org_id, spec.id, &empty, &[])
+            .declare(spec.org_id, spec.id, &empty, None)
             .await
             .unwrap());
         let got = store
@@ -794,6 +808,7 @@ mod tests {
         let report = writer.report(spec.org_id, spec.id, 0, 50).await.unwrap();
         assert_eq!(report.missing_publisher, ["dcat-ap-sk-2.0"]);
         assert_eq!(report.total, 1);
+        assert_eq!(report.served, ["dcat-ap-sk-2.0", "city-rules"]);
         let gaps = &report.datasets[0].1;
         let of = |id: &str| gaps.iter().find(|(p, _)| p == id).map(|(_, f)| f.to_vec());
         assert!(
@@ -802,9 +817,8 @@ mod tests {
         );
 
         let none = CatalogueDeclaration::default();
-        let only_eu = [dataroom_api::BASE_PROFILE.to_owned()];
         assert!(writer
-            .declare(spec.org_id, spec.id, &none, &only_eu)
+            .declare(spec.org_id, spec.id, &none, Some(&[]))
             .await
             .unwrap());
         let got = store

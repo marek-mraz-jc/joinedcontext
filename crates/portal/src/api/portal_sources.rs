@@ -72,6 +72,8 @@ pub struct DeskCatalogue {
     pub total: usize,
     /// The profiles with no feed until the Organization declares a publisher (T-7520).
     pub missing_publisher: Vec<String>,
+    /// The profiles served beside EU DCAT-AP.
+    pub profiles: Vec<String>,
     pub datasets: Vec<DeskDataset>,
 }
 
@@ -413,6 +415,9 @@ pub struct PortalDatasets {
     pub total: usize,
     /// The chosen profiles with no feed until the Organization declares a publisher IRI.
     pub missing_publisher: Vec<String>,
+    /// The profiles the catalogue serves beside EU DCAT-AP: what a Portal that states no choice
+    /// keeps (T-7521).
+    pub profiles: Vec<String>,
     pub items: Vec<PortalDataset>,
 }
 
@@ -467,6 +472,7 @@ pub async fn list_portal_datasets(
     Ok(Json(PortalDatasets {
         total: page.total,
         missing_publisher: page.missing_publisher,
+        profiles: page.profiles,
         items,
     }))
 }

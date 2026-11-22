@@ -1341,6 +1341,58 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
     assert!(!odata_body.contains("b-only-secret"));
 }
 
+/// T-7521 C6: the operations refuse what the profile routes refuse.
+#[tokio::test]
+async fn profile_operations_refuse_a_built_in_id_bad_shapes_and_an_uninstalled_choice() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let store = Arc::new(MemoryStore::new());
+    let mut cat = make_catalogue(org, id, "ops", "ops.example.org");
+    store.upsert_catalogue(cat.clone()).await.unwrap();
+    let authz = Arc::new(PolicyAuthorizer::new(vec![GrantRule {
+        org_id: org,
+        catalogue_id: Some(id),
+        principal: "admin".into(),
+        actions: vec![Action::Admin],
+        publisher_id: None,
+    }]));
+    let state = DataroomState::new(store, authz, org, id);
+    let ctx = RequestCtx::new(
+        org,
+        id,
+        Subject::authenticated("admin", vec![org], Vec::new()),
+    );
+    let refused = |op: &'static str, input: Value, field: &'static str| {
+        let (ops, ctx) = (state.op_context(), ctx.clone());
+        async move {
+            match execute_operation(&ops, &ctx, op, input).await {
+                Err(dataroom_core::DataroomError::Validation { fields, .. }) => {
+                    assert!(fields.contains_key(field), "{fields:?}");
+                }
+                other => panic!("{op} answered {other:?}"),
+            }
+        }
+    };
+    let upload = |id: &str, shapes: &str| {
+        json!({ "profile": {
+            "id": id, "version": "9", "uri": "https://example.org/p", "title": {"en": "P"},
+            "builtIn": false, "shapesTurtle": shapes,
+        }})
+    };
+    let built_in = upload("dcat-ap-fi-2.0", "");
+    refused("profile.propose", built_in, "profile.id").await;
+    let broken = upload("own-rules", "this is not turtle");
+    refused("profile.propose", broken, "profile.shapesTurtle").await;
+    cat.active_profiles.push(ProfilePin {
+        profile_id: "dcat-ap-zz".into(),
+        version: String::new(),
+    });
+    let choice = json!({ "catalogue": cat });
+    refused("catalogue.propose", choice, "activeProfiles").await;
+}
+
 #[tokio::test]
 async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     let org_a = OrgId::from_uuid(Uuid::from_u128(0xB401));

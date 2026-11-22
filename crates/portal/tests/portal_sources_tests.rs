@@ -102,6 +102,7 @@ impl SourceDesk for Fake {
             Ok(DeskCatalogue {
                 total: all.len(),
                 missing_publisher: vec!["dcat-ap-sk-2.0".into()],
+                profiles: vec!["dcat-ap-sk-2.0".into()],
                 datasets: all.into_iter().skip(offset).take(limit).collect(),
             })
         })
@@ -406,6 +407,7 @@ async fn datasets_of_a_portal_never_list_another_portals_or_organizations_record
         ])
     );
     assert_eq!(page.body["missingPublisher"], json!(["dcat-ap-sk-2.0"]));
+    assert_eq!(page.body["profiles"], json!(["dcat-ap-sk-2.0"]));
     assert!(!page.body.to_string().contains("praha"), "{}", page.body);
     let second = http(
         &state,

@@ -79,8 +79,7 @@ impl Sites {
 /// The registry role of a host a further portal answers on.
 pub const SITE_ROLE: &str = "portal-site";
 
-/// The profile every catalogue serves beside the ones its Portal chooses.
-pub const BASE_PROFILE: &str = "dcat-ap-3.0.1";
+pub use jc_core::kinds::portal::BASE_PROFILE;
 
 /// A publication profile the catalogue of this installation ships (`JC_PORTAL_PROFILES`, the
 /// manifests of dataroom's profile directories as jc passes them on; T-7521).
@@ -264,7 +263,7 @@ pub fn check(
     let mut existing = None;
     if let Some(held) = mirror.get(ORG_NAMESPACE, "Portal", name) {
         let held = serde_json::from_value::<PortalSpec>(held.spec).ok();
-        existing = Some(held.clone().map(|h| h.profiles).unwrap_or_default());
+        existing = Some(held.clone().and_then(|h| h.profiles).unwrap_or_default());
         if held.as_ref().is_some_and(|h| &h.organization_ref != org) {
             return Err(refused(
                 "spec.organizationRef",
@@ -398,7 +397,7 @@ pub fn check(
     }
     // Judged where it is chosen: what the portal serves already never blocks another edit.
     let chosen_already = existing.unwrap_or_default();
-    for (i, id) in spec.profiles.iter().enumerate() {
+    for (i, id) in spec.profiles.iter().flatten().enumerate() {
         if id == BASE_PROFILE || chosen_already.contains(id) {
             continue;
         }
