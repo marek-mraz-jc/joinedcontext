@@ -881,13 +881,11 @@ mod tests {
         let one = expand_init_files(&["c.sql".into()], root).unwrap();
         assert_eq!(one.len(), 1);
         assert!(expand_init_files(&["missing.sql".into()], root)
-            .err()
-            .expect("refused")
+            .expect_err("refused")
             .to_string()
             .contains("open "));
         assert!(expand_init_files(&["[.sql".into()], root)
-            .err()
-            .expect("refused")
+            .expect_err("refused")
             .to_string()
             .contains("failed to expand init_files glob patterns"));
         assert!(expand_init_files(&["none-*.sql".into()], root)
