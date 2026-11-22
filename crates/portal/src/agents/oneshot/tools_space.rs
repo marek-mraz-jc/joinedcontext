@@ -242,6 +242,7 @@ impl Driver {
         let now = now_rfc3339();
         let provenance = kpi::Provenance {
             org_domain: &crate::api::assistant::project_org_domain(&self.state, &self.project),
+            urn_owner: &crate::api::assistant::project_urn_owner(&self.state, &self.project),
             project: &self.project,
             endpoint_space: &endpoint_space,
             endpoint_name: &endpoint_name,
@@ -896,6 +897,69 @@ mod tests {
             panic!("the last step is done");
         };
         assert!(prose.contains("draft_kpi_pipeline"), "{prose}");
+    }
+
+    /// T-7500: the assistant's compute_kpi mints a pinned project's indicator under the pin and
+    /// names the Endpoint and the run under the project's Organization.
+    #[tokio::test]
+    async fn a_pinned_projects_indicator_keeps_its_id_and_names_its_resources_as_they_are() {
+        let source = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "urn:ngsi-ld:Bike:1", "type": "Bike", "n": 1 }
+            ])))
+            .mount(&source)
+            .await;
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::permissions::ORG_NAMESPACE;
+        for (kind, name, spec) in [
+            ("Organization", "bcn", json!({ "domain": "barcelona.cat" })),
+            (
+                "Project",
+                "helsinki",
+                json!({ "organizationRef": "bcn", "urnOwner": "hel.fi" }),
+            ),
+        ] {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, org),
+                spec,
+                status: None,
+            });
+        }
+        let mut driver = super::Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = source.uri();
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let op = crate::ops::find("jc_kpi_compute").expect("registered");
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": ["jc_kpi_compute"],
+            "kinds": [{ "kind": op.kind, "verbs": ["read", "propose"] }],
+        } }));
+        let call = serde_json::from_value(
+            json!({ "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum", "unit": "C62" }),
+        )
+        .expect("a call");
+        let mut chosen = vec![crate::agents::endpoints::RunEndpoint {
+            name: "bikes".into(),
+            slug: "bikes".into(),
+            space: "bikes".into(),
+        }];
+        driver
+            .kpi(Ok(call), "", &mut chosen, &mut vec![Vec::new()], true)
+            .await
+            .expect("an answer");
+        let events = tool_events(&state).await;
+        let entity = events
+            .iter()
+            .find_map(|event| event["output"].get("entity"))
+            .unwrap_or_else(|| panic!("an indicator: {events:?}"));
+        let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_owned();
+        assert!(text(&entity["id"]).contains(":hel.fi:"), "{entity}");
+        for field in ["derivedFrom", "computedBy"] {
+            let named = text(&entity[field]["value"]);
+            assert!(named.contains(":barcelona.cat:"), "{field}: {named}");
+        }
     }
 
     async fn tool_events(state: &crate::state::AppState) -> Vec<serde_json::Value> {

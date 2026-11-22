@@ -404,6 +404,7 @@ async fn kpi_compute(
         None => (kpi_value(&input.rows.unwrap_or_default(), &params)?, None),
     };
     let org_domain = assistant::project_org_domain(state, project);
+    let urn_owner = assistant::project_urn_owner(state, project);
     // The Endpoint read, or for rows the indicator space's, as the provenance's source.
     let (ep_slug, ep_name) = read
         .or_else(|| kpi::kpi_endpoint(state, project))
@@ -411,6 +412,7 @@ async fn kpi_compute(
     let now = jc_time::TimestampTz::now().to_rfc3339();
     let prov = kpi::Provenance {
         org_domain: &org_domain,
+        urn_owner: &urn_owner,
         project,
         endpoint_space: &ep_slug,
         endpoint_name: &ep_name,
@@ -878,6 +880,30 @@ mod tests {
         .expect("an indicator");
         let id = answer["id"].as_str().unwrap_or_default();
         assert!(id.contains(":barcelona.cat:"), "{id}");
+
+        // T-7500: a pin moves the indicator's id and none of the resources it names.
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Project".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("mobility", org),
+            spec: json!({ "organizationRef": "bcn", "urnOwner": "hel.fi" }),
+            status: None,
+        });
+        let input = json!({ "name": "n", "type": "BikeCounter", "agg": "count", "rows": [{ "id": "urn:ngsi-ld:BikeCounter:1" }] });
+        let answer = kpi_compute(
+            &caller(),
+            &state,
+            "mobility",
+            parse_input(input).expect("an input"),
+        )
+        .await
+        .expect("a pinned indicator");
+        let id = answer["id"].as_str().unwrap_or_default();
+        assert!(id.contains(":hel.fi:"), "{id}");
+        for field in ["derivedFrom", "computedBy"] {
+            let named = answer[field]["value"].as_str().unwrap_or_default();
+            assert!(named.contains(":barcelona.cat:"), "{field}: {named}");
+        }
     }
 
     /// A gateway holding `total` counters of count 1, 2, ... that answers at most `page` a read.

@@ -31,6 +31,7 @@ fn a_count_with_a_filter_becomes_an_entity_the_platform_accepts() {
     assert_eq!((value, count), (Some(2.0), 2));
     let provenance = Provenance {
         org_domain: "hel.fi",
+        urn_owner: "hel.fi",
         project: "helsinki",
         endpoint_space: "helsinki",
         endpoint_name: "helsinki-bikes",
