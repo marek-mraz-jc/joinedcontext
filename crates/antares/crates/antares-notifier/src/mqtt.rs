@@ -365,7 +365,8 @@ impl MqttSink {
         let key = pool_key(ep, params);
         // one retry with a fresh connection: a pooled client whose broker
         // restarted fails the first publish; a dead broker fails both.
-        for attempt in 0..2 {
+        let mut retried = false;
+        loop {
             let mut conn = match self.checkout(&key) {
                 Some(c) => c,
                 None => self.connect(ep, params).await?,
@@ -388,7 +389,7 @@ impl MqttSink {
                     self.checkin(key, conn);
                     return Ok(());
                 }
-                _ if attempt == 0 => continue, // drop conn, retry fresh
+                _ if !retried => retried = true, // drop conn, retry fresh
                 Ok(Ok(())) => {
                     return Err(NgsiError::InternalError(
                         "mqtt connection lost during publish".into(),
@@ -403,9 +404,6 @@ impl MqttSink {
                 }
             }
         }
-        Err(NgsiError::InternalError(
-            "mqtt publish exhausted its retry without a verdict".into(),
-        ))
     }
 
     async fn publish(client: &Client, topic: &str, qos: u8, payload: &[u8]) -> Result<(), String> {
@@ -793,11 +791,12 @@ mod tests {
             "mqtts://user:hunter2@/t",             // no host
             "http://user:hunter2@host/t",          // wrong scheme
         ] {
-            let NgsiError::BadRequestData(msg) =
-                MqttEndpoint::parse(uri).expect_err(&format!("{uri} must be rejected"))
-            else {
-                panic!("{uri} must be BadRequestData (400, Table 6.3.2-1)");
-            };
+            let err = MqttEndpoint::parse(uri).expect_err(&format!("{uri} must be rejected"));
+            assert!(
+                matches!(err, NgsiError::BadRequestData(_)),
+                "{uri} must be BadRequestData (400, Table 6.3.2-1): {err:?}"
+            );
+            let msg = err.to_string();
             assert!(
                 !msg.contains("hunter2"),
                 "the password leaked into the 400 detail: {msg}"
@@ -823,6 +822,20 @@ mod tests {
         assert_eq!(p, MqttParams { qos: 2, v5: false });
         assert!(MqttParams::from_notifier_info([("MQTT-QoS", "3")]).is_err());
         assert!(MqttParams::from_notifier_info([("MQTT-Version", "mqtt4")]).is_err());
+        // the defaults spelled out, and a key Table 7.2-1 does not name, are accepted as given
+        let p = MqttParams::from_notifier_info([
+            ("MQTT-QoS", "0"),
+            ("MQTT-Version", "mqtt5.0"),
+            ("X-Unknown", "kept out of the params"),
+        ])
+        .expect("spelled-out defaults");
+        assert_eq!(p, MqttParams { qos: 0, v5: true });
+        assert_eq!(
+            MqttParams::from_notifier_info([("MQTT-QoS", "1")])
+                .expect("qos 1")
+                .qos,
+            1
+        );
     }
 
     /// The pool key must separate sessions by credentials: same user with
@@ -899,51 +912,14 @@ mod tests {
     fn tls_config_is_built_once_and_shared() {
         let a = shared_tls_config().expect("first load");
         let b = shared_tls_config().expect("second load");
-        let (rumqttc::TlsConfiguration::Rustls(a), rumqttc::TlsConfiguration::Rustls(b)) = (a, b)
-        else {
-            panic!("expected the injected-rustls variant");
-        };
         assert!(
-            std::sync::Arc::ptr_eq(&a, &b),
-            "each call built a fresh trust store instead of sharing one"
+            matches!(
+                (&a, &b),
+                (rumqttc::TlsConfiguration::Rustls(a), rumqttc::TlsConfiguration::Rustls(b))
+                    if std::sync::Arc::ptr_eq(a, b)
+            ),
+            "expected one shared injected-rustls config, each call built its own"
         );
-    }
-
-    /// A stub MQTT 3.1.1 broker on loopback: it accepts every CONNECT and
-    /// answers a QoS 1 PUBLISH with its PUBACK only when `ack` holds.
-    async fn stub_broker(ack: bool) -> u16 {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n) = s.read(&mut buf).await {
-                        let Some(packet) = buf.get(..n).filter(|p| !p.is_empty()) else {
-                            return;
-                        };
-                        let reply: Vec<u8> = match packet.first().map(|b| b >> 4) {
-                            Some(1) => vec![0x20, 0x02, 0x00, 0x00],
-                            // header, one-byte length, topic length + topic, pkid
-                            Some(3) if ack => {
-                                let topic = usize::from(packet.get(3).copied().unwrap_or(0));
-                                let at = 4usize.saturating_add(topic);
-                                let pkid = packet.get(at..at.saturating_add(2)).unwrap_or(&[0, 1]);
-                                [&[0x40, 0x02][..], pkid].concat()
-                            }
-                            _ => continue,
-                        };
-                        if s.write_all(&reply).await.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        port
     }
 
     /// F-ANT3-022: a QoS 1 publish is delivered once the broker sent its
@@ -952,9 +928,11 @@ mod tests {
     async fn a_qos1_publish_waits_for_the_puback() {
         let params = MqttParams { qos: 1, v5: false };
         let sink = MqttSink::new(2, Duration::from_millis(300));
-        let silent =
-            MqttEndpoint::parse(&format!("mqtt://127.0.0.1:{}/t", stub_broker(false).await))
-                .expect("parse");
+        let silent = MqttEndpoint::parse(&format!(
+            "mqtt://127.0.0.1:{}/t",
+            stub(OnPublish::Ignore, Vec::new()).await.0
+        ))
+        .expect("parse");
         let started = Instant::now();
         let err = sink
             .publish_message(&silent, params, b"{}")
@@ -966,12 +944,524 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
-        let acking =
-            MqttEndpoint::parse(&format!("mqtt://127.0.0.1:{}/t", stub_broker(true).await))
-                .expect("parse");
+        let acking = MqttEndpoint::parse(&format!(
+            "mqtt://127.0.0.1:{}/t",
+            stub(OnPublish::Ack, Vec::new()).await.0
+        ))
+        .expect("parse");
         sink.publish_message(&acking, params, b"{}")
             .await
             .expect("the PUBACK delivers");
+    }
+
+    /// What a [`stub`] broker does with a PUBLISH.
+    #[derive(Clone, Copy, PartialEq)]
+    enum OnPublish {
+        /// PUBACK it and stay connected.
+        Ack,
+        /// Read it, answer nothing and stay connected.
+        Ignore,
+        /// PUBACK it, then drop the connection.
+        AckThenHang,
+        /// Drop the connection without acknowledging.
+        Hang,
+        /// As `Hang`, and also drop the connection once a SUBSCRIBE was
+        /// answered with its SUBACK and the pushed messages.
+        HangAfterPush,
+    }
+
+    /// One MQTT 5 PUBLISH at QoS 0 with no properties.
+    fn v5_publish(topic: &str, payload: &[u8]) -> Vec<u8> {
+        let len = u8::try_from(2 + topic.len() + 1 + payload.len()).expect("short packet");
+        let topic_len = u8::try_from(topic.len()).expect("short topic");
+        [
+            &[0x30, len, 0x00, topic_len][..],
+            topic.as_bytes(),
+            &[0x00],
+            payload,
+        ]
+        .concat()
+    }
+
+    /// A stub broker on loopback, MQTT 3.1.1 and 5: CONNACK in the version
+    /// the client spoke, a PUBLISH answered per `on_publish`, and a SUBSCRIBE
+    /// answered with its SUBACK followed by `pushed`. It counts the
+    /// connections it accepted and keeps every packet it read.
+    async fn stub(
+        on_publish: OnPublish,
+        pushed: Vec<Vec<u8>>,
+    ) -> (
+        u16,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        std::sync::Arc<Mutex<Vec<Vec<u8>>>>,
+    ) {
+        use std::sync::atomic::Ordering;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let (count, log) = (accepted.clone(), seen.clone());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                let (log, pushed) = (log.clone(), pushed.clone());
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n) = s.read(&mut buf).await {
+                        let Some(packet) = buf.get(..n).filter(|p| !p.is_empty()) else {
+                            return;
+                        };
+                        log.lock().expect("log").push(packet.to_vec());
+                        let reply: Vec<u8> = match packet.first().map(|b| b >> 4) {
+                            Some(1) => {
+                                // protocol level after the "MQTT" name: 5 or 4
+                                if packet.get(8) == Some(&5) {
+                                    vec![0x20, 0x03, 0x00, 0x00, 0x00]
+                                } else {
+                                    vec![0x20, 0x02, 0x00, 0x00]
+                                }
+                            }
+                            Some(3)
+                                if on_publish == OnPublish::Ack
+                                    || on_publish == OnPublish::AckThenHang =>
+                            {
+                                let topic = usize::from(packet.get(3).copied().unwrap_or(0));
+                                let at = 4usize.saturating_add(topic);
+                                let pkid = packet.get(at..at.saturating_add(2)).unwrap_or(&[0, 1]);
+                                let _ = s.write_all(&[&[0x40, 0x02][..], pkid].concat()).await;
+                                if on_publish == OnPublish::AckThenHang {
+                                    // let the client read the PUBACK before the EOF
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                    return;
+                                }
+                                continue;
+                            }
+                            Some(3) if on_publish != OnPublish::Ignore => return,
+                            Some(8) if on_publish == OnPublish::HangAfterPush => {
+                                let pkid = packet.get(2..4).unwrap_or(&[0, 1]);
+                                let reply =
+                                    [&[0x90, 0x04][..], pkid, &[0x00, 0x01], &pushed.concat()]
+                                        .concat();
+                                let _ = s.write_all(&reply).await;
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                return;
+                            }
+                            Some(8) => {
+                                let pkid = packet.get(2..4).unwrap_or(&[0, 1]);
+                                // listen is MQTT 5 only: SUBACK with no properties
+                                [&[0x90, 0x04][..], pkid, &[0x00, 0x01], &pushed.concat()].concat()
+                            }
+                            // an ignored PUBLISH, PINGREQ, DISCONNECT: nothing to answer
+                            _ => continue,
+                        };
+                        // a write to a client that left ends at the next read
+                        let _ = s.write_all(&reply).await;
+                    }
+                });
+            }
+        });
+        (port, accepted, seen)
+    }
+
+    fn ep_at(port: u16) -> MqttEndpoint {
+        MqttEndpoint::parse(&format!("mqtt://127.0.0.1:{port}/t")).expect("parse")
+    }
+
+    /// MQTT 5 (the Table 7.2-1 default) takes its own connect path: QoS 0 is
+    /// delivered once queued, QoS 1 once the PUBACK arrived, and both reuse
+    /// the one pooled connection of that endpoint.
+    #[tokio::test]
+    async fn an_mqtt5_publish_connects_with_v5_and_is_pooled() {
+        let sink = MqttSink::new(2, Duration::from_secs(2));
+        let ep = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+        for qos in [0, 1] {
+            let sent = sink
+                .publish_message(&ep, MqttParams { qos, v5: true }, b"{}")
+                .await;
+            assert!(sent.is_ok(), "v5 QoS {qos}: {sent:?}");
+        }
+        let pool = sink.pool.lock().expect("pool");
+        assert_eq!(
+            pool.len(),
+            1,
+            "QoS 0 and QoS 1 reuse the endpoint's one session"
+        );
+        assert!(pool
+            .values()
+            .all(|c| matches!(c.client, Client::V5(_)) && !c.pump.is_finished()));
+    }
+
+    /// A pooled connection whose broker went away fails its first publish;
+    /// the sink retries once on a fresh connection instead of failing the
+    /// notification.
+    #[tokio::test]
+    async fn a_dead_pooled_connection_is_replaced_by_one_retry() {
+        for v5 in [false, true] {
+            let (port, accepted, _) = stub(OnPublish::AckThenHang, Vec::new()).await;
+            let sink = MqttSink::new(2, Duration::from_secs(2));
+            let params = MqttParams { qos: 1, v5 };
+            sink.publish_message(&ep_at(port), params, b"{}")
+                .await
+                .expect("first publish acknowledged");
+            // the broker hung up after its PUBACK: wait for the pooled pump to see it
+            let key = pool_key(&ep_at(port), params);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !sink.pool.lock().expect("pool")[&key].pump.is_finished() {
+                assert!(Instant::now() < deadline, "the pump never saw the hang-up");
+                tokio::task::yield_now().await;
+            }
+            sink.publish_message(&ep_at(port), params, b"{}")
+                .await
+                .expect("the retry delivers on a fresh connection");
+            assert_eq!(
+                accepted.load(std::sync::atomic::Ordering::SeqCst),
+                2,
+                "v5={v5}"
+            );
+        }
+    }
+
+    /// F-ANT3-022: a broker that drops the connection after taking a QoS 1
+    /// PUBLISH has not acknowledged it. Both attempts fail and the error
+    /// says why; no delivery is reported.
+    #[tokio::test]
+    async fn a_connection_lost_before_the_puback_fails_after_one_retry() {
+        let (port, accepted, _) = stub(OnPublish::Hang, Vec::new()).await;
+        let sink = MqttSink::new(2, Duration::from_secs(2));
+        let err = sink
+            .publish_message(&ep_at(port), MqttParams { qos: 1, v5: false }, b"{}")
+            .await
+            .expect_err("no PUBACK, no delivery");
+        assert_eq!(
+            err.to_string(),
+            "mqtt publish: connection lost before the broker acknowledged",
+            "{err}"
+        );
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(
+            sink.pool.lock().expect("pool").is_empty(),
+            "a failed session is not pooled"
+        );
+    }
+
+    /// A QoS outside 0..=2 (params built by hand, bypassing Table 7.2-1's
+    /// parse) is refused by the client in both versions, never sent.
+    #[tokio::test]
+    async fn an_invalid_qos_is_refused_before_anything_is_sent() {
+        for v5 in [false, true] {
+            let (port, _, seen) = stub(OnPublish::Hang, Vec::new()).await;
+            let sink = MqttSink::new(2, Duration::from_secs(2));
+            let err = sink
+                .publish_message(&ep_at(port), MqttParams { qos: 3, v5 }, b"{}")
+                .await
+                .expect_err("QoS 3 does not exist");
+            assert!(err.to_string().contains("mqtt publish:"), "{err}");
+            assert!(
+                err.to_string().contains('3'),
+                "the refusal names the value: {err}"
+            );
+            let published = seen
+                .lock()
+                .expect("seen")
+                .iter()
+                .any(|p| p.first().map(|b| b >> 4) == Some(3));
+            assert!(!published, "v5={v5}: a PUBLISH reached the broker");
+        }
+    }
+
+    /// The pool is bounded: past `cap` sessions the least recently used one
+    /// is dropped.
+    #[tokio::test]
+    async fn the_pool_evicts_the_least_recently_used_session() {
+        let sink = MqttSink::new(1, Duration::from_secs(2));
+        let params = MqttParams { qos: 1, v5: false };
+        let first = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+        let second = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+        sink.publish_message(&first, params, b"{}")
+            .await
+            .expect("first");
+        sink.publish_message(&second, params, b"{}")
+            .await
+            .expect("second");
+        let pool = sink.pool.lock().expect("pool");
+        assert_eq!(pool.len(), 1);
+        assert!(
+            pool.contains_key(&pool_key(&second, params)),
+            "the newest session stays"
+        );
+    }
+
+    /// ADR-0031 inbound bridge: `listen` subscribes under the shared
+    /// subscription `$share/{group}/{topic}` at QoS 1 and hands every message
+    /// on to the channel; a full channel drops a message instead of stalling.
+    #[tokio::test]
+    async fn listen_subscribes_shared_and_forwards_messages() {
+        let pushed = vec![v5_publish("t", b"one"), v5_publish("t", b"two")];
+        let (port, _, seen) = stub(OnPublish::Hang, pushed).await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let task = listen(&ep_at(port), "g", tx, Duration::from_secs(2))
+            .await
+            .expect("listen");
+        let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a message within 5 s")
+            .expect("open channel");
+        assert_eq!(
+            first,
+            Inbound {
+                topic: "t".into(),
+                payload: b"one".to_vec()
+            }
+        );
+        let subscribe = seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .find(|p| p.first() == Some(&0x82))
+            .cloned()
+            .expect("a SUBSCRIBE");
+        assert!(
+            subscribe.windows(10).any(|w| w == b"$share/g/t"),
+            "{subscribe:?}"
+        );
+        // QoS 1 is the last byte: the subscription options after the filter
+        assert_eq!(subscribe.last().map(|o| o & 0x03), Some(1));
+        task.abort();
+    }
+
+    /// A dropped connection is not the end of an inbound Channel: the task
+    /// reconnects after its pause and subscribes again on the new CONNACK (a
+    /// clean start keeps no subscription), so messages flow again.
+    #[tokio::test]
+    async fn listen_reconnects_and_subscribes_again() {
+        let pushed = vec![v5_publish("t", b"m")];
+        let (port, accepted, seen) = stub(OnPublish::HangAfterPush, pushed).await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let task = listen(&ep_at(port), "g", tx, Duration::from_secs(2))
+            .await
+            .expect("listen");
+        for session in 1..=2 {
+            let got = tokio::time::timeout(Duration::from_secs(15), rx.recv()).await;
+            assert!(
+                matches!(&got, Ok(Some(m)) if m.payload == b"m"),
+                "session {session}: {got:?}"
+            );
+        }
+        assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        let subscribes = seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .filter(|p| p.first() == Some(&0x82) && p.windows(10).any(|w| w == b"$share/g/t"))
+            .count();
+        assert!(subscribes >= 2, "subscribed {subscribes} times");
+        task.abort();
+    }
+
+    /// Dropping the receiving end ends the subscription: the task returns at
+    /// the next message instead of running on for nobody.
+    #[tokio::test]
+    async fn listen_stops_once_the_receiver_is_gone() {
+        let (port, _, _) = stub(OnPublish::Hang, vec![v5_publish("t", b"x")]).await;
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let task = listen(&ep_at(port), "g", tx, Duration::from_secs(2))
+            .await
+            .expect("listen");
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the task ends within 5 s")
+            .expect("no panic");
+    }
+
+    /// A broker that never answers the CONNECT fails `listen` within its
+    /// timeout, and a refused connection fails it at once: both name the
+    /// endpoint, never a silent task that subscribes nothing.
+    #[tokio::test]
+    async fn listen_fails_on_a_silent_or_refused_broker() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = silent.local_addr().expect("addr").port();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = listen(&ep_at(port), "g", tx.clone(), Duration::from_millis(300))
+            .await
+            .expect_err("no CONNACK");
+        assert!(err.to_string().contains("connect timeout"), "{err}");
+        assert!(
+            err.to_string().contains(&format!("127.0.0.1:{port}")),
+            "{err}"
+        );
+        drop(silent);
+        // a bound socket that does not listen refuses the connection
+        let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        let err = listen(&ep_at(port), "g", tx, Duration::from_secs(2))
+            .await
+            .expect_err("refused");
+        drop(closed);
+        assert!(err.to_string().contains("mqtt connect"), "{err}");
+    }
+
+    /// A broker that accepts the TCP connection but never sends CONNACK
+    /// fails the delivery within the sink's timeout, in both versions,
+    /// naming the endpoint.
+    #[tokio::test]
+    async fn a_broker_without_connack_fails_the_connect_in_time() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = silent.local_addr().expect("addr").port();
+        let sink = MqttSink::new(2, Duration::from_millis(300));
+        for v5 in [false, true] {
+            let err = sink
+                .publish_message(&ep_at(port), MqttParams { qos: 0, v5 }, b"{}")
+                .await
+                .expect_err("no CONNACK");
+            assert_eq!(
+                err.to_string(),
+                format!("mqtt connect 127.0.0.1:{port}: connect timeout"),
+                "v5={v5}"
+            );
+        }
+    }
+
+    /// The resolver runs under the sink's deadline: a name not resolved in
+    /// time is refused, never dialled. The resolver is held up by giving the
+    /// runtime one blocking thread and keeping it busy.
+    #[test]
+    fn a_name_not_resolved_in_time_is_refused() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let busy =
+                tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(500)));
+            let err = checked_addr("localhost", 1883, OPEN, Duration::from_millis(50))
+                .await
+                .expect_err("the resolver had no thread in time");
+            assert_eq!(
+                err.to_string(),
+                "mqtt egress: resolving localhost timed out"
+            );
+            busy.await.expect("busy task");
+        });
+    }
+
+    /// Clause 7 at subscription creation: the sink serves mqtt and mqtts and
+    /// refuses an endpoint or a notifierInfo Table 7.2-1 does not allow.
+    #[test]
+    fn the_sink_checks_endpoint_and_notifier_info_at_creation() {
+        use crate::NotificationSink;
+        let sink = MqttSink::default();
+        assert_eq!(sink.schemes(), &["mqtt", "mqtts"]);
+        sink.parse_endpoint("mqtts://broker:8883/t", &[("MQTT-QoS", "1")])
+            .expect("valid endpoint");
+        assert!(matches!(
+            sink.parse_endpoint("mqtt://broker", &[]),
+            Err(NgsiError::BadRequestData(_))
+        ));
+        assert!(matches!(
+            sink.parse_endpoint("mqtt://broker/t", &[("MQTT-Version", "mqtt4")]),
+            Err(NgsiError::BadRequestData(_))
+        ));
+    }
+
+    /// A filter MQTT 5.0 (4.7.1) does not allow (`#` only as the last
+    /// level) is refused by the client before it is sent: `listen` fails,
+    /// naming the endpoint, instead of handing back a task that never
+    /// receives anything.
+    #[tokio::test]
+    async fn listen_refuses_a_malformed_filter() {
+        let (port, _, seen) = stub(OnPublish::Hang, Vec::new()).await;
+        let ep = MqttEndpoint {
+            topic: "a/#/b".into(),
+            ..ep_at(port)
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = listen(&ep, "g", tx, Duration::from_secs(2))
+            .await
+            .expect_err("invalid filter");
+        assert!(
+            err.to_string()
+                .starts_with(&format!("mqtt connect 127.0.0.1:{port}: ")),
+            "{err}"
+        );
+        let subscribed = seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .any(|p| p.first() == Some(&0x82));
+        assert!(!subscribed, "a malformed SUBSCRIBE reached the broker");
+    }
+
+    fn outbound(notifier_info: &[(&str, &str)]) -> crate::Outbound {
+        crate::Outbound {
+            body: serde_json::json!({"type": "Notification"}),
+            accept: "application/json".into(),
+            link: "<https://ctx>".into(),
+            receiver_info: Vec::new(),
+            notifier_info: notifier_info
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        }
+    }
+
+    /// The clause 7 binding through the sink trait: a stored endpoint and
+    /// its notifierInfo deliver; a row that no longer parses fails the
+    /// attempt with the redacted URI, and a broker-level failure counts as a
+    /// timeout for the circuit breaker.
+    #[tokio::test]
+    async fn deliver_through_the_sink_trait() {
+        use crate::NotificationSink;
+        let sink = MqttSink::new(2, Duration::from_secs(2));
+        let port = stub(OnPublish::Ack, Vec::new()).await.0;
+        let uri = format!("mqtt://127.0.0.1:{port}/t");
+        let ok = outbound(&[("MQTT-QoS", "1"), ("MQTT-Version", "mqtt3.1.1")]);
+        sink.deliver(&uri, &ok, Duration::from_secs(1))
+            .await
+            .expect("delivered");
+
+        let err = sink
+            .deliver("mqtt://u:hunter2@127.0.0.1", &ok, Duration::from_secs(1))
+            .await
+            .expect_err("no topic");
+        assert!(!err.timed_out);
+        assert!(
+            err.message.contains("unusable") && !err.message.contains("hunter2"),
+            "{err:?}"
+        );
+
+        let err = sink
+            .deliver(
+                &uri,
+                &outbound(&[("MQTT-QoS", "7")]),
+                Duration::from_secs(1),
+            )
+            .await
+            .expect_err("bad notifierInfo");
+        assert!(!err.timed_out);
+        assert!(err.message.contains("notifierInfo"), "{err:?}");
+
+        let (port, _, _) = stub(OnPublish::Hang, Vec::new()).await;
+        let err = sink
+            .deliver(
+                &format!("mqtt://127.0.0.1:{port}/t"),
+                &outbound(&[("MQTT-QoS", "1")]),
+                Duration::from_secs(1),
+            )
+            .await
+            .expect_err("never acknowledged");
+        assert!(err.timed_out, "{err:?}");
     }
 
     /// The MQTT destination is client-supplied (`notification.endpoint.uri`,
@@ -1037,10 +1527,11 @@ mod tests {
             "::1",
             "localhost",
         ] {
-            let ok = checked_addr(host, 1883, OPEN, d)
-                .await
-                .unwrap_or_else(|e| panic!("{host} must be reachable by default: {e}"));
-            assert_eq!(ok.port(), 1883);
+            let ok = checked_addr(host, 1883, OPEN, d).await;
+            assert!(
+                matches!(ok, Ok(a) if a.port() == 1883),
+                "{host} must be reachable by default: {ok:?}"
+            );
             assert!(
                 checked_addr(host, 1883, CLOSED, d).await.is_err(),
                 "{host} must be refused with private egress off"
@@ -1151,6 +1642,10 @@ mod tests {
         // ld+json: @context is in the body, no Link in metadata (Table 7.2-2)
         let m = build_message(&body, "application/ld+json", Some("<x>"), &[]);
         assert_eq!(m["metadata"]["Content-Type"], "application/ld+json");
+        assert!(m["metadata"].get("Link").is_none());
+
+        // json with no @context to reference (core context only): no Link either
+        let m = build_message(&body, "application/json", None, &[]);
         assert!(m["metadata"].get("Link").is_none());
     }
 

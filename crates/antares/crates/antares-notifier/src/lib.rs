@@ -466,6 +466,26 @@ mod tests {
         reg
     }
 
+    /// Delivery goes to the sink the endpoint's scheme names, matched
+    /// case-insensitively; a dropped notification reaches the default `lost`,
+    /// which has no channel to tell anyone and leaves delivery working.
+    #[tokio::test]
+    async fn delivery_dispatches_on_the_endpoint_scheme() {
+        let reg = registry();
+        assert!(reg.sink_for_uri("ftp://h/n").is_none());
+        let sink = reg.sink_for_uri("HTTP://h/n").expect("http is served");
+        assert_eq!(sink.schemes(), &["http", "https"]);
+        sink.lost("http://h/n", "acme", "urn:s:1");
+        let out = Outbound::from_dead_letter(&json!({"uri": "http://h/n", "payload": {},
+            "accept": "application/json", "link": "", "receiverInfo": [], "notifierInfo": []}))
+        .expect("letter");
+        assert_eq!(
+            sink.deliver("http://h/n", &out, Duration::from_secs(1))
+                .await,
+            Ok(())
+        );
+    }
+
     /// 5.8.1.4 + Table 5.5.2-1: an endpoint scheme no sink serves is input
     /// data that does not meet the operation's requirements — BadRequestData
     /// (400), not OperationNotSupported. Create Subscription is supported.
@@ -579,6 +599,19 @@ mod tests {
                 ("MQTT-Version".to_owned(), "mqtt3.1.1".to_owned())
             ]
         );
+
+        // a pre-registry MQTT letter written without its mqtt params or a
+        // Content-Type reads back with the Table 7.2-1 defaults
+        let bare_mqtt = json!({"uri": "mqtt://h/t", "binding": "mqtt",
+            "payload": {"metadata": {}, "body": body}});
+        let o = Outbound::from_dead_letter(&bare_mqtt).expect("bare mqtt shape");
+        assert_eq!(o.accept, "application/json");
+        assert_eq!(o.link, "");
+        assert!(o.notifier_info.is_empty() && o.receiver_info.is_empty());
+
+        let torn = json!({"uri": "http://h/n", "payload": body, "headers": {"Link": link}});
+        let err = Outbound::from_dead_letter(&torn).expect_err("headers must be a pair list");
+        assert!(err.starts_with("dead letter headers unreadable"), "{err}");
 
         assert!(Outbound::from_dead_letter(&json!({"uri": "http://h/n"})).is_err());
     }
@@ -720,6 +753,16 @@ mod policy_tests {
         let parse =
             |a: Option<&str>, b: Option<&str>, m: Option<&str>| DeliveryPolicy::parse(a, b, m);
         assert_eq!(parse(None, None, None), Ok(DeliveryPolicy::default()));
+        // from_env reads exactly the three documented variables
+        let env = |k: &str| std::env::var(k).ok();
+        assert_eq!(
+            DeliveryPolicy::from_env(),
+            parse(
+                env("ANTARES_NOTIFY_ATTEMPTS").as_deref(),
+                env("ANTARES_NOTIFY_BACKOFF_MS").as_deref(),
+                env("ANTARES_NOTIFY_MAX_AGE_SECS").as_deref()
+            )
+        );
         let p = parse(Some("3"), Some("250"), Some("30")).expect("valid");
         assert_eq!(p.attempts, 3);
         assert_eq!(p.backoff, Duration::from_millis(250));
