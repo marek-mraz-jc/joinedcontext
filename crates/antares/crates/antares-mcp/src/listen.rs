@@ -310,6 +310,15 @@ mod tests {
         s.unwatch(&id, "sub-4");
     }
 
+    /// T-7507 (S10-19): a change delivered by one replica reaches the stream another holds.
+    #[test]
+    fn a_change_on_one_replica_reaches_the_stream_of_another() {
+        let (holds, delivers) = (Streams::default(), Streams::default());
+        let (id, _) = holds.open("a", who(1), SMALL).unwrap_or_default();
+        holds.watch(&id, "sub-1", "ngsi-ld://v/entities/x");
+        assert!(delivers.changed(&id, "sub-1"));
+    }
+
     #[tokio::test]
     async fn the_sink_takes_only_its_own_stream_while_it_makes_it() {
         let uri = format!("{SCHEME}:abc");

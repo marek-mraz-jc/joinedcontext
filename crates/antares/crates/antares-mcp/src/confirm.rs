@@ -265,6 +265,20 @@ mod tests {
         assert!(spend(&spent, "new".into(), "full".into(), later));
     }
 
+    /// T-7507: a nonce spent on one replica is spent on the other.
+    #[test]
+    fn a_nonce_redeems_once_across_replicas() {
+        let (one, other) = (Mutex::default(), Mutex::default());
+        let now = Instant::now();
+        assert_eq!(
+            (
+                spend(&one, "a".into(), "n1".into(), now),
+                spend(&other, "a".into(), "n1".into(), now),
+            ),
+            (true, false)
+        );
+    }
+
     #[test]
     fn one_subject_cannot_spend_the_share_of_another() {
         let spent = Mutex::default();

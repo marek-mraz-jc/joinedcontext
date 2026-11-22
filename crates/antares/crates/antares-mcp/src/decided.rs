@@ -388,6 +388,22 @@ mod tests {
         assert_eq!(take_in(&q, "n1", &person("alice"), now), Found::Unknown);
     }
 
+    /// T-7507: each replica's state is what a process starts with; a question asked on one is
+    /// decided and taken on the other.
+    #[test]
+    fn a_question_asked_on_one_replica_is_decided_on_the_other() {
+        let (one, other) = (Questions::default(), Questions::default());
+        let now = Instant::now();
+        asked(&one, "n1", "alice", now);
+        assert_eq!(
+            (
+                decide(&other, "n1", &body("accept", "alice"), now).status(),
+                take_in(&other, "n1", &person("alice"), now),
+            ),
+            (StatusCode::OK, Found::Accepted)
+        );
+    }
+
     #[test]
     fn a_decline_ends_the_question_and_an_expired_one_is_gone() {
         let q = Questions::default();
