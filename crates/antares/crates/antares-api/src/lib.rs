@@ -122,6 +122,8 @@ mod tests;
 pub mod views;
 
 pub use antares_notifier::DeliveryPolicy;
+// What a write confirmation keeps, so a surface names no antares-store (M2).
+pub use antares_store::confirmations;
 // The sink contract, so a surface reaches it through this crate and names no
 // antares-notifier (ADR-0027 section 1, rule M2).
 pub use antares_notifier::{
@@ -298,6 +300,10 @@ pub async fn sweep_expired_docs(st: &AppState) -> usize {
         let Ok(tenant) = antares_model::TenantId::new(&name) else {
             continue;
         };
+        match st.store.confirmation_sweep(&tenant).await {
+            Ok(gone) => n = n.saturating_add(usize::try_from(gone).unwrap_or(usize::MAX)),
+            Err(e) => tracing::warn!("the sweep of expired write confirmations failed: {e}"),
+        }
         // Each sweep counts documents it deleted, far below `usize::MAX`.
         n = n
             .saturating_add(csource::sweep_expired_registrations(st, &tenant).await)

@@ -97,7 +97,7 @@ jobs:
       # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
       - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/watched.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -652,15 +652,16 @@ jobs:
   # cargo test, not nextest: the Portal's database tests serialize on in-process locks
   # (KNOWLEDGE: the DATABASE mutex), which separate processes would not hold. The test binaries
   # are split in four jobs, each with its own Postgres (.github/scripts/test-part.py: every
-  # tests/*.rs by its recorded build and run time in .github/ci-durations.json, the libs and bins
-  # in the first, the doc tests in the second); binaries of one job still run one after another,
-  # as before. The partition job names are listed in changes.sh (covered).
+  # tests/*.rs by its recorded build and run time in .github/ci-durations.json, the libs alone
+  # in the first, the bins and the doc tests in the second); binaries of one job still run one
+  # after another, as before. The partition job names are listed in changes.sh (covered).
   portal-test:
     name: portal-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.portal == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # the backstop: each cargo step has its own bound below, which ends the step and keeps the log
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: { part: [1, 2, 3, 4] }
@@ -691,18 +692,21 @@ jobs:
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal && swapon --show
       - uses: ./.github/actions/rust
         with: { workspace: crates/portal, key: portal-test }
-      # Memory and disk once a minute: a runner that runs out of either ends the step with 143 and
-      # no error line.
-      - run: |
-          (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
+      # watched.sh: the build in a memory cgroup, so an overrun kills rustc and not the runner (a
+      # lost runner writes no log), and memory, disk and the largest processes every 20 s. The
+      # step's bound is well under the job's: a timed-out step still uploads its log.
+      - name: cargo test (part ${{ matrix.part }})
+        timeout-minutes: 30
+        run: |
           # -j 4: the runner's four cores for the link phase (~160 test binaries); a flag, not
           # CARGO_BUILD_JOBS, which is part of the rust-cache key
           targets=$(python3 ../../.github/scripts/test-part.py ${{ matrix.part }} ${{ strategy.job-total }} --doc 2)
           # shellcheck disable=SC2086
-          cargo test --workspace --locked --no-fail-fast -j 4 $targets
+          sh ../../.github/scripts/watched.sh cargo test --workspace --locked --no-fail-fast -j 4 $targets
       # in the second job: the first runs the lib tests and compiles the lib's test build
       - if: matrix.part == 2
-        run: cargo test --workspace --locked --no-fail-fast --doc
+        timeout-minutes: 20
+        run: sh ../../.github/scripts/watched.sh cargo test --workspace --locked --no-fail-fast --doc
       - if: always()
         run: du -sh target/debug/deps 2>/dev/null || echo "no target/debug/deps (cold target cache)"
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.

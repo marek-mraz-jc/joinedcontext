@@ -197,18 +197,20 @@ request:
 3. The retry runs the operation through its policy gate as any call does:
    the confirmation is in addition to the gate, never instead of it.
 
-The `requestState` is sealed with HMAC-SHA256 over the view, the caller's
-policy subject headers, the tool and its arguments, and expires after ten
-minutes. A state that was changed, made for other arguments, another tool,
+The `requestState` is sealed with HMAC-SHA256 over the Tenant, the view,
+the caller's policy subject headers, the tool and its arguments, and
+expires after ten minutes. A state that was changed, made for other arguments, another tool,
 another view or another caller, or that was already used once is refused
 with one tool error, and the call writes nothing. A "no", a decline or a
 cancel is a tool error too.
 
 - **The key.** `ANTARES_MCP_REQUEST_STATE_KEY_FILE` names a file of at
   least 32 bytes, mounted from a Kubernetes Secret, so every replica
-  accepts the others' states. Unset, each process draws its own key at
-  start: a retry that reaches another replica is refused, and the client
-  asks again. A named file that cannot be read or is too short refuses
+  accepts the others' states, also after a restart. Unset, a host may hand
+  its own key (`jc` hands a subkey of the installation's KEK where it holds
+  one); with neither, each process draws its own key at start: a retry that
+  reaches another replica or a restarted one is refused, and the client
+  asks again. On Postgres that logs an error at start. A named file that cannot be read or is too short refuses
   every write and logs one error; the key itself is never logged.
 - **A decision page.** With `ANTARES_MCP_CONFIRM_URL` set, the client's
   answer confirms nothing, so an AI client cannot approve its own write
@@ -221,12 +223,17 @@ cancel is a tool error too.
   decision is an accept, by the caller who asked; before the person decided
   it is the tool error `the person has not decided on the page yet` and the
   state stays usable; a decline ends it. `inputResponses` is ignored. A
-  client must declare `elicitation` with `url`. Questions live in the
-  process that asked, ten minutes, at most 10 000 at a time and 100 per
-  subject.
-- **Spent states** are remembered per process until they expire, at most
-  100 000 at a time; past that a confirmation is refused until the oldest
-  expire.
+  client must declare `elicitation` with `url`. Questions and decisions
+  live in the store for ten minutes, so any replica shows, decides and
+  answers them and a restart keeps them on Postgres; at most 10 000 at a
+  time in one Tenant and 100 per subject. The id is 32 hex digits, a hyphen
+  and the hex of the Tenant: the admin route works inside that Tenant alone.
+- **Spent states** are kept in the store until they expire, so one state
+  runs once across replicas: at most 100 000 at a time in one Tenant and
+  1000 per subject; past that a confirmation is refused until the oldest
+  expire. The sweep of expired documents deletes the expired rows.
+- **A store that does not answer** refuses the call with its own tool error
+  and writes nothing; the admin routes answer 500, never 404.
 - **Clients.** A client that does not declare `elicitation` (form) in its
   `io.modelcontextprotocol/clientCapabilities`, and every legacy
   `initialize` client, gets the tool error `this tool needs a client that
@@ -305,7 +312,11 @@ is acknowledged, and a legacy `initialize` client cannot listen (D-8).
   served by an in-process sink that opens no socket. Nobody can name that
   endpoint over HTTP or a tool: it is accepted only while the stream makes
   its own Subscription (MC7). A burst of changes to one Entity is one event
-  until the stream has sent it.
+  until the stream has sent it. With `ANTARES_BUS=nats` the replica that
+  took the change asks the one holding the stream over core NATS
+  request/reply (`antares.mcp.{tenant}.{stream}`), and the holder checks
+  that the stream is of that Tenant; with `ANTARES_BUS=local` there is one
+  process and no relay.
 - **Bounds.** A stream lasts at most one hour. One process holds at most
   4 streams per subject and Tenant (callers that send no subject header
   share one subject), 64 per Tenant and 256 in all; past a bound the

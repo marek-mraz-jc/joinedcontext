@@ -706,8 +706,9 @@ mod tests {
             geometries: vec![],
             profile: None,
             filter: None,
+            ..Default::default()
         };
-        trace.visual(&Event::Data(table));
+        trace.visual(&Event::Data(Box::new(table)));
         trace.visual(&Event::Visualization(
             json!({"spec": {"mark": "bar", "data": {"name": "source"}},
             "rows": [{"a": 1}, {"a": 2}, {"a": 3}]}),

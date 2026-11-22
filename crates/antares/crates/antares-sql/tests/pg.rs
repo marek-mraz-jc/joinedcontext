@@ -1035,6 +1035,22 @@ async fn purge_tenant_empties_every_tenant_table() {
             )
             .await
             .expect("correction");
+        // T-7507: a spent confirmation nonce is the Tenant's row too.
+        let caps = antares_store::confirmations::Caps {
+            tenant: 10,
+            subject: 10,
+        };
+        let spent = CurrentStateDriver::confirmation_spend(
+            &store,
+            t,
+            "nonce-1",
+            &vec![("x-jc-subject".to_owned(), b"alice".to_vec())],
+            std::time::Duration::from_secs(600),
+            caps,
+        )
+        .await
+        .expect("confirmation");
+        assert!(spent);
         // The keyed history parent (0020) is not written before the cut-over:
         // seeded by hand, as the cut-over will fill it.
         for stmt in [
@@ -1053,7 +1069,7 @@ async fn purge_tenant_empties_every_tenant_table() {
                 .expect(stmt);
         }
     }
-    const TABLES: [&str; 22] = [
+    const TABLES: [&str; 23] = [
         "entities",
         "entity_values",
         "entity_types",
@@ -1076,6 +1092,7 @@ async fn purge_tenant_empties_every_tenant_table() {
         "attr_versions",
         "iri_ids",
         "attr_rows",
+        "mcp_confirmations",
     ];
     let count = |table: &'static str, t: &TenantId| {
         let pool = pool.clone();

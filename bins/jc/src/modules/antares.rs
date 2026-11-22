@@ -157,6 +157,38 @@ pub fn self_urls(siblings: &crate::siblings::Siblings) -> Option<String> {
     Some(urls.join(","))
 }
 
+/// What seals an MCP write's `requestState` (T-7507): a subkey of the installation's KEK, so
+/// every replica and the process after a restart open what one sealed. `None` where this
+/// process holds no KEK (kaisatsu runs elsewhere): the deployment names
+/// `ANTARES_MCP_REQUEST_STATE_KEY_FILE` then, and the broker says so at start.
+#[cfg(any(feature = "kaisatsu", feature = "shako"))]
+fn request_state_key(
+    setup: &crate::setup::Setup,
+) -> Result<Option<antares_broker::Secret>, StartError> {
+    use std::fmt::Write as _;
+    let Some(kek) = setup.value(crate::setup::Secret::KaisatsuKek) else {
+        return Ok(None);
+    };
+    let kek = kaisatsu_crypto::Kek::from_raw_bytes(kek.as_bytes())
+        .map_err(|_| err("the installation's kaisatsu-kek is not a 32-byte key"))?;
+    let key = kek.derive_subkey("antares-mcp-request-state").iter().fold(
+        String::new(),
+        |mut hex, byte| {
+            // writing to a String cannot fail
+            let _written = write!(hex, "{byte:02x}");
+            hex
+        },
+    );
+    Ok(Some(antares_broker::Secret::new(key)))
+}
+
+#[cfg(not(any(feature = "kaisatsu", feature = "shako")))]
+fn request_state_key(
+    _setup: &crate::setup::Setup,
+) -> Result<Option<antares_broker::Secret>, StartError> {
+    Ok(None)
+}
+
 pub async fn build(
     cfg: &AntaresSection,
     setup: &crate::setup::Setup,
@@ -231,6 +263,7 @@ pub async fn build(
     if broker_cfg.database_url.is_some() || broker_cfg.store_name != "memory" {
         broker_cfg.require_rls = true;
     }
+    broker_cfg.mcp_request_state_key = request_state_key(setup)?;
     if broker_cfg.metrics_port.is_some() {
         tracing::warn!(
             "ANTARES_METRICS_PORT opens no listener inside jc; use the jc admin listener"
@@ -354,6 +387,28 @@ mod tests {
         let listed: Vec<&str> = urls.split(',').collect();
         assert_eq!(listed[0], broker.internal);
         assert!(listed.contains(&broker.public.as_str()), "{urls}");
+    }
+
+    /// T-7507: two starts over one state directory seal with one key, which is not the KEK.
+    #[test]
+    fn the_request_state_key_is_the_same_at_every_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let none = std::collections::BTreeMap::new();
+        let secret = crate::setup::Secret::KaisatsuKek;
+        let start =
+            || crate::setup::Setup::prepare_with(dir.path(), &[], &none, &[secret]).unwrap();
+        let (first, again) = (start(), start());
+        let key = request_state_key(&first).unwrap().unwrap();
+        assert_eq!(
+            key.expose(),
+            request_state_key(&again).unwrap().unwrap().expose()
+        );
+        assert_eq!(key.expose().len(), 64);
+        assert_ne!(Some(key.expose()), first.value(secret));
+        let without =
+            crate::setup::Setup::prepare_with(tempfile::tempdir().unwrap().path(), &[], &none, &[])
+                .unwrap();
+        assert!(request_state_key(&without).unwrap().is_none());
     }
 
     /// dev's four write settings come as defaults beside the identity keys; the broker reads each

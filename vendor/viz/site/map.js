@@ -10,11 +10,11 @@
   var STYLES = ["sk", "cs", "en", "fi"];
   var COLOUR = "#1f5fae";
   var TEXT = {
-    sk: { detail: "Detail", hint: "Kliknite na bod alebo stlačte Enter.", yes: "áno", no: "nie" },
-    cs: { detail: "Detail", hint: "Klikněte na bod nebo stiskněte Enter.", yes: "ano", no: "ne" },
-    de: { detail: "Details", hint: "Punkt anklicken oder Enter drücken.", yes: "ja", no: "nein" },
-    fi: { detail: "Tiedot", hint: "Napsauta kohdetta tai paina Enter.", yes: "kyllä", no: "ei" },
-    en: { detail: "Details", hint: "Click a point or press Enter.", yes: "yes", no: "no" }
+    sk: { detail: "Detail", hint: "Vyberte bod alebo stlačte Enter.", yes: "áno", no: "nie", shown: "Zobrazené: {n}, spolu {total}", unlocated: "{none} bez polohy" },
+    cs: { detail: "Detail", hint: "Vyberte bod nebo stiskněte Enter.", yes: "ano", no: "ne", shown: "Zobrazeno: {n}, celkem {total}", unlocated: "{none} bez polohy" },
+    de: { detail: "Details", hint: "Punkt auswählen oder Enter drücken.", yes: "ja", no: "nein", shown: "{n} von {total} angezeigt", unlocated: "{none} ohne Standort" },
+    fi: { detail: "Tiedot", hint: "Valitse kohde tai paina Enter.", yes: "kyllä", no: "ei", shown: "Näytetään {n} / {total}", unlocated: "{none} ilman sijaintia" },
+    en: { detail: "Details", hint: "Select a point or press Enter.", yes: "yes", no: "no", shown: "{n} shown of {total}", unlocated: "{none} without a location" }
   };
 
   // Every position of a geometry, however deep it nests.
@@ -81,6 +81,17 @@
     };
   }
 
+  // What the map says on itself (T-7504): how many it draws of all, and how many of all have no
+  // location. "" for a map that was not counted.
+  function countText(spec, lang) {
+    if (!spec.count) return "";
+    var t = TEXT[lang] || TEXT.en;
+    var numbers = new Intl.NumberFormat(lang);
+    var said = t.shown.replace("{n}", numbers.format(spec.data.features.length)).replace("{total}", numbers.format(spec.count.total));
+    if (!spec.count.unlocated) return said;
+    return said + " · " + t.unlocated.replace("{none}", numbers.format(spec.count.unlocated));
+  }
+
   function node(tag, className, text) {
     var el = document.createElement(tag);
     if (className) el.className = className;
@@ -117,9 +128,12 @@
   }
 
   async function draw(spec, lang) {
-    var domain = location.hostname.replace(/^viz\./, "");
+    var domain = location.hostname.replace(/^(?:embed|viz)\./, "");
     var errors = root.jcRefuseMap(spec, domain);
     if (errors.length) throw new Error("The map was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
+    var count = document.getElementById("count");
+    count.textContent = countText(spec, lang);
+    count.hidden = !count.textContent;
     var maplibre = await import(MAPLIBRE);
     maplibre.setWorkerUrl(WORKER);
     maplibre.addProtocol("pmtiles", new root.pmtiles.Protocol().tile);
@@ -134,7 +148,7 @@
     document.getElementById("hint").textContent = (TEXT[lang] || TEXT.en).hint;
     var box = bounds(features);
     if (box && box[0][0] === box[1][0] && box[0][1] === box[1][1]) map.jumpTo({ center: box[0], zoom: 14 });
-    else if (box) map.fitBounds(box, { padding: 40, maxZoom: 15, animate: false });
+    else if (box) map.fitBounds(box, { padding: count.hidden ? 40 : { top: 56, right: 48, bottom: area.clientWidth <= 600 ? 84 : 56, left: 40 }, maxZoom: 15, animate: false });
     await new Promise(function (resolve) { map.once("load", resolve); });
     map.addSource("jc", { type: "geojson", data: { type: "FeatureCollection", features: features } });
     var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };
@@ -159,11 +173,22 @@
       var i = nearest(features, [c.lng, c.lat]);
       open(i, flat(features[i].geometry.coordinates)[0]);
     });
+    // A few answers on one map are told apart by name; textContent alone, as in the popup.
+    if (features.length > 1 && features.length <= 3) {
+      features.forEach(function (f) {
+        // A line's or an area's name stands at the dot that marks it (T-4811).
+        var dot = anchors([f])[0] || f;
+        var at = flat(dot.geometry.coordinates)[0];
+        var east = at[0] > (box[0][0] + box[1][0]) / 2;
+        var name = node("span", "jc-name", lines(spec, f.properties, lang).title);
+        new maplibre.Marker({ element: name, anchor: east ? "right" : "left", offset: [east ? -12 : 12, 0] }).setLngLat(at).addTo(map);
+      });
+    }
     root.jcMapReady = true; // for the browser journey
   }
 
   if (typeof module === "object" && module.exports) {
-    module.exports = { anchors: anchors, bounds: bounds, nearest: nearest, lines: lines };
+    module.exports = { anchors: anchors, bounds: bounds, nearest: nearest, lines: lines, countText: countText };
     return;
   }
   window.addEventListener("message", function (event) {
@@ -172,6 +197,7 @@
     if (message.type !== "jc-viz-render") return;
     var lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
     document.documentElement.lang = lang;
+    document.documentElement.dataset.theme = message.theme === "dark" ? "dark" : "light";
     draw(message.spec, lang).then(height, function (error) {
       tell({ type: "jc-viz-error", message: String((error && error.message) || error) });
     });
