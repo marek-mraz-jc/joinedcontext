@@ -565,7 +565,12 @@ async fn a_repeated_query_is_served_from_the_public_cache() {
     .await;
     let (_, shown) = w.call("POST", &uri, None, Some(json!({}))).await;
     assert_ne!(first, shown, "query text shown is another answer");
-    w.add_prometheus("prom", &format!("{url}/")).await;
+    w.ok(
+        "PUT",
+        "/api/datasources/uid/prom",
+        Some(json!({ "uid": "prom", "name": "Prom renamed", "type": "prometheus", "url": url })),
+    )
+    .await;
     let (st, _) = w.call("POST", &uri, None, Some(json!({}))).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(seen.lock().len(), 2, "a changed datasource is asked again");
