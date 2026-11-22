@@ -90,9 +90,18 @@
 .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell > .jc-grid-open,
 .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell a.jc-cell--link { display: block; max-width: none; max-height: none; white-space: normal; overflow: visible; overflow-wrap: break-word; text-overflow: clip; -webkit-line-clamp: none; line-clamp: none; }
 @media (max-width: 639.98px) {
+  /* The name keeps room for a word and breaks between words; only a word wider than the screen breaks. */
   .jc-explorer .jc-grid :is(th, td).jc-grid-pinned,
-  .jc-explorer .jc-grid[data-row-size] td.jc-grid-pinned { min-width: 0; }
-  .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell > .jc-grid-open { overflow-wrap: anywhere; }
+  .jc-explorer .jc-grid[data-row-size] td.jc-grid-pinned { min-width: min(40vw, 160px); }
+  .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell > .jc-grid-open { max-width: 75vw; }
+  /* Columns beyond the card cast a shadow at its edge, seen through the rows; the cover hides it at the end. */
+  .jc-explorer .jc-grid[data-row-size] tbody tr:nth-child(n) > td { background: transparent; }
+  .jc-explorer .jc-grid tbody tr:nth-child(even) { background: color-mix(in srgb, currentColor 3%, transparent); }
+  .jc-explorer .jc-grid-scroll {
+    background:
+      linear-gradient(to left, var(--jc-explorer-row, #fff) 60%, transparent) right / 40px 100% no-repeat local,
+      linear-gradient(to left, rgb(100 116 139 / 55%), transparent) right / 18px 100% no-repeat scroll;
+  }
 }
 .jc-explorer .jc-data-card .jc-grid .jc-grid-pager { margin: 0; padding: 8px; background: transparent; }
 .jc-explorer .jc-data-card .jc-grid { background: transparent; }
@@ -103,4 +112,25 @@
   .jc-explorer .jc-data-card > [data-testid="grid-toolbar"] select { height: 44px; min-height: 44px; }
   .jc-explorer .jc-data-card > [data-testid="grid-chips"] button { min-width: 44px; min-height: 44px; }
   .jc-explorer .jc-data-card .jc-grid thead .jc-grid-meta-btn { min-width: 36px; min-height: 44px; margin-block: -9px; }
+}
+/* A phone reads the tools at the page's body size (T-7503); the 80 % scale stays a wide screen's. */
+@media (max-width: 639.98px) {
+  :root { --portal-text-caption: 15px; --portal-text-caption--line-height: 20px; --portal-text-body: 15px; --portal-text-body--line-height: 20px; }
+  .jc-explorer table, .jc-explorer .jc-grid-pager { font-size: 14px; }
+  .jc-explorer [data-testid="grid-toolbar"] :is(summary, button, label, legend),
+  .jc-explorer [data-testid="grid-toolbar"] :is(input, select, details input, details select) { font-size: 15px; }
+  .jc-explorer [data-testid="grid-toolbar"] details :is(summary, button, a, label) { min-height: 44px; }
+  .jc-explorer [data-testid="grid-toolbar"] details label { align-items: center; }
+  .jc-explorer [data-testid="grid-toolbar"] details input[type="checkbox"] { width: 20px; height: 20px; }
+  /* With a type to pick, the search takes the second row and Arrange columns stays beside Tools. */
+  .jc-explorer [data-testid="grid-toolbar"]:has(> span > select) > input { order: 1; flex-basis: 100%; }
+  .jc-explorer [data-testid="grid-toolbar"] > span:has(> select) { flex: 1 1 0; min-width: 0; }
+  .jc-explorer [data-testid="grid-toolbar"] > span > select { width: 100%; }
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-hint { font-size: 14px; line-height: 1.35; }
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-head h2 { font-size: 17px; }
+  /* Arrange columns is a frame of three columns, not a second menu beside Tools. */
+  .jc-explorer .jc-arrange-slot .jc-grid-menu-icon {
+    width: 18px; height: 15px; border: 2px solid currentColor; border-radius: 2px; font-size: 0; color: inherit;
+    background: linear-gradient(currentColor 0 0) 33.3% 0 / 2px 100% no-repeat, linear-gradient(currentColor 0 0) 66.7% 0 / 2px 100% no-repeat;
+  }
 }

@@ -186,7 +186,7 @@
  .map-panel { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
  .map-panel h3 { flex-basis: 100%; margin: 0; font-size: 1rem; font-weight: 600; }
  .map-panel .field { flex: 1 1 14rem; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; border: 0; padding: 0; }
-@@ -111,7 +148,13 @@
+@@ -111,10 +148,23 @@
  .chip { font: inherit; font-size: 0.9rem; min-height: 44px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); cursor: pointer; }
  .map-fallback { margin: 4px 0; }
  .map-box { position: relative; margin-top: 6px; }
@@ -201,6 +201,16 @@
  .map-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 6px 0 0; padding: 0; font-size: 0.9rem; }
  .map-legend li { display: inline-flex; align-items: center; gap: 6px; }
  .swatch { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+ .map-bubble { font: 0.85rem/1.4 system-ui, sans-serif; color: #0f172a; }
+ .map-bubble strong { display: block; margin-bottom: 2px; }
+ .map-bubble .muted { color: #475569; }
++/* A phone reads the map's labels, hints and counts at body size (T-7503). */
++@media (max-width: 639.98px) {
++  #map-panel-open, .page-head .actions .page-button, .map-panel, .map-panel :is(label, legend, select), .hint, .chip, .map-count, .grid-count, .map-legend, .map-empty #map-note { font-size: 15px; }
++  #map-title, .map-panel h3 { font-size: 17px; }
++  .map-count { text-wrap: pretty; }
++  #map[data-loading]::after, .map-off-box p, .status { font-size: 15px; }
++}
 --- a/site/explore.html
 +++ site/explore.html
 @@ -27,9 +27,11 @@

@@ -27,6 +27,8 @@ export interface DataToolbarProps {
    * as tall as its rows (the catalogue's live data) that bottom is off screen (T-6748).
    */
   anchorMenu?: boolean;
+  /** How many hidden fields the badge names, where the host's own layout hides more than was chosen (T-7503). */
+  hiddenCount?: number;
   /** The columns the grid can filter, as it reports them (`onFilterColumns`). */
   filterColumns: FilterColumn[];
   filterTitle: (column: FilterColumn) => string;
@@ -152,7 +154,7 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
   const labelOf = (attr: string) => props.fields.find((field) => field.value === attr)?.label ?? attr;
   const tools = [
     { label: t("spaces.toolbar.filter"), count: conditionCount(props.filters), wide: true, panel: <FilterPanel columns={props.filterColumns} titleOf={props.filterTitle} value={props.filters} onChange={props.onFilters} /> },
-    { label: t("spaces.toolbar.hide"), count: extras.hidden?.length, panel: <ViewOptions part="fields" attributes={attributes} enums={enums} value={extras} onChange={onExtras} labelOf={labelOf} /> },
+    { label: t("spaces.toolbar.hide"), count: props.hiddenCount ?? extras.hidden?.length, panel: <ViewOptions part="fields" attributes={attributes} enums={enums} value={extras} onChange={onExtras} labelOf={labelOf} /> },
     { label: t("spaces.toolbar.sort"), count: props.sortKeys.length, panel: <SortPanel fields={props.fields} value={props.sortKeys} onChange={props.onSortKeys} /> },
     { label: t("spaces.toolbar.group"), count: props.groupBy.length, panel: <GroupPanel fields={props.fields} value={props.groupBy} onChange={(next) => props.onGroupBy(next.slice(0, MAX_GROUP_FIELDS))} /> },
     { label: t("spaces.toolbar.colour"), count: extras.colour?.length, wide: true, panel: <ViewOptions part="colours" attributes={attributes} enums={enums} value={extras} onChange={onExtras} /> },

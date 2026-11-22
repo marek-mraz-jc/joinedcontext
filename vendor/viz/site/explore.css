@@ -161,3 +161,10 @@ textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; 
 .map-bubble { font: 0.85rem/1.4 system-ui, sans-serif; color: #0f172a; }
 .map-bubble strong { display: block; margin-bottom: 2px; }
 .map-bubble .muted { color: #475569; }
+/* A phone reads the map's labels, hints and counts at body size (T-7503). */
+@media (max-width: 639.98px) {
+  #map-panel-open, .page-head .actions .page-button, .map-panel, .map-panel :is(label, legend, select), .hint, .chip, .map-count, .grid-count, .map-legend, .map-empty #map-note { font-size: 15px; }
+  #map-title, .map-panel h3 { font-size: 17px; }
+  .map-count { text-wrap: pretty; }
+  #map[data-loading]::after, .map-off-box p, .status { font-size: 15px; }
+}

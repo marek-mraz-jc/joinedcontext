@@ -55,7 +55,7 @@ def in_view(events, asked):
     return [f for f in events if f["geometry"] and w <= f["geometry"]["coordinates"][0] <= e and s <= f["geometry"]["coordinates"][1] <= n]
 
 
-def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True):
+def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True, fields=()):
     # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
     missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
     if missing:
@@ -112,7 +112,8 @@ def serve(style_ok, events=EVENTS, cap=1000, points_ok=lambda: True):
             if path == f"/api/endpoint/{SLUG}/schema/index.json":
                 return self.send(200, "application/json", json.dumps({"endpoint": SLUG, "models": [{"name": "events", "version": 1, "types": ["Event"]}]}).encode())
             if path == f"/api/endpoint/{SLUG}/schema/v1/json-schema":
-                props = {"name": {"type": "string", "x-ngsi-ld-kind": "Property"}, "location": {"type": "object", "x-ngsi-ld-kind": "GeoProperty"}}
+                props = {"name": {"type": "string", "x-ngsi-ld-kind": "Property"}, "location": {"type": "object", "x-ngsi-ld-kind": "GeoProperty"},
+                         **{field: {"type": "string", "x-ngsi-ld-kind": "Property"} for field in fields}}
                 return self.send(200, "application/json", json.dumps({"definitions": {"Event": {"type": "object", "properties": props}}}).encode())
             if path.startswith(api + "entities/"):
                 id = unquote(path[len(api + "entities/"):])
@@ -437,6 +438,55 @@ def test_the_table_is_one_card_led_by_the_name_and_cuts_no_column(pw, width):
         assert look["borders"] <= 1 and look["frame"] == "0px", look
         assert look["sw"] <= look["cw"] and look["cut"] == 0, look
         shot(page, f"table-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [360, 400])
+def test_a_phone_reads_at_body_size_counts_the_readers_hides_and_breaks_no_word(pw, width):
+    """T-7503, the review's four phone findings: 10 px labels, a badge of the phone's own hides, a second menu glyph, "Dokumentarn/y"."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    said = {"name": "Dokumentárny film ,,ZÓNY NIKOHO“", "start": "23. 11. 2026, 18:00",
+            "organizer": "Fakulta politických vied a medzinárodných vzťahov Univerzity Mateja Bela"}
+    # The table reads normalized rows.
+    events = [{**event, "properties": {field: {"type": "Property", "value": value} for field, value in said.items()}} for event in EVENTS]
+    srv = serve(lambda: True, events, fields=("start", "organizer"))
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        bar = page.locator('[data-testid="grid-toolbar"]')
+        body = page.evaluate("() => parseFloat(getComputedStyle(document.body).fontSize)")
+        sizes = page.evaluate("""() => [...document.querySelectorAll('[data-testid="grid-toolbar"] :is(summary, button, input, select, label, legend), #map-panel-open')]
+                                 .map((e) => [e.textContent.trim().slice(0, 30), parseFloat(getComputedStyle(e).fontSize)])""")
+        assert [each for each in sizes if each[1] < body] == []
+        tools = bar.locator(":scope > details > summary")
+        assert tools.inner_text().strip() == "Tools"  # the phone hid two columns, the reader none
+        icon = page.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.jc-arrange-slot .jc-grid-menu-icon')).fontSize)")
+        assert icon == 0  # a drawn columns icon, not the menu's three lines
+        shot(page, f"phone-open-{width}")
+        tools.click()
+        bar.get_by_text("Hide fields", exact=True).click()
+        bar.get_by_label(re.compile("^organizer$", re.I)).check()
+        page.wait_for_function("() => document.querySelectorAll('#grid tbody tr:first-child td').length >= 3")
+        assert tools.inner_text().strip() == "Tools"
+        shot(page, f"phone-menu-{width}")
+        page.keyboard.press("Escape")
+        page.evaluate("() => document.querySelectorAll('[data-testid=grid-toolbar] details[open]').forEach((d) => (d.open = false))")
+        look = page.evaluate("""() => {
+          const name = document.querySelector("#grid tbody .jc-grid-open"), scroll = document.querySelector(".jc-grid-scroll");
+          const text = document.createTreeWalker(name, NodeFilter.SHOW_TEXT).nextNode(), range = document.createRange(), broken = [];
+          for (const word of text.data.matchAll(/\\S+/g)) {
+            range.setStart(text, word.index); range.setEnd(text, word.index + word[0].length);
+            if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) broken.push(word[0]);
+          }
+          return {broken, name: name.closest("td").getBoundingClientRect().width, sw: scroll.scrollWidth, cw: scroll.clientWidth,
+                  cells: [...new Set([...document.querySelectorAll("#grid tbody td")].map((td) => getComputedStyle(td).backgroundColor))]};
+        }""")
+        assert look["broken"] == [] and look["name"] >= 120 and look["sw"] > look["cw"], look
+        assert look["cells"] == ["rgba(0, 0, 0, 0)"], look  # the edge's shadow shows through every row
+        shot(page, f"phone-restored-{width}")
         assert errors == []
     finally:
         browser.close()

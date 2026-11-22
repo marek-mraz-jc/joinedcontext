@@ -915,6 +915,12 @@ export function EndpointDataView({
   );
   // What Hide fields shows as hidden: the attributes alone, not the grid's own columns.
   const fieldsHidden = useMemo(() => (narrow ? shape.order.filter((name) => tableHidden.includes(name)) : hiddenNow), [narrow, shape, tableHidden, hiddenNow]);
+  // The badge counts what the reader or the model hid, never the fields a phone starts without (T-7503).
+  const hiddenCount = useMemo(() => {
+    if (!catalogue || !phone) return undefined;
+    const folded = catalogueColumns(shape, [], modelColumns, true);
+    return fieldsHidden.filter((name) => !shape.shown.includes(name) || !folded.includes(name)).length;
+  }, [catalogue, phone, shape, modelColumns, fieldsHidden]);
   const [arrangeIn, setArrangeIn] = useState<HTMLElement | null>(null);
   const onHide = useCallback((attr: string) => hide(fieldsHidden, attr), [hide, fieldsHidden]);
   useEscapeLeaves(full, setFull);
@@ -997,6 +1003,7 @@ export function EndpointDataView({
           attributes={shape.order}
           enums={enums}
           extras={{ ...extras, hidden: fieldsHidden }}
+          hiddenCount={hiddenCount}
           fields={panelFields}
           sortKeys={sortKeys}
           onSortKeys={(next) => {
