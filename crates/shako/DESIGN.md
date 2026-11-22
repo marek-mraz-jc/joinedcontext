@@ -40,10 +40,15 @@ shako-core
     commits, `branches` create/delete, PR `merge` and `update-branch`.
   - Refuses whitelisting any subject without `Action::Write` on the repository with `422` naming the
     subject (closing the Gitea silent-drop bug).
-- **Memory Budget & Semaphore (`MemoryBudget`)**:
-  - One memory-weighted semaphore of 192 MiB (`192 * 1024 * 1024` bytes) governing pack generation,
-    pack indexing, archive streaming, and tree merges. Requests exceeding available permits after the
-    acquire timeout receive `503 Service Unavailable` with `Retry-After: 5`.
+- **Git work budgets (`shako-api/src/work.rs::GitWork`, `jc-limits::FairBudget`)**:
+  - Two budgets keyed by Organization. Spool (4 GiB, with a 256 MiB reserve on the volume): a
+    request body, pack or archive lives in an unlinked temporary file, admitted before it is read
+    and held until it is sent. Memory (192 MiB): the CPU phase alone, weighted by the largest
+    object and the object count (`shako-git/src/pack.rs::job_bytes`). A busy budget answers `503`
+    with `Retry-After`; what can never fit answers the quota refusal.
+- **Push mirrors (`shako-api/src/mirror.rs`)**: a write marks the repository due in
+  `shako.mirror_sync` and answers; a drain claims it under a lease and sends what the remote
+  lacks. "Sync now" waits up to 10 s for the result.
 
 ## 3. Git Engine State Machines (`shako-git`)
 
@@ -83,5 +88,5 @@ on `(instance_id, org_id)` via `current_setting('shako.instance', true)::uuid` a
 
 - Idle anonymous RSS target: ~30 MiB (ceiling 64 MiB).
 - Bounded JWKS cache: max 64 keys, refresh cooldown 10 s.
-- Per-operation pack/archive/merge semaphore: 192 MiB total across concurrent blocking tasks.
-- Streaming channel buffer: `4 * 64 KiB = 256 KiB` per active pack or archive stream.
+- Git work: 192 MiB of memory and 4 GiB of spool across the process, shared fairly between Organizations.
+- A 200 MiB push or clone stays under 64 MiB (`server/tests/git_memory.rs`); bodies are sent in 64 KiB chunks.

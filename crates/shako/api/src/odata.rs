@@ -1008,7 +1008,6 @@ async fn repo_navigation_get(
     let args = parse_func_args(nav_parens, raw_q);
     match op_short {
         "Tree" => return exec_bound_repo_tree(state, ctx, repo_key_str, &args).await,
-        "File" => return exec_bound_repo_file(state, ctx, repo_key_str, &args).await,
         "History" => return exec_bound_repo_history(state, ctx, repo_key_str, &args).await,
         "Compare" => return exec_bound_repo_compare(state, ctx, repo_key_str, &args).await,
         "CommitStatus" => return exec_bound_repo_status(state, ctx, repo_key_str, &args).await,
@@ -1136,6 +1135,13 @@ async fn odata_two_segment_get(
 
     if let Some(k_raw) = key_parens {
         match (set_name, op_short) {
+            ("Repositories", "File") => {
+                let (_, parens) = split_paren_segment(&seg2);
+                let args = parse_func_args(parens, raw_q.as_deref());
+                return bound_repo_file_response(&state, &ctx, &repo_key(k_raw), &args)
+                    .await
+                    .unwrap_or_else(|e| odata_error_response(&e));
+            }
             ("Repositories", _) => {
                 return match repo_navigation_get(
                     &state,
@@ -1601,24 +1607,87 @@ async fn exec_bound_repo_tree(
     Ok(json!({ "Sha": sha, "Tree": page, "Truncated": truncated, "TotalCount": total }))
 }
 
+/// What `File` returns inline through a value (POST, MCP, CLI); GET spools any size.
+const INLINE_FILE_BYTES: usize = 1024 * 1024;
+
+/// The repository, ref and path a `File` call names.
+async fn bound_repo_file_args(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    repo_key: &str,
+    args: &BTreeMap<String, String>,
+) -> ShakoResult<(std::path::PathBuf, String, String)> {
+    let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
+    let git_ref = arg(args, "Ref").unwrap_or(repo.default_branch);
+    let path = arg(args, "Path")
+        .ok_or_else(|| ShakoError::BadRequest("File function requires Path".into()))?;
+    let path = validate_tree_path(&path)?;
+    Ok((disk_path, git_ref, path))
+}
+
+/// `GET R/Shako.File(...)`: the answer is written to a spool under the job's memory permit, its
+/// base64 straight from the blob, and sent from there with the spool's permit (T-7522).
+async fn bound_repo_file_response(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    repo_key: &str,
+    args: &BTreeMap<String, String>,
+) -> ShakoResult<Response> {
+    let (disk_path, git_ref, path) = bound_repo_file_args(state, ctx, repo_key, args).await?;
+    let (spool, ()) = state
+        .git_work
+        .produce(ctx.org_id, move |out, admit| {
+            let Some((sha, bytes)) = read_file_at_ref(&disk_path, &git_ref, &path, admit)? else {
+                return Err(ShakoError::NotFound("file not found".into()));
+            };
+            write_file_answer(out, &sha, &bytes)
+                .map_err(|e| ShakoError::Storage(format!("file spool: {e}")))
+        })
+        .await?;
+    spool.respond("application/json").await
+}
+
+/// `{"Sha","Size","Content"}` with the content's base64 written to `out` as it is encoded.
+fn write_file_answer(
+    out: &mut impl std::io::Write,
+    sha: &str,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let head = json!({ "Sha": sha, "Size": bytes.len() }).to_string();
+    out.write_all(head.trim_end_matches('}').as_bytes())?;
+    out.write_all(br#","Content":""#)?;
+    let mut encoded = base64::write::EncoderWriter::new(&mut *out, &STANDARD);
+    encoded.write_all(bytes)?;
+    encoded.finish()?;
+    drop(encoded);
+    out.write_all(br#""}"#)
+}
+
+/// `File` through a value: up to [`INLINE_FILE_BYTES`], encoded under the job's permit.
 async fn exec_bound_repo_file(
     state: &ShakoState,
     ctx: &RequestCtx,
     repo_key: &str,
     args: &BTreeMap<String, String>,
 ) -> ShakoResult<Value> {
-    let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
-    let git_ref = arg(args, "Ref").unwrap_or(repo.default_branch);
-    let path = arg(args, "Path")
-        .ok_or_else(|| ShakoError::BadRequest("File function requires Path".into()))?;
-    let path = validate_tree_path(&path)?;
-    let found = tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &path))
+    let (disk_path, git_ref, path) = bound_repo_file_args(state, ctx, repo_key, args).await?;
+    state
+        .git_work
+        .run(ctx.org_id, move |admit| {
+            let Some((sha, bytes)) = read_file_at_ref(&disk_path, &git_ref, &path, admit)? else {
+                return Err(ShakoError::NotFound("file not found".into()));
+            };
+            if bytes.len() > INLINE_FILE_BYTES {
+                return Err(ShakoError::BadRequest(format!(
+                    "{path} is {} bytes; this call returns files up to {INLINE_FILE_BYTES} bytes, \
+                     read a larger one with GET R/Shako.File(Path=@p,Ref=@r)",
+                    bytes.len()
+                )));
+            }
+            Ok(json!({ "Sha": sha, "Size": bytes.len(), "Content": STANDARD.encode(&bytes) }))
+        })
         .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))??;
-    let Some((sha, bytes)) = found else {
-        return Err(ShakoError::NotFound("file not found".into()));
-    };
-    Ok(json!({ "Sha": sha, "Size": bytes.len(), "Content": STANDARD.encode(&bytes) }))
 }
 
 async fn exec_bound_repo_history(

@@ -467,6 +467,41 @@ async fn contents_history_tree_and_a_stale_sha_that_moves_nothing() {
     assert_eq!(status["State"], "");
     assert_eq!(status["TotalCount"], 0);
 
+    // Over 1 MiB: GET answers it whole from a spool; a value (POST, MCP, CLI) names the limit.
+    let large = vec![b'x'; 1_200_000];
+    let (st, made) = commit(
+        &w,
+        R,
+        "main",
+        json!([{"operation": "create", "path": "large.txt", "content": STANDARD.encode(&large)}]),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{made}");
+    let (st, file, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/Shako.File(Path=@p,Ref=@r)?@p='large.txt'&@r='main'"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{file}");
+    assert_eq!(file["Size"], 1_200_000);
+    assert_eq!(
+        STANDARD.decode(file["Content"].as_str().unwrap()).unwrap(),
+        large
+    );
+    let (st, refused, _) = call(
+        &w.app,
+        "POST",
+        &format!("{R}/Shako.File"),
+        Some("portal-token"),
+        Some(json!({"Path": "large.txt", "Ref": "main"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(refused.to_string().contains("1048576 bytes"), "{refused}");
+
     // Protecting main refuses the next contents write there.
     let (st, _, _) = call(
         &w.app,

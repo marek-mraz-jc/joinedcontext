@@ -7102,6 +7102,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-limits"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "jc-manifest"
 version = "0.1.0"
 dependencies = [
@@ -12429,6 +12437,7 @@ dependencies = [
  "gix-ref",
  "hex",
  "hmac 0.12.1",
+ "jc-limits",
  "jc-router",
  "jc-time",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12437,6 +12446,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -12461,7 +12471,7 @@ dependencies = [
  "gix-validate",
  "globset",
  "hex",
- "ipnet",
+ "jc-http",
  "jc-time",
  "jsonwebtoken 11.1.0",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12469,7 +12479,6 @@ dependencies = [
  "p256 0.14.0",
  "parking_lot",
  "rand 0.9.5",
- "reqwest 0.12.28",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -12500,7 +12509,6 @@ dependencies = [
  "jc-time",
  "parking_lot",
  "regex",
- "reqwest 0.12.28",
  "serde",
  "serde_norway",
  "shako-core",
@@ -12555,6 +12563,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
+ "gix-hash",
  "hex",
  "hmac 0.12.1",
  "http-body-util",
