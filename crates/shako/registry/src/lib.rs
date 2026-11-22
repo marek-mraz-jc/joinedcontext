@@ -763,7 +763,10 @@ async fn finish_blob_store(
             None,
         );
     }
-    let instance = state.instance_for(instance_id, org_id).await;
+    let instance = match state.instance_for(instance_id, org_id).await {
+        Ok(instance) => instance,
+        Err(e) => return gitea_error_response(state, &e),
+    };
     let left = match state.store().get_quota_usage(instance_id, org_id).await {
         Ok(usage) => instance
             .max_storage_bytes

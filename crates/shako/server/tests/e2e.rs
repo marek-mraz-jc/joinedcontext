@@ -1905,7 +1905,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         .get_quota_usage(inst, org_a)
         .await
         .unwrap();
-    let mut full = world.state.instance_for(inst, org_a).await;
+    let mut full = world.state.instance_for(inst, org_a).await.unwrap();
     let roomy = full.clone();
     full.max_storage_bytes = used.total_bytes();
     world.state.store().upsert_instance(full).await.unwrap();

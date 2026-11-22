@@ -8,7 +8,7 @@ use shako_core::{
     BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
     PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
-    ShakoError, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
+    ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -36,7 +36,17 @@ struct TenantState {
 struct InnerStore {
     tenants: BTreeMap<(InstanceId, OrgId), TenantState>,
     unguarded_tables: BTreeSet<String>,
+    unreadable_tables: BTreeSet<String>,
     role_has_bypassrls: bool,
+}
+
+impl InnerStore {
+    fn readable(&self, table_name: &str) -> ShakoResult<()> {
+        if self.unreadable_tables.contains(table_name) {
+            return Err(ShakoError::Internal(format!("{table_name} cannot be read")));
+        }
+        Ok(())
+    }
 }
 
 /// Thread-safe in-memory [`Store`] implementation.
@@ -56,6 +66,16 @@ impl MemoryStore {
             .write()
             .unguarded_tables
             .insert(table_name.into());
+    }
+
+    /// Reads of `table_name` fail from now on, or answer again with `failing` false.
+    pub fn simulate_read_failure(&self, table_name: &str, failing: bool) {
+        let mut inner = self.inner.write();
+        if failing {
+            inner.unreadable_tables.insert(table_name.to_owned());
+        } else {
+            inner.unreadable_tables.remove(table_name);
+        }
     }
 
     pub fn simulate_bypassrls_role(&self, bypass: bool) {
@@ -100,6 +120,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'_, Option<InstanceRecord>> {
         Box::pin(async move {
             let guard = self.inner.read();
+            guard.readable("instances")?;
             Ok(guard
                 .tenants
                 .get(&(instance_id, org_id))
@@ -322,6 +343,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'_, Vec<ProtectionRuleRecord>> {
         Box::pin(async move {
             let guard = self.inner.read();
+            guard.readable("protection_rules")?;
             Ok(guard
                 .tenants
                 .get(&(instance_id, org_id))
@@ -492,6 +514,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'_, Vec<ReviewRecord>> {
         Box::pin(async move {
             let guard = self.inner.read();
+            guard.readable("reviews")?;
             Ok(guard
                 .tenants
                 .get(&(instance_id, org_id))
@@ -537,6 +560,7 @@ impl Store for MemoryStore {
         let sha = sha.to_owned();
         Box::pin(async move {
             let guard = self.inner.read();
+            guard.readable("commit_statuses")?;
             Ok(guard
                 .tenants
                 .get(&(instance_id, org_id))

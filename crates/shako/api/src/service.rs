@@ -172,7 +172,7 @@ pub async fn create_repository(
     validate_repo_or_owner_name(&req.name, "repository")?;
     validate_branch_name(&req.default_branch)?;
     check_org_write(state, ctx, &req.owner)?;
-    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await;
+    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await?;
     let usage = state
         .store()
         .get_quota_usage(ctx.instance_id, ctx.org_id)
@@ -239,7 +239,7 @@ pub async fn import_repository(
     )
     .await?;
     check_org_write(state, ctx, &req.owner)?;
-    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await;
+    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await?;
     let usage = state
         .store()
         .get_quota_usage(ctx.instance_id, ctx.org_id)
@@ -387,8 +387,7 @@ pub async fn branch_head(
         resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await?;
     let policy = state
         .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-        .unwrap_or_default();
+        .await?;
     let protected = policy.matching_branch_rule(branch).is_some();
     let full_ref = format!("refs/heads/{branch}");
     let sha = blocking(move || {
@@ -1043,8 +1042,7 @@ pub async fn create_review(
     if verdict == ReviewVerdict::Approved && ctx.subject.username == pr.author_login {
         let policy = state
             .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-            .await
-            .unwrap_or_default();
+            .await?;
         if policy
             .matching_branch_rules(&pr.base_ref)
             .any(|rule| rule.required_approvals > 0)
@@ -1236,13 +1234,11 @@ pub async fn merge_pull_request(
     let reviews = state
         .store()
         .list_reviews(repo.instance_id, repo.org_id, Some(repo.id), Some(number))
-        .await
-        .unwrap_or_default();
+        .await?;
     let statuses = state
         .store()
         .list_commit_statuses(repo.instance_id, repo.org_id, repo.id, &m.head_sha)
-        .await
-        .unwrap_or_default();
+        .await?;
     policy.check_pr_merge(
         ctx,
         state.authorizer.as_ref(),
@@ -1611,7 +1607,7 @@ pub async fn package_allowance(
 ) -> ShakoResult<usize> {
     authorize_package(state, ctx, owner, "generic", pkg, Action::Publish)?;
     let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
-    let instance = state.instance_for(ctx.instance_id, target_org).await;
+    let instance = state.instance_for(ctx.instance_id, target_org).await?;
     let usage = state
         .store()
         .get_quota_usage(ctx.instance_id, target_org)

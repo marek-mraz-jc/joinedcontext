@@ -122,14 +122,18 @@ impl ShakoState {
         self.subscribers.write().push(sub);
     }
 
-    /// Loads the `InstanceRecord` for `(instance_id, org_id)`, returning default quotas if not yet stored.
-    pub async fn instance_for(&self, instance_id: InstanceId, org_id: OrgId) -> InstanceRecord {
-        self.store
+    /// Loads the `InstanceRecord` for `(instance_id, org_id)`, returning default quotas if none is
+    /// stored. A store that cannot answer is an error, never the defaults: they may be wider.
+    pub async fn instance_for(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> ShakoResult<InstanceRecord> {
+        Ok(self
+            .store
             .get_instance(instance_id, org_id)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| InstanceRecord::default_for(instance_id, org_id, "localhost"))
+            .await?
+            .unwrap_or_else(|| InstanceRecord::default_for(instance_id, org_id, "localhost")))
     }
 
     /// Loads the `RefPolicy` (branch + tag protection rules) for a repository.
