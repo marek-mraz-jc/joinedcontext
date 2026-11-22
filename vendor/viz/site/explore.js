@@ -100,7 +100,7 @@
       filterIs: "filter {q}", orderIs: "ordered by {col}", desc: " (descending)",
       code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
       invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
-      count: "{n} in view · {located} of {total} with a location · {none} without", countDrawn: " · {n} drawn", countTiles: " · drawn as tiles", other: "Other",
+      count: "{n} in view · {located} of {total} with a location · {none} without", countDrawn: "{n} of {located} with a location drawn · {none} without", countTiles: " · drawn as tiles", other: "Other",
       panelOpen: "Map settings", pointsFrom: "Points from: {attr}", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
       colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
       popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
@@ -131,7 +131,7 @@
       filterIs: "filter {q}", orderIs: "zoradené podľa {col}", desc: " (zostupne)",
       code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
       invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
-      count: "Vo výreze: {n} · s polohou: {located} z {total} · bez polohy: {none}", countDrawn: " · nakreslených: {n}", countTiles: " · kreslené ako dlaždice", other: "Iné",
+      count: "Vo výreze: {n} · s polohou: {located} z {total} · bez polohy: {none}", countDrawn: "Nakreslených: {n} z {located} s polohou · bez polohy: {none}", countTiles: " · kreslené ako dlaždice", other: "Iné",
       panelOpen: "Nastaviť mapu", pointsFrom: "Body z: {attr}", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
       colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
       popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
@@ -577,12 +577,13 @@
 
   function number(t, v) { return new Intl.NumberFormat(t.locale).format(v); }
 
-  // "Vo výreze: 412 · s polohou: 1 584 z 1 680 · bez polohy: 96", and how many are drawn when a
-  // capped read draws fewer than are in view.
+  // "Vo výreze: 412 · s polohou: 1 584 z 1 680 · bez polohy: 96"; where a capped read draws fewer
+  // than are in view, how many are drawn in place of both.
   function countLine(t, c) {
     var none = Math.max(0, c.none);
-    var drawn = c.drawn !== undefined && c.drawn < c.inView ? say(t.countDrawn, { n: number(t, c.drawn) }) : "";
-    return say(t.count, { n: number(t, c.inView), located: number(t, Math.max(0, c.total - none)), total: number(t, c.total), none: number(t, none) }) + (c.tiled ? t.countTiles : drawn);
+    var capped = !c.tiled && c.drawn !== undefined && c.drawn < c.inView;
+    var said = say(capped ? t.countDrawn : t.count, { n: number(t, capped ? c.drawn : c.inView), located: number(t, Math.max(0, c.total - none)), total: number(t, c.total), none: number(t, none) });
+    return said + (c.tiled ? t.countTiles : "");
   }
 
   // "Filtru vyhovuje 200 z 234 záznamov.": the pager's total beside the type's, both the broker's.

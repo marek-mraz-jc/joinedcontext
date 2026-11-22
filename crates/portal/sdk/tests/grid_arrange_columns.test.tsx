@@ -55,6 +55,38 @@ describe("the toolbar's Arrange columns panel (T-6738)", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it("draws in the host's toolbar when given a place there, with no band or blank filter row left (T-7503)", async () => {
+    const place = document.body.appendChild(document.createElement("span"));
+    const { unmount } = render(<EntityGrid config={config} source={fixtureSource(entities)} arrangeIn={place} filterRow="used" />);
+    await screen.findByText("Alpha");
+    expect(document.querySelector(".jc-grid-toolbar")).toBeNull();
+    expect(document.querySelector(".jc-grid-filter-row")).toBeNull();
+    const toggle = within(place).getByRole("button", { name: "Arrange columns" });
+    const panel = openPanel();
+    expect(place.contains(panel)).toBe(true);
+    fireEvent.keyDown(panel, { key: "Escape" });
+    expect(document.activeElement).toBe(toggle);
+    unmount();
+    place.remove();
+  });
+
+  it("shows the filter row once a column is filtered (T-7503)", async () => {
+    render(<EntityGrid config={config} source={fixtureSource(entities)} filterRow="used" state={{ shown: {}, sort: null, filters: { count: { op: "equals", value: "2" } } }} />);
+    await screen.findByText("Alpha");
+    await waitFor(() => expect(document.querySelector(".jc-grid-filter-row")).not.toBeNull());
+  });
+
+  it("offers a public table no filter with one value to pick (T-7503)", async () => {
+    const onFilterColumns = vi.fn();
+    const enums = { "ngsi-ld:status": [{ value: "open" }] };
+    render(<EntityGrid config={config} source={fixtureSource(entities)} enums={enums} publicView onFilterColumns={onFilterColumns} />);
+    await screen.findByText("Alpha");
+    const offered = onFilterColumns.mock.lastCall![0].map((column: { key: string }) => column.key);
+    expect(offered).toContain("count");
+    expect(offered).not.toContain("ngsi-ld:status");
+    expect(offered).not.toContain("entity:type");
+  });
+
   it("hides and shows a column again; the pinned name cannot be hidden", async () => {
     render(<EntityGrid config={config} source={fixtureSource(entities)} />);
     await screen.findByText("Alpha");

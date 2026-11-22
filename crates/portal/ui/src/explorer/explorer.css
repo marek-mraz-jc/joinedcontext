@@ -65,3 +65,38 @@
 }
 .jc-explorer [data-testid="grid-toolbar"] details select,
 .jc-explorer [data-testid="grid-toolbar"] details input { font-size: 14px; }
+/* T-7503: one card, the toolbar, the chips and the rows parted by lines alone. */
+.jc-explorer .jc-data-card { gap: 0; border: 1px solid var(--portal-border, #ddd); border-radius: var(--portal-radius-md, 6px); background: var(--portal-surface, #fff); }
+.jc-explorer .jc-data-card[role="dialog"] { border: 0; border-radius: 0; }
+.jc-explorer .jc-data-card > [data-testid="grid-toolbar"] { padding: 8px; gap: 6px; }
+.jc-explorer .jc-data-card > [data-testid="grid-chips"] { padding: 6px 8px; border-bottom: 1px solid var(--portal-border, #ddd); }
+.jc-explorer .jc-data-card .jc-grid { border: 0; border-radius: inherit; gap: 0; }
+/* Arrange columns among the view's tools, in their look; its panel opens into the page. */
+.jc-explorer .jc-arrange-slot { display: inline-flex; }
+.jc-explorer .jc-arrange-slot:empty { display: none; }
+.jc-explorer .jc-arrange-slot .jc-grid-arrange { margin: 0; }
+.jc-explorer .jc-arrange-slot .jc-grid-arrange-toggle { min-height: var(--portal-control, 2rem); padding-block: 0; border-color: var(--portal-border, #ddd); border-radius: var(--portal-radius-md, 6px); background: var(--portal-surface, #fff); font-size: var(--portal-text-caption, 0.8125rem); box-shadow: var(--portal-shadow-1, none); }
+@media (pointer: coarse), (max-width: 639.98px) {
+  .jc-explorer .jc-arrange-slot .jc-grid-arrange-toggle { min-height: 44px; }
+}
+/* The header reads as the label: no glyph of the value's kind, whose "{}" read as an empty value. */
+.jc-explorer .jc-grid-kind::before { content: none; }
+.jc-explorer .jc-grid-kind { min-width: 0; margin: 0; }
+/* Every value whole: a name wraps and no column runs past the card. */
+.jc-explorer .jc-grid table { width: 100%; }
+.jc-explorer .jc-grid[data-row-size] tbody td { max-width: none; white-space: normal; overflow: visible; overflow-wrap: break-word; }
+.jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell,
+.jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell > .jc-grid-open,
+.jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell a.jc-cell--link { display: block; max-width: none; max-height: none; white-space: normal; overflow: visible; overflow-wrap: break-word; text-overflow: clip; -webkit-line-clamp: none; line-clamp: none; }
+@media (max-width: 639.98px) {
+  .jc-explorer .jc-grid :is(th, td).jc-grid-pinned,
+  .jc-explorer .jc-grid[data-row-size] td.jc-grid-pinned { min-width: 0; }
+  .jc-explorer .jc-grid[data-row-size] tbody td > .jc-grid-cell > .jc-grid-open { overflow-wrap: anywhere; }
+}
+.jc-explorer .jc-data-card .jc-grid .jc-grid-pager { margin: 0; padding: 8px; }
+@media (max-width: 639.98px) {
+  /* The toolbar's controls are one height, a finger's. */
+  .jc-explorer .jc-data-card > [data-testid="grid-toolbar"] > details > summary,
+  .jc-explorer .jc-data-card > [data-testid="grid-toolbar"] > input,
+  .jc-explorer .jc-data-card > [data-testid="grid-toolbar"] select { height: 44px; min-height: 44px; }
+}

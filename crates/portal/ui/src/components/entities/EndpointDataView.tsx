@@ -26,6 +26,7 @@ import { gridLabels, PortalEntityGrid } from "./PortalEntityGrid";
 import { filtersFromQ } from "./presetFilters";
 import { unreadableOf, useAttributeAccess } from "../../api/access";
 import { useIsPhone } from "../../phone";
+import { Select } from "../ui";
 
 interface SchemaIndex {
   models?: { name?: string; version?: number }[];
@@ -452,6 +453,11 @@ export interface EndpointDataViewProps {
   anonymous?: boolean;
   /** A host's own actions, shown first in the view's action group in the same look (the catalogue's Data API and Embed). */
   actions?: ReactNode;
+  /**
+   * The open data explorer's layout (T-7503): one card led by the title, the type picked in the toolbar.
+   * Not `origin`: the Portal's own dataset page passes one too, for a visitor without a session.
+   */
+  catalogue?: boolean;
   /** The phone's Tools menu under its button: the host is a frame as tall as its rows (T-6748). */
   anchorMenu?: boolean;
 }
@@ -476,10 +482,29 @@ function linkRenderers(links: Set<string>, text: string): Record<string, (cell: 
 }
 
 /** The full window is a modal dialog over the page; Escape leaves it. */
-function windowProps(full: boolean, label: string): JSX.IntrinsicElements["div"] {
+function windowProps(full: boolean, label: string, card: boolean): JSX.IntrinsicElements["div"] {
+  // A catalogue's table is one card with lines between its parts (T-7503), not three boxes in each other.
+  const look = card ? "jc-data-card" : "gap-3";
   return full
-    ? { className: "fixed inset-0 z-50 flex flex-col gap-3 overflow-auto bg-bg p-4", role: "dialog", "aria-modal": true, "aria-label": label }
-    : { className: "flex flex-col gap-3" };
+    ? { className: `fixed inset-0 z-50 flex flex-col ${look} overflow-auto bg-bg p-4`, role: "dialog", "aria-modal": true, "aria-label": label }
+    : { className: `flex flex-col ${look}` };
+}
+
+/**
+ * What a catalogue's table leaves to the row's card (T-7503): the id, the type every row shares and,
+ * where the model chose the columns, the scope. A phone starts from the title and the first field after it.
+ */
+export function catalogueColumns(
+  shape: { order: string[]; shown: string[]; title?: string },
+  hidden: readonly string[],
+  chosen: boolean,
+  narrow: boolean,
+): string[] {
+  const out = [...hidden, "id", "entity:type", ...(chosen ? ["entity:scope"] : [])];
+  if (!narrow) return out;
+  const title = shape.title ?? "name";
+  const kept = [...new Set([...(shape.shown.includes(title) ? [title] : []), ...shape.shown])].slice(0, 2);
+  return [...new Set([...out, ...shape.order.filter((name) => !kept.includes(name))])];
 }
 
 /** The endpoint's published schema: its index, the JSON Schema of the newest version and its model. */
@@ -810,6 +835,7 @@ export function EndpointDataView({
   onOpenRow,
   csv = false,
   origin,
+  catalogue = false,
   anonymous,
   actions,
   anchorMenu,
@@ -880,8 +906,17 @@ export function EndpointDataView({
   const sortDir = opened.sort?.dir;
   const gridView = useMemo(() => gridViewOf(opened.filterText, sortAttr, sortDir), [opened.filterText, sortAttr, sortDir]);
   const { hide } = tools;
-  const onHide = useCallback((attr: string) => hide(hiddenNow, attr), [hide, hiddenNow]);
 
+  const narrow = catalogue && phone && extras.hidden === undefined;
+  const modelColumns = Boolean(classView?.columns?.length);
+  const tableHidden = useMemo(
+    () => (catalogue ? catalogueColumns(shape, hiddenNow, modelColumns, narrow) : hiddenNow),
+    [catalogue, shape, hiddenNow, modelColumns, narrow],
+  );
+  // What Hide fields shows as hidden: the attributes alone, not the grid's own columns.
+  const fieldsHidden = useMemo(() => (narrow ? shape.order.filter((name) => tableHidden.includes(name)) : hiddenNow), [narrow, shape, tableHidden, hiddenNow]);
+  const [arrangeIn, setArrangeIn] = useState<HTMLElement | null>(null);
+  const onHide = useCallback((attr: string) => hide(fieldsHidden, attr), [hide, fieldsHidden]);
   useEscapeLeaves(full, setFull);
   const rowsPerPage = classView?.pageLength;
   const config = useMemo(() => gridConfigOf(slug, type?.name, gridColumns, rowsPerPage), [slug, type, gridColumns, rowsPerPage]);
@@ -913,6 +948,14 @@ export function EndpointDataView({
   if (notReady || !type || !config) {
     return notReady ?? <></>;
   }
+  const pickType = (next: string) => {
+    setChosen(next);
+    // Another type has other columns: its query, order and tools start empty.
+    setView({ filterText: null, sort: null });
+    tools.reset();
+    setAsked(undefined);
+  };
+  const typeOptions = types.map((each) => ({ value: each.name, label: classLabel(model.data, each.name, i18n.language) }));
   const dataActions = (
     <DataActions
       actions={actions}
@@ -928,16 +971,32 @@ export function EndpointDataView({
   );
 
   return (
-    <div {...windowProps(full, t("endpoints.data.title"))}>
+    <div {...windowProps(full, t("endpoints.data.title"), catalogue)}>
       {refused ? null : (
       <>
       <div className="relative flex flex-wrap items-center gap-1 border-b border-border pb-2" data-testid="grid-toolbar">
+        {/* A catalogue picks the type here, only where there is another to pick (T-7503). */}
+        {catalogue && typeOptions.length > 1 ? (
+          <Select
+            aria-label={t("endpoints.data.type")}
+            title={t("endpoints.data.type")}
+            className="h-control"
+            value={type.name}
+            onChange={(event) => pickType(event.target.value)}
+          >
+            {typeOptions.map((each) => (
+              <option key={each.value} value={each.value}>
+                {each.label}
+              </option>
+            ))}
+          </Select>
+        ) : null}
         <DataToolbar
           {...tools.props}
           filterTitle={filterTitle}
           attributes={shape.order}
           enums={enums}
-          extras={{ ...extras, hidden: hiddenNow }}
+          extras={{ ...extras, hidden: fieldsHidden }}
           fields={panelFields}
           sortKeys={sortKeys}
           onSortKeys={(next) => {
@@ -947,13 +1006,14 @@ export function EndpointDataView({
           menuExtra={phone ? dataActions : undefined}
           anchorMenu={anchorMenu}
         />
+        {catalogue ? <span ref={setArrangeIn} className="jc-arrange-slot" /> : null}
         {/* Two doors on the same page of entities: what this endpoint's filter and projection leave
             out is marked on the space's side (T-1435). The CSV is the whole answer of this query as
             one table, built by the endpoint under its own limits and read with the person's own
             session, as the rows are (EP-08, EP-44). */}
         {phone ? null : <div className="ml-auto">{dataActions}</div>}
       </div>
-      <div className="flex flex-wrap items-center gap-2 empty:hidden">
+      <div className="flex flex-wrap items-center gap-2 empty:hidden" data-testid="grid-chips">
         {/* The conditions in force stay in sight, as on the space's grid (T-6161). */}
         <FilterChips columns={tools.props.filterColumns} titleOf={filterTitle} value={group} onChange={tools.props.onFilters} />
         <DefaultFilter
@@ -996,18 +1056,8 @@ export function EndpointDataView({
           {...(project ? {} : { basemap: undefined })}
           config={config}
           // The type is picked in the grid's Type column, like on a space (owner 2026-11-01).
-          typeChoice={{
-            value: type.name,
-            label: t("endpoints.data.type"),
-            options: types.map((each) => ({ value: each.name, label: classLabel(model.data, each.name, i18n.language) })),
-            onChange: (next) => {
-              setChosen(next);
-              // Another type has other columns: its query, order and tools start empty.
-              setView({ filterText: null, sort: null });
-              tools.reset();
-              setAsked(undefined);
-            },
-          }}
+          typeChoice={catalogue ? undefined : { value: type.name, label: t("endpoints.data.type"), options: typeOptions, onChange: pickType }}
+          arrangeIn={catalogue && !refused ? arrangeIn : undefined}
           source={source}
           enums={enums}
           relations={relations}
@@ -1018,7 +1068,7 @@ export function EndpointDataView({
           onRefused={setRefused}
           // Read without a session: an open dataset names no one's access (T-6869).
           publicView={anonymous || Boolean(origin)}
-          hidden={hiddenNow}
+          hidden={tableHidden}
           onHide={onHide}
           thenBy={tools.thenBy}
           groupBy={tools.groupBy}
@@ -1030,8 +1080,8 @@ export function EndpointDataView({
           emptyText={tools.q ? t("entityGrid.filtersMatchNothing") : undefined}
          
           queryBox={tools.showQuery}
-          filterRow={!phone}
-          compact={phone}
+          filterRow={phone ? false : catalogue ? "used" : true}
+          compact={phone && !catalogue}
           onFilterColumns={tools.onFilterColumns}
           {...openRowProps(onOpenRow)}
         />

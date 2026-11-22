@@ -413,6 +413,25 @@ describe("the data section of an endpoint", () => {
     const link = await screen.findByRole("link", { name: en.endpoints.data.csv });
     expect(new URL(link.getAttribute("href") ?? "").origin).toBe("https://api.example.test");
   });
+
+  it("picks the type in the catalogue's toolbar, and leaves the id and the type to the row's card (T-7503)", async () => {
+    const user = userEvent.setup();
+    show({ origin: "https://api.example.test", catalogue: true }, (url) => answer(url));
+    const picker = await screen.findByRole("combobox", { name: en.endpoints.data.type });
+    expect(picker.closest('[data-testid="grid-toolbar"]')).not.toBeNull();
+    await waitFor(() => expect(columns().length).toBeGreaterThan(0));
+    expect(columns().filter((header) => /^(ID|Type)$/.test(header.replace(/[⋮↑↓]/g, "").trim()))).toEqual([]);
+    expect(document.querySelector(".jc-grid-filter-row")).toBeNull();
+    await user.selectOptions(picker, "WeatherObserved");
+    await waitFor(() => expect(columns().some((header) => header.includes("Wind speed"))).toBe(true));
+  });
+
+  it("keeps the Portal's own table for a visitor without a session, whose rows come from another origin (T-7503)", async () => {
+    show({ origin: "https://api.example.test", anonymous: true }, (url) => answer(url));
+    const picker = await screen.findByLabelText(en.endpoints.data.type);
+    expect(picker.closest('[data-testid="grid-toolbar"]')).toBeNull();
+    expect(document.querySelector(".jc-data-card")).toBeNull();
+  });
 });
 
 // T-5192: the catalogue's events table, named and ordered by the published model.

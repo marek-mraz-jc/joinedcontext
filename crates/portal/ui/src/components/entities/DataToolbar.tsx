@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { clsx } from "clsx";
 import { andQ, matchesQ, queryFromGroup, searchQuery } from "@joinedcontext/sdk";
 import type { EnumOption, FilterColumn, FilterGroup, RichRow } from "@joinedcontext/sdk";
 import { useIsPhone } from "../../phone";
@@ -169,7 +170,8 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
     },
   ];
   const panels = tools.map(({ panel, ...tool }) => (
-    <ToolbarPopover key={tool.label} {...tool} inPlace={phone}>
+    // One style for every tool (T-7503): a ghost beside an outlined one read as plain text.
+    <ToolbarPopover key={tool.label} {...tool} outlined inPlace={phone}>
       {panel}
     </ToolbarPopover>
   ));
@@ -186,9 +188,9 @@ export function DataToolbar(props: DataToolbarProps): JSX.Element {
   // The query the filters ask, folded until asked for (T-5093): the rows and their count stay together.
   const query = (
     <Button
-      variant={props.showQuery ? "secondary" : "ghost"}
+      variant="secondary"
       size="sm"
-      className={phone ? "h-control-lg justify-start" : undefined}
+      className={clsx(phone && "h-control-lg justify-start", props.showQuery && "border-primary text-primary-soft-fg")}
       aria-pressed={props.showQuery}
       onClick={() => props.onShowQuery(!props.showQuery)}
     >

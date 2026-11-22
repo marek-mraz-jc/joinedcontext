@@ -89,7 +89,7 @@ describe("explore.js map view", () => {
     expect(X.countLine(en, { inView: 49, total: all, none: all - located(PODUJATIA) })).toBe("49 in view · 231 of 234 with a location · 3 without");
     expect(X.countLine(en, { inView: 49, total: 200, none: 3 })).toBe("49 in view · 197 of 200 with a location · 3 without");
     // A capped read draws fewer than are in view, and says how many.
-    expect(X.countLine(en, { inView: 231, total: all, none: 3, drawn: 197 })).toBe("231 in view · 231 of 234 with a location · 3 without · 197 drawn");
+    expect(X.countLine(en, { inView: 231, total: all, none: 3, drawn: 197 })).toBe("197 of 231 with a location drawn · 3 without");
     expect(X.countLine({ ...X.TEXT.sk, locale: "sk-SK" }, { inView: 49, total: 200, none: 3 })).toBe("Vo výreze: 49 · s polohou: 197 z 200 · bez polohy: 3");
     expect(X.matchLine(en, upcoming.length, all)).toBe("200 of 234 records match the filter.");
     expect(X.matchLine({ ...X.TEXT.sk, locale: "sk-SK" }, upcoming.length, all)).toBe("Filtru vyhovuje 200 z 234 záznamov.");

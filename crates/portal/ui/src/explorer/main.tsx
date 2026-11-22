@@ -67,6 +67,7 @@ export function mount(element: Element, options: MountOptions): Root {
               project="catalogue"
               slug={options.slug}
               origin={options.origin}
+              catalogue
               link={options.link}
               onLink={options.onLink}
               onCard={options.onCard}

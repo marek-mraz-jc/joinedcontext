@@ -35,7 +35,7 @@ export function GridNotices({ view }: { view: GridView }): React.JSX.Element {
 
       <GridPending view={view} />
 
-      {filterRow && filterable.size > 0 && !asText && (
+      {filterRow === true && filterable.size > 0 && !asText && (
         <button type="button" className="jc-grid-filter-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>
           {activeFilters > 0 ? `${labels.filterRow} (${activeFilters})` : labels.filterRow}
         </button>

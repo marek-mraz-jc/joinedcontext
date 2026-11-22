@@ -176,10 +176,14 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
       if (allowed && column.attr !== null && !allowed.includes(column.attr)) {
         continue;
       }
+      // A public table offers no filter with one value to pick (T-7503).
+      if (publicView && (column.kind === "enum" || column.kind === "type") && column.options?.length === 1) {
+        continue;
+      }
       byKey.set(column.key, column);
     }
     return byKey;
-  }, [filterColumns, allowed]);
+  }, [filterColumns, allowed, publicView]);
   const asText = state.filterText !== null;
   // On a phone the filter row folds under one button (T-5415); wider screens always show it.
   const [filtersOpen, setFiltersOpen] = useState(false);

@@ -345,7 +345,7 @@ def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
         wait_drawn(page)
         assert page.locator("#map-note").inner_text() == "The map opens on the first 200 of 234 records; zoom in for the rest."
         drawn = sum(1 for e in PODUJATIA[:200] if e["geometry"])
-        tail = f"231 of 234 with a location · 3 without · {drawn} drawn"
+        tail = f"{drawn} of 231 with a location drawn · 3 without"
         page.wait_for_function("(tail) => document.getElementById('map-count').textContent.endsWith(tail)", arg=tail, timeout=10_000)
         assert errors == []
     finally:
@@ -360,13 +360,43 @@ def test_a_query_with_places_after_one_without_fits_its_points_again(pw):
     try:
         page, errors = open_explorer(browser, srv, 1440, q="upcoming==true")
         page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
-        page.get_by_role("button", name=re.compile("Clear (all )?filters", re.I)).first.click()
+        page.get_by_role("button", name=re.compile("Clear (all )?filters", re.IGNORECASE)).first.click()
         page.wait_for_selector("#map", state="visible", timeout=20_000)
         wait_drawn(page)
         view = page.evaluate(DRAWN)
         (west, south), (east, north) = view["bounds"]
         points = [e["geometry"]["coordinates"] for e in placeless if e["geometry"]]
         assert view["w"] > 0 and all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+@pytest.mark.parametrize("width", [1440, 400])
+def test_the_table_is_one_card_led_by_the_name_and_cuts_no_column(pw, width):
+    """T-7503, the owner's "this formating is odd": two button styles, a band for one button, a blank filter row, the id first."""
+    browser = pw.chromium.launch(args=["--disable-dev-shm-usage", *NO_WEBGL])
+    srv = serve(lambda: True)
+    try:
+        page, errors = open_explorer(browser, srv, width)
+        page.wait_for_selector("#grid tbody .jc-grid-open", timeout=20_000)
+        look = page.evaluate("""() => {
+          const scroll = document.querySelector(".jc-grid-scroll"), bar = document.querySelector('[data-testid="grid-toolbar"]');
+          return {first: document.querySelector("#grid thead th").innerText, heads: document.querySelector("#grid thead tr").innerText,
+                  band: !!document.querySelector(".jc-grid .jc-grid-toolbar"), filterRow: !!document.querySelector(".jc-grid-filter-row"),
+                  arrange: !!bar.querySelector(".jc-grid-arrange-toggle"), select: !!bar.querySelector(":scope select"),
+                  borders: new Set([...bar.querySelectorAll(":scope > details > summary, :scope > button")].map((b) => getComputedStyle(b).borderTopStyle + getComputedStyle(b).borderTopWidth)).size,
+                  frame: getComputedStyle(document.querySelector(".jc-grid")).borderTopWidth,
+                  sw: scroll.scrollWidth, cw: scroll.clientWidth,
+                  cut: [...document.querySelectorAll("#grid tbody td .jc-grid-open")].filter((b) => b.scrollWidth > b.clientWidth + 1).length};
+        }""")
+        assert look["first"].lower().startswith("name") and not re.search(r"\bID\b|\bType\b", look["heads"]), look
+        assert not look["band"] and not look["filterRow"] and look["arrange"], look
+        assert not look["select"], look  # one type: nothing to pick
+        assert look["borders"] <= 1 and look["frame"] == "0px", look
+        assert look["sw"] <= look["cw"] and look["cut"] == 0, look
+        shot(page, f"table-{width}")
         assert errors == []
     finally:
         browser.close()
