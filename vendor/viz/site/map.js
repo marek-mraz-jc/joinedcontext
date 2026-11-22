@@ -174,10 +174,11 @@
       open(i, flat(features[i].geometry.coordinates)[0]);
     });
     // A few answers on one map are told apart by name; textContent alone, as in the popup.
-    var dots = features.filter(function (f) { return f.geometry.type === "Point"; });
-    if (dots.length > 1 && dots.length <= 3 && dots.length === features.length) {
-      dots.forEach(function (f) {
-        var at = f.geometry.coordinates;
+    if (features.length > 1 && features.length <= 3) {
+      features.forEach(function (f) {
+        // A line's or an area's name stands at the dot that marks it (T-4811).
+        var dot = anchors([f])[0] || f;
+        var at = flat(dot.geometry.coordinates)[0];
         var east = at[0] > (box[0][0] + box[1][0]) / 2;
         var name = node("span", "jc-name", lines(spec, f.properties, lang).title);
         new maplibre.Marker({ element: name, anchor: east ? "right" : "left", offset: [east ? -12 : 12, 0] }).setLngLat(at).addTo(map);
