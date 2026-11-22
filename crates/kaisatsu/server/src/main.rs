@@ -361,7 +361,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             let opts = pg_config(&db, &database_url)
                 .connect_options()
                 .map_err(fail(EXIT_INVALID_INPUT))?;
-            let pool = sqlx::postgres::PgPoolOptions::new()
+            let pool = jc_pool::options::<sqlx::Postgres>()
                 .max_connections(1)
                 .acquire_timeout(std::time::Duration::from_secs(10))
                 .connect_with(opts)

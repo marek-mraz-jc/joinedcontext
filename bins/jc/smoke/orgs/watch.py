@@ -38,7 +38,9 @@ Each run:
    30 min from Prometheus (T-7467), which pipelines.refused reads: the log rotates in minutes at
    jc-prod's volume, so it can only fail that row or explain a skip. From the same Prometheus the
    seconds the Portal's database pool has handed out no connection (T-7494, database.pool), and from
-   the Portal's database when a pipeline run was last recorded (pipelines.recorded).
+   the Portal's database when a pipeline run was last recorded (pipelines.recorded). From
+   pg_stat_activity the jc databases' sessions left in a transaction or idle after a ROLLBACK for
+   2 min (T-7499, database.held): database, application_name, login, state and age, no statement.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
@@ -130,6 +132,13 @@ SELECT json_build_object('pipelinesAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-
                 AND r.pipeline = p.pipeline AND r.failed > 0 ORDER BY r.last_at DESC LIMIT 1)
             ORDER BY l.id DESC LIMIT 1)
 ) ORDER BY p.project, p.pipeline), '[]')) FROM p"""
+# T-7499: the sessions database.held judges, a jc database's alone and without their statements.
+HELD_SQL = r"""SELECT json_build_object('heldSessions', coalesce(json_agg(json_build_object(
+  'database', datname, 'application', application_name, 'login', usename, 'state', state,
+  'seconds', floor(extract(epoch FROM now() - state_change))::int) ORDER BY state_change), '[]'))
+FROM pg_stat_activity
+WHERE datname LIKE 'jc\_%' AND pid <> pg_backend_pid() AND state_change < now() - interval '2 min'
+  AND (state LIKE 'idle in transaction%' OR (state = 'idle' AND query ILIKE 'rollback%'))"""
 # chunks.embed_error arrives with assistant migration 0025: before it, the errors are unknown (null).
 EMBED_ERROR_SQL = """SELECT json_build_object('embedError', EXISTS (SELECT 1 FROM information_schema.columns
   WHERE table_schema = current_schema() AND table_name = 'chunks' AND column_name = 'embed_error'))"""
@@ -339,6 +348,7 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
     snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_portal", PIPELINES_SQL),
+            **query(cfg, pod, "jc_portal", HELD_SQL),
             **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg), **refused_counter(cfg),
             **pool_gauge(cfg)}
     path = run / "snapshot.json"

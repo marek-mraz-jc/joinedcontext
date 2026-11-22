@@ -18,6 +18,7 @@ antares-store = { workspace = true }
 antares-ql = { workspace = true }
 # T-6066: a count under idPatterns matches ids with the rule's own regex
 regex = { workspace = true }
+jc-pool = { workspace = true, optional = true }
 jc-time = { workspace = true, features = ["sqlx"] }
 jiff = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
@@ -71,7 +72,7 @@ harness = false
 # it off and gets the memory store through the same seam. A feature gate
 # only — every gated item keeps its behaviour verbatim.
 default = ["postgres"]
-postgres = ["dep:sqlx", "dep:metrics", "dep:uuid", "dep:ring", "dep:base64"]
+postgres = ["dep:sqlx", "dep:jc-pool", "dep:metrics", "dep:uuid", "dep:ring", "dep:base64"]
 # Row readers that exist for the integration tests in tests/ and for
 # nothing else: the broker's own operations never call them, so a release
 # build never compiles them.

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum = "0.8.1"
+jc-pool = { path = "../../shared/jc-pool" }
 jc-time = { path = "../../shared/jc-time" }
 clap = { version = "4.5.32", features = ["derive", "env"] }
 dataroom-api = { path = "../api" }

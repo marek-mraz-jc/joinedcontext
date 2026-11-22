@@ -1928,6 +1928,7 @@ dependencies = [
  "ekiben-io-http",
  "futures",
  "glob",
+ "jc-pool",
  "jc-time",
  "jiff",
  "rusqlite",
@@ -3136,6 +3137,14 @@ dependencies = [
  "log",
  "regex-bites",
  "urlencoding",
+]
+
+[[package]]
+name = "jc-pool"
+version = "0.1.0"
+dependencies = [
+ "sqlx-core",
+ "tracing",
 ]
 
 [[package]]

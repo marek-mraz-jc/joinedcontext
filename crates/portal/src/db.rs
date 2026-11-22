@@ -319,29 +319,14 @@ pub(crate) fn next_project(
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more
 /// often than sqlx's 10 min default, so all five stayed open all day, ~19 MiB of Postgres each.
 ///
-/// A released connection is tested here before sqlx tests it (T-7494). A future dropped
-/// mid-statement leaves that statement's error for the test to read, and sqlx 0.9.0 answers a
-/// failed test with `close_hard`, which over TLS first waits for the idle server to send
-/// something: the slot is never given back. `Ok(false)` closes with a Terminate, which the server
-/// answers by hanging up, so the hook must never return `Err`.
-/// ponytail: one extra round trip per release; drop the hook with sqlx-core 0.9.1 (#4450).
+/// A connection cut off mid-statement gives its slot back by `jc_pool::options`' release rule
+/// (T-7494, T-7499).
 fn pool_options() -> PgPoolOptions {
-    PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .max_connections(5)
         .min_connections(0)
         .idle_timeout(Duration::from_secs(60))
         .acquire_timeout(Duration::from_secs(5))
-        .after_release(|connection, _| {
-            Box::pin(async move {
-                match connection.ping().await {
-                    Ok(()) => Ok(true),
-                    Err(error) => {
-                        tracing::warn!(%error, "a released database connection is closed, not reused");
-                        Ok(false)
-                    }
-                }
-            })
-        })
 }
 
 /// A pool of one beside `pool` for a session held as long as the process runs (a LISTEN, the

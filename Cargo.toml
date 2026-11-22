@@ -18,6 +18,7 @@ members = [
   "crates/shared/jc-secret",
   "crates/shared/jc-types",
   "crates/shared/jc-time",
+  "crates/shared/jc-pool",
   "crates/shared/jc-door",
   "crates/shared/jc-chart",
   "crates/shared/ekiben-linkml",

@@ -74,6 +74,7 @@ odata-csdl = { path = "../antares/crates/odata-csdl", version = "0.3.0" }
 odata-table = { path = "../antares/crates/odata-table", version = "0.3.0" }
 # The chart subset and raster jc_render shares with the gateway's render_chart (T-6881).
 jc-chart = { path = "../shared/jc-chart", version = "0.1.0" }
+jc-pool = { path = "../shared/jc-pool", version = "0.1.0" }
 jc-router = { path = "../shared/jc-router", version = "0.1.0" }
 jc-types = { path = "../shared/jc-types", version = "0.1.0" }
 # The manifest contract, by tag or by full commit, never by path into another agent's clone

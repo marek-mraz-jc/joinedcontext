@@ -207,7 +207,7 @@ def run_e2e(out: Path, timeout: float) -> dict:
 # every handshake 426 behind the edge while each plain GET row passed).
 NEVER_KNOWN = ("orgs/pipelines.delivering.p/n", "pipelines/delivering.p/n", "orgs/pipelines.refused",
                "orgs/pipelines.unplaced", "subscriptions/transport.edge-upgrade",
-               "orgs/database.pool", "orgs/pipelines.recorded")
+               "orgs/database.pool", "orgs/database.held", "orgs/pipelines.recorded")
 
 
 def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
@@ -218,11 +218,11 @@ def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
             rx = re.compile(pattern.strip())
             if "delivering" in rx.pattern or any(rx.search(i) for i in NEVER_KNOWN):
                 raise SystemExit(f"{path}:{n}: {rx.pattern!r} would hold pipelines.delivering, .refused, "
-                                 ".unplaced or .recorded, database.pool rows or subscriptions/transport.edge-upgrade: "
+                                 ".unplaced or .recorded, database.pool, database.held rows or subscriptions/transport.edge-upgrade: "
                                  "a pipeline that stopped delivering, whose writes are refused or whose project has "
-                                 "no Organization, a Portal that records no run or has no database connection, and "
+                                 "no Organization, a Portal that records no run or has no database connection, a session held in a jc database, and "
                                  "an Endpoint WebSocket no client can open: each is an incident, never a known "
-                                 "failure (T-7445, T-7458, T-7478, T-7494)")
+                                 "failure (T-7445, T-7458, T-7478, T-7494, T-7499)")
             out.append((rx, reason.strip()))
     return out
 

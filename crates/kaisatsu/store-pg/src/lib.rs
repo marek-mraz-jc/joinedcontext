@@ -24,7 +24,7 @@ use odata_table::{Answer, QueryOptions, Service, TableInfo, query};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use sqlx::postgres::{PgConnectOptions, PgListener, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgListener, PgPool};
 use sqlx::{PgConnection, Postgres, Transaction};
 use std::path::Path;
 use std::str::FromStr;
@@ -238,7 +238,7 @@ impl PgStore {
         max_connections: u32,
         kek: Kek,
     ) -> Result<Self> {
-        let pool = PgPoolOptions::new()
+        let pool = jc_pool::options::<sqlx::Postgres>()
             .max_connections(max_connections.clamp(1, 50))
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts)

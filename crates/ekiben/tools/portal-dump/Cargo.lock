@@ -2383,6 +2383,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-pool"
+version = "0.1.0"
+dependencies = [
+ "sqlx-core",
+ "tracing",
+]
+
+[[package]]
 name = "jc-relationships"
 version = "0.1.0"
 dependencies = [
@@ -2583,6 +2591,7 @@ dependencies = [
  "hmac 0.12.1",
  "jc-chart",
  "jc-core",
+ "jc-pool",
  "jc-router",
  "jc-time",
  "jc-types",

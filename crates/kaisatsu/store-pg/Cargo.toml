@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
+jc-pool = { path = "../../shared/jc-pool" }
 jc-time = { path = "../../shared/jc-time", features = ["sqlx"] }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }

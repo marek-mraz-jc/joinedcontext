@@ -705,6 +705,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
         calls.append(args)
         if args[-1] == watch.EMBED_ERROR_SQL:
             return "SET\n" + json.dumps({"embedError": embed_error})
+        if args[-1] == watch.HELD_SQL:
+            return "SET\n" + json.dumps({"heldSessions": []})
         if args[-1] == watch.PIPELINES_SQL:
             return "SET\n" + json.dumps({"pipelines": []})
         if args[-1].startswith("SELECT"):
@@ -720,17 +722,17 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
-    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG),
+    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "heldSessions": [], "knowledge": [], **watch.log_facts(LOG),
                                             "poolUnavailable": {"error": "watch.toml names no prometheus_namespace"},
                                             "refusedCounter": {"window": "30m", "error": "watch.toml names no prometheus_namespace"}}
     # the log of every jc pod's jc-server container, the last 30 min only
     assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true",
             "--prefix=false") in calls
     queries = [c for c in calls if c[-1].startswith(("SELECT", "WITH"))]
-    assert len(queries) == 4 and all("SET default_transaction_read_only = on" in c for c in queries)
+    assert len(queries) == 5 and all("SET default_transaction_read_only = on" in c for c in queries)
     # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
     assert ("embed_error" in queries[-1][-1]) is embed_error
-    for sql in (watch.PORTAL_SQL, watch.PIPELINES_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
+    for sql in (watch.PORTAL_SQL, watch.PIPELINES_SQL, watch.HELD_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
         assert not any(w in sql.upper() for w in ("INSERT", "UPDATE ", "DELETE", "DROP", "TRUNCATE", "C.TEXT"))
     # Crawl jobs give their time, kind and the error's class only: never the error's own text.
     assert "split_part(coalesce(j.error, ''), ':', 1)" in watch.assistant_sql(True)
@@ -1002,6 +1004,34 @@ def test_the_exhausted_pool_rows_belong_to_the_deployment_and_fail_the_run(tmp_p
     rows = {(r["id"], r["target"], r["result"]) for r in res["checks"]}
     assert {("database.pool", "t", "fail"), ("pipelines.recorded", "t", "fail")} <= rows
     assert code == 1
+
+
+def session(database, seconds, state="idle", application="", login="app"):
+    return {"database": database, "seconds": seconds, "state": state, "application": application, "login": login}
+
+
+def test_a_held_session_is_red_and_names_database_and_application(tmp_path, edge, public_sources):
+    # jc-prod 2026-11-22 11:49Z: three of three assistant sessions idle after ROLLBACK since 11:25Z
+    held = [session("jc_assistant", s, login="jc_assistant") for s in (1426, 1420, 1406)]
+    result, got = orgs.sessions_held({"heldSessions": held})
+    assert result == "fail" and got.startswith("3 held: jc_assistant application_name=(none) login=jc_assistant idle")
+    result, got = orgs.sessions_held({"heldSessions": [session("jc_daiya", 121, "idle in transaction (aborted)", "daiya\nx")]})
+    assert result == "fail" and "jc_daiya application_name=daiya x" in got and "(aborted) 121 s" in got
+    code, res = run(tmp_path, public_sources, snap_doc={**snapshot(public_sources), "heldSessions": held})
+    assert ("database.held", "t", "fail") in {(r["id"], r["target"], r["result"]) for r in res["checks"]}
+    assert code == 1
+
+
+@pytest.mark.parametrize("rows", [[], [session("jc_assistant", 130)], [session("jc_antares", 480)],
+                                  [session("jc_shako", 120, "idle in transaction")]])
+def test_a_session_the_pool_still_closes_by_itself_is_not_held(rows):
+    assert orgs.sessions_held({"heldSessions": rows}) == ("pass", "no session held")
+
+
+def test_the_held_row_passes_nothing_it_did_not_read_and_antares_is_red_past_its_reaper():
+    assert orgs.sessions_held({})[0] == "skip"
+    assert orgs.sessions_held({"heldSessions": [session("jc_antares", 491)]})[0] == "fail"
+    assert orgs.sessions_held({"heldSessions": [session("jc_antares", 121, "idle in transaction")]})[0] == "fail"
 
 
 COUNTER = {"refusedCounter": {"window": "30m", "rows": [

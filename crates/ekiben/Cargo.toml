@@ -81,6 +81,7 @@ regex = "1.13"
 # IANA zones, bundled so a container without /usr/share/zoneinfo answers the same (T-7233)
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jc-time = { path = "../shared/jc-time" }
+jc-pool = { path = "../shared/jc-pool" }
 quick-xml = { version = "0.42", features = ["serialize"] }
 proj4rs = { version = "0.3.0", default-features = false }
 csv = "1.4"

@@ -20,7 +20,7 @@ use crate::{
 use daiya_model::{DatasourceRecord, OrgId};
 use ipnet::IpNet;
 use serde_json::Value;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -338,7 +338,7 @@ async fn build_postgres(
         let password = deps.secrets.resolve_secret(record.org_id, secret_ref)?;
         opts = opts.password(password.as_str());
     }
-    let pool = PgPoolOptions::new()
+    let pool = jc_pool::options::<sqlx::Postgres>()
         .max_connections(4)
         .acquire_timeout(deps.policy.timeout)
         .connect_lazy_with(opts);

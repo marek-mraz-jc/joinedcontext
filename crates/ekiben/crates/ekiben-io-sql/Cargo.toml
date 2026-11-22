@@ -15,6 +15,7 @@ sqlx-postgres = { workspace = true }
 sqlx-mysql = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
+jc-pool = { workspace = true }
 jc-time = { workspace = true }
 jiff = { workspace = true }
 url = { workspace = true }

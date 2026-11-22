@@ -72,6 +72,8 @@ jsonschema = { version = "0.54", default-features = false }
 # Passage and question embeddings (ADR-N-040 §3.1, T-3053): the model code (multilingual-e5-small
 # int8 over ONNX Runtime, files pinned by SHA-256) and the embedder service's client, one crate.
 jc-embedder = { path = "../../../../crates/embedder" }
+# The release rule every pool of jc starts with (T-7499).
+jc-pool = { path = "../../../../crates/shared/jc-pool" }
 
 [dev-dependencies]
 wiremock = "0.6"

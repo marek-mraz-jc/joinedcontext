@@ -137,8 +137,9 @@ pub fn chat_config(
 /// backfill and the catalogue counts, and with 4 each waited ~9.7 s to acquire on prod.
 /// Idle connections close after 60 s (T-6201): the background loops touch the pool more often
 /// than sqlx's 10 min default, so the idle set never shrank and each held a ~19 MiB backend.
+/// A connection cut off mid-statement gives its slot back (`jc_pool::options`, T-7499).
 pub fn pool_options() -> sqlx::postgres::PgPoolOptions {
-    sqlx::postgres::PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .max_connections(10)
         .min_connections(0)
         .idle_timeout(Duration::from_secs(60))

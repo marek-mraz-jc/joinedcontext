@@ -1459,7 +1459,7 @@ impl AppState {
                 crate::artifact_store::Client::new(store),
             ) {
                 (Ok(connect), Ok(store)) => {
-                    let admin = sqlx::postgres::PgPoolOptions::new()
+                    let admin = jc_pool::options::<sqlx::Postgres>()
                         .max_connections(4)
                         .connect_lazy_with(connect.clone());
                     let db = crate::apps::apps_db::AppsDb {
