@@ -1382,10 +1382,7 @@ spec:
         panic!("one change.merged event, got {:?}", page.items);
     };
     assert_eq!(event.correlation_id.as_deref(), Some("chg-00000003"));
-    assert_eq!(
-        event.details["approvedBy"],
-        json!("sub-jana.approver")
-    );
+    assert_eq!(event.details["approvedBy"], json!("sub-jana.approver"));
     assert_eq!(event.details["object"], json!("spaces/sandbox-space"));
     assert_eq!(event.details["operation"], json!("create"));
     assert!(event.summary.contains("sandbox-space"), "{}", event.summary);

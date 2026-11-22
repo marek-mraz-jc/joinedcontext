@@ -178,7 +178,8 @@ async fn put_dry_run_all_returns_200_and_makes_zero_git_requests() {
         .to_bytes();
     let res: DryRunResult = serde_json::from_slice(&body_bytes).expect("deserialize DryRunResult");
     assert!(res.valid);
-    assert_eq!(res.lane, Lane::Green);
+    // An edit of a space that exists is reviewed, though it declares itself a sandbox (S1-15).
+    assert_eq!(res.lane, Lane::Yellow);
     assert_eq!(res.plan.summary.create, 0);
     assert_eq!(res.plan.summary.update, 1);
     assert_eq!(res.plan.summary.delete, 0);
