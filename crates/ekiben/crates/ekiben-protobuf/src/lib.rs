@@ -1080,13 +1080,13 @@ message All {
         let out = round_trip(
             r#"{"b":{"true":1,"false":2},"i32":{"2":"x","-1":"y"},"i64":{"10":"a","9":"b"},
                "u32":{"3":"c","1":"d"},"u64":{"5":"e","4":"f"},"s":{"b":{"id":"1"},"a":{"id":"2"}},
-               "f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\","raw":"YWJj"}"#,
+               "f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\\r\t","raw":"YWJj"}"#,
             json!({}),
         )
         .expect("converts");
         assert_eq!(
             out,
-            r#"{"b":{"false":2,"true":1},"i32":{"-1":"y","2":"x"},"i64":{"9":"b","10":"a"},"u32":{"1":"d","3":"c"},"u64":{"4":"f","5":"e"},"s":{"a":{"id":"2"},"b":{"id":"1"}},"f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\","raw":"YWJj"}"#
+            r#"{"b":{"false":2,"true":1},"i32":{"-1":"y","2":"x"},"i64":{"9":"b","10":"a"},"u32":{"1":"d","3":"c"},"u64":{"4":"f","5":"e"},"s":{"a":{"id":"2"},"b":{"id":"1"}},"f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\\r\t","raw":"YWJj"}"#
         );
         let out =
             round_trip(r#"{"snakeName":"q"}"#, json!({"use_proto_names": true})).expect("converts");
@@ -1351,7 +1351,49 @@ message All {
     }
 
     #[test]
+    fn well_known_names_are_the_google_protobuf_types() {
+        for t in [
+            "Any",
+            "Timestamp",
+            "Duration",
+            "BoolValue",
+            "Int32Value",
+            "Int64Value",
+            "UInt32Value",
+            "UInt64Value",
+            "FloatValue",
+            "DoubleValue",
+            "StringValue",
+            "BytesValue",
+            "Struct",
+            "ListValue",
+            "Value",
+            "FieldMask",
+            "Empty",
+        ] {
+            assert!(is_well_known(&format!("google.protobuf.{t}")), "{t}");
+            assert!(!is_well_known(&format!("t.{t}")), "{t}");
+        }
+        assert!(!is_well_known("google.protobuf.FileDescriptorProto"));
+    }
+
+    #[test]
     fn schema_files_that_cannot_be_read_are_refused() {
+        // A file root that does not exist confines to itself: every real file escapes it.
+        let dir = schema();
+        let e = load_descriptors(
+            &[dir.path().to_path_buf()],
+            Some(Path::new("/nonexistent-ekiben-root")),
+        )
+        .err();
+        assert_eq!(
+            e,
+            Some(format!(
+                "import {} escapes the configured file root",
+                dir.path().join("t.proto").display()
+            ))
+        );
+
         let missing = std::path::PathBuf::from("/nonexistent-ekiben-proto");
         assert!(load_descriptors(&[missing], None)
             .unwrap_err()
