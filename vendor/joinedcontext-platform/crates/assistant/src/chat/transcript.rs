@@ -727,6 +727,7 @@ mod tests {
                 geometries: vec![],
                 profile: None,
                 filter: None,
+                ..Default::default()
             }),
             Event::Citations(vec![Citation {
                 n: 1,

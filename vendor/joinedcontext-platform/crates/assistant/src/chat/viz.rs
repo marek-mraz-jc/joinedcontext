@@ -142,6 +142,7 @@ fn map_of(
     if features.is_empty() {
         return None;
     }
+    let placed = features.len();
     let popup: Vec<Value> = popup
         .iter()
         .map(|&i| {
@@ -161,6 +162,9 @@ fn map_of(
     if let Some(time) = time {
         spec["time"] = json!(table.columns[time]);
     }
+    if let Some(count) = counted(table, placed) {
+        spec["count"] = count;
+    }
     if let Some(title) = title {
         spec["title"] = json!(title);
     }
@@ -168,6 +172,22 @@ fn map_of(
         spec["link"] = json!(page);
     }
     Some(spec)
+}
+
+/// What a map says of itself, "N shown of TOTAL" and how many have no location (T-7504); `None`
+/// when the read was not counted.
+fn counted(table: &Table, placed: usize) -> Option<Value> {
+    let total = table.total?.max(placed as u64);
+    let mut count = json!({"total": total});
+    let unlocated = if table.top.is_none() && total <= table.rows.len() as u64 {
+        Some(total - placed as u64)
+    } else {
+        table.located.map(|located| total.saturating_sub(located))
+    };
+    if let Some(without) = unlocated.filter(|n| *n <= total - placed as u64) {
+        count["unlocated"] = json!(without);
+    }
+    Some(count)
 }
 
 /// Whether a column only points elsewhere (a relationship, a URN, a URL): no value for a popup.
@@ -311,7 +331,8 @@ pub fn build(arguments: &str, tables: &[(usize, Table)], domain: &str) -> Result
             "The title is longer than {TITLE_CHARS} characters."
         ));
     }
-    if request.kind != Kind::Map {
+    // Code made an aggregation's points: they are the whole of what it says it counts.
+    if request.kind != Kind::Map && table.aggregation.is_none() {
         if let Some(why) = refusal(table, request.kind, label, value) {
             return Err(format!(
                 "{why} Answer with the text and the table, without a chart."
@@ -320,6 +341,9 @@ pub fn build(arguments: &str, tables: &[(usize, Table)], domain: &str) -> Result
     }
     let title = request.title.trim();
     match request.kind {
+        Kind::Bar | Kind::Line if table.aggregation.is_some() => {
+            aggregated(table).ok_or_else(|| "One value is no chart. Answer in text.".to_owned())
+        }
         Kind::Map => map_of(table, label, &[value], time, Some(title), domain)
             .map(|spec| json!({"spec": spec}))
             .ok_or_else(|| {
@@ -404,6 +428,48 @@ fn refusal(table: &Table, kind: Kind, label: usize, value: usize) -> Option<Stri
         );
     }
     None
+}
+
+/// The chart of a table code aggregated (T-7504): a count's bars in its own order, or a
+/// history's lines. Its event names what was aggregated and the words of its categories, for the
+/// widget to say in the visitor's language.
+pub fn aggregated(table: &Table) -> Option<Value> {
+    let made = table.aggregation.as_ref()?;
+    if table.rows.len() < 2 || table.rows.len() > super::view::POINTS {
+        return None;
+    }
+    let counts = made.method == "count";
+    let mut event = if counts {
+        chart(table, Kind::Bar, 0, 1, None, "")
+    } else {
+        chart(table, Kind::Line, 0, 2, Some(1), "")
+    };
+    let spec = &mut event["spec"];
+    if !counts {
+        spec["encoding"]["x"]["scale"] = json!({"type": "utc"});
+        let first = table.rows.first()?.first();
+        if table.rows.iter().all(|row| row.first() == first) {
+            spec["encoding"]["color"]["legend"] = Value::Null;
+        } else {
+            spec["encoding"]["color"]["legend"] = json!({"orient": "bottom", "columns": 1});
+        }
+        spec["mark"]["point"] = json!(table.rows.len() <= 100);
+    } else if made.per == "value" {
+        spec["encoding"]["y"]["sort"] = Value::Null;
+    } else {
+        // Periods read left to right, in time.
+        spec["encoding"] = json!({
+            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -45, "labelOverlap": true}},
+            "y": spec["encoding"]["x"].clone(),
+        });
+        spec["mark"] = json!({"type": "bar", "tooltip": true});
+        spec.as_object_mut()?.remove("layer");
+    }
+    event["aggregation"] = json!(made);
+    if let Some(Some(words)) = table.enums.first() {
+        event["enums"] = json!(words);
+    }
+    Some(event)
 }
 
 /// A Vega-Lite bar or line chart over the table's rows, fields named `label`, `value` and
@@ -528,6 +594,7 @@ mod tests {
             ],
             profile: None,
             filter: None,
+            ..Default::default()
         }
     }
 
@@ -884,5 +951,56 @@ mod tests {
         assert_eq!(domain(&embed), Some("dev.example.org"));
         let other = url::Url::parse("https://charts.dev.example.org").expect("url");
         assert_eq!(domain(&other), None);
+    }
+
+    #[test]
+    fn a_map_says_how_many_of_all_it_shows_and_how_many_have_no_location() {
+        let mut table = air();
+        table.total = Some(3);
+        let spec = default_map(&table, "dev.example.org").expect("a map");
+        assert_eq!(spec["count"], json!({"total": 3, "unlocated": 1}));
+
+        table.total = Some(1651);
+        table.located = Some(1640);
+        let spec = default_map(&table, "dev.example.org").expect("a map");
+        assert_eq!(spec["count"], json!({"total": 1651, "unlocated": 11}));
+        table.located = None;
+        let spec = default_map(&table, "dev.example.org").expect("a map");
+        assert_eq!(
+            spec["count"],
+            json!({"total": 1651}),
+            "never a number not counted"
+        );
+        table.total = None;
+        let spec = default_map(&table, "dev.example.org").expect("a map");
+        assert!(spec.get("count").is_none());
+    }
+
+    #[test]
+    fn an_aggregated_table_draws_itself_and_names_its_method() {
+        let mut table = air();
+        table.columns = vec!["yearBuilt".into(), "count".into()];
+        table.rows = vec![
+            vec![json!("1950–1959"), json!(210)],
+            vec![json!("1960–1969"), json!(298)],
+        ];
+        table.units = vec![None, None];
+        table.total = Some(1651);
+        table.aggregation = Some(super::super::view::Aggregation {
+            method: "count".into(),
+            per: "decade",
+            of: "yearBuilt".into(),
+            shown: 508,
+            total: 1651,
+            partial: false,
+        });
+        let event = aggregated(&table).expect("a chart");
+        assert_eq!(event["spec"]["mark"]["type"], "bar");
+        assert_eq!(event["spec"]["encoding"]["x"]["field"], "label");
+        assert_eq!(event["spec"]["encoding"]["y"]["field"], "value");
+        assert_eq!(event["aggregation"]["per"], "decade");
+        assert_eq!(event["rows"].as_array().map(Vec::len), Some(2));
+        table.aggregation = None;
+        assert_eq!(aggregated(&table), None);
     }
 }

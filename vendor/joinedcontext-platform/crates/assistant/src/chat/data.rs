@@ -5,7 +5,7 @@
 //! without a tool call is the answer. The bounds, the allowlist and the arguments are checked
 //! here, never left to the model.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -36,7 +36,8 @@ const DATA_RULES: &str = "\n\nYou may read more live data before you answer, wit
 - For a list, `pick` the attributes your answer shows (always `id` and `name`), so each row is short.\n\
 - query_entities takes `type` (a list), `q` (conditions joined with `;` for AND and `|` for OR; == != > >= < <= ~= for a regular expression; a member of a structured value as `address[addressLocality]==\"X\"`), `idPattern` (a regular expression over ids), `georel` (`near;maxDistance==1000`) with `geometry` and `coordinates` (longitude first), `limit` and `count`.\n\
 - For history use query_temporal: `type`, `timerel` (`after`, `before`, `between`) with `timeAt` (and `endTimeAt`), or `lastN`; `aggrMethods` (`avg`, `min`, `max`, `sum`) with `aggrPeriodDuration` such as P1D. At most 31 days, at most 100 values.\n\
-- A question about history, the last days or weeks or a trend is answered with the values themselves: call query_temporal for the entities the tables and the earlier turns name (their `idPattern` or a `q` on their names), with `aggrMethods` avg,min,max and `aggrPeriodDuration` P1D, and give the numbers per place and day, briefly. Never tell the person to call an API, an address or a query themselves. When the history cannot be read, say in one sentence that it is not available right now.\n\
+- A question about history, the last days or weeks or a trend is answered with the values themselves: call query_temporal for the entities the tables and the earlier turns name (their `idPattern` or a `q` on their names), with `attrs`, avg,min,max and P1D, and give each place's average and range, briefly. Never tell the person to call an API, an address or a query themselves. When the history cannot be read, say in one sentence that it is not available right now.\n\
+- Most or least: `orderBy` and `limit` 1 or N; give the `answering` rows.\n\
 - When the place asked for has no figure but the same indicator is there for a wider area that holds it (the whole country, `refArea` SK0), read that one, say in one sentence that the place itself has no figure and give the wider area's value with its [n]; never present it as the place's own.\n\
 - get_type and list_attributes tell you a type's attributes when you do not know which one holds what you need.\n\
 - Every data tool takes `endpoint`: one Endpoint of the list you are given, by its name. The same tools read every Endpoint.\n\
@@ -172,7 +173,7 @@ pub async fn answer(
     } = start;
     let viz = ask.viz.and_then(super::viz::domain);
     let tools = tool_specs(ask.connectors, viz.is_some());
-    let mut shown = false;
+    let mut charted = false;
     let call = Call {
         model: ask.answer_model,
         max_tokens: ask.output_tokens,
@@ -214,7 +215,7 @@ pub async fn answer(
             messages.push(json!({"role": "user", "content": budget(left, ask.data_steps, secs)}));
         }
         if over && spent.calls == called_before {
-            tables_read(&tables, events).await;
+            tables_read(&tables, &BTreeSet::new(), None, events).await;
             send(
                 events,
                 Event::Error {
@@ -259,7 +260,7 @@ pub async fn answer(
         let completion = match stepped {
             Ok(completion) => completion,
             Err(err) => {
-                tables_read(&tables, events).await;
+                tables_read(&tables, &BTreeSet::new(), None, events).await;
                 send(events, super::routed::refusal(ask, &err)).await;
                 return None;
             }
@@ -268,13 +269,13 @@ pub async fn answer(
         spent.served(Stage::Answer, &completion);
         if completion.calls.is_empty() || !allow {
             if completion.declined() {
-                tables_read(&tables, events).await;
+                tables_read(&tables, &BTreeSet::new(), None, events).await;
                 send(events, super::agent::declined()).await;
                 return None;
             }
             let text = completion.text.trim().to_owned();
             if text.is_empty() {
-                tables_read(&tables, events).await;
+                tables_read(&tables, &BTreeSet::new(), None, events).await;
                 send(events, super::agent::no_answer(spent)).await;
                 return None;
             }
@@ -287,9 +288,15 @@ pub async fn answer(
             // The tables are shown once the answer is written, and only when it cites one of them
             // (T-4741): an answer that found nothing came beside two tables of other indicators
             // on prod. An answer that cites one keeps every table read, as before.
-            let cited = tables.iter().filter(|(n, _)| used.contains(n)).count();
+            let numbers: BTreeSet<usize> = tables
+                .iter()
+                .map(|(n, _)| *n)
+                .filter(|n| used.contains(n))
+                .collect();
+            let cited = numbers.len();
             if cited > 0 {
-                tables_read(&tables, events).await;
+                let chart = viz.filter(|_| !charted);
+                tables_read(&tables, &numbers, chart, events).await;
             }
             // Whether the model stopped early or ran into the cap (T-4651).
             let steps_left_at_answer = ask.data_steps.saturating_sub(steps);
@@ -374,7 +381,7 @@ pub async fn answer(
                 }
                 (Reply::Same(earlier), _) => contents.get(*earlier).cloned().unwrap_or_default(),
                 (Reply::Chart(arguments, domain), _) => {
-                    show(&tables, arguments, domain, &mut shown, events).await
+                    show(&tables, arguments, domain, &mut charted, events).await
                 }
                 (Reply::Said(text), _) => text.clone(),
                 // every call to send has its answer; this is the pairing's other half
@@ -395,11 +402,24 @@ pub async fn answer(
     }
 }
 
-/// Sends every table the loop read, in their order: beside an answer that cites one, or beside
-/// the error when no answer came, as they were shown before an answer existed (T-4741).
-async fn tables_read(tables: &[(usize, Table)], events: &Sender<Event>) {
-    for (_, table) in tables {
-        send(events, Event::Data(table.clone())).await;
+/// Sends the tables that answer of those read, in their order ([`super::view::selected`]): beside
+/// an answer that cites one, or beside the error when no answer came, as they were shown before an
+/// answer existed (T-4741). `chart` is the renderer's domain while the answer has no chart: the
+/// first aggregated table then gets its own (T-7504).
+pub(super) async fn tables_read(
+    tables: &[(usize, Table)],
+    cited: &BTreeSet<usize>,
+    chart: Option<&str>,
+    events: &Sender<Event>,
+) {
+    let selected = super::view::selected(tables, cited);
+    for table in &selected {
+        send(events, Event::Data((*table).clone())).await;
+    }
+    if chart.is_some() {
+        if let Some(drawn) = selected.iter().find_map(|t| super::viz::aggregated(t)) {
+            send(events, Event::Visualization(drawn)).await;
+        }
     }
 }
 
@@ -449,6 +469,8 @@ struct Checked<'a> {
     connector: &'a Connected,
     tool: &'a Tool,
     arguments: Value,
+    /// As the model wrote it, it only counts the whole type ([`super::view::counts_all`]).
+    counts: bool,
 }
 
 /// What a sent call came back with: the answer or why it failed, the table a read makes, and how
@@ -462,6 +484,7 @@ fn checked<'a>(ask: &Ask<'a>, (name, arguments): (&str, &str)) -> Result<Checked
         .ok()
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
+    let counts = name == "query_entities" && super::view::counts_all(&arguments);
     let (connector, tool, arguments) = resolved(ask.connectors, name, arguments).inspect_err(|_| {
         tracing::warn!(deployment = %ask.deployment, tool = %name, "a data call was refused before it was sent");
     })?;
@@ -469,6 +492,7 @@ fn checked<'a>(ask: &Ask<'a>, (name, arguments): (&str, &str)) -> Result<Checked
         connector,
         tool,
         arguments,
+        counts,
     })
 }
 
@@ -510,13 +534,23 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
         connector,
         tool,
         arguments,
+        counts,
     } = c;
+    let schema = &tool.input_schema;
+    let top = (tool.name == "query_entities")
+        .then(|| super::view::top_of(arguments))
+        .flatten();
+    let sent = match tool.name.as_str() {
+        "query_entities" if top.is_some() => super::view::ranked_arguments(schema, arguments),
+        "query_temporal" => {
+            super::view::history_arguments(schema, arguments, time::OffsetDateTime::now_utc())
+        }
+        _ => arguments.clone(),
+    };
     let began = Instant::now();
     let answered = tokio::time::timeout(
         left,
-        connector
-            .surface
-            .call(ask.http, &tool.name, arguments.clone()),
+        connector.surface.call(ask.http, &tool.name, sent.clone()),
     )
     .await
     .unwrap_or_else(|_| Err("the source did not answer within the question's time".into()));
@@ -524,7 +558,7 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
     ask.trace.tool(
         &tool.name,
         Some(&connector.endpoint),
-        arguments,
+        &sent,
         began,
         &answered,
     );
@@ -532,9 +566,16 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
     if let (Ok(text), "query_entities", Some(kind)) =
         (&answered, tool.name.as_str(), type_of(arguments))
     {
-        let asked = super::routed::asked_of(arguments);
+        let mut asked = super::routed::asked_of(arguments);
+        let order = arguments.get("orderBy").and_then(Value::as_str);
+        if let (Some(_), Some(order)) = (top, order) {
+            asked.extend(order.split(';').next().map(str::to_owned));
+        }
         table = super::routed::table(ask, connector, &kind, text, &asked).await;
-        if let Some(wider) = table.as_ref().and_then(|t| widened(arguments, t)) {
+        // A count's rows are never shown; a ranked read takes the page to find ties and
+        // placeholders in, then keeps the rows that answer.
+        let page = table.as_ref().filter(|_| !counts);
+        if let Some(wider) = page.and_then(|t| widened(&sent, t)) {
             let more = Instant::now();
             let read = tokio::time::timeout(
                 left.saturating_sub(began.elapsed()),
@@ -554,6 +595,21 @@ async fn call_of(ask: &Ask<'_>, c: &Checked<'_>, left: Duration) -> Sent {
                 }
             }
         }
+        if let Some(table) = table.as_mut() {
+            table.counted = *counts;
+            if !counts {
+                let read = (&*arguments, &sent);
+                super::view::finish(ask, connector, schema, table, read, top).await;
+            }
+            table.map = table.map.take().filter(|_| !counts);
+        }
+    }
+    if let (Ok(text), "query_temporal", Some(kind)) =
+        (&answered, tool.name.as_str(), type_of(arguments))
+    {
+        let read = (kind.as_str(), text.as_str(), &sent);
+        let left = left.saturating_sub(began.elapsed());
+        table = super::view::history_of(ask, connector, read, left).await;
     }
     (answered, table, began.elapsed().as_millis() as u64)
 }
@@ -592,23 +648,25 @@ async fn recorded(
         Ok(text) => {
             send(events, tool_event(c, "done")).await;
             let (mut rows, mut dataset) = (None, None);
+            let (mut answering, mut ranked) = (None, None);
             if let Some(table) = table {
+                if table.top.is_some() {
+                    answering = Some(
+                        json!({"columns": table.columns, "rows": table.rows, "total": table.total, "placeholders": table.set_aside}),
+                    );
+                    ranked = table.total;
+                }
                 rows = Some(table.rows.len());
                 dataset = table.dataset.clone();
                 if !table.rows.is_empty() {
                     tables.push((citations.len() + 1, table));
                 }
             }
-            send(
-                events,
-                Event::Step(super::agent::Step::of(
-                    c.connector,
-                    &c.arguments,
-                    &text,
-                    dataset.clone(),
-                )),
-            )
-            .await;
+            let mut step =
+                super::agent::Step::of(c.connector, &c.arguments, &text, dataset.clone());
+            // Ranked among all, though the read kept those with the attribute.
+            step.count = ranked.or(step.count);
+            send(events, Event::Step(step)).await;
             // What a step did, never what it read (T-4294's per-step record).
             tracing::info!(deployment = %ask.deployment, tool = %tool, endpoint = %endpoint, status = "done", rows, ms, "data step");
             let n = citations.len() + 1;
@@ -621,7 +679,11 @@ async fn recorded(
                 cards: Vec::new(),
                 dates: Default::default(),
             });
-            json!({"n": n, "tool": tool, "endpoint": endpoint, "result": for_model(&text, STEP_RESULT_CHARS)}).to_string()
+            let mut said = json!({"n": n, "tool": tool, "endpoint": endpoint, "result": for_model(&text, STEP_RESULT_CHARS)});
+            if let Some(answering) = answering {
+                said["answering"] = answering;
+            }
+            said.to_string()
         }
         Err(why) => {
             tracing::info!(deployment = %ask.deployment, tool = %tool, endpoint = %endpoint, status = "failed", ms, "data step");
@@ -1251,6 +1313,7 @@ mod tests {
             geometries: vec![None, None, None],
             profile: None,
             filter: None,
+            ..Default::default()
         };
         let tables = [(2, table)];
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);

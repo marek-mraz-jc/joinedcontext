@@ -264,6 +264,22 @@ pub struct Table {
     /// table, so a filtered `total` is told from the type's whole count (T-5784).
     #[serde(skip)]
     pub filter: Option<String>,
+    /// How many rows answer a question for the most or the least, ties included; `total` is then
+    /// how many they were ranked among (T-7504).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<usize>,
+    /// What the rows are when code computed them: a split count or a history's points (T-7504).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregation: Option<super::view::Aggregation>,
+    /// How many of `total` have a location, for a map of part of them.
+    #[serde(skip)]
+    pub located: Option<u64>,
+    /// The read only counted the whole type: its rows are no answer and are never shown.
+    #[serde(skip)]
+    pub counted: bool,
+    /// A ranked read's placeholder rows, named by the answer and never shown (T-4803).
+    #[serde(skip)]
+    pub set_aside: Vec<Vec<Value>>,
 }
 
 /// Everything one question is answered with.

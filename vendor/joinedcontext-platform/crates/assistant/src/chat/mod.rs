@@ -28,6 +28,7 @@ pub mod standard;
 pub mod trace;
 pub mod transcript;
 pub mod usage;
+pub mod view;
 pub mod visitor;
 pub mod viz;
 pub mod widget;
@@ -2395,6 +2396,7 @@ mod tests {
             geometries: Vec::new(),
             profile: None,
             filter: None,
+            ..Default::default()
         });
         for event in [&tool, &table] {
             let shown = |anonymous| format!("{:?}", sse(event, anonymous));
