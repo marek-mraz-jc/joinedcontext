@@ -303,7 +303,11 @@ impl Statement<'_> {
         Ok(())
     }
 
-    fn from_where(&self, qb: &mut QueryBuilder<Postgres>, org_id: OrgId) -> CrResult<()> {
+    fn push_scope_and_filter(
+        &self,
+        qb: &mut QueryBuilder<Postgres>,
+        org_id: OrgId,
+    ) -> CrResult<()> {
         qb.push(" FROM ").push(self.from).push(" WHERE t.org_id = ");
         qb.push_bind(org_id.as_uuid());
         self.scope(qb)?;
@@ -369,7 +373,7 @@ impl Statement<'_> {
                 qb.push("::int8");
             }
         }
-        self.from_where(&mut qb, org_id)?;
+        self.push_scope_and_filter(&mut qb, org_id)?;
         if let Some(after) = &self.query.window.after {
             self.after(&mut qb, after)?;
         }
@@ -447,7 +451,7 @@ pub(crate) async fn read(
     }
     if query.window.count {
         let mut qb = QueryBuilder::<Postgres>::new("SELECT count(*)");
-        statement.from_where(&mut qb, org_id)?;
+        statement.push_scope_and_filter(&mut qb, org_id)?;
         let counted: i64 = qb
             .build_query_scalar()
             .fetch_one(&mut **tx)
