@@ -131,6 +131,10 @@ fn grid_positions_outside_the_24_column_grid_are_refused() {
             "/panels/0/gridPos: out of 24-column grid bounds"
         );
     }
+    let full = json!({"h": 4, "w": 24, "x": 23, "y": 0});
+    assert!(
+        validate(&json!({"title": "t", "panels": [{"type": "stat", "gridPos": full}]})).is_ok()
+    );
     let err = validate(&json!({"title": "t", "panels": [{"type": " "}]})).unwrap_err();
     assert_eq!(
         unprocessable_pointer(err),
@@ -158,6 +162,11 @@ fn panel_and_target_caps_count_panels_inside_rows() {
     let raw = json!({"title": "t", "panels": [p]});
     let err = classify_and_validate(1, &doc(&raw), &BTreeSet::new(), &limits).unwrap_err();
     assert!(err.to_string().contains("2 targets"), "{err}");
+    // Exactly at each cap passes.
+    let mut p = panel("stat");
+    p["targets"] = json!([{"refId": "A"}]);
+    let raw = json!({"title": "t", "panels": [p, panel("gauge")]});
+    assert!(classify_and_validate(1, &doc(&raw), &BTreeSet::new(), &limits).is_ok());
 }
 
 #[test]
@@ -182,7 +191,8 @@ fn verdict_matrix_for_panels_variables_datasources_expressions_and_transformatio
         {"refId": "E", "datasource": {"type": "__expr__"}, "type": "prql"},
         {"refId": "F", "datasource": {"uid": "__expr__"}},
         {"refId": "G", "datasource": {"type": "wasm:acme", "uid": "acme1"}},
-        {"refId": "H", "datasource": {"type": "datasource", "uid": "-- Mixed --"}}
+        {"refId": "H", "datasource": {"type": "datasource", "uid": "-- Mixed --"}},
+        {"refId": "I", "datasource": {"type": "-- Mixed --"}, "exemplar": false}
     ]);
     queries["transformations"] = json!([
         {"id": "organize", "options": {}},
@@ -215,6 +225,17 @@ fn verdict_matrix_for_panels_variables_datasources_expressions_and_transformatio
     assert_eq!(report.uid, "matrix");
     assert_eq!(report.title, "Matrix");
     let got = code_verdicts(&report);
+    // Only the target that asks for exemplars gets the exemplar finding.
+    assert_eq!(
+        got.iter()
+            .filter(|(c, _)| c == "prometheus.exemplar")
+            .count(),
+        1
+    );
+    assert!(
+        got.contains(&("datasource.-- Mixed --".to_owned(), Verdict::Supports)),
+        "{got:?}"
+    );
     let expect = [
         ("variable.query", Verdict::Supports),
         ("variable.adhoc", Verdict::Refuses),
