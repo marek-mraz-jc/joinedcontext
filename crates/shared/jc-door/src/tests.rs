@@ -248,6 +248,48 @@ async fn the_jwks_is_fetched_once_per_period_and_a_failed_fetch_keeps_the_old_ke
     );
 }
 
+#[tokio::test]
+async fn a_large_jwks_is_read_and_a_redirect_is_not_followed() {
+    let issuer = Issuer::start("https://id.a.example/realms/a", "k1").await;
+    let token = issuer.token("jc-assistant", "embedder", 300);
+    let jwks = reqwest::get(&issuer.jwks_url)
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // A JWKS of 200 KB (many rotated keys) is still read.
+    let padded = jwks.replacen(
+        '{',
+        &format!("{{\"padding\":\"{}\",", "p".repeat(200_000)),
+        1,
+    );
+    let (url, _) = answering(200, padded).await;
+    let v = Verifier::new(&issuer.issuer, &url, &["jc-assistant".to_owned()]).unwrap();
+    v.prepare(&token).await;
+    assert!(v.verify(&token, "embedder"));
+
+    let target = issuer.jwks_url.clone();
+    let app = axum::Router::new().fallback(move || {
+        let target = target.clone();
+        async move { (http::StatusCode::FOUND, [(header::LOCATION, target)]) }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let v = Verifier::new(
+        &issuer.issuer,
+        &format!("http://{addr}/"),
+        &["jc-assistant".to_owned()],
+    )
+    .unwrap();
+    v.prepare(&token).await;
+    assert!(
+        !v.verify(&token, "embedder"),
+        "the door follows no redirect to a key set"
+    );
+}
+
 #[test]
 fn bearer_takes_any_case_of_the_scheme_and_refuses_an_oversized_token() {
     let mut headers = HeaderMap::new();
@@ -264,6 +306,16 @@ fn bearer_takes_any_case_of_the_scheme_and_refuses_an_oversized_token() {
         format!("Bearer {at_cap}a").parse().unwrap(),
     );
     assert_eq!(bearer(&headers), None);
+    let large = "a".repeat(60_000);
+    headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {large}").parse().unwrap(),
+    );
+    assert_eq!(
+        bearer(&headers),
+        Some(large.as_str()),
+        "a 60 KB token is taken"
+    );
     headers.insert(header::AUTHORIZATION, "Bearer".parse().unwrap());
     assert_eq!(bearer(&headers), None, "no value");
 }
