@@ -18,8 +18,9 @@ pub mod testkit;
 pub mod validate;
 
 pub use auth::{
-    Action, AudClaim, Authorizer, Decision, JwksFetcher, JwtClaims, LocalAuthorizer, ObjectTarget,
-    RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, AudClaim, Authorizer, Decision, GroupMember, JwksFetcher, JwtClaims, LocalAuthorizer,
+    ObjectTarget, Principal, RequestCtx, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject,
+    TokenVerifier,
 };
 pub use error::{GiteaErrorBody, ProblemDetails, ShakoError, ShakoResult};
 pub use ids::{

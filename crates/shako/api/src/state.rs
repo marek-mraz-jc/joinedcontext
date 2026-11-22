@@ -13,11 +13,10 @@ use serde_json::{Value, json};
 use shako_core::{
     Action, Authorizer, InstanceId, InstanceRecord, MemoryBudget, MemorySecretStore, ObjectTarget,
     OperationRegistry, OrgId, OutboundGuard, ProblemDetails, RefPolicy, RepoRecord, RequestCtx,
-    SecretStore, ShakoError, ShakoResult, ShakoSigningKey, StaticTokenBinding, Store, Subject,
+    SecretStore, ShakoError, ShakoResult, ShakoSigningKey, StaticTokenBinding, Store,
     TokenVerifier,
 };
 use shako_git::RepoLocks;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -29,7 +28,6 @@ pub type InProcessEventSubscriber = Arc<dyn Fn(&shako_core::OutboxEvent) + Send 
 #[derive(Clone)]
 pub struct ShakoState {
     pub default_instance_id: InstanceId,
-    pub default_org_id: OrgId,
     repo_root: PathBuf,
     store: Arc<dyn Store>,
     pub secret_store: Arc<dyn SecretStore>,
@@ -42,7 +40,6 @@ pub struct ShakoState {
     /// never both deliver the same pending event.
     pub outbox_locks: RepoLocks,
     pub registry: Arc<OperationRegistry>,
-    pub owner_to_org: Arc<RwLock<BTreeMap<String, OrgId>>>,
     pub event_bus: broadcast::Sender<shako_core::OutboxEvent>,
     pub subscribers: Arc<RwLock<Vec<InProcessEventSubscriber>>>,
     /// Documentation link in Gitea-shaped error bodies; empty unless the host sets one.
@@ -53,7 +50,6 @@ impl ShakoState {
     #[must_use]
     pub fn new(
         default_instance_id: InstanceId,
-        default_org_id: OrgId,
         repo_root: PathBuf,
         store: Arc<dyn Store>,
         authorizer: Arc<dyn Authorizer>,
@@ -63,7 +59,6 @@ impl ShakoState {
         let (tx, _) = broadcast::channel(256);
         Self {
             default_instance_id,
-            default_org_id,
             repo_root,
             store,
             secret_store: Arc::new(MemorySecretStore::new()),
@@ -74,7 +69,6 @@ impl ShakoState {
             repo_locks: RepoLocks::new(),
             outbox_locks: RepoLocks::new(),
             registry: OperationRegistry::shared(),
-            owner_to_org: Arc::new(RwLock::new(BTreeMap::new())),
             event_bus: tx,
             subscribers: Arc::new(RwLock::new(Vec::new())),
             docs_url: String::new(),
@@ -94,28 +88,6 @@ impl ShakoState {
     #[must_use]
     pub fn signing_key(&self) -> &ShakoSigningKey {
         self.token_verifier.signing_key()
-    }
-
-    pub fn register_owner_org(&self, owner: impl Into<String>, org_id: OrgId) {
-        self.owner_to_org.write().insert(owner.into(), org_id);
-    }
-
-    /// The Organization an owner name is bound to, if any.
-    #[must_use]
-    pub fn owner_org(&self, owner: &str) -> Option<OrgId> {
-        self.owner_to_org.read().get(owner).copied()
-    }
-
-    #[must_use]
-    pub fn resolve_org_for_owner(&self, owner: &str, caller: &Subject) -> OrgId {
-        if let Some(&oid) = self.owner_to_org.read().get(owner) {
-            return oid;
-        }
-        caller
-            .organizations
-            .first()
-            .copied()
-            .unwrap_or(self.default_org_id)
     }
 
     pub fn subscribe_events(&self, sub: InProcessEventSubscriber) {
@@ -168,14 +140,12 @@ impl ShakoState {
         repo_root: PathBuf,
         store: Arc<dyn Store>,
         authorizer: Arc<dyn Authorizer>,
-        default_org_id: OrgId,
         static_tokens: Vec<StaticTokenBinding>,
     ) -> ShakoResult<Self> {
         let key = ShakoSigningKey::generate()?;
         let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
         Ok(Self::new(
             InstanceId::from_u128(1),
-            default_org_id,
             repo_root,
             store,
             authorizer,
@@ -197,7 +167,6 @@ pub fn strip_dot_git(segment: &str) -> &str {
 pub fn authenticate_request(
     state: &ShakoState,
     headers: &HeaderMap,
-    owner_hint: Option<&str>,
     expected_audience: &str,
 ) -> ShakoResult<RequestCtx> {
     let auth_hdr = headers
@@ -208,19 +177,11 @@ pub fn authenticate_request(
         .ok_or_else(|| ShakoError::Unauthorized("malformed Authorization header".into()))?;
     let subject = state.token_verifier.verify(&raw_token, expected_audience)?;
 
-    let active_org = match owner_hint {
-        Some(owner) => state.resolve_org_for_owner(owner, &subject),
-        None => subject
-            .organizations
-            .first()
-            .copied()
-            .unwrap_or(state.default_org_id),
-    };
-    // Every handler acts inside `active_org`, so a caller outside it stops here; the answer is
-    // the one a missing repository gets (S12).
-    if !subject.is_member_of(active_org) {
-        return Err(ShakoError::NotFound("repository not found".into()));
-    }
+    // Every handler acts inside the token's one Organization: an owner is a label in it and picks
+    // none, so a name another Organization holds answers as a free one (ISO-03, TEN-03).
+    let active_org = subject
+        .organization()
+        .ok_or_else(|| ShakoError::NotFound("repository not found".into()))?;
 
     Ok(RequestCtx::new(
         state.default_instance_id,
@@ -245,10 +206,9 @@ pub async fn resolve_and_authorize_repo(
     shako_core::validate_repo_or_owner_name(repo_name, "repository")
         .map_err(|_| ShakoError::NotFound("repository not found".into()))?;
 
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
     let dummy_target = ObjectTarget::Repository {
         instance_id: ctx.instance_id,
-        org_id: target_org,
+        org_id: ctx.org_id,
         project_id: None,
         owner: owner.to_owned(),
         repo: repo_name.to_owned(),
@@ -259,7 +219,7 @@ pub async fn resolve_and_authorize_repo(
     // execute in the same latency band (S12 timing band requirement).
     let maybe_repo = state
         .store()
-        .get_repo_by_name(ctx.instance_id, target_org, owner, repo_name)
+        .get_repo_by_name(ctx.instance_id, ctx.org_id, owner, repo_name)
         .await?;
     let target = match &maybe_repo {
         Some(r) => ObjectTarget::Repository {

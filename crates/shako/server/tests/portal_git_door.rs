@@ -17,8 +17,8 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use p256::pkcs8::EncodePrivateKey;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -51,7 +51,7 @@ async fn world() -> World {
     let org = OrgId::from_u128(10);
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id: org,
-        principal: "jc-portal".into(),
+        principal: Principal::User("jc-portal".into()),
         actions: vec![Action::Admin, Action::Write, Action::Approve],
         project_id: None,
         repo: None,
@@ -59,7 +59,7 @@ async fn world() -> World {
     let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
         .with_static_tokens(vec![StaticTokenBinding::new(
             PORTAL_TOKEN,
-            Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
         )]);
     let guard = OutboundGuard::new(OutboundPolicy {
         allowed_hosts: Some(vec!["127.0.0.1".into()]),
@@ -68,14 +68,12 @@ async fn world() -> World {
     });
     let shako = ShakoState::new(
         InstanceId::from_u128(1),
-        org,
         tmp.path().to_path_buf(),
         Arc::new(MemoryStore::new()),
         authz,
         verifier,
         guard,
     );
-    shako.register_owner_org(OWNER, org);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let host = listener.local_addr().unwrap().to_string();
     let jc = JcRouterBuilder::new("http", host.clone())
