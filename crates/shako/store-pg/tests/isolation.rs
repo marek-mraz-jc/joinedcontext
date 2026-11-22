@@ -267,9 +267,85 @@ fn repo(
     }
 }
 
-/// A restart keeps every record kind: a fresh store hydrated from `shako.store_log` answers the
-/// repository, the pull request and its number counter as before, and a tenant's replay never
-/// loads another organization's rows (forced RLS on the log).
+/// T-7508: two replicas on one database agree. A protection rule, a pull request number and an
+/// outbox event written through one store are what the other answers, without a restart.
+#[tokio::test]
+async fn two_replicas_on_one_database_agree() {
+    let _serial = PG_SERIAL.lock().await;
+    let Ok(db_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+        println!("SKIP: SHAKO_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let opts = PgConnectOptions::from_str(&db_url).expect("valid SHAKO_TEST_DATABASE_URL");
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts.clone())
+        .await
+        .expect("SHAKO_TEST_DATABASE_URL is set but unreachable");
+    PgStore::run_migrations(&admin_pool).await.expect("migrate");
+    let app_password = ensure_app_login(&admin_pool).await;
+    let app_opts = opts.clone().username(APP_LOGIN).password(&app_password);
+
+    let (inst, org) = (shako_core::InstanceId::new(), shako_core::OrgId::new());
+    let first = PgStore::connect_with(app_opts.clone(), 2).await.unwrap();
+    let created = first.create_repo(repo(inst, org, "config")).await.unwrap();
+    let second = PgStore::connect_with(app_opts, 2).await.unwrap();
+    second.hydrate(inst, org).await.unwrap();
+
+    let now = jc_time::TimestampTz::now();
+    first
+        .upsert_protection_rule(shako_core::ProtectionRuleRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: inst,
+            org_id: org,
+            repo_id: created.id,
+            rule: serde_json::from_value(serde_json::json!({"rule_name": "main"})).unwrap(),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+    first
+        .append_outbox(shako_core::OutboxEvent {
+            id: uuid::Uuid::now_v7(),
+            instance_id: inst,
+            org_id: org,
+            repo_id: Some(created.id),
+            event_kind: "push".into(),
+            idempotency_key: uuid::Uuid::now_v7().to_string(),
+            payload: serde_json::json!({}),
+            dispatched: false,
+            created_at: now,
+            dispatched_at: None,
+        })
+        .await
+        .unwrap();
+
+    let rules = second
+        .list_protection_rules(inst, org, created.id)
+        .await
+        .unwrap();
+    let pending = second.list_undispatched_outbox(inst, org).await.unwrap();
+    let numbers = (
+        first
+            .allocate_pr_number(inst, org, created.id)
+            .await
+            .unwrap(),
+        second
+            .allocate_pr_number(inst, org, created.id)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        (rules.len(), pending.len(), numbers),
+        (1, 1, (1, 2)),
+        "(rules the other replica sees, events it sees, the two PR numbers)"
+    );
+}
+
+/// A restart keeps every record kind: a fresh store answers the repository, the pull request and
+/// its number counter as before, with nothing to load first, and never another organization's
+/// rows (forced RLS on every table and on the log).
 #[tokio::test]
 async fn postgres_store_log_survives_a_restart_and_stays_per_tenant() {
     let _serial = PG_SERIAL.lock().await;
@@ -336,12 +412,6 @@ async fn postgres_store_log_survives_a_restart_and_stays_per_tenant() {
     drop(first);
 
     let second = PgStore::connect_with(app_opts.clone(), 2).await.unwrap();
-    assert!(
-        second.list_repos(inst, org_a).await.unwrap().is_empty(),
-        "nothing is served before hydrate"
-    );
-    let replayed = second.hydrate(inst, org_a).await.unwrap();
-    assert_eq!(replayed, 3, "org A's log holds its three operations only");
     let repos = second.list_repos(inst, org_a).await.unwrap();
     assert_eq!(
         repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
@@ -362,9 +432,29 @@ async fn postgres_store_log_survives_a_restart_and_stays_per_tenant() {
         "the number counter continues"
     );
     assert!(
-        second.list_repos(inst, org_b).await.unwrap().is_empty(),
-        "org B is not loaded by org A's replay"
+        second
+            .get_repo_by_id(inst, org_b, repo_a.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "org B does not read org A's repository by its id"
     );
-    assert_eq!(second.hydrate(inst, org_b).await.unwrap(), 1);
-    assert_eq!(second.list_repos(inst, org_b).await.unwrap().len(), 1);
+    assert!(
+        second
+            .get_pull_request(inst, org_b, repo_a.id, number)
+            .await
+            .unwrap()
+            .is_none(),
+        "nor its pull request"
+    );
+    let repos_b = second.list_repos(inst, org_b).await.unwrap();
+    assert_eq!(
+        repos_b.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["b-secret"]
+    );
+    assert_eq!(
+        second.hydrate(inst, org_b).await.unwrap(),
+        0,
+        "a write projects itself"
+    );
 }

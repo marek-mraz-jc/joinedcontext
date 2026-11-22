@@ -15,7 +15,7 @@ use jc_router::Mount;
 use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-pub use shako_api::ShakoState;
+pub use shako_api::{ShakoState, dispatch_pending_outbox};
 use shako_api::{api_router, authenticate_request, exec_odata_operation, odata_error_response};
 use shako_core::{
     BranchProtectionRule, InstanceRecord, OrgId, ProtectionRuleRecord, PushMirrorRecord, RepoId,

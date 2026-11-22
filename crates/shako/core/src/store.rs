@@ -312,6 +312,17 @@ pub trait Store: Send + Sync {
         org_id: OrgId,
         event_id: uuid::Uuid,
     ) -> StoreFuture<'_, bool>;
+    /// The oldest undispatched event, held for the caller to send and mark. A store replicas
+    /// share leases it, so one of them sends it; the default fits a store of one process, whose
+    /// dispatcher holds a lock.
+    fn claim_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Option<OutboxEvent>> {
+        let pending = self.list_undispatched_outbox(instance_id, org_id);
+        Box::pin(async move { Ok(pending.await?.into_iter().next()) })
+    }
     fn list_outbox_events(
         &self,
         instance_id: InstanceId,

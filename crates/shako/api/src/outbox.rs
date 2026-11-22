@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use shako_core::{
     DeliveryRecord, OutboxEvent, PullRequestRecord, RepoId, RepoRecord, ShakoError, ShakoResult,
-    WebhookFormat, WebhookRecord,
+    WebhookFormat, WebhookId, WebhookRecord,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -219,13 +219,15 @@ pub async fn dispatch_pending_outbox(
         .outbox_locks
         .lock(RepoId::from(org_id.as_uuid()))
         .await;
-    let pending = state
-        .store()
-        .list_undispatched_outbox(state.default_instance_id, org_id)
-        .await?;
     let mut count = 0usize;
 
-    for ev in pending {
+    // Claimed one by one, sent outside any transaction, then marked: replicas share the outbox,
+    // and only a claimant that died leaves an event to be sent again.
+    while let Some(ev) = state
+        .store()
+        .claim_outbox(state.default_instance_id, org_id)
+        .await?
+    {
         // 1. Publish to in-process broadcast bus & subscribers
         let _ = state.event_bus.send(ev.clone());
         let subs = state.subscribers.read().clone();
@@ -245,19 +247,39 @@ pub async fn dispatch_pending_outbox(
                 {
                     continue;
                 }
-                let _ =
-                    deliver_webhook_with_retries(state, &hook, &ev.event_kind, &ev.payload).await;
+                let id = delivery_id_of(ev.id, hook.id);
+                let _ = deliver_webhook(state, &hook, &ev.event_kind, &ev.payload, id).await;
             }
         }
 
-        state
+        let marked = state
             .store()
             .mark_outbox_dispatched(state.default_instance_id, org_id, ev.id)
             .await?;
+        if !marked {
+            return Err(ShakoError::Storage(
+                "a claimed event could not be marked".into(),
+            ));
+        }
         count += 1;
     }
 
     Ok(count)
+}
+
+/// The id a receiver sees for `event` at `hook`: the same when a claim is sent again, so it can
+/// tell the repeat.
+fn delivery_id_of(event: uuid::Uuid, hook: WebhookId) -> uuid::Uuid {
+    use sha2::Digest as _;
+    let digest = Sha256::new()
+        .chain_update(event.as_bytes())
+        .chain_update(hook.as_uuid().as_bytes())
+        .finalize();
+    let mut id = [0u8; 16];
+    id.iter_mut()
+        .zip(digest.iter())
+        .for_each(|(to, from)| *to = *from);
+    uuid::Builder::from_random_bytes(id).into_uuid()
 }
 
 /// Delivers one webhook event through `state.outbound_guard` with up to 3 attempts,
@@ -268,12 +290,21 @@ pub async fn deliver_webhook_with_retries(
     event_kind: &str,
     payload: &Value,
 ) -> ShakoResult<DeliveryRecord> {
+    deliver_webhook(state, hook, event_kind, payload, uuid::Uuid::now_v7()).await
+}
+
+async fn deliver_webhook(
+    state: &ShakoState,
+    hook: &WebhookRecord,
+    event_kind: &str,
+    payload: &Value,
+    delivery_id: uuid::Uuid,
+) -> ShakoResult<DeliveryRecord> {
     let body = match hook.format {
         WebhookFormat::Gitea => payload.clone(),
         WebhookFormat::Shako => native_webhook_payload(event_kind, payload),
     };
     let body_bytes = serde_json::to_vec(&body).map_err(|e| ShakoError::Internal(e.to_string()))?;
-    let delivery_id = uuid::Uuid::now_v7();
     // A reference stored before the API refused non-key names still signs; the warning names
     // the hook, never the reference, which may be a pasted secret.
     if !shako_core::is_secret_ref(&hook.secret_ref)

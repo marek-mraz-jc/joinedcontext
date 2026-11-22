@@ -788,6 +788,7 @@ pub async fn build_router(
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup).await?;
+            modules::shako::spawn_outbox(state.clone(), shutdown.clone(), tasks);
             let (main_router, v2_router) = modules::shako::build(
                 state,
                 plan.mount.clone(),
