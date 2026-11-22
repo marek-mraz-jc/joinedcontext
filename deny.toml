@@ -7,8 +7,7 @@
 # (crypto-bigint 0.5.5 under age; supervisor decision 2026-11-09). RUSTSEC-2026-0543 (chrono,
 # unmaintained) is a dated ignore (owner 2026-11-18, T-7232): its reason's `remove by` date is
 # enforced by .github/scripts/deny-ignore-dates.py. chrono-tz (RUSTSEC-2026-0555) left with T-7233. cargo audit does not read this
-# file: .cargo/audit.toml repeats rsa and crypto-bigint and adds RUSTSEC-2026-0459 (libsqlite3-sys,
-# a lock entry deny does not see); audit only warns on basic-toml.
+# file: .cargo/audit.toml repeats rsa and crypto-bigint; audit only warns on basic-toml.
 [graph]
 all-features = false
 

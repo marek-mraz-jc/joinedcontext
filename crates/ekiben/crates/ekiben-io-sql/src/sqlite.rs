@@ -1,5 +1,5 @@
 //! The `sqlite` driver: modernc.org/sqlite's behaviour over rusqlite (bundled SQLite 3.54, which
-//! carries the fix for RUSTSEC-2026-0459; sqlx 0.9's sqlite pins the affected libsqlite3-sys).
+//! carries the fix for RUSTSEC-2026-0459; sqlx 0.9.0's sqlite pinned the affected libsqlite3-sys).
 //! One connection per component behind a mutex, used on the blocking pool: SQLite serializes
 //! writes, and a `:memory:` database lives as long as its one connection.
 
