@@ -1003,7 +1003,7 @@
 
   // "Table | Map" over a data card whose rows have places; the map loads when it is first shown,
   // so it never holds up the answer, and a map that fails leaves the table (T-4657).
-  function mapTabs(figure, scroll, drawn, data) {
+  function mapTabs(figure, scroll, drawn, data, onPick) {
     var tabs = el("div", "jc-tabs");
     tabs.setAttribute("role", "tablist");
     var box = el("div", "jc-viz-box");
@@ -1021,6 +1021,7 @@
       scroll.hidden = map;
       if (drawn) drawn.hidden = map;
       box.hidden = !map;
+      onPick(map);
       if (map && !box.firstChild) {
         box.appendChild(vizFrame({ spec: data.map }, w.tabMap, function () {
           tabs.remove();
@@ -1061,7 +1062,9 @@
     var answers = typeof data.top === "number";
     var figure = el("details", answers ? "jc-data jc-record" : "jc-data");
     figure.open = true;
-    var summary = figure.appendChild(el("summary", "", shown.caption || w.table));
+    // Folded under its chart, an aggregated table says that it is the table.
+    var named = VIZ && data.aggregation && shown.caption ? w.tabTable + ": " + shown.caption : shown.caption;
+    var summary = figure.appendChild(el("summary", "", named || w.table));
     var scroll = el("div", "jc-data-scroll");
     scroll.tabIndex = 0;
     scroll.setAttribute("role", "region");
@@ -1114,7 +1117,7 @@
         shown = JCRender.table(data, lang, undefined, to);
         fill();
         scroll.scrollTop = 0;
-        summary.textContent = shown.caption || w.table;
+        summary.textContent = (data.aggregation ? named : shown.caption) || w.table;
         if (caption) caption.textContent = shown.caption;
         where.textContent = summary.textContent;
         back.setAttribute("aria-disabled", String(shown.page === 0));
@@ -1127,7 +1130,7 @@
     }
     if (VIZ && data.map && typeof data.map === "object") {
       if (answers) mapUnder(figure, scroll, data);
-      else mapTabs(figure, scroll, drawn, data);
+      else mapTabs(figure, scroll, drawn, data, function (map) { summary.textContent = (map ? shown.mapCaption : shown.caption) || w.table; });
     }
     if (shown.dataset || shown.download || shown.geojson) {
       var links = el("p", "jc-data-links");
@@ -1400,7 +1403,13 @@
     } else if (item.streaming) {
       show(item, item.text, [], item.turn);
     }
-    log.scrollTop = log.scrollHeight;
+    var question = item.previousElementSibling;
+    if (item.visuals && question && question.classList.contains("jc-you")) {
+      // An answer with a card or a map starts at its question, or its first sentence is off the top.
+      log.scrollTop += question.getBoundingClientRect().top - log.getBoundingClientRect().top - 8;
+    } else {
+      log.scrollTop = log.scrollHeight;
+    }
     follow(item);
   }
 

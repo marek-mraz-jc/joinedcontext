@@ -148,7 +148,7 @@
     document.getElementById("hint").textContent = (TEXT[lang] || TEXT.en).hint;
     var box = bounds(features);
     if (box && box[0][0] === box[1][0] && box[0][1] === box[1][1]) map.jumpTo({ center: box[0], zoom: 14 });
-    else if (box) map.fitBounds(box, { padding: 40, maxZoom: 15, animate: false });
+    else if (box) map.fitBounds(box, { padding: count.hidden ? 40 : { top: 56, right: 48, bottom: 40, left: 40 }, maxZoom: 15, animate: false });
     await new Promise(function (resolve) { map.once("load", resolve); });
     map.addSource("jc", { type: "geojson", data: { type: "FeatureCollection", features: features } });
     var is = function (types) { return ["in", ["geometry-type"], ["literal", types]]; };

@@ -157,6 +157,9 @@ body { font: 15px/1.5 var(--font, system-ui, -apple-system, "Segoe UI", Roboto, 
    the grid only, its fade edge the hint. */
 .jc-visuals { margin: 0 0 10px; }
 .jc-data { --cell-y: 8px; --cell-x: 12px; margin: 0 0 10px; }
+.jc-data > summary::before { content: "▸"; flex: none; margin-inline-end: 6px; }
+.jc-data[open] > summary::before { content: "▾"; }
+@media (min-width: 600px) { .jc-data:not(.jc-record) td:first-child { min-width: 24ch; } }
 .jc-data > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--muted); font-size: 13px; }
 .jc-data-scroll { position: relative; overflow: auto; max-height: 60vh; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg);
   background-image: linear-gradient(to left, var(--bg), transparent), linear-gradient(to left, rgb(0 0 0 / 12%), transparent);

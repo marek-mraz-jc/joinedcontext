@@ -450,12 +450,28 @@ pub fn aggregated(table: &Table) -> Option<Value> {
         let first = table.rows.first()?.first();
         if table.rows.iter().all(|row| row.first() == first) {
             spec["encoding"]["color"]["legend"] = Value::Null;
+            // The one series is named over its line, as a legend would.
+            if let Some(name) = first.and_then(Value::as_str).and_then(titled) {
+                spec["title"] = json!(name);
+            }
         } else {
             spec["encoding"]["color"]["legend"] = json!({"orient": "bottom", "columns": 1});
         }
         spec["mark"]["point"] = json!(table.rows.len() <= 100);
     } else if made.per == "value" {
-        spec["encoding"]["y"]["sort"] = Value::Null;
+        // Each name over its bar: at 400 px an organisation's name beside it was cut to a word.
+        spec["encoding"] = json!({
+            "y": {"field": "label", "type": "nominal", "sort": null, "axis": null},
+            "x": {"field": "value", "type": "quantitative", "axis": null},
+        });
+        spec["layer"] = json!([
+            {"mark": {"type": "bar", "size": 10, "yOffset": 8, "tooltip": true}},
+            {"mark": {"type": "text", "align": "left", "baseline": "middle", "yOffset": 8, "dx": 4, "fontSize": 12},
+             "encoding": {"text": {"field": "value", "type": "quantitative", "format": ","}}},
+            {"mark": {"type": "text", "align": "left", "baseline": "middle", "yOffset": -8, "fontSize": 12},
+             "encoding": {"x": {"value": 0}, "text": {"field": "label", "type": "nominal"}}},
+        ]);
+        spec["height"] = json!(table.rows.len() * 40);
     } else {
         // Periods read left to right, in time.
         spec["encoding"] = json!({
@@ -477,6 +493,14 @@ pub fn aggregated(table: &Table) -> Option<Value> {
         event["enums"] = json!(words);
     }
     Some(event)
+}
+
+/// A title the renderer draws: one its refusal list would refuse is left out, so the chart still
+/// draws.
+fn titled(title: &str) -> Option<&str> {
+    let lower = title.to_lowercase();
+    let refused = ["__proto__", "constructor", "prototype", "javascript:"];
+    (!title.is_empty() && !refused.iter().any(|w| lower.contains(w))).then_some(title)
 }
 
 /// A Vega-Lite bar or line chart over the table's rows, fields named `label`, `value` and
@@ -530,13 +554,7 @@ fn chart(
              "encoding": {"text": {"field": "value", "type": "quantitative", "format": ",.4~g"}}},
         ]);
     }
-    // A title the renderer's refusal list would refuse is left out, so the chart still draws.
-    let lower = title.to_lowercase();
-    if !title.is_empty()
-        && !["__proto__", "constructor", "prototype", "javascript:"]
-            .iter()
-            .any(|w| lower.contains(w))
-    {
+    if let Some(title) = titled(title) {
         spec["title"] = json!(title);
     }
     let mut event = json!({"spec": spec, "rows": rows});

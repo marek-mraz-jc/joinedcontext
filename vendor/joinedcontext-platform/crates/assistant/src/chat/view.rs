@@ -1087,12 +1087,16 @@ mod tests {
                 (NONE.to_owned(), 1),
             ]
         );
-        let days: Vec<Option<Value>> = ["2026-10-02", "2026-10-30", "2026-11-03"]
+        let days: Vec<Option<Value>> = ["2026-11-02", "2026-11-30", "2027-01-03"]
             .map(|d| Some(json!(d)))
             .to_vec();
+        let months = super::split("startDate", &days).expect("months");
+        assert_eq!(months.per, "month");
+        let named: Vec<(&str, u64)> = months.rows.iter().map(|(k, n)| (k.as_str(), *n)).collect();
         assert_eq!(
-            super::split("startDate", &days).map(|s| s.per),
-            Some("month")
+            named,
+            [("2026-11", 2), ("2026-12", 0), ("2027-01", 1)],
+            "no gap in time"
         );
     }
 

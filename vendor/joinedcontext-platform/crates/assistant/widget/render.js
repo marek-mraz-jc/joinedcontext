@@ -607,6 +607,8 @@ var JCRender = (function () {
     }
     return {
       caption: caption,
+      // Over the map, which draws what is listed and says so on itself, the caption names them all.
+      mapCaption: named && pages > 1 ? named + " (" + numbers.format(total) + ")" : caption,
       columns: columns,
       numeric: numeric,
       rows: rows,
