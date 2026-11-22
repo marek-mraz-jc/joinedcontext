@@ -34,7 +34,12 @@ const MAX_SCOPE: usize = 50;
 const MAX_CLIENTS: usize = 10;
 /// Audit rows one activity page carries, and how long a row is kept.
 pub const CALLS_PAGE: i64 = 200;
-const CALLS_KEPT_DAYS: i64 = 30;
+/// The audit rows the memory arm keeps: without a database nothing outlives the process anyway.
+const CALLS_IN_MEMORY: usize = 10_000;
+/// How long the audit is kept unless `JC_PORTAL_AUDIT_RETENTION_DAYS` says otherwise (AUD-04).
+pub const AUDIT_RETENTION_DAYS: u32 = 400;
+/// The verdict of the row written before a call runs; alone, it says the outcome is unknown.
+pub const STARTED: &str = "started";
 /// Connectors the organization overview lists, live ones first (T-5975).
 const OVERVIEW_PAGE: i64 = 500;
 /// Refused calls in a day that flag a connector on the overview: a client probing past its scope.
@@ -2128,13 +2133,34 @@ pub struct Call {
     pub tool: String,
     /// `project/kind/name`, as far as the call names them.
     pub target: Option<String>,
-    /// `allowed`, `refused: <why>` or `error`.
+    /// `allowed`, `refused: <why>`, `error`, or `started` where the outcome was not recorded.
     pub verdict: String,
     pub duration_ms: i32,
 }
 
-/// The memory arm: the connectors, and each audit row beside its connector's id.
-type Held = (Vec<Record>, Vec<(String, Call)>);
+/// Where one call's audit rows belong.
+#[derive(Debug, Clone)]
+pub struct Trail {
+    /// The connector it came through; none for the Portal MCP.
+    connector: Option<String>,
+    /// The Organization an agent run's call belongs to; none: the request's.
+    organization: Option<String>,
+    /// What the `started` row and the outcome share.
+    id: String,
+}
+
+impl Trail {
+    pub fn new(connector: Option<String>, organization: Option<String>) -> Self {
+        Self {
+            connector,
+            organization,
+            id: new_id(),
+        }
+    }
+}
+
+/// The memory arm: the connectors, and each audit row beside where it belongs.
+type Held = (Vec<Record>, Vec<(Trail, Call)>);
 type CallRow = (
     Odt,
     String,
@@ -2168,10 +2194,33 @@ impl Db {
             .await
             .map_err(db_error)
     }
+
+    /// The transaction an audit row is written in: the named Organization's, else the request's.
+    /// None is an error, so no call runs unrecorded (AUD-02).
+    async fn audit(&self, organization: Option<&str>) -> Result<Tx, ApiError> {
+        let tx = match organization {
+            Some(organization) => {
+                match crate::project_ids::reserved(&self.pool, organization)
+                    .await
+                    .map_err(db_error)?
+                {
+                    Some(key) => Some(
+                        crate::db::tenant_tx(&self.pool, key)
+                            .await
+                            .map_err(db_error)?,
+                    ),
+                    None => None,
+                }
+            }
+            None => self.person().await?,
+        };
+        tx.ok_or_else(|| crate::project_ids::person_unplaced("audit of MCP calls"))
+    }
 }
 
 pub struct ConnectorStore {
     inner: Inner,
+    trimmed_at: Mutex<Option<TimestampTz>>,
 }
 
 type Odt = time::OffsetDateTime;
@@ -2240,6 +2289,7 @@ impl ConnectorStore {
         installation: Option<String>,
     ) -> Self {
         Self {
+            trimmed_at: Mutex::default(),
             inner: match db {
                 Some((pool, mirror)) => Inner::Postgres(Db {
                     pool,
@@ -2583,7 +2633,7 @@ impl ConnectorStore {
                     "SELECT ",
                     columns!(),
                     ", (SELECT count(*) FROM connector_calls k WHERE k.connector = connectors.id \
-                       AND k.at > now() - interval '1 day'), \
+                       AND k.at > now() - interval '1 day' AND k.verdict <> 'started'), \
                      (SELECT count(*) FROM connector_calls k WHERE k.connector = connectors.id \
                        AND k.at > now() - interval '1 day' AND k.verdict LIKE 'refused%') \
                      FROM connectors ORDER BY revoked_at IS NULL DESC, created_at DESC LIMIT $1"
@@ -2660,22 +2710,25 @@ impl ConnectorStore {
         }
     }
 
-    /// Keeps one audit row; an allowed call also marks the connector used.
+    /// Keeps the one audit row of a connector's event that is no call to wait for (a paired tab).
     pub async fn record(&self, connector: &str, call: Call) -> Result<(), ApiError> {
-        let used = call.verdict == "allowed";
+        self.keep(&Trail::new(Some(connector.to_owned()), None), call)
+            .await
+    }
+
+    /// Appends one audit row of `trail`; an allowed call also marks its connector used, in the
+    /// same transaction. An `Err` is the caller's to answer with: the call is not on record.
+    pub async fn keep(&self, trail: &Trail, call: Call) -> Result<(), ApiError> {
+        let used = trail.connector.as_ref().filter(|_| call.verdict == "allowed");
         match &self.inner {
             Inner::Postgres(db) => {
-                // The connector was read in the same key a moment before: none means it is not
-                // this Organization's, and its call is not written into another's.
-                let Some(mut tx) = db.person().await? else {
-                    tracing::warn!(%connector, "a connector call outside any Organization was not recorded");
-                    return Ok(());
-                };
+                let mut tx = db.audit(trail.organization.as_deref()).await?;
                 sqlx::query(
-                    "INSERT INTO connector_calls (connector, at, subject, client, tool, target, verdict, duration_ms) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                    "INSERT INTO connector_calls (connector, call_id, at, subject, client, tool, target, verdict, duration_ms) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 )
-                .bind(connector)
+                .bind(&trail.connector)
+                .bind(&trail.id)
                 .bind(ts_to_odt(call.at))
                 .bind(&call.subject)
                 .bind(&call.client)
@@ -2686,15 +2739,7 @@ impl ConnectorStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
-                sqlx::query(
-                    "DELETE FROM connector_calls WHERE connector = $1 AND at < now() - make_interval(days => $2)",
-                )
-                .bind(connector)
-                .bind(i32::try_from(CALLS_KEPT_DAYS).unwrap_or(30))
-                .execute(&mut *tx)
-                .await
-                .map_err(db_error)?;
-                if used {
+                if let Some(connector) = used {
                     sqlx::query("UPDATE connectors SET last_used_at = $2 WHERE id = $1")
                         .bind(connector)
                         .bind(ts_to_odt(call.at))
@@ -2706,17 +2751,81 @@ impl ConnectorStore {
             }
             Inner::Memory(rows) => {
                 let mut rows = Self::memory(rows);
-                if used {
-                    if let Some(r) = rows.0.iter_mut().find(|r| r.id == connector) {
+                if let Some(connector) = used {
+                    if let Some(r) = rows.0.iter_mut().find(|r| r.id == *connector) {
                         r.last_used_at = Some(call.at);
                     }
                 }
-                let oldest = call.at - jiff::SignedDuration::from_hours(24 * CALLS_KEPT_DAYS);
-                rows.1.retain(|(_, c)| c.at >= oldest);
-                rows.1.push((connector.to_owned(), call));
+                let over = (rows.1.len() + 1).saturating_sub(CALLS_IN_MEMORY);
+                rows.1.drain(..over);
+                rows.1.push((trail.clone(), call));
             }
         }
         Ok(())
+    }
+
+    /// Deletes the audit rows older than `days`, Organization by Organization in its own key,
+    /// batch by batch (AUD-04, STO-07). The leader's hourly job.
+    pub async fn trim_audit(&self, now: TimestampTz, days: u32) -> Result<u64, ApiError> {
+        let floor = now - jiff::SignedDuration::from_hours(24 * i64::from(days));
+        match &self.inner {
+            Inner::Postgres(db) => {
+                let mut done = 0;
+                for organization in crate::host_registry::organizations(&db.pool)
+                    .await
+                    .map_err(db_error)?
+                {
+                    let Some(key) = crate::project_ids::reserved(&db.pool, &organization.name)
+                        .await
+                        .map_err(db_error)?
+                    else {
+                        continue;
+                    };
+                    loop {
+                        let mut tx = crate::db::tenant_tx(&db.pool, key).await.map_err(db_error)?;
+                        let deleted = sqlx::query(
+                            "DELETE FROM connector_calls WHERE id IN \
+                             (SELECT id FROM connector_calls WHERE at < $1 LIMIT $2)",
+                        )
+                        .bind(ts_to_odt(floor))
+                        .bind(crate::activity::TRIM_BATCH)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_error)?
+                        .rows_affected();
+                        tx.commit().await.map_err(db_error)?;
+                        done += deleted;
+                        if deleted < crate::activity::TRIM_BATCH as u64 {
+                            break;
+                        }
+                    }
+                }
+                Ok(done)
+            }
+            Inner::Memory(rows) => {
+                let mut rows = Self::memory(rows);
+                let before = rows.1.len();
+                rows.1.retain(|(_, call)| call.at >= floor);
+                Ok((before - rows.1.len()) as u64)
+            }
+        }
+    }
+
+    /// [`Self::trim_audit`] when an hour has passed since this process's last one, else `None`.
+    pub async fn trim_audit_if_due(
+        &self,
+        now: TimestampTz,
+        days: u32,
+    ) -> Option<Result<u64, ApiError>> {
+        {
+            let mut last = self.trimmed_at.lock().unwrap_or_else(|p| p.into_inner());
+            let every = jiff::SignedDuration::from_mins(crate::activity::TRIM_EVERY_MINUTES);
+            if last.is_some_and(|at| now - at < every) {
+                return None;
+            }
+            *last = Some(now);
+        }
+        Some(self.trim_audit(now, days).await)
     }
 
     /// The connector's newest audit rows first, at most [`CALLS_PAGE`].
@@ -2728,8 +2837,11 @@ impl ConnectorStore {
                 };
                 let rows: Vec<CallRow> =
                     sqlx::query_as(
-                        "SELECT at, subject, client, tool, target, verdict, duration_ms FROM connector_calls \
-                         WHERE connector = $1 ORDER BY at DESC, id DESC LIMIT $2",
+                        "SELECT at, subject, client, tool, target, verdict, duration_ms FROM connector_calls c \
+                         WHERE connector = $1 AND NOT (verdict = 'started' AND call_id IS NOT NULL \
+                           AND EXISTS (SELECT 1 FROM connector_calls o \
+                                       WHERE o.call_id = c.call_id AND o.verdict <> 'started')) \
+                         ORDER BY at DESC, id DESC LIMIT $2",
                     )
                     .bind(connector)
                     .bind(CALLS_PAGE)
@@ -2751,14 +2863,26 @@ impl ConnectorStore {
                     )
                     .collect())
             }
-            Inner::Memory(rows) => Ok(Self::memory(rows)
-                .1
-                .iter()
-                .rev()
-                .filter(|(id, _)| id == connector)
-                .take(usize::try_from(CALLS_PAGE).unwrap_or(200))
-                .map(|(_, call)| call.clone())
-                .collect()),
+            Inner::Memory(rows) => {
+                let rows = Self::memory(rows);
+                let ended: std::collections::HashSet<&str> = rows
+                    .1
+                    .iter()
+                    .filter(|(_, call)| call.verdict != STARTED)
+                    .map(|(trail, _)| trail.id.as_str())
+                    .collect();
+                Ok(rows
+                    .1
+                    .iter()
+                    .rev()
+                    .filter(|(trail, call)| {
+                        trail.connector.as_deref() == Some(connector)
+                            && (call.verdict != STARTED || !ended.contains(trail.id.as_str()))
+                    })
+                    .take(usize::try_from(CALLS_PAGE).unwrap_or(200))
+                    .map(|(_, call)| call.clone())
+                    .collect())
+            }
         }
     }
 }

@@ -8,7 +8,6 @@
 //! call. Every call past the token writes one audit row (connector, person, client, tool, target,
 //! verdict, duration) and never a token, a header or an input value.
 
-use std::time::Instant;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -19,11 +18,11 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use super::{
-    call_result, dispatch, elicitation, error, failure_result, json_response, result, too_large,
+    audited,     call_result, dispatch, elicitation, error, failure_result, json_response, result, too_large,
     tool_definition, GROUNDING_META, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, WITHHELD_META,
 };
 use crate::agents::oneshot::ui_actions::{self, UI_TOOLS};
-use crate::connectors::{self, Call, Connector};
+use crate::connectors::{self, Connector};
 use crate::error::ApiError;
 use crate::personal_data::{self, Marks};
 use crate::state::AppState;
@@ -99,7 +98,6 @@ pub async fn handle_connector(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let started = Instant::now();
     let address = connectors::address(&base(&state), &id);
     let token = headers
         .get(header::AUTHORIZATION)
@@ -148,61 +146,21 @@ pub async fn handle_connector(
     };
     let (tool, target) = audited(&message);
     let identity = session.identity;
-    let (response, verdict) = if connector.owner != identity.subject {
-        (unknown(), "refused: not the owner".to_owned())
-    } else {
-        judge(&state, &connector, identity.clone(), token, &message, body).await
-    };
-    let call = Call {
-        at: jc_time::TimestampTz::now(),
-        subject: identity.subject,
-        client: identity.client,
+    let audit = super::Audit {
+        trail: connectors::Trail::new(Some(connector.id.clone()), None),
+        subject: identity.subject.clone(),
+        client: identity.client.clone(),
         tool,
         target,
-        verdict,
-        duration_ms: i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX),
     };
-    if let Err(err) = state.connectors.record(&connector.id, call).await {
-        tracing::warn!(connector = %connector.id, error = %err, "a connector call is not in its audit");
-    }
-    response
-}
-
-/// The tool (or method) and the `project/kind/name` a call names, identifiers only (AG-147).
-fn audited(message: &Value) -> (String, Option<String>) {
-    let method = message["method"].as_str().unwrap_or("");
-    let params = &message["params"];
-    let tool = match method {
-        "tools/call" => params["name"].as_str().unwrap_or(""),
-        other => other,
+    let call = async {
+        if connector.owner != identity.subject {
+            (unknown(), "refused: not the owner".to_owned())
+        } else {
+            judge(&state, &connector, identity.clone(), token, &message, body).await
+        }
     };
-    let word = |v: &Value| {
-        v.as_str()
-            .filter(|s| s.len() <= 63 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
-            .map(str::to_owned)
-    };
-    let args = &params["arguments"];
-    let target: Vec<String> = [
-        word(&args["project"]).or_else(|| word(&params["project"])),
-        word(&args["kind"]),
-        word(&args["name"])
-            .or_else(|| word(&args["endpoint"]))
-            .or_else(|| word(&args["data"]["query"]["endpoint"])),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let tool = if !tool.is_empty()
-        && tool.len() <= 64
-        && tool
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_/-".contains(&b))
-    {
-        tool.to_owned()
-    } else {
-        "unknown".to_owned()
-    };
-    (tool, (!target.is_empty()).then(|| target.join("/")))
+    super::on_record(&state, audit, call).await
 }
 
 /// A call past one of the connector's or the person's limits: 429 problem+json with

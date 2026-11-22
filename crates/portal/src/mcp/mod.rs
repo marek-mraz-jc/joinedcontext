@@ -215,29 +215,34 @@ pub async fn handle_mcp(
         return unauthorized_response(&state);
     }
 
-    if body.len() > MAX_REQUEST_BYTES {
-        return too_large(
-            &format!(
-            "the request is {} bytes; this route reads at most {MAX_REQUEST_BYTES}. Send fewer \
-             arguments, or put a large manifest in a draft and name it",
-            body.len()
-        ),
-            &Value::Null,
-        );
-    }
+    let audit = audit_of(&session.identity, &body, None);
+    let call = async {
+        if body.len() > MAX_REQUEST_BYTES {
+            return too_large(
+                &format!(
+                    "the request is {} bytes; this route reads at most {MAX_REQUEST_BYTES}. Send fewer \
+                     arguments, or put a large manifest in a draft and name it",
+                    body.len()
+                ),
+                &Value::Null,
+            );
+        }
 
-    let Ok(_in_flight) = state.mcp_enter(&[(&session.identity.subject, MAX_PARALLEL_CALLS)]) else {
-        return too_many_at_once();
+        let Ok(_in_flight) = state.mcp_enter(&[(&session.identity.subject, MAX_PARALLEL_CALLS)])
+        else {
+            return too_many_at_once();
+        };
+
+        let caller = crate::ops::Caller {
+            bearer: Some(crate::ops::Bearer(token.to_owned())),
+            identity: session.identity.clone(),
+            via: crate::ops::Via::Mcp,
+            access: None,
+        };
+
+        dispatch(state.clone(), caller, body).await
     };
-
-    let caller = crate::ops::Caller {
-        bearer: Some(crate::ops::Bearer(token.to_owned())),
-        identity: session.identity,
-        via: crate::ops::Via::Mcp,
-        access: None,
-    };
-
-    dispatch(state, caller, body).await
+    on_record(&state, audit, async { outcome(call.await).await }).await
 }
 
 /// The project door (ARCH/MCP-33, T-7194): the router places `/{org}/{ProjectId}/api/mcp` here.
@@ -354,24 +359,183 @@ fn held_to(body: &Bytes, project: &str) -> Result<Bytes, Option<Value>> {
         .map_err(|_| None)
 }
 
+/// Who calls, through which door, asking what: all an audit row says of a call before it runs.
+pub(crate) struct Audit {
+    pub trail: crate::connectors::Trail,
+    pub subject: String,
+    pub client: Option<String>,
+    pub tool: String,
+    pub target: Option<String>,
+}
+
+/// Runs one MCP call on the record (MCP-16, AUD-02, T-7542). The `started` row is committed
+/// before `call` is polled, so a call that cannot be recorded never runs (503); the outcome is
+/// committed before the answer leaves, and where it cannot be the answer is a 500 saying so. A
+/// change in the forge shares no Postgres transaction: writing ahead is that transaction's equal.
+/// No connection is held while the call runs.
+pub(crate) async fn on_record(
+    state: &AppState,
+    audit: Audit,
+    call: impl std::future::Future<Output = (Response, String)>,
+) -> Response {
+    let began = std::time::Instant::now();
+    let row = |verdict: String, duration_ms: i32| crate::connectors::Call {
+        at: jc_time::TimestampTz::now(),
+        subject: audit.subject.clone(),
+        client: audit.client.clone(),
+        tool: audit.tool.clone(),
+        target: audit.target.clone(),
+        verdict,
+        duration_ms,
+    };
+    let started = row(crate::connectors::STARTED.to_owned(), 0);
+    if let Err(err) = state.connectors.keep(&audit.trail, started).await {
+        tracing::error!(error = %err, "an MCP call was refused: its audit row cannot be written (on an address of no Organization, set JC_PORTAL_INSTALLATION_ORGANIZATION)");
+        return ApiError::Unavailable(
+            "this call cannot be written to the audit, so it did not run; try again in a minute, or ask an operator".into(),
+        )
+        .into_response();
+    }
+    let (response, verdict) = call.await;
+    let elapsed = i32::try_from(began.elapsed().as_millis()).unwrap_or(i32::MAX);
+    if let Err(err) = state.connectors.keep(&audit.trail, row(verdict, elapsed)).await {
+        tracing::error!(error = %err, "an MCP call ran and its outcome is not in the audit");
+        return ApiError::Internal(
+            "the call may have run, and its outcome could not be written to the audit; read the current state before sending it again".into(),
+        )
+        .into_response();
+    }
+    response
+}
+
+/// The verdict of an answer of the Portal MCP, read off its envelope; the answer is unchanged.
+async fn outcome(response: Response) -> (Response, String) {
+    let (parts, body) = response.into_parts();
+    // Every answer of this door is built in memory, so this reads no stream.
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            "error".to_owned(),
+        );
+    };
+    let envelope: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let verdict = if parts.status.is_client_error() {
+        format!("refused: {}", parts.status.as_u16())
+    } else if !parts.status.is_success() || envelope.get("error").is_some() {
+        "error".to_owned()
+    } else if envelope["result"]["isError"] == json!(true) {
+        "refused: tool".to_owned()
+    } else {
+        "allowed".to_owned()
+    };
+    (Response::from_parts(parts, Body::from(bytes)), verdict)
+}
+
+/// What a caller's message to the Portal MCP puts on record; one past the size limit is not read.
+fn audit_of(
+    identity: &crate::auth::session::Identity,
+    body: &Bytes,
+    organization: Option<String>,
+) -> Audit {
+    let message: Value = if body.len() > MAX_REQUEST_BYTES {
+        Value::Null
+    } else {
+        serde_json::from_slice(body).unwrap_or(Value::Null)
+    };
+    let (tool, target) = audited(&message);
+    Audit {
+        trail: crate::connectors::Trail::new(None, organization),
+        subject: identity.subject.clone(),
+        client: identity.client.clone(),
+        tool,
+        target,
+    }
+}
+
+/// The tool (or method) and what a call names, identifiers only (AG-147): the project, kind and
+/// name of a tool call, the words of a resource's address, a prompt's or a task's name.
+pub(crate) fn audited(message: &Value) -> (String, Option<String>) {
+    let method = message["method"].as_str().unwrap_or("");
+    let params = &message["params"];
+    let tool = match method {
+        "tools/call" => params["name"].as_str().unwrap_or(""),
+        other => other,
+    };
+    let is_word = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 63
+            && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    let word = |v: &Value| v.as_str().filter(|s| is_word(s)).map(str::to_owned);
+    let args = &params["arguments"];
+    let target: Vec<String> = match method {
+        "resources/read" => params["uri"]
+            .as_str()
+            .and_then(|uri| uri.split_once("://"))
+            .map(|(_, path)| path.split(['?', '#']).next().unwrap_or_default())
+            .into_iter()
+            .flat_map(|path| path.split('/'))
+            .map_while(|part| is_word(part).then(|| part.to_owned()))
+            .take(4)
+            .collect(),
+        _ => [
+            word(&args["project"]).or_else(|| word(&params["project"])),
+            word(&args["kind"]),
+            match method {
+                "prompts/get" => word(&params["name"]),
+                method if method.starts_with("tasks/") => word(&params["taskId"]),
+                _ => word(&args["name"])
+                    .or_else(|| word(&args["endpoint"]))
+                    .or_else(|| word(&args["data"]["query"]["endpoint"])),
+            },
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    };
+    let tool = if !tool.is_empty()
+        && tool.len() <= 64
+        && tool
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_/-".contains(&b))
+    {
+        tool.to_owned()
+    } else {
+        "unknown".to_owned()
+    };
+    (tool, (!target.is_empty()).then(|| target.join("/")))
+}
+
 /// The JSON-RPC half every door shares: what the message asks for, answered as the caller.
 ///
 /// Two doors reach it. A person or a program signs in with their own token and arrives with
 /// no profile; an agent run arrives through the proxy's `/v1/mcp`, as the person who started
 /// it and narrowed by the run's `AgentProfile` (AG-70, AG-64). The narrowing is on the caller,
 /// so it holds for `tools/list` and `tools/call` alike, and for the resource half too.
-pub async fn dispatch_for(state: AppState, caller: crate::ops::Caller, body: Bytes) -> Response {
-    if body.len() > MAX_REQUEST_BYTES {
-        return too_large(
-            &format!(
-            "the request is {} bytes; this route reads at most {MAX_REQUEST_BYTES}. Send fewer \
-             arguments, or put a large manifest in a draft and name it",
-            body.len()
-        ),
-            &Value::Null,
-        );
-    }
-    dispatch(state, caller, body).await
+///
+/// `organization` is the one the call is on record in: a run's own, whose internal route has no
+/// Organization host (T-7542); none takes the request's.
+pub async fn dispatch_for(
+    state: AppState,
+    caller: crate::ops::Caller,
+    body: Bytes,
+    organization: Option<String>,
+) -> Response {
+    let audit = audit_of(&caller.identity, &body, organization);
+    let call = async {
+        if body.len() > MAX_REQUEST_BYTES {
+            return too_large(
+                &format!(
+                    "the request is {} bytes; this route reads at most {MAX_REQUEST_BYTES}. Send fewer \
+                     arguments, or put a large manifest in a draft and name it",
+                    body.len()
+                ),
+                &Value::Null,
+            );
+        }
+        dispatch(state.clone(), caller, body).await
+    };
+    on_record(&state, audit, async { outcome(call.await).await }).await
 }
 
 async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> Response {

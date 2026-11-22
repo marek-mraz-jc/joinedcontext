@@ -1143,7 +1143,12 @@ fn in_a_browser(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
 }
 
 /// One row of the connector's audit for its tab: who paired or let it go.
-async fn audit_tab(state: &AppState, identity: &Identity, id: &str, tool: &str) {
+async fn audit_tab(
+    state: &AppState,
+    identity: &Identity,
+    id: &str,
+    tool: &str,
+) -> Result<(), ApiError> {
     let call = Call {
         at: jc_time::TimestampTz::now(),
         subject: identity.subject.clone(),
@@ -1153,9 +1158,7 @@ async fn audit_tab(state: &AppState, identity: &Identity, id: &str, tool: &str) 
         verdict: "allowed".to_owned(),
         duration_ms: 0,
     };
-    if let Err(err) = state.connectors.record(id, call).await {
-        tracing::warn!(connector = %id, error = %err, "a tab pairing is not in its connector's audit");
-    }
+    state.connectors.record(id, call).await
 }
 
 #[utoipa::path(
@@ -1186,13 +1189,14 @@ pub async fn pair_tab(
             connector.name, connector.state
         )));
     }
+    // On record before the tab takes a client's actions (AUD-02).
+    audit_tab(&state, &session.identity, &connector.id, "tab/connect").await?;
     let tab = state.paired_tabs.pair(
         &connector.id,
         &session.identity.subject,
         session.started_at(),
         session.expires_at,
     );
-    audit_tab(&state, &session.identity, &connector.id, "tab/connect").await;
     let until = jc_time::TimestampTz::from_second(session.expires_at).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
@@ -1228,7 +1232,7 @@ pub async fn unpair_tab(
     in_a_browser(&state, identity)?;
     let connector = own(&state, identity, &id).await?;
     if state.paired_tabs.unpair(&connector.id, &identity.subject) {
-        audit_tab(&state, identity, &connector.id, "tab/disconnect").await;
+        audit_tab(&state, identity, &connector.id, "tab/disconnect").await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }

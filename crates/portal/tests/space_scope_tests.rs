@@ -378,8 +378,7 @@ async fn resources(state: &AppState, who: Identity, method: &str, params: Value)
     let response = joinedcontext_portal::mcp::dispatch_for(
         state.clone(),
         mcp(who),
-        Bytes::from(body.to_string()),
-    )
+        Bytes::from(body.to_string()), None)
     .await;
     let bytes = http_body_util::BodyExt::collect(response.into_body())
         .await

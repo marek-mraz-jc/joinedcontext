@@ -335,6 +335,8 @@ pub struct Syncer {
     /// Where a run says what it did (OPS-48). `None` leaves the loop silent, which is what a
     /// Portal built without a state does in a unit test.
     activity: Option<ActivityStore>,
+    /// The audit of MCP and connector calls, and the days it is kept (AUD-04).
+    audit: Option<(Arc<crate::connectors::ConnectorStore>, u32)>,
     /// Where this replica fetches the builds the manifests name (AP-102): the run fetches the
     /// missing ones and checks that each named build is actually there (AP-72).
     apps_cache_dir: Option<String>,
@@ -474,6 +476,7 @@ impl Syncer {
             config_mirror: None,
             roles_held: Default::default(),
             activity: None,
+            audit: None,
             apps_cache_dir: None,
             apps_dir: None,
             artifact_store: None,
@@ -637,6 +640,15 @@ impl Syncer {
         mqtt_default: Option<jc_core::kinds::MqttAllowance>,
     ) -> Self {
         self.judge_settings = (bounds, apex, domain, mqtt_default);
+        self
+    }
+
+    pub fn with_audit(
+        mut self,
+        audit: Arc<crate::connectors::ConnectorStore>,
+        days: u32,
+    ) -> Self {
+        self.audit = Some((audit, days));
         self
     }
 
@@ -3481,6 +3493,16 @@ impl Syncer {
                         tracing::info!(rows = done.rows, batches = done.batches, "activity trimmed")
                     }
                     Some(Err(err)) => tracing::warn!(error = %err, "the activity trim failed"),
+                    None => {}
+                }
+            });
+        }
+        // 12. Audit retention (AUD-04): the same hour and the same way.
+        if let Some((audit, days)) = self.audit.clone() {
+            tokio::spawn(async move {
+                match audit.trim_audit_if_due(jc_time::TimestampTz::now(), days).await {
+                    Some(Ok(rows)) => tracing::info!(rows, "audit trimmed"),
+                    Some(Err(err)) => tracing::warn!(error = %err, "the audit trim failed"),
                     None => {}
                 }
             });

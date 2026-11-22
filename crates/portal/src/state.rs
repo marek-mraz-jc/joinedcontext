@@ -581,6 +581,10 @@ impl AppState {
                     state.config.gateway_namespace.clone(),
                 )
                 .with_activity(state.activity.clone())
+                .with_audit(
+                    Arc::clone(&state.connectors),
+                    state.config.audit_retention_days,
+                )
                 .with_judge_settings(
                     state.config.organization_bounds.clone(),
                     state.config.app_settings.as_ref().map(|s| s.apex.clone()),
