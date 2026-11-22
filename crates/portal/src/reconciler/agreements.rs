@@ -99,11 +99,8 @@ pub fn compile(
                 continue;
             }
             granted.q = conjunction("q", policy.q.as_deref(), wanted.q.as_deref())?;
-            granted.scope_q = conjunction(
-                "scopeQ",
-                policy.scope_q.as_deref(),
-                wanted.scope_q.as_deref(),
-            )?;
+            granted.scope_q =
+                scope_conjunction(policy.scope_q.as_deref(), wanted.scope_q.as_deref())?;
             granted.geo_q = fence("geoQ", policy.geo_q.as_deref(), wanted.geo_q.as_deref())?;
             granted.temporal_q = fence(
                 "temporalQ",
@@ -186,6 +183,27 @@ fn conjunction(
                 });
             }
             Ok(Some(format!("({offer});({agreement})")))
+        }
+        (offer, agreement) => Ok(offer.or(agreement).map(str::to_owned)),
+    }
+}
+
+/// Both scope queries at once, in the scope grammar: each alternative of the agreement's holds
+/// together with each of the offer's, so none reaches past the offer. One that is no scope query
+/// is refused.
+fn scope_conjunction(
+    offer: Option<&str>,
+    agreement: Option<&str>,
+) -> Result<Option<String>, CompileError> {
+    match (offer, agreement) {
+        (Some(offer), Some(agreement)) if offer != agreement => {
+            antares_ql::scope::subtree_scope_q(agreement)
+                .and(antares_ql::scope::intersect_scope_q(offer, agreement))
+                .map(Some)
+                .ok_or_else(|| CompileError::Widens {
+                    dimension: "scopeQ",
+                    asked: agreement.to_owned(),
+                })
         }
         (offer, agreement) => Ok(offer.or(agreement).map(str::to_owned)),
     }
@@ -364,6 +382,32 @@ mod tests {
             kept[0].1.q.as_deref(),
             Some("(pm10<500);(name==\"a)|(b\";(x==1|y==2))")
         );
+    }
+
+    /// S2-17: two scope queries are one, each alternative holding the offer's scope.
+    #[test]
+    fn an_agreement_scope_keeps_the_offers_in_every_alternative() {
+        let mut offer = offered();
+        offer[0].1.scope_q = Some("/geo".to_owned());
+        let wanted = |scope: &str| agreement("accepted", json!({ "scopeQ": scope }));
+        let kept = compile_read("partner", &wanted("/org/a|/org/b"), &offer).expect("compiles");
+        assert_eq!(
+            kept[0].1.scope_q.as_deref(),
+            Some("(/geo;/org/a),(/geo;/org/b)")
+        );
+        for scope in ["/org/a)|(/org/b", "org/a", "/org/a;"] {
+            let refused = compile_read("partner", &wanted(scope), &offer);
+            assert!(
+                matches!(
+                    &refused,
+                    Err(CompileError::Widens {
+                        dimension: "scopeQ",
+                        ..
+                    })
+                ),
+                "{scope}: {refused:?}"
+            );
+        }
     }
 
     #[test]
