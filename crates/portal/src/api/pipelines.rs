@@ -1256,14 +1256,14 @@ pub async fn post_run(
         source: "portal".to_owned(),
         summary: format!(
             "{} started run {run} of pipeline {name}",
-            user.0.identity.username
+            user.0.identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,
         details: serde_json::json!({
             "object": format!("pipelines/{name}"),
             "run": run,
-            "actor": user.0.identity.username,
+            "actor": user.0.identity.subject,
         }),
     };
     if let Err(error) = state.activity.append(&[event]).await {
@@ -1716,7 +1716,7 @@ async fn source_decision(
     }
     let rule = snapshot_of(&pipeline)?;
     let deleting = decide(state, project, name, &rule, choice).await?;
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let summary = match choice {
         SourceChoice::Delete => {
             format!("{actor} released {deleting} source deletes of pipeline {name}")

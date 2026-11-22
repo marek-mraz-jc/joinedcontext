@@ -160,7 +160,7 @@ pub async fn rename_shapes(
         },
     )
     .await?;
-    tracing::info!(project = %project, apps = names.len(), by = %identity.username, "App shapes rename proposed");
+    tracing::info!(project = %project, apps = names.len(), by = %identity.subject, "App shapes rename proposed");
     Ok((StatusCode::ACCEPTED, Json(change)).into_response())
 }
 

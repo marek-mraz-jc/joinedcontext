@@ -1676,12 +1676,11 @@ async fn record_call(
     };
     let decision = decision_of(envelope, answer);
     let change = change_of(envelope);
-    let username = caller.identity.username.as_str();
+    let subject = caller.identity.subject.as_str();
     let mut details = json!({
         "operation": op.name,
         "decision": decision,
-        "subject": caller.identity.subject,
-        "username": username,
+        "subject": subject,
         "channel": via.channel,
         "client": via.client,
     });
@@ -1702,7 +1701,7 @@ async fn record_call(
         kind: "mcp.tool".to_owned(),
         source: "portal".to_owned(),
         summary: format!(
-            "{username} {decision} {} through {} (MCP)",
+            "{subject} {decision} {} through {} (MCP)",
             op.name, via.client
         ),
         severity: if decision == "refused" {

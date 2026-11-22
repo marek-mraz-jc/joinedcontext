@@ -1332,11 +1332,11 @@ impl Syncer {
             ),
             severity: "error".to_owned(),
             correlation_id: Some(sha.to_owned()),
+            // The commit names who proposed it by address; the feed keeps the commit (OBS-01).
             details: serde_json::json!({
                 "revision": sha,
                 "path": file,
                 "reason": reason,
-                "proposer": proposer,
             }),
         }])
         .await;

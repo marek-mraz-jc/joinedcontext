@@ -2734,7 +2734,7 @@ pub async fn approve_change_as(
         ));
     }
     if publishes && by == ApprovedBy::Operation {
-        tracing::warn!(change = %id, approver = %identity.username, "refused: an operation may not approve a public publication");
+        tracing::warn!(change = %id, approver = %identity.subject, "refused: an operation may not approve a public publication");
         return Err(ApiError::Denied(
             "a public publication or a public App is approved by a person in the Portal, never by the assistant, an agent or MCP (EP-142, AP-175)".to_string(),
         ));
@@ -2771,7 +2771,7 @@ pub async fn approve_change_as(
     // a role they hold, or a Group change adding them, waits for someone else, an administrator
     // of Policy included (PF-58, T-5563).
     if is_author && grants_approver && !alone {
-        tracing::warn!(change = %id, kind = %data.kind, approver = %identity.username, "refused: a change granting access to its own proposer");
+        tracing::warn!(change = %id, kind = %data.kind, approver = %identity.subject, "refused: a change granting access to its own proposer");
         return Err(ApiError::SelfApproval(
             "this change grants access to its own author (a Policy naming them, a Group they are in, or a Group adding them), so a second person approves it, never its author (PF-58)".to_string(),
         ));
@@ -2785,7 +2785,7 @@ pub async fn approve_change_as(
         && !alone
         && (changes_access || needs_second_person(&data.kind))
     {
-        tracing::warn!(change = %id, kind = %data.kind, approver = %identity.username, "refused: the proposer of an access or model change may not approve it");
+        tracing::warn!(change = %id, kind = %data.kind, approver = %identity.subject, "refused: the proposer of an access or model change may not approve it");
         return Err(ApiError::SelfApproval(format!(
             "a change to {} is approved by a second administrator, never by its proposer (PF-58)",
             data.kind
@@ -2848,7 +2848,7 @@ pub async fn approve_change_as(
             pr.title, data.kind
         )
     } else if alone {
-        tracing::warn!(target: "audit", change = %id, project, kind = %data.kind, approver, approved_by = crate::single_person::APPROVED_BY, "a change approved by its author alone in single-person mode (T-7388)");
+        tracing::warn!(target: "audit", change = %id, project, kind = %data.kind, approver = %identity.subject, approved_by = crate::single_person::APPROVED_BY, "a change approved by its author alone in single-person mode (T-7388)");
         format!(
             "Merge change proposal {id}: {}\n\nApproved in the Portal by {approver}, its author, as an administrator of {} after a fresh second factor\napprovedBy: {} (T-7388)",
             pr.title,
@@ -2899,7 +2899,7 @@ pub async fn approve_change_as(
         Some((&merger_name, &merger_email)),
     )
     .await?;
-    say_merged(state, project, id, &data, approver, connector, alone).await;
+    say_merged(state, project, id, &data, &identity.subject, connector, alone).await;
 
     // A published application's own repository merges once its Change has (AP-77).
     crate::api::agent_runs::merge_published_application(
@@ -3465,7 +3465,7 @@ pub async fn reject_change_for(
             .await;
     }
 
-    say_rejected(state, project, id, &data, rejecter, reason, withdrawn).await;
+    say_rejected(state, project, id, &data, &identity.subject, reason, withdrawn).await;
 
     let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
     let lane = if data.operation == Operation::Delete {

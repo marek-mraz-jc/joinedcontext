@@ -548,7 +548,7 @@ pub(crate) fn subject_of(
     // here, not in the realm's username rules (T-5358).
     if !owns_its_name(&user, claims.azp.as_deref()) {
         tracing::warn!(
-            user = %user,
+            user = %claims.sub,
             azp = claims.azp.as_deref().unwrap_or_default(),
             slug = %endpoint.slug,
             "a service-account username from a client it does not name"
@@ -571,7 +571,7 @@ pub(crate) fn subject_of(
         |project| gateway.organization_of(project),
         gateway.provenance().known_organizations(),
     )
-    .map_err(|outside| refused(outside, endpoint, claims, &user))?;
+    .map_err(|outside| refused(outside, endpoint, claims))?;
     // A member admitted without a project group writes under the Endpoint's own Organization.
     subject.organization = if project.is_empty() {
         gateway.organization_of(&endpoint.project)
@@ -605,19 +605,18 @@ fn refused(
     outside: Outside,
     endpoint: &Endpoint,
     claims: &Claims,
-    user: &str,
 ) -> Box<ProblemDetails> {
     let azp = claims.azp.as_deref().unwrap_or_default();
     match outside {
         Outside::Organization => {
-            tracing::warn!(user = %user, azp, slug = %endpoint.slug, "the token names no project of this endpoint's organization");
+            tracing::warn!(user = %claims.sub, azp, slug = %endpoint.slug, "the token names no project of this endpoint's organization");
             Box::new(ProblemDetails::not_found())
         }
         Outside::Audience => {
             // T-3033: an App's client minted tokens with no `groups` claim, and every
             // project-bound read was a 403 with no line anywhere. The person, the client, the
             // endpoint; never the token or its groups.
-            tracing::warn!(user = %user, azp, slug = %endpoint.slug, "the token names no project this endpoint admits");
+            tracing::warn!(user = %claims.sub, azp, slug = %endpoint.slug, "the token names no project this endpoint admits");
             Box::new(ProblemDetails::forbidden())
         }
     }
@@ -818,9 +817,25 @@ pub(crate) fn roles_on(
     roles
 }
 
-/// The principal, as one string for the audit log.
+/// The principal, as one string for logs, Activity and limiter keys: a person is their id and
+/// never a username (OBS-01, T-7542). One without an id, which no verified token is, is a fixed
+/// word and never `anonymous`.
 pub(crate) fn principal_of(subject: &Subject) -> String {
-    match (&subject.user, &subject.service_account, &subject.did) {
+    let person = subject
+        .user
+        .as_ref()
+        .map(|_| subject.user_principal().unwrap_or("unknown"));
+    caller_as(subject, person)
+}
+
+/// The `actor` a write's provenance stores. It keeps the username form the history already
+/// holds, so one person's changes read as one person's; it is never logged.
+pub(crate) fn actor_of(subject: &Subject) -> String {
+    caller_as(subject, subject.user.as_deref())
+}
+
+fn caller_as(subject: &Subject, person: Option<&str>) -> String {
+    match (person, &subject.service_account, &subject.did) {
         (Some(user), _, _) => match &subject.via {
             Some(account) => format!("user:{user} via serviceAccount:{account}"),
             None => format!("user:{user}"),
@@ -949,6 +964,7 @@ mod tests {
     #[test]
     fn the_audit_principal_names_the_account_a_persons_call_came_through() {
         let person = Subject {
+            id: Some("0f5a".to_owned()),
             user: Some("jana".to_owned()),
             ..Subject::default()
         };
@@ -960,12 +976,27 @@ mod tests {
             service_account: Some("agent-proxy".to_owned()),
             ..Subject::default()
         };
-        assert_eq!(principal_of(&person), "user:jana");
+        assert_eq!(principal_of(&person), "user:0f5a");
         assert_eq!(
             principal_of(&delegated),
-            "user:jana via serviceAccount:agent-proxy"
+            "user:0f5a via serviceAccount:agent-proxy"
         );
         assert_eq!(principal_of(&workload), "serviceAccount:agent-proxy");
+    }
+
+    /// T-7542 (S2-28): the principal a log line carries is the person's id, and a person without
+    /// one is neither named by username nor taken for nobody.
+    #[test]
+    fn the_audit_principal_carries_an_id_and_no_username() {
+        let person = Subject {
+            id: Some("f-1-jana".to_owned()),
+            user: Some("jana@hel.fi".to_owned()),
+            ..Subject::default()
+        };
+        assert_eq!(principal_of(&person), "user:f-1-jana");
+        let unnamed = principal_of(&Subject { id: None, ..person });
+        assert!(!unnamed.contains("jana"), "{unnamed}");
+        assert_ne!(unnamed, "anonymous");
     }
 
     /// A realm role counts only for a member of the Endpoint's Organization: one realm serves

@@ -374,7 +374,7 @@ pub fn provenance(subject: &Subject) -> (&'static str, String) {
         (Some(_), _) if subject.client.as_deref() == Some(PORTAL_UI_CLIENT) => "ui",
         _ => "api",
     };
-    (channel, crate::auth::subject::principal_of(subject))
+    (channel, crate::auth::subject::actor_of(subject))
 }
 
 /// Keeps the edge's `X-Request-Id` when the broker would store it, else sets a fresh one, so each

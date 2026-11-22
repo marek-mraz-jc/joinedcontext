@@ -267,12 +267,12 @@ async fn audit(
         source: "portal".to_owned(),
         summary: format!(
             "{} downloaded the repository {repository} at {commit}",
-            identity.username
+            identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,
         details: json!({
-            "actor": identity.username,
+            "actor": identity.subject,
             "organization": organization,
             "repository": repository,
             "commit": commit,
