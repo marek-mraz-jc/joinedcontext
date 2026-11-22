@@ -2286,7 +2286,7 @@
       "description": "One class of a [`WidgetOutput`] and its map defaults.",
       "properties": {
         "cluster": {
-          "description": "Whether markers cluster; absent: the widget's own rule (above 200 in view, EP-161).",
+          "description": "Whether markers cluster; absent: the widget's own rule (where they would overlap, EP-161).",
           "type": [
             "boolean",
             "null"

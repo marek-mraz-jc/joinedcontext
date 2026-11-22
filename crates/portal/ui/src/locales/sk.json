@@ -2211,8 +2211,8 @@
         },
         "cluster": {
           "label": "Zoskupiť blízke značky",
-          "hint": "Automaticky zoskupí značky, keď ich je v zábere viac ako 200, napríklad na mape celého mesta.",
-          "auto": "Automaticky (nad 200 v zábere)",
+          "hint": "Automaticky spojí značky, ktoré by sa prekrývali, napríklad miesta podujatí na mape celého mesta.",
+          "auto": "Automaticky (kde sa prekrývajú)",
           "on": "Vždy",
           "off": "Nikdy"
         },

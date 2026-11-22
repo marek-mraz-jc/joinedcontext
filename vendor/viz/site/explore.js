@@ -72,6 +72,8 @@
   var DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
   var TIMEOUT_MS = 15000;
   var MAP_LIMIT = 1000;
+  // Room round a fitted view for the widest badge, the zoom buttons (right) and the attribution (bottom).
+  var BADGE_ROOM = { top: 32, left: 32, right: 56, bottom: 48 };
   var MVT = "application/vnd.mapbox-vector-tile";
   var COLOUR = "#1f5fae";
   var TEXT = {
@@ -81,11 +83,12 @@
       timeout: "The data took longer than 15 seconds. Narrow the search or try again.", noAddress: "This page shows the live data of an open-data Endpoint; the address names none.",
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
+      mapFirst: "The map opens on the first {n} of {total} records; zoom in for the rest.", matches: "{n} of {total} records match the filter.",
       mapNone: "No entity of this query has a location.", mapLoading: "Loading map…",
       mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table above lists the same rows.",
         start: "The map could not load. The table above lists the same rows.",
         lost: "The map stopped drawing because the browser took back its graphics memory. The table above lists the same rows." },
-      mapRetry: "Try the map again", mapTiles: "Part of the map could not be loaded. The table above lists every row.", mapTwoFingers: "Use two fingers to move the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
+      mapRetry: "Try the map again", mapTiles: "Part of the map could not be loaded. The table above lists every row.", mapTwoFingers: "Use two fingers to move the map", mapWheel: "Use Ctrl + scroll to zoom the map", mapWheelMac: "Use \u2318 + scroll to zoom the map", links: "This query elsewhere", entityLink: "This entity in NGSI-LD", queryLink: "This query in NGSI-LD",
       viewLink: "This view (type, filter and order)", yes: "yes", no: "no",
       cardYes: "Yes", cardNo: "No", dev: "For developers", onMap: "Show on the map", idLabel: "Identifier", typeLabel: "Type", placeMap: "Location map",
       embed: "Embed", embedLead: "Put this live table on your own website. It keeps reading the current data; nothing is copied.",
@@ -96,11 +99,11 @@
       filterIs: "filter {q}", orderIs: "ordered by {col}", desc: " (descending)",
       code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
       invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
-      count: "On the map {n} of {total} · {none} without a location", countTiles: " · drawn as tiles", other: "Other",
+      count: "{n} in view · {located} with a location · {none} without", countTiles: " · drawn as tiles", other: "Other",
       panelOpen: "Map settings", pointsFrom: "Points from: {attr}", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
       colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
       popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
-      clusterLabel: "Group points", clusterHint: "Above 200 points in view, nearby points merge into a bubble with their count.",
+      clusterLabel: "Group points", clusterHint: "Points that would cover each other merge into a bubble with their count; click it to zoom in.",
       reset: "Reset to default", fallback: "The link names a map setting this type does not have ({what}); the map shows its default.", remove: "Remove {what}",
       chipGeo: "Location from: {v}", chipColor: "Colour by: {v}", chipPop: "In the bubble: {v}", chipCluster: "Group points: {v}", popNone: "title only", detailOpen: "Click for details"
     },
@@ -110,11 +113,12 @@
       timeout: "Dáta sa načítavali dlhšie ako 15 sekúnd. Zúžte hľadanie alebo to skúste znova.", noAddress: "Táto stránka ukazuje živé dáta Endpointu otvorených dát; adresa žiadny neuvádza.",
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
+      mapFirst: "Mapa sa otvára na prvých {n} z {total} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov.",
       mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…",
       mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované. Zvyčajne ho vráti zapnutie hardvérovej akcelerácie v nastaveniach prehliadača. Tabuľka vyššie uvádza tie isté riadky.",
         start: "Mapu sa nepodarilo načítať. Tabuľka vyššie uvádza tie isté riadky.",
         lost: "Mapa prestala kresliť, lebo prehliadač si vzal späť grafickú pamäť. Tabuľka vyššie uvádza tie isté riadky." },
-      mapRetry: "Skúsiť mapu znova", mapTiles: "Časť mapy sa nepodarilo načítať. Tabuľka vyššie uvádza všetky riadky.", mapTwoFingers: "Mapu posuniete dvoma prstami", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
+      mapRetry: "Skúsiť mapu znova", mapTiles: "Časť mapy sa nepodarilo načítať. Tabuľka vyššie uvádza všetky riadky.", mapTwoFingers: "Mapu posuniete dvoma prstami", mapWheel: "Mapu priblížite klávesom Ctrl a kolieskom myši", mapWheelMac: "Mapu priblížite klávesom \u2318 a kolieskom myši", links: "Tento dopyt inde", entityLink: "Táto entita v NGSI-LD", queryLink: "Tento dopyt v NGSI-LD",
       viewLink: "Toto zobrazenie (typ, filter a poradie)", yes: "áno", no: "nie",
       cardYes: "Áno", cardNo: "Nie", dev: "Pre vývojárov", onMap: "Zobraziť na mape", idLabel: "Identifikátor", typeLabel: "Typ", placeMap: "Mapa miesta",
       embed: "Vložiť na web", embedLead: "Dajte túto živú tabuľku na svoj web. Stále číta aktuálne dáta; nič sa nekopíruje.",
@@ -125,11 +129,11 @@
       filterIs: "filter {q}", orderIs: "zoradené podľa {col}", desc: " (zostupne)",
       code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
       invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
-      count: "Na mape {n} z {total} · {none} bez polohy", countTiles: " · kreslené ako dlaždice", other: "Iné",
+      count: "Vo výreze: {n} · s polohou: {located} · bez polohy: {none}", countTiles: " · kreslené ako dlaždice", other: "Iné",
       panelOpen: "Nastaviť mapu", pointsFrom: "Body z: {attr}", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
       colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
       popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
-      clusterLabel: "Zoskupovať body", clusterHint: "Nad 200 bodov vo výreze sa blízke body spoja do bubliny s ich počtom.",
+      clusterLabel: "Zoskupovať body", clusterHint: "Body, ktoré by sa prekrývali, sa spoja do bubliny s ich počtom; kliknutím ju priblížite.",
       reset: "Obnoviť predvolené", fallback: "Odkaz uvádza nastavenie mapy, ktoré tento typ nemá ({what}); mapa ukazuje predvolené.", remove: "Odstrániť {what}",
       chipGeo: "Poloha z: {v}", chipColor: "Farba podľa: {v}", chipPop: "V bubline: {v}", chipCluster: "Zoskupovať body: {v}", popNone: "len názov", detailOpen: "Kliknutím otvoríte detail"
     }
@@ -393,7 +397,8 @@
 
   var PALETTE = ["#1f5fae", "#c2410c", "#15803d", "#7e22ce", "#b91c1c", "#0e7490", "#a16207", "#be185d"];
   var GREY = "#6b7280";
-  var CLUSTER_ABOVE = 200;
+  var MIXED = "#334155"; // a bubble of several colours
+  var SAME_PLACE = 1e-5; // degrees, about a metre: nothing to zoom into
   var PLACE = ["address", "venue", "addressLocality", "place", "locationName"];
 
   // The GeoProperties of a type as the broker lists them (GET /types/{type}, attributeDetails), in the
@@ -412,7 +417,7 @@
   // What a reader may pick on a type's map, from the model's slots alone, and the default the map
   // starts from: the publisher's (`card.map`, API/11 EP-163) for each member the model offers, else
   // the built-in one: the first geometry, a colour per type, the card's roles (time, place, link) in
-  // the bubble, clusters above 200 in view.
+  // the bubble, points that would overlap merged.
   function mapOptions(geos, card) {
     var fields = ((card && card.fields) || []).filter(function (f) {
       return f && NAME.test(f.name || "") && !SYSTEM[f.name] && !f.hidden && geos.indexOf(f.name) < 0 && f.name !== (card.title || "name");
@@ -487,14 +492,51 @@
     return { points: points, shapes: shapes };
   }
 
-  // Rows at one position draw as one dot: each point carries how many share its position, so the
-  // dot can say so (29 events at 2 venues read as 2 dots otherwise).
-  function stacks(points) {
-    var n = {};
-    var key = function (p) { return p.geometry.coordinates.join(","); };
-    points.forEach(function (p) { n[key(p)] = (n[key(p)] || 0) + 1; });
-    points.forEach(function (p) { p.properties = Object.assign({}, p.properties, { jcStack: n[key(p)] }); });
-    return points;
+  // The badges of the points at a zoom. Rows at one position are one dot saying how many they are
+  // (29 events at 2 venues read as 2 dots otherwise); with `merge`, badges whose boxes would intersect
+  // become one, until none do (T-7503). MapLibre's own clusters cannot promise that: a cluster's
+  // centre moves as it grows, onto its neighbour. `jcR` is the badge's outer radius in pixels.
+  // ponytail: each badge is compared with all placed ones, fine for MAP_LIMIT points; a grid past that.
+  function badges(points, zoom, merge) {
+    var size = 512 * Math.pow(2, zoom), at = {}, groups = [];
+    var sized = function (g) {
+      var span = Math.max(g.box[1][0] - g.box[0][0], g.box[1][1] - g.box[0][1]);
+      g.cluster = span > SAME_PLACE;
+      g.r = g.cluster ? (g.n < 50 ? 16 : g.n < 200 ? 20 : 26) : g.n > 1 ? 19 : 14;
+      var sin = Math.sin(Math.max(-85.05, Math.min(85.05, g.lat)) * Math.PI / 180);
+      g.x = (g.lon + 180) / 360 * size;
+      g.y = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size;
+      return g;
+    };
+    points.forEach(function (p) {
+      var c = p.geometry.coordinates, key = c[0] + "," + c[1], props = p.properties || {};
+      if (!at[key]) groups.push(at[key] = { n: 0, lon: c[0], lat: c[1], box: [[c[0], c[1]], [c[0], c[1]]], id: props.jcId, colour: props.jcColour });
+      else if (at[key].colour !== props.jcColour) at[key].colour = MIXED;
+      at[key].n++;
+    });
+    var join = function (a, b) {
+      var n = a.n + b.n;
+      return sized({ n: n, id: a.id, colour: a.colour === b.colour ? a.colour : MIXED,
+        lon: (a.lon * a.n + b.lon * b.n) / n, lat: (a.lat * a.n + b.lat * b.n) / n,
+        box: [[Math.min(a.box[0][0], b.box[0][0]), Math.min(a.box[0][1], b.box[0][1])], [Math.max(a.box[1][0], b.box[1][0]), Math.max(a.box[1][1], b.box[1][1])]] });
+    };
+    var placed = [];
+    groups.forEach(function (first) {
+      var g = sized(first);
+      // Only a badge clear of every placed one is placed; a merged one is checked again.
+      for (var i = 0; merge && i < placed.length; i++) {
+        var o = placed[i];
+        if (Math.abs(o.x - g.x) >= o.r + g.r || Math.abs(o.y - g.y) >= o.r + g.r) continue;
+        g = join(placed.splice(i, 1)[0], g);
+        i = -1;
+      }
+      placed.push(g);
+    });
+    return placed.map(function (g) {
+      var props = { jcId: g.id, jcColour: g.colour, jcStack: g.n, jcR: g.r };
+      if (g.cluster) { props.jcCluster = true; props.jcBox = JSON.stringify(g.box); }
+      return { type: "Feature", geometry: { type: "Point", coordinates: [g.lon, g.lat] }, properties: props };
+    });
   }
 
   // Every position of a feature's geometry, [lon, lat] each; none for a feature without one.
@@ -531,10 +573,22 @@
     return { read: url };
   }
 
-  // "Na mape 412 z 1 680 · 96 bez polohy", numbers in the page's language.
+  function number(t, v) { return new Intl.NumberFormat(t.locale).format(v); }
+
+  // "Vo výreze: 412 · s polohou: 1 584 · bez polohy: 96": the last two add up to the query's count.
   function countLine(t, c) {
-    var n = function (v) { return new Intl.NumberFormat(t.locale).format(v); };
-    return say(t.count, { n: n(c.inView), total: n(c.total), none: n(Math.max(0, c.none)) }) + (c.tiled ? t.countTiles : "");
+    var none = Math.max(0, c.none);
+    return say(t.count, { n: number(t, c.inView), located: number(t, Math.max(0, c.total - none)), none: number(t, none) }) + (c.tiled ? t.countTiles : "");
+  }
+
+  // "Filtru vyhovuje 200 z 234 záznamov.": the pager's total beside the type's, both the broker's.
+  function matchLine(t, matching, all) {
+    return say(t.matches, { n: number(t, matching), total: number(t, all) });
+  }
+
+  // A first read that stopped short says so.
+  function capLine(t, read, total) {
+    return say(t.mapFirst, { n: number(t, read), total: total === null ? "…" : number(t, total) });
   }
 
   // ---- the page ----
@@ -870,11 +924,12 @@
               return r.arrayBuffer().then(function (data) { return { data: data }; });
             });
         });
-        // On a touch screen one finger scrolls the page past the map and two move it: a phone map
-        // fills most of a short screen.
-        var touch = !!(root.matchMedia && root.matchMedia("(pointer: coarse)").matches);
+        // The page scrolls past the map: the wheel zooms it only with Ctrl or ⌘ (T-7503: scrolling
+        // readers found it zoomed into one city) and two fingers move it, as a phone map fills most
+        // of a short screen. Never tilted: a tilt would push the badges onto each other.
         var map = mapStart(maplibre, { container: "map", style: styleOf(H.tiles, lang), attributionControl: false, center: [17.1, 48.15], zoom: 4,
-          cooperativeGestures: touch, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers } }, mapTrouble);
+          cooperativeGestures: true, maxPitch: 0, locale: { "CooperativeGesturesHandler.MobileHelpText": t.mapTwoFingers,
+            "CooperativeGesturesHandler.WindowsHelpText": t.mapWheel, "CooperativeGesturesHandler.MacHelpText": t.mapWheelMac } }, mapTrouble);
         if (!map) return;
         state.map = map;
         root.jcExploreMap = map; // for the browser journey
@@ -883,21 +938,21 @@
         // A phone's bottom-right corner holds the host page's assistant button: the (i) goes left.
         map.addControl(new maplibre.AttributionControl({ compact: true }), $("map").clientWidth < 640 ? "bottom-left" : "bottom-right");
         map.once("load", function () {
-          // Lines and areas in "jc", points in "jc-pts", which clusters above CLUSTER_ABOVE in view.
+          // Lines and areas in "jc", the points' badges of this zoom in "jc-pts" (badges).
           var empty = { type: "FeatureCollection", features: [] };
           var colour = ["coalesce", ["get", "jcColour"], COLOUR];
           map.addSource("jc", { type: "geojson", data: empty });
-          map.addSource("jc-pts", { type: "geojson", data: empty, cluster: false, clusterRadius: 50, clusterMaxZoom: 14 });
+          map.addSource("jc-pts", { type: "geojson", data: empty });
           map.addLayer({ id: "jc-fill", type: "fill", source: "jc", filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]], paint: { "fill-color": colour, "fill-opacity": 0.25 } });
           map.addLayer({ id: "jc-line", type: "line", source: "jc", paint: { "line-color": colour, "line-width": 2 } });
-          map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 14, 50, 18, 200, 24], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+          var merged = ["has", "jcCluster"], single = ["!", merged], count = { "text-field": ["to-string", ["get", "jcStack"]], "text-size": 12, "text-allow-overlap": true };
+          map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: merged, paint: { "circle-color": colour, "circle-radius": ["-", ["get", "jcR"], 2], "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
           // The count on a cluster needs the style's glyphs; the basemap styles have them.
-          if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
-          var stacked = [">", ["coalesce", ["get", "jcStack"], 1], 1];
+          if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: merged, layout: count, paint: { "text-color": "#fff" } });
           // A dark halo under each dot keeps the data apart from the basemap's own blue icons.
-          map.addLayer({ id: "jc-point-halo", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": "rgba(15, 23, 42, 0.35)", "circle-radius": ["case", stacked, 19, 14], "circle-blur": 0.3 } });
-          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: { "circle-color": colour, "circle-radius": ["case", stacked, 15, 10], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
-          if (map.getStyle().glyphs) map.addLayer({ id: "jc-stack", type: "symbol", source: "jc-pts", filter: ["all", ["!", ["has", "point_count"]], stacked], layout: { "text-field": ["to-string", ["get", "jcStack"]], "text-size": 12, "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
+          map.addLayer({ id: "jc-point-halo", type: "circle", source: "jc-pts", filter: single, paint: { "circle-color": "rgba(15, 23, 42, 0.35)", "circle-radius": ["get", "jcR"], "circle-blur": 0.3 } });
+          map.addLayer({ id: "jc-point", type: "circle", source: "jc-pts", filter: single, paint: { "circle-color": colour, "circle-radius": ["-", ["get", "jcR"], 4], "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
+          if (map.getStyle().glyphs) map.addLayer({ id: "jc-stack", type: "symbol", source: "jc-pts", filter: ["all", single, [">", ["get", "jcStack"], 1]], layout: count, paint: { "text-color": "#fff" } });
           // On a narrow map the attribution starts folded to its (i) button, off the data.
           if (map.getContainer().clientWidth < 640) Array.prototype.forEach.call(map.getContainer().querySelectorAll(".maplibregl-compact-show"), function (n) { n.classList.remove("maplibregl-compact-show"); });
           ["jc-point", "jc-line", "jc-fill"].forEach(function (layer) {
@@ -909,10 +964,8 @@
             map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; if (state.popup) state.popup.remove(); });
           });
           map.on("click", "jc-cluster", function (e) {
-            var c = e.features[0];
-            Promise.resolve(map.getSource("jc-pts").getClusterExpansionZoom(c.properties.cluster_id)).then(function (z) {
-              map.easeTo({ center: c.geometry.coordinates, zoom: z });
-            }, function () {});
+            // Its own points fill the view, which takes the badge apart.
+            map.fitBounds(JSON.parse(e.features[0].properties.jcBox), { padding: BADGE_ROOM });
           });
           map.on("mouseenter", "jc-cluster", function () { map.getCanvas().style.cursor = "pointer"; });
           map.on("mouseleave", "jc-cluster", function () { map.getCanvas().style.cursor = ""; });
@@ -928,6 +981,7 @@
             map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
           });
           map.on("moveend", mapMoved);
+          map.on("zoom", function () { drawBadges(); });
           firstView(first).then(function () {
             if (state.mapAt) map.jumpTo({ center: state.mapAt, zoom: 15 });
             state.mapAt = null;
@@ -947,7 +1001,7 @@
         var rows = ((answer.body && answer.body.features) || []).length;
         // Every row of the query came back: the map holds them and counts each view itself.
         var whole = rows < MAP_LIMIT && (answer.count === null || +answer.count <= rows);
-        return { key: key, features: features, whole: whole, total: answer.count === null ? null : +answer.count };
+        return { key: key, features: features, rows: rows, whole: whole, total: answer.count === null ? null : +answer.count };
       }, function (e) { if (state.first && state.first.key === key) state.first = null; return { key: key, error: e }; }));
     }
 
@@ -972,14 +1026,14 @@
         state.fitting = true;
         try {
           if (box && box[0][0] === box[1][0] && box[0][1] === box[1][1]) map.jumpTo({ center: box[0], zoom: 14 });
-          else if (box) map.fitBounds(box, { padding: 30, maxZoom: 15, animate: false });
+          else if (box) map.fitBounds(box, { padding: BADGE_ROOM, maxZoom: 15, animate: false });
         } finally { state.fitting = false; }
         if (!got.features.length) { $("map-note").textContent = t.mapNone; state.inView = 0; showCount(); return; }
         if (got.whole) return mapMoved();
         // The view now shows what the read held; its count in view comes from the query.
         var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
         state.viewUrl = entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: MAP_LIMIT, count: "true", lang: lang, format: "keyValues" }, bboxQuery(bb), ownGeo()));
-        $("map-note").textContent = say(t.mapCap, { n: got.features.length, total: got.total === null ? "…" : got.total });
+        $("map-note").textContent = capLine(t, got.rows, got.total);
         get(entitiesUrl(api, Object.assign({ type: state.type, q: state.q, limit: 0, count: "true" }, bboxQuery(bb), ownGeo()))).then(function (a) {
           if (asked === state.mapAsk && a.count !== null) { state.inView = +a.count; showCount(); }
         }, function () {});
@@ -1011,6 +1065,7 @@
         map.addLayer(of({ id: "jc-tile-line", type: "line", filter: ["!", is(["Point", "MultiPoint"])], paint: { "line-color": COLOUR, "line-width": 2 } }));
         map.addLayer(of({ id: "jc-tile-point", type: "circle", filter: is(["Point", "MultiPoint"]), paint: { "circle-color": COLOUR, "circle-radius": 5, "circle-stroke-color": "#fff", "circle-stroke-width": 1.5 } }));
         map.getSource("jc").setData({ type: "FeatureCollection", features: [] });
+        state.points = null;
         map.getSource("jc-pts").setData({ type: "FeatureCollection", features: [] });
         legend([]);
         state.mapData = [];
@@ -1044,18 +1099,40 @@
       if (ok) $("map-count").textContent = countLine(t, { inView: state.inView, total: state.total, none: state.none, tiled: !!state.tiled });
     }
 
-    // The features of the view, coloured by the reader's field, points clustered when they are many.
+    // The filter's count beside the type's: the pager says only the first (T-7503: 200 read as all of 234).
+    function matched() {
+      var type = state.type, q = state.q, key = type + "\u0000" + q, line = $("grid-count");
+      if (state.matchKey === key) return;
+      state.matchKey = key;
+      line.hidden = true;
+      if (!type || !q) return;
+      var ask = function (filter) { return get(entitiesUrl(api, { type: type, q: filter, limit: 0, count: "true" })); };
+      Promise.all([ask(q), ask("")]).then(function (a) {
+        if (state.matchKey !== key || a[0].count === null || a[1].count === null) return;
+        line.textContent = matchLine(t, +a[0].count, +a[1].count);
+        line.hidden = false;
+        height();
+      }, function () {});
+    }
+
+    // The features of the view, coloured by the reader's field, the points as badges.
     function paint(features) {
       var m = state.mapping, map = state.map;
       var c = colourClasses(features, m.choice.color, m.card, t);
       var parts = splitPoints(features.map(function (f, i) { return { type: "Feature", geometry: f.geometry, properties: { jcId: f.id, jcColour: c.colours[i] } }; }));
-      stacks(parts.points);
-      var fc = function (list) { return { type: "FeatureCollection", features: list }; };
-      map.getSource("jc").setData(fc(parts.shapes));
-      var pts = map.getSource("jc-pts");
-      if (pts.setClusterOptions) pts.setClusterOptions({ cluster: m.choice.cluster && parts.points.length > CLUSTER_ABOVE, clusterRadius: 50, clusterMaxZoom: 14 });
-      pts.setData(fc(parts.points));
+      map.getSource("jc").setData({ type: "FeatureCollection", features: parts.shapes });
+      state.points = parts.points;
+      drawBadges(true);
       legend(c.legend);
+    }
+    // Worked out again each quarter zoom, at its lower end: above it the badges only move apart.
+    function drawBadges(fresh) {
+      var map = state.map;
+      if (!map || !state.points || !state.mapping) return;
+      var step = Math.floor(map.getZoom() * 4) / 4;
+      if (fresh !== true && step === state.badgeZoom) return;
+      state.badgeZoom = step;
+      map.getSource("jc-pts").setData({ type: "FeatureCollection", features: badges(state.points, step, state.mapping.choice.cluster) });
     }
     function legend(items) {
       var list = $("map-legend");
@@ -1105,7 +1182,7 @@
       if (plan.local !== undefined) {
         state.inView = plan.local;
         showCount();
-        $("map-note").textContent = t.mapHint;
+        $("map-note").textContent = state.held.length ? t.mapHint : t.mapNone;
         return;
       }
       if (plan.skip) return;
@@ -1223,6 +1300,7 @@
       // The catalogue's Subscribe menu builds a calendar of these rows (brief 132, END-16): the
       // type and q go to the catalogue's origin alone, never to any page that frames this one.
       if (window.parent !== window && H.catalogue) window.parent.postMessage({ type: "jc-viz-query", entityType: state.type || "", q: state.q }, H.catalogue);
+      matched();
       if (moved) drawMap();
     }
 
@@ -1375,7 +1453,7 @@
     height();
   }
 
-  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, stacks: stacks, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
+  root.jcExplore = { parseHash: parseHash, hashOf: hashOf, base: base, hosts: hosts, styleOf: styleOf, entitiesUrl: entitiesUrl, bboxQuery: bboxQuery, links: links, templateOf: templateOf, tilesetUrl: tilesetUrl, geoProps: geoProps, mapOptions: mapOptions, mapChoice: mapChoice, colourClasses: colourClasses, splitPoints: splitPoints, boundsOf: boundsOf, badges: badges, matchLine: matchLine, capLine: capLine, inBox: inBox, viewPlan: viewPlan, countLine: countLine, show: show, cardValue: cardValue, namedLink: namedLink, cardOf: cardOf, hostOf: hostOf, humanise: humanise, mapStart: mapStart, TEXT: TEXT };
   if (typeof module === "object" && module.exports) module.exports = root.jcExplore;
   else if (typeof document !== "undefined") main();
 })(typeof self !== "undefined" ? self : this);

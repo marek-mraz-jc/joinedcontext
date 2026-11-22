@@ -414,7 +414,7 @@ One class of a [`WidgetOutput`] and its map defaults.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `cluster` | boolean | no | Whether markers cluster; absent: the widget's own rule (above 200 in view, EP-161). |
+| `cluster` | boolean | no | Whether markers cluster; absent: the widget's own rule (where they would overlap, EP-161). |
 | `mapping` | [WidgetRoles](#widgetroles) | no | The roles: which attribute the map reads for each. |
 | `table` | [WidgetTable](#widgettable) | no | Where the table starts; absent: the model's `view_*` annotations (EP-164). |
 | `type` | string | yes | The model class, by its local name (`Event`). |

@@ -2211,8 +2211,8 @@
         },
         "cluster": {
           "label": "Group nearby markers",
-          "hint": "Automatic groups markers when more than 200 are in view, for example on a city-wide map.",
-          "auto": "Automatic (above 200 in view)",
+          "hint": "Automatic merges markers that would cover each other, for example venues on a city-wide map.",
+          "auto": "Automatic (where they overlap)",
           "on": "Always",
           "off": "Never"
         },

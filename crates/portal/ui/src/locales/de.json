@@ -2211,8 +2211,8 @@
         },
         "cluster": {
           "label": "Nahe Marker gruppieren",
-          "hint": "Automatisch gruppiert Marker ab mehr als 200 im Ausschnitt, zum Beispiel auf einer Stadtkarte.",
-          "auto": "Automatisch (ab 200 im Ausschnitt)",
+          "hint": "Automatisch fasst Marker zusammen, die sich überdecken würden, zum Beispiel Veranstaltungsorte auf einer Stadtkarte.",
+          "auto": "Automatisch (wo sie sich überdecken)",
           "on": "Immer",
           "off": "Nie"
         },

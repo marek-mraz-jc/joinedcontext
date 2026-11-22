@@ -12,7 +12,7 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, quote, unquote
 
 import pytest
 
@@ -30,9 +30,32 @@ EVENTS = [
 ]
 NO_WEBGL = ["--disable-gpu", "--disable-webgl", "--disable-3d-apis"]
 SHOTS = os.environ.get("SHOTS_DIR")
+# bbsk-podujatia as the broker answered it on 2026-11-22 (T-7503): [position or null, starts today or later].
+PODUJATIA = [
+    {"type": "Feature", "id": f"urn:ngsi-ld:Event:p{n}", "geometry": at and {"type": "Point", "coordinates": at},
+     "properties": {"type": "Event", "name": f"Podujatie {n}", "upcoming": later}}
+    for n, (at, later) in enumerate(json.loads((Path(__file__).parent / "fixtures" / "bbsk_podujatia.json").read_text()))
+]
 
 
-def serve(style_ok):
+def matching(events, q):
+    """The stub broker's q: the tests ask `upcoming==true`, the map's counts add `!location`."""
+    if "!location" in q:
+        events = [e for e in events if not e["geometry"]]
+    if "upcoming" in q:
+        events = [e for e in events if e["properties"].get("upcoming")]
+    return events
+
+
+def in_view(events, asked):
+    if "coordinates" not in asked:
+        return events
+    ring = json.loads(asked["coordinates"][0])[0]
+    (w, s), (e, n) = ring[0], ring[2]
+    return [f for f in events if f["geometry"] and w <= f["geometry"]["coordinates"][0] <= e and s <= f["geometry"]["coordinates"][1] <= n]
+
+
+def serve(style_ok, events=EVENTS, cap=1000):
     # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
     missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
     if missing:
@@ -79,7 +102,7 @@ def serve(style_ok):
                 types = [{"id": "Event", "type": "EntityType", "typeName": "Event", "attributeNames": ["location", "name"]}]
                 return self.send(200, "application/json", json.dumps(types).encode())
             if path == api + "types/Event":
-                info = {"id": "Event", "typeName": "Event", "entityCount": 2, "attributeDetails": [
+                info = {"id": "Event", "typeName": "Event", "entityCount": len(events), "attributeDetails": [
                     {"attributeName": "location", "attributeTypes": ["GeoProperty"]},
                     {"attributeName": "name", "attributeTypes": ["Property"]}]}
                 return self.send(200, "application/json", json.dumps(info).encode())
@@ -93,14 +116,17 @@ def serve(style_ok):
                 return self.send(200, "application/json", json.dumps({"definitions": {"Event": {"type": "object", "properties": props}}}).encode())
             if path.startswith(api + "entities/"):
                 id = unquote(path[len(api + "entities/"):])
-                row = [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS if e["id"] == id]
+                row = [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in events if e["id"] == id]
                 return self.send(200, "application/json", json.dumps(row[0]).encode()) if row else self.send(404, "application/json", b"{}")
             if path == api + "entities":
-                count = {"NGSILD-Results-Count": str(len(EVENTS))}
+                asked = parse_qs(query)
+                found = in_view(matching(events, asked.get("q", [""])[0]), asked)
+                count = {"NGSILD-Results-Count": str(len(found))}
+                start = int(asked.get("offset", ["0"])[0])
+                page = found[start : start + min(cap, int(asked.get("limit", ["1000"])[0]))]
                 if "application/geo+json" in (self.headers.get("Accept") or ""):
-                    fc = {"type": "FeatureCollection", "features": EVENTS[: 0 if "limit=0" in query else None]}
-                    return self.send(200, "application/geo+json", json.dumps(fc).encode(), count)
-                rows = [] if "limit=0" in query else [{"id": e["id"], "type": "Event", **e["properties"], "location": e["geometry"]} for e in EVENTS]
+                    return self.send(200, "application/geo+json", json.dumps({"type": "FeatureCollection", "features": page}).encode(), count)
+                rows = [{"id": e["id"], "type": "Event", **e["properties"], **({"location": e["geometry"]} if e["geometry"] else {})} for e in page]
                 return self.send(200, "application/json", json.dumps(rows).encode(), count)
             return self.send(404, "application/json", b"{}")
 
@@ -116,11 +142,11 @@ def pw():
         yield p
 
 
-def open_explorer(browser, srv, width, lang="en"):
+def open_explorer(browser, srv, width, lang="en", q=""):
     page = browser.new_page(viewport={"width": width, "height": 900})
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(f"http://127.0.0.1:{srv.server_port}/viz/explore.html#{SLUG}&type=Event&lang={lang}")
+    page.goto(f"http://127.0.0.1:{srv.server_port}/viz/explore.html#{SLUG}&type=Event&lang={lang}" + (f"&q={quote(q, safe='')}" if q else ""))
     page.wait_for_selector("#map-section:not([hidden])", timeout=20_000)
     # The map starts lazily, once it has stayed near the reader's view.
     page.locator("#map-section").scroll_into_view_if_needed()
@@ -224,6 +250,126 @@ def test_a_map_whose_style_fails_offers_a_retry_that_draws_it(pw, width):
         page.wait_for_function("() => window.jcExploreMap && window.jcExploreMap.getSource('jc-pts')", timeout=20_000)
         assert page.locator("#map-off").is_hidden()
         assert page.locator("#map-from").is_visible() and page.locator("#map-panel-open").is_visible()
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+WEBGL = ["--disable-dev-shm-usage", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"]
+# The drawn badges and the view, in the map's own pixels.
+DRAWN = """() => {
+  const m = self.jcExploreMap;
+  const badges = m.getSource("jc-pts").serialize().data.features.map((f) => {
+    const p = m.project(f.geometry.coordinates);
+    return {x: p.x, y: p.y, r: f.properties.jcR, n: f.properties.jcStack};
+  });
+  const c = m.getContainer();
+  return {badges, bounds: m.getBounds().toArray(), w: c.clientWidth, h: c.clientHeight};
+}"""
+
+
+def wait_drawn(page):
+    page.wait_for_function("() => self.jcExploreMap && !document.getElementById('map-count').hidden && self.jcExploreMap.loaded()", timeout=40_000)
+
+
+def overlaps(badges):
+    return [(a, b) for i, a in enumerate(badges) for b in badges[i + 1:]
+            if abs(a["x"] - b["x"]) < a["r"] + b["r"] and abs(a["y"] - b["y"]) < a["r"] + b["r"]]
+
+
+@pytest.mark.parametrize("width, lang", [(1440, "en"), (400, "sk")])
+@pytest.mark.parametrize("case", ["all", "default-filter", "all-located", "none-located", "bratislava"])
+def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, width, lang, case):
+    """T-7503: the owner's page read "49 of 200" beside 234 Events, the badges one on another."""
+    events = {
+        "all-located": [e for e in PODUJATIA if e["geometry"]],
+        "none-located": [{**e, "geometry": None} for e in PODUJATIA[:7]],
+        "bratislava": EVENTS,
+    }.get(case, PODUJATIA)
+    q = "upcoming==true" if case == "default-filter" else ""
+    shown = matching(events, q)
+    points = [e["geometry"]["coordinates"] for e in shown if e["geometry"]]
+    n, none = len(points), len(shown) - len(points)
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, events)
+    try:
+        page, errors = open_explorer(browser, srv, width, lang, q)
+        if not points:
+            # No row has a place: the page says so, whether or not it draws an empty map.
+            page.wait_for_function("() => document.getElementById('map-note').textContent.match(/has a location|nemá polohu/)", timeout=40_000)
+        wait_drawn(page)
+        line = {"en": f"{n} in view · {n} with a location · {none} without", "sk": f"Vo výreze: {n} · s polohou: {n} · bez polohy: {none}"}[lang]
+        assert page.locator("#map-count").inner_text() == line
+        of = page.locator("#grid-count")
+        if q:
+            of.wait_for(state="visible", timeout=10_000)
+            assert of.inner_text() == {"en": "200 of 234 records match the filter.", "sk": "Filtru vyhovuje 200 z 234 záznamov."}[lang]
+        else:
+            assert of.is_hidden()
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        assert all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
+        assert sum(b["n"] for b in view["badges"]) == n
+        assert all(b["r"] <= b["x"] <= view["w"] - b["r"] and b["r"] <= b["y"] <= view["h"] - b["r"] for b in view["badges"]), view
+        assert overlaps(view["badges"]) == []
+        page.wait_for_timeout(800)
+        shot(page, f"map-{case}-open-{width}")
+        if points:
+            zoom = page.evaluate("() => self.jcExploreMap.getZoom()")
+            for step in (1, 1.6, 3):
+                page.evaluate("(z) => self.jcExploreMap.jumpTo({zoom: z})", zoom + step)
+                page.wait_for_function("() => self.jcExploreMap.loaded()", timeout=20_000)
+                view = page.evaluate(DRAWN)
+                assert sum(b["n"] for b in view["badges"]) == n
+                assert overlaps(view["badges"]) == [], step
+                page.wait_for_timeout(500)
+                if step == 1:
+                    shot(page, f"map-{case}-zoomed-{width}")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA, cap=200)
+    try:
+        page, errors = open_explorer(browser, srv, 1440)
+        wait_drawn(page)
+        assert page.locator("#map-note").inner_text() == "The map opens on the first 200 of 234 records; zoom in for the rest."
+        assert page.locator("#map-count").inner_text().endswith("231 with a location · 3 without")
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_the_wheel_scrolls_the_page_and_only_ctrl_with_it_zooms_the_map(pw):
+    """T-7503: a reader scrolling past the map found it zoomed into Banská Bystrica, "49 of 200"."""
+    browser = pw.chromium.launch(args=WEBGL)
+    srv = serve(lambda: True, PODUJATIA)
+    try:
+        page, errors = open_explorer(browser, srv, 1440)
+        wait_drawn(page)
+        page.locator("#map").scroll_into_view_if_needed()
+        box = page.locator("#map").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        zoom, top = page.evaluate("() => [self.jcExploreMap.getZoom(), scrollY]")
+        for _ in range(4):
+            page.mouse.wheel(0, -240)
+            page.wait_for_timeout(100)
+        page.wait_for_timeout(700)
+        after, moved = page.evaluate("() => [self.jcExploreMap.getZoom(), scrollY]")
+        assert after == zoom and moved < top
+        page.locator("#map").scroll_into_view_if_needed()
+        box = page.locator("#map").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.keyboard.down("Control")
+        page.mouse.wheel(0, -240)
+        page.keyboard.up("Control")
+        page.wait_for_function("(z) => self.jcExploreMap.getZoom() > z", arg=zoom, timeout=5_000)
         assert errors == []
     finally:
         browser.close()
