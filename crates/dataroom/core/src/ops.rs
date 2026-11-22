@@ -2464,13 +2464,9 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
     if activate {
         enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Approve, &target))?;
     }
-    // A pinned version decides who is in a feed: it is never replaced under its pin.
-    if profile.built_in {
-        return Err(DataroomError::field_error(
-            "profile.builtIn",
-            "a built-in profile ships with the release; upload under an id of your own",
-        ));
-    }
+    // An upload never becomes a built-in: those ship with the release (their ids are refused
+    // by the validator).
+    profile.built_in = false;
     let mut cat = own_catalogue(op_ctx, req_ctx).await?;
     // An upload activated through a national base needs what that feed needs: the base's
     // choice is checked as if the catalogue took it up (a Portal-managed choice aside).

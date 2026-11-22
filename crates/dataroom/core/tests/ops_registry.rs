@@ -915,13 +915,15 @@ async fn declarations_are_closed_to_invented_values_and_borrowed_identities() {
                "title": {"en": "City"}, "shapesTurtle": shapes, "requiredLanguages": [],
                "builtIn": built_in, "formFields": []}})
     };
-    let r = w
+    let saved = w
         .run(&w.admin(), "profile.propose", profile("", true))
-        .await;
-    assert!(field(&r, "profile.builtIn"), "{r:?}");
-    w.run(&w.admin(), "profile.propose", profile("", false))
         .await
         .expect("a first version");
+    assert_eq!(
+        saved["profile"]["builtIn"],
+        json!(false),
+        "an upload never becomes a built-in"
+    );
     let r = w
         .run(&w.admin(), "profile.propose", profile("# other", false))
         .await;
