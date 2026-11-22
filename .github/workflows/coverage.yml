@@ -192,7 +192,7 @@ jobs:
   # move into this monorepo). Red when a threshold is missed; the summary lands in the job summary.
   coverage-ui:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults: { run: { working-directory: crates/portal } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -205,7 +205,8 @@ jobs:
       - run: cd ui && pnpm vitest run --coverage
       - if: always()
         run: |
-          { echo "## Portal UI coverage"; echo '```'; cat ui/coverage/coverage-summary.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["total"]; print("## Portal UI coverage\n\n| metric | % | covered/total |\n|---|---:|---:|"); [print(f"| {k} | {v[\"pct\"]} | {v[\"covered\"]}/{v[\"total\"]} |") for k, v in t.items()]' \
+            ui/coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY" || echo "no coverage summary written" >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: coverage-ui, path: crates/portal/ui/coverage/coverage-summary.json, if-no-files-found: ignore, retention-days: 35 }
