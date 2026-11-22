@@ -515,6 +515,9 @@ async fn topology_and_tenant_checks_refuse_what_does_not_match() {
             continue;
         };
         if std::str::from_utf8(&m.payload).is_ok_and(|p| p.contains(&id)) {
+            // A subscriber, so the drop's log line is written as in production.
+            let log = tracing_subscriber::fmt().with_test_writer().finish();
+            let _log = tracing::subscriber::set_default(log);
             assert!(
                 antares_bus::nats::decode(&m).is_none(),
                 "a mismatched tenant is dropped"
@@ -524,6 +527,33 @@ async fn topology_and_tenant_checks_refuse_what_does_not_match() {
         m.ack().await.expect("ack");
     }
     assert!(dropped, "the mismatched event was delivered to the durable");
+}
+
+/// `next_delta` acks and skips a registry message that is not JSON and
+/// returns the next one that is.
+#[tokio::test(flavor = "multi_thread")]
+async fn next_delta_skips_a_message_that_is_not_json() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let consumer = bus.consume_registry_broadcast().await.expect("consumer");
+    let mut stream = consumer.messages().await.expect("messages");
+    let tenant = TenantId::new(&format!("nd{}", nonce())).expect("tenant");
+    let subject = antares_bus::subjects::registry_subject(&tenant);
+    let js = async_nats::jetstream::new(async_nats::connect(&url).await.expect("raw client"));
+    for body in ["not json", r#"{"delta":1}"#] {
+        js.publish(subject.clone(), body.into())
+            .await
+            .expect("publish")
+            .await
+            .expect("stored");
+    }
+    let next = tokio::time::timeout(
+        Duration::from_secs(10),
+        antares_bus::nats::next_delta(&mut stream),
+    )
+    .await
+    .expect("a delta within 10 s");
+    assert_eq!(next, Some(serde_json::json!({"delta": 1})));
 }
 
 /// A TCP hop between the bus and NATS that the test can cut and hold shut.
@@ -588,6 +618,11 @@ async fn a_lost_connection_is_counted_and_unacked_publishes_are_reported() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(!bus.connected(), "the bus sees the cut");
+    let e = bus
+        .reply_ready(format!("antares.mcp.hop{}", nonce()), |p| Some(p.to_vec()))
+        .await
+        .expect_err("no server confirms the subscription");
+    assert!(e.to_string().starts_with("bus error: "), "{e}");
     let tenant = TenantId::new(&format!("hop{}", nonce())).expect("tenant");
     let (sent, failed) = bus
         .publish_all(&[

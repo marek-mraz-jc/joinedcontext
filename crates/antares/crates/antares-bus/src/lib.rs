@@ -174,10 +174,10 @@ mod tests {
         let limit = 256 * 1024;
         let checked = e.claim_check(limit);
         let wire = serde_json::to_vec(&checked).expect("serialize");
+        let len = wire.len();
         assert!(
-            wire.len() <= limit,
-            "the published message must fit the bus limit, got {} bytes",
-            wire.len()
+            len <= limit,
+            "the published message must fit the bus limit, got {len} bytes"
         );
         assert!(
             checked.payload.is_some(),
