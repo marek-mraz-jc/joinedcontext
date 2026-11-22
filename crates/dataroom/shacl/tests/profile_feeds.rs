@@ -2,7 +2,7 @@
 //! field the profile requires (C17). The EU feed keeps what its own shapes allow.
 
 use dataroom_core::{Catalogue, Dataset};
-use dataroom_rdf::{dataset_to_graph, DcatProfile};
+use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfile};
 use dataroom_shacl::{validate_graph_against_shapes, ProfileRegistry};
 use serde_json::Value;
 
@@ -16,11 +16,44 @@ fn complete() -> (Catalogue, Dataset) {
         .as_object_mut()
         .expect("a distribution")
         .remove("termsOfUse");
-    dataset["extras"] = serde_json::json!({"personal_data": "does-not-contain"});
+    dataset["extras"] = serde_json::json!({
+        "personal_data": "does-not-contain",
+        // Read by the profiles that name it as an additional property.
+        "topic_category": "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/environment",
+    });
     (
         serde_json::from_value(fixture["catalogue"].take()).expect("catalogue"),
         serde_json::from_value(dataset).expect("dataset"),
     )
+}
+
+/// The violations of the whole feed of `dataset`: its catalogue node included. With
+/// `PROFILE_FEEDS_OUT` set, each feed is left there for another SHACL engine to read.
+fn feed_violations(catalogue: &Catalogue, dataset: &Dataset, profile: DcatProfile) -> Vec<String> {
+    let stack = ProfileRegistry::new()
+        .stack((catalogue.org_id, catalogue.id), profile.id(), None)
+        .expect("a built-in profile");
+    let datasets = std::slice::from_ref(dataset);
+    let publishers = std::collections::BTreeMap::new();
+    let graph = catalogue_to_graph(catalogue, datasets, &publishers, profile, None);
+    if let Some(dir) = option_env!("PROFILE_FEEDS_OUT") {
+        let path = std::path::Path::new(dir).join(format!("{}.ttl", profile.id()));
+        std::fs::write(path, dataroom_rdf::turtle::serialize_turtle(&graph)).expect("feed written");
+    }
+    validate_graph_against_shapes(
+        &graph,
+        &stack.shapes,
+        catalogue.org_id,
+        catalogue.id,
+        "catalog",
+        profile.id(),
+        "1",
+    )
+    .findings
+    .into_iter()
+    .filter(|f| f.severity == dataroom_core::ShaclSeverity::Violation)
+    .map(|f| f.result_path.unwrap_or(f.source_shape))
+    .collect()
 }
 
 /// The paths of `dataset`'s violations in `profile`; empty when it stays in that feed.
@@ -48,13 +81,12 @@ fn violations(catalogue: &Catalogue, dataset: &Dataset, profile: DcatProfile) ->
 #[test]
 fn a_complete_dataset_passes_every_profiles_shapes() {
     let (catalogue, dataset) = complete();
-    for profile in [
-        DcatProfile::eu(),
-        DcatProfile::from_token("dcat-ap-cz").expect("installed"),
-        DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
-    ] {
+    // Every profile a catalogue may choose, so a new directory is under test with no edit here.
+    for profile in DcatProfile::installed().filter(|profile| profile.selectable) {
         let found = violations(&catalogue, &dataset, profile);
         assert!(found.is_empty(), "{}: {found:#?}", profile.id());
+        let found = feed_violations(&catalogue, &dataset, profile);
+        assert!(found.is_empty(), "{} feed: {found:#?}", profile.id());
     }
 }
 
