@@ -50,8 +50,4 @@ impl MockClock {
             .expect("a time within jiff's range");
         *guard
     }
-
-    pub fn set(&self, dt: Timestamp) {
-        *self.now.lock().unwrap() = dt;
-    }
 }
