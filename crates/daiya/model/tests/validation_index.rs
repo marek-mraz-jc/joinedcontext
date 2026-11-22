@@ -81,6 +81,17 @@ fn schema_rules_refuse_bad_titles_uids_months_tooltips_and_sizes() {
             .starts_with("/graphTooltip")
     );
     assert!(validate(&json!({"title": "t", "graphTooltip": 2})).is_ok());
+    // A uid of letters, digits, '-' and '_', and a document of exactly the size cap, pass.
+    assert!(validate(&json!({"title": "t", "uid": "a-b_C9"})).is_ok());
+    assert!(
+        classify_and_validate(
+            limits.max_dashboard_json_bytes,
+            &doc(&ok),
+            &BTreeSet::new(),
+            &limits
+        )
+        .is_ok()
+    );
 }
 
 #[test]
