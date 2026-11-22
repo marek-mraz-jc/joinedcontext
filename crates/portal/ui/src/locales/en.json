@@ -13549,7 +13549,7 @@
       "notIn": "Not in {profile}",
       "lacks": "Missing or not valid: {fields}",
       "noPublisherTitle": "Missing publisher",
-      "noPublisher": "These feeds are unavailable until the Organization declares its publisher IRI in its settings (Catalogue, Publisher, URI): {profiles}."
+      "noPublisher": "{profiles}: no feed until your Organization says who publishes its data."
     },
     "hosts": {
       "title": "Portal hosts",
@@ -13738,9 +13738,14 @@
       "always": "Always served",
       "none": "No other profile is installed here. Ask your operator for the one your national portal harvests.",
       "notInstalled": "Not installed here: its feed is unavailable. Untick it or ask your operator.",
-      "unknown": "The profiles this catalogue serves now could not be read, so they cannot be changed. Reload the page.",
-      "declare": "A national profile needs the publisher IRI of your Organization, for example https://www.helsinki.fi/.",
-      "declareLink": "Open the Organization’s settings"
+      "unknown": "They cannot be changed until they are read, so that no feed is withdrawn by mistake.",
+      "declareLink": "Set it in the Organization’s settings",
+      "needsPublisher": "Needs your Organization's publisher address (IRI), for example https://www.helsinki.fi/.",
+      "needsRegistered": "Needs your Organization's publisher address (IRI) from the national register; it starts with {prefix}",
+      "unavailable": "Chosen, but its feed is paused. {reason} Set it, or untick the profile.",
+      "refused": "{profile} was not saved. {reason}",
+      "unknownTitle": "The served profiles could not be read",
+      "retry": "Read again"
     }
   },
   "assistantGuides": {

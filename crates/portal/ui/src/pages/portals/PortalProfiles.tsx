@@ -6,7 +6,7 @@ import { door } from "../../api/odata";
 import type { RestAnswer } from "../../api/odata";
 import { localized } from "../../api/manifest";
 import type { components } from "../../api/schema";
-import { Alert, Checkbox } from "../../components/ui";
+import { Alert, Button, Checkbox } from "../../components/ui";
 
 type PortalProfile = components["schemas"]["PortalProfile"];
 
@@ -73,6 +73,25 @@ export function PortalProfilesField({
     if (!options.includes(id)) options.push(id);
   }
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const needs = (option: PortalProfile) =>
+    option.publisherPrefix ? t("portals.profiles.needsRegistered", { prefix: option.publisherPrefix }) : t("portals.profiles.needsPublisher");
+  const settings = (
+    <Link to="/organization/$tab" params={{ tab: "settings" }} className="focus-ring underline hover:no-underline">
+      {t("portals.profiles.declareLink")}
+    </Link>
+  );
+  // A refusal starts with the profile it refuses: it is said at that profile, in the reader's words.
+  const refusedId = error ? options.find((id) => error.startsWith(`${id} `)) : undefined;
+  const refusedOption = profiles.find((p) => p.id === refusedId);
+  const forPublisher = Boolean(error?.includes("spec.catalog.publisher.uri"));
+  const refusal = error ? (
+    <p id="portal-profiles-error" role="alert" className="break-words text-body text-danger">
+      {refusedOption && forPublisher
+        ? t("portals.profiles.refused", { profile: profileLabel(profiles, refusedOption.id, locale), reason: needs(refusedOption) })
+        : error}{" "}
+      {forPublisher ? settings : null}
+    </p>
+  ) : null;
   const toggle = (id: string, on: boolean) => {
     const held = (checked ?? []).filter((p) => p !== id && options.includes(p));
     onChange(on ? [...held, id] : held);
@@ -83,54 +102,61 @@ export function PortalProfilesField({
       <p id="portal-profiles-hint" className="text-caption text-fg-muted">
         {t("portals.hint.profiles")}
       </p>
-      <ul className="space-y-3">
-        <li className="space-y-1">
+      {refusedId ? null : refusal}
+      {checked === undefined ? (
+        served.isError ? (
+          <Alert tone="danger" role="alert" title={t("portals.profiles.unknownTitle")}>
+            <p>{t("portals.profiles.unknown")}</p>
+            <Button variant="secondary" className="mt-2 touch-size" loading={served.isFetching} onClick={() => void served.refetch()}>
+              {t("portals.profiles.retry")}
+            </Button>
+          </Alert>
+        ) : (
+          <p role="status" className="text-caption text-fg-muted">
+            {t("app.loading")}
+          </p>
+        )
+      ) : null}
+      <ul className="space-y-2">
+        <li>
           <Checkbox label={profileLabel(profiles, BASE_PROFILE, locale)} checked disabled disabledReason={t("portals.profiles.always")} />
           <p className="pl-6 text-caption text-fg-muted">{t("portals.profiles.always")}</p>
         </li>
-        {options.map((id) => {
+        {/* Unticked boxes would read as "none served" while what is served is unknown. */}
+        {(checked === undefined ? [] : options).map((id) => {
           const option = profiles.find((p) => p.id === id);
           const on = checked?.includes(id) ?? false;
-          const note = option ? option.blocked : t("portals.profiles.notInstalled");
+          const unavailable = !option || Boolean(option.blocked);
+          const servedBlocked = unavailable && on;
+          const note = !option
+            ? t("portals.profiles.notInstalled")
+            : option.blocked
+              ? on
+                ? t("portals.profiles.unavailable", { reason: needs(option) })
+                : needs(option)
+              : undefined;
           const noteId = note ? `portal-profile-${id}-note` : undefined;
           return (
-            <li key={id} className="space-y-1">
+            <li key={id}>
               <Checkbox
                 id={`portal-profile-${id}`}
                 label={profileLabel(profiles, id, locale)}
                 checked={on}
-                disabled={checked === undefined || (Boolean(note) && !on)}
+                disabled={unavailable && !on}
                 aria-describedby={noteId}
                 onChange={(event) => toggle(id, event.target.checked)}
               />
               {note ? (
-                <p id={noteId} className="break-words pl-6 text-caption text-fg-muted">
-                  {note}
+                <p id={noteId} className={`break-words pl-6 text-caption ${servedBlocked ? "text-danger" : "text-fg-muted"}`}>
+                  {note} {option?.blocked ? settings : null}
                 </p>
               ) : null}
+              {id === refusedId ? <div className="pl-6">{refusal}</div> : null}
             </li>
           );
         })}
       </ul>
       {options.length === 0 ? <p className="text-caption text-fg-muted">{t("portals.profiles.none")}</p> : null}
-      {profiles.some((p) => p.blocked) ? (
-        <p className="text-caption text-fg-muted">
-          {t("portals.profiles.declare")}{" "}
-          <Link to="/organization/$tab" params={{ tab: "settings" }} className="focus-ring underline hover:no-underline">
-            {t("portals.profiles.declareLink")}
-          </Link>
-        </p>
-      ) : null}
-      {checked === undefined ? (
-        <Alert tone="info" role="status">
-          {t(served.isError ? "portals.profiles.unknown" : "app.loading")}
-        </Alert>
-      ) : null}
-      {error ? (
-        <p id="portal-profiles-error" role="alert" className="break-words text-caption text-danger">
-          {error}
-        </p>
-      ) : null}
     </fieldset>
   );
 }

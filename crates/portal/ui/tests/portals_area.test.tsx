@@ -212,7 +212,7 @@ describe("the portal editor", () => {
     });
     const fi = await screen.findByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
     expect(fi).toBeDisabled();
-    expect(fi).toHaveAccessibleDescription("dcat-ap-fi-2.0 needs the publisher's IRI");
+    expect(fi).toHaveAccessibleDescription(/Needs your Organization's publisher address/);
     expect(screen.getByRole("checkbox", { name: "DCAT-AP 3.0.1" })).toBeChecked();
     const geo = screen.getByRole("checkbox", { name: "GeoDCAT-AP 3.1.0" });
     await waitFor(() => expect(geo).toBeEnabled());
@@ -243,7 +243,8 @@ describe("the portal editor", () => {
 
     await renderRoute(answers(() => problem(503, "no catalogue")));
     expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "GeoDCAT-AP 3.1.0" })).toBeDisabled();
+    expect(screen.queryByRole("checkbox", { name: "GeoDCAT-AP 3.1.0" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Read again" })).toBeInTheDocument();
   });
 
   it("does not offer to remove the default portal", async () => {

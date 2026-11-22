@@ -13549,7 +13549,7 @@
       "notIn": "Nie je v {profile}",
       "lacks": "Chýba alebo je neplatné: {fields}",
       "noPublisherTitle": "Chýba poskytovateľ",
-      "noPublisher": "Tieto feedy sú nedostupné, kým organizácia neuvedie IRI poskytovateľa v nastaveniach (katalóg, poskytovateľ, URI): {profiles}."
+      "noPublisher": "{profiles}: bez feedu, kým organizácia neuvedie, kto jej dáta poskytuje."
     },
     "hosts": {
       "title": "Adresy portálov",
@@ -13738,9 +13738,14 @@
       "always": "Poskytuje sa vždy",
       "none": "Iný profil tu nie je nainštalovaný. Požiadajte prevádzkovateľa o ten, ktorý zbiera váš národný portál.",
       "notInstalled": "Tu nie je nainštalovaný: jeho feed je nedostupný. Odškrtnite ho alebo požiadajte prevádzkovateľa.",
-      "unknown": "Profily, ktoré katalóg práve poskytuje, sa nepodarilo načítať, preto ich nemožno zmeniť. Obnovte stránku.",
-      "declare": "Národný profil potrebuje IRI poskytovateľa vašej organizácie, napríklad https://data.gov.sk/id/legal-subject/00691135.",
-      "declareLink": "Otvoriť nastavenia organizácie"
+      "unknown": "Kým sa nenačítajú, nemožno ich meniť, aby sa žiadny feed omylom nezrušil.",
+      "declareLink": "Nastaviť v nastaveniach organizácie",
+      "needsPublisher": "Potrebuje adresu (IRI) poskytovateľa vašej organizácie, napríklad https://www.helsinki.fi/.",
+      "needsRegistered": "Potrebuje adresu (IRI) poskytovateľa vašej organizácie z národného registra; začína sa {prefix}",
+      "unavailable": "Je zvolený, ale jeho feed je pozastavený. {reason} Doplňte ju alebo profil odškrtnite.",
+      "refused": "Profil {profile} sa neuložil. {reason}",
+      "unknownTitle": "Poskytované profily sa nepodarilo načítať",
+      "retry": "Načítať znova"
     }
   },
   "assistantGuides": {

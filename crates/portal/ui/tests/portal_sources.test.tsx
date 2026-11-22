@@ -339,7 +339,7 @@ describe("the datasets tab", () => {
   it("says what to do before any source has run", async () => {
     await openTab("Datasets", {}, (path) => (path.endsWith("/datasets") ? jsonResponse({ total: 0, missingPublisher: ["dcat-ap-cz"], profiles: ["dcat-ap-cz"], items: [] }) : undefined));
     expect(await screen.findByText("No dataset yet")).toBeInTheDocument();
-    expect(screen.getByText(/unavailable until the Organization declares/)).toBeInTheDocument();
+    expect(screen.getByText(/no feed until your Organization says/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to Sources" }));
     expect(await screen.findByRole("tab", { name: "Sources", selected: true })).toBeInTheDocument();
   });

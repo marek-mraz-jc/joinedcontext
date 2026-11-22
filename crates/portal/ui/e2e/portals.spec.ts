@@ -295,6 +295,7 @@ const PROFILES = [
     title: { en: "DCAT-AP-SK 2.0" },
     country: "SK",
     always: false,
+    publisherPrefix: "https://data.gov.sk/id/legal-subject/",
     blocked: "dcat-ap-sk-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki, e.g. https://data.gov.sk/id/legal-subject/…",
   },
 ];
@@ -302,8 +303,8 @@ const HELSINKI = portal("helsinki", { en: "Helsinki open data", fi: "Helsingin a
 const profileHosts = (profiles: unknown[]) => ({ items: [{ ...HOSTS.items[0], profiles }] });
 const CATALOGUE = {
   total: 2,
-  missingPublisher: ["dcat-ap-sk-2.0"],
-  profiles: ["dcat-ap-sk-2.0", "dcat-ap-fi-2.0"],
+  missingPublisher: ["dcat-ap-fi-2.0"],
+  profiles: ["dcat-ap-fi-2.0", "geodcat-ap-3.1.0"],
   items: [
     { name: "bike-stations", title: "City bike stations", source: "endpoints", hidden: false, missing: [] },
     {
@@ -311,7 +312,7 @@ const CATALOGUE = {
       title: "Register of street trees",
       source: "endpoints",
       hidden: false,
-      missing: [{ profile: "dcat-ap-sk-2.0", fields: ["personal_data", "applicable_legislation"] }],
+      missing: [{ profile: "geodcat-ap-3.1.0", fields: ["applicable_legislation"] }],
     },
   ],
 };
@@ -348,6 +349,7 @@ for (const width of [1440, 400]) {
 
       await open({ datasets: false });
       await expect(field.getByText(/could not be read/)).toBeVisible();
+      await expect(field.getByRole("button", { name: "Read again" })).toBeVisible();
       await state("profiles-error");
 
       const asked: { spec: { profiles?: string[] } }[] = [];
@@ -366,13 +368,16 @@ for (const width of [1440, 400]) {
       await state("profiles-choice");
       await fi.check();
       await page.getByRole("button", { name: "Propose the changes" }).click();
-      await expect(field.getByRole("alert")).toContainText("needs the publisher's IRI");
+      await expect(field.getByRole("alert")).toContainText("was not saved");
       expect(sent.length).toBeGreaterThan(0);
       expect(asked[0].spec.profiles).toEqual(["dcat-ap-fi-2.0"]);
       await state("profiles-refusal");
 
-      await open({ datasets: CATALOGUE });
+      // Chosen while the Organization still had its publisher.
+      const lost = PROFILES.map((p) => (p.id === "dcat-ap-fi-2.0" ? { ...p, blocked: "dcat-ap-fi-2.0 needs the publisher's IRI" } : p));
+      await open({ datasets: CATALOGUE, hostsBody: profileHosts(lost) });
       await expect(fi).toBeChecked();
+      await expect(field.getByText(/its feed is paused/)).toBeVisible();
       await state("profiles-filled");
       await page.getByRole("tab", { name: "Datasets" }).click();
       await expect(page.getByText("Missing publisher")).toBeVisible();

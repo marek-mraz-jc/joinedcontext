@@ -13549,7 +13549,7 @@
       "notIn": "Nicht in {profile}",
       "lacks": "Fehlt oder ist ungültig: {fields}",
       "noPublisherTitle": "Herausgeber fehlt",
-      "noPublisher": "Diese Feeds sind nicht verfügbar, bis die Organisation ihre Herausgeber-IRI in den Einstellungen (Katalog, Herausgeber, URI) angibt: {profiles}."
+      "noPublisher": "{profiles}: kein Feed, bis Ihre Organisation angibt, wer ihre Daten herausgibt."
     },
     "hosts": {
       "title": "Portal-Adressen",
@@ -13738,9 +13738,14 @@
       "always": "Immer angeboten",
       "none": "Hier ist kein weiteres Profil installiert. Bitten Sie Ihren Betreiber um das Profil Ihres nationalen Portals.",
       "notInstalled": "Hier nicht installiert: sein Feed ist nicht verfügbar. Entfernen Sie den Haken oder fragen Sie Ihren Betreiber.",
-      "unknown": "Die derzeit angebotenen Profile konnten nicht gelesen und daher nicht geändert werden. Laden Sie die Seite neu.",
-      "declare": "Ein nationales Profil braucht die Herausgeber-IRI Ihrer Organisation, zum Beispiel https://www.helsinki.fi/.",
-      "declareLink": "Einstellungen der Organisation öffnen"
+      "unknown": "Bis dahin lassen sie sich nicht ändern, damit kein Feed versehentlich entfällt.",
+      "declareLink": "In den Einstellungen der Organisation eintragen",
+      "needsPublisher": "Braucht die Herausgeber-Adresse (IRI) Ihrer Organisation, zum Beispiel https://www.helsinki.fi/.",
+      "needsRegistered": "Braucht die Herausgeber-Adresse (IRI) Ihrer Organisation aus dem nationalen Register; sie beginnt mit {prefix}",
+      "unavailable": "Gewählt, aber sein Feed pausiert. {reason} Tragen Sie sie ein oder entfernen Sie den Haken.",
+      "refused": "{profile} wurde nicht gespeichert. {reason}",
+      "unknownTitle": "Die angebotenen Profile konnten nicht gelesen werden",
+      "retry": "Erneut lesen"
     }
   },
   "assistantGuides": {

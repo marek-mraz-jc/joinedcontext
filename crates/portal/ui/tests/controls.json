@@ -2289,6 +2289,7 @@
     },
     "src/pages/portals/PortalProfiles.tsx": {
       "controls": {
+        "Button": 1,
         "Checkbox": 2
       },
       "tests": [

@@ -85,6 +85,9 @@ pub struct PortalProfile {
     pub country: Option<String>,
     /// Served whatever is chosen: EU DCAT-AP.
     pub always: bool,
+    /// How the publisher's IRI begins in its national register; absent without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_prefix: Option<String>,
     /// Why this Organization cannot choose it yet; absent when it can.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked: Option<String>,
@@ -157,6 +160,7 @@ async fn entries(
                     id: profile.id.clone(),
                     title: profile.title.clone(),
                     country: profile.country.clone(),
+                    publisher_prefix: profile.publisher_iri_prefixes.first().cloned(),
                     always: profile.id == crate::portals::BASE_PROFILE,
                     blocked: crate::portals::profile_refusal(&state.mirror, &organization, profile),
                 })

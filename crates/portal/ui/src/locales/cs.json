@@ -13549,7 +13549,7 @@
       "notIn": "Není v {profile}",
       "lacks": "Chybí nebo je neplatné: {fields}",
       "noPublisherTitle": "Chybí poskytovatel",
-      "noPublisher": "Tyto feedy jsou nedostupné, dokud organizace neuvede IRI poskytovatele v nastavení (katalog, poskytovatel, URI): {profiles}."
+      "noPublisher": "{profiles}: bez feedu, dokud organizace neuvede, kdo její data poskytuje."
     },
     "hosts": {
       "title": "Adresy portálů",
@@ -13738,9 +13738,14 @@
       "always": "Poskytuje se vždy",
       "none": "Jiný profil zde není nainstalován. Požádejte provozovatele o ten, který sklízí váš národní portál.",
       "notInstalled": "Zde není nainstalován: jeho feed je nedostupný. Odškrtněte jej nebo požádejte provozovatele.",
-      "unknown": "Profily, které katalog právě poskytuje, se nepodařilo načíst, proto je nelze změnit. Obnovte stránku.",
-      "declare": "Národní profil potřebuje IRI poskytovatele vaší organizace, například z registru orgánů veřejné moci.",
-      "declareLink": "Otevřít nastavení organizace"
+      "unknown": "Dokud se nenačtou, nelze je měnit, aby se žádný feed omylem nezrušil.",
+      "declareLink": "Nastavit v nastavení organizace",
+      "needsPublisher": "Potřebuje adresu (IRI) poskytovatele vaší organizace, například https://www.helsinki.fi/.",
+      "needsRegistered": "Potřebuje adresu (IRI) poskytovatele vaší organizace z národního registru; začíná {prefix}",
+      "unavailable": "Je zvolen, ale jeho feed je pozastaven. {reason} Doplňte ji nebo profil odškrtněte.",
+      "refused": "Profil {profile} se neuložil. {reason}",
+      "unknownTitle": "Poskytované profily se nepodařilo načíst",
+      "retry": "Načíst znovu"
     }
   },
   "assistantGuides": {
