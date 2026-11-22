@@ -1271,7 +1271,15 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
     // 2. Probing org B's `b-only-secret` id returns the exact same NotFound error as `nonexistent-xyz`.
     for op in all_operations() {
         let probe_b_input = match op.name {
-            "dataset.get" | "dataset.withdraw" => json!({ "name": "b-only-secret" }),
+            "dataset.get" | "dataset.withdraw" | "dataset.purge" => {
+                json!({ "name": "b-only-secret" })
+            }
+            "resource.propose" => json!({ "dataset": "b-only-secret", "resource": {} }),
+            "resource.delete" | "resource_view.delete" => json!({ "id": "b-only-secret" }),
+            "resource_view.propose" => json!({
+                "resource": "b-only-secret", "view": { "view_type": "text_view" }
+            }),
+            "profile.activate" => json!({ "id": "b-only-secret", "version": "1.0.0" }),
             "harvest_run.start" | "harvest_source.test" | "harvest_run.list" => {
                 json!({ "source": "b-only-secret" })
             }
@@ -1293,6 +1301,12 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
         match op.name {
             "dataset.get"
             | "dataset.withdraw"
+            | "dataset.purge"
+            | "resource.propose"
+            | "resource.delete"
+            | "resource_view.propose"
+            | "resource_view.delete"
+            | "profile.activate"
             | "harvest_run.start"
             | "harvest_run.get"
             | "harvest_run.logs"

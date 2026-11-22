@@ -4,7 +4,7 @@
 //! - `$batch` (OData 4.01 JSON batch requests)
 //! - All 8 entity sets (`Dashboards`, `DashboardVersions`, `Folders`, `Datasources`,
 //!   `LibraryPanels`, `PublicDashboards`, `QueryCacheStats`, `ImportReports`) served through
-//!   `odata-table` (`$filter`, `$orderby`, `$select`, `$top`, `$skip`, `$count`, `$skiptoken`,
+//!   `odata-table` (index rows paged by the store, `crate::sets`; `$filter`, `$orderby`, `$select`, `$top`, `$skip`, `$count`, `$skiptoken`,
 //!   `({key})`, `/$count`, `/$export`, `/$allowed`).
 //! - All bound and unbound actions and functions of R10a:
 //!   `Datasource/Query`, `Datasource/Health`, `Datasource/EditorSchema`, `Datasource/Resource`,
@@ -17,6 +17,7 @@ use crate::public::{
 use crate::render::{
     PanelTimeRange, execute_targets_and_expressions, panel_view, parse_time_str_ms,
 };
+use crate::sets;
 use crate::state::{DaiyaState, error_response, resolve_request_ctx};
 use axum::extract::{Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -30,277 +31,16 @@ use daiya_import::{
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use daiya_query::{Health, QueryCtx, ResourceReq};
 use jc_router::ClientAddr;
-use odata_table::{
-    MemoryTable, Operation as TableOp, Scope, Table, TableError, allowed as table_allowed,
-    export as table_export, key_options, query as table_query,
-};
+use odata_table::{Operation as TableOp, Scope, TableError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-const MAX_PAGE_SIZE: u64 = 500;
 /// Most sub-requests one `$batch` may carry.
 pub const MAX_BATCH_REQUESTS: usize = 100;
 
-/// Builds a `MemoryTable` snapshot for `set_name` in `ctx.org_id` using the single `odata-table`
-/// `Service` declaration from `daiya-model::registry` (R10).
-async fn build_entity_table(
-    state: &DaiyaState,
-    ctx: &RequestCtx,
-    set_name: &str,
-) -> CrResult<MemoryTable> {
-    let model = Arc::new(state.registry.service.model());
-    let info = state
-        .registry
-        .service
-        .info(model, set_name)
-        .ok_or_else(|| CrError::NotFound(format!("unknown OData entity set '{set_name}'")))?;
-
-    let rows: Vec<Value> = match set_name {
-        // These hang off no dashboard, folder or datasource: the Organization's read decides.
-        "QueryCacheStats" | "ImportReports" if !can_read_organization(state, ctx) => Vec::new(),
-        "Dashboards" => state
-            .store
-            .list_dashboards(ctx.org_id)
-            .await?
-            .into_iter()
-            .filter(|d| can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()))
-            .map(|d| {
-                json!({
-                    "uid": d.uid,
-                    "title": d.title,
-                    "slug": d.slug,
-                    "folderUid": d.folder_uid,
-                    "panelCount": d.panel_count,
-                    "version": d.version,
-                    "schemaVersion": d.schema_version,
-                    "isProvisioned": d.is_provisioned,
-                    "updatedBy": d.updated_by,
-                    "updatedAt": d.updated_at.to_rfc3339(),
-                })
-            })
-            .collect(),
-        "DashboardVersions" => {
-            let dashboards = state.store.list_dashboards(ctx.org_id).await?;
-            let mut vers = Vec::new();
-            for d in dashboards {
-                if !can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()) {
-                    continue;
-                }
-                for v in state
-                    .store
-                    .list_dashboard_versions(ctx.org_id, &d.uid)
-                    .await?
-                {
-                    vers.push(json!({
-                        "id": format!("{}:{}", v.dashboard_uid, v.version),
-                        "dashboardUid": v.dashboard_uid,
-                        "version": v.version,
-                        "parentVersion": v.parent_version,
-                        "restoredFrom": v.restored_from,
-                        "message": v.message,
-                        "createdBy": v.created_by,
-                        "createdAt": v.created_at.to_rfc3339(),
-                    }));
-                }
-            }
-            vers
-        }
-        "Folders" => state
-            .store
-            .list_folders(ctx.org_id)
-            .await?
-            .into_iter()
-            .filter(|f| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::Folder {
-                            org_id: ctx.org_id,
-                            folder_uid: f.uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
-            .map(|f| {
-                json!({
-                    "uid": f.uid,
-                    "parentUid": f.parent_uid,
-                    "title": f.title,
-                    "version": f.version,
-                    "managedBy": f.managed_by,
-                    "updatedAt": f.updated_at.to_rfc3339(),
-                })
-            })
-            .collect(),
-        "Datasources" => state
-            .store
-            .list_datasources(ctx.org_id)
-            .await?
-            .into_iter()
-            .filter(|ds| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::Datasource {
-                            org_id: ctx.org_id,
-                            datasource_uid: ds.uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
-            .map(|ds| {
-                json!({
-                    "uid": ds.uid,
-                    "name": ds.name,
-                    "type": ds.kind,
-                    "access": ds.access,
-                    "url": ds.url,
-                    "isDefault": ds.is_default,
-                    "readOnly": ds.read_only,
-                    "wasmDigest": ds.wasm_digest,
-                    "version": ds.version,
-                })
-            })
-            .collect(),
-        "LibraryPanels" => state
-            .store
-            .list_library_panels(ctx.org_id)
-            .await?
-            .into_iter()
-            .filter(|p| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::LibraryPanel {
-                            org_id: ctx.org_id,
-                            panel_uid: p.uid.clone(),
-                            folder_uid: p.folder_uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
-            .map(|p| {
-                json!({
-                    "uid": p.uid,
-                    "folderUid": p.folder_uid,
-                    "name": p.name,
-                    "type": p.panel_type,
-                    "description": p.description,
-                    "version": p.version,
-                })
-            })
-            .collect(),
-        "PublicDashboards" => state
-            .store
-            .list_public_dashboards(ctx.org_id)
-            .await?
-            .into_iter()
-            .filter(|p| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::PublicDashboard {
-                            org_id: ctx.org_id,
-                            dashboard_uid: p.dashboard_uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
-            .map(|p| {
-                json!({
-                    "uid": p.uid,
-                    "dashboardUid": p.dashboard_uid,
-                    "isEnabled": p.is_enabled,
-                    "timeSelectionEnabled": p.time_selection_enabled,
-                    "annotationsEnabled": p.annotations_enabled,
-                    "showQueryText": p.show_query_text,
-                    "share": p.share.as_str(),
-                })
-            })
-            .collect(),
-        "QueryCacheStats" => {
-            let mut stats = state.query_cache.stats_for_org(ctx.org_id, ctx.instance_id);
-            let stored = state.store.list_query_cache_stats(ctx.org_id).await?;
-            for s in stored {
-                if !stats.iter().any(|x| x.id == s.id) {
-                    stats.push(s);
-                }
-            }
-            stats
-                .into_iter()
-                .map(|s| {
-                    json!({
-                        "id": s.id,
-                        "datasourceUid": s.datasource_uid,
-                        "hits": s.hits,
-                        "misses": s.misses,
-                        "entries": s.entries,
-                        "bytesUsed": s.bytes_used,
-                    })
-                })
-                .collect()
-        }
-        "ImportReports" => state
-            .store
-            .list_import_reports(ctx.org_id)
-            .await?
-            .into_iter()
-            .map(|r| {
-                json!({
-                    "id": r.id,
-                    "dryRun": r.dry_run,
-                    "status": r.status,
-                    "dashboardCount": r.dashboard_count,
-                    "refusedCount": r.refused_count,
-                    "mappedCount": r.mapped_count,
-                    "createdAt": r.created_at.to_rfc3339(),
-                })
-            })
-            .collect(),
-        other => {
-            return Err(CrError::NotFound(format!(
-                "unknown OData entity set '{other}'"
-            )));
-        }
-    };
-
-    MemoryTable::new(info, rows).map_err(map_table_error)
-}
-
-/// Read decision on a dashboard in its folder: every set listing a dashboard or what hangs
-/// off one (its versions) keeps only the rows this decision allows.
-fn can_read_dashboard(
-    state: &DaiyaState,
-    ctx: &RequestCtx,
-    uid: &str,
-    folder_uid: Option<&str>,
-) -> bool {
-    state
-        .authorizer
-        .check(
-            ctx,
-            Action::Read,
-            &ObjectTarget::Dashboard {
-                org_id: ctx.org_id,
-                dashboard_uid: uid.to_owned(),
-                folder_uid: folder_uid.map(str::to_owned),
-            },
-        )
-        .allowed
-}
-
 /// Read decision on the Organization itself, for the sets that list what is its own.
-fn can_read_organization(state: &DaiyaState, ctx: &RequestCtx) -> bool {
+pub(crate) fn can_read_organization(state: &DaiyaState, ctx: &RequestCtx) -> bool {
     state
         .authorizer
         .check(
@@ -311,7 +51,7 @@ fn can_read_organization(state: &DaiyaState, ctx: &RequestCtx) -> bool {
         .allowed
 }
 
-fn map_table_error(err: TableError) -> CrError {
+pub(crate) fn map_table_error(err: TableError) -> CrError {
     match err {
         TableError::NotImplemented(w) => CrError::NotImplemented(w),
         TableError::UnknownProperty(p) => {
@@ -348,7 +88,7 @@ fn scope_for_ctx(state: &DaiyaState, ctx: &RequestCtx) -> Scope {
     Scope::default().holding(&refs)
 }
 
-fn parse_odata_query_options(
+pub(crate) fn parse_odata_query_options(
     model: &odata_csdl::Model,
     set_name: &str,
     raw_query: Option<&str>,
@@ -899,59 +639,29 @@ async fn handle_odata_single_segment_get(
     }
 
     // EntitySet list or single entity by key `EntitySet('key')`
-    let table = match build_entity_table(&state, &ctx, name).await {
-        Ok(t) => t,
-        Err(e) => return error_response(&e),
-    };
-    let scope = scope_for_ctx(&state, &ctx);
+    match get_set(&state, &ctx, name, parens, raw_q.as_deref()).await {
+        Ok(body) => (
+            StatusCode::OK,
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            Json(body),
+        )
+            .into_response(),
+        Err(e) => error_response(&e),
+    }
+}
 
-    if let Some(key_raw) = parens {
-        let key_val = Value::String(unquote_odata_key(key_raw));
-        let opts = match key_options(table.info(), &key_val, None) {
-            Ok(o) => o,
-            Err(e) => return error_response(&map_table_error(e)),
-        };
-        match table_query(&table, &opts, &scope, 1).await {
-            Ok(mut ans) => {
-                if let Some(row) = ans.rows.pop() {
-                    (
-                        StatusCode::OK,
-                        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
-                        Json(row),
-                    )
-                        .into_response()
-                } else {
-                    error_response(&CrError::NotFound(format!("{name} entity not found")))
-                }
-            }
-            Err(e) => error_response(&map_table_error(e)),
-        }
-    } else {
-        let opts = match parse_odata_query_options(&table.info().model, name, raw_q.as_deref()) {
-            Ok(o) => o,
-            Err(e) => return error_response(&e),
-        };
-        match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
-            Ok(ans) => {
-                let mut payload = json!({
-                    "@odata.context": format!("$metadata#{name}"),
-                    "value": ans.rows,
-                });
-                if let Some(c) = ans.count {
-                    payload["@odata.count"] = Value::from(c);
-                }
-                if let Some(next) = ans.next {
-                    payload["@odata.nextLink"] = Value::String(format!("{name}?$skiptoken={next}"));
-                }
-                (
-                    StatusCode::OK,
-                    [(axum::http::header::CACHE_CONTROL, "private, no-store")],
-                    Json(payload),
-                )
-                    .into_response()
-            }
-            Err(e) => error_response(&map_table_error(e)),
-        }
+/// `GET Set` and `GET Set('key')`, at the route and inside `$batch`.
+async fn get_set(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    name: &str,
+    parens: Option<&str>,
+    raw_query: Option<&str>,
+) -> CrResult<Value> {
+    let scope = scope_for_ctx(state, ctx);
+    match parens {
+        Some(key) => sets::entity(state, ctx, &scope, name, unquote_odata_key(key)).await,
+        None => sets::list(state, ctx, &scope, name, raw_query).await,
     }
 }
 
@@ -1029,54 +739,35 @@ async fn handle_odata_two_segment_get(
     }
 
     // EntitySet/$count, EntitySet/$export, EntitySet/$allowed
-    let table = match build_entity_table(&state, &ctx, set_name).await {
-        Ok(t) => t,
-        Err(e) => return error_response(&e),
-    };
     let scope = scope_for_ctx(&state, &ctx);
+    let raw = raw_q.as_deref();
 
     match sub_op {
-        "$count" => {
-            let mut opts =
-                match parse_odata_query_options(&table.info().model, set_name, raw_q.as_deref()) {
-                    Ok(o) => o,
-                    Err(e) => return error_response(&e),
-                };
-            opts.count = Some(true);
-            opts.top = Some(0);
-            match table_query(&table, &opts, &scope, 1).await {
-                Ok(ans) => (
-                    StatusCode::OK,
-                    [(axum::http::header::CONTENT_TYPE, "text/plain")],
-                    ans.count.unwrap_or(0).to_string(),
-                )
-                    .into_response(),
-                Err(e) => error_response(&map_table_error(e)),
-            }
-        }
-        "$export" => {
-            let opts =
-                match parse_odata_query_options(&table.info().model, set_name, raw_q.as_deref()) {
-                    Ok(o) => o,
-                    Err(e) => return error_response(&e),
-                };
-            match table_export(&table, &opts, &scope, 100, 10_000).await {
-                Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
-                Err(e) => error_response(&map_table_error(e)),
-            }
-        }
+        "$count" => match sets::count(&state, &ctx, &scope, set_name, raw).await {
+            Ok(count) => (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                count.to_string(),
+            )
+                .into_response(),
+            Err(e) => error_response(&e),
+        },
+        "$export" => match sets::export(&state, &ctx, &scope, set_name, raw).await {
+            Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+            Err(e) => error_response(&e),
+        },
         "$allowed" => {
-            let args = parse_func_args(sub_parens, raw_q.as_deref());
+            let args = parse_func_args(sub_parens, raw);
             let op_name = args.get("op").map_or("read", String::as_str);
             let Some(op) = TableOp::parse(op_name) else {
                 return error_response(&CrError::BadRequest(format!(
                     "unknown operation '{op_name}'"
                 )));
             };
-            let key_val = args.get("key").map(|k| Value::String(k.clone()));
-            match table_allowed(&table, &scope, op, key_val.as_ref()).await {
-                Ok(dec) => (StatusCode::OK, Json(dec.to_json())).into_response(),
-                Err(e) => error_response(&map_table_error(e)),
+            let key = args.get("key").map(|k| Value::String(k.clone()));
+            match sets::allowed(&state, &ctx, &scope, set_name, op, key).await {
+                Ok(decision) => (StatusCode::OK, Json(decision)).into_response(),
+                Err(e) => error_response(&e),
             }
         }
         _ => error_response(&CrError::NotFound(format!(
@@ -1300,20 +991,8 @@ async fn odata_batch(
                     .check_allowed(state.authorizer.as_ref(), &ctx, op, obj);
                 (200, serde_json::to_value(dec).unwrap_or(Value::Null))
             }
-            "GET" => match build_entity_table(&state, &ctx, seg_name).await {
-                Ok(table) => {
-                    let scope = scope_for_ctx(&state, &ctx);
-                    match parse_odata_query_options(&table.info().model, seg_name, query_part) {
-                        Ok(opts) => match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
-                            Ok(ans) => (200, json!({ "value": ans.rows })),
-                            Err(e) => {
-                                let ce = map_table_error(e);
-                                (ce.status_code(), ce.to_odata_error())
-                            }
-                        },
-                        Err(e) => (e.status_code(), e.to_odata_error()),
-                    }
-                }
+            "GET" => match get_set(&state, &ctx, seg_name, parens, query_part).await {
+                Ok(body) => (200, body),
                 Err(e) => (e.status_code(), e.to_odata_error()),
             },
             "POST" if seg_name == "Import" => {

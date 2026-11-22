@@ -31,7 +31,7 @@ use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
     validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock, Catalogue,
-    CatalogueId, DataroomError, Dataset, DatasetFilter, GrantRule, ObjectTarget, OrgId, ProfilePin,
+    CatalogueId, DataroomError, Dataset, DatasetFilter, GrantRule, ObjectTarget, OrgId,
     ProfileRecord, Publisher, RecordState, RequestCtx, Result, SanitisedAsset, Store, Subject,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
@@ -935,108 +935,8 @@ async fn handle_upload_profile(
     headers: HeaderMap,
     Json(req): Json<UploadProfileRequest>,
 ) -> Response {
-    let (ctx, mut cat) = match state.resolve_context(&headers).await {
-        Ok(v) => v,
-        Err(e) => return problem_response(e),
-    };
-    let target = ObjectTarget::Profile {
-        org_id: ctx.org_id,
-        catalogue_id: ctx.catalogue_id,
-        profile_id: req.profile.id.clone(),
-    };
-    let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-    if !dec.allowed {
-        return problem_response(DataroomError::Forbidden(dec.reason));
-    }
-    // Activating changes what the catalogue validates against, which the activate route
-    // decides with Approve; uploading with `activate` may not skip that.
-    if req.activate {
-        let dec = state.authorizer.check(&ctx, Action::Approve, &target);
-        if !dec.allowed {
-            return problem_response(DataroomError::Forbidden(dec.reason));
-        }
-        // An upload that renders through a national base needs what that feed needs.
-        let national = req
-            .profile
-            .base_profile
-            .as_deref()
-            .and_then(dataroom_rdf::DcatProfile::by_id)
-            .is_some_and(dataroom_rdf::DcatProfile::requires_publisher);
-        if national && cat.declared_publisher_uri().is_none() {
-            return problem_response(DataroomError::field_error(
-                "publisherUri",
-                "this profile's base needs the catalogue's publisher IRI; declare it first",
-            ));
-        }
-    }
-
-    // A published version is immutable (C17: catalogues pin versions): neither a built-in
-    // profile nor this catalogue's stored upload (loaded first, whatever this process saw) is
-    // replaced.
-    let scope = (ctx.org_id, ctx.catalogue_id);
-    match state.store.list_profiles(&ctx).await {
-        Ok(stored) => state.profiles.load_stored(scope, &stored),
-        Err(e) => return problem_response(e),
-    }
-    if state
-        .profiles
-        .list(scope)
-        .iter()
-        .any(|p| p.id == req.profile.id && p.version == req.profile.version)
-    {
-        return problem_response(DataroomError::Conflict(format!(
-            "profile '{}' version '{}' already exists; upload a new version",
-            req.profile.id, req.profile.version
-        )));
-    }
-
-    let datasets = match state.store.list_datasets(&ctx).await {
-        Ok(d) => d,
-        Err(e) => return problem_response(e),
-    };
-    let publishers = match state.store.list_publishers(&ctx).await {
-        Ok(p) => p,
-        Err(e) => return problem_response(e),
-    };
-    let pub_map: BTreeMap<String, Publisher> = publishers
-        .into_iter()
-        .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
-        .collect();
-
-    let (saved_profile, dry_run) =
-        match state
-            .profiles
-            .upload_and_dry_run(req.profile, &cat, &datasets, &pub_map)
-        {
-            Ok(res) => res,
-            Err(e) => return problem_response(e),
-        };
-
-    if let Err(e) = state
-        .store
-        .upsert_profile(&ctx, saved_profile.clone())
-        .await
-    {
-        return problem_response(e);
-    }
-
-    if req.activate {
-        cat.active_profiles
-            .retain(|p| p.profile_id != saved_profile.id);
-        cat.active_profiles.push(ProfilePin {
-            profile_id: saved_profile.id.clone(),
-            version: saved_profile.version.clone(),
-        });
-        if let Err(e) = state.store.upsert_catalogue(cat).await {
-            return problem_response(e);
-        }
-    }
-
-    Json(json!({
-        "profile": saved_profile,
-        "dryRun": dry_run,
-    }))
-    .into_response()
+    let input = json!({ "profile": req.profile, "activate": req.activate });
+    run_rest_op(&state, &headers, "profile.propose", input).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1052,73 +952,8 @@ async fn handle_activate_profile(
     Path(id): Path<String>,
     Json(body): Json<ActivateProfileBody>,
 ) -> Response {
-    let (ctx, mut cat) = match state.resolve_context(&headers).await {
-        Ok(v) => v,
-        Err(e) => return problem_response(e),
-    };
-    let target = ObjectTarget::Profile {
-        org_id: ctx.org_id,
-        catalogue_id: ctx.catalogue_id,
-        profile_id: id.clone(),
-    };
-    let dec = state.authorizer.check(&ctx, Action::Approve, &target);
-    if !dec.allowed {
-        return problem_response(DataroomError::Forbidden(dec.reason));
-    }
-
-    let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
-    let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
-    let pub_map: BTreeMap<String, Publisher> = publishers
-        .into_iter()
-        .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
-        .collect();
-
-    match state.store.list_profiles(&ctx).await {
-        Ok(stored) => state
-            .profiles
-            .load_stored((ctx.org_id, ctx.catalogue_id), &stored),
-        Err(e) => return problem_response(e),
-    }
-    let dry_run = match state
-        .profiles
-        .dry_run(&id, &body.version, &cat, &datasets, &pub_map)
-    {
-        Ok(r) => r,
-        Err(e) => return problem_response(e),
-    };
-
-    let held = cat.main_profile == id || cat.active_profiles.iter().any(|p| p.profile_id == id);
-    if !held {
-        if let Err(e) = dataroom_core::ops::DatasetValidator::check_profile_choice(
-            state.profiles.as_ref(),
-            &cat,
-            &[id.as_str()],
-            state.sources_by_portal,
-        ) {
-            return problem_response(e);
-        }
-    }
-    cat.active_profiles.retain(|p| p.profile_id != id);
-    cat.active_profiles.push(ProfilePin {
-        profile_id: id.clone(),
-        version: body.version.clone(),
-    });
-    if body.make_main {
-        cat.main_profile = id;
-    }
-    let saved_cat = match state.store.upsert_catalogue(cat).await {
-        Ok(c) => c,
-        Err(e) => return problem_response(e),
-    };
-    for rep in &dry_run.dataset_reports {
-        let _ = state.store.upsert_shacl_report(&ctx, rep.clone()).await;
-    }
-
-    Json(json!({
-        "catalogue": saved_cat,
-        "dryRun": dry_run,
-    }))
-    .into_response()
+    let input = json!({ "id": id, "version": body.version, "makeMain": body.make_main });
+    run_rest_op(&state, &headers, "profile.activate", input).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1266,46 +1101,27 @@ async fn handle_get_branding(State(state): State<DataroomState>, headers: Header
 async fn handle_post_branding(
     State(state): State<DataroomState>,
     headers: HeaderMap,
-    Json(override_val): Json<Value>,
+    Json(branding): Json<Value>,
 ) -> Response {
-    let (ctx, mut cat) = match state.resolve_context(&headers).await {
-        Ok(v) => v,
-        Err(e) => return problem_response(e),
+    let input = json!({ "branding": branding });
+    run_rest_op(&state, &headers, "branding.propose", input).await
+}
+
+/// A REST write route over the registry operation it maps to (MOD-09).
+async fn run_rest_op(
+    state: &DataroomState,
+    headers: &HeaderMap,
+    operation: &str,
+    input: Value,
+) -> Response {
+    let ran = async {
+        let (ctx, _) = state.resolve_context(headers).await?;
+        execute_operation(&state.op_context(), &ctx, operation, input).await
     };
-    let target = ObjectTarget::Catalogue {
-        org_id: ctx.org_id,
-        catalogue_id: ctx.catalogue_id,
-    };
-    let dec = state.authorizer.check(&ctx, Action::Admin, &target);
-    if !dec.allowed {
-        return problem_response(DataroomError::Forbidden(dec.reason));
+    match ran.await {
+        Ok(out) => Json(out).into_response(),
+        Err(e) => problem_response(e),
     }
-    cat.branding = Some(override_val);
-    cat.modified = jc_time::TimestampTz::now();
-    let saved = match state.store.upsert_catalogue(cat).await {
-        Ok(c) => c,
-        Err(e) => return problem_response(e),
-    };
-    let _ = state
-        .store
-        .record_activity(
-            &ctx,
-            ActivityRow {
-                org_id: ctx.org_id,
-                catalogue_id: ctx.catalogue_id,
-                id: format!("act-{}", Uuid::now_v7()),
-                at: jc_time::TimestampTz::now(),
-                actor: ctx.actor_name().to_owned(),
-                operation: "branding.propose".into(),
-                object_type: "Catalogue".into(),
-                object_id: saved.id.to_string(),
-                summary: format!("Updated branding on catalogue {}", saved.name),
-                details: json!({}),
-            },
-        )
-        .await;
-    let effective = saved.effective_branding(Some(&state.branding_of(&saved)));
-    Json(effective).into_response()
 }
 
 async fn handle_upload_logo(

@@ -339,9 +339,56 @@ impl Decision {
     }
 }
 
+/// The kind of object a list reads, for [`Authorizer::read_scope`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadKind {
+    Organization,
+    Folder,
+    Dashboard,
+    Datasource,
+    LibraryPanel,
+    PublicDashboard,
+}
+
+impl ReadKind {
+    pub const ALL: [Self; 6] = [
+        Self::Organization,
+        Self::Folder,
+        Self::Dashboard,
+        Self::Datasource,
+        Self::LibraryPanel,
+        Self::PublicDashboard,
+    ];
+}
+
+/// Which value of an [`ObjectTarget`] a [`ReadScope::In`] lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeColumn {
+    /// The object's own uid; a public dashboard's is its dashboard's.
+    Object,
+    /// [`ObjectTarget::folder_uid`].
+    Folder,
+}
+
+/// What a subject may read of one kind, as a predicate a store applies before it counts and pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadScope {
+    All,
+    Nothing,
+    In {
+        column: ScopeColumn,
+        values: std::collections::BTreeSet<String>,
+    },
+}
+
 /// Single authorization decision interface (R9).
 pub trait Authorizer: Send + Sync {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision;
+
+    /// The objects of `kind` in `ctx.org_id` that [`Self::check`] lets the caller read, one
+    /// evaluation for a whole page. The two must agree: a listed row that `check` refuses fails
+    /// the request. An authorizer that cannot say answers [`ReadScope::Nothing`].
+    fn read_scope(&self, ctx: &RequestCtx, kind: ReadKind) -> ReadScope;
 }
 
 /// Actor of Grafana's server administrator: the local admin `provision.sh` and the Portal
@@ -367,6 +414,17 @@ impl Authorizer for ServerAdminAuthorizer {
             Decision::allow("server administrator")
         } else {
             self.inner.check(ctx, action, object)
+        }
+    }
+
+    fn read_scope(&self, ctx: &RequestCtx, kind: ReadKind) -> ReadScope {
+        let admin = ctx.subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR)
+            && !ctx.subject.read_only
+            && ctx.subject.is_member_of(ctx.org_id);
+        if admin {
+            ReadScope::All
+        } else {
+            self.inner.read_scope(ctx, kind)
         }
     }
 }
@@ -427,6 +485,28 @@ impl Authorizer for PublicDashboardAuthorizer {
             Decision::allow("saved query of a public dashboard")
         } else {
             Decision::deny_hidden("not part of this public dashboard")
+        }
+    }
+
+    fn read_scope(&self, ctx: &RequestCtx, kind: ReadKind) -> ReadScope {
+        let expected_actor = format!("{PUBLIC_DASHBOARD_ACTOR_PREFIX}{}", self.dashboard_uid);
+        if ctx.org_id != self.org_id
+            || ctx.subject.actor_id.as_deref() != Some(expected_actor.as_str())
+        {
+            return ReadScope::Nothing;
+        }
+        let values = match kind {
+            ReadKind::Dashboard | ReadKind::PublicDashboard => {
+                std::collections::BTreeSet::from([self.dashboard_uid.clone()])
+            }
+            ReadKind::Datasource => self.datasource_uids.clone(),
+            ReadKind::Organization | ReadKind::Folder | ReadKind::LibraryPanel => {
+                return ReadScope::Nothing;
+            }
+        };
+        ReadScope::In {
+            column: ScopeColumn::Object,
+            values,
         }
     }
 }
@@ -557,6 +637,42 @@ impl Authorizer for PolicyAuthorizer {
             Decision::allow(format!("granted {}", action.as_str()))
         } else {
             Decision::deny_visible(format!("missing {} permission", action.as_str()))
+        }
+    }
+
+    fn read_scope(&self, ctx: &RequestCtx, kind: ReadKind) -> ReadScope {
+        if !ctx.subject.is_member_of(ctx.org_id) {
+            return ReadScope::Nothing;
+        }
+        // The column a narrowed binding can match on this kind, as `check` matches it: only a
+        // datasource carries a datasource uid, only these three carry a folder.
+        let column = match kind {
+            ReadKind::Datasource => Some(ScopeColumn::Object),
+            ReadKind::Dashboard | ReadKind::Folder | ReadKind::LibraryPanel => {
+                Some(ScopeColumn::Folder)
+            }
+            ReadKind::Organization | ReadKind::PublicDashboard => None,
+        };
+        let principals = ctx.subject.principals();
+        let mut values = std::collections::BTreeSet::new();
+        for b in &self.bindings {
+            if b.org_id != ctx.org_id
+                || !principals.contains(&b.principal.as_str())
+                || !(b.actions.contains(&Action::Read) || b.actions.contains(&Action::Admin))
+            {
+                continue;
+            }
+            let value = match (&b.folder_uid, &b.datasource_uid, column) {
+                (None, None, _) => return ReadScope::All,
+                (Some(folder), None, Some(ScopeColumn::Folder)) => folder,
+                (None, Some(datasource), Some(ScopeColumn::Object)) => datasource,
+                _ => continue,
+            };
+            values.insert(value.clone());
+        }
+        match column {
+            Some(column) if !values.is_empty() => ReadScope::In { column, values },
+            _ => ReadScope::Nothing,
         }
     }
 }

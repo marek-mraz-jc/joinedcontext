@@ -2758,8 +2758,10 @@ dependencies = [
  "hex",
  "indexmap 2.14.2",
  "ipnet",
+ "jc-http",
  "jc-pool",
  "jc-time",
+ "jc-types",
  "jiff",
  "parking_lot",
  "percent-encoding",
@@ -2833,6 +2835,8 @@ dependencies = [
  "jc-pool",
  "jc-time",
  "jiff",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
+ "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde",
  "serde_json",
  "sqlx",
@@ -6986,6 +6990,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-audit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "jc-chart"
 version = "0.1.0"
 dependencies = [
@@ -7077,6 +7091,16 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jc-http"
+version = "0.1.0"
+dependencies = [
+ "ipnet",
+ "reqwest 0.12.28",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -7546,6 +7570,7 @@ dependencies = [
  "hickory-resolver",
  "http",
  "http-body-util",
+ "jc-audit",
  "jc-router",
  "jc-time",
  "jiff",
@@ -7679,6 +7704,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "jc-audit",
  "jc-router",
  "kaisatsu-admin",
  "kaisatsu-core",
@@ -7790,6 +7816,7 @@ dependencies = [
 name = "kaisatsu-store-pg"
 version = "0.1.0"
 dependencies = [
+ "jc-audit",
  "jc-pool",
  "jc-time",
  "jiff",

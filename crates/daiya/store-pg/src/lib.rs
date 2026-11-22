@@ -11,7 +11,7 @@ use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
     LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag, store::StoreFuture,
+    PublicDashboardRecord, RowPage, RowQuery, ShareType, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
@@ -21,10 +21,15 @@ use std::path::Path;
 use std::str::FromStr;
 use zeroize::Zeroizing;
 
+mod rows;
+
 pub const MIGRATION_SQL: &str = include_str!("../migrations/0001_initial.sql");
 /// The installation's organizations (T-7509). A release before it reads only version 1 and
 /// never this table, so it still starts after a rollback.
 pub const ORGANIZATIONS_SQL: &str = include_str!("../migrations/0002_organizations.sql");
+
+/// The key indexes of the lists (T-7524). A release before it never reads them.
+pub const LIST_INDEXES_SQL: &str = include_str!("../migrations/0003_list_indexes.sql");
 
 /// Required tables that MUST have both `relrowsecurity` and `relforcerowsecurity` enabled at boot (§5.3, R8).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
@@ -194,7 +199,11 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     // so every later one follows it, and all of them commit at once.
     let mut tx = conn.begin().await.map_err(failed)?;
     let mut behind = false;
-    for (version, sql) in [(1_i32, MIGRATION_SQL), (2, ORGANIZATIONS_SQL)] {
+    for (version, sql) in [
+        (1_i32, MIGRATION_SQL),
+        (2, ORGANIZATIONS_SQL),
+        (3, LIST_INDEXES_SQL),
+    ] {
         let checksum = daiya_model::sha256_hex(sql.as_bytes());
         let applied: Option<String> =
             sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = $1")
@@ -324,6 +333,21 @@ impl PgStore {
             .begin()
             .await
             .map_err(|e| CrError::Internal(format!("begin tx failed: {e}")))?;
+        sqlx::query("SELECT set_config('cr.org', $1, true)")
+            .bind(org_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CrError::Internal(format!("set_config cr.org failed: {e}")))?;
+        Ok(tx)
+    }
+
+    /// [`Self::begin_org_tx`] for a read whose statements must see one snapshot.
+    async fn begin_org_snapshot(&self, org_id: OrgId) -> CrResult<Transaction<'_, Postgres>> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await
+            .map_err(|e| CrError::Internal(format!("begin snapshot failed: {e}")))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
             .bind(org_id.to_string())
             .execute(&mut *tx)
@@ -1459,61 +1483,12 @@ impl DaiyaStore for PgStore {
         })
     }
 
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>> {
+    fn read_rows(&self, org_id: OrgId, query: RowQuery) -> StoreFuture<'_, RowPage> {
         Box::pin(async move {
-            let mut tx = self.begin_org_tx(org_id).await?;
-            let rows = sqlx::query(
-                "SELECT id, org_id, instance_id, datasource_uid, hits, misses, entries, bytes_used
-                 FROM cr_query_cache WHERE org_id = $1 ORDER BY id",
-            )
-            .bind(org_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let mut tx = self.begin_org_snapshot(org_id).await?;
+            let page = rows::read(&mut tx, org_id, &query).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows
-                .into_iter()
-                .map(|r| QueryCacheStatRecord {
-                    id: r.get("id"),
-                    org_id: OrgId(r.get("org_id")),
-                    instance_id: InstanceId(r.get("instance_id")),
-                    datasource_uid: r.get("datasource_uid"),
-                    hits: r.get::<i64, _>("hits") as u64,
-                    misses: r.get::<i64, _>("misses") as u64,
-                    entries: r.get::<i64, _>("entries") as u64,
-                    bytes_used: r.get::<i64, _>("bytes_used") as u64,
-                })
-                .collect())
-        })
-    }
-
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()> {
-        Box::pin(async move {
-            let mut tx = self.begin_org_tx(stat.org_id).await?;
-            sqlx::query(
-                "INSERT INTO cr_query_cache (installation_id, org_id, instance_id, id, datasource_uid, hits, misses, entries, bytes_used)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                 ON CONFLICT (org_id, id) DO UPDATE SET
-                    hits = EXCLUDED.hits,
-                    misses = EXCLUDED.misses,
-                    entries = EXCLUDED.entries,
-                    bytes_used = EXCLUDED.bytes_used,
-                    updated_at = NOW()",
-            )
-            .bind(InstallationId::from_u128(1).as_uuid())
-            .bind(stat.org_id.as_uuid())
-            .bind(stat.instance_id.as_uuid())
-            .bind(&stat.id)
-            .bind(&stat.datasource_uid)
-            .bind(stat.hits as i64)
-            .bind(stat.misses as i64)
-            .bind(stat.entries as i64)
-            .bind(stat.bytes_used as i64)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
-            Ok(())
+            Ok(page)
         })
     }
 

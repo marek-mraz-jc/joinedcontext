@@ -3,8 +3,8 @@
 //! - Per-datasource host allow-list (empty allow-list denies everything).
 //! - Requires `https` by default (`allow_http_for_tests` only for local wiremock/test listeners on
 //!   explicitly allow-listed hosts).
-//! - Resolves DNS once, checks every resolved IPv4 and IPv6 address (including IPv4-mapped IPv6
-//!   `::ffff:a.b.c.d`) against loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`,
+//! - Sends through [`jc_http`], which resolves DNS once and checks every IPv4 and IPv6 address
+//!   (including IPv4-mapped IPv6 `::ffff:a.b.c.d`) against loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`,
 //!   `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local (`169.254.0.0/16`, `fe80::/10`),
 //!   cloud metadata (`169.254.169.254`, `fd00:ec2::254`), CGNAT (`100.64.0.0/10`), multicast,
 //!   broadcast, and unspecified ranges.
@@ -14,13 +14,13 @@
 //! - Enforces wall-clock timeout and streaming response size cap (`max_response_bytes`).
 
 use crate::DsError;
-use futures_util::StreamExt;
-use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+use ipnet::IpNet;
 use reqwest::Method;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::str::FromStr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use url::Url;
+
+pub use jc_http::is_cloud_metadata;
 
 /// Configuration for [`OutboundGuard`].
 #[derive(Debug, Clone)]
@@ -415,25 +415,11 @@ impl OutboundGuard {
             self.check_addr(ip, operator)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
-        // A name that does not resolve and a name that resolves to a refused address answer
-        // the same text, without the address: the refusal tells nothing about internal names.
-        let unreachable = || {
-            DsError::GuardRefused(format!(
-                "host '{clean_host}' does not resolve to an address the outbound policy allows"
-            ))
-        };
-        let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
-            .await
-            .map_err(|_| unreachable())?
-            .collect();
-        if resolved.is_empty() {
-            return Err(unreachable());
-        }
-        for addr in &resolved {
-            self.check_addr(addr.ip(), operator)
-                .map_err(|_| unreachable())?;
-        }
-        Ok(resolved)
+        jc_http::resolve(clean_host, port, self.config.timeout, |ip| {
+            self.check_addr(ip, operator).is_ok()
+        })
+        .await
+        .map_err(outbound_error)
     }
 
     /// Resolves DNS, checks every returned IP address, pins the resolved addresses on the HTTP
@@ -441,66 +427,32 @@ impl OutboundGuard {
     pub async fn send(&self, req: OutboundRequest) -> Result<OutboundResponse, DsError> {
         let (parsed_url, host, port, own) = self.validate(&req.url)?;
 
-        // Resolve DNS and check every address (an own reach names its IP literal)
-        let clean_host = host.trim_matches(['[', ']']);
-        let addrs = match own {
-            Some(addr) => vec![addr],
-            None => self.resolve_checked(&host, port).await?,
-        };
-
+        let operator = self.operator_admits(&host, port);
         let timeout = req
             .timeout
             .map_or(self.config.timeout, |t| t.min(self.config.timeout));
+        let answer = jc_http::send(
+            jc_http::Request {
+                method: req.method,
+                // `validate` let `http` through only where this guard admits it.
+                plain_http: parsed_url.scheme() == "http",
+                url: parsed_url,
+                headers: req.headers,
+                body: req.body.map(Into::into),
+                timeout,
+                max_response_bytes: self.config.max_response_bytes,
+            },
+            // An own reach names its IP literal and opens that address alone.
+            |ip| match own {
+                Some(addr) => ip == addr.ip(),
+                None => self.check_addr(ip, operator).is_ok(),
+            },
+        )
+        .await
+        .map_err(outbound_error)?;
 
-        // No proxy: a proxy taken from the environment would resolve the host itself and
-        // bypass the address checks and the DNS pinning above.
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(timeout);
-
-        if clean_host.parse::<IpAddr>().is_err() {
-            builder = builder.resolve_to_addrs(clean_host, &addrs);
-        }
-
-        let client = builder
-            .build()
-            .map_err(|e| DsError::GuardRefused(format!("failed to build HTTP client: {e}")))?;
-
-        let mut rb = client.request(req.method, parsed_url);
-        for (k, v) in req.headers {
-            rb = rb.header(&k, &v);
-        }
-        if let Some(body) = req.body {
-            rb = rb.body(body);
-        }
-
-        let resp = rb.send().await.map_err(|e| {
-            // Strip any potential URL credentials or internal details
-            DsError::Upstream {
-                status: 502,
-                message: format!("request to '{clean_host}' failed: {}", e.without_url()),
-            }
-        })?;
-
-        let status = resp.status().as_u16();
-        if (300..400).contains(&status) {
-            return Err(DsError::GuardRefused(format!(
-                "upstream attempted redirect with status {status} (redirects are disabled)"
-            )));
-        }
-
-        if let Some(cl) = resp.content_length()
-            && cl > self.config.max_response_bytes as u64
-        {
-            return Err(DsError::GuardRefused(format!(
-                "response content-length {cl} exceeds limit of {} bytes",
-                self.config.max_response_bytes
-            )));
-        }
-
-        let headers: Vec<(String, String)> = resp
-            .headers()
+        let headers: Vec<(String, String)> = answer
+            .headers
             .iter()
             .filter_map(|(k, v)| {
                 v.to_str()
@@ -509,158 +461,28 @@ impl OutboundGuard {
             })
             .collect();
 
-        let mut stream = resp.bytes_stream();
-        let mut body = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| DsError::Upstream {
-                status: 502,
-                message: format!("error reading response stream: {}", e.without_url()),
-            })?;
-            if body.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
-                return Err(DsError::GuardRefused(format!(
-                    "response body exceeded maximum size of {} bytes",
-                    self.config.max_response_bytes
-                )));
-            }
-            body.extend_from_slice(&chunk);
-        }
-
         Ok(OutboundResponse {
-            status,
+            status: answer.status,
             headers,
-            body,
+            body: answer.body,
         })
     }
 }
 
-/// The cloud metadata addresses (`169.254.169.254`, also IPv4-mapped, and AWS `fd00:ec2::254`).
-#[must_use]
-pub fn is_cloud_metadata(ip: IpAddr) -> bool {
-    let metadata_v4 = Ipv4Addr::new(169, 254, 169, 254);
-    match ip {
-        IpAddr::V4(v4) => v4 == metadata_v4,
-        IpAddr::V6(v6) => {
-            v6.to_ipv4_mapped() == Some(metadata_v4)
-                || v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
-        }
+fn outbound_error(error: jc_http::Error) -> DsError {
+    match error {
+        jc_http::Error::Transport { .. } | jc_http::Error::Body(_) => DsError::Upstream {
+            status: 502,
+            message: error.to_string(),
+        },
+        refused => DsError::GuardRefused(refused.to_string()),
     }
 }
 
-/// Checks whether `ip` is permitted for outbound datasource connections.
-/// Unwraps IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) so IPv4 restrictions cannot be bypassed via IPv6!
+/// Checks whether `ip` is permitted for outbound datasource connections ([`jc_http::check_address`]).
 pub fn check_ip_allowed(ip: IpAddr, allow_loopback_for_tests: bool) -> Result<(), DsError> {
-    match ip {
-        IpAddr::V4(v4) => check_ipv4_allowed(v4, allow_loopback_for_tests),
-        IpAddr::V6(v6) => {
-            if let Some(mapped_v4) = v6.to_ipv4_mapped() {
-                return check_ipv4_allowed(mapped_v4, allow_loopback_for_tests);
-            }
-            check_ipv6_allowed(v6, allow_loopback_for_tests)
-        }
-    }
-}
-
-fn check_ipv4_allowed(ip: Ipv4Addr, allow_loopback_for_tests: bool) -> Result<(), DsError> {
-    // Cloud metadata endpoint 169.254.169.254 is ALWAYS blocked even in test mode
-    if ip == Ipv4Addr::new(169, 254, 169, 254) {
-        return Err(DsError::GuardRefused(
-            "blocked cloud metadata address 169.254.169.254".into(),
-        ));
-    }
-    if ip.is_loopback() {
-        if allow_loopback_for_tests {
-            return Ok(());
-        }
-        return Err(DsError::GuardRefused(format!(
-            "blocked loopback address {ip}"
-        )));
-    }
-    if ip.is_unspecified()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || ip.is_documentation()
-    {
-        return Err(DsError::GuardRefused(format!(
-            "blocked non-public IPv4 address {ip}"
-        )));
-    }
-    // "This network" 0/8 (0.x.y.z reaches the local host on Linux), CGNAT, IETF protocol
-    // assignments, 6to4 relay anycast, benchmark and the reserved 240/4.
-    for cidr in [
-        "0.0.0.0/8",
-        "100.64.0.0/10",
-        "192.0.0.0/24",
-        "192.88.99.0/24",
-        "198.18.0.0/15",
-        "240.0.0.0/4",
-    ] {
-        if let Ok(net) = Ipv4Net::from_str(cidr)
-            && net.contains(&ip)
-        {
-            return Err(DsError::GuardRefused(format!(
-                "blocked reserved IPv4 range {ip} ({cidr})"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn check_ipv6_allowed(ip: Ipv6Addr, allow_loopback_for_tests: bool) -> Result<(), DsError> {
-    if ip.is_loopback() {
-        if allow_loopback_for_tests {
-            return Ok(());
-        }
-        return Err(DsError::GuardRefused(format!(
-            "blocked IPv6 loopback address {ip}"
-        )));
-    }
-    if ip.is_unspecified()
-        || ip.is_multicast()
-        || ip.is_unique_local()
-        || ip.is_unicast_link_local()
-    {
-        return Err(DsError::GuardRefused(format!(
-            "blocked non-public IPv6 address {ip}"
-        )));
-    }
-    let seg = ip.segments();
-    // Addresses that carry an IPv4 address inside: IPv4-compatible (::a.b.c.d), NAT64
-    // (64:ff9b::/96) and 6to4 (2002::/16). The embedded address gets the IPv4 rules.
-    let embedded_v4 = if seg[..6] == [0, 0, 0, 0, 0, 0] || seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
-        Some(Ipv4Addr::from(
-            (u32::from(seg[6]) << 16) | u32::from(seg[7]),
-        ))
-    } else if seg[0] == 0x2002 {
-        Some(Ipv4Addr::from(
-            (u32::from(seg[1]) << 16) | u32::from(seg[2]),
-        ))
-    } else {
-        None
-    };
-    if let Some(v4) = embedded_v4 {
-        return check_ipv4_allowed(v4, allow_loopback_for_tests);
-    }
-    // AWS IPv6 metadata fd00:ec2::254, documentation, site-local, discard-only, local-use NAT64
-    // and Teredo (its IPv4 endpoint is hidden).
-    for cidr in [
-        "fd00:ec2::/32",
-        "2001:db8::/32",
-        "fec0::/10",
-        "100::/64",
-        "64:ff9b:1::/48",
-        "2001::/32",
-    ] {
-        if let Ok(net) = Ipv6Net::from_str(cidr)
-            && net.contains(&ip)
-        {
-            return Err(DsError::GuardRefused(format!(
-                "blocked reserved IPv6 address {ip}"
-            )));
-        }
-    }
-    Ok(())
+    jc_http::check_address(ip, allow_loopback_for_tests)
+        .map_err(|blocked| DsError::GuardRefused(blocked.to_string()))
 }
 
 #[cfg(test)]

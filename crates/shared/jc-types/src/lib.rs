@@ -9,6 +9,12 @@
 //! - [`internal_name`]: the one function that builds an internal space, Tenant, subject, object,
 //!   queue or bucket name. Its output holds the two ids and a checked [`Label`], nothing else, so a
 //!   branch project with the same Git files as its parent still gets names of its own.
+//! - [`BoundedCache`]: the one cache type (ARCH/ISO-04): a key without an Organization does not
+//!   compile.
+
+mod cache;
+
+pub use cache::{BoundedCache, OrgKeyed};
 
 use serde::{Deserialize, Serialize};
 use std::fmt;

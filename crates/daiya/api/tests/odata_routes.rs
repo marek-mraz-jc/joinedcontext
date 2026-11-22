@@ -44,20 +44,18 @@ async fn organization_wide_sets_need_read_on_the_organization() {
         })
         .await
         .unwrap();
-    w.store
-        .inner
-        .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
-            id: "stat-1".into(),
-            org_id: ORG,
-            instance_id: daiya_model::InstanceId::from_u128(1),
-            datasource_uid: "prom".into(),
-            hits: 1,
-            misses: 1,
-            entries: 1,
-            bytes_used: 10,
-        })
-        .await
-        .unwrap();
+    let key = daiya_query::CacheKey::new(
+        ORG,
+        w.state.default_instance_id,
+        &[],
+        "prom",
+        "r1",
+        &json!("up"),
+        0,
+        60_000,
+        15_000,
+    );
+    assert!(w.state.query_cache.get(&key).is_none(), "one counted miss");
     for set in ["ImportReports", "QueryCacheStats"] {
         for who in [None, Some("outsider"), Some("ops-viewer")] {
             for path in [set.to_owned(), format!("{set}/$count")] {
@@ -678,6 +676,23 @@ impl Authorizer for DenySome {
             Decision::allow("member")
         }
     }
+
+    fn read_scope(&self, ctx: &RequestCtx, kind: daiya_model::ReadKind) -> daiya_model::ReadScope {
+        use daiya_model::{ReadKind, ReadScope, ScopeColumn};
+        if !ctx.subject.is_member_of(ctx.org_id) {
+            return ReadScope::Nothing;
+        }
+        let (column, open) = match kind {
+            ReadKind::Dashboard | ReadKind::PublicDashboard => (ScopeColumn::Object, "public"),
+            ReadKind::Folder => (ScopeColumn::Object, "open"),
+            ReadKind::LibraryPanel => (ScopeColumn::Folder, "open"),
+            ReadKind::Organization | ReadKind::Datasource => return ReadScope::All,
+        };
+        ReadScope::In {
+            column,
+            values: [open.to_owned()].into(),
+        }
+    }
 }
 
 /// Each entity set filters per object with the same decision as the direct routes: a caller
@@ -763,24 +778,16 @@ fn uids(page: &Value, field: &str) -> Vec<String> {
 async fn store_failures_are_errors_in_every_set_and_action() {
     let w = seeded().await;
     let cases: &[(&'static str, &str, &str)] = &[
-        ("list_dashboards", "GET", "/odata/v4/Dashboards"),
-        ("list_dashboards", "GET", "/odata/v4/DashboardVersions"),
-        (
-            "list_dashboard_versions",
-            "GET",
-            "/odata/v4/DashboardVersions",
-        ),
-        ("list_folders", "GET", "/odata/v4/Folders"),
-        ("list_datasources", "GET", "/odata/v4/Datasources"),
-        ("list_library_panels", "GET", "/odata/v4/LibraryPanels"),
-        (
-            "list_public_dashboards",
-            "GET",
-            "/odata/v4/PublicDashboards",
-        ),
-        ("list_query_cache_stats", "GET", "/odata/v4/QueryCacheStats"),
-        ("list_import_reports", "GET", "/odata/v4/ImportReports"),
-        ("list_dashboards", "GET", "/odata/v4/Dashboards/$count"),
+        ("read_rows", "GET", "/odata/v4/Dashboards"),
+        ("read_rows", "GET", "/odata/v4/DashboardVersions"),
+        ("read_rows", "GET", "/odata/v4/Folders"),
+        ("read_rows", "GET", "/odata/v4/Datasources"),
+        ("read_rows", "GET", "/odata/v4/LibraryPanels"),
+        ("read_rows", "GET", "/odata/v4/PublicDashboards"),
+        ("read_rows", "GET", "/odata/v4/ImportReports"),
+        ("read_rows", "GET", "/odata/v4/Dashboards('edge')"),
+        ("read_rows", "GET", "/odata/v4/Dashboards/$count"),
+        ("read_rows", "GET", "/odata/v4/Dashboards/$export"),
         (
             "get_datasource",
             "GET",
@@ -828,7 +835,7 @@ async fn store_failures_are_errors_in_every_set_and_action() {
         w.store.heal();
         assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{uri}: {answer}");
     }
-    w.store.fail("list_dashboards");
+    w.store.fail("read_rows");
     let (st, answer) = w
         .call(
             "POST",
@@ -877,6 +884,87 @@ async fn paging_keys_cache_stats_and_refused_exports() {
     let rest = w.ok("GET", &format!("/odata/v4/{next}"), None).await;
     assert_eq!(rest["value"].as_array().unwrap().len(), 2, "501 + ops");
 
+    // The next link keeps the options and starts behind the last row of that order.
+    let asked = "Folders?$orderby=title%20desc&$select=uid&$count=true&$skip=1";
+    let page = w.ok("GET", &format!("/odata/v4/{asked}"), None).await;
+    assert_eq!(page["@odata.count"], 502);
+    assert_eq!(page["value"].as_array().unwrap().len(), 500);
+    let link = page["@odata.nextLink"].as_str().unwrap();
+    assert!(link.starts_with(&format!("{asked}&$skiptoken=")), "{link}");
+    let last = w.ok("GET", &format!("/odata/v4/{link}"), None).await;
+    assert_eq!(
+        last["value"],
+        json!([{ "uid": "f000" }]),
+        "titles descend to F0"
+    );
+    assert_eq!(
+        last["@odata.count"], 502,
+        "the count is the set's, on every page"
+    );
+    let top = w.ok("GET", "/odata/v4/Folders?$top=501", None).await;
+    let link = top["@odata.nextLink"].as_str().unwrap();
+    let end = w.ok("GET", &format!("/odata/v4/{link}"), None).await;
+    assert_eq!(
+        end["value"].as_array().unwrap().len(),
+        1,
+        "$top counts over pages"
+    );
+    assert!(end.get("@odata.nextLink").is_none(), "{end}");
+
+    // A cursor carries no right: the caller's scope applies behind it too.
+    let token = next.split_once("$skiptoken=").unwrap().1;
+    let (st, seen) = w
+        .call(
+            "GET",
+            &format!("/odata/v4/{next}"),
+            Some("ops-viewer"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        seen["value"].as_array().unwrap().len(),
+        1,
+        "ops alone: {seen}"
+    );
+    for uri in [
+        format!("/odata/v4/Folders?$orderby=title&$skiptoken={token}"),
+        format!("/odata/v4/Dashboards?$skiptoken={token}"),
+        format!("/odata/v4/Folders?$skiptoken={token}&$skiptoken={token}"),
+        "/odata/v4/Folders?$skiptoken=500".to_owned(),
+        "/odata/v4/Folders?$filter=title%20eq%20'a%00b'".to_owned(),
+        "/odata/v4/Folders?$filter=contains(updatedAt,'2026')".to_owned(),
+    ] {
+        let (st, _) = w.call("GET", &uri, Some("admin"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}");
+    }
+
+    // A time is compared as a time, whatever the literal's spelling.
+    for (filter, count) in [
+        ("updatedAt%20gt%202000-01-01T00:00:00Z", 502),
+        ("updatedAt%20lt%202000-01-01T02:00:00%2B02:00", 0),
+    ] {
+        let uri = format!("/odata/v4/Folders/$count?$filter={filter}");
+        assert_eq!(w.ok("GET", &uri, None).await, json!(count), "{filter}");
+    }
+
+    // `$batch` answers a set and a key as the routes do.
+    let batch = w
+        .ok(
+            "POST",
+            "/odata/v4/$batch",
+            Some(json!({ "requests": [
+                { "id": "1", "method": "GET", "url": "Folders?$count=true&$top=1" },
+                { "id": "2", "method": "GET", "url": "Folders('f007')" },
+            ] })),
+        )
+        .await;
+    assert_eq!(
+        batch["responses"][0]["body"]["@odata.count"], 502,
+        "{batch}"
+    );
+    assert_eq!(batch["responses"][1]["body"]["uid"], "f007", "{batch}");
+
     // A skiptoken this service did not write is refused at every door.
     for uri in [
         "/odata/v4/Folders?$skiptoken=garbage",
@@ -922,28 +1010,11 @@ async fn paging_keys_cache_stats_and_refused_exports() {
         })),
     )
     .await;
-    {
-        use daiya_model::DaiyaStore;
-        w.store
-            .inner
-            .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
-                id: "stored-1".into(),
-                org_id: ORG,
-                instance_id: daiya_model::InstanceId::from_u128(1),
-                datasource_uid: "prom".into(),
-                hits: 3,
-                misses: 1,
-                entries: 1,
-                bytes_used: 10,
-            })
-            .await
-            .unwrap();
-    }
     let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
     let rows = stats["value"].as_array().unwrap();
-    assert!(rows.iter().any(|r| r["id"] == "stored-1"), "{stats}");
     assert!(
-        rows.len() >= 2,
-        "a live entry beside the stored one: {stats}"
+        rows.iter()
+            .any(|r| r["datasourceUid"] == "prom" && r["entries"] == 1),
+        "the live entry: {stats}"
     );
 }

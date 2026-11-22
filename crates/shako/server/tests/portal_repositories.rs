@@ -15,8 +15,8 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -55,7 +55,7 @@ impl World {
         ];
         let binding = |org_id, principal: &str| RoleBinding {
             org_id,
-            principal: principal.into(),
+            principal: Principal::User(principal.into()),
             actions: all.clone(),
             project_id: None,
             repo: None,
@@ -68,11 +68,11 @@ impl World {
             .with_static_tokens(vec![
                 StaticTokenBinding::new(
                     PORTAL_TOKEN,
-                    Subject::authenticated("jc-portal", "jc-portal", vec![org], vec![]),
+                    Subject::authenticated("jc-portal", "jc-portal", vec![org]),
                 ),
                 StaticTokenBinding::new(
                     APPS_TOKEN,
-                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org], vec![]),
+                    Subject::authenticated("jc-apps", "jc-apps", vec![apps_org]),
                 ),
             ]);
         let guard = OutboundGuard::new(OutboundPolicy {
@@ -82,15 +82,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
-        state.register_owner_org(APPS_OWNER, apps_org);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let host = listener.local_addr().unwrap().to_string();

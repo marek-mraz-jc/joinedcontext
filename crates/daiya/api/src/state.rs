@@ -117,6 +117,8 @@ impl DaiyaState {
         store: Arc<dyn DaiyaStore>,
         authorizer: Arc<dyn Authorizer>,
     ) -> Self {
+        let query_cache = Arc::new(QueryCache::default());
+        query_cache.sweep_on_timer();
         Self {
             installation_id,
             default_org_id,
@@ -125,7 +127,7 @@ impl DaiyaState {
             authorizer,
             datasources: Arc::new(RwLock::new(BTreeMap::new())),
             default_org_name: MAIN_ORG_NAME.to_owned(),
-            query_cache: Arc::new(QueryCache::default()),
+            query_cache,
             wasm_host: Arc::new(WasmPluginHost::default()),
             secret_resolver: Arc::new(MapSecretResolver::new()),
             token_exchanger: Arc::new(DenyTokenExchanger),

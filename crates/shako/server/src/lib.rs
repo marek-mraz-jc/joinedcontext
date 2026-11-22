@@ -86,7 +86,7 @@ struct McpCallReq {
 }
 
 async fn http_mcp_list(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -100,7 +100,7 @@ async fn http_mcp_call(
     mount_ext: Option<Extension<Mount>>,
     Json(req): Json<McpCallReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+    let ctx = match authenticate_request(&state, &headers, "shako") {
         Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
@@ -294,7 +294,6 @@ pub async fn apply_manifest_bundle(
                     .await?
             }
         };
-        state.register_owner_org(&r.owner, org_id);
         for rule in &r.protections {
             state
                 .store()

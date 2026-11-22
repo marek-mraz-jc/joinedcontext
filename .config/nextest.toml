@@ -38,7 +38,7 @@ filter = 'package(daiya-store-pg) or (package(daiya-server) and (binary(config) 
 test-group = 'pg-daiya'
 
 [[profile.default.overrides]]
-filter = 'package(shako-store-pg)'
+filter = 'package(shako-store-pg) or (package(shako-server) and binary(registry_manifests))'
 test-group = 'pg-shako'
 
 [[profile.default.overrides]]

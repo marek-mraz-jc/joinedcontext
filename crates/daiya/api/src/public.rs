@@ -13,7 +13,9 @@
 //!   is enabled by the owner, nor any other organization's data).
 //! - Revoke = token rotation (`rotate_public_dashboard_token`): old token immediately answers 404.
 
-use crate::render::{execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms};
+use crate::render::{
+    datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
+};
 use crate::state::{DaiyaState, error_response, resolve_request_ctx};
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -32,7 +34,7 @@ use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
@@ -744,25 +746,6 @@ pub async fn execute_public_dashboard_query(
         .max(safe_interval_ms) as u64;
     let max_dp = req.max_data_points.unwrap_or(1_500).clamp(1, 11_000);
 
-    // Check public cache keyed by (org_id, instance_id, dashboard_uid, dashboard_version, panel_id, range_bucket, interval, maxDataPoints) (R7)
-    let pub_cache_key = PublicCacheKey::new(
-        pubdash.org_id,
-        pubdash.instance_id,
-        &dash.uid,
-        dash.version,
-        panel_id,
-        from_ms,
-        to_ms,
-        effective_interval_ms as i64,
-        max_dp,
-    );
-
-    if resolved_vars.is_empty()
-        && let Some(cached) = state.query_cache.get_public(&pub_cache_key)
-    {
-        return Ok(cached);
-    }
-
     let raw_targets: Vec<Value> = panel
         .targets
         .as_ref()
@@ -791,7 +774,39 @@ pub async fn execute_public_dashboard_query(
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         })
-        .chain(default_ds_uid.map(str::to_owned));
+        .chain(default_ds_uid.map(str::to_owned))
+        .collect::<BTreeSet<String>>();
+    // A changed datasource or a changed sanitisation is a new key, not a wait for the old one.
+    let mut datasources = Vec::with_capacity(panel_datasources.len());
+    for uid in &panel_datasources {
+        let record = state.store.get_datasource(pubdash.org_id, uid).await?;
+        datasources.push((uid, datasource_revision(record.as_ref())?));
+    }
+    let revision = sha256_hex(
+        &serde_json::to_vec(&(pubdash.show_query_text, datasources))
+            .map_err(|e| CrError::Internal(format!("cache revision: {e}")))?,
+    );
+
+    // Check public cache keyed by (org_id, instance_id, dashboard_uid, dashboard_version, revision, panel_id, range_bucket, interval, maxDataPoints) (R7)
+    let pub_cache_key = PublicCacheKey::new(
+        pubdash.org_id,
+        pubdash.instance_id,
+        &dash.uid,
+        dash.version,
+        &revision,
+        panel_id,
+        from_ms,
+        to_ms,
+        effective_interval_ms as i64,
+        max_dp,
+    );
+
+    if resolved_vars.is_empty()
+        && let Some(cached) = state.query_cache.get_public(&pub_cache_key)
+    {
+        return Ok(cached);
+    }
+
     let public_authz = PublicDashboardAuthorizer::new(pubdash.org_id, &dash.uid, panel_datasources);
     let svc_ctx = RequestCtx::new(
         pubdash.installation_id,

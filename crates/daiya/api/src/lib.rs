@@ -15,6 +15,7 @@ pub mod odata;
 pub mod page;
 pub mod public;
 pub mod render;
+mod sets;
 pub mod state;
 
 pub use public::{
@@ -26,6 +27,7 @@ pub use render::{
     PanelTimeRange, PanelView, execute_targets_and_expressions, format_picked, panel_view,
     render_frames_html_table,
 };
+pub use sets::readable_rows;
 pub use state::{
     DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PageReader, PersonTokenExchanger,
     READ_AS_HEADER, READ_AS_PUBLIC, ServerAdminCheck, SubjectResolver, TokenBinding,

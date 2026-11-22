@@ -6,11 +6,12 @@
 use daiya_model::{
     ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
     DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, LibraryPanelRecord,
-    MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord,
-    QueryCacheStatRecord, constant_time_eq, org_state_etag, store::StoreFuture,
+    MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage,
+    RowQuery, RowSet, constant_time_eq, org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Default, Clone)]
@@ -22,7 +23,6 @@ struct OrgState {
     datasources: BTreeMap<String, DatasourceRecord>,
     library_panels: BTreeMap<String, LibraryPanelRecord>,
     public_dashboards: BTreeMap<String, PublicDashboardRecord>,
-    cache_stats: BTreeMap<String, QueryCacheStatRecord>,
     import_reports: Vec<ImportReportRecord>,
     plans: BTreeMap<String, PlanRecord>,
 }
@@ -738,27 +738,15 @@ impl DaiyaStore for MemoryStore {
         })
     }
 
-    fn list_query_cache_stats(&self, org_id: OrgId) -> StoreFuture<'_, Vec<QueryCacheStatRecord>> {
+    fn read_rows(&self, org_id: OrgId, query: RowQuery) -> StoreFuture<'_, RowPage> {
         Box::pin(async move {
             let guard = self.inner.read();
-            Ok(guard
+            let rows = guard
                 .orgs
                 .get(&org_id)
-                .map(|o| o.cache_stats.values().cloned().collect())
-                .unwrap_or_default())
-        })
-    }
-
-    fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()> {
-        Box::pin(async move {
-            let mut guard = self.inner.write();
-            guard
-                .orgs
-                .entry(stat.org_id)
-                .or_default()
-                .cache_stats
-                .insert(stat.id.clone(), stat);
-            Ok(())
+                .map(|org| index_rows(org, query.set))
+                .unwrap_or_default();
+            Ok(daiya_model::rows::answer_rows(rows, &query))
         })
     }
 
@@ -850,5 +838,125 @@ impl DaiyaStore for MemoryStore {
             *live = org;
             Ok(saved)
         })
+    }
+}
+
+/// The index rows of `set`, member for member what daiya-store-pg selects.
+fn index_rows(org: &OrgState, set: RowSet) -> Vec<Value> {
+    match set {
+        RowSet::Dashboards => org
+            .dashboards
+            .values()
+            .map(|d| {
+                json!({
+                    "uid": d.uid,
+                    "title": d.title,
+                    "slug": d.slug,
+                    "folderUid": d.folder_uid,
+                    "panelCount": d.panel_count,
+                    "version": d.version,
+                    "schemaVersion": d.schema_version,
+                    "isProvisioned": d.is_provisioned,
+                    "updatedBy": d.updated_by,
+                    "updatedAt": d.updated_at.to_rfc3339(),
+                    "tags": d.tags,
+                    "provisionedExternalId": d.provisioned_external_id,
+                })
+            })
+            .collect(),
+        RowSet::DashboardVersions => org
+            .dashboards
+            .values()
+            .flat_map(|d| {
+                org.versions.get(&d.uid).into_iter().flatten().map(|v| {
+                    json!({
+                        "id": format!("{}:{}", v.dashboard_uid, v.version),
+                        "dashboardUid": v.dashboard_uid,
+                        "version": v.version,
+                        "parentVersion": v.parent_version,
+                        "restoredFrom": v.restored_from,
+                        "message": v.message,
+                        "createdBy": v.created_by,
+                        "createdAt": v.created_at.to_rfc3339(),
+                        "folderUid": d.folder_uid,
+                    })
+                })
+            })
+            .collect(),
+        RowSet::Folders => org
+            .folders
+            .values()
+            .map(|f| {
+                json!({
+                    "uid": f.uid,
+                    "parentUid": f.parent_uid,
+                    "title": f.title,
+                    "version": f.version,
+                    "managedBy": f.managed_by,
+                    "updatedAt": f.updated_at.to_rfc3339(),
+                })
+            })
+            .collect(),
+        RowSet::Datasources => org
+            .datasources
+            .values()
+            .map(|ds| {
+                json!({
+                    "uid": ds.uid,
+                    "name": ds.name,
+                    "type": ds.kind,
+                    "access": ds.access,
+                    "url": ds.url,
+                    "isDefault": ds.is_default,
+                    "readOnly": ds.read_only,
+                    "wasmDigest": ds.wasm_digest,
+                    "version": ds.version,
+                })
+            })
+            .collect(),
+        RowSet::LibraryPanels => org
+            .library_panels
+            .values()
+            .map(|p| {
+                json!({
+                    "uid": p.uid,
+                    "folderUid": p.folder_uid,
+                    "name": p.name,
+                    "type": p.panel_type,
+                    "description": p.description,
+                    "version": p.version,
+                })
+            })
+            .collect(),
+        RowSet::PublicDashboards => org
+            .public_dashboards
+            .values()
+            .map(|p| {
+                json!({
+                    "uid": p.uid,
+                    "dashboardUid": p.dashboard_uid,
+                    "isEnabled": p.is_enabled,
+                    "timeSelectionEnabled": p.time_selection_enabled,
+                    "annotationsEnabled": p.annotations_enabled,
+                    "showQueryText": p.show_query_text,
+                    "share": p.share.as_str(),
+                })
+            })
+            .collect(),
+        RowSet::ImportReports => org
+            .import_reports
+            .iter()
+            .map(|r| {
+                json!({
+                    "id": r.id,
+                    "dryRun": r.dry_run,
+                    "status": r.status,
+                    "dashboardCount": r.dashboard_count,
+                    "refusedCount": r.refused_count,
+                    "mappedCount": r.mapped_count,
+                    "createdAt": r.created_at.to_rfc3339(),
+                })
+            })
+            .collect(),
     }
 }
