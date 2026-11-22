@@ -55,16 +55,18 @@ impl Issuer {
             .expect("clock")
             .as_secs()
             .cast_signed();
+        self.sign(&json!({
+            "iss": self.issuer, "aud": audience, "azp": client,
+            "iat": now, "exp": now + life,
+        }))
+    }
+
+    /// `claims` signed with this issuer's key under its `kid`, for a token [`Issuer::token`]
+    /// does not shape (no `azp`, another claim set).
+    #[must_use]
+    pub fn sign(&self, claims: &serde_json::Value) -> String {
         let mut header = Header::new(Algorithm::EdDSA);
         header.kid = Some(self.kid.clone());
-        encode(
-            &header,
-            &json!({
-                "iss": self.issuer, "aud": audience, "azp": client,
-                "iat": now, "exp": now + life,
-            }),
-            &self.key,
-        )
-        .expect("sign")
+        encode(&header, claims, &self.key).expect("sign")
     }
 }

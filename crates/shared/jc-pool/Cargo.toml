@@ -10,3 +10,7 @@ description = "The one place a sqlx pool of jc starts: a failed release ping clo
 # Not the sqlx umbrella: ekiben links the driver crates alone (crates/ekiben/Cargo.toml).
 sqlx-core = { version = "0.9", default-features = false }
 tracing = "0.1"
+
+[dev-dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

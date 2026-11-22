@@ -7120,7 +7120,9 @@ dependencies = [
 name = "jc-pool"
 version = "0.1.0"
 dependencies = [
+ "sqlx",
  "sqlx-core",
+ "tokio",
  "tracing",
 ]
 
