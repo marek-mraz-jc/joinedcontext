@@ -67,7 +67,8 @@ pub enum View {
 pub struct Aggregation {
     /// `count`, or the NGSI-LD `aggrMethods` name of a history.
     pub method: String,
-    /// `value`, `year`, `decade` or `month` of a count; `day`, `hour` or `period` of a history.
+    /// `value`, `year`, `decade` or `month` of a count; `year`, `month`, `day`, `hour` or
+    /// `period` of a history.
     pub per: &'static str,
     /// The attribute it is over.
     pub of: String,
@@ -80,6 +81,9 @@ pub struct Aggregation {
     /// The days with a value and the days of the window asked, of one daily series.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub days: Option<(u64, u64)>,
+    /// The first and the last year in a history per month or per year (T-7526).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub years: Option<(i32, i32)>,
 }
 
 /// Whether the question itself asks for the most or the least of something, for a router reply
@@ -607,6 +611,7 @@ pub fn show_split(table: &mut Table, attribute: &str, split: &Split, counted: u6
         total: table.total.unwrap_or(counted).max(counted),
         partial: false,
         days: None,
+        years: None,
     });
 }
 
@@ -646,7 +651,8 @@ pub fn said(table: &Table) -> Option<Value> {
 }
 
 /// The arguments a history is sent with: a window of [`DAILY_FROM`] days or more that averages
-/// per less than a day is asked per day, so the broker aggregates it before it is sent on.
+/// per less than a day is asked per day, and a longer one no finer than its range is read by
+/// (`jc_time::granularity`, T-7526), so the broker aggregates it before it is sent on.
 pub fn history_arguments(schema: &Value, arguments: &Value, now: OffsetDateTime) -> Value {
     let mut sent = arguments.clone();
     let text = |key: &str| arguments.get(key).and_then(Value::as_str);
@@ -661,13 +667,18 @@ pub fn history_arguments(schema: &Value, arguments: &Value, now: OffsetDateTime)
     let long = span.is_some_and(|span| span >= time::Duration::days(DAILY_FROM as i64));
     let finer = text("aggrPeriodDuration")
         .is_some_and(|period| period.starts_with("PT") && period != "PT0S" && period != "PT24H");
-    if long
-        && finer
-        && arguments.get("aggrMethods").is_some()
-        && offers(schema, "aggrPeriodDuration")
-    {
-        sent["aggrPeriodDuration"] = json!("P1D");
+    if arguments.get("aggrMethods").is_none() || !offers(schema, "aggrPeriodDuration") {
+        return sent;
     }
+    let Some(asked) = text("aggrPeriodDuration") else {
+        return sent;
+    };
+    let mut period = if long && finer { "P1D" } else { asked };
+    if let Some(span) = span {
+        let span = jc_time::granularity::SignedDuration::from_secs(span.whole_seconds());
+        period = jc_time::granularity::bounded(span, period);
+    }
+    sent["aggrPeriodDuration"] = json!(period);
     sent
 }
 
@@ -684,6 +695,68 @@ fn window_days(arguments: &Value) -> Option<u64> {
     let last = at("endTimeAt")?.checked_sub(time::Duration::SECOND)?;
     let days = last.date().to_julian_day() - at("timeAt")?.date().to_julian_day() + 1;
     u64::try_from(days).ok()
+}
+
+/// The calendar a history of days or longer is said and drawn by, finest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Calendar {
+    Day,
+    Month,
+    Year,
+}
+
+impl Calendar {
+    /// The calendar of an ISO 8601 period, a month or a year whatever its day count.
+    fn of(period: &str) -> Self {
+        const DAY: i64 = 86_400;
+        match jc_time::granularity::seconds(period) {
+            Some(secs) if secs >= 365 * DAY => Self::Year,
+            Some(secs) if secs >= 28 * DAY => Self::Month,
+            _ => Self::Day,
+        }
+    }
+
+    fn per(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Month => "month",
+            Self::Year => "year",
+        }
+    }
+
+    /// The first moment of the day, the month or the year holding `at`.
+    fn start(self, at: OffsetDateTime) -> Option<OffsetDateTime> {
+        let date = match self {
+            Self::Day => at.date(),
+            Self::Month => at.date().replace_day(1).ok()?,
+            Self::Year => {
+                time::Date::from_calendar_date(at.year(), time::Month::January, 1).ok()?
+            }
+        };
+        Some(at.replace_date(date).replace_time(time::Time::MIDNIGHT))
+    }
+}
+
+/// The calendar a history at `instants` is read by: no finer than the table's for its span, the
+/// period the broker `aggregated` by, or the one its moments already keep.
+fn calendar(instants: &BTreeSet<OffsetDateTime>, aggregated: bool, arguments: &Value) -> Calendar {
+    let (Some(first), Some(last)) = (instants.first(), instants.last()) else {
+        return Calendar::Day;
+    };
+    let span = jc_time::granularity::SignedDuration::from_secs((*last - *first).whole_seconds());
+    let mut read = Calendar::of(jc_time::granularity::finest(span));
+    if aggregated {
+        if let Some(period) = arguments.get("aggrPeriodDuration").and_then(Value::as_str) {
+            read = read.max(Calendar::of(period));
+        }
+    }
+    if instants.len() > 1 {
+        let kept = [Calendar::Year, Calendar::Month]
+            .into_iter()
+            .find(|calendar| instants.iter().all(|at| calendar.start(*at) == Some(*at)));
+        read = read.max(kept.unwrap_or(Calendar::Day));
+    }
+    read
 }
 
 /// One attribute's history of one entity: its numbers by instant.
@@ -744,7 +817,8 @@ fn points(attribute: &Value) -> Option<Points> {
 }
 
 /// A temporal answer as the points a chart draws: one attribute, per day from [`DAILY_FROM`]
-/// days on, at most [`SERIES`] series and [`POINTS`] points, the newest kept.
+/// days on, per month or year where [`calendar`] reads so or the points would pass [`POINTS`],
+/// at most [`SERIES`] series; only past a year per point are the newest alone kept.
 pub fn history(text: &str, arguments: &Value) -> Option<History> {
     let answer: Value = serde_json::from_str(text).ok()?;
     let entities: Vec<&Value> = match answer.get("entities").unwrap_or(&answer) {
@@ -795,20 +869,13 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
         .iter()
         .flat_map(|s| s.points.iter().map(|(at, _)| *at))
         .collect();
-    let daily = days.len() >= DAILY_FROM;
+    let asked_per = calendar(&instants, method.is_some(), arguments);
+    let dated = days.len() >= DAILY_FROM || asked_per > Calendar::Day;
     let hourly = instants
         .iter()
         .all(|at| at.minute() == 0 && at.second() == 0);
     // Values the broker did not aggregate are averaged here, and said so.
     let method = method.unwrap_or("avg");
-    let per = if daily {
-        "day"
-    } else if hourly {
-        "hour"
-    } else {
-        "period"
-    };
-
     let all = series.len();
     let total = answer
         .get("total")
@@ -817,15 +884,32 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
         .max(all as u64);
     series.truncate(SERIES);
     let most = POINTS / series.len().max(1);
+    let fits = |read: &Calendar| {
+        series.iter().all(|one| {
+            let starts: BTreeSet<_> = one.points.iter().map(|(at, _)| read.start(*at)).collect();
+            starts.len() <= most
+        })
+    };
+    let read = dated.then(|| {
+        [Calendar::Day, Calendar::Month, Calendar::Year]
+            .into_iter()
+            .filter(|read| *read >= asked_per)
+            .find(fits)
+            .unwrap_or(Calendar::Year)
+    });
+    let per = match read {
+        Some(read) => read.per(),
+        None if hourly => "hour",
+        None => "period",
+    };
     let mut partial = answer.get("more").is_some();
     let mut rows = Vec::new();
     for (at, one) in series.iter().enumerate() {
         let mut buckets: BTreeMap<OffsetDateTime, Vec<f64>> = BTreeMap::new();
         for (instant, value) in &one.points {
-            let key = if daily {
-                instant.replace_time(time::Time::MIDNIGHT)
-            } else {
-                *instant
+            let key = match read {
+                Some(read) => read.start(*instant)?,
+                None => *instant,
             };
             buckets.entry(key).or_default().push(*value);
         }
@@ -838,7 +922,7 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
                 "min" => values.iter().copied().fold(f64::INFINITY, f64::min),
                 _ => values.iter().sum::<f64>() / values.len() as f64,
             };
-            let moment = if daily {
+            let moment = if read.is_some() {
                 instant.date().to_string()
             } else {
                 instant.format(&Rfc3339).ok()?
@@ -846,7 +930,11 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
             rows.push((at, moment, (value * 1e4).round() / 1e4));
         }
     }
-    let days = (daily && series.len() == 1)
+    let years = read
+        .filter(|read| *read > Calendar::Day)
+        .and(instants.first().zip(instants.last()))
+        .map(|(first, last)| (first.year(), last.year()));
+    let days = (read == Some(Calendar::Day) && series.len() == 1)
         .then(|| window_days(arguments))
         .flatten()
         .map(|asked| (rows.len() as u64, asked.max(rows.len() as u64)));
@@ -861,6 +949,7 @@ pub fn history(text: &str, arguments: &Value) -> Option<History> {
             total,
             partial,
             days,
+            years,
         },
     })
 }
@@ -892,7 +981,7 @@ pub fn history_table(endpoint: &str, kind: &str, history: &History, current: &st
         .ids
         .iter()
         .find_map(|id| routed::unit_of(of(id)?.get(&history.made.of)?));
-    let moment = if history.made.per == "day" {
+    let moment = if matches!(history.made.per, "day" | "month" | "year") {
         "date"
     } else {
         "observedAt"
@@ -1293,8 +1382,86 @@ mod tests {
         assert!(history.rows.len() <= POINTS);
         assert_eq!(
             (history.made.shown, history.made.total, history.made.partial),
-            (8, 12, true)
+            (8, 12, false)
         );
+        // 200 days of 8 series are their 7 months, none dropped (T-7526)
+        assert_eq!((history.rows.len(), history.made.per), (56, "month"));
+        assert_eq!(history.rows[0].1, "2026-01-01");
+    }
+
+    /// Yearly or monthly buckets of `from` up to 2026, as the broker aggregates them.
+    fn buckets(from: i32, months: &[u8]) -> Vec<Value> {
+        (from..2026)
+            .flat_map(|year| months.iter().map(move |month| (year, *month)))
+            .map(|(year, month)| {
+                json!([
+                    year,
+                    format!("{year}-{month:02}-01T00:00:00Z"),
+                    "2026-01-01T00:00:00Z"
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ten_and_a_hundred_years_show_their_whole_span_with_the_period_stated() {
+        let year: Vec<u8> = (1..=12).collect();
+        for (from, months, period, per, rows) in [
+            (2016, &year[..], "P1M", "month", 120),
+            (1926, &year[..1], "P1Y", "year", 100),
+            // two years of two buckets are years too
+            (2024, &year[..1], "P1Y", "year", 2),
+            // forty-five years of months are more than a chart holds
+            (1981, &year[..], "P1M", "year", 45),
+        ] {
+            let text = json!({"entities": [{"id": "urn:ngsi-ld:K:1", "type": "K", "population": {"type": "Property", "avg": buckets(from, months)}}]});
+            let asked = json!({"attrs": ["population"], "aggrPeriodDuration": period});
+            let history = history(&text.to_string(), &asked).expect("a history");
+            assert_eq!(
+                (history.made.per, history.rows.len()),
+                (per, rows),
+                "{from}"
+            );
+            assert_eq!(history.made.years, Some((from, 2025)), "{from}");
+            assert!(!history.made.partial, "{from}");
+            assert_eq!(history.rows[0].1, format!("{from}-01-01"));
+            assert_eq!(history.made.days, None);
+            let table = history_table("kpi", "K", &history, "");
+            assert_eq!(table.columns, ["name", "date", "population"]);
+        }
+    }
+
+    #[test]
+    fn only_years_past_the_points_lose_the_oldest_and_say_so() {
+        let entities: Vec<Value> = (0..8)
+            .map(|i| json!({"id": format!("urn:ngsi-ld:K:{i}"), "type": "K", "population": {"type": "Property", "avg": buckets(1900, &[1])}}))
+            .collect();
+        let history =
+            history(&json!({"entities": entities}).to_string(), &json!({})).expect("a history");
+        assert_eq!((history.made.per, history.made.partial), ("year", true));
+        assert!(history.rows.len() <= POINTS);
+    }
+
+    #[test]
+    fn a_long_range_is_asked_no_finer_than_the_shared_table() {
+        let schema = json!({"properties": {"aggrPeriodDuration": {}}});
+        let now = time::macros::datetime!(2026-11-22 12:00 UTC);
+        for (from, asked, sent) in [
+            ("2025-11-22", "P1D", "P1D"),
+            ("2016-11-22", "P1D", "P1M"),
+            ("2016-11-22", "PT1H", "P1M"),
+            ("2016-11-22", "P1Y", "P1Y"),
+            ("1926-11-22", "P1M", "P1Y"),
+            ("1800-01-01", "P1Y", "P1Y"),
+            ("1926-11-22", "PT0S", "PT0S"),
+        ] {
+            let read = json!({"timerel": "after", "timeAt": format!("{from}T00:00:00Z"), "aggrMethods": ["avg"], "aggrPeriodDuration": asked});
+            assert_eq!(
+                history_arguments(&schema, &read, now)["aggrPeriodDuration"],
+                sent,
+                "{from} {asked}"
+            );
+        }
     }
 
     #[test]

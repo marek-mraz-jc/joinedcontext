@@ -9,6 +9,8 @@
 //!   caps, per-IP rate limiting, and metadata sanitization (R7).
 //! - Thin Grafana HTTP API compatibility adapters for `provision.sh` and `src/grafana.rs` (R2).
 //! - The dashboard page `/d/{uid}` the Portal links a person to.
+//! - Any other path answers 401 to nobody and 404 to a signed caller: daiya serves no MCP of its
+//!   own, the Portal's is the signed door.
 
 pub mod compat;
 pub mod odata;
@@ -44,6 +46,7 @@ pub fn api_router(state: DaiyaState, _mount: Mount) -> Router {
         .merge(page::page_router())
         .merge(compat::compat_router())
         .merge(public::public_router())
+        .fallback(state::unknown_path)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             state::refuse_unknown_credential,

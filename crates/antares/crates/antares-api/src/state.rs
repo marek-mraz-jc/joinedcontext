@@ -475,9 +475,9 @@ pub struct Shared {
     /// The bytes every concurrently buffered answer holds together, from
     /// the memory budget ([`crate::bounds::MemoryBudget::answers`]).
     pub answer_pool: Arc<crate::bounds::AnswerPool>,
-    /// The charged bytes of ImplicitlyCreated @contexts one Tenant may hold
+    /// The charged bytes of stored @contexts of one kind one Tenant may hold
     /// ([`crate::bounds::MemoryBudget::implicit_contexts`]).
-    pub implicit_context_bytes: u64,
+    pub context_bytes: u64,
     /// One shared outbound client, timeouts set at construction.
     pub http: antares_jsonld::HttpClient,
     /// Federation-forwarding client — longer deadline: the ETSI mock replies
@@ -901,7 +901,7 @@ impl AppState {
                     usize::try_from(crate::bounds::MemoryBudget::default().answers())
                         .unwrap_or(usize::MAX),
                 ),
-                implicit_context_bytes: crate::bounds::MemoryBudget::default().implicit_contexts(),
+                context_bytes: crate::bounds::MemoryBudget::default().implicit_contexts(),
                 http: http.clone(),
                 fed_http: outbound_client(
                     egress_policy,

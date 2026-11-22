@@ -126,7 +126,7 @@ fn public_dashboard(
 }
 
 async fn contract_quotas(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     assert_eq!(store.get_quotas(org).await.unwrap(), OrgQuotas::default());
     let custom = OrgQuotas {
         max_dashboards: 3,
@@ -134,15 +134,21 @@ async fn contract_quotas(store: &dyn DaiyaStore) {
         min_public_interval_ms: 30_000,
         ..OrgQuotas::default()
     };
-    store.set_quotas(org, custom.clone()).await.unwrap();
+    store
+        .set_quotas(InstallationId::SINGLE, org, INSTANCE, custom.clone())
+        .await
+        .unwrap();
     assert_eq!(store.get_quotas(org).await.unwrap(), custom);
     // A second set replaces the first.
-    store.set_quotas(org, OrgQuotas::default()).await.unwrap();
+    store
+        .set_quotas(InstallationId::SINGLE, org, INSTANCE, OrgQuotas::default())
+        .await
+        .unwrap();
     assert_eq!(store.get_quotas(org).await.unwrap(), OrgQuotas::default());
 }
 
 async fn contract_folders(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let created = store.upsert_folder(folder(org, "f-b", None)).await.unwrap();
     assert_eq!(created.version, 1);
     assert_eq!(created.project_id.as_deref(), Some("proj"));
@@ -253,11 +259,11 @@ async fn contract_folders(store: &dyn DaiyaStore) {
             .unwrap()
             .is_some()
     );
-    assert!(!store.delete_folder(OrgId::new(), "f-b").await.unwrap());
+    assert!(!store.delete_folder(OrgId::generate(), "f-b").await.unwrap());
 }
 
 async fn contract_dashboards(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let saved = store
         .upsert_dashboard(dashboard(org, "d1", None), "", false)
         .await
@@ -337,7 +343,9 @@ async fn contract_dashboards(store: &dyn DaiyaStore) {
     // Quotas: panels per dashboard and dashboards per organization.
     store
         .set_quotas(
+            InstallationId::SINGLE,
             org,
+            INSTANCE,
             OrgQuotas {
                 max_dashboards: 2,
                 max_panels_per_dashboard: 5,
@@ -379,7 +387,12 @@ async fn contract_dashboards(store: &dyn DaiyaStore) {
             .unwrap()
             .is_none()
     );
-    assert!(!store.delete_dashboard(OrgId::new(), "prov").await.unwrap());
+    assert!(
+        !store
+            .delete_dashboard(OrgId::generate(), "prov")
+            .await
+            .unwrap()
+    );
     let uids: Vec<String> = store
         .list_dashboards(org)
         .await
@@ -391,7 +404,7 @@ async fn contract_dashboards(store: &dyn DaiyaStore) {
 }
 
 async fn contract_datasources(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let mut first = datasource(org, "uid-z", "Alpha", "prometheus");
     first.is_default = true;
     let saved = store.upsert_datasource(first).await.unwrap();
@@ -427,7 +440,12 @@ async fn contract_datasources(store: &dyn DaiyaStore) {
     assert_eq!(clash.status_code(), 409);
     // The same name in another organization is fine.
     store
-        .upsert_datasource(datasource(OrgId::new(), "uid-new", "Beta", "prometheus"))
+        .upsert_datasource(datasource(
+            OrgId::generate(),
+            "uid-new",
+            "Beta",
+            "prometheus",
+        ))
         .await
         .unwrap();
 
@@ -461,7 +479,9 @@ async fn contract_datasources(store: &dyn DaiyaStore) {
     // Quotas: datasources and WASM plugins.
     store
         .set_quotas(
+            InstallationId::SINGLE,
             org,
+            INSTANCE,
             OrgQuotas {
                 max_datasources: 4,
                 max_wasm_plugins: 1,
@@ -495,11 +515,16 @@ async fn contract_datasources(store: &dyn DaiyaStore) {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("datasources"), "{err}");
-    assert!(!store.delete_datasource(OrgId::new(), "p4").await.unwrap());
+    assert!(
+        !store
+            .delete_datasource(OrgId::generate(), "p4")
+            .await
+            .unwrap()
+    );
 }
 
 async fn contract_library_panels(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let now = TimestampTz::now();
     let mut panel = LibraryPanelRecord {
         installation_id: INST,
@@ -535,14 +560,14 @@ async fn contract_library_panels(store: &dyn DaiyaStore) {
     assert!(!store.delete_library_panel(org, "lp").await.unwrap());
     assert!(
         !store
-            .delete_library_panel(OrgId::new(), "lp")
+            .delete_library_panel(OrgId::generate(), "lp")
             .await
             .unwrap()
     );
 }
 
 async fn contract_public_dashboards(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     // A public dashboard needs its dashboard.
     let err = store
         .upsert_public_dashboard(public_dashboard(org, "pd", "absent", "t0"))
@@ -633,7 +658,7 @@ async fn contract_public_dashboards(store: &dyn DaiyaStore) {
     assert!(!store.delete_public_dashboard(org, "pd").await.unwrap());
     assert!(
         !store
-            .delete_public_dashboard(OrgId::new(), "pd")
+            .delete_public_dashboard(OrgId::generate(), "pd")
             .await
             .unwrap()
     );
@@ -647,7 +672,7 @@ async fn contract_rows(store: &dyn DaiyaStore) {
     use odata_table::{Cond, SortKey, TextOp};
     use odata_url::CompareOp;
 
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let mut parent = folder(org, "B", None);
     parent.title = "ä% folder".into();
     parent.managed_by = Some("git".into());
@@ -697,18 +722,21 @@ async fn contract_rows(store: &dyn DaiyaStore) {
             .await
             .unwrap();
         store
-            .insert_import_report(ImportReportRecord {
-                id: uid.into(),
-                org_id: org,
-                instance_id: INSTANCE,
-                dry_run: uid == "Z",
-                status: "ok".into(),
-                dashboard_count: uid.len() as i32,
-                refused_count: 0,
-                mapped_count: 1,
-                summary: json!({}),
-                created_at: now,
-            })
+            .insert_import_report(
+                InstallationId::SINGLE,
+                ImportReportRecord {
+                    id: uid.into(),
+                    org_id: org,
+                    instance_id: INSTANCE,
+                    dry_run: uid == "Z",
+                    status: "ok".into(),
+                    dashboard_count: uid.len() as i32,
+                    refused_count: 0,
+                    mapped_count: 1,
+                    summary: json!({}),
+                    created_at: now,
+                },
+            )
             .await
             .unwrap();
     }
@@ -718,7 +746,7 @@ async fn contract_rows(store: &dyn DaiyaStore) {
         let all = read(RowQuery::every(set, ReadScope::All)).await.rows;
         assert!(all.len() >= 4, "{set:?}");
         let other = store
-            .read_rows(OrgId::new(), RowQuery::every(set, ReadScope::All))
+            .read_rows(OrgId::generate(), RowQuery::every(set, ReadScope::All))
             .await
             .unwrap();
         assert!(
@@ -857,22 +885,25 @@ async fn contract_rows(store: &dyn DaiyaStore) {
 }
 
 async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     let base = TimestampTz(TimestampTz::now().0 - SignedDuration::from_mins(5));
     for (i, id) in ["older", "newer"].into_iter().enumerate() {
         store
-            .insert_import_report(ImportReportRecord {
-                id: id.into(),
-                org_id: org,
-                instance_id: INSTANCE,
-                dry_run: i == 0,
-                status: "ok".into(),
-                dashboard_count: 9,
-                refused_count: 0,
-                mapped_count: 1,
-                summary: json!({ "n": i }),
-                created_at: TimestampTz(base.0 + SignedDuration::from_mins(i as i64)),
-            })
+            .insert_import_report(
+                InstallationId::SINGLE,
+                ImportReportRecord {
+                    id: id.into(),
+                    org_id: org,
+                    instance_id: INSTANCE,
+                    dry_run: i == 0,
+                    status: "ok".into(),
+                    dashboard_count: 9,
+                    refused_count: 0,
+                    mapped_count: 1,
+                    summary: json!({ "n": i }),
+                    created_at: TimestampTz(base.0 + SignedDuration::from_mins(i as i64)),
+                },
+            )
             .await
             .unwrap();
     }
@@ -887,7 +918,7 @@ async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
 /// or not at all, refuses a moved base etag, and lets one of two concurrent bundles on one base
 /// through (R2, §7.3).
 async fn contract_plans_and_apply(store: &dyn DaiyaStore) {
-    let org = OrgId::new();
+    let org = OrgId::generate();
     // Whole milliseconds, so the timestamps survive Postgres' microsecond precision.
     let now = TimestampTz::from_millis(TimestampTz::now().as_millis()).unwrap();
     let hour = TimestampTz::from_millis(now.as_millis() + 3_600_000).unwrap();
@@ -908,7 +939,10 @@ async fn contract_plans_and_apply(store: &dyn DaiyaStore) {
         Some(plan.clone())
     );
     assert_eq!(
-        store.get_plan(OrgId::new(), &plan.digest).await.unwrap(),
+        store
+            .get_plan(OrgId::generate(), &plan.digest)
+            .await
+            .unwrap(),
         None
     );
     let mut renewed = plan.clone();
@@ -955,11 +989,17 @@ async fn contract_plans_and_apply(store: &dyn DaiyaStore) {
     let quotas = store.get_quotas(org).await.unwrap();
     let mut none = quotas.clone();
     none.max_dashboards = 0;
-    store.set_quotas(org, none).await.unwrap();
+    store
+        .set_quotas(InstallationId::SINGLE, org, INSTANCE, none)
+        .await
+        .unwrap();
     let err = store.apply_bundle(bundle.clone()).await.unwrap_err();
     assert_eq!(err.slug(), "cr.quota_exceeded", "{err}");
     nothing_written().await;
-    store.set_quotas(org, quotas).await.unwrap();
+    store
+        .set_quotas(InstallationId::SINGLE, org, INSTANCE, quotas)
+        .await
+        .unwrap();
 
     // A base etag the state no longer has is stale, and writes nothing.
     let mut stale = bundle.clone();
@@ -1059,7 +1099,7 @@ async fn visible_rows(
 async fn forced_rls_hides_other_organizations_from_raw_sql_of_the_app_role() {
     let _schema = SCHEMA_LOCK.read().await;
     let Some(db) = pg().await else { return };
-    let (org_a, org_b) = (OrgId::new(), OrgId::new());
+    let (org_a, org_b) = (OrgId::generate(), OrgId::generate());
     for org in [org_a, org_b] {
         db.app
             .upsert_dashboard(dashboard(org, "same-uid", None), "", true)
@@ -1146,8 +1186,8 @@ async fn forced_rls_hides_other_organizations_from_raw_sql_of_the_app_role() {
 async fn a_public_token_resolves_through_the_lookup_and_no_setting_widens_rls() {
     let _schema = SCHEMA_LOCK.read().await;
     let Some(db) = pg().await else { return };
-    let org = OrgId::new();
-    let other = OrgId::new();
+    let org = OrgId::generate();
+    let other = OrgId::generate();
     let token = format!("pub-{}", uuid::Uuid::new_v4());
     let hash = sha256_hex(token.as_bytes());
     for (o, uid, tok) in [
@@ -1220,7 +1260,7 @@ async fn a_public_token_resolves_through_the_lookup_and_no_setting_widens_rls() 
 async fn data_survives_a_new_store_instance() {
     let _schema = SCHEMA_LOCK.read().await;
     let Some(db) = pg().await else { return };
-    let org = OrgId::new();
+    let org = OrgId::generate();
     db.app
         .upsert_dashboard(dashboard(org, "durable", None), "first", true)
         .await
@@ -1459,14 +1499,14 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
     let Some(db) = pg().await else { return };
     let store = PgStore::new(db.app_config.connect().await.unwrap());
     store.pool().close().await;
-    let org = OrgId::new();
+    let org = OrgId::generate();
 
     let boot = store.verify_rls_enforced().await.unwrap_err();
     assert_eq!(boot.slug(), "cr.rls_not_enforced");
     let mut errors = vec![
         store.get_quotas(org).await.unwrap_err(),
         store
-            .set_quotas(org, OrgQuotas::default())
+            .set_quotas(InstallationId::SINGLE, org, INSTANCE, OrgQuotas::default())
             .await
             .unwrap_err(),
         store.list_folders(org).await.unwrap_err(),
@@ -1534,18 +1574,21 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
     );
     errors.push(
         store
-            .insert_import_report(ImportReportRecord {
-                id: "r".into(),
-                org_id: org,
-                instance_id: INSTANCE,
-                dry_run: false,
-                status: "ok".into(),
-                dashboard_count: 0,
-                refused_count: 0,
-                mapped_count: 0,
-                summary: json!({}),
-                created_at: now,
-            })
+            .insert_import_report(
+                InstallationId::SINGLE,
+                ImportReportRecord {
+                    id: "r".into(),
+                    org_id: org,
+                    instance_id: INSTANCE,
+                    dry_run: false,
+                    status: "ok".into(),
+                    dashboard_count: 0,
+                    refused_count: 0,
+                    mapped_count: 0,
+                    summary: json!({}),
+                    created_at: now,
+                },
+            )
             .await
             .unwrap_err(),
     );

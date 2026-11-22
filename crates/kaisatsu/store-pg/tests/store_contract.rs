@@ -626,7 +626,10 @@ async fn groups(store: &dyn Store) {
         .await
         .expect("get")
         .expect("u1");
-    assert_eq!(u1.groups, ["/hel/members"]);
+    assert!(
+        u1.groups.is_empty(),
+        "membership is a row, never a path in the document"
+    );
     let u1_groups = store.list_user_groups(R, "u1").await.expect("groups");
     assert_eq!(
         u1_groups
@@ -661,12 +664,8 @@ async fn groups(store: &dyn Store) {
         .remove_user_from_group(R, "u1", &members.id)
         .await
         .expect("remove");
-    let u1 = store
-        .get_user_by_id(R, None, "u1")
-        .await
-        .expect("get")
-        .expect("u1");
-    assert!(u1.groups.is_empty());
+    let left = store.list_user_groups(R, "u1").await.expect("groups");
+    assert!(left.is_empty(), "a removed member has no group");
     store
         .add_user_to_group(R, "u1", &board.id)
         .await
@@ -700,6 +699,8 @@ async fn groups(store: &dyn Store) {
         u1.groups.is_empty(),
         "a deleted group leaves no path on its members"
     );
+    let left = store.list_user_groups(R, "u1").await.expect("groups");
+    assert!(left.is_empty(), "a deleted group leaves no membership");
 }
 
 async fn roles_and_clients(store: &dyn Store) {
@@ -2063,8 +2064,9 @@ async fn paged_lists(store: &dyn Store) {
             .is_empty()
     );
 
-    // Membership has two sources: the row and the path in the person's own document.
     store.add_user_to_group(P, "a", "hm").await.expect("member");
+    store.add_user_to_group(P, "c", "hm").await.expect("member");
+    // A path in the person's own document adds no second membership and is not kept.
     let mut named = store
         .get_user_by_id(P, None, "c")
         .await
@@ -2140,13 +2142,15 @@ async fn paged_lists(store: &dyn Store) {
         .await
         .expect("crowd");
     for n in 0..1201 {
+        let id = format!("m{n}");
         store
-            .create_user(UserRepresentation {
-                groups: vec![crowd.path.clone()],
-                ..person(&format!("m{n}"), &format!("member-{n:04}"), None)
-            })
+            .create_user(person(&id, &format!("member-{n:04}"), None))
             .await
             .expect("crowd member");
+        store
+            .add_user_to_group(P, &id, &crowd.id)
+            .await
+            .expect("crowd membership");
     }
     let page = |first, max| store.list_group_members(P, None, "crowd", first, max);
     let mut seen = std::collections::BTreeSet::new();

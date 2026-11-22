@@ -135,6 +135,8 @@ async fn mcp_endpoint(
                     error: None,
                 })),
                 Err(e) => {
+                    // The answer is a 200 carrying the error: roll the request's writes back.
+                    jc_audit::abort();
                     let problem = e.to_problem();
                     Ok(Json(JsonRpcResponse {
                         jsonrpc: "2.0".into(),

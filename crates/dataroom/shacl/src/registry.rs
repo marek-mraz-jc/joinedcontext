@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
-//! Profile registry (`C17`) managing the 7 built-in DCAT-AP profiles and uploaded/versioned
-//! custom profiles, form layout extraction, and dry-run validation reports.
+//! Profile registry (`C17`): the installed profiles of `crates/dataroom/profiles` and each
+//! catalogue's uploaded versions, their stacked shapes, form layout extraction, and dry-run
+//! validation reports.
 
 use crate::validator::{parse_shapes_graph, validate_graph_against_shapes, PathExpr, ShapesGraph};
 use dataroom_core::ops::DatasetValidator;
@@ -8,26 +9,11 @@ use dataroom_core::{
     Catalogue, CatalogueId, DataroomError, Dataset, FormFieldLayout, OrgId, ProfileDryRunReport,
     ProfilePin, ProfileRecord, Publisher, Result, ShaclValidationReport,
 };
-use dataroom_rdf::jsonld::{CZ_CATALOG_CONTEXT_IRI, SK_CATALOG_CONTEXT_IRI};
-use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfileKind, RdfLimits};
+use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfile, RdfLimits};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::sync::RwLock;
-
-/// Upstream and built-in SHACL shape sources.
-pub const UPSTREAM_EU_301_SHACL: &str = include_str!("../../specs/dcat-ap-3.0.1/dcat-ap-SHACL.ttl");
-pub const UPSTREAM_CZ_SHACL: &str = include_str!("../../specs/dcat-ap-cz/dcat-ap-cz.shacl.ttl");
-pub const UPSTREAM_CZ_LKOD_SHACL: &str =
-    include_str!("../../specs/dcat-ap-cz/dcat-ap-cz-rozhraní-katalogů-dat.shacl.ttl");
-
-pub const BUILTIN_EU_301_SHACL: &str = include_str!("../shapes/dcat-ap-3.0.1.ttl");
-pub const BUILTIN_CZ_BASE_SHACL: &str = include_str!("../shapes/dcat-ap-cz.ttl");
-pub const BUILTIN_CZ_OPEN_DATA_SHACL: &str = include_str!("../shapes/dcat-ap-cz-open-data.ttl");
-pub const BUILTIN_CZ_LKOD_SHACL: &str = include_str!("../shapes/dcat-ap-cz-lkod.ttl");
-pub const BUILTIN_CZ_HVD_SHACL: &str = include_str!("../shapes/dcat-ap-cz-hvd.ttl");
-pub const BUILTIN_CZ_DATA_INTERFACES_SHACL: &str =
-    include_str!("../shapes/dcat-ap-cz-data-interfaces.ttl");
-pub const BUILTIN_SK_20_SHACL: &str = include_str!("../shapes/dcat-ap-sk-2.0.ttl");
+use std::hash::BuildHasher;
+use std::sync::{Arc, RwLock};
 
 /// Derives [`FormFieldLayout`] entries for the dataset editor from a [`ShapesGraph`] (C17).
 pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormFieldLayout> {
@@ -106,7 +92,8 @@ pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormF
     fields
 }
 
-fn predicate_to_field_name(pred_iri: &str) -> String {
+/// The field a person fills in for a shape's path.
+pub fn predicate_to_field_name(pred_iri: &str) -> String {
     match pred_iri {
         "http://purl.org/dc/terms/title" => "title".into(),
         "http://purl.org/dc/terms/description" => "notes".into(),
@@ -121,116 +108,56 @@ fn predicate_to_field_name(pred_iri: &str) -> String {
         "http://data.europa.eu/r5r/applicableLegislation" => "applicable_legislation".into(),
         "http://purl.org/dc/terms/conformsTo" => "conforms_to".into(),
         "http://www.w3.org/ns/dcat#landingPage" => "landing_page".into(),
-        other => other.rsplit(['/', '#']).next().unwrap_or(other).to_owned(),
+        other => national_field(other)
+            .unwrap_or_else(|| other.rsplit(['/', '#']).next().unwrap_or(other))
+            .to_owned(),
     }
 }
 
-/// Returns the 7 built-in DCAT-AP profile definitions (C17):
-/// 1. `dcat-ap-3.0.1` (EU 3.0.1)
-/// 2. `dcat-ap-cz` (CZ base)
-/// 3. `dcat-ap-cz-open-data` (CZ open data)
-/// 4. `dcat-ap-cz-lkod` (CZ catalogue interface)
-/// 5. `dcat-ap-cz-hvd` (CZ HVD)
-/// 6. `dcat-ap-cz-data-interfaces` (CZ data interfaces)
-/// 7. `dcat-ap-sk-2.0` (SK 2.0)
-pub fn built_in_profiles() -> Vec<ProfileRecord> {
-    let make = |id: &str,
-                version: &str,
-                uri: &str,
-                en_title: &str,
-                base: Option<&str>,
-                shapes_ttl: String,
-                ctx: Option<&str>,
-                langs: Vec<&str>|
-     -> ProfileRecord {
-        let parsed = parse_shapes_graph(&shapes_ttl, &RdfLimits::default()).unwrap_or_default();
-        let form_fields = derive_form_layout(&parsed, "http://www.w3.org/ns/dcat#Dataset");
-        ProfileRecord {
-            id: id.to_owned(),
-            version: version.to_owned(),
-            uri: uri.to_owned(),
-            title: BTreeMap::from([("en".into(), en_title.to_owned())]),
-            base_profile: base.map(str::to_owned),
-            shapes_turtle: shapes_ttl,
-            jsonld_context: ctx.map(str::to_owned),
-            required_languages: langs.into_iter().map(str::to_owned).collect(),
-            built_in: true,
-            form_fields,
+/// The field behind an installed profile's terms predicate.
+fn national_field(predicate: &str) -> Option<&'static str> {
+    DcatProfile::installed().find_map(|profile| {
+        let terms = profile.render.terms.as_ref()?;
+        if predicate == terms.personal_data {
+            return Some("personal_data");
         }
-    };
+        [
+            &terms.link,
+            &terms.authors_work,
+            &terms.database_as_work,
+            &terms.sui_generis_database,
+        ]
+        .into_iter()
+        .any(|member| member == predicate)
+        .then_some("license_id")
+    })
+}
 
-    vec![
-        make(
-            "dcat-ap-3.0.1",
-            "3.0.1",
-            "https://semiceu.github.io/DCAT-AP/releases/3.0.1",
-            "DCAT-AP 3.0.1 (European Union)",
-            None,
-            format!("{UPSTREAM_EU_301_SHACL}\n{BUILTIN_EU_301_SHACL}"),
-            None,
-            vec!["en"],
-        ),
-        make(
-            "dcat-ap-cz",
-            "2026-09-23",
-            "https://ofn.gov.cz/dcat-ap-cz",
-            "DCAT-AP-CZ (Základní datový model)",
-            Some("dcat-ap-3.0.1"),
-            format!("{UPSTREAM_CZ_SHACL}\n{BUILTIN_CZ_BASE_SHACL}"),
-            Some(CZ_CATALOG_CONTEXT_IRI),
-            vec!["cs"],
-        ),
-        make(
-            "dcat-ap-cz-open-data",
-            "2026-09-23",
-            "https://ofn.gov.cz/dcat-ap-cz-open-data",
-            "DCAT-AP-CZ: Datové sady otevřených dat",
-            Some("dcat-ap-cz"),
-            BUILTIN_CZ_OPEN_DATA_SHACL.to_owned(),
-            Some(CZ_CATALOG_CONTEXT_IRI),
-            vec!["cs"],
-        ),
-        make(
-            "dcat-ap-cz-lkod",
-            "2026-09-23",
-            "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat",
-            "DCAT-AP-CZ: Rozhraní katalogů dat (LKOD)",
-            Some("dcat-ap-cz"),
-            format!("{UPSTREAM_CZ_LKOD_SHACL}\n{BUILTIN_CZ_LKOD_SHACL}"),
-            Some(CZ_CATALOG_CONTEXT_IRI),
-            vec!["cs"],
-        ),
-        make(
-            "dcat-ap-cz-hvd",
-            "2026-09-23",
-            "https://ofn.gov.cz/dcat-ap-cz-hvd",
-            "DCAT-AP-CZ: Datové sady s vysokou hodnotou (HVD)",
-            Some("dcat-ap-cz"),
-            BUILTIN_CZ_HVD_SHACL.to_owned(),
-            Some(CZ_CATALOG_CONTEXT_IRI),
-            vec!["cs"],
-        ),
-        make(
-            "dcat-ap-cz-data-interfaces",
-            "2026-09-23",
-            "https://ofn.gov.cz/dcat-ap-cz-datová-rozhraní",
-            "DCAT-AP-CZ: Datová rozhraní",
-            Some("dcat-ap-cz"),
-            BUILTIN_CZ_DATA_INTERFACES_SHACL.to_owned(),
-            Some(CZ_CATALOG_CONTEXT_IRI),
-            vec!["cs"],
-        ),
-        make(
-            "dcat-ap-sk-2.0",
-            "2.0.1",
-            "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/",
-            "DCAT-AP-SK 2.0.1 (Slovensko)",
-            Some("dcat-ap-3.0.1"),
-            BUILTIN_SK_20_SHACL.to_owned(),
-            Some(SK_CATALOG_CONTEXT_IRI),
-            vec!["sk"],
-        ),
-    ]
+/// The installed profiles as registry records (C17), each from its manifest.
+pub fn built_in_profiles() -> Vec<ProfileRecord> {
+    DcatProfile::installed()
+        .map(|profile| {
+            let shapes_turtle = profile.shapes_turtle();
+            let parsed =
+                parse_shapes_graph(&shapes_turtle, &RdfLimits::default()).unwrap_or_default();
+            ProfileRecord {
+                id: profile.id.clone(),
+                version: profile.version.clone(),
+                uri: profile.uri.clone(),
+                title: profile.title.clone(),
+                base_profile: profile.bases.first().cloned(),
+                form_fields: derive_form_layout(&parsed, "http://www.w3.org/ns/dcat#Dataset"),
+                shapes_turtle,
+                jsonld_context: profile
+                    .render
+                    .json_ld
+                    .as_ref()
+                    .map(|keys| keys.catalogue.context.clone()),
+                required_languages: profile.languages.clone(),
+                built_in: true,
+            }
+        })
+        .collect()
 }
 
 /// The catalogue an uploaded profile belongs to; built-in profiles carry `None` and serve every
@@ -276,9 +203,23 @@ fn resolve<'a>(
         .or_else(|| unpinned(map, scope, id))
 }
 
+/// A profile with the shapes of every base under it, merged once.
+#[derive(Debug)]
+pub struct Stack {
+    pub record: ProfileRecord,
+    pub shapes: ShapesGraph,
+    /// The installed profile that renders it: itself, else the nearest installed base, else EU.
+    pub renderer: DcatProfile,
+    /// A hash of every shapes text stacked, keyed per process: equal keys, equal verdicts.
+    pub key: u64,
+}
+
 /// Thread-safe registry of built-in and uploaded DCAT-AP profiles (C17).
 pub struct ProfileRegistry {
     profiles: RwLock<ProfileMap>,
+    /// Merged stacks by the record they end in; emptied whenever a profile is added.
+    stacks: RwLock<BTreeMap<ProfileKey, Arc<Stack>>>,
+    hasher: std::hash::RandomState,
 }
 
 impl Default for ProfileRegistry {
@@ -297,7 +238,17 @@ impl ProfileRegistry {
         }
         Self {
             profiles: RwLock::new(map),
+            stacks: RwLock::default(),
+            hasher: std::hash::RandomState::new(),
         }
+    }
+
+    /// A profile was added: a stack may end elsewhere now.
+    fn forget_stacks(&self) {
+        self.stacks
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Lists the built-in profiles and `scope`'s own uploads, every version.
@@ -328,6 +279,7 @@ impl ProfileRegistry {
     /// shapes no longer parse stays out and its pin answers "not found".
     pub fn load_stored(&self, scope: ProfileScope, stored: &[ProfileRecord]) {
         let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+        let before = guard.len();
         for rec in stored.iter().filter(|r| !r.built_in) {
             let key = (Some(scope), rec.id.clone(), rec.version.clone());
             if guard.contains_key(&key) {
@@ -337,42 +289,81 @@ impl ProfileRegistry {
                 guard.insert(key, (rec.clone(), sg));
             }
         }
+        if guard.len() != before {
+            self.forget_stacks();
+        }
     }
 
-    /// Resolves the stacked [`ShapesGraph`] for `(id, version)` including its `base_profile` chain (C17).
-    pub fn stacked_shapes(
+    /// The profile `(id, version)` stacked on all its bases (C17), shared and merged once.
+    pub fn stack(
         &self,
         scope: ProfileScope,
         id: &str,
         version: Option<&str>,
-    ) -> Result<(ProfileRecord, ShapesGraph)> {
+    ) -> Result<Arc<Stack>> {
         let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
-        let (target_rec, target_sg) = resolve(&guard, scope, id, version)
-            .cloned()
+        let (target, _) = resolve(&guard, scope, id, version)
             .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
+        let key = (
+            (!target.built_in).then_some(scope),
+            target.id.clone(),
+            target.version.clone(),
+        );
+        if let Some(stack) = self
+            .stacks
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
+            return Ok(stack.clone());
+        }
 
-        // Collect ancestor chain (`base_profile`).
-        let mut chain = vec![target_sg];
-        let mut curr_base = target_rec.base_profile.clone();
-        for _ in 0..8 {
-            let Some(ref base_id) = curr_base else {
-                break;
-            };
-            let found = unpinned(&guard, scope, base_id)
-                .map(|(r, sg)| (r.base_profile.clone(), sg.clone()));
-            if let Some((next_base, sg)) = found {
-                chain.push(sg);
-                curr_base = next_base;
-            } else {
-                break;
+        // Breadth first, so the first installed profile met is the nearest; each profile once.
+        let mut chain = vec![resolve(&guard, scope, id, version)
+            .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?];
+        let mut at = 0;
+        while let Some((record, _)) = chain.get(at).copied() {
+            at += 1;
+            let bases: Vec<String> =
+                match DcatProfile::by_id(&record.id).filter(|_| record.built_in) {
+                    Some(installed) => installed.bases.clone(),
+                    None => record.base_profile.iter().cloned().collect(),
+                };
+            for base in bases {
+                let found = unpinned(&guard, scope, &base).ok_or_else(|| {
+                    DataroomError::NotFound(format!(
+                        "profile '{base}', a base of '{}', not found",
+                        record.id
+                    ))
+                })?;
+                if !chain.iter().any(|(held, _)| held.id == found.0.id) {
+                    chain.push(found);
+                }
             }
         }
 
-        let mut merged = ShapesGraph::default();
-        for sg in chain.into_iter().rev() {
-            merged.merge(&sg);
+        let renderer = chain
+            .iter()
+            .find(|(record, _)| record.built_in)
+            .and_then(|(record, _)| DcatProfile::by_id(&record.id))
+            .unwrap_or_else(DcatProfile::eu);
+        let mut shapes = ShapesGraph::default();
+        let mut texts = Vec::new();
+        for (record, own) in chain.iter().rev() {
+            shapes.merge(own);
+            texts.push(record.shapes_turtle.as_str());
         }
-        Ok((target_rec, merged))
+        let stack = Arc::new(Stack {
+            record: target.clone(),
+            shapes,
+            renderer,
+            key: self.hasher.hash_one(&texts),
+        });
+        self.stacks
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, stack.clone());
+        Ok(stack)
     }
 
     /// Uploads and registers a new profile or profile version (enforcing `RdfLimits::uploaded_shapes()`,
@@ -385,34 +376,53 @@ impl ProfileRegistry {
         existing_datasets: &[Dataset],
         publishers: &BTreeMap<String, Publisher>,
     ) -> Result<(ProfileRecord, ProfileDryRunReport)> {
+        self.check_profile(&record)?;
         let sg = parse_shapes_graph(&record.shapes_turtle, &RdfLimits::uploaded_shapes())?;
         record.built_in = false;
         let scope = scope_of(catalogue);
         let key = (Some(scope), record.id.clone(), record.version.clone());
 
         // Register in memory, under the uploading catalogue only, so stacked_shapes resolves it.
-        {
+        let replaced = {
             let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            guard.insert(key.clone(), (record.clone(), sg));
-        }
+            guard.insert(key.clone(), (record.clone(), sg))
+        };
+        self.forget_stacks();
 
-        let (_, stacked) = self.stacked_shapes(scope, &record.id, Some(&record.version))?;
-        record.form_fields = derive_form_layout(&stacked, "http://www.w3.org/ns/dcat#Dataset");
-        {
-            let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            if let Some((stored_rec, _)) = guard.get_mut(&key) {
-                stored_rec.form_fields.clone_from(&record.form_fields);
+        let checked = self
+            .stack(scope, &record.id, Some(&record.version))
+            .and_then(|stack| {
+                record.form_fields =
+                    derive_form_layout(&stack.shapes, "http://www.w3.org/ns/dcat#Dataset");
+                {
+                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    if let Some((stored_rec, _)) = guard.get_mut(&key) {
+                        stored_rec.form_fields.clone_from(&record.form_fields);
+                    }
+                }
+                self.dry_run(
+                    &record.id,
+                    &record.version,
+                    catalogue,
+                    existing_datasets,
+                    publishers,
+                )
+            });
+        match checked {
+            Ok(dry_run) => Ok((record, dry_run)),
+            Err(e) => {
+                // A refused upload is stored nowhere, so it is not resolvable either.
+                {
+                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    match replaced {
+                        Some(before) => guard.insert(key, before),
+                        None => guard.remove(&key),
+                    };
+                }
+                self.forget_stacks();
+                Err(e)
             }
         }
-
-        let dry_run = self.dry_run(
-            &record.id,
-            &record.version,
-            catalogue,
-            existing_datasets,
-            publishers,
-        )?;
-        Ok((record, dry_run))
     }
 
     /// Evaluates all `existing_datasets` against `(profile_id, version)` without modifying them,
@@ -425,8 +435,7 @@ impl ProfileRegistry {
         existing_datasets: &[Dataset],
         publishers: &BTreeMap<String, Publisher>,
     ) -> Result<ProfileDryRunReport> {
-        let (_, stacked) = self.stacked_shapes(scope_of(catalogue), profile_id, Some(version))?;
-        let kind = DcatProfileKind::from_token(profile_id).unwrap_or(DcatProfileKind::Eu301);
+        let stack = self.stack(scope_of(catalogue), profile_id, Some(version))?;
 
         let mut reports = Vec::new();
         let mut conforming = 0usize;
@@ -435,10 +444,10 @@ impl ProfileRegistry {
 
         for ds in existing_datasets {
             let pub_rec = publishers.get(&ds.publisher_id);
-            let g = dataset_to_graph(ds, catalogue, pub_rec, kind);
+            let g = dataset_to_graph(ds, catalogue, pub_rec, stack.renderer);
             let report = validate_graph_against_shapes(
                 &g,
-                &stacked,
+                &stack.shapes,
                 catalogue.org_id,
                 catalogue.id,
                 &ds.id,
@@ -494,6 +503,56 @@ impl DatasetValidator for ProfileRegistry {
         self.load_stored(scope_of(catalogue), stored);
     }
 
+    fn check_profile(&self, profile: &ProfileRecord) -> Result<()> {
+        if DcatProfile::by_id(&profile.id).is_some() {
+            return Err(DataroomError::field_error(
+                "profile.id",
+                format!(
+                    "{} ships with the release; upload under an id of your own, with it as \
+                     baseProfile",
+                    profile.id
+                ),
+            ));
+        }
+        parse_shapes_graph(&profile.shapes_turtle, &RdfLimits::uploaded_shapes())
+            .map(|_| ())
+            .map_err(|e| {
+                DataroomError::field_error(
+                    "profile.shapesTurtle",
+                    format!("not SHACL in Turtle: {e}"),
+                )
+            })
+    }
+
+    fn check_profile_choice(
+        &self,
+        catalogue: &Catalogue,
+        added: &[&str],
+        managed: bool,
+    ) -> Result<()> {
+        for id in added {
+            if managed && DcatProfile::by_id(id).is_some() {
+                return Err(DataroomError::field_error(
+                    "activeProfiles",
+                    format!("{id} is chosen on the Portal manifest: set spec.profiles there"),
+                ));
+            }
+            let stack = self.stack(scope_of(catalogue), id, None).map_err(|_| {
+                DataroomError::field_error(
+                    "activeProfiles",
+                    format!("{id} is not an installed profile"),
+                )
+            })?;
+            if stack.renderer.requires_publisher() && catalogue.declared_publisher_uri().is_none() {
+                return Err(DataroomError::field_error(
+                    "publisherUri",
+                    format!("{id} needs the catalogue's publisher IRI; declare it first"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -514,17 +573,26 @@ impl DatasetValidator for ProfileRegistry {
         let mut reports = Vec::new();
         for pin in pins {
             let ver = (!pin.version.is_empty()).then_some(pin.version.as_str());
-            let (rec, stacked) = self.stacked_shapes(scope_of(catalogue), &pin.profile_id, ver)?;
-            let kind = DcatProfileKind::from_token(&rec.id).unwrap_or(DcatProfileKind::Eu301);
-            let data = dataset_to_graph(dataset, catalogue, publisher, kind);
+            let scope = scope_of(catalogue);
+            let stack = match self.stack(scope, &pin.profile_id, ver) {
+                Ok(stack) => stack,
+                // A pin this build does not know blocks no write (T-7521 C7); its feed is closed.
+                // The main profile decides a write, so that one still fails it.
+                Err(error) if pin.profile_id != catalogue.main_profile => {
+                    tracing::warn!(catalogue = %catalogue.id, profile = %pin.profile_id, %error, "pinned profile not installed");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let data = dataset_to_graph(dataset, catalogue, publisher, stack.renderer);
             let report = validate_graph_against_shapes(
                 &data,
-                &stacked,
+                &stack.shapes,
                 catalogue.org_id,
                 catalogue.id,
                 &dataset.id,
-                &rec.id,
-                &rec.version,
+                &pin.profile_id,
+                &stack.record.version,
             );
             reports.push(report);
         }
@@ -539,8 +607,8 @@ impl DatasetValidator for ProfileRegistry {
         profile_id: Option<&str>,
     ) -> Result<Value> {
         let pid = profile_id.unwrap_or(&catalogue.main_profile);
-        let (rec, stacked) = self.stacked_shapes(scope_of(catalogue), pid, None)?;
-        let kind = DcatProfileKind::from_token(&rec.id).unwrap_or(DcatProfileKind::Eu301);
+        let stack = self.stack(scope_of(catalogue), pid, None)?;
+        let (rec, stacked, kind) = (&stack.record, &stack.shapes, stack.renderer);
 
         let mut valid_datasets = Vec::new();
         let mut hidden_from_profile = Vec::new();
@@ -550,7 +618,7 @@ impl DatasetValidator for ProfileRegistry {
             let ds_graph = dataset_to_graph(ds, catalogue, pub_rec, kind);
             let report = validate_graph_against_shapes(
                 &ds_graph,
-                &stacked,
+                stacked,
                 catalogue.org_id,
                 catalogue.id,
                 &ds.id,
@@ -571,7 +639,7 @@ impl DatasetValidator for ProfileRegistry {
         let feed_graph = catalogue_to_graph(catalogue, &valid_datasets, publishers, kind, None);
         let feed_report = validate_graph_against_shapes(
             &feed_graph,
-            &stacked,
+            stacked,
             catalogue.org_id,
             catalogue.id,
             "catalog",
@@ -590,6 +658,43 @@ impl DatasetValidator for ProfileRegistry {
             "findings": feed_report.findings,
         }))
     }
+
+    fn upload_profile(
+        &self,
+        profile: ProfileRecord,
+        catalogue: &Catalogue,
+        datasets: &[Dataset],
+        publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(ProfileRecord, Value)> {
+        let taken = self
+            .list(scope_of(catalogue))
+            .iter()
+            .any(|p| p.id == profile.id && p.version == profile.version);
+        if taken {
+            return Err(DataroomError::Conflict(format!(
+                "profile '{}' version '{}' already exists; upload a new version",
+                profile.id, profile.version
+            )));
+        }
+        let (saved, report) = self.upload_and_dry_run(profile, catalogue, datasets, publishers)?;
+        let report = serde_json::to_value(report)
+            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        Ok((saved, report))
+    }
+
+    fn dry_run_profile(
+        &self,
+        profile_id: &str,
+        version: &str,
+        catalogue: &Catalogue,
+        datasets: &[Dataset],
+        publishers: &BTreeMap<String, Publisher>,
+    ) -> Result<(Value, Vec<ShaclValidationReport>)> {
+        let report = self.dry_run(profile_id, version, catalogue, datasets, publishers)?;
+        let value = serde_json::to_value(&report)
+            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        Ok((value, report.dataset_reports))
+    }
 }
 
 #[cfg(test)]
@@ -601,6 +706,23 @@ mod tests {
     use dataroom_rdf::{parse_rdf_graph, RdfFormat};
     use std::collections::BTreeSet;
     use uuid::Uuid;
+
+    fn sk_shapes() -> &'static str {
+        let sk = DcatProfile::by_id("dcat-ap-sk-2.0").expect("installed");
+        sk.manifest().file("shapes.ttl")
+    }
+
+    impl ProfileRegistry {
+        fn stacked_shapes(
+            &self,
+            scope: ProfileScope,
+            id: &str,
+            version: Option<&str>,
+        ) -> Result<(ProfileRecord, ShapesGraph)> {
+            self.stack(scope, id, version)
+                .map(|stack| (stack.record.clone(), stack.shapes.clone()))
+        }
+    }
 
     fn test_ids() -> (OrgId, CatalogueId) {
         (
@@ -950,14 +1072,14 @@ mod tests {
     #[test]
     fn a4_sk_shapes_have_source_comments_and_fail_each_mandatory_property_mutation() {
         // Verify header and rdfs:comment source line annotations on every shape and constraint
-        assert!(BUILTIN_SK_20_SHACL.starts_with(
+        assert!(sk_shapes().starts_with(
             "# Derived by Argon (2026-11-07) from DCAT-AP-SK 2.0 (index.bs, schémy/*.json): the SK profile publishes no SHACL."
         ));
-        assert!(BUILTIN_SK_20_SHACL.contains("rdfs:comment \"Source: specs/dcat-ap-sk/"));
+        assert!(sk_shapes().contains("rdfs:comment \"Source: specs/dcat-ap-sk/"));
 
         let (org_id, catalogue_id) = test_ids();
         let sk_shapes =
-            parse_shapes_graph(BUILTIN_SK_20_SHACL, &RdfLimits::default()).expect("parse sk 2.0");
+            parse_shapes_graph(sk_shapes(), &RdfLimits::default()).expect("parse sk 2.0");
 
         // Every mandatory property in DCAT-AP-SK 2.0 across Catalog, Dataset, Distribution, TermsOfUse, DataService:
         let sk_ds_ttl = include_str!("../../specs/dcat-ap-sk/príklady/dataset.ttl");
@@ -1272,10 +1394,23 @@ mod tests {
             None,
             "@prefix sh: <http://www.w3.org/ns/shacl#> .",
         );
-        let (saved, _) = registry
-            .upload_and_dry_run(empty, &small_catalogue("other"), &[], &BTreeMap::new())
-            .unwrap();
-        assert!(!saved.built_in, "an upload is never built in");
+        let refused = registry
+            .upload_and_dry_run(
+                empty.clone(),
+                &small_catalogue("other"),
+                &[],
+                &BTreeMap::new(),
+            )
+            .expect_err("a built-in's id is taken");
+        assert!(matches!(refused, DataroomError::Validation { .. }));
+        // One stored before uploads were refused still changes nothing unasked.
+        registry.load_stored(
+            test_ids(),
+            &[ProfileRecord {
+                built_in: false,
+                ..empty
+            }],
+        );
         let after = registry.validate_dataset(&cat, &bad, None).unwrap();
         assert_eq!(
             after[0].profile_version, before[0].profile_version,
@@ -1384,6 +1519,14 @@ mod tests {
         assert!(
             registry.get(test_ids(), "broken", None).is_none(),
             "a refused upload is not registered"
+        );
+        let orphan = profile("orphan", "1", Some("no-such-base"), "");
+        assert!(registry
+            .upload_and_dry_run(orphan, &cat, &[], &BTreeMap::new())
+            .is_err());
+        assert!(
+            registry.get(test_ids(), "orphan", None).is_none(),
+            "an upload whose base does not resolve is not registered"
         );
     }
 

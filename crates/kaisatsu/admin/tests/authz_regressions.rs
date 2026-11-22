@@ -608,57 +608,150 @@ async fn roles_never_leak_across_realms_or_from_role_names() {
         );
     }
 
-    // Keycloak's cross-realm admin: master `admin` administers dev ...
-    let master_admin = f
-        .token(
-            "master",
-            "root",
-            json!({ "realm_access": { "roles": ["admin"] } }),
-        )
-        .await;
-    let st = f
-        .send(
-            Method::PUT,
-            "/admin/realms/dev",
-            &master_admin,
-            Some(realm_body()),
-        )
-        .await;
-    assert_eq!(st, StatusCode::NO_CONTENT);
-    // ... master's own realm-management does not reach dev ...
-    let master_rm = f
+    // Master `admin` and master's own realm-management stay in master (S3-13) ...
+    for extra in [
+        json!({ "realm_access": { "roles": ["admin"] }, "acr": "mfa" }),
+        json!({ "resource_access": { "realm-management": { "roles": ["realm-admin"] } }, "acr": "mfa" }),
+    ] {
+        let t = f.token("master", "root", extra).await;
+        let st = f
+            .send(Method::PUT, "/admin/realms/dev", &t, Some(realm_body()))
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+    // ... a `dev-realm` role in a token alone is no grant ...
+    let claimed = f
         .token(
             "master",
             "ops",
-            json!({ "resource_access": { "realm-management": { "roles": ["realm-admin"] } } }),
+            json!({ "resource_access": { "dev-realm": { "roles": ["realm-admin"] } }, "acr": "mfa" }),
         )
         .await;
     let st = f
         .send(
             Method::PUT,
             "/admin/realms/dev",
-            &master_rm,
+            &claimed,
             Some(realm_body()),
         )
         .await;
-    assert_ne!(st, StatusCode::NO_CONTENT);
-    // ... but the `dev-realm` client roles do.
-    let master_dev = f
-        .token(
-            "master",
-            "ops2",
-            json!({ "resource_access": { "dev-realm": { "roles": ["realm-admin"] } } }),
-        )
-        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    // ... the `dev-realm` role ops holds in master is, with a second factor ...
+    f.store
+        .create_user(UserRepresentation {
+            id: "ops".into(),
+            realm_id: "master".into(),
+            username: "ops".into(),
+            client_roles: std::collections::HashMap::from([(
+                "dev-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let st = f
         .send(
             Method::PUT,
             "/admin/realms/dev",
-            &master_dev,
+            &claimed,
             Some(realm_body()),
         )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+    let password_only = f.token("master", "ops", json!({ "amr": ["pwd"] })).await;
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev",
+            &password_only,
+            Some(realm_body()),
+        )
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "a password alone administers dev"
+    );
+    // ... it reaches dev only, and ends when the grant is revoked.
+    let st = f
+        .send(Method::GET, "/admin/realms/espoo-city", &claimed, None)
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    f.store
+        .set_user_grants("master", "ops", &[], &Default::default())
+        .await
+        .unwrap();
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev",
+            &claimed,
+            Some(realm_body()),
+        )
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "a revoked grant still administers dev"
+    );
+    // A service account with the grant needs no second factor.
+    f.store
+        .create_user(UserRepresentation {
+            id: "svc".into(),
+            realm_id: "master".into(),
+            username: "service-account-ops".into(),
+            service_account_client_id: Some("ops-client".into()),
+            client_roles: std::collections::HashMap::from([(
+                "dev-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let svc = f.token("master", "svc", json!({})).await;
+    let st = f
+        .send(Method::PUT, "/admin/realms/dev", &svc, Some(realm_body()))
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+/// A grant on one realm name creates no realm under another (id and name are both judged).
+#[tokio::test]
+async fn a_realm_grant_creates_that_realm_only() {
+    let f = Fixture::new().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "svc".into(),
+            realm_id: "master".into(),
+            username: "service-account-ops".into(),
+            service_account_client_id: Some("ops-client".into()),
+            client_roles: std::collections::HashMap::from([(
+                "fresh-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let svc = f.token("master", "svc", json!({})).await;
+    let create = async |body: Value| {
+        f.send(Method::POST, "/admin/realms", &svc, Some(body))
+            .await
+    };
+    assert_eq!(
+        create(json!({ "id": "fresh", "realm": "other" })).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        create(json!({ "id": "other", "realm": "fresh" })).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        create(json!({ "realm": "fresh" })).await,
+        StatusCode::CREATED
+    );
 }
 
 #[tokio::test]
@@ -1795,4 +1888,196 @@ async fn org_admin_post_creates_no_role_mappings() {
     assert!(u.groups.is_empty(), "{:?}", u.groups);
     assert_ne!(u.id, "esp-person", "an organization admin picks no id");
     assert_eq!(f.user("esp-person").await.username, "esp-person");
+}
+
+#[tokio::test]
+async fn a_master_admin_without_a_grant_on_the_realm_is_refused() {
+    let f = Fixture::new().await;
+    let t = f
+        .token(
+            "master",
+            "root",
+            json!({ "realm_access": { "roles": ["admin"] } }),
+        )
+        .await;
+    let st = f
+        .send(Method::PUT, "/admin/realms/dev", &t, Some(realm_body()))
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn an_org_client_manager_cannot_create_a_reserved_client_id() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let create = async |id: &str| {
+        let body = json!({ "clientId": id, "orgId": "helsinki", "publicClient": true });
+        f.send(Method::POST, "/admin/realms/dev/clients", &t, Some(body))
+            .await
+    };
+    assert_eq!(create("hel-kiosk").await, StatusCode::CREATED);
+    for id in [
+        "account-console",
+        "admin-cli",
+        "account",
+        "broker",
+        "espoo-realm",
+        "app-kartta",
+        "mcp-portal",
+    ] {
+        assert_eq!(create(id).await, StatusCode::FORBIDDEN, "{id}");
+    }
+}
+
+#[tokio::test]
+async fn partial_import_turns_paths_into_membership_rows() {
+    let f = Fixture::new().await;
+    let t = f
+        .token(
+            "dev",
+            "root",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let import = async |mode: &str, path: &str| {
+        let body = json!({
+            "ifResourceExists": mode,
+            "users": [{ "username": "imported", "groups": [path] }],
+            "groups": [{ "name": "team", "subGroups": [{ "name": "inner" }] }],
+        });
+        f.send(
+            Method::POST,
+            "/admin/realms/dev/partialImport",
+            &t,
+            Some(body),
+        )
+        .await
+    };
+    assert_eq!(import("SKIP", "/team/inner").await, StatusCode::OK);
+    let person = async || {
+        f.store
+            .get_user_by_username_or_email("dev", None, "imported")
+            .await
+            .unwrap()
+            .expect("imported person")
+    };
+    let first = person().await;
+    assert!(first.groups.is_empty());
+    let joined = f.store.list_user_groups("dev", &first.id).await.unwrap();
+    assert_eq!(joined.len(), 1);
+    assert_eq!(joined[0].path, "/team/inner");
+
+    // An unknown path is refused before OVERWRITE deletes the person.
+    assert_eq!(
+        import("OVERWRITE", "/nowhere").await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(person().await.id, first.id);
+}
+
+#[tokio::test]
+async fn reserved_client_ids_are_written_by_a_realm_admin_only() {
+    let f = Fixture::new().await;
+    let admin = f
+        .token(
+            "dev",
+            "root",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let portal = f
+        .token(
+            "dev",
+            "portal",
+            json!({ "resource_access": { "realm-management": { "roles": ["manage-clients", "view-clients"] } } }),
+        )
+        .await;
+    let org = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let body = |id: &str| json!({ "clientId": id, "publicClient": true });
+    let clients = "/admin/realms/dev/clients";
+
+    // A realm-wide client manager registers platform prefixes, never a reserved id.
+    assert_eq!(
+        f.send(Method::POST, clients, &portal, Some(body("app-kartta")))
+            .await,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        f.send(
+            Method::POST,
+            clients,
+            &portal,
+            Some(body("Account-Console "))
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::POST, clients, &admin, Some(body("account-console")))
+            .await,
+        StatusCode::CREATED
+    );
+    let console = f
+        .store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    let path = format!("{clients}/{}", console.id);
+    let edited = json!({ "clientId": "account-console", "publicClient": true,
+                         "redirectUris": ["https://elsewhere.example/*"] });
+    assert_eq!(
+        f.send(Method::PUT, &path, &portal, Some(edited)).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::DELETE, &path, &portal, None).await,
+        StatusCode::FORBIDDEN
+    );
+    let secret = format!("{path}/client-secret");
+    assert_eq!(
+        f.send(Method::POST, &secret, &portal, None).await,
+        StatusCode::FORBIDDEN
+    );
+
+    // A rename may neither take a reserved id nor give one up.
+    let own = format!("{clients}/uuid-hel-app");
+    let to_reserved = json!({ "clientId": "admin-cli", "publicClient": true });
+    assert_eq!(
+        f.send(Method::PUT, &own, &org, Some(to_reserved)).await,
+        StatusCode::FORBIDDEN
+    );
+    let from_reserved = json!({ "clientId": "console-2", "publicClient": true });
+    assert_eq!(
+        f.send(Method::PUT, &path, &portal, Some(from_reserved))
+            .await,
+        StatusCode::FORBIDDEN
+    );
+    let plain = json!({ "clientId": "hel-app-2", "publicClient": true,
+                        "attributes": { "managed-by": "joinedcontext" } });
+    assert_eq!(
+        f.send(Method::PUT, &own, &org, Some(plain)).await,
+        StatusCode::NO_CONTENT
+    );
+
+    // Its roles too.
+    let roles = format!("{path}/roles");
+    assert_eq!(
+        f.send(
+            Method::POST,
+            &roles,
+            &portal,
+            Some(json!({ "name": "manage-account" }))
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.send(Method::DELETE, &path, &admin, None).await,
+        StatusCode::NO_CONTENT
+    );
 }

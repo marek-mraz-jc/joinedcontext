@@ -209,7 +209,7 @@ fn field(r: &Result<Value>, name: &str) -> bool {
 #[tokio::test]
 async fn registry_lookup_by_name_tool_and_command() {
     let ops = all_operations();
-    assert_eq!(ops.len(), 27);
+    assert_eq!(ops.len(), 33);
     for op in &ops {
         for key in [op.name, op.mcp_tool, op.cli_command] {
             assert_eq!(find_operation(key).map(|d| d.name), Some(op.name), "{key}");
@@ -218,6 +218,11 @@ async fn registry_lookup_by_name_tool_and_command() {
         assert!(op.output_schema.is_object(), "{}", op.name);
     }
     assert!(find_operation("nope").is_none());
+    // Distinct from the Portal's manifest tools of the same verb.
+    assert_eq!(
+        find_operation("resource.propose").map(|d| d.mcp_tool),
+        Some("jc_catalogue_resource_propose")
+    );
     let w = world().await;
     let r = w.run(&w.admin(), "nope", json!({})).await;
     assert!(is_not_found(&r), "{r:?}");
@@ -854,6 +859,75 @@ async fn dataset_propose_cannot_take_over_another_publishers_dataset() {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn declarations_are_closed_to_invented_values_and_borrowed_identities() {
+    let w = world().await;
+    let editor = w.dept_editor();
+    let package = |extras: Value| {
+        json!({"name": "dept-noise", "title": "Hluk", "owner_org": "dept", "private": true,
+               "extras": extras})
+    };
+    let r = w
+        .run(
+            &editor,
+            "dataset.propose",
+            package(json!([{"key": "personal_data", "value": "none"}])),
+        )
+        .await;
+    assert!(field(&r, "personal_data"), "{r:?}");
+    let body = json!([{"key": "publisher_uri",
+                       "value": "https://data.gov.sk/id/legal-subject/00151866"}]);
+    let r = w
+        .run(&editor, "dataset.propose", package(body.clone()))
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor publishes as another body: {r:?}"
+    );
+    w.run(&w.admin(), "dataset.propose", package(body))
+        .await
+        .expect("an administrator declares it");
+    w.run(
+        &editor,
+        "dataset.propose",
+        package(json!([{"key": "personal_data", "value": "does-not-contain"}])),
+    )
+    .await
+    .expect("an editor declares personal data and keeps the publisher");
+
+    let r = w
+        .run(
+            &editor,
+            "publisher.propose",
+            json!({"publisher": {"name": "dept", "title": {"sk": "Odbor"}, "description": {},
+                   "uri": "https://data.gov.sk/id/legal-subject/00151866", "state": "active"}}),
+        )
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor changes the publisher IRI: {r:?}"
+    );
+
+    let profile = |shapes: &str, built_in: bool| {
+        json!({"profile": {"id": "city", "version": "1", "uri": "https://city.example/profile",
+               "title": {"en": "City"}, "shapesTurtle": shapes, "requiredLanguages": [],
+               "builtIn": built_in, "formFields": []}})
+    };
+    let saved = w
+        .run(&w.admin(), "profile.propose", profile("", true))
+        .await
+        .expect("a first version");
+    assert_eq!(
+        saved["profile"]["builtIn"],
+        json!(false),
+        "an upload never becomes a built-in"
+    );
+    let r = w
+        .run(&w.admin(), "profile.propose", profile("# other", false))
+        .await;
+    assert!(matches!(r, Err(DataroomError::Conflict(_))), "{r:?}");
 }
 
 #[tokio::test]

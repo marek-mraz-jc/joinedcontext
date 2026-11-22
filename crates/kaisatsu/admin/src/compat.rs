@@ -18,7 +18,7 @@ use kaisatsu_crypto::{random_handle_256, verify_jwt};
 use kaisatsu_oidc::OidcState;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -268,8 +268,12 @@ async fn attach_req_info(req: axum::extract::Request, next: axum::middleware::Ne
     resp
 }
 
+/// Wraps the protected APIs: DPoP request info, and one transaction per write request, so an
+/// admin event commits with its change and a change whose event fails does not stand (AUD-02).
 pub fn with_dpop_req_info(router: Router) -> Router {
-    router.layer(axum::middleware::from_fn(attach_req_info))
+    router
+        .layer(axum::middleware::from_fn(jc_audit::layer))
+        .layer(axum::middleware::from_fn(attach_req_info))
 }
 
 /// Extracts and verifies the admin token (`Bearer` or `DPoP`, either from the target realm or
@@ -342,12 +346,23 @@ pub async fn extract_admin_ctx(
             "invalid admin bearer token".into(),
         ));
     }
-    // A token from `master` acting on another realm is Keycloak's cross-realm admin: only the
-    // master `admin` role and the `{realm}-realm` client roles carry over (as `realm-management`).
+    // A token from `master` acting on another realm carries only the `{realm}-realm` client roles
+    // its holder has in master now (as `realm-management`), never a role of the token alone and
+    // never the master `admin` role (S3-13).
     let cross_realm = token_realm != realm_id;
 
     let sub = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
     let azp = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
+
+    let acr = claims.get("acr").and_then(Value::as_str);
+    let second_factor = acr == Some("mfa")
+        || claims
+            .get("amr")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("otp")));
+    if cross_realm {
+        return cross_realm_ctx(state, realm_id, sub, azp, second_factor).await;
+    }
 
     let mut realm_roles: Vec<String> = claims
         .pointer("/realm_access/roles")
@@ -406,16 +421,6 @@ pub async fn extract_admin_ctx(
     if token_realm == "master" && realm_roles.iter().any(|r| r == "admin") {
         realm_roles.push("realm-admin".into());
     }
-    if cross_realm {
-        realm_roles.retain(|r| r == "realm-admin");
-        let per_realm = client_roles
-            .remove(&format!("{realm_id}-realm"))
-            .unwrap_or_default();
-        client_roles.clear();
-        if !per_realm.is_empty() {
-            client_roles.insert("realm-management".into(), per_realm);
-        }
-    }
 
     let mut organizations: Vec<String> = claims
         .get("jc_org")
@@ -430,10 +435,8 @@ pub async fn extract_admin_ctx(
 
     let mut org_roles: HashMap<String, Vec<String>> = HashMap::new();
 
-    // Organization memberships of the person in this realm (a cross-realm admin has none here).
-    if let Some(uid) = &sub
-        && !cross_realm
-    {
+    // Organization memberships of the person in this realm.
+    if let Some(uid) = &sub {
         if let Ok(Some(u)) = state.oidc.store.get_user_by_id(realm_id, None, uid).await
             && let Some(u_org) = u.org_id
             && !organizations.contains(&u_org)
@@ -454,16 +457,6 @@ pub async fn extract_admin_ctx(
             }
         }
     }
-    if cross_realm {
-        organizations.clear();
-    }
-
-    let acr = claims.get("acr").and_then(Value::as_str);
-    let second_factor = acr == Some("mfa")
-        || claims
-            .get("amr")
-            .and_then(Value::as_array)
-            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("otp")));
 
     let mut ctx = RequestCtx::new(
         realm_id,
@@ -487,6 +480,62 @@ pub async fn extract_admin_ctx(
     Ok(ctx)
 }
 
+/// The context of a `master` token on `realm_id`: the `{realm_id}-realm` client roles its holder
+/// has in master now, directly or by group, and a second factor for a person (a service account
+/// has none to give). Without them 403 before anything of `realm_id` is read, so an absent realm
+/// answers the same.
+async fn cross_realm_ctx(
+    state: &AdminState,
+    realm_id: &str,
+    sub: Option<String>,
+    azp: Option<String>,
+    second_factor: bool,
+) -> Result<RequestCtx> {
+    let refused = || {
+        KaisatsuError::Forbidden(format!(
+            "a master token administers realm {realm_id} only with a {realm_id}-realm role in master"
+        ))
+    };
+    let store = &state.oidc.store;
+    let holder = match &sub {
+        Some(uid) => store.get_user_by_id("master", None, uid).await?,
+        None => None,
+    };
+    let holder = holder.ok_or_else(refused)?;
+    if !holder.enabled {
+        return Err(KaisatsuError::Unauthorized(
+            "invalid admin bearer token".into(),
+        ));
+    }
+    let grant = format!("{realm_id}-realm");
+    let mut roles: Vec<String> = holder.client_roles.get(&grant).cloned().unwrap_or_default();
+    for group in store.list_user_groups("master", &holder.id).await? {
+        roles.extend(group.client_roles.get(&grant).cloned().unwrap_or_default());
+    }
+    roles.sort();
+    roles.dedup();
+    if roles.is_empty() {
+        return Err(refused());
+    }
+    if holder.service_account_client_id.is_none() && !second_factor {
+        return Err(KaisatsuError::Forbidden(format!(
+            "administering realm {realm_id} from master needs a sign-in with a second factor"
+        )));
+    }
+    Ok(RequestCtx::new(
+        realm_id,
+        Principal {
+            subject: sub,
+            client_id: azp,
+            realm_roles: Vec::new(),
+            client_roles: HashMap::from([("realm-management".to_owned(), roles)]),
+            organizations: Vec::new(),
+            org_roles: HashMap::new(),
+            second_factor,
+        },
+    ))
+}
+
 /// Role mappings of a client may be granted or removed only by someone who may write that client:
 /// a realm admin, or (for an ordinary application) whoever the authorizer lets update it. The
 /// admin clients (`realm-management`, `broker`, `{realm}-realm`) are realm-admin only, so neither
@@ -506,9 +555,7 @@ pub(crate) async fn ensure_may_map_client_roles(
         .get_client_by_uuid(realm, None, client_uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
-    if matches!(client.client_id.as_str(), "realm-management" | "broker")
-        || client.client_id.ends_with("-realm")
-    {
+    if is_admin_client(&client.client_id) {
         return Err(KaisatsuError::Forbidden(
             "admin client roles are granted by a realm admin only".into(),
         ));
@@ -545,7 +592,7 @@ pub(crate) fn merge_user_update(
     user.realm_id = existing.realm_id.clone();
     user.realm_roles = existing.realm_roles.clone();
     user.client_roles = existing.client_roles.clone();
-    user.groups = existing.groups.clone();
+    user.groups.clear();
     user.service_account_client_id = existing.service_account_client_id.clone();
     user.created_timestamp = existing.created_timestamp;
     user.transient = existing.transient;
@@ -554,6 +601,23 @@ pub(crate) fn merge_user_update(
         user.org_id = existing.org_id.clone();
     }
     user
+}
+
+/// The paths of `groups` and their subgroups, as `upsert_group` will store them.
+fn payload_group_paths(groups: &[GroupRepresentation]) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    let mut pending: Vec<(String, &GroupRepresentation)> =
+        groups.iter().map(|g| (String::new(), g)).collect();
+    while let Some((parent, group)) = pending.pop() {
+        let path = if group.path.is_empty() {
+            format!("{}/{}", parent.trim_end_matches('/'), group.name)
+        } else {
+            group.path.clone()
+        };
+        pending.extend(group.sub_groups.iter().map(|s| (path.clone(), s)));
+        paths.insert(format!("/{}", path.trim_start_matches('/')));
+    }
+    paths
 }
 
 /// The user attribute prefix of an identity-provider link (`kaisatsu.idp.{alias}.sub`), which the
@@ -623,17 +687,6 @@ const RESERVED_CLIENT_ATTRIBUTES: [&str; 3] = [
     LINKED_SCOPE_PREFIX,
 ];
 
-/// A realm administrator, or a realm-management service account (the Portal's) acting without an
-/// Organization pinned.
-fn realm_wide_client_manager(ctx: &RequestCtx) -> bool {
-    let p = &ctx.principal;
-    p.is_realm_admin()
-        || (ctx.active_org_id.is_none()
-            && ["manage-clients", "view-clients", "manage-users"]
-                .iter()
-                .any(|r| p.has_realm_mgmt_role(r)))
-}
-
 /// Refuses a client write that changes a reserved attribute without realm-wide rights, or links a
 /// scope (by the default or optional list) the caller may not read: a linked scope's mappers and
 /// audience go into the client's tokens.
@@ -643,7 +696,7 @@ async fn guard_client_write(
     existing: Option<&ClientRepresentation>,
     client: &ClientRepresentation,
 ) -> Result<()> {
-    if !realm_wide_client_manager(ctx) {
+    if !ctx.manages_clients_realm_wide() {
         for key in RESERVED_CLIENT_ATTRIBUTES {
             if client.attributes.get(key) != existing.and_then(|e| e.attributes.get(key)) {
                 return Err(KaisatsuError::Forbidden(format!(
@@ -737,6 +790,25 @@ pub(crate) fn check_decision(dec: Decision) -> Result<()> {
     }
 }
 
+/// Removes, at any depth, every key that names a secret: `secret`, `clientSecret`, `password`,
+/// `credentials`, a mapper's `pairwiseSubAlgorithmSalt` (SEC-02). An admin event keeps ids and
+/// the shape of the change, never a value that grants access.
+pub(crate) fn strip_secret_keys(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            map.retain(|k, _| {
+                let k = k.to_ascii_lowercase();
+                !["secret", "password", "credential", "salt"]
+                    .iter()
+                    .any(|word| k.contains(word))
+            });
+            map.values_mut().for_each(strip_secret_keys);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_secret_keys),
+        _ => {}
+    }
+}
+
 pub(crate) async fn record_admin_write(
     state: &AdminState,
     ctx: &RequestCtx,
@@ -747,10 +819,11 @@ pub(crate) async fn record_admin_write(
 ) -> Result<()> {
     let mut sanitized = representation;
     if let Some(Value::Object(ref mut map)) = sanitized {
-        map.remove("secret");
-        map.remove("password");
+        // A credential representation's top-level `value` is the secret itself.
         map.remove("value");
-        map.remove("credentials");
+    }
+    if let Some(v) = sanitized.as_mut() {
+        strip_secret_keys(v);
     }
     state
         .oidc
@@ -795,14 +868,22 @@ async fn compat_create_realm(
     {
         realm.id = realm.realm.clone();
     }
-    let ctx = extract_admin_ctx(&state, &mount, &realm.id, &headers).await?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Apply,
-        &ObjectTarget::Realm {
-            realm_id: realm.id.clone(),
-        },
-    ))?;
+    // The id and the name are both judged: a grant on one may not create the other.
+    let mut names = vec![realm.id.clone()];
+    if realm.realm != realm.id {
+        names.push(realm.realm.clone());
+    }
+    let mut ctx = None;
+    for name in names {
+        let judged = extract_admin_ctx(&state, &mount, &name, &headers).await?;
+        check_decision(state.authorizer.check(
+            &judged,
+            Action::Apply,
+            &ObjectTarget::Realm { realm_id: name },
+        ))?;
+        ctx.get_or_insert(judged);
+    }
+    let ctx = ctx.ok_or_else(|| KaisatsuError::BadRequest("realm is required".into()))?;
     if state.oidc.store.get_realm(&realm.realm).await?.is_some()
         || state.oidc.store.get_realm(&realm.id).await?.is_some()
     {
@@ -971,9 +1052,33 @@ async fn compat_partial_import(
             }
         }
     }
+    // Every path a person names is a stored group or one of this payload, found before anything
+    // is written: OVERWRITE deletes the person first.
+    let in_payload = payload_group_paths(&payload.groups);
+    for path in payload.users.iter().flat_map(|u| &u.groups) {
+        let norm = format!("/{}", path.trim_start_matches('/'));
+        if !in_payload.contains(&norm)
+            && state
+                .oidc
+                .store
+                .get_group_by_path(&realm_name, None, &norm)
+                .await?
+                .is_none()
+        {
+            return Err(KaisatsuError::BadRequest(format!(
+                "partialImport: group {path} does not exist: create it or add it to the import's groups"
+            )));
+        }
+    }
     let mut added = 0u32;
     let mut overwritten = 0u32;
     let mut skipped = 0u32;
+
+    for mut g in payload.groups {
+        g.realm_id = realm_name.clone();
+        state.oidc.store.upsert_group(g).await?;
+        added += 1;
+    }
 
     for mut u in payload.users {
         u.realm_id = realm_name.clone();
@@ -995,29 +1100,40 @@ async fn compat_partial_import(
             None
         };
         let existing = existing_by_id.or(existing_by_name);
-        match existing {
+        let paths = std::mem::take(&mut u.groups);
+        let written = match existing {
             Some(old) if mode == "OVERWRITE" => {
                 let _ = state
                     .oidc
                     .store
                     .delete_user(&realm_name, None, &old.id)
                     .await?;
-                state.oidc.store.create_user(u).await?;
                 overwritten += 1;
+                state.oidc.store.create_user(u).await?
             }
             // SKIP (FAIL found its conflicts before writing).
-            Some(_) => skipped += 1,
-            None => {
-                state.oidc.store.create_user(u).await?;
-                added += 1;
+            Some(_) => {
+                skipped += 1;
+                continue;
             }
+            None => {
+                added += 1;
+                state.oidc.store.create_user(u).await?
+            }
+        };
+        for path in &paths {
+            let group = state
+                .oidc
+                .store
+                .get_group_by_path(&realm_name, None, path)
+                .await?
+                .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
+            state
+                .oidc
+                .store
+                .add_user_to_group(&realm_name, &written.id, &group.id)
+                .await?;
         }
-    }
-
-    for mut g in payload.groups {
-        g.realm_id = realm_name.clone();
-        state.oidc.store.upsert_group(g).await?;
-        added += 1;
     }
 
     for mut c in payload.clients {
@@ -1223,11 +1339,11 @@ async fn compat_get_user(
         },
     ))?;
     let mut user = user;
-    if !user.groups.is_empty() && !ctx.principal.is_realm_admin() {
-        let visible = visible_user_groups(&state, &ctx, &realm, &user.id).await?;
-        user.groups
-            .retain(|path| visible.iter().any(|g| &g.path == path));
-    }
+    user.groups = visible_user_groups(&state, &ctx, &realm, &user.id)
+        .await?
+        .into_iter()
+        .map(|g| g.path)
+        .collect();
     Ok(Json(user))
 }
 
@@ -1413,13 +1529,26 @@ async fn compat_list_user_credentials(
         },
     ))?;
     let creds = state.oidc.store.list_credentials(&realm, &user.id).await?;
-    Ok(Json(
-        creds
-            .iter()
-            .filter(|c| c.credential_type != "password-history")
-            .map(CredentialMetadata::from)
-            .collect(),
-    ))
+    let mut out: Vec<CredentialMetadata> = creds
+        .iter()
+        .filter(|c| c.credential_type != "password-history")
+        .map(CredentialMetadata::from)
+        .collect();
+    // Passkeys live in their own table; an administrator resets a lost one from this list.
+    let passkeys = state
+        .oidc
+        .store
+        .list_webauthn_credentials(&realm, &user.id)
+        .await?;
+    out.extend(passkeys.into_iter().map(|p| CredentialMetadata {
+        id: p.id,
+        realm_id: p.realm_id,
+        user_id: p.user_id,
+        credential_type: "webauthn-passwordless".into(),
+        user_label: p.user_label,
+        created_date: p.created_at.as_millis(),
+    }));
+    Ok(Json(out))
 }
 
 async fn compat_delete_user_credential(
@@ -1447,11 +1576,27 @@ async fn compat_delete_user_credential(
         },
     ))?;
     crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
-    let deleted = state
+    let mut deleted = state
         .oidc
         .store
         .delete_credential(&realm, &user.id, &cred_id)
         .await?;
+    // A passkey of this person (the id alone could name another person's).
+    if !deleted
+        && state
+            .oidc
+            .store
+            .list_webauthn_credentials(&realm, &user.id)
+            .await?
+            .iter()
+            .any(|p| p.id == cred_id)
+    {
+        deleted = state
+            .oidc
+            .store
+            .delete_webauthn_credential(&realm, allowed.as_deref(), &cred_id)
+            .await?;
+    }
     if !deleted {
         return Err(KaisatsuError::NotFound("credential not found".into()));
     }
@@ -2092,7 +2237,7 @@ async fn compat_update_group(
     {
         group.managed_by = Some(first.clone());
     }
-    let updated = state.oidc.store.upsert_group(group).await?;
+    let updated = state.oidc.store.update_group(group).await?;
     record_admin_write(
         &state,
         &ctx,
@@ -2662,6 +2807,21 @@ async fn compat_update_client(
             managed_by: client.attributes.get("managed-by").cloned(),
         },
     ))?;
+    // A rename registers the new id and gives up the old: both are judged as a create.
+    if client.client_id != existing.client_id {
+        for id in [&existing.client_id, &client.client_id] {
+            check_decision(state.authorizer.check(
+                &ctx,
+                Action::Create,
+                &ObjectTarget::Application {
+                    realm_id: client.realm_id.clone(),
+                    org_id: existing.org_id.clone(),
+                    client_id: id.clone(),
+                    managed_by: existing.managed_by.clone(),
+                },
+            ))?;
+        }
+    }
     guard_client_write(&state, &ctx, Some(&existing), &client).await?;
     let updated = state.oidc.store.upsert_client(client).await?;
     record_admin_write(
@@ -2863,6 +3023,11 @@ fn client_role_write(
     client: &ClientRepresentation,
     role_name: &str,
 ) -> Result<()> {
+    if is_reserved_client(&client.client_id) && !ctx.principal.is_realm_admin() {
+        return Err(KaisatsuError::Forbidden(
+            "the roles of a reserved client are written by a realm admin only".into(),
+        ));
+    }
     let on_role = state.authorizer.check(
         ctx,
         action,
@@ -3063,6 +3228,7 @@ fn portal_adds_audience(
     mapper: &ProtocolMapperRepresentation,
 ) -> bool {
     ctx.principal.has_realm_mgmt_role("view-clients")
+        && !is_reserved_client(&client.client_id)
         && client
             .attributes
             .get(AUDIENCES_MANAGED_BY)

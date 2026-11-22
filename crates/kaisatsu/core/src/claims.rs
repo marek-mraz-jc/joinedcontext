@@ -481,20 +481,6 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                         }
                     })
                     .collect();
-                for path in &ctx.user.groups {
-                    let formatted = if full_path {
-                        if path.starts_with('/') {
-                            path.clone()
-                        } else {
-                            format!("/{path}")
-                        }
-                    } else {
-                        path.rsplit('/').next().unwrap_or(path).to_owned()
-                    };
-                    if !groups.contains(&formatted) {
-                        groups.push(formatted);
-                    }
-                }
                 groups.sort();
                 groups.dedup();
                 insert_mapped(&mut claims, claim_name, "groups", json!(groups));

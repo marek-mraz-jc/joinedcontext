@@ -579,6 +579,31 @@ pub(crate) fn held_attrs(
         .collect()
 }
 
+/// Whether a type of `types` records one of `attrs` (`None`: some Attribute)
+/// `onChange`; without `types`, whether any type of the Tenant does. An Entity
+/// may carry a type not asked for: [`held_attrs`] answers for the Entity.
+pub(crate) fn may_hold(
+    st: &AppState,
+    tenant: &TenantId,
+    types: Option<&[String]>,
+    attrs: Option<&[String]>,
+) -> bool {
+    st.history_off
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .recording
+        .iter()
+        .filter(|((t, kind), _)| {
+            t == tenant.as_str() && types.is_none_or(|asked| asked.contains(kind))
+        })
+        .any(|(_, r)| match attrs {
+            Some(attrs) => attrs
+                .iter()
+                .any(|a| matches!(r.of(a), Some(RecordMode::OnChange(_)))),
+            None => r.has_on_change(),
+        })
+}
+
 /// Does some type of `tenant` record an Attribute `onChange`? Its
 /// aggregations are then computed here, never pushed into the store.
 pub(crate) fn records_on_change(st: &AppState, tenant: &TenantId) -> bool {

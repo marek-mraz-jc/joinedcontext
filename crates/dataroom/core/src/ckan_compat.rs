@@ -693,7 +693,12 @@ pub fn dataset_from_ckan(
                     .get(idx)
                     .cloned()
                     .unwrap_or_else(|| format!("res-{id}-{idx}"));
-                distribution_from_ckan(r, &id, &fallback_id, default_lang)
+                let mut dist = distribution_from_ckan(r, &id, &fallback_id, default_lang);
+                // CKAN has no key for a terms-of-use declaration: an update keeps the stored one.
+                dist.terms_of_use = existing
+                    .and_then(|e| e.distributions.iter().find(|d| d.id == dist.id))
+                    .and_then(|d| d.terms_of_use.clone());
+                dist
             })
             .collect()
     } else if let Some(ex) = existing {
@@ -1036,4 +1041,98 @@ pub fn ckan_license_list() -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// Validates that a `resource_view_create` or `resource_view_update` payload contains no
+/// undeclared `__extras` fields (matching `ours/platform/jcctl-publish/ckan.rs` `VIEW_PAYLOAD`, EP-144).
+pub fn validate_view_payload(payload: &Value) -> crate::Result<()> {
+    const CORE_FIELDS: [&str; 6] = [
+        "id",
+        "resource_id",
+        "view_type",
+        "title",
+        "description",
+        "order",
+    ];
+    const JC_VIS_FIELDS: [&str; 4] = ["jc_name", "spec", "source", "endpoint"];
+
+    let Some(obj) = payload.as_object() else {
+        return Err(crate::DataroomError::field_error(
+            "view",
+            "payload must be a JSON object",
+        ));
+    };
+    let view_type = obj.get("view_type").and_then(Value::as_str).unwrap_or("");
+    for key in obj.keys() {
+        if CORE_FIELDS.contains(&key.as_str()) {
+            continue;
+        }
+        if view_type == "jc_visualization" && JC_VIS_FIELDS.contains(&key.as_str()) {
+            continue;
+        }
+        if matches!(
+            view_type,
+            "datatables_view" | "image_view" | "text_view" | "map_view"
+        ) && matches!(key.as_str(), "image_url" | "page_url" | "filterable")
+        {
+            continue;
+        }
+        return Err(crate::DataroomError::field_error(
+            "__extras",
+            format!("unexpected view field '{key}' for view_type '{view_type}'"),
+        ));
+    }
+    Ok(())
+}
+
+/// A CKAN view dict as a [`ResourceView`].
+pub fn resource_view_from_ckan(
+    payload: &Value,
+    existing_id: &str,
+    resource_id: &str,
+    view_type: &str,
+) -> ResourceView {
+    let id = payload
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(existing_id)
+        .to_owned();
+    let title = payload
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("View")
+        .to_owned();
+    let description = payload
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let order = payload.get("order").and_then(Value::as_i64).unwrap_or(0) as i32;
+
+    let mut config = BTreeMap::new();
+    if let Some(obj) = payload.as_object() {
+        for (k, v) in obj {
+            if !matches!(
+                k.as_str(),
+                "id" | "resource_id" | "view_type" | "title" | "description" | "order"
+            ) {
+                config.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    ResourceView {
+        id: if id.is_empty() {
+            format!("view-{}", Uuid::now_v7())
+        } else {
+            id
+        },
+        resource_id: resource_id.to_owned(),
+        view_type: view_type.to_owned(),
+        title,
+        description,
+        order,
+        config,
+    }
 }

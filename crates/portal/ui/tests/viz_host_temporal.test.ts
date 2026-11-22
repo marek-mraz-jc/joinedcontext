@@ -13,19 +13,21 @@ import { describe, expect, it } from "vitest";
 const site = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../vendor/viz/site");
 
 type State = { range: string; from: string | null; to: string | null; gran: string; method: string; attr: string | null; stations: string[] };
-type Plan = { attrs: string[]; method: string | null; gran: string; forced: string | null; capped: number; urls: string[] };
+type Plan = { attrs: string[]; method: string | null; gran: string; least: string; forced: string | null; url: string };
 type Host = {
   defaults: (source: unknown) => State;
   parseState: (hash: string, source: unknown) => State;
   stateHash: (state: State, source: unknown) => string;
-  temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number) => Plan;
+  temporalPlan: (source: unknown, state: State, endpoint: string, api: string, now: number, since?: number) => Plan;
   measure: (attr: string, unitCode: string | null, lang: string, values: unknown[]) => { title: string; percent: boolean };
   interactive: (spec: unknown, opts: Record<string, unknown>) => Record<string, unknown>;
-  load: (view: unknown, api: string, lang: string, fetcher: (url: string) => Promise<Response>, now: number) => Promise<{ partial?: string }>;
+  load: (view: unknown, api: string, lang: string, fetcher: (url: string) => Promise<Response>, now: number, deadline?: number, state?: State) => Promise<{ partial?: string; plan: Plan; rows: { observedAt: string }[] }>;
   gapped: (rows: Record<string, unknown>[], attr: string, factor?: number) => Record<string, unknown>[];
 };
 const module = { exports: {} as Host };
-new Function("module", "self", readFileSync(resolve(site, "host.js"), "utf8"))(module, {});
+const self: { jcGranularity?: string[][] } = {};
+new Function("self", readFileSync(resolve(site, "granularity.js"), "utf8"))(self);
+new Function("module", "self", readFileSync(resolve(site, "host.js"), "utf8"))(module, self);
 const host = module.exports;
 
 const API = "https://api.smartcity.example.org";
@@ -66,10 +68,49 @@ describe("a cut answer", () => {
   });
 });
 
+describe("all available", () => {
+  const view = { endpoint: SLUG, source: JSON.stringify(SOURCE) };
+  // The broker over a history from `first`: a bucket for each period that holds some of it.
+  const loaded = async (first: string) => {
+    const asked: string[] = [];
+    const data = await host.load(view, API, "en", async (url) => {
+      if (!url.includes("/temporal/")) return Response.json([]);
+      const query = params(url);
+      asked.push(query.aggrPeriodDuration);
+      const keep = { P1Y: 4, P1M: 7, P1D: 10 }[query.aggrPeriodDuration] ?? 10;
+      const tail = { 4: "-01-01", 7: "-01", 10: "" }[keep] ?? "";
+      const starts = new Set<string>();
+      for (let at = Date.parse(first); at < NOW; at += 86400000) starts.add(new Date(at).toISOString().slice(0, keep) + tail);
+      const avg = [...starts].map((day) => [1, `${day}T00:00:00Z`, `${day}T00:00:00Z`]);
+      return Response.json([{ id: "urn:ngsi-ld:WeatherObserved:s1", temperature: { avg } }]);
+    }, NOW, Date.now() + 10000, { ...host.defaults(SOURCE), range: "whole" });
+    return { asked, data };
+  };
+
+  it("shows a century by year in one read", async () => {
+    const { asked, data } = await loaded("1926-01-01T00:00:00Z");
+    expect(asked).toEqual(["P1Y"]);
+    expect(data.rows).toHaveLength(101);
+  });
+
+  it("reads ten years again by month", async () => {
+    const { asked, data } = await loaded("2016-01-01T00:00:00Z");
+    expect(asked).toEqual(["P1Y", "P1M"]);
+    expect(data.rows.length).toBeLessThanOrEqual(500);
+    expect(data.rows[0].observedAt).toBe("2016-01-01T00:00:00Z");
+  });
+
+  it("shows a thirty-day Policy window as its thirty days", async () => {
+    const { asked, data } = await loaded(new Date(NOW - 29 * 86400000).toISOString().slice(0, 10) + "T00:00:00Z");
+    expect(asked).toEqual(["P1Y", "P1D"]);
+    expect(data.rows).toHaveLength(30);
+  });
+});
+
 describe("the toolbar's reads", () => {
   it("reads a preset range `after` now minus the range, raw", () => {
     const plan = host.temporalPlan(SOURCE, host.defaults(SOURCE), SLUG, API, NOW);
-    expect(plan.urls).toEqual([
+    expect([plan.url]).toEqual([
       `${base}type=WeatherObserved&attrs=temperature&timerel=after&timeAt=2026-11-14T16%3A00%3A00Z&format=temporalValues&firstN=1000&limit=1000`,
     ]);
     expect(plan.forced).toBeNull();
@@ -77,14 +118,14 @@ describe("the toolbar's reads", () => {
 
   it("reads a custom range `between` its first day and the end of its last", () => {
     const state = { ...host.defaults(SOURCE), range: "custom", from: "2026-11-01", to: "2026-11-03" };
-    const [url] = host.temporalPlan(SOURCE, state, SLUG, API, NOW).urls;
+    const url = host.temporalPlan(SOURCE, state, SLUG, API, NOW).url;
     expect(params(url)).toMatchObject({ timerel: "between", timeAt: "2026-11-01T00:00:00Z", endTimeAt: "2026-11-04T00:00:00Z", format: "temporalValues" });
   });
 
   it("asks hourly and daily aggregates with the method picked", () => {
     for (const [gran, method] of [["PT1H", "avg"], ["P1D", "max"], ["PT1H", "min"]]) {
       const plan = host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range: "PT24H", gran, method }, SLUG, API, NOW);
-      expect(params(plan.urls[0])).toEqual({
+      expect(params(plan.url)).toEqual({
         type: "WeatherObserved", attrs: "temperature", timerel: "after", timeAt: gran === "P1D" ? "2026-11-20T00:00:00Z" : "2026-11-20T16:00:00Z",
         format: "aggregatedValues", aggrMethods: method, aggrPeriodDuration: gran, limit: "1000",
       });
@@ -94,7 +135,7 @@ describe("the toolbar's reads", () => {
   it("starts an aggregated read on a whole hour or UTC day, within the gateway's 31 days", () => {
     const now = Date.parse("2026-11-21T15:10:00Z");
     const at = (range: string, gran: string) =>
-      params(host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range, gran, method: "avg" }, SLUG, API, now).urls[0]).timeAt;
+      params(host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range, gran, method: "avg" }, SLUG, API, now).url).timeAt;
     expect(at("PT24H", "PT1H")).toBe("2026-11-20T15:00:00Z");
     expect(at("PT24H", "P1D")).toBe("2026-11-20T00:00:00Z");
     expect(at("P7D", "P1D")).toBe("2026-11-14T00:00:00Z");
@@ -106,35 +147,60 @@ describe("the toolbar's reads", () => {
   it("turns raw readings past seven days hourly and says so", () => {
     const plan = host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range: "P31D" }, SLUG, API, NOW);
     expect(plan.forced).toBe("hourly");
-    expect(params(plan.urls[0])).toMatchObject({ format: "aggregatedValues", aggrMethods: "avg", aggrPeriodDuration: "PT1H" });
+    expect(params(plan.url)).toMatchObject({ format: "aggregatedValues", aggrMethods: "avg", aggrPeriodDuration: "PT1H" });
     const week = host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range: "P7D" }, SLUG, API, NOW);
     expect(week.forced).toBeNull();
   });
 
-  it("walks a window over 31 days as consecutive daily windows of at most 31 days", () => {
+  it("reads a range over 31 days in one daily window, none walked", () => {
     const state = { ...host.defaults(SOURCE), range: "custom", from: "2026-09-01", to: "2026-11-20" };
     const plan = host.temporalPlan(SOURCE, state, SLUG, API, NOW);
     expect(plan.forced).toBe("daily");
-    expect(plan.capped).toBe(0);
-    const windows = plan.urls.map(params);
-    expect(windows.map((w) => [w.timeAt, w.endTimeAt])).toEqual([
-      ["2026-09-01T00:00:00Z", "2026-10-02T00:00:00Z"],
-      ["2026-10-02T00:00:00Z", "2026-11-02T00:00:00Z"],
-      ["2026-11-02T00:00:00Z", "2026-11-21T00:00:00Z"],
-    ]);
-    for (const w of windows) {
-      expect(w).toMatchObject({ timerel: "between", format: "aggregatedValues", aggrPeriodDuration: "P1D" });
-      expect(Date.parse(w.endTimeAt) - Date.parse(w.timeAt)).toBeLessThanOrEqual(31 * 86400000);
+    expect(params(plan.url)).toMatchObject({
+      timerel: "between", timeAt: "2026-09-01T00:00:00Z", endTimeAt: "2026-11-21T00:00:00Z",
+      format: "aggregatedValues", aggrPeriodDuration: "P1D",
+    });
+  });
+
+  it("reads 1 year, 10 years, a century and all available in one read by the table", () => {
+    const now = Date.parse("2026-11-21T15:10:00Z");
+    for (const [range, gran, from, forced] of [
+      ["P1Y", "P1D", "2025-11-21T00:00:00Z", "daily"],
+      ["P10Y", "P1M", "2016-11-01T00:00:00Z", "monthly"],
+      ["whole", "P1Y", "1000-01-01T00:00:00Z", "yearly"],
+    ]) {
+      const plan = host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range }, SLUG, API, now);
+      expect([plan.gran, plan.least, plan.forced]).toEqual([gran, gran, forced]);
+      expect(params(plan.url)).toEqual({
+        type: "WeatherObserved", attrs: "temperature", timerel: "between", timeAt: from, endTimeAt: "2026-11-21T15:10:00Z",
+        format: "aggregatedValues", aggrMethods: "avg", aggrPeriodDuration: gran, limit: "1000",
+      });
+    }
+    const century = { ...host.defaults(SOURCE), range: "custom", from: "1926-05-10", to: "2025-12-31" };
+    expect(params(host.temporalPlan(SOURCE, century, SLUG, API, now).url)).toMatchObject({ timeAt: "1926-01-01T00:00:00Z", endTimeAt: "2026-01-01T00:00:00Z", aggrPeriodDuration: "P1Y" });
+  });
+
+  it("keeps a coarser pick and never asks finer than the range allows", () => {
+    const at = (range: string, gran: string) => host.temporalPlan(SOURCE, { ...host.defaults(SOURCE), range, gran }, SLUG, API, NOW);
+    expect([at("P1Y", "P1M").gran, at("P1Y", "P1M").forced]).toEqual(["P1M", null]);
+    expect(at("P10Y", "P1Y").gran).toBe("P1Y");
+    expect(at("P10Y", "PT1H").gran).toBe("P1M");
+    expect(at("P10Y", "raw").method).toBe("avg");
+    for (const range of ["P1Y", "P10Y", "whole"]) {
+      for (const gran of ["raw", "PT1H", "P1D"]) {
+        const query = params(at(range, gran).url);
+        expect(query.format).toBe("aggregatedValues");
+        expect(query.firstN).toBeUndefined();
+      }
     }
   });
 
-  it("caps the walk at its newest twelve windows and names the days shown", () => {
-    const state = { ...host.defaults(SOURCE), range: "custom", from: "2024-01-01", to: "2026-11-20" };
-    const plan = host.temporalPlan(SOURCE, state, SLUG, API, NOW);
-    expect(plan.urls).toHaveLength(12);
-    // Eleven whole 31-day windows and the newest, shorter one (counted from 2024-01-01).
-    expect(plan.capped).toBe(342);
-    expect(params(plan.urls[11]).endTimeAt).toBe("2026-11-21T00:00:00Z");
+  it("reads again from where the data starts, by the span it covers", () => {
+    const state = { ...host.defaults(SOURCE), range: "whole" };
+    const from = (since: string) => host.temporalPlan(SOURCE, state, SLUG, API, NOW, Date.parse(since));
+    expect(from("2016-01-01T00:00:00Z").gran).toBe("P1M");
+    expect(from("2026-01-01T00:00:00Z").gran).toBe("P1D");
+    expect(params(from("2026-01-01T00:00:00Z").url)).toMatchObject({ timerel: "between", timeAt: "2026-01-01T00:00:00Z" });
   });
 
   it("refuses dates out of order, in the future or not a day", () => {
@@ -146,7 +212,7 @@ describe("the toolbar's reads", () => {
   it("reads only the attribute picked, and only one the view lists", () => {
     const source = { ...SOURCE, attrs: ["temperature", "relativeHumidity"] };
     const state = host.parseState("#view-01a1c5e4-c153-712b-887a-282522e42033&a=relativeHumidity", source);
-    expect(params(host.temporalPlan(source, state, SLUG, API, NOW).urls[0]).attrs).toBe("relativeHumidity");
+    expect(params(host.temporalPlan(source, state, SLUG, API, NOW).url).attrs).toBe("relativeHumidity");
     expect(host.parseState("#v&a=pm10", source).attr).toBeNull();
   });
 });

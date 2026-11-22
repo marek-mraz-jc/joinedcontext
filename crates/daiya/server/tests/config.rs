@@ -380,6 +380,12 @@ async fn build_state_loads_tokens_secrets_and_provisioning_into_a_serving_router
         "{hits}"
     );
     let (st, _) = send(&app, get("/api/dashboards/uid/slo", None)).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "no Organization named");
+    let mut named = get("/api/dashboards/uid/slo", None);
+    named
+        .headers_mut()
+        .insert("x-grafana-org-id", "1".parse().unwrap());
+    let (st, _) = send(&app, named).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _) = send(&app, get("/api/dashboards/uid/slo", Some("viewer"))).await;
     assert_eq!(st, StatusCode::OK);
@@ -604,7 +610,7 @@ async fn a_postgres_store_from_configuration_migrates_checks_rls_and_keeps_data(
     let admin_pw = secret_file(&scratch.0, "admin", &admin_password);
     let host = format!("{}:{}", opts.get_host(), opts.get_port());
     let database = opts.get_database().unwrap_or("postgres");
-    let org = OrgId::new();
+    let org = OrgId::generate();
     scratch.write("prov/datasources/d.yaml", "apiVersion: 1\ndatasources:\n  - name: P\n    uid: prom\n    type: prometheus\n    url: https://prom.example.com\n");
     scratch.write(
         "prov/dashboards/p.yaml",

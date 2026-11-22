@@ -7,11 +7,27 @@ use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::files::{FileEntry, FileStore, FileUsage};
 use dataroom_core::{
-    ActivityRow, Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer,
-    OrgId, Publisher, RecordState, RequestCtx, Result, Subject,
+    ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, DataroomError, Dataset,
+    HarvestSource, LiveAuthorizer, OrgId, ProfilePin, Publisher, RecordState, RequestCtx, Result,
+    Subject,
 };
 use dataroom_harvest::harvest_principal;
+use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
+
+/// What an administrator reads of a catalogue's feeds ([`CatalogueWriter::report`]).
+pub struct CatalogueReport {
+    pub total: usize,
+    /// The profiles with no feed until the catalogue declares its publisher.
+    pub missing_publisher: Vec<String>,
+    /// The profiles it serves beside EU DCAT-AP.
+    pub served: Vec<String>,
+    /// Each dataset with the profiles it is absent from and the fields that keep it out.
+    pub datasets: Vec<DatasetGaps>,
+}
+
+/// A dataset and the profiles whose feed it is absent from.
+pub type DatasetGaps = (Dataset, Vec<(String, Arc<[String]>)>);
 
 /// One catalogue as the reconciler wants it.
 #[derive(Clone)]
@@ -201,6 +217,75 @@ impl CatalogueWriter {
         Ok(cat)
     }
 
+    /// Writes what the manifests declare of the catalogue, only on a difference; whether it
+    /// wrote. `chosen` is the Portal's choice: `None` keeps the stored pins (T-7521 C1), else
+    /// the pins are EU DCAT-AP, the chosen ones and the catalogue's own uploads it pins.
+    pub async fn declare(
+        &self,
+        org: OrgId,
+        id: CatalogueId,
+        declared: &CatalogueDeclaration,
+        chosen: Option<&[String]>,
+    ) -> Result<bool> {
+        let _serial = self.serial.lock().await;
+        let store = self.state.store.as_ref();
+        let Some(mut held) = store.get_catalogue(org, id).await? else {
+            return Ok(false);
+        };
+        if held.deleted.is_some() {
+            return Ok(false);
+        }
+        let mut declared = declared.clone();
+        // A manifest may name a profile by its alias; the pins hold ids.
+        let chosen: Option<Vec<String>> = chosen.map(|names| {
+            names
+                .iter()
+                .map(|name| dataroom_api::installed_id(name).unwrap_or_else(|| name.clone()))
+                .collect()
+        });
+        if let Some(chosen) = chosen.as_deref() {
+            let mut pins: Vec<ProfilePin> = Vec::new();
+            for name in
+                std::iter::once(dataroom_api::BASE_PROFILE).chain(chosen.iter().map(String::as_str))
+            {
+                if pins.iter().any(|pin| pin.profile_id == name) {
+                    continue;
+                }
+                // One this build does not ship stays pinned: its feed answers 503, not 404 (C7).
+                pins.push(
+                    dataroom_api::installed_pin(name).unwrap_or_else(|| ProfilePin {
+                        profile_id: name.to_owned(),
+                        version: String::new(),
+                    }),
+                );
+            }
+            if held
+                .active_profiles
+                .iter()
+                .any(|pin| pins.iter().all(|p| p.profile_id != pin.profile_id))
+            {
+                let ctx = self.live(org, id)?;
+                let uploads = store.list_profiles(&ctx).await?;
+                for pin in &held.active_profiles {
+                    let own = dataroom_api::installed_pin(&pin.profile_id).is_none()
+                        && uploads.iter().any(|upload| upload.id == pin.profile_id);
+                    if own && pins.iter().all(|p| p.profile_id != pin.profile_id) {
+                        pins.push(pin.clone());
+                    }
+                }
+            }
+            if pins.iter().all(|pin| pin.profile_id != held.main_profile) {
+                declared.main_profile = Some(dataroom_api::BASE_PROFILE.to_owned());
+            }
+            declared.active_profiles = Some(pins);
+        }
+        if !declared.apply(&mut held) {
+            return Ok(false);
+        }
+        store.declare_catalogue(org, id, &declared).await?;
+        Ok(true)
+    }
+
     /// Deletes the catalogue's datasets, publishers and sources (its addresses answer 410
     /// from now on) and takes its principal, grants and routes away. `false`: no such catalogue.
     pub async fn delete(&self, org: OrgId, id: CatalogueId) -> Result<bool> {
@@ -271,6 +356,75 @@ impl CatalogueWriter {
         let mut all = self.state.store.list_datasets(&ctx).await?;
         all.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(all)
+    }
+
+    /// A page of the catalogue's active datasets, by name, with what keeps each out of which
+    /// feed and which profiles have no feed for want of a publisher (T-7520).
+    pub async fn report(
+        &self,
+        org: OrgId,
+        id: CatalogueId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CatalogueReport> {
+        let ctx = self.live(org, id)?;
+        let store = self.state.store.as_ref();
+        let cat = store
+            .get_catalogue(org, id)
+            .await?
+            .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+        let mut all = self.datasets(org, id).await?;
+        all.retain(|ds| ds.state == RecordState::Active);
+        let total = all.len();
+        let page: Vec<Dataset> = all.into_iter().skip(offset).take(limit).collect();
+        let publishers: BTreeMap<String, Publisher> = store
+            .list_publishers(&ctx)
+            .await?
+            .into_iter()
+            .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
+            .collect();
+        self.state
+            .profiles
+            .load_stored((org, id), &store.list_profiles(&ctx).await?);
+        let missing_publisher = if cat.declared_publisher_uri().is_some() {
+            Vec::new()
+        } else {
+            let mut ids: Vec<String> = cat
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.clone())
+                .chain([cat.main_profile.clone()])
+                .filter(|id| dataroom_api::requires_publisher(id))
+                .collect();
+            ids.sort();
+            ids.dedup();
+            ids
+        };
+        let mut served: Vec<String> = Vec::new();
+        for id in cat
+            .active_profiles
+            .iter()
+            .map(|pin| &pin.profile_id)
+            .chain([&cat.main_profile])
+        {
+            if id != dataroom_api::BASE_PROFILE && !served.contains(id) {
+                served.push(id.clone());
+            }
+        }
+        let state = self.state.clone();
+        // SHACL over up to a page of records for each profile: off the async workers.
+        let datasets = tokio::task::spawn_blocking(move || {
+            let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &page, &publishers);
+            page.into_iter().zip(gaps).collect()
+        })
+        .await
+        .map_err(|e| DataroomError::Storage(format!("profile report: {e}")))?;
+        Ok(CatalogueReport {
+            total,
+            missing_publisher,
+            served,
+            datasets,
+        })
     }
 
     /// Deletes a harvest source and its runs and withdraws the active records it harvested
@@ -502,7 +656,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataroom_core::Store;
+    use dataroom_core::{ProfileRecord, Store};
     use dataroom_store_memory::MemoryStore;
     use serde_json::json;
 
@@ -556,6 +710,179 @@ mod tests {
                 redirect: false,
             }),
         }
+    }
+
+    /// T-7520: a catalogue stored before its Organization declared a publisher gets it.
+    #[tokio::test]
+    async fn a_declaration_clears_a_publisher_declared_as_none_and_resolves_aliases() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        writer.upsert(spec.clone()).await.expect("served");
+        for uri in [Some("https://data.gov.sk/id/legal-subject/00691135"), None] {
+            let declared = CatalogueDeclaration {
+                publisher_uri: Some(uri.map(str::to_owned)),
+                ..CatalogueDeclaration::default()
+            };
+            let chosen = ["dcat-ap-sk".to_owned()];
+            writer
+                .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+                .await
+                .unwrap();
+            let got = store
+                .get_catalogue(spec.org_id, spec.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(got.publisher_uri.as_deref(), uri);
+            let pins: Vec<&str> = got
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.as_str())
+                .collect();
+            assert_eq!(pins, [dataroom_api::BASE_PROFILE, "dcat-ap-sk-2.0"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_declaration_is_written_once_and_clears_nothing() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let held = writer.upsert(spec.clone()).await.expect("served");
+        assert_eq!(held.publisher_uri, None);
+        let declared = CatalogueDeclaration {
+            publisher_uri: Some(Some("https://data.gov.sk/id/legal-subject/00691135".into())),
+            ..CatalogueDeclaration::default()
+        };
+        assert!(writer
+            .declare(spec.org_id, spec.id, &declared, None)
+            .await
+            .unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared, None)
+            .await
+            .unwrap());
+        let empty = CatalogueDeclaration::default();
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &empty, None)
+            .await
+            .unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Some(got.publisher_uri), declared.publisher_uri);
+        assert_eq!(got.hidden_datasets, held.hidden_datasets);
+
+        // T-7521: the Portal's choice becomes the pins, and an empty one keeps them.
+        let chosen = ["geodcat-ap-3.1.0".to_owned(), "dcat-ap-fi-2.0".to_owned()];
+        assert!(writer
+            .declare(spec.org_id, spec.id, &empty, Some(&chosen))
+            .await
+            .unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &empty, Some(&chosen))
+            .await
+            .unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &empty, None)
+            .await
+            .unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let pins: Vec<&str> = got
+            .active_profiles
+            .iter()
+            .map(|p| p.profile_id.as_str())
+            .collect();
+        assert_eq!(
+            pins,
+            ["dcat-ap-3.0.1", "geodcat-ap-3.1.0", "dcat-ap-fi-2.0"]
+        );
+        let report = writer.report(spec.org_id, spec.id, 0, 50).await.unwrap();
+        assert!(report.missing_publisher.is_empty(), "declared above");
+    }
+
+    /// T-7521: a profile no longer chosen loses its pin and the main place, an upload keeps
+    /// its pin; T-7520: the report names what keeps a dataset out of which feed.
+    #[tokio::test]
+    async fn a_choice_drops_a_national_pin_and_the_report_names_the_gaps() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let mut held = writer.upsert(spec.clone()).await.expect("served");
+        let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
+        let upload: ProfileRecord = serde_json::from_value(json!({
+            "id": "city-rules", "version": "1.0.0", "uri": "https://data.city.test/profile",
+            "title": {"en": "City rules"}, "builtIn": false,
+            "shapesTurtle": "@prefix sh: <http://www.w3.org/ns/shacl#> .",
+        }))
+        .expect("an upload");
+        store.upsert_profile(&ctx, upload).await.expect("stored");
+        held.main_profile = "dcat-ap-sk-2.0".into();
+        held.active_profiles = [
+            dataroom_api::installed_pin("dcat-ap-sk-2.0").expect("installed"),
+            ProfilePin {
+                profile_id: "city-rules".into(),
+                version: "1.0.0".into(),
+            },
+        ]
+        .into();
+        store.upsert_catalogue(held).await.expect("stored");
+        let ds: Dataset = serde_json::from_value(json!({
+            "orgId": spec.org_id, "catalogueId": spec.id, "id": "", "name": "air",
+            "title": {"sk": "Ovzdušie"}, "description": {}, "publisherId": "city",
+            "visibility": "public", "state": "active", "tags": [], "distributions": [],
+            "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        }))
+        .expect("a dataset");
+        store.upsert_dataset(&ctx, ds).await.expect("stored");
+
+        let report = writer.report(spec.org_id, spec.id, 0, 50).await.unwrap();
+        assert_eq!(report.missing_publisher, ["dcat-ap-sk-2.0"]);
+        assert_eq!(report.total, 1);
+        assert_eq!(report.served, ["dcat-ap-sk-2.0", "city-rules"]);
+        let gaps = &report.datasets[0].1;
+        let of = |id: &str| gaps.iter().find(|(p, _)| p == id).map(|(_, f)| f.to_vec());
+        assert!(
+            of("dcat-ap-sk-2.0").is_some_and(|f| !f.is_empty()),
+            "{gaps:?}"
+        );
+
+        let none = CatalogueDeclaration::default();
+        assert!(writer
+            .declare(spec.org_id, spec.id, &none, Some(&[]))
+            .await
+            .unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.main_profile, dataroom_api::BASE_PROFILE);
+        let pins: Vec<&str> = got
+            .active_profiles
+            .iter()
+            .map(|p| p.profile_id.as_str())
+            .collect();
+        assert_eq!(pins, [dataroom_api::BASE_PROFILE, "city-rules"]);
+        let report = writer.report(spec.org_id, spec.id, 0, 50).await.unwrap();
+        assert!(report.missing_publisher.is_empty());
+        assert!(report.datasets[0]
+            .1
+            .iter()
+            .all(|(p, _)| p != "dcat-ap-sk-2.0"));
+        assert!(writer
+            .report(spec.org_id, spec.id, 1, 50)
+            .await
+            .unwrap()
+            .datasets
+            .is_empty());
     }
 
     #[tokio::test]

@@ -587,7 +587,8 @@ pub(crate) fn grant_filter(q: Option<&str>, scope_q: Option<&str>) -> Option<Str
                 NOTHING.to_owned()
             }
         }),
-        scope_q.and_then(scope_folding::fold),
+        // And so a `scopeQ` that is no scope query: folded to nothing, it granted every scope.
+        scope_q.map(|scopes| scope_folding::fold(scopes).unwrap_or_else(|| NOTHING.to_owned())),
     ]
     .into_iter()
     .flatten()
@@ -602,8 +603,13 @@ pub(crate) fn grant_filter(q: Option<&str>, scope_q: Option<&str>) -> Option<Str
 
 /// The scope tree the grants cover, for the write guard alone (R29).
 fn union<'a>(scopes: impl Iterator<Item = &'a str>) -> Option<String> {
-    let scopes: Vec<&str> = scopes.collect();
-    (!scopes.is_empty()).then(|| scopes.join("|"))
+    let mut scopes = scopes.peekable();
+    scopes.peek()?;
+    // One that does not parse grants no scope and takes none from the others.
+    let readable: Vec<&str> = scopes
+        .filter(|scope_q| antares_ql::scope::subtree_scope_q(scope_q).is_some())
+        .collect();
+    Some(readable.join("|"))
 }
 
 /// `requested ∩ granted`, or the granted set when the caller asked for nothing specific

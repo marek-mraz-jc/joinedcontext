@@ -17,8 +17,8 @@ use tower::ServiceExt;
 use common::doors::http;
 use common::envelope;
 use joinedcontext_portal::api::portal_sources::{
-    hand_desk_to, DeskDataset, DeskError, DeskFuture, SourceDesk, SourcePreviewRecord,
-    SourceTestAnswer,
+    hand_desk_to, DeskCatalogue, DeskDataset, DeskError, DeskFuture, FeedGap, SourceDesk,
+    SourcePreviewRecord, SourceTestAnswer,
 };
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
@@ -74,21 +74,37 @@ impl SourceDesk for Fake {
         };
         Box::pin(async move { Ok(vec![json!({ "id": "run-1", "state": state })]) })
     }
-    fn datasets<'a>(&'a self, portal: &'a PortalSpec) -> DeskFuture<'a, Vec<DeskDataset>> {
+    fn datasets<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        offset: usize,
+        limit: usize,
+    ) -> DeskFuture<'a, DeskCatalogue> {
         let own = format!("{}-{}", portal.organization_ref, portal.path);
         Box::pin(async move {
-            Ok(vec![
+            let all = vec![
                 DeskDataset {
                     name: format!("{own}-air"),
                     title: "Air".into(),
                     source: Some("kosice".into()),
+                    missing: vec![FeedGap {
+                        profile: "dcat-ap-sk-2.0".into(),
+                        fields: vec!["personal_data".into()],
+                    }],
                 },
                 DeskDataset {
                     name: format!("{own}-hidden"),
                     title: "Hidden".into(),
                     source: None,
+                    missing: Vec::new(),
                 },
-            ])
+            ];
+            Ok(DeskCatalogue {
+                total: all.len(),
+                missing_publisher: vec!["dcat-ap-sk-2.0".into()],
+                profiles: vec!["dcat-ap-sk-2.0".into()],
+                datasets: all.into_iter().skip(offset).take(limit).collect(),
+            })
         })
     }
 }
@@ -384,10 +400,14 @@ async fn datasets_of_a_portal_never_list_another_portals_or_organizations_record
     assert_eq!(
         page.body["items"],
         json!([
-            { "name": "bbsk-skoly-air", "title": "Air", "source": "kosice", "hidden": false },
-            { "name": "bbsk-skoly-hidden", "title": "Hidden", "source": "endpoints", "hidden": true },
+            { "name": "bbsk-skoly-air", "title": "Air", "source": "kosice", "hidden": false,
+              "missing": [{ "profile": "dcat-ap-sk-2.0", "fields": ["personal_data"] }] },
+            { "name": "bbsk-skoly-hidden", "title": "Hidden", "source": "endpoints", "hidden": true,
+              "missing": [] },
         ])
     );
+    assert_eq!(page.body["missingPublisher"], json!(["dcat-ap-sk-2.0"]));
+    assert_eq!(page.body["profiles"], json!(["dcat-ap-sk-2.0"]));
     assert!(!page.body.to_string().contains("praha"), "{}", page.body);
     let second = http(
         &state,

@@ -615,6 +615,15 @@ impl CurrentStateDriver for Double {
     ) -> Result<(), NgsiError> {
         self.inner.context_put(tenant, id, doc).await
     }
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        self.inner.context_put_capped(tenant, id, doc, caps).await
+    }
     async fn context_get(
         &self,
         tenant: Option<&TenantId>,

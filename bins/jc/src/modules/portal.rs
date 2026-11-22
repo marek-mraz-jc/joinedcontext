@@ -786,6 +786,11 @@ pub(crate) fn organization_vars(
         })
         .collect();
     out.insert("JC_PORTAL_PORTAL_HOSTS".to_owned(), portal_hosts.join(","));
+    #[cfg(feature = "dataroom")]
+    out.insert(
+        "JC_PORTAL_PROFILES".to_owned(),
+        serde_json::Value::Array(dataroom_api::installed_profiles()).to_string(),
+    );
     out.insert(
         "JC_PORTAL_HARVEST_HOSTS".to_owned(),
         cfg.dataroom.harvest_hosts().join(","),
@@ -933,7 +938,7 @@ pub(crate) fn backup_vars(cfg: &crate::config::Config) -> BTreeMap<String, Strin
         // DaiyaState::for_standalone's installation, the one jc's daiya runs as.
         tenants.insert(
             "daiyaInstallation".to_owned(),
-            daiya_model::InstallationId::from_u128(1).to_string().into(),
+            daiya_model::InstallationId::SINGLE.to_string().into(),
         );
     }
     #[cfg(feature = "dataroom")]

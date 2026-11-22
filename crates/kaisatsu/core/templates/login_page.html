@@ -174,7 +174,7 @@
     </main>
   </div>
 </div>
-<script nonce="{{ nonce }}" id="kc-page-script" data-show="{{ show_label }}" data-hide="{{ hide_label }}">
+<script nonce="{{ nonce }}" id="kc-page-script" data-show="{{ show_label }}" data-hide="{{ hide_label }}" data-wa-failed="{{ webauthn_failed }}" data-wa-unsupported="{{ webauthn_unsupported }}">
 (function () {
     var me = document.getElementById("kc-page-script");
     document.querySelectorAll("button[data-password-toggle]").forEach(function (b) {
@@ -196,6 +196,75 @@
         });
     }
     var form = document.querySelector("main form");
+    var wa = form && form.querySelector("input[name=webauthn_assertion_response], input[name=webauthn_register_response]");
+    if (wa) {
+        // The passkey ceremony: the browser asks the authenticator, the form carries its answer.
+        var b64d = function (s) {
+            s = s.replace(/-/g, "+").replace(/_/g, "/");
+            while (s.length % 4) { s += "="; }
+            var b = atob(s), a = new Uint8Array(b.length);
+            for (var i = 0; i < b.length; i++) { a[i] = b.charCodeAt(i); }
+            return a;
+        };
+        var b64e = function (buf) {
+            var a = new Uint8Array(buf), s = "";
+            for (var i = 0; i < a.length; i++) { s += String.fromCharCode(a[i]); }
+            return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        };
+        var val = function (n) {
+            var i = form.querySelector("input[name=" + n + "]");
+            return i ? i.value : "";
+        };
+        var region = document.createElement("div");
+        region.className = "pf-v5-c-form__helper-text";
+        region.setAttribute("role", "alert");
+        region.innerHTML = '<div class="pf-v5-c-helper-text"><div class="pf-v5-c-helper-text__item pf-m-error">'
+            + '<span class="pf-v5-c-helper-text__item-text pf-m-error kc-feedback-text" id="kc-webauthn-status"></span></div></div>';
+        form.insertBefore(region, document.getElementById("kc-form-buttons"));
+        var status = document.getElementById("kc-webauthn-status");
+        var reg = wa.name === "webauthn_register_response";
+        form.addEventListener("submit", function (e) {
+            if (wa.value || (e.submitter && e.submitter.classList.contains("pf-m-secondary"))) { return; }
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            status.textContent = "";
+            if (!window.PublicKeyCredential || !navigator.credentials) {
+                status.textContent = me.dataset.waUnsupported;
+                return;
+            }
+            var rpId = val("webauthn_rp_id");
+            var ask = reg ? navigator.credentials.create({ publicKey: {
+                challenge: b64d(val("webauthn_challenge")),
+                rp: { id: rpId, name: val("webauthn_rp_name") },
+                user: { id: b64d(val("webauthn_user_handle")), name: val("webauthn_user_name"), displayName: val("webauthn_user_name") },
+                pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -8 }, { type: "public-key", alg: -257 }],
+                authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+                attestation: "none",
+                timeout: 120000
+            } }) : navigator.credentials.get({ publicKey: {
+                challenge: b64d(val("webauthn_challenge")),
+                rpId: rpId,
+                userVerification: "preferred",
+                timeout: 120000
+            } });
+            ask.then(function (c) {
+                var r = c.response;
+                var out = { id: c.id, rawId: b64e(c.rawId), type: c.type, response: { clientDataJSON: b64e(r.clientDataJSON) } };
+                if (reg) {
+                    out.response.attestationObject = b64e(r.attestationObject);
+                    out.response.transports = r.getTransports ? r.getTransports() : [];
+                } else {
+                    out.response.authenticatorData = b64e(r.authenticatorData);
+                    out.response.signature = b64e(r.signature);
+                    if (r.userHandle) { out.response.userHandle = b64e(r.userHandle); }
+                }
+                wa.value = JSON.stringify(out);
+                form.submit();
+            }, function () {
+                status.textContent = me.dataset.waFailed;
+            });
+        });
+    }
     if (form) {
         form.addEventListener("submit", function () {
             var b = form.querySelector("button[type=submit]");

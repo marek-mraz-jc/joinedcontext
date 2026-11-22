@@ -544,6 +544,275 @@ async fn credentials_are_enrolled_only_through_the_account_console() {
     assert_eq!(st, StatusCode::OK, "{raw}");
 }
 
+/// A client named like the realm's own, but owned by an Organization, carries none of its trust.
+#[tokio::test]
+async fn an_organizations_client_named_account_console_enrols_nothing() {
+    let api = Api::new().await;
+    let mut console = api
+        .store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    console.org_id = Some("helsinki".into());
+    api.store.upsert_client(console).await.unwrap();
+    let token = api
+        .token(ANALYST, json!({ "azp": "account-console" }))
+        .await;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/GenerateRecoveryCodes"),
+            &token,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{raw}");
+}
+
+/// Every write operation of the registry leaves an admin event (S3-35, AUD-02): one row per
+/// operation of this table, and no write operation of the registry outside it.
+#[tokio::test]
+async fn every_write_operation_leaves_an_admin_event() {
+    // Excluded, with the reason: realm_apply writes one event per changed object through
+    // kaisatsu-import (realm_apply_writes_only_the_realm_it_is_bound_to); passkey_register's
+    // second step needs a signed authenticator attestation, and its event is written by the
+    // same code path after insert_webauthn_credential; the domain operations need a DNS answer.
+    const NOT_IN_TABLE: &[&str] = &[
+        "realm_apply",
+        "passkey_register",
+        "domain_request_verification",
+        "domain_verify",
+    ];
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    let me = api
+        .token(ANALYST, json!({ "azp": "account-console" }))
+        .await;
+    let store = &api.store;
+    let group = store.list_groups("dev", None, None, false).await.unwrap()[0]
+        .id
+        .clone();
+    let client = store
+        .get_client_by_client_id("dev", "portal-api")
+        .await
+        .unwrap()
+        .unwrap();
+    let analyst = store
+        .get_user_by_id("dev", None, ANALYST)
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .upsert_consent(ConsentRecord {
+            id: "consent-audit".into(),
+            realm_id: "dev".into(),
+            org_id: analyst.org_id.clone(),
+            user_id: ANALYST.into(),
+            client_id: "portal-api".into(),
+            granted_client_scopes: vec!["profile".into()],
+            created_date: 0,
+            last_updated_date: 0,
+        })
+        .await
+        .unwrap();
+    let outbox: EmailOutboxRecord = serde_json::from_value(json!({
+        "id": "outbox-audit", "realmId": "dev", "orgId": analyst.org_id, "userId": ANALYST,
+        "toAddress": "analyst@example.test", "locale": "en", "templateKind": "execute-actions",
+        "actionJti": "jti-audit", "lifespanSecs": 600, "issuer": ISSUER, "status": "failed",
+        "attempts": 5, "nextAttemptAt": "2026-01-01T00:00:00Z", "createdAt": "2026-01-01T00:00:00Z"
+    }))
+    .unwrap();
+    store.enqueue_outbox(outbox).await.unwrap();
+    store
+        .insert_webauthn_credential(WebAuthnCredentialRecord {
+            id: "pk-audit".into(),
+            realm_id: "dev".into(),
+            org_id: analyst.org_id.clone(),
+            user_id: ANALYST.into(),
+            user_handle: "handle-audit".into(),
+            credential_id: "cred-audit".into(),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: false,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "idm.dev.example.test".into(),
+            user_label: None,
+            created_at: jc_time::TimestampTz::now(),
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+    let created_id = "de300000-0000-4000-8000-0000000000aa";
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.smtp_server = Some(SmtpServerConfig::default());
+    store.upsert_realm(realm.clone()).await.unwrap();
+    let totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+    let totp = CredentialRecord {
+        credential_type: "otp".into(),
+        secret_data: json!({ "value": totp_secret }).to_string(),
+        credential_data: json!({ "digits": realm.otp_policy_digits, "period": realm.otp_policy_period,
+                                 "algorithm": realm.otp_policy_algorithm, "secretEncoding": "BASE32" })
+        .to_string(),
+        ..Default::default()
+    };
+    let code =
+        generate_totp_code_for_credential(&totp, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
+    let person = |id: &str, op: &str| format!("{BASE}/People('{id}')/{op}");
+    // (operation, method, uri, caller, body, resource type of its event)
+    type Row<'a> = (&'a str, Method, String, &'a str, Option<Value>, &'a str);
+    let table: Vec<Row> = vec![
+        (
+            "person_create",
+            Method::POST,
+            format!("{BASE}/People"),
+            &admin,
+            Some(json!({ "id": created_id, "username": "audit-person" })),
+            "USER",
+        ),
+        (
+            "person_update",
+            Method::PATCH,
+            format!("{BASE}/People('{created_id}')"),
+            &admin,
+            Some(json!({ "firstName": "Audit" })),
+            "USER",
+        ),
+        (
+            "member_add",
+            Method::POST,
+            person(created_id, "AddToGroup"),
+            &admin,
+            Some(json!({ "groupId": group })),
+            "GROUP_MEMBERSHIP",
+        ),
+        (
+            "role_map",
+            Method::POST,
+            person(created_id, "MapClientRoles"),
+            &admin,
+            Some(json!({ "clientUuid": client.id, "roles": [] })),
+            "CLIENT_ROLE_MAPPING",
+        ),
+        (
+            "credential_reset",
+            Method::POST,
+            person(created_id, "ResetCredentials"),
+            &admin,
+            Some(json!({ "value": "Audit-Pass-2026-long", "temporary": true })),
+            "USER",
+        ),
+        (
+            "send_required_actions",
+            Method::POST,
+            person(ANALYST, "SendRequiredActions"),
+            &admin,
+            Some(json!({ "actions": ["UPDATE_PASSWORD"] })),
+            "USER",
+        ),
+        (
+            "session_revoke",
+            Method::POST,
+            person(created_id, "RevokeSessions"),
+            &admin,
+            Some(json!({})),
+            "USER",
+        ),
+        (
+            "keys_rotate",
+            Method::POST,
+            format!("{BASE}/SigningKeys/Rotate"),
+            &admin,
+            Some(json!({})),
+            "KEYS",
+        ),
+        (
+            "consent_revoke",
+            Method::POST,
+            format!("{BASE}/Consents('consent-audit')/Revoke"),
+            &admin,
+            Some(json!({})),
+            "CONSENT",
+        ),
+        (
+            "outbox_retry",
+            Method::POST,
+            format!("{BASE}/EmailOutbox('outbox-audit')/Retry"),
+            &admin,
+            Some(json!({})),
+            "EMAIL_OUTBOX",
+        ),
+        (
+            "passkey_delete",
+            Method::POST,
+            format!("{BASE}/WebAuthnCredentials('pk-audit')/DeletePasskey"),
+            &admin,
+            Some(json!({})),
+            "WEBAUTHN_CREDENTIAL",
+        ),
+        (
+            "totp_enrol",
+            Method::POST,
+            person(ANALYST, "EnrolTotp"),
+            &me,
+            Some(json!({ "secret": totp_secret, "code": code })),
+            "CREDENTIAL",
+        ),
+        (
+            "recovery_codes_generate",
+            Method::POST,
+            person(ANALYST, "GenerateRecoveryCodes"),
+            &me,
+            Some(json!({})),
+            "CREDENTIAL",
+        ),
+        (
+            "person_delete",
+            Method::DELETE,
+            format!("{BASE}/People('{created_id}')"),
+            &admin,
+            None,
+            "USER",
+        ),
+    ];
+    let writes: Vec<&str> = OperationRegistry::new()
+        .operations()
+        .iter()
+        .filter(|op| {
+            matches!(op.odata.kind, ODataKind::Action | ODataKind::EntitySetWrite)
+                && op.name != "allowed"
+        })
+        .map(|op| op.name)
+        .collect();
+    for name in &writes {
+        assert!(
+            NOT_IN_TABLE.contains(name) || table.iter().any(|row| row.0 == *name),
+            "write operation {name} has no row in the audit table"
+        );
+    }
+    for (name, method, uri, caller, body, resource) in table {
+        let before = store.list_admin_events("dev", None).await.unwrap().len();
+        let (st, _, _, raw) = api.call(method, &uri, caller, body).await;
+        assert!(st.is_success(), "{name}: {st} {raw}");
+        let events = store.list_admin_events("dev", None).await.unwrap();
+        assert!(
+            events[before..].iter().any(|e| e.resource_type == resource),
+            "{name} left no {resource} admin event: {:?}",
+            &events[before..]
+        );
+        assert!(
+            !format!("{:?}", &events[before..]).contains("Audit-Pass-2026-long")
+                && !format!("{:?}", &events[before..]).contains(totp_secret),
+            "{name}: a secret reached the admin event"
+        );
+    }
+}
+
 #[tokio::test]
 async fn self_service_actions_and_honest_not_implemented() {
     let api = Api::new().await;

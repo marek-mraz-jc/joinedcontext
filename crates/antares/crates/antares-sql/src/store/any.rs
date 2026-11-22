@@ -66,6 +66,24 @@ pub(crate) fn db(e: sqlx::Error) -> NgsiError {
     NgsiError::InternalError("database error".into())
 }
 
+/// 5.5.2 TooManyResults for a read that outran its own deadline
+/// (`TemporalFilter::deadline`): the caller asked for too much, and can ask
+/// for less.
+#[cfg(feature = "postgres")]
+fn over_budget(f: &crate::store::filter::TemporalFilter<'_>, e: &sqlx::Error) -> Option<NgsiError> {
+    f.deadline?;
+    let sqlx::Error::Database(d) = e else {
+        return None;
+    };
+    (d.code().as_deref() == Some("57014")).then(|| {
+        NgsiError::TooManyResults(
+            "this read aggregates more history than one read may in its time budget: \
+             ask a shorter window, fewer Entities (id, limit) or fewer attrs"
+                .into(),
+        )
+    })
+}
+
 /// 4.22: the read-boundary "now" — every entity read strips expired docs and
 /// instances against this stamp (UTC Z, millisecond precision, the same form
 /// the broker writes into system timestamps).
@@ -1337,7 +1355,11 @@ impl AnyStore {
                 aggregated: false,
             },
             #[cfg(feature = "postgres")]
-            AnyStore::Pg(p) => p.temporal.query(tenant, f).await.map_err(db)?,
+            AnyStore::Pg(p) => p
+                .temporal
+                .query(tenant, f)
+                .await
+                .map_err(|e| over_budget(f, &e).unwrap_or_else(|| db(e)))?,
         };
         // 4.22 on temporal reads: the Pg arm already dropped expired ENTITIES in
         // SQL (paging exact); this strips expired attribute INSTANCES, and does
@@ -1906,6 +1928,38 @@ impl AnyStore {
                     .to_owned();
                 p.docs
                     .context_put(tenant, id, &doc, &kind)
+                    .await
+                    .map_err(db)
+            }
+        }
+    }
+
+    pub async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        // ADR-0021, as in `context_put`; a Cached row has no Tenant to cap
+        if antares_store::context_row_owner(&doc).is_none()
+            || !antares_store::context_row_visible(&doc, Some(tenant))
+        {
+            return Err(NgsiError::InternalError(
+                "a capped @context is the writing tenant's own".into(),
+            ));
+        }
+        match self {
+            AnyStore::Mem(s) => s.context_put_capped(tenant, id, doc, caps),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                let kind = doc
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| NgsiError::InternalError("@context row without a kind".into()))?
+                    .to_owned();
+                p.docs
+                    .context_put_capped(tenant, id, &doc, &kind, caps)
                     .await
                     .map_err(db)
             }
@@ -2591,6 +2645,15 @@ impl antares_store::CurrentStateDriver for AnyStore {
         doc: Value,
     ) -> Result<(), NgsiError> {
         AnyStore::context_put(self, tenant, id, doc).await
+    }
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        AnyStore::context_put_capped(self, tenant, id, doc, caps).await
     }
     async fn context_get(
         &self,

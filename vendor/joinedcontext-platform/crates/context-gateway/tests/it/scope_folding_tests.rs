@@ -187,3 +187,132 @@ scopeQ: "/geo/SK/BB"
         "a write into a district the caller only named itself is refused"
     );
 }
+
+/// S2-17 (T-7543): `;` is AND, in either spelling, for the folded read and the write guard.
+#[test]
+fn a_conjunction_admits_only_entities_in_both_scopes() {
+    for granted in ["/a;/b", "(/a;/b)"] {
+        let term = fold(granted).expect("folds");
+        assert_eq!(
+            term, r#"(scope~="^/a(/.*)?$";scope~="^/b(/.*)?$")"#,
+            "{granted}"
+        );
+        let constraints = context_gateway::pdp::evaluator::Constraints {
+            granted_scopes: Some(granted.to_owned()),
+            ..Default::default()
+        };
+        for (scope, admitted) in [
+            (serde_json::json!(["/a", "/b"]), true),
+            (serde_json::json!(["/a/x", "/b"]), true),
+            (serde_json::json!("/a"), false),
+            (serde_json::json!(["/b"]), false),
+            (serde_json::json!(["/a", "/b", "/c"]), false),
+            (serde_json::json!([]), false),
+        ] {
+            let entity = serde_json::json!({
+                "id": "urn:ngsi-ld:AirQualityObserved:city.example:air:a1", "type": "AirQualityObserved", "scope": scope,
+            });
+            assert_eq!(
+                context_gateway::pdp::write_guard::check(&entity, &constraints).is_ok(),
+                admitted,
+                "{granted}: {entity}"
+            );
+        }
+    }
+}
+
+/// S2-17: a `scopeQ` that is no scope query grants nothing, where it used to grant everything.
+#[test]
+fn a_scope_query_that_does_not_parse_grants_nothing() {
+    for broken in ["geo/SK", "(/a;/b", "/a/#/b", ""] {
+        let unreadable = policy(&format!(
+            "contextSpaceRef: air\nassigner: did:web:city.example\nassignee: {{ kind: role, id: public }}\noperations: [queryEntity]\nscopeQ: \"{broken}\"\n"
+        ));
+        let verdict = evaluate(
+            &Subject::anonymous(),
+            Operation::QueryEntity,
+            &Request::default(),
+            "air",
+            &[unreadable],
+            now(),
+        );
+        let q = verdict.constraints().and_then(|c| c.q.clone());
+        assert!(
+            q.as_deref()
+                .is_some_and(|q| q.contains(context_gateway::pdp::evaluator::NOTHING)),
+            "{broken:?}: {q:?}"
+        );
+    }
+}
+
+/// The splitter against the broker's parser, exhaustively: for every query of up to two
+/// alternatives of up to two patterns, on every set of the scopes below, the folded `q` as
+/// the broker parses it selects what the broker's `scopeQ` selects over the subtrees, and a
+/// write lies inside the grant only where a read would select it.
+#[test]
+fn a_folded_scope_selects_what_the_brokers_parser_selects() {
+    use antares_ql::scope::{scope_matches, scopes_within, subtree_scope_q};
+    use antares_ql::{parse_q, QNode, QValue};
+
+    fn holds(node: &QNode, scopes: &[&str]) -> bool {
+        match node {
+            QNode::And(all) => all.iter().all(|one| holds(one, scopes)),
+            QNode::Or(any) => any.iter().any(|one| holds(one, scopes)),
+            QNode::Cmp {
+                value: QValue::Str(regex),
+                ..
+            } => {
+                let regex = antares_ql::regex::compile(regex).expect("a folded pattern compiles");
+                scopes.iter().any(|scope| regex.is_match(scope))
+            }
+            other => panic!("not a folded scope term: {other:?}"),
+        }
+    }
+
+    const PATTERNS: [&str; 7] = ["/a", "/b", "/a/b", "/a/+", "/+/b", "/#", "/a.b/"];
+    const SCOPES: [&str; 7] = ["/a", "/b", "/a/b", "/a/b/c", "/ab", "/a.b", "/axb"];
+    let mut groups: Vec<String> = PATTERNS.map(str::to_owned).to_vec();
+    for left in PATTERNS {
+        groups.extend(PATTERNS.map(|right| format!("({left};{right})")));
+    }
+    let mut queries = groups.clone();
+    for left in &groups {
+        for operator in [",", "|"] {
+            queries.extend(
+                groups
+                    .iter()
+                    .map(|right| format!("{left}{operator}{right}")),
+            );
+        }
+    }
+    let sets: Vec<Vec<&str>> = (0..1_u32 << SCOPES.len())
+        .map(|bits| {
+            SCOPES
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| bits & (1 << at) != 0)
+                .map(|(_, scope)| *scope)
+                .collect()
+        })
+        .collect();
+    let stored: Vec<serde_json::Value> = sets
+        .iter()
+        .map(|scopes| serde_json::json!({ "scope": scopes }))
+        .collect();
+    for query in &queries {
+        let tree = subtree_scope_q(query).expect("a scope query");
+        let folded = parse_q(&fold(query).expect("a scope query folds")).expect("a q");
+        for (scopes, document) in sets.iter().zip(&stored) {
+            let read = holds(&folded, scopes);
+            assert_eq!(
+                read,
+                scope_matches(&tree, document),
+                "{query} on {scopes:?}"
+            );
+            assert!(
+                read || !scopes_within(&tree, scopes),
+                "{query} on {scopes:?}"
+            );
+        }
+    }
+}

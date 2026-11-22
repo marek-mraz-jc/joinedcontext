@@ -5,7 +5,9 @@
 //!
 //! Runs when `DAIYA_TEST_DATABASE_URL` is set (printing a `SKIP` line when unset).
 
-use daiya_model::{DaiyaStore, InstallationId, OrgId, OrgKey};
+use daiya_model::{
+    DaiyaStore, ImportReportRecord, InstallationId, InstanceId, OrgId, OrgKey, OrgQuotas,
+};
 use daiya_store_pg::{MIGRATION_SQL, PgStore, connect_test_database, migrate};
 use sqlx::AssertSqlSafe;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -93,22 +95,22 @@ async fn a_database_of_the_release_before_keeps_its_numbers_ids_and_rows() {
     );
     assert!(
         second
-            .create_org(installation, "kosice", Some(3), OrgId::new())
+            .create_org(installation, "kosice", Some(3), OrgId::generate())
             .await
             .is_err(),
         "a held number is never renumbered"
     );
 
     let (a, b) = tokio::join!(
-        first.create_org(installation, "kosice", None, OrgId::new()),
-        second.create_org(installation, "nitra", None, OrgId::new()),
+        first.create_org(installation, "kosice", None, OrgId::generate()),
+        second.create_org(installation, "nitra", None, OrgId::generate()),
     );
     let mut given = [a.unwrap().number, b.unwrap().number];
     given.sort_unstable();
     assert_eq!(given, [8, 9], "the database numbers");
     let (a, b) = tokio::join!(
-        first.create_org(installation, "trnava", None, OrgId::new()),
-        second.create_org(installation, "trnava", None, OrgId::new()),
+        first.create_org(installation, "trnava", None, OrgId::generate()),
+        second.create_org(installation, "trnava", None, OrgId::generate()),
     );
     assert_eq!(
         usize::from(a.is_ok()) + usize::from(b.is_ok()),
@@ -202,8 +204,8 @@ async fn a_temporary_table_of_the_caller_changes_no_definer_functions_result() {
     };
     let _cluster = CLUSTER.lock().await;
     let db = connect_test_database(&url).await.expect("test database");
-    let installation = InstallationId::new();
-    let (org, forged) = (OrgId::new(), OrgId::new());
+    let installation = InstallationId::generate();
+    let (org, forged) = (OrgId::generate(), OrgId::generate());
     db.app
         .create_org(installation, "real", None, org)
         .await
@@ -250,7 +252,7 @@ async fn a_temporary_table_of_the_caller_changes_no_definer_functions_result() {
         .unwrap();
     assert_eq!(token_org, None, "the token index");
 
-    let added = OrgId::new();
+    let added = OrgId::generate();
     sqlx::query("SELECT number FROM daiya_org_create($1, 'added', NULL, $2, $2)")
         .bind(installation.as_uuid())
         .bind(added.as_uuid())
@@ -306,4 +308,55 @@ async fn a_temporary_table_of_the_caller_changes_no_definer_functions_result() {
         .close()
         .await
         .expect("the session and its tables end");
+}
+
+#[tokio::test]
+async fn a_quota_and_an_import_report_keep_the_installation_they_were_written_for() {
+    let Ok(url) = std::env::var("DAIYA_TEST_DATABASE_URL") else {
+        println!("SKIP: DAIYA_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let _cluster = CLUSTER.lock().await;
+    let db = connect_test_database(&url).await.expect("test database");
+    let (installation, org, instance) = (
+        InstallationId::from_u128(9),
+        OrgId::generate(),
+        InstanceId::from_u128(8),
+    );
+    db.app
+        .set_quotas(installation, org, instance, OrgQuotas::default())
+        .await
+        .unwrap();
+    db.app
+        .insert_import_report(
+            installation,
+            ImportReportRecord {
+                id: "r".into(),
+                org_id: org,
+                instance_id: instance,
+                dry_run: false,
+                status: "ok".into(),
+                dashboard_count: 1,
+                refused_count: 0,
+                mapped_count: 0,
+                summary: serde_json::json!({}),
+                created_at: jc_time::TimestampTz::now(),
+            },
+        )
+        .await
+        .unwrap();
+    for table in ["cr_quota", "cr_import_report"] {
+        let stored: (uuid::Uuid, uuid::Uuid) = sqlx::query_as(AssertSqlSafe(format!(
+            "SELECT installation_id, instance_id FROM {table} WHERE org_id = $1"
+        )))
+        .bind(org.as_uuid())
+        .fetch_one(&db.admin)
+        .await
+        .unwrap();
+        assert_eq!(
+            stored,
+            (installation.as_uuid(), instance.as_uuid()),
+            "{table}"
+        );
+    }
 }

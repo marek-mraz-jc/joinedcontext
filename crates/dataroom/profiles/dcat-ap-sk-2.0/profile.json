@@ -1,0 +1,226 @@
+{
+  "id": "dcat-ap-sk-2.0",
+  "version": "2.0.1",
+  "uri": "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/",
+  "source": "DCAT-AP-SK 2.0.1. shapes.ttl is derived from the specification and its JSON schemas beside this file: 2.0 publishes no SHACL. The gateway serves 3.0.0 (docs API/08).",
+  "title": {
+    "en": "DCAT-AP-SK 2.0.1 (Slovensko)",
+    "sk": "DCAT-AP-SK 2.0.1 (Slovensko)"
+  },
+  "country": "SK",
+  "languages": [
+    "sk"
+  ],
+  "aliases": [
+    "sk",
+    "dcat-ap-sk",
+    "https://datova-kancelaria.github.io/dcat-ap-sk-2.0"
+  ],
+  "bases": [
+    "dcat-ap-3.0.1"
+  ],
+  "selectable": true,
+  "shapes": [
+    "shapes.ttl"
+  ],
+  "catalogue": {
+    "publisher": true,
+    "publisherIriPrefixes": [
+      "https://data.gov.sk/id/legal-subject/"
+    ]
+  },
+  "render": {
+    "identifier": false,
+    "issuedModified": true,
+    "licence": false,
+    "inheritLegislation": false,
+    "terms": {
+      "link": "https://data.gov.sk/def/ontology/legislation/termsOfUse",
+      "class": "https://data.gov.sk/def/ontology/legislation/TermsOfUse",
+      "authorsWork": "https://data.gov.sk/def/ontology/legislation/authorsWorkType",
+      "authorName": "https://data.gov.sk/def/ontology/legislation/authorName",
+      "databaseAsWork": "https://data.gov.sk/def/ontology/legislation/originalDatabaseType",
+      "databaseAuthorName": "https://data.gov.sk/def/ontology/legislation/originalDatabaseAuthorName",
+      "suiGenerisDatabase": "https://data.gov.sk/def/ontology/legislation/databaseProtectedBySpecialRightsType",
+      "personalData": "https://data.gov.sk/def/ontology/legislation/personalDataContainmentType"
+    },
+    "personalData": {
+      "contains": "https://data.gov.sk/def/personal-data-occurence-type/1",
+      "doesNotContain": "https://data.gov.sk/def/personal-data-occurence-type/2"
+    },
+    "jsonLd": {
+      "iri": "iri",
+      "type": "typ",
+      "catalogue": {
+        "context": "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld",
+        "class": "Katalóg",
+        "contact": {
+          "organization": "Organizácia",
+          "individual": "Organizácia",
+          "name": [
+            "meno"
+          ],
+          "email": "e-mail"
+        },
+        "members": [
+          [
+            "title",
+            "názov"
+          ],
+          [
+            "description",
+            "popis"
+          ],
+          [
+            "contact",
+            "kontaktný_bod"
+          ],
+          [
+            "homepage",
+            "domovská_stránka"
+          ],
+          [
+            "publisher",
+            "poskytovateľ"
+          ],
+          [
+            "datasets",
+            "dataset"
+          ]
+        ]
+      },
+      "dataset": {
+        "context": "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld",
+        "class": "Dataset",
+        "contact": {
+          "organization": "Organizácia",
+          "individual": "Organizácia",
+          "name": [
+            "jméno",
+            "meno"
+          ],
+          "email": "e-mail"
+        },
+        "members": [
+          [
+            "title",
+            "názov"
+          ],
+          [
+            "description",
+            "popis"
+          ],
+          [
+            "publisher",
+            "poskytovateľ"
+          ],
+          [
+            "themes",
+            "téma"
+          ],
+          [
+            "frequency",
+            "periodicita_aktualizácie"
+          ],
+          [
+            "keywordsOrTags",
+            "kľúčové_slovo"
+          ],
+          [
+            "spatial",
+            "geografické_územie"
+          ],
+          [
+            "contact",
+            "kontaktný_bod"
+          ],
+          [
+            "distributions",
+            "distribúcia"
+          ]
+        ]
+      },
+      "distribution": {
+        "class": "Distribúcia",
+        "members": [
+          [
+            "terms",
+            "podmienky_použitia"
+          ],
+          [
+            "accessUrl",
+            "prístupové_url"
+          ],
+          [
+            "downloadUrl",
+            "súbor_na_stiahnutie"
+          ],
+          [
+            "format",
+            "formát"
+          ],
+          [
+            "mediaType",
+            "typ_média"
+          ],
+          [
+            "title",
+            "názov"
+          ]
+        ]
+      },
+      "terms": {
+        "class": "Špecifikácia podmienok použitia",
+        "members": [
+          [
+            "authorsWork",
+            "autorské_dielo"
+          ],
+          [
+            "databaseAsWork",
+            "databáza_ako_autorské_dielo"
+          ],
+          [
+            "suiGenerisDatabase",
+            "databáza_chránená_zvláštnými_právami"
+          ],
+          [
+            "personalData",
+            "osobné_údaje"
+          ]
+        ]
+      }
+    }
+  },
+  "contexts": [
+    {
+      "suffixes": [
+        "rozhranie-katalógu-otvorených-dát.jsonld"
+      ],
+      "file": "../../specs/dcat-ap-sk/kontexty/rozhranie-katalógu-otvorených-dát.jsonld",
+      "add": {
+        "dct": "http://purl.org/dc/terms/",
+        "jméno": {
+          "@id": "vcard:fn",
+          "@container": "@language"
+        },
+        "začátek": {
+          "@id": "dcat:startDate",
+          "@type": "xsd:date"
+        },
+        "autor_databáze": {
+          "@id": "leg:originalDatabaseAuthorName",
+          "@container": "@language"
+        },
+        "dokumentácia": {
+          "@id": "foaf:page",
+          "@type": "@id"
+        },
+        "prvek_rúian": {
+          "@id": "dcterms:spatial",
+          "@type": "@id"
+        }
+      }
+    }
+  ]
+}
