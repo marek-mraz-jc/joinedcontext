@@ -567,8 +567,10 @@ pub fn temporal_instance_limit() -> usize {
 /// The statement time one aggregated temporal read through a view's rules may
 /// take (DAT-11, T-7526): such a read is bounded by what it costs instead of
 /// by days, so 100 years of days answer and a read over millions of instances
-/// is 403 TooManyResults inside the chart host's 15 s. A caller no rule
-/// narrows keeps the session's statement_timeout.
+/// is 403 TooManyResults inside the chart host's 15 s. It holds whether the
+/// store aggregates or the broker rebuilds the instances, and every statement
+/// the read runs again shares it. A caller no rule narrows keeps the
+/// session's statement_timeout.
 pub const AGGREGATE_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Deployment knob (ANTARES_TEMPORAL_DEFAULT_INSTANCES): the instances of one

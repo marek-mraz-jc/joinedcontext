@@ -143,9 +143,10 @@ pub(crate) fn anonymous_refusal(id: Value, name: &str) -> Value {
 const ANONYMOUS_WINDOW_DAYS: i64 = 31;
 /// The shortest aggregation period an anonymous read may ask for, in seconds (`PT1H`).
 const ANONYMOUS_AGGR_SECONDS: f64 = 3600.0;
-/// The arguments of an aggregated history read past those days (T-7526): each one the store
-/// answers by itself, so the broker's statement budget bounds it. An allow-list, so an
-/// argument added later is no way around the days.
+/// The arguments of an aggregated history read past those days (T-7526): the broker ends
+/// each one through a view's rules after its statement budget, whether the store aggregates
+/// it or the broker rebuilds the instances. An allow-list, so an argument added later is no
+/// way around the days.
 const LONG_READ_ARGUMENTS: &[&str] = &[
     "endpoint",
     "type",
@@ -938,7 +939,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     broker(
         "query_temporal",
         &[Operation::QueryTemporal],
-        "Query the history of Entities between timeAt and endTimeAt, a page of Entities at a time; lastN bounds each Attribute's instances. A window over a day answers averages (hourly up to 31 days, then daily, monthly past two years, yearly past 40) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        "Query the history of Entities between timeAt and endTimeAt, a page of Entities at a time; lastN bounds each Attribute's instances. A window over a day answers averages by hour, day, month or year as it grows unless format or lastN asks raw values; a cut answer carries `more.next`, the window of the rest.",
         TEMPORAL_QUERY,
         "entities",
     ),
@@ -959,7 +960,7 @@ pub(crate) const TOOLS: &[Tool] = &[
     broker(
         "retrieve_temporal",
         &[Operation::RetrieveTemporal],
-        "Read the history of one Entity between timeAt and endTimeAt; lastN bounds each Attribute's instances. A window over a day answers averages (hourly up to 31 days, then daily, monthly past two years, yearly past 40) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        "Read the history of one Entity between timeAt and endTimeAt; lastN bounds each Attribute's instances. A window over a day answers averages by hour, day, month or year as it grows unless format or lastN asks raw values; a cut answer carries `more.next`, the window of the rest.",
         TEMPORAL_ONE,
         "entity",
     ),

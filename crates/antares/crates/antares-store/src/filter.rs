@@ -189,6 +189,11 @@ pub struct TemporalFilter<'a> {
     /// value class outside the numeric one) ignores this and the API
     /// aggregates over the reconstructed instances as before.
     pub aggregate: Option<Aggregate<'a>>,
+    /// Every statement of this read ends by this instant, never later than
+    /// the session's own statement_timeout allows (DAT-11): an aggregated read
+    /// through a view's rules, pushed into the store or not, and each read the
+    /// store or the caller runs again for it share one deadline.
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// 4.5.19.1: the bucket matrix a backend computes for the numeric value class.
@@ -202,8 +207,6 @@ pub struct Aggregate<'a> {
     pub anchor: Option<&'a str>,
     /// only these Attribute IRIs are read: those asked for, of those a narrowing shows
     pub attrs: Option<&'a [String]>,
-    /// the statement time this read may take, below the session's own (DAT-11)
-    pub budget: Option<std::time::Duration>,
 }
 
 /// The width of a clause 4.5.19.1 bucket.
@@ -247,6 +250,7 @@ impl Default for TemporalFilter<'_> {
             expand: &|t: &str| t.to_owned(),
             geo: &[],
             aggregate: None,
+            deadline: None,
         }
     }
 }

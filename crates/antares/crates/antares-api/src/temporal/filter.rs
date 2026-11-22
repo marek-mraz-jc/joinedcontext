@@ -73,7 +73,8 @@ pub(super) fn page_attrs(
     attrs: Option<&[String]>,
     clamped: bool,
 ) -> Option<Option<Vec<String>>> {
-    let first = rules.rules.first()?;
+    let deciding = deciding(rules, types);
+    let first = deciding.first()?;
     let start = range_start(tq);
     let late = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(1))
@@ -94,20 +95,23 @@ pub(super) fn page_attrs(
             || patterns
                 .is_some_and(|p| !r.is_conditional() && r.ids.is_empty() && r.id_patterns == p)
     };
-    let alike = rules
-        .rules
+    let alike = deciding
         .iter()
         .all(|r| by_ids(r) && r.temporal == first.temporal);
-    // what an Entity of `t` shows: every Attribute, or the union of its rules' lists
+    // what an Entity of `t` shows of what is read: every Attribute, or the
+    // union of its rules' lists, cut to the request's own `attrs`
     let shown = |t: &String| {
         let of = || rules.rules.iter().filter(|r| r.types.contains(t));
         let every = of().any(|r| r.every_attribute);
-        let names: std::collections::BTreeSet<&String> = if every {
-            Default::default()
-        } else {
-            of().flat_map(|r| &r.attributes).collect()
+        let names: std::collections::BTreeSet<&String> = match (every, attrs) {
+            (true, None) => Default::default(),
+            (true, Some(a)) => a.iter().collect(),
+            (false, _) => of()
+                .flat_map(|r| &r.attributes)
+                .filter(|x| attrs.is_none_or(|a| a.contains(x)))
+                .collect(),
         };
-        (every, names)
+        (every && attrs.is_none(), names)
     };
     let mut typed = rules.rules.iter().flat_map(|r| &r.types).map(shown);
     let (every, names) = typed.next()?;
@@ -120,27 +124,62 @@ pub(super) fn page_attrs(
         return None;
     }
     Some(match (every, attrs) {
-        (true, None) => None,
-        (true, Some(a)) => Some(a.to_vec()),
+        (true, _) => None,
         (false, None) => Some(names.into_iter().cloned().collect()),
         (false, Some(a)) => Some(a.iter().filter(|x| names.contains(x)).cloned().collect()),
     })
 }
 
+/// The rules whose selection and windows decide a read of `types` in the
+/// store: those naming one of them. A rule of another type also decides an
+/// Entity that carries both types, so it is left out only where it adds
+/// nothing such an Entity would not show anyway: it has no condition, the
+/// rules of the types asked name Entities by type alone, and its windows are
+/// theirs, or theirs have none. What it shows is compared on the Attributes
+/// read ([`page_attrs`]). Otherwise every rule decides, as before (T-7526:
+/// the Portal writes one rule per Attribute list, so a view of two model
+/// classes always held rules of other types).
+fn deciding<'r>(
+    rules: &'r crate::policy::Filter,
+    types: Option<&[String]>,
+) -> Vec<&'r crate::policy::Rule> {
+    let every: Vec<&crate::policy::Rule> = rules.rules.iter().collect();
+    let Some(types) = types else {
+        return every;
+    };
+    let (own, other): (Vec<&crate::policy::Rule>, Vec<&crate::policy::Rule>) = every
+        .iter()
+        .copied()
+        .partition(|r| r.types.iter().any(|t| types.contains(t)));
+    let Some(first) = own.first() else {
+        return every;
+    };
+    let adds_nothing = |r: &&crate::policy::Rule| {
+        !r.is_conditional() && (first.temporal.is_empty() || r.temporal == first.temporal)
+    };
+    if own.iter().all(|r| r.admits_by_type_alone()) && other.iter().all(adds_nothing) {
+        own
+    } else {
+        every
+    }
+}
+
 /// The range an aggregation in the store reads under `rules`: the request's,
-/// intersected with the windows every rule shares (gap G6), resolved as the
+/// intersected with the windows every [`deciding`] rule shares (gap G6), resolved as the
 /// request is decided. The bucket origin stays the request's own timeAt, so
 /// the answer is the one `rules_per_instance` would leave. `Ok(None)`: no
 /// windows to intersect. `Err(())`: windows no range can stand for.
 pub(super) fn rules_window(
     rules: &crate::policy::Filter,
+    types: Option<&[String]>,
     params: &HashMap<String, String>,
     tq: Option<&TemporalQ>,
 ) -> Result<Option<TemporalQ>, ()> {
-    let Some(first) = rules.rules.first() else {
+    let deciding = deciding(rules, types);
+    let Some(first) = deciding.first() else {
         return Ok(None);
     };
-    if rules.rules.iter().any(|r| r.temporal != first.temporal) {
+    if deciding.iter().any(|r| r.temporal != first.temporal) {
         return Err(());
     }
     if first.temporal.is_empty() {

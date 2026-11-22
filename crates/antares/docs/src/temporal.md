@@ -198,9 +198,11 @@ is ordered lexicographically and has no average.
 
 On Postgres the store computes an aggregation itself, for periods of
 seconds or of whole months, also under a policy's rules: it reads only the
-Attributes the rules show, inside the windows they share, and no expired
-instance. Such a read under rules may take 10 seconds, or the session's
-`statement_timeout` when that is shorter. Past it the answer is 403
+Attributes the rules show, inside the windows of the rules that decide the
+types asked, and no expired instance. An aggregated read under rules may
+take 10 seconds, or the session's `statement_timeout` when that is shorter,
+whether the store computes it or the broker does; every statement of the
+read, one run again included, shares that budget. Past it the answer is 403
 TooManyResults and the caller asks a shorter window, fewer Entities or
 fewer `attrs`. A range of 10 or 100 years by month or year is one such
 read. `omit`, `lastN`, an Attribute recorded `onChange` or a period mixing

@@ -149,10 +149,12 @@ async fn cleaned(pool: &antares_sql::sqlx::PgPool, tenant: &str) {
     }
 }
 
-/// Records, for each temporal query, whether the store answered it aggregated.
+/// Records, for each temporal query, whether the store answered it aggregated,
+/// and whether the read carried a deadline.
 struct Store {
     inner: Arc<dyn TemporalDriver>,
     aggregated: Mutex<Vec<bool>>,
+    bounded: Mutex<Vec<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -171,6 +173,10 @@ impl TemporalDriver for Store {
         t: &TenantId,
         f: &filter::TemporalFilter<'_>,
     ) -> Result<filter::TemporalOutcome, NgsiError> {
+        self.bounded
+            .lock()
+            .expect("lock")
+            .push(f.deadline.is_some());
         let out = self.inner.query_temporal(t, f).await?;
         self.aggregated.lock().expect("lock").push(out.aggregated);
         Ok(out)
@@ -213,14 +219,16 @@ impl Store {
     fn answered(&self) -> Vec<bool> {
         std::mem::take(&mut *self.aggregated.lock().expect("lock"))
     }
+
+    /// Whether each read since the last call carried a deadline.
+    fn bounded(&self) -> Vec<bool> {
+        std::mem::take(&mut *self.bounded.lock().expect("lock"))
+    }
 }
 
 /// A broker over the fixture whose view shows `attributes` of both types, inside `window`.
 /// The window is the rules' alone, as the policy engine writes a Policy's.
 async fn view(pool: &antares_sql::sqlx::PgPool, window: Option<Window>) -> (AppState, Arc<Store>) {
-    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
-        pool.clone(),
-    ));
     let filter = Filter {
         rules: vec![Rule {
             types: vec![iri("Decade"), iri("Century"), iri("Edge")],
@@ -230,12 +238,21 @@ async fn view(pool: &antares_sql::sqlx::PgPool, window: Option<Window>) -> (AppS
         }],
         ..Filter::default()
     };
+    ruled(pool, filter).await
+}
+
+/// A broker over the fixture whose view holds `filter`.
+async fn ruled(pool: &antares_sql::sqlx::PgPool, filter: Filter) -> (AppState, Arc<Store>) {
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
     let mut st = AppState::with_store("me".into(), Arc::new(store), "postgres")
         .with_policy(Arc::new(Narrowing(filter)));
     antares_api::wire(&mut st).await;
     let store = Arc::new(Store {
         inner: st.temporal.clone(),
         aggregated: Mutex::new(Vec::new()),
+        bounded: Mutex::new(Vec::new()),
     });
     st.temporal = store.clone();
     (st, store)
@@ -525,8 +542,8 @@ async fn an_aggregation_over_its_budget_says_to_ask_for_less() {
             period: filter::Period::Months(1),
             anchor: Some("2016-01-01T00:00:00Z"),
             attrs: Some(&attrs),
-            budget: Some(std::time::Duration::from_millis(1)),
         }),
+        deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(1)),
         ..Default::default()
     };
     let tid = TenantId::new(&tenant).expect("tenant");
@@ -535,11 +552,213 @@ async fn an_aggregation_over_its_budget_says_to_ask_for_less() {
         Err(other) => panic!("{other:?}"),
         Ok(_) => panic!("87,672 instances aggregated within a millisecond"),
     }
+    // the instances the broker rebuilds itself are read under the same deadline
+    let raw = filter::TemporalFilter {
+        types: Some(&types),
+        deadline: Some(std::time::Instant::now()),
+        ..Default::default()
+    };
+    match st.temporal.query_temporal(&tid, &raw).await {
+        Err(NgsiError::TooManyResults(said)) => assert!(said.contains("shorter window"), "{said}"),
+        Err(other) => panic!("{other:?}"),
+        Ok(_) => panic!("a read past its deadline answered"),
+    }
     // the budget was that transaction's alone
     let left: String = antares_sql::sqlx::query_scalar("SHOW statement_timeout")
         .fetch_one(&pool)
         .await
         .expect("show");
     assert_ne!(left, "1ms");
+    cleaned(&pool, &tenant).await;
+}
+
+/// One rule per Attribute list, types grouped, each list cut to `MAX_NAMES`: the
+/// rules the Portal's reconciler writes for a view (views.rs `rules`).
+fn reconciled(shown: &[(&str, &[&str], Option<Window>)]) -> Filter {
+    let mut rules: Vec<Rule> = Vec::new();
+    for (kind, attributes, window) in shown {
+        let attributes: Vec<String> = attributes.iter().map(|a| iri(a)).collect();
+        let temporal: Vec<Window> = window.clone().into_iter().collect();
+        match rules
+            .iter_mut()
+            .find(|r| r.attributes == attributes && r.temporal == temporal)
+        {
+            Some(rule) => rule.types.push(iri(kind)),
+            None => rules.push(Rule {
+                types: vec![iri(kind)],
+                attributes,
+                temporal,
+                ..Rule::default()
+            }),
+        }
+    }
+    Filter {
+        rules,
+        ..Filter::default()
+    }
+}
+
+/// T-7526 review: a view of several types, as the Portal writes it, aggregates in the
+/// store when the rules of the types asked decide alone, also for an Entity of two
+/// types (`Edge` is a `Meter` too); where they do not, the broker rebuilds the
+/// instances under the same deadline. Each answer is the one the broker rebuilds.
+#[tokio::test(flavor = "multi_thread")]
+async fn views_of_several_types_aggregate_in_the_store_or_stay_bounded() {
+    let Some((pool, tenant)) = seeded().await else {
+        return;
+    };
+    let from = |t: &str| {
+        Some(Window {
+            from: Some(TimeBound::At(t.parse().expect("instant"))),
+            to: None,
+        })
+    };
+    let level: &[&str] = &["level"];
+    let both: &[&str] = &["level", "hidden"];
+    let cases: Vec<(&str, Filter, &str, bool)> = vec![
+        (
+            "two types, same list",
+            reconciled(&[("Decade", level, None), ("Century", level, None)]),
+            "Decade",
+            true,
+        ),
+        (
+            "two types, each its own list",
+            reconciled(&[("Decade", level, None), ("Century", both, None)]),
+            "Decade",
+            true,
+        ),
+        (
+            "two types, same list, one with its own window",
+            reconciled(&[
+                ("Decade", level, None),
+                ("Century", level, from("1950-01-01T00:00:00Z")),
+            ]),
+            "Decade",
+            true,
+        ),
+        (
+            "an Entity of two types, the other with its own list",
+            reconciled(&[("Edge", level, None), ("Meter", both, None)]),
+            "Edge",
+            true,
+        ),
+        (
+            "an Entity of two types, the other with its own window",
+            reconciled(&[
+                ("Edge", level, None),
+                ("Meter", level, from("2024-03-01T00:00:00Z")),
+            ]),
+            "Edge",
+            true,
+        ),
+        (
+            "an Entity of two types, asked by the type with a window",
+            reconciled(&[
+                ("Edge", level, None),
+                ("Meter", level, from("2024-03-01T00:00:00Z")),
+            ]),
+            "Meter",
+            false,
+        ),
+        (
+            "a rule with a condition",
+            Filter {
+                rules: vec![Rule {
+                    types: vec![iri("Edge")],
+                    attributes: vec![iri("level")],
+                    q: Some(Box::new(antares_ql::parse_q("level>0").expect("q"))),
+                    ..Rule::default()
+                }],
+                ..Filter::default()
+            },
+            "Edge",
+            false,
+        ),
+    ];
+    for (case, filter, kind, pushed) in cases {
+        let (st, store) = ruled(&pool, filter).await;
+        // ten years for the time, a year and a half against the rebuilt answer
+        for (range, compared) in [
+            (
+                "timerel=between&timeAt=2016-01-01T00:00:00Z&endTimeAt=2026-01-01T00:00:00Z",
+                false,
+            ),
+            (
+                "timerel=between&timeAt=2023-12-01T00:00:00Z&endTimeAt=2025-06-01T00:00:00Z",
+                true,
+            ),
+        ] {
+            let query = format!(
+                "type={kind}&attrs=level&aggrMethods=avg,max,totalCount&aggrPeriodDuration=P1M&{range}"
+            );
+            let (code, warned, body, took) = answered(&st, &tenant, &query).await;
+            assert_eq!(code, StatusCode::OK, "{case} {query}: {body}");
+            let reads = store.answered();
+            assert_eq!(reads.first(), Some(&pushed), "{case} {query}: {reads:?}");
+            assert!(
+                store.bounded().iter().all(|b| *b),
+                "{case} {query}: every read carries the deadline"
+            );
+            assert!(took < BUDGET, "{case} {query} took {took:?}");
+            if !compared {
+                continue;
+            }
+            let (as_rebuilt, marked, rebuilt, _) = answered(&st, &tenant, &unpushed(&query)).await;
+            assert_eq!(
+                store.answered(),
+                [false],
+                "{case}: the reference is rebuilt"
+            );
+            assert_eq!(
+                store.bounded(),
+                [true],
+                "{case}: the reference is bounded too"
+            );
+            assert_eq!((code, warned), (as_rebuilt, marked), "{case} {query}");
+            // the reference reads every Attribute the rules show; `attrs` asked `level`
+            let ids = |b: &Value| {
+                b.as_array()
+                    .map(|a| a.iter().map(|e| e["id"].clone()).collect::<Vec<_>>())
+            };
+            assert_eq!(ids(&body), ids(&rebuilt), "{case} {query}");
+            for (asked, rebuilt) in body
+                .as_array()
+                .into_iter()
+                .flatten()
+                .zip(rebuilt.as_array().into_iter().flatten())
+            {
+                assert!(
+                    same(&asked["level"], &rebuilt["level"]),
+                    "{case} {query}: {asked} != {rebuilt}"
+                );
+                assert!(asked.get("hidden").is_none(), "{case} {query}: {asked}");
+            }
+        }
+    }
+    cleaned(&pool, &tenant).await;
+}
+
+/// A text Attribute beside the numeric one: the store reads the numbers in SQL,
+/// meets the text, and the broker rebuilds the page on the same deadline.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_text_attribute_is_rebuilt_on_the_same_deadline() {
+    let Some((pool, tenant)) = seeded().await else {
+        return;
+    };
+    let (st, store) = view(&pool, None).await;
+    let query = "type=Decade&attrs=level,name&aggrMethods=totalCount&aggrPeriodDuration=P1Y\
+                 &timerel=between&timeAt=2019-01-01T00:00:00Z&endTimeAt=2022-01-01T00:00:00Z";
+    let (code, body, took) = read(&st, &tenant, query).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(store.answered(), [false], "rebuilt for the text");
+    assert_eq!(store.bounded(), [true]);
+    assert!(took < BUDGET, "took {took:?}");
+    let names: f64 = body[0]["name"]["totalCount"]
+        .as_array()
+        .map(|rows| rows.iter().filter_map(|r| r[0].as_f64()).sum())
+        .unwrap_or_default();
+    assert_eq!(names, 1.0, "{body}");
+    assert_eq!(counted(&body), serde_json::json!(26_304.0), "{body}");
     cleaned(&pool, &tenant).await;
 }

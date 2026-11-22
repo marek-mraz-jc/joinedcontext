@@ -2024,9 +2024,11 @@ impl PgTemporalStore {
         let first: Result<Option<TemporalOutcome>, sqlx::Error> = async {
             let mut tx = super::begin(&self.pool).await?;
             crate::store::pg::set_tenant(&mut tx, tenant).await?;
-            if let Some(budget) = f.aggregate.and_then(|a| a.budget) {
+            if let Some(deadline) = f.deadline {
+                // what is left of it: the fallback below runs on the same deadline
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
                 sqlx::query(BUDGET)
-                    .bind(i64::try_from(budget.as_millis()).unwrap_or(i64::MAX).max(1))
+                    .bind(i64::try_from(left.as_millis()).unwrap_or(i64::MAX).max(1))
                     .execute(&mut *tx)
                     .await?;
             }

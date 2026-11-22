@@ -391,8 +391,13 @@ pub(crate) async fn query_temporal_collected(
     };
     let qry = Parsed::new(&req, types_rule, client_q)?;
     let (geos, shown_geos) = qry.geos(filter);
+    // DAT-11: an aggregated read through a view's rules is bounded by what it
+    // costs, whether the store aggregates it or not, and a read run again
+    // below spends the same budget
+    let deadline = (qry.types_rule.is_some() && qry.trepr.aggregated)
+        .then(|| std::time::Instant::now() + crate::bounds::AGGREGATE_BUDGET);
     let mut plan = Pushdown::plan(&req, &qry, geos.is_empty(), true).await?;
-    let mut outcome = fetch_temporal(&req, &qry, &geos, &plan).await?;
+    let mut outcome = fetch_temporal(&req, &qry, &geos, &plan, deadline).await?;
     // an Entity of the page may carry a type not asked for that records one of
     // these Attributes onChange, and the store fills no period a value held
     // through, nor reads the row before a range inside the rules' windows
@@ -403,7 +408,7 @@ pub(crate) async fn query_temporal_collected(
             .any(|d| !crate::history::held_attrs(st, &tenant, d).is_empty())
     {
         plan = Pushdown::plan(&req, &qry, geos.is_empty(), false).await?;
-        outcome = fetch_temporal(&req, &qry, &geos, &plan).await?;
+        outcome = fetch_temporal(&req, &qry, &geos, &plan, deadline).await?;
     }
     if outcome.aggregated {
         let mut resp = respond_aggregated(
@@ -745,7 +750,7 @@ impl Pushdown {
         let mut agg = aggregate && exact && store_aggregates(req, qry);
         let mut scope = None;
         if let Some(rules) = qry.types_rule.as_deref().filter(|_| agg) {
-            match rules_window(rules, params, qry.tq.as_ref()) {
+            match rules_window(rules, qry.types.as_deref(), params, qry.tq.as_ref()) {
                 // PT0S takes its one bucket's edges from the range the store reads
                 Ok(Some(inside)) if qry.trepr.aggr_period != AggrPeriod::Whole => {
                     scope = Some(inside);
@@ -827,12 +832,13 @@ fn range_of(t: &TemporalQ) -> antares_store::filter::InstanceRange<'_> {
     }
 }
 
-/// The store call of one query, with what `plan` pushed down.
+/// The store call of one query, with what `plan` pushed down, ended by `deadline`.
 async fn fetch_temporal(
     req: &QueryReq<'_>,
     qry: &Parsed<'_>,
     geos: &[&antares_ql::geo::GeoQuery],
     plan: &Pushdown,
+    deadline: Option<std::time::Instant>,
 ) -> ApiResult<antares_store::filter::TemporalOutcome> {
     let (ctx, trepr, page_n) = (req.ctx, &qry.trepr, qry.trepr.page);
     // scoped: the &dyn expander must not live across an await (handler
@@ -891,11 +897,8 @@ async fn fetch_temporal(
                 Some(_) => plan.page_attrs.as_deref(),
                 None => qry.attrs_filter.as_deref(),
             },
-            budget: qry
-                .types_rule
-                .is_some()
-                .then_some(crate::bounds::AGGREGATE_BUDGET),
         }),
+        deadline,
     };
     Ok(req.st.temporal.query_temporal(req.tenant, &tf).await?)
 }

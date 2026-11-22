@@ -579,8 +579,6 @@ pub(crate) fn held_attrs(
         .collect()
 }
 
-/// Does some type of `tenant` record an Attribute `onChange`? Its
-/// aggregations are then computed here, never pushed into the store.
 /// Whether a type of `types` records one of `attrs` (`None`: some Attribute)
 /// `onChange`; without `types`, whether any type of the Tenant does. An Entity
 /// may carry a type not asked for: [`held_attrs`] answers for the Entity.
@@ -606,6 +604,8 @@ pub(crate) fn may_hold(
         })
 }
 
+/// Does some type of `tenant` record an Attribute `onChange`? Its
+/// aggregations are then computed here, never pushed into the store.
 pub(crate) fn records_on_change(st: &AppState, tenant: &TenantId) -> bool {
     st.history_off
         .read()
