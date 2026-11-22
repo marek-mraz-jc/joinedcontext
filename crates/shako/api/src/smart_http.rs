@@ -19,7 +19,7 @@ use serde::Deserialize;
 use shako_core::{Action, RequestCtx, ShakoError, ShakoResult, remaining_storage_allowance};
 use shako_git::{
     PushGuard, advertise_receive_pack, advertise_upload_pack, handle_receive_pack,
-    handle_upload_pack, push_mirror_over_https, read_negotiation,
+    handle_upload_pack, read_negotiation,
 };
 use std::time::Duration;
 
@@ -274,6 +274,8 @@ async fn receive_push(
         .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
         .await?;
 
+    // Due before the refs move, so a crash after them leaves the mirrors due.
+    let mirrored = crate::mirror::mark_due(state, &repo).await.is_some();
     let outcome = state
         .git_work
         .run(ctx.org_id, {
@@ -323,70 +325,13 @@ async fn receive_push(
         }
         drop(repo_guard);
 
-        // Sync any push mirrors with `sync_on_commit = true` (S15)
-        sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
+        // Any push mirrors with `sync_on_commit = true` follow as a job (S15). Marked again: a
+        // drain may have answered the first mark before the refs moved.
+        if mirrored {
+            crate::mirror::follow_write(state, &repo).await;
+        }
     }
     Ok(outcome.response_bytes)
-}
-
-pub async fn sync_repo_mirrors_on_commit(
-    state: &ShakoState,
-    repo: &shako_core::RepoRecord,
-    disk_path: &std::path::Path,
-) {
-    let Ok(mirrors) = state
-        .store()
-        .list_push_mirrors(repo.instance_id, repo.org_id, Some(repo.id))
-        .await
-    else {
-        return;
-    };
-    for mut m in mirrors {
-        if !m.sync_on_commit {
-            continue;
-        }
-        if !shako_core::is_secret_ref(&m.credential_secret_ref) {
-            // Stored before the API refused non-key names: still used, never logged.
-            tracing::warn!(mirror = %m.id, "a push mirror's secret reference is not a secret-store key name; add the mirror again");
-        }
-        let cred = match state
-            .secret_store
-            .get_secret(repo.org_id, &m.credential_secret_ref)
-            .await
-        {
-            Ok(held) => held.unwrap_or_default(),
-            Err(e) => {
-                tracing::warn!(mirror = %m.id, error = %e, "a push mirror's secret could not be read; not pushed");
-                m.last_error =
-                    "the mirror's credential could not be read; the next push tries again".into();
-                let _ = state.store().upsert_push_mirror(m).await;
-                continue;
-            }
-        };
-        let (user, pass) = cred
-            .split_once(':')
-            .map_or(("x-access-token", cred.as_str()), |(u, p)| (u, p));
-        match push_mirror_over_https(
-            disk_path,
-            &m.remote_address,
-            user,
-            pass,
-            &state.outbound_guard,
-            None,
-            Some(m.branch.as_str()).filter(|b| !b.is_empty()),
-        )
-        .await
-        {
-            Ok(()) => {
-                m.last_sync = Some(jc_time::TimestampTz::now());
-                m.last_error = String::new();
-            }
-            Err(e) => {
-                m.last_error = e.public_detail();
-            }
-        }
-        let _ = state.store().upsert_push_mirror(m).await;
-    }
 }
 
 /// Builds the Git Smart HTTP router (`/{owner}/{repo}/info/refs`, `/{owner}/{repo}/git-upload-pack`,

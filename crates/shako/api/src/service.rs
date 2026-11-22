@@ -12,7 +12,6 @@ use crate::outbox::{
     build_pr_webhook_payload, build_push_webhook_payload, deliver_webhook_with_retries,
     emit_and_dispatch_event,
 };
-use crate::smart_http::sync_repo_mirrors_on_commit;
 use crate::state::{ShakoState, resolve_and_authorize_repo};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -807,7 +806,7 @@ pub async fn commit_files(
         payload,
     )
     .await;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
+    crate::mirror::follow_write(state, &repo).await;
     Ok(commit_sha)
 }
 
@@ -1311,7 +1310,7 @@ pub async fn merge_pull_request(
         payload,
     )
     .await;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
+    crate::mirror::follow_write(state, &repo).await;
     Ok(merge_sha)
 }
 
@@ -1452,10 +1451,8 @@ pub async fn sync_push_mirrors(
     owner: &str,
     name: &str,
 ) -> ShakoResult<()> {
-    let (repo, disk_path) =
-        resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
-    sync_repo_mirrors_on_commit(state, &repo, &disk_path).await;
-    Ok(())
+    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    crate::mirror::sync_now(state, &repo).await
 }
 
 /// Where a webhook's signing secret comes from.

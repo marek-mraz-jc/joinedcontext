@@ -40,6 +40,8 @@ pub struct ShakoState {
     /// The spool and memory budgets of Git work, fair between Organizations (T-7522).
     pub git_work: GitWork,
     pub repo_locks: RepoLocks,
+    /// The mirror drains this process runs at once.
+    pub(crate) mirror_drains: Arc<tokio::sync::Semaphore>,
     /// One outbox dispatch at a time per Organization (keyed by the OrgId's UUID), so two writes
     /// never both deliver the same pending event.
     pub outbox_locks: RepoLocks,
@@ -75,6 +77,7 @@ impl ShakoState {
             outbound_guard,
             git_work,
             repo_locks: RepoLocks::new(),
+            mirror_drains: Arc::new(tokio::sync::Semaphore::new(2)),
             outbox_locks: RepoLocks::new(),
             registry: OperationRegistry::shared(),
             owner_to_org: Arc::new(RwLock::new(BTreeMap::new())),

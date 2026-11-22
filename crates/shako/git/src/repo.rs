@@ -78,15 +78,17 @@ impl RepoLocks {
 /// ignoring environment variables, global/system gitconfig, hooks, and fsmonitor (Threat T2).
 pub fn open_isolated(path: &Path) -> ShakoResult<gix::Repository> {
     let mut opts = gix::open::Options::isolated();
-    // gix keeps 96 MiB of delta bases per handle unless told otherwise (T-7522).
+    // 8 MiB of delta bases per handle, in the cache that counts what it allocates (S22, T-7522).
+    // gix's hashmap caches (`core.deltaBaseCacheLimit`, the object cache) count an entry's
+    // length and reuse evicted buffers whole, so each entry could hold the largest blob seen.
     opts = opts
         .open_path_as_is(true)
-        .config_overrides(["core.deltaBaseCacheLimit=8m"]);
-    let mut repo = gix::open_opts(path, opts)
+        .config_overrides(["gitoxide.core.deltaBaseCacheLimit=8m"]);
+    let repo = gix::open_opts(path, opts)
         .map_err(|e| ShakoError::Git(format!("failed to open repository: {e}")))?;
-    // Cap decoded object cache at 2 MiB per repository handle (S22)
-    repo.object_cache_size(Some(2 * 1024 * 1024));
-    Ok(repo)
+    // Without a free list a small object never holds a blob's buffer, so a job holds the two
+    // largest objects `pack::job_bytes` admitted (+16 MiB on a delta chain, +24 MiB with one).
+    Ok(repo.without_freelist())
 }
 
 /// Initializes a bare repository at `{root}/{instance_id}/{repo_id}.git`, writes `SAFE_BARE_REPO_CONFIG`,

@@ -164,7 +164,7 @@ pub async fn build_state(
 const OUTBOX_POLL: Duration = Duration::from_secs(30);
 
 /// Sends what the outbox still holds: the events of a process that died before it sent them,
-/// which wait for no next write (T-7508).
+/// which wait for no next write (T-7508), and the push mirrors still due (T-7522).
 pub fn spawn_outbox(state: ShakoState, shutdown: CancellationToken, tasks: &TaskTracker) {
     poll_outbox(state, OUTBOX_POLL, shutdown, tasks);
 }
@@ -183,6 +183,7 @@ fn poll_outbox(
                     if let Err(e) = shako_server::dispatch_pending_outbox(&state, ORG).await {
                         tracing::warn!(error = %e, "shako: the outbox was not sent, trying again");
                     }
+                    shako_server::drain_mirrors(&state, INSTANCE, ORG);
                 }
             }
         }

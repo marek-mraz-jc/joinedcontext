@@ -129,7 +129,7 @@ pub(crate) fn collect_all_objects_from_tips(
     Ok(set.into_iter().collect())
 }
 
-fn collect_all_tree_objects(
+pub(crate) fn collect_all_tree_objects(
     repo: &gix::Repository,
     tree: &gix::Tree<'_>,
     out: &mut BTreeSet<ObjectId>,

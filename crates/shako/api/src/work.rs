@@ -87,6 +87,7 @@ impl GitWork {
             file,
             permit,
             capacity: self.spool.capacity(),
+            limit: u64::MAX,
             at: 0,
             refusal: None,
         };
@@ -197,6 +198,7 @@ pub struct Spool {
     file: std::fs::File,
     permit: Permit<OrgId>,
     capacity: u64,
+    limit: u64,
     at: u64,
     refusal: Option<ShakoError>,
 }
@@ -205,6 +207,11 @@ impl Spool {
     #[must_use]
     pub fn file(&self) -> &std::fs::File {
         &self.file
+    }
+
+    /// Refuses to grow past `bytes`.
+    pub(crate) fn cap(&mut self, bytes: u64) {
+        self.limit = bytes;
     }
 
     fn volume_has_room(&self, more: u64) -> ShakoResult<()> {
@@ -220,6 +227,12 @@ impl Spool {
 
     /// Admits a spool of `bytes`.
     fn hold(&mut self, bytes: u64) -> ShakoResult<()> {
+        if bytes > self.limit {
+            return Err(ShakoError::QuotaExceeded {
+                resource: "spool_bytes".into(),
+                limit: self.limit,
+            });
+        }
         let held = self.permit.bytes();
         if bytes <= held {
             return Ok(());

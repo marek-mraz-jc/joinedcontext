@@ -36,7 +36,7 @@ pub use repo::{
     delete_branch, init_bare_repo, list_branches, list_commits, list_tags, list_tree_entries,
     open_isolated, read_commit_info, read_file_at_ref, resolve_commit_oid, set_ref_direct,
 };
-pub use send_pack::push_mirror_over_https;
+pub use send_pack::{MirrorRemote, SendPack, write_send_pack};
 pub use upload_pack::{
     AdvertisedRef, ObjectFilter, V0_UPLOAD_CAPABILITIES, advertise_upload_pack,
     collect_advertised_refs, handle_upload_pack, read_negotiation,

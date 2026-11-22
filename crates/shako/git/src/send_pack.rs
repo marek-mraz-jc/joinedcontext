@@ -2,112 +2,109 @@
 //! Git Smart HTTP `send-pack` client on `gix` for pushing to push mirrors over HTTPS
 //! through `OutboundGuard` (Contract S15, R§2.1, Threat T3).
 
-use crate::pack::write_pack;
+use crate::pack::{Admit, write_pack};
 use crate::pktline::{parse_all_pkt_lines, write_flush, write_text_line};
 use crate::repo::{is_ancestor, open_isolated};
 use crate::upload_pack::collect_advertised_refs;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use gix_hash::ObjectId;
-use shako_core::{OutboundGuard, ShakoError, ShakoResult};
+use shako_core::{OutboundBody, OutboundGuard, OutboundMethod, ShakoError, ShakoResult};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::Path;
 
-/// Pushes all `refs/heads/*` and `refs/tags/*` from `repo_path` to `remote_address` over
-/// Smart HTTP (`GET .../info/refs?service=git-receive-pack` + `POST .../git-receive-pack`)
-/// through `guard`, authenticating with HTTP Basic `username:password`.
-/// Never includes credentials in returned errors or logs (Contract S15).
-///
-/// `branch` scopes the mirror (T-6892): only `refs/heads/{branch}` and new tags go, and only
-/// as a fast-forward. A remote ref that moved elsewhere is named in the error, never
-/// overwritten; the refs that can go still go.
-pub async fn push_mirror_over_https(
-    repo_path: &Path,
-    remote_address: &str,
-    username: &str,
-    password: &str,
-    guard: &OutboundGuard,
-    allowed_hosts: Option<&[String]>,
-    branch: Option<&str>,
-) -> ShakoResult<()> {
-    let base = remote_address.trim_end_matches('/');
-    let info_url = format!("{base}/info/refs?service=git-receive-pack");
+/// A push mirror's remote over Smart HTTP (`GET .../info/refs?service=git-receive-pack` +
+/// `POST .../git-receive-pack`) through `guard`, authenticated with HTTP Basic
+/// `username:password`. Never includes credentials in returned errors or logs (Contract S15).
+pub struct MirrorRemote<'a> {
+    base: String,
+    password: &'a str,
+    guard: &'a OutboundGuard,
+    headers: Vec<(String, String)>,
+}
 
-    let mut headers = Vec::new();
-    if !password.is_empty() {
-        let basic = STANDARD.encode(format!("{username}:{password}"));
-        headers.push(("Authorization".to_owned(), format!("Basic {basic}")));
-    }
-
-    let (status, adv_bytes) = guard
-        .request(
-            reqwest::Method::GET,
-            &info_url,
-            &headers,
-            Vec::new(),
-            allowed_hosts,
-        )
-        .await
-        .map_err(|e| scrub_secret(&e, password))?;
-    if !(200..300).contains(&status) {
-        return Err(remote_answer(format!(
-            "the remote answered HTTP {status} to the ref listing{}",
-            if matches!(status, 401 | 403) {
-                ": check the mirror's credential"
-            } else {
-                ""
-            }
-        )));
-    }
-
-    let remote_refs = parse_remote_receive_pack_advertisement(&adv_bytes)?;
-    let (commands, pack_bytes, diverged) =
-        build_send_pack_payload(repo_path, &remote_refs, branch)?;
-    if commands.is_empty() {
-        return diverged_error(&diverged);
-    }
-
-    let mut body = Vec::new();
-    for (idx, (old_oid, new_oid, refname)) in commands.iter().enumerate() {
-        if idx == 0 {
-            write_text_line(
-                &mut body,
-                &format!(
-                    "{old_oid} {new_oid} {refname}\0 report-status ofs-delta agent=shako/0.1.0"
-                ),
-            )?;
-        } else {
-            write_text_line(&mut body, &format!("{old_oid} {new_oid} {refname}"))?;
+impl<'a> MirrorRemote<'a> {
+    #[must_use]
+    pub fn new(
+        remote_address: &str,
+        username: &str,
+        password: &'a str,
+        guard: &'a OutboundGuard,
+    ) -> Self {
+        let mut headers = Vec::new();
+        if !password.is_empty() {
+            let basic = STANDARD.encode(format!("{username}:{password}"));
+            headers.push(("Authorization".to_owned(), format!("Basic {basic}")));
+        }
+        Self {
+            base: remote_address.trim_end_matches('/').to_owned(),
+            password,
+            guard,
+            headers,
         }
     }
-    write_flush(&mut body)?;
-    body.extend_from_slice(&pack_bytes);
 
-    let mut post_headers = headers;
-    post_headers.push((
-        "Content-Type".to_owned(),
-        "application/x-git-receive-pack-request".to_owned(),
-    ));
-    let post_url = format!("{base}/git-receive-pack");
-    let (post_status, resp_bytes) = guard
-        .request(
-            reqwest::Method::POST,
-            &post_url,
-            &post_headers,
-            body,
-            allowed_hosts,
-        )
-        .await
-        .map_err(|e| scrub_secret(&e, password))?;
-
-    if !(200..300).contains(&post_status) {
-        return Err(remote_answer(format!(
-            "the remote answered HTTP {post_status} to the push"
-        )));
+    /// The refs the remote holds.
+    pub async fn refs(&self) -> ShakoResult<BTreeMap<String, ObjectId>> {
+        let info_url = format!("{}/info/refs?service=git-receive-pack", self.base);
+        let (status, adv_bytes) = self
+            .guard
+            .request(
+                OutboundMethod::GET,
+                &info_url,
+                &self.headers,
+                Vec::new(),
+                None,
+            )
+            .await
+            .map_err(|e| scrub_secret(&e, self.password))?;
+        if !(200..300).contains(&status) {
+            return Err(remote_answer(format!(
+                "the remote answered HTTP {status} to the ref listing{}",
+                if matches!(status, 401 | 403) {
+                    ": check the mirror's credential"
+                } else {
+                    ""
+                }
+            )));
+        }
+        parse_remote_receive_pack_advertisement(&adv_bytes)
     }
 
-    verify_remote_report_status(&resp_bytes)?;
-    diverged_error(&diverged)
+    /// Sends the request [`write_send_pack`] wrote and says what the mirror could not move.
+    pub async fn push(&self, plan: &SendPack, request: std::fs::File) -> ShakoResult<()> {
+        if plan.commands.is_empty() {
+            return diverged_error(&plan.diverged);
+        }
+        let mut headers = self.headers.clone();
+        headers.push((
+            "Content-Type".to_owned(),
+            "application/x-git-receive-pack-request".to_owned(),
+        ));
+        let post_url = format!("{}/git-receive-pack", self.base);
+        let body = OutboundBody::File(request);
+        let (status, answer) = self
+            .guard
+            .send(OutboundMethod::POST, &post_url, &headers, body, None)
+            .await
+            .map_err(|e| scrub_secret(&e, self.password))?;
+        if !(200..300).contains(&status) {
+            return Err(remote_answer(format!(
+                "the remote answered HTTP {status} to the push"
+            )));
+        }
+        verify_remote_report_status(&answer, &plan.commands, self.password)?;
+        diverged_error(&plan.diverged)
+    }
+}
+
+/// What a mirror push changes, and the refs a scoped mirror left alone because the remote's tip
+/// is not behind ours.
+#[derive(Debug)]
+pub struct SendPack {
+    commands: Vec<SendPackCommand>,
+    diverged: Vec<String>,
 }
 
 fn diverged_error(diverged: &[String]) -> ShakoResult<()> {
@@ -170,13 +167,19 @@ fn parse_remote_receive_pack_advertisement(
 /// One ref command of a push: `(old id, new id, ref name)`.
 type SendPackCommand = (ObjectId, ObjectId, String);
 
-/// The ref commands and the pack for `remote_refs`, and the refs a scoped mirror left alone
-/// because the remote's tip is not behind ours.
-fn build_send_pack_payload(
+/// Writes the push that brings the remote from `remote_refs` to this repository: the commands
+/// and a pack of only what the remote lacks (T-7522).
+///
+/// All of `refs/heads/*` and `refs/tags/*` go. `branch` scopes the mirror (T-6892): only
+/// `refs/heads/{branch}` and new tags go, and only as a fast-forward. A remote ref that moved
+/// elsewhere is named in the error, never overwritten; the refs that can go still go.
+pub fn write_send_pack(
     repo_path: &Path,
     remote_refs: &BTreeMap<String, ObjectId>,
     branch: Option<&str>,
-) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>, Vec<String>)> {
+    mut out: impl Write,
+    admit: Admit<'_>,
+) -> ShakoResult<SendPack> {
     let repo = open_isolated(repo_path)?;
     let (_, local_refs) = collect_advertised_refs(&repo, false)?;
     let zero = ObjectId::null(gix_hash::Kind::Sha1);
@@ -217,50 +220,173 @@ fn build_send_pack_payload(
         }
         if old_oid != r.oid {
             commands.push((old_oid, r.oid, r.name.clone()));
-            if let Some(p) = r.peeled {
-                new_tips.push(p);
-            } else {
-                new_tips.push(r.oid);
-            }
+            new_tips.push(r.oid);
         }
     }
 
     if commands.is_empty() {
-        return Ok((Vec::new(), Vec::new(), diverged));
+        return Ok(SendPack { commands, diverged });
     }
 
-    let mut objects: BTreeSet<ObjectId> =
-        crate::bundle::collect_all_objects_from_tips(&repo, &new_tips)?
-            .into_iter()
-            .collect();
-    for (_, new_oid, _) in &commands {
-        if repo.has_object(*new_oid) {
-            objects.insert(*new_oid);
+    for (idx, (old_oid, new_oid, refname)) in commands.iter().enumerate() {
+        let caps = if idx == 0 {
+            "\0 report-status ofs-delta agent=shako/0.1.0"
+        } else {
+            ""
+        };
+        write_text_line(&mut out, &format!("{old_oid} {new_oid} {refname}{caps}"))?;
+    }
+    write_flush(&mut out)?;
+    let held: Vec<ObjectId> = remote_refs.values().copied().collect();
+    let objects = objects_to_send(&repo, &new_tips, &held)?;
+    write_pack(&repo, &objects, &mut out, admit)?;
+    out.flush()
+        .map_err(|e| ShakoError::Storage(format!("mirror spool: {e}")))?;
+    Ok(SendPack { commands, diverged })
+}
+
+/// The objects reachable from `tips` that a holder of `remote` lacks. A failed walk fails the
+/// push; where in doubt an object goes.
+fn objects_to_send(
+    repo: &gix::Repository,
+    tips: &[ObjectId],
+    remote: &[ObjectId],
+) -> ShakoResult<Vec<ObjectId>> {
+    let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("mirror walk failed: {e}"));
+    let mut known = BTreeSet::new();
+    let mut hidden = Vec::new();
+    for id in remote.iter().filter(|id| repo.has_object(**id)) {
+        let mut at = *id;
+        loop {
+            known.insert(at);
+            let object = repo.find_object(at).map_err(|e| failed(&e))?;
+            match object.kind {
+                gix_object::Kind::Tag => {
+                    let tag = object.try_into_tag().map_err(|e| failed(&e))?;
+                    at = tag.target_id().map_err(|e| failed(&e))?.detach();
+                }
+                gix_object::Kind::Commit => {
+                    hidden.push(at);
+                    break;
+                }
+                _ => break,
+            }
         }
     }
 
-    let oid_vec: Vec<ObjectId> = objects.into_iter().collect();
-    let mut pack = Vec::new();
-    write_pack(&repo, &oid_vec, &mut pack, &mut |_| Ok(()))?;
-    Ok((commands, pack, diverged))
+    let mut send = BTreeSet::new();
+    let mut starts = Vec::new();
+    let mut loose_trees = Vec::new();
+    for tip in tips {
+        let mut at = *tip;
+        loop {
+            let object = repo.find_object(at).map_err(|e| failed(&e))?;
+            match object.kind {
+                gix_object::Kind::Tag => {
+                    let tag = object.try_into_tag().map_err(|e| failed(&e))?;
+                    let target = tag.target_id().map_err(|e| failed(&e))?.detach();
+                    send.insert(at);
+                    at = target;
+                }
+                gix_object::Kind::Commit => {
+                    starts.push(at);
+                    break;
+                }
+                gix_object::Kind::Tree => {
+                    loose_trees.push(at);
+                    break;
+                }
+                gix_object::Kind::Blob => {
+                    send.insert(at);
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut commits = BTreeSet::new();
+    if !starts.is_empty() {
+        let walk = repo
+            .rev_walk(starts)
+            .with_hidden(hidden)
+            .all()
+            .map_err(|e| failed(&e))?;
+        for info in walk {
+            commits.insert(info.map_err(|e| failed(&e))?.id);
+        }
+    }
+    let mut trees = loose_trees;
+    let mut boundary = BTreeSet::new();
+    for id in &commits {
+        let commit = repo.find_commit(*id).map_err(|e| failed(&e))?;
+        trees.push(commit.tree_id().map_err(|e| failed(&e))?.detach());
+        for parent in commit.parent_ids() {
+            if !commits.contains(&parent.detach()) {
+                boundary.insert(parent.detach());
+            }
+        }
+    }
+    // A parent outside the walk is one the remote holds, with all its tree reaches.
+    for id in boundary {
+        let tree = repo
+            .find_commit(id)
+            .map_err(|e| failed(&e))?
+            .tree()
+            .map_err(|e| failed(&e))?;
+        crate::bundle::collect_all_tree_objects(repo, &tree, &mut known)?;
+    }
+    let held = known.clone();
+    for id in trees {
+        let tree = repo.find_tree(id).map_err(|e| failed(&e))?;
+        crate::bundle::collect_all_tree_objects(repo, &tree, &mut known)?;
+    }
+    send.extend(commits);
+    send.extend(known.difference(&held).copied());
+    Ok(send.into_iter().collect())
 }
 
-fn verify_remote_report_status(resp: &[u8]) -> ShakoResult<()> {
+fn verify_remote_report_status(
+    resp: &[u8],
+    commands: &[SendPackCommand],
+    secret: &str,
+) -> ShakoResult<()> {
     let lines = parse_all_pkt_lines(resp)?;
+    let shown = |text: &str| {
+        if secret.is_empty() {
+            text.to_owned()
+        } else {
+            text.replace(secret, "[REDACTED]")
+        }
+    };
+    let mut unpacked = false;
+    let mut moved = BTreeSet::new();
     for line in lines {
         let Some(text) = line.as_text() else {
             continue;
         };
-        if let Some(reason) = text.strip_prefix("unpack ")
-            && reason.trim() != "ok"
-        {
-            return Err(remote_answer(format!(
-                "the remote could not unpack the push: {reason}"
-            )));
+        if let Some(reason) = text.strip_prefix("unpack ") {
+            if reason.trim() != "ok" {
+                return Err(remote_answer(format!(
+                    "the remote could not unpack the push: {}",
+                    shown(reason)
+                )));
+            }
+            unpacked = true;
         }
         if let Some(ng) = text.strip_prefix("ng ") {
-            return Err(remote_answer(format!("the remote refused the ref: {ng}")));
+            return Err(remote_answer(format!(
+                "the remote refused the ref: {}",
+                shown(ng)
+            )));
         }
+        if let Some(name) = text.strip_prefix("ok ") {
+            moved.insert(name.trim().to_owned());
+        }
+    }
+    if !unpacked || commands.iter().any(|(_, _, name)| !moved.contains(name)) {
+        return Err(remote_answer(
+            "the remote did not confirm every ref of the push".into(),
+        ));
     }
     Ok(())
 }
@@ -320,6 +446,16 @@ mod tests {
         (repo, first, second, change)
     }
 
+    fn payload(
+        repo: &Path,
+        remote: &BTreeMap<String, ObjectId>,
+        branch: Option<&str>,
+    ) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>, Vec<String>)> {
+        let mut out = Vec::new();
+        let plan = write_send_pack(repo, remote, branch, &mut out, &mut |_| Ok(()))?;
+        Ok((plan.commands, out, plan.diverged))
+    }
+
     fn names(commands: &[SendPackCommand]) -> Vec<&str> {
         commands.iter().map(|(_, _, name)| name.as_str()).collect()
     }
@@ -329,13 +465,13 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let (repo, ..) = repository(tmp.path());
         let (commands, pack, diverged) =
-            build_send_pack_payload(&repo, &BTreeMap::new(), Some("main")).expect("payload");
+            payload(&repo, &BTreeMap::new(), Some("main")).expect("payload");
         assert_eq!(names(&commands), ["refs/heads/main", "refs/tags/v1"]);
         assert!(!pack.is_empty());
         assert!(diverged.is_empty());
 
         // The App mirror keeps every branch.
-        let (all, _, _) = build_send_pack_payload(&repo, &BTreeMap::new(), None).expect("payload");
+        let (all, _, _) = payload(&repo, &BTreeMap::new(), None).expect("payload");
         assert!(
             names(&all).contains(&"refs/heads/change/1"),
             "{:?}",
@@ -350,8 +486,7 @@ mod tests {
 
         // Behind: a fast-forward goes.
         let behind = BTreeMap::from([("refs/heads/main".to_owned(), oid(&first))]);
-        let (commands, _, diverged) =
-            build_send_pack_payload(&repo, &behind, Some("main")).expect("payload");
+        let (commands, _, diverged) = payload(&repo, &behind, Some("main")).expect("payload");
         assert_eq!(
             commands[0],
             (oid(&first), oid(&second), "refs/heads/main".to_owned())
@@ -365,8 +500,7 @@ mod tests {
             BTreeMap::from([("refs/heads/main".to_owned(), oid(&change))]),
             BTreeMap::from([("refs/heads/main".to_owned(), oid(unknown))]),
         ] {
-            let (commands, _, diverged) =
-                build_send_pack_payload(&repo, &remote, Some("main")).expect("payload");
+            let (commands, _, diverged) = payload(&repo, &remote, Some("main")).expect("payload");
             assert_eq!(names(&commands), ["refs/tags/v1"]);
             assert_eq!(diverged, ["refs/heads/main"]);
         }
@@ -374,8 +508,7 @@ mod tests {
             ("refs/heads/main".to_owned(), oid(&second)),
             ("refs/tags/v1".to_owned(), oid(&first)),
         ]);
-        let (commands, _, diverged) =
-            build_send_pack_payload(&repo, &moved_tag, Some("main")).expect("payload");
+        let (commands, _, diverged) = payload(&repo, &moved_tag, Some("main")).expect("payload");
         assert!(commands.is_empty());
         assert_eq!(diverged, ["refs/tags/v1"]);
         let err = diverged_error(&diverged).expect_err("reported");
