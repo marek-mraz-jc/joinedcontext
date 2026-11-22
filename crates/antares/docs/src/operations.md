@@ -255,6 +255,16 @@ Error: "open …/antares.redb: Database already open. Cannot acquire lock."
 One sweep loop per process, every `ANTARES_SWEEP_SECS` (default 900):
 
 - Expired entities (`expiresAt`, 4.22) are deleted.
+- Expired Attribute instances (4.22) are pruned from the current state in a
+  transaction of their own, then deleted from history leaf by leaf through
+  each leaf's `{leaf}_expiry` index, 1 000 rows a transaction, for at most
+  20 seconds a pass; the next pass goes on at the following leaf. One process
+  reaps at a time (advisory lock `antares.history_reap`). The same loop
+  builds a missing index with `CREATE INDEX CONCURRENTLY` (at most 120
+  seconds a pass); until a leaf has one it is not reaped, reads hide what
+  expired either way. Audit rows (`provenance.audit`) are never reaped. The
+  pass logs `4.22 reap: expired attribute instances pruned` with `pruned`,
+  `rows` and `ms`, and a warning for each leaf it left to the next pass.
 - Registrations, snapshots and entity maps (5.14; one hour by default, a
   client-set `expiresAt` capped at 24 hours) carry their own expiry and
   are deleted by the same loop. A read never deletes one: it refuses the
