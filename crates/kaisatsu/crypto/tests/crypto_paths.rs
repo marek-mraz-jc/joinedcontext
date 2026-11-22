@@ -81,6 +81,14 @@ fn aes_gcm_refuses_short_tampered_and_wrong_context_ciphertext() {
     let sealed = kek.encrypt(b"dev:k1", b"pkcs8").unwrap();
     assert_eq!(kek.decrypt(b"dev:k1", &sealed).unwrap(), b"pkcs8");
     assert!(kek.decrypt(b"dev:k1", &sealed[..20]).is_err());
+    assert!(
+        kek.decrypt(b"dev:k1", &sealed[..5]).is_err(),
+        "shorter than a nonce"
+    );
+    // Nonce and tag alone (28 bytes) are an empty plaintext, not a short ciphertext.
+    let empty = kek.encrypt(b"dev:k1", b"").unwrap();
+    assert_eq!(empty.len(), 28);
+    assert_eq!(kek.decrypt(b"dev:k1", &empty).unwrap(), b"");
     assert!(kek.decrypt(b"dev:k2", &sealed).is_err());
     let mut flipped = sealed.clone();
     let last = flipped.len() - 1;
@@ -125,7 +133,12 @@ fn jwks_publishes_live_keys_only_and_rotation_stages_keys() {
         for k in &existing {
             if k.algorithm == alg {
                 assert_eq!(k.status, "PASSIVE", "{alg}");
-                assert!(k.expires_at.is_some());
+                // Published two token lifetimes more (the 300 s floor, doubled), then gone.
+                let left = k.expires_at.unwrap() - TimestampTz::now();
+                assert!(
+                    left > SignedDuration::from_secs(590) && left <= SignedDuration::from_secs(600),
+                    "{alg}: {left:?}"
+                );
             } else {
                 assert_eq!(k.status, "ACTIVE", "{alg}");
             }
