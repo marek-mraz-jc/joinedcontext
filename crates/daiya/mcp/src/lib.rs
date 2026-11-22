@@ -12,10 +12,10 @@ use daiya_api::odata::{
 };
 use daiya_api::{
     DaiyaState, PanelTimeRange, PublicCaller, PublicDashboardQueryReq,
-    execute_public_dashboard_query, panel_view, rotate_public_dashboard_token,
+    execute_public_dashboard_query, panel_view, readable_rows, rotate_public_dashboard_token,
 };
 use daiya_import::DesiredBundle;
-use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
+use daiya_model::{CrError, CrResult, RequestCtx, RowSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -107,32 +107,23 @@ pub async fn call_mcp_tool(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_ascii_lowercase();
-        let dashboards = state.store.list_dashboards(ctx.org_id).await?;
+        let dashboards = readable_rows(state, ctx, RowSet::Dashboards).await?;
         let visible: Vec<Value> = dashboards
             .into_iter()
             .filter(|d| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::Dashboard {
-                            org_id: ctx.org_id,
-                            dashboard_uid: d.uid.clone(),
-                            folder_uid: d.folder_uid.clone(),
-                        },
-                    )
-                    .allowed
-                    && (q_filter.is_empty() || d.title.to_ascii_lowercase().contains(&q_filter))
+                q_filter.is_empty()
+                    || d["title"]
+                        .as_str()
+                        .is_some_and(|title| title.to_ascii_lowercase().contains(&q_filter))
             })
             .map(|d| {
                 json!({
-                    "uid": d.uid,
-                    "title": d.title,
-                    "slug": d.slug,
-                    "folderUid": d.folder_uid,
-                    "panelCount": d.panel_count,
-                    "version": d.version,
+                    "uid": d["uid"],
+                    "title": d["title"],
+                    "slug": d["slug"],
+                    "folderUid": d["folderUid"],
+                    "panelCount": d["panelCount"],
+                    "version": d["version"],
                 })
             })
             .collect();

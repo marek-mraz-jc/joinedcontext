@@ -26,7 +26,7 @@ use crate::provisioning::{
 use crate::{DashboardImportInput, ImportReport, import_dashboards};
 use daiya_model::{
     CrError, CrResult, DaiyaStore, DatasourceRecord, FolderRecord, InputLimits, InstallationId,
-    InstanceId, OrgId, Verdict,
+    InstanceId, OrgId, ReadScope, RowQuery, RowSet, Verdict,
 };
 use jc_time::TimestampTz;
 use serde::Serialize;
@@ -381,15 +381,21 @@ pub async fn load_provisioning_dir(
     }
     let orgs: BTreeSet<OrgId> = pruned.iter().map(|(org, _)| *org).collect();
     for org in orgs {
-        for d in store.list_dashboards(org).await? {
-            let gone = d.is_provisioned
-                && d.provisioned_external_id.as_ref().is_some_and(|ext| {
-                    !seen.contains(&(org, ext.clone()))
-                        && pruned
-                            .iter()
-                            .any(|(o, p)| *o == org && Path::new(ext).starts_with(p))
-                });
-            if gone && store.delete_dashboard(org, &d.uid).await? {
+        // The process's own prune, no caller: every row of the organization.
+        let query = RowQuery::every(RowSet::Dashboards, ReadScope::All);
+        for d in store.read_rows(org, query).await?.rows {
+            let (Some(uid), Some(true), Some(ext)) = (
+                d["uid"].as_str(),
+                d["isProvisioned"].as_bool(),
+                d["provisionedExternalId"].as_str(),
+            ) else {
+                continue;
+            };
+            let gone = !seen.contains(&(org, ext.to_owned()))
+                && pruned
+                    .iter()
+                    .any(|(o, p)| *o == org && Path::new(ext).starts_with(p));
+            if gone && store.delete_dashboard(org, uid).await? {
                 report.dashboards_deleted += 1;
             }
         }

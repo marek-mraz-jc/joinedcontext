@@ -300,6 +300,13 @@ impl DaiyaStore for FlakyStore {
             self.inner.delete_public_dashboard(org_id, uid)
         )
     }
+    fn read_rows(
+        &self,
+        org_id: OrgId,
+        query: daiya_model::RowQuery,
+    ) -> StoreFuture<'_, daiya_model::RowPage> {
+        guarded!(self, "read_rows", self.inner.read_rows(org_id, query))
+    }
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>> {
         guarded!(
             self,
