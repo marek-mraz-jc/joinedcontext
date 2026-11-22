@@ -130,7 +130,7 @@ pub(crate) fn to_row(table: &Table, record: Value) -> ShakoResult<Map<String, Va
     Ok(row)
 }
 
-/// The record of a row as `to_jsonb` writes it.
+/// The record of a row as Postgres writes it in JSON.
 pub(crate) fn to_record(table: &Table, row: Value) -> ShakoResult<Value> {
     let Value::Object(mut row) = row else {
         return Err(ShakoError::Storage("a row is a JSON object".into()));
@@ -236,6 +236,7 @@ pub(crate) async fn put(
 }
 
 /// The tenant's records `rest` selects: SQL after the tenant's predicate, with `binds` from $3.
+/// `row_to_json`, as `to_jsonb` takes half as long again on a list.
 pub(crate) async fn select<T: DeserializeOwned>(
     tx: &mut Transaction<'_, Postgres>,
     tenant: (InstanceId, OrgId),
@@ -249,7 +250,7 @@ pub(crate) async fn select<T: DeserializeOwned>(
     }
     let name = table.name;
     let mut query = sqlx::query_scalar::<_, Value>(AssertSqlSafe(format!(
-        "SELECT to_jsonb(t) FROM shako.{name} t WHERE t.instance_id = $1 AND t.org_id = $2 {rest}"
+        "SELECT row_to_json(t) FROM shako.{name} t WHERE t.instance_id = $1 AND t.org_id = $2 {rest}"
     )))
     .bind(tenant.0.as_uuid())
     .bind(tenant.1.as_uuid());
