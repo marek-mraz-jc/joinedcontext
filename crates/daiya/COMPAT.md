@@ -7,7 +7,7 @@ The native API of `daiya` is the OData 4.01 service at `/odata/v4` (R10a). The f
 | `GET /api/health` | `provision.sh`, k8s probes | Health check |
 | `POST /api/orgs` | `provision.sh` | Organization stored with its number and id, one mapping for every replica (T-7509) |
 | `DELETE /api/orgs/{orgId}` | operator | Retires the Organization: its number and id are never given again (T-7509) |
-| `GET /api/orgs/name/{name}` | `provision.sh`, `POR src/grafana.rs` | Organization lookup by project/org name |
+| `GET /api/orgs/name/{name}` | `provision.sh`, `POR src/grafana.rs` | Organization lookup by project/org name; a retired name is 404, marked `"retired": true` for the installation administrator (T-7509) |
 | `GET /api/org` | Grafana clients | Current organization lookup |
 | `GET /api/datasources` | `POR src/grafana.rs` | `GET /odata/v4/Datasources` |
 | `POST /api/datasources` | `provision.sh`, `POR src/grafana.rs` | Datasource upsert in `Apply` |

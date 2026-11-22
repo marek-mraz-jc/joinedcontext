@@ -24,7 +24,7 @@ refused, 10 s timeout, answers read up to 1 MiB; `X-Grafana-Org-Id: <n>` on orga
 
 | # | Call | Caller | Body | What the Portal parses |
 |---|---|---|---|---|
-| G1 | `GET /api/orgs/name/{project}` | `portal/grafana.rs:271` `organization` | | 404 = no organization; else `id` (i64) |
+| G1 | `GET /api/orgs/name/{project}` | `portal/grafana.rs:271` `organization` | | 404 = no organization; else `id` (i64). The backup (`organization_id`) reads `uuid`, and a 404 with `"retired": true` as a name whose rows it never exports |
 | G2 | `GET /api/datasources` + org | `portal/grafana.rs:292` `datasources` | | `[{type, url, uid}]`; keeps `type == ngsild-grafana-datasource`, slug after `/api/endpoint/` |
 | G3 | `POST /api/datasources` + org | `portal/grafana.rs:315` `create_public_datasource` | `{uid, name, type, access: proxy, url: {gateway}/api/endpoint/{slug}, jsonData: {pageSize}}` | 2xx |
 | G4 | `POST /api/dashboards/db` + org | `portal/grafana.rs:339` `save` | `{dashboard: dashboard_of(..) (schemaVersion 39), folderUid: project-{project}, overwrite: true, message}` | 2xx |
@@ -55,7 +55,8 @@ the same local administrator, `X-Grafana-Org-Id` from the `POST /api/orgs` answe
   restart answers alike. A name held for the first time gets the id derived from installation and
   name (`org_id_for_name`, the id earlier releases used, so a rollback still finds the rows). After
   `DELETE /api/orgs/{orgId}` retired it, the name created again gets a random id and none of the old
-  rows, and the retired number and id answer 404. A creator of an organization the store holds gets
+  rows, and the retired number and id answer 404. Its name answers 404 too, to the installation
+  administrator with `"retired": true`. A creator of an organization the store holds gets
   409 and looks it up by name. A configured number that contradicts a row refuses the start.
 - **The dashboard page** (`api/src/page.rs`): G7 answered 404. It now renders each panel's
   server-side table (`panel_view`) with the caller's rights; 404 for a missing organization,

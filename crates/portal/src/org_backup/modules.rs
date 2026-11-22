@@ -11,6 +11,8 @@
 //! The keys are resolved once, at the start of the run, from what this Portal knows of the
 //! Organization (its realm, its projects, the repositories of those projects) and from what jc
 //! tells it of the modules' tenants ([`BackupModules`], `JC_PORTAL_BACKUP_TENANTS`).
+//! daiya's are also asked of daiya by name (`JC_PORTAL_GRAFANA_URL`): without it they are not
+//! exported.
 
 use std::collections::BTreeMap;
 
@@ -796,26 +798,34 @@ pub fn daiya_org(installation: uuid::Uuid, project: &str) -> uuid::Uuid {
     uuid::Builder::from_custom_bytes(bytes).into_uuid()
 }
 
-/// daiya's organizations of `projects`: the id daiya stores for the name (T-7509), and the
-/// first-time id only where it holds none or no daiya client is configured. A daiya that cannot
-/// answer fails the source, so a backup never exports a retired organization's rows as a
-/// project's.
+/// daiya's organizations of `projects`: the id daiya stores for the name (T-7509), none for a
+/// retired name, and the first-time id only for a name daiya never held. Without a daiya that
+/// answers, the source fails: a retired name looks like one never held, and a backup never
+/// exports a retired organization's rows as a project's.
 async fn daiya_orgs(
     state: &AppState,
     installation: uuid::Uuid,
     projects: &[String],
 ) -> Result<Vec<String>, String> {
+    use crate::grafana::StoredOrganization;
+    let config = state.config.grafana.as_ref().ok_or(
+        "this Portal cannot ask daiya which organization holds each project's dashboards \
+         (JC_PORTAL_GRAFANA_URL is not set)",
+    )?;
+    let client = crate::grafana::Client::new(config);
     let mut orgs = Vec::with_capacity(projects.len());
     for project in projects {
-        let stored = match state.config.grafana.as_ref() {
-            Some(config) => crate::grafana::Client::new(config)
-                .organization_id(project)
-                .await
-                .map_err(|e| format!("daiya did not name the organization of {project}: {e}"))?,
-            None => None,
-        };
-        let org = stored.unwrap_or_else(|| daiya_org(installation, project));
-        orgs.push(org.to_string());
+        let stored = client
+            .stored_organization(project)
+            .await
+            .map_err(|e| format!("daiya did not name the organization of {project}: {e}"))?;
+        match stored {
+            StoredOrganization::Held(id) => orgs.push(id.to_string()),
+            StoredOrganization::Retired => {}
+            StoredOrganization::NeverHeld => {
+                orgs.push(daiya_org(installation, project).to_string());
+            }
+        }
     }
     Ok(orgs)
 }

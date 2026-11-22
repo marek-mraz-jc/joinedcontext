@@ -33,7 +33,7 @@ pub enum OrgKey {
     Number(i64),
     /// Live or retired.
     Id(OrgId),
-    /// Live only: a retired organization's name names nothing.
+    /// The live one of that name, else the last retired one.
     Name(String),
 }
 

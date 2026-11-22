@@ -200,6 +200,18 @@ impl DaiyaState {
     /// # Errors
     /// A store that cannot answer, which never reads as another organization.
     pub async fn organization(&self, key: OrgKey) -> CrResult<Option<OrgRow>> {
+        Ok(self
+            .organization_held(key)
+            .await?
+            .filter(|row| !row.retired))
+    }
+
+    /// The organization `key` names, live or retired: only for telling a retired one from one
+    /// never held. Nothing is served inside a retired one.
+    ///
+    /// # Errors
+    /// A store that cannot answer.
+    pub(crate) async fn organization_held(&self, key: OrgKey) -> CrResult<Option<OrgRow>> {
         let main = match &key {
             OrgKey::Number(number) => *number == 1,
             OrgKey::Id(id) => *id == self.default_org_id,
@@ -213,8 +225,7 @@ impl DaiyaState {
                 retired: false,
             }));
         }
-        let held = self.store.find_org(self.installation_id, key).await?;
-        Ok(held.filter(|row| !row.retired))
+        self.store.find_org(self.installation_id, key).await
     }
 
     /// Accepts these API credentials (hashed bindings).

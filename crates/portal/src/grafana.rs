@@ -335,6 +335,18 @@ async fn json_of<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&body).map_err(|err| unreachable(what, err))
 }
 
+/// What daiya stores under a project's name (T-7509).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredOrganization {
+    /// The live organization's id, which a retired name created again does not share with the
+    /// one before.
+    Held(uuid::Uuid),
+    /// The name's last organization was retired and none has the name now.
+    Retired,
+    /// The name was never held, or the server is a Grafana, which stores no such id.
+    NeverHeld,
+}
+
 impl<'a> Client<'a> {
     pub fn new(config: &'a GrafanaConfig) -> Self {
         Self { config }
@@ -358,49 +370,57 @@ impl<'a> Client<'a> {
     /// The organization of `project`; `None` when the deployment has made none.
     pub async fn organization(&self, project: &str) -> Result<Option<i64>, ApiError> {
         let what = "finding the project's organization";
-        let Some(org) = self.organization_named(project, what).await? else {
+        let answer = self.organization_named(project, what).await?;
+        if answer.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
-        };
+        }
+        let org: Value = json_of(answer, what).await?;
         org["id"]
             .as_i64()
             .map(Some)
             .ok_or_else(|| unreachable(what, "an organization without an id"))
     }
 
-    /// The id daiya stores the rows of `project`'s organization under (T-7509), which a
-    /// retired name created again does not share with the one before; `None` when it holds
-    /// none or is a Grafana, which names no such id.
-    pub async fn organization_id(&self, project: &str) -> Result<Option<uuid::Uuid>, ApiError> {
+    /// What daiya stores under `project`'s name. A 404 is read too: its body alone tells a
+    /// retired name from one never held, so one that is no JSON is no answer.
+    pub async fn stored_organization(&self, project: &str) -> Result<StoredOrganization, ApiError> {
         let what = "finding the id of the project's organization";
-        let Some(org) = self.organization_named(project, what).await? else {
-            return Ok(None);
-        };
+        let answer = self.organization_named(project, what).await?;
+        let found = answer.status() != reqwest::StatusCode::NOT_FOUND;
+        let org: Value = json_of(answer, what).await?;
+        if !found {
+            return Ok(if org["retired"] == true {
+                StoredOrganization::Retired
+            } else {
+                StoredOrganization::NeverHeld
+            });
+        }
         let Some(id) = org.get("uuid") else {
-            return Ok(None);
+            return Ok(StoredOrganization::NeverHeld);
         };
         id.as_str()
             .and_then(|id| id.parse().ok())
-            .map(Some)
+            .map(StoredOrganization::Held)
             .ok_or_else(|| unreachable(what, "an organization id that is no UUID"))
     }
 
+    /// The answer of the lookup by name: a success or a 404.
     async fn organization_named(
         &self,
         project: &str,
         what: &str,
-    ) -> Result<Option<Value>, ApiError> {
+    ) -> Result<reqwest::Response, ApiError> {
         let answer = self
             .request(reqwest::Method::GET, &format!("/orgs/name/{project}"), None)
             .send()
             .await
             .map_err(|err| unreachable(what, err))?;
         if answer.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+            return Ok(answer);
         }
-        let answer = answer
+        answer
             .error_for_status()
-            .map_err(|err| unreachable(what, err))?;
-        json_of(answer, what).await.map(Some)
+            .map_err(|err| unreachable(what, err))
     }
 
     /// The Endpoints the organization has a datasource for.
@@ -1256,29 +1276,47 @@ mod tests {
             json!({ "id": 6, "uuid": "x" }),
         )
         .await;
-        Mock::given(method("GET"))
-            .and(path("/api/orgs/name/gone"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
+        for (name, answer) in [
+            (
+                "never",
+                ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
+            ),
+            (
+                "retired",
+                ResponseTemplate::new(404).set_body_json(json!({ "retired": true })),
+            ),
+            ("unreadable", ResponseTemplate::new(404)),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/orgs/name/{name}")))
+                .respond_with(answer)
+                .mount(&server)
+                .await;
+        }
         let config = config(&server);
         let client = Client::new(&config);
-        let id = client.organization_id("doprava").await.expect("answered");
-        assert_eq!(id.map(|id| id.to_string()).as_deref(), Some(stored));
-        assert!(client
-            .organization_id("grafana")
-            .await
-            .expect("answered")
-            .is_none());
-        assert!(client
-            .organization_id("gone")
-            .await
-            .expect("answered")
-            .is_none());
-        assert!(
-            client.organization_id("broken").await.is_err(),
-            "never a guessed id"
-        );
+        for (name, expected) in [
+            (
+                "doprava",
+                StoredOrganization::Held(stored.parse().expect("uuid")),
+            ),
+            ("grafana", StoredOrganization::NeverHeld),
+            ("never", StoredOrganization::NeverHeld),
+            ("retired", StoredOrganization::Retired),
+        ] {
+            let held = client.stored_organization(name).await.expect("answered");
+            assert_eq!(held, expected, "{name}");
+        }
+        for name in ["broken", "unreadable"] {
+            assert!(
+                client.stored_organization(name).await.is_err(),
+                "{name}: never a guessed id"
+            );
+        }
+        for name in ["never", "retired", "unreadable"] {
+            let org = client.organization(name).await.expect("answered");
+            assert!(org.is_none(), "{name}: no organization to show");
+        }
     }
 
     #[tokio::test]

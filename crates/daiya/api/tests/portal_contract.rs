@@ -564,6 +564,28 @@ async fn a_recreated_name_is_a_new_organization_with_no_old_rows() {
     let (status, body) = first.admin("DELETE", &path, None, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
+    // The Portal's backup tells a retired name from one never held by this mark.
+    let (status, body) = first.admin("GET", "/orgs/name/helsinki", None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["retired"], true, "{body}");
+    let (status, body) = first.admin("GET", "/orgs/name/never", None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.get("retired").is_none(), "{body}");
+    let (status, body) = first
+        .call(
+            "GET",
+            "/orgs/name/helsinki",
+            None,
+            Some("Bearer viewer-token"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.get("retired").is_none(),
+        "only an administrator learns it: {body}"
+    );
+
     let second = Grafana::new(store, None);
     let (status, body) = second.admin("DELETE", &path, None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "retired once: {body}");
@@ -574,6 +596,9 @@ async fn a_recreated_name_is_a_new_organization_with_no_old_rows() {
     let new = new_org["orgId"].as_i64().expect("orgId");
     assert_ne!(new, old, "a number is never given again");
     assert_ne!(new_org["uuid"], old_org["uuid"], "nor an id");
+    let (status, named) = first.admin("GET", "/orgs/name/helsinki", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{named}");
+    assert_eq!(named["uuid"], new_org["uuid"], "the live one of that name");
 
     for replica in [&first, &second] {
         let dashboard = "/dashboards/uid/project-helsinki";

@@ -209,11 +209,13 @@ async fn compat_get_org_by_name(
     Path(name): Path<String>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers).await;
-    let (num, org_id) = match state.organization(OrgKey::Name(name.clone())).await {
-        Ok(Some(org)) => (org.number, org.org_id),
-        Ok(None) => return error_response(&CrError::NotFound("Organization not found".into())),
+    let not_found = CrError::NotFound("Organization not found".into());
+    let org = match state.organization_held(OrgKey::Name(name.clone())).await {
+        Ok(Some(org)) => org,
+        Ok(None) => return error_response(&not_found),
         Err(e) => return error_response(&e),
     };
+    let (num, org_id) = (org.number, org.org_id);
     // Only a member (or the installation admin) learns that the organization exists.
     let member = state
         .authorizer
@@ -233,8 +235,20 @@ async fn compat_get_org_by_name(
             },
         )
         .allowed;
-    if !member && !installation_admin {
-        return error_response(&CrError::NotFound("Organization not found".into()));
+    if org.retired && installation_admin {
+        // Still no organization, as Grafana answers a deleted one. The mark keeps the Portal's
+        // backup from reading this id's rows as those of a name never held.
+        let mut body = not_found.to_odata_error();
+        body["retired"] = Value::Bool(true);
+        return (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            Json(body),
+        )
+            .into_response();
+    }
+    if org.retired || (!member && !installation_admin) {
+        return error_response(&not_found);
     }
     (
         StatusCode::OK,

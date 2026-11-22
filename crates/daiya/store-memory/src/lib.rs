@@ -275,13 +275,14 @@ impl DaiyaStore for MemoryStore {
     ) -> StoreFuture<'_, Option<OrgRow>> {
         Box::pin(async move {
             let guard = self.inner.read();
-            let mut rows = guard.directory.get(&installation).into_iter().flatten();
+            let rows = guard.directory.get(&installation).into_iter().flatten();
             Ok(rows
-                .find(|row| match &key {
+                .filter(|row| match &key {
                     OrgKey::Number(number) => row.number == *number,
                     OrgKey::Id(id) => row.org_id == *id,
-                    OrgKey::Name(name) => !row.retired && row.name == *name,
+                    OrgKey::Name(name) => row.name == *name,
                 })
+                .max_by_key(|row| (!row.retired, row.number))
                 .cloned())
         })
     }

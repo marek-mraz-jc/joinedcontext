@@ -1217,7 +1217,16 @@ const MODULE_SEED: &[(&str, &str)] = &[
             'ada', 'ada', now(), now()),
            ('00000000-0000-0000-0000-000000000001', '{bravo_daiya}',
             '00000000-0000-0000-0000-000000000001', 'bravo-town', 'f-2', 'bravo-folder', 1,
-            'bob', 'bob', now(), now());
+            'bob', 'bob', now(), now()),
+           ('00000000-0000-0000-0000-000000000001', '{retired_daiya}',
+            '00000000-0000-0000-0000-000000000001', 'alfa-old', 'f-3', 'retired-folder', 1,
+            'ada', 'ada', now(), now()),
+           ('00000000-0000-0000-0000-000000000001', '{replaced_daiya}',
+            '00000000-0000-0000-0000-000000000001', 'alfa-again', 'f-4', 'retired-before', 1,
+            'ada', 'ada', now(), now()),
+           ('00000000-0000-0000-0000-000000000001', '{recreated_daiya}',
+            '00000000-0000-0000-0000-000000000001', 'alfa-again', 'f-5', 'recreated-folder-mark',
+            1, 'ada', 'ada', now(), now());
          INSERT INTO cr_public_dashboard (installation_id, org_id, instance_id, uid,
            dashboard_uid, access_token_hash, is_enabled, time_selection_enabled,
            annotations_enabled, show_query_text, share, created_by, updated_by, created_at,
@@ -1438,6 +1447,24 @@ async fn seeded_module_dbs(
 async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_column_does() {
     use joinedcontext_portal::org_backup::modules::{daiya_org, DataroomTenant, Tenants};
     let one: uuid::Uuid = ONE.parse().expect("uuid");
+    // daiya never held alfa-city's name, retired alfa-old's, and holds alfa-again's again.
+    const RECREATED: &str = "0190a000-0000-7000-8000-0000000000aa";
+    let daiya = MockServer::start().await;
+    for (project, status, answer) in [
+        ("alfa-city", 404, json!({ "error": { "status": 404 } })),
+        (
+            "alfa-old",
+            404,
+            json!({ "error": { "status": 404 }, "retired": true }),
+        ),
+        ("alfa-again", 200, json!({ "id": 5, "uuid": RECREATED })),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/orgs/name/{project}")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(answer))
+            .mount(&daiya)
+            .await;
+    }
     let tenant = |org: u128, catalogue: u128| DataroomTenant {
         org: uuid::Uuid::from_u128(org),
         catalogue: uuid::Uuid::from_u128(catalogue),
@@ -1449,6 +1476,12 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
     let fill = |text: &str| {
         text.replace("{alfa_daiya}", &daiya_org(one, "alfa-city").to_string())
             .replace("{bravo_daiya}", &daiya_org(one, "bravo-town").to_string())
+            .replace("{retired_daiya}", &daiya_org(one, "alfa-old").to_string())
+            .replace(
+                "{replaced_daiya}",
+                &daiya_org(one, "alfa-again").to_string(),
+            )
+            .replace("{recreated_daiya}", RECREATED)
             .replace("{alfa_org}", &dataroom["alfa"].org.to_string())
             .replace("{bravo_org}", &dataroom["bravo"].org.to_string())
             .replace("{alfa_catalogue}", &dataroom["alfa"].catalogue.to_string())
@@ -1466,6 +1499,12 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
     };
     let mut world = world_configured("alfa", "Enabled", None, |config| {
         config.backup_modules.readers = readers;
+        config.grafana = Some(joinedcontext_portal::config::GrafanaConfig {
+            url: daiya.uri(),
+            public_url: "https://dashboards.alfa.example".into(),
+            user: "admin".into(),
+            password: "unused".into(),
+        });
         config.backup_modules.tenants = Tenants {
             shako: Some([one, one]),
             daiya_installation: Some(one),
@@ -1481,6 +1520,13 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
         "alfa-city-air",
         json!({ "organizationRef": "bravo" }),
     ));
+    for project in ["alfa-old", "alfa-again"] {
+        m.upsert(org(
+            "Project",
+            project,
+            json!({ "organizationRef": "alfa" }),
+        ));
+    }
     for (project, space) in [
         ("alfa-city", "air"),
         ("bravo-town", "air"),
@@ -1534,7 +1580,7 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
         );
     }
     for (path, text) in files.iter().filter(|(p, _)| p.starts_with("module/")) {
-        for foreign in ["bravo", "bob", "lookalike", "alfa-city-air-x"] {
+        for foreign in ["bravo", "bob", "lookalike", "alfa-city-air-x", "retired-"] {
             assert!(!text.contains(foreign), "{foreign} in {path}: {text}");
         }
         for secret in [
@@ -1559,6 +1605,7 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
         ("module/kaisatsu/applications.jsonl", "alfa-client-mark"),
         ("module/shako/repo.jsonl", "alfa-repo-mark"),
         ("module/daiya/cr_folder.jsonl", "alfa-folder-mark"),
+        ("module/daiya/cr_folder.jsonl", "recreated-folder-mark"),
         ("module/dataroom/cat_catalogue.jsonl", "alfa-catalogue-mark"),
         (
             "module/dataroom/cat_harvest_source.jsonl",
@@ -1599,6 +1646,34 @@ async fn every_portal_table_is_exported_or_left_out_on_purpose() {
              org_backup/data.rs"
         );
     }
+}
+
+#[tokio::test]
+async fn a_backup_that_cannot_ask_daiya_exports_no_dashboards() {
+    use joinedcontext_portal::org_backup::modules::Tenants;
+    let world = world_configured("alfa", "Enabled", None, |config| {
+        config.backup_modules.readers =
+            BTreeMap::from([("daiya", "postgres://nobody@127.0.0.1:9/none".to_owned())]);
+        config.backup_modules.tenants = Tenants {
+            daiya_installation: Some(uuid::Uuid::from_u128(1)),
+            ..Tenants::default()
+        };
+    })
+    .await;
+    let ids = identities();
+    data_saved_and_run(&world, &ids).await;
+    let files = unzip(&decrypt(
+        &latest(&world.bucket, &key_of(&world, "alfa", "data").await),
+        &ids[0],
+    ));
+    let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    let daiya = &index["modules"]["daiya"];
+    assert_eq!(daiya["exported"], false, "{daiya}");
+    // Without daiya nobody can tell a retired name from one never held.
+    assert!(
+        daiya.to_string().contains("JC_PORTAL_GRAFANA_URL"),
+        "{daiya}"
+    );
 }
 
 #[tokio::test]
