@@ -8,8 +8,7 @@
 use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
 use daiya_model::{
-    DaiyaStore as _, GrafanaRole, InstallationId, InstanceId, OrgId, PolicyAuthorizer,
-    RoleBinding, Subject,
+    GrafanaRole, InstallationId, InstanceId, OrgId, PolicyAuthorizer, RoleBinding, Subject,
 };
 use daiya_store_pg::connect_test_database;
 use http::{Request, StatusCode};
@@ -100,7 +99,10 @@ async fn a_write_commits_with_its_audit_row_or_neither_stands() {
     assert_eq!(kinds().await, ["FOLDER_CREATE"]);
 
     // The request role appends and reads; it never rewrites or removes a row.
-    for statement in ["UPDATE cr_audit SET actor_id = 'someone'", "DELETE FROM cr_audit"] {
+    for statement in [
+        "UPDATE cr_audit SET actor_id = 'someone'",
+        "DELETE FROM cr_audit",
+    ] {
         let refused = sqlx::raw_sql(statement).execute(&pool).await;
         assert!(refused.is_err(), "{statement} ran as the request role");
     }
