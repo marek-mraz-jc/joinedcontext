@@ -1,0 +1,12 @@
+# Per-crate coverage floors (T-7529): the nightly coverage workflow fails when a crate measures below
+# its line. `.github/scripts/coverage-ratchet.py update EXPORT.json` raises them; a branch that raises a
+# crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
+[crates]
+"daiya-api" = { lines = 97.10, functions = 96.50 }
+"daiya-expr" = { lines = 99.20, functions = 100.00 }
+"daiya-import" = { lines = 98.20, functions = 94.10 }
+"daiya-model" = { lines = 99.80, functions = 99.10 }
+"daiya-query" = { lines = 98.50, functions = 95.40 }
+"daiya-server" = { lines = 97.10, functions = 98.70 }
+"daiya-store-memory" = { lines = 99.70, functions = 99.20 }
+"daiya-store-pg" = { lines = 97.70, functions = 92.30 }
