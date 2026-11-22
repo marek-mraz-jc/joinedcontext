@@ -449,6 +449,28 @@ pub fn checks(
     })
 }
 
+/// The most minutes one queueing catches up: past the longest run of the weekly crawls.
+/// ponytail: a pod down longer than this skips the slots of its outage; the source's next slot
+/// or a restart's first minute (never-read sources) still reads it.
+const CATCH_UP: i64 = 6 * 60;
+
+/// The minutes after `last` up to `now`, oldest first; `now` alone when nothing was queued yet.
+/// One minute's work runs every queued job, so a long crawl carries it past the next minutes,
+/// and a source whose schedule named one of them was never queued (T-7493: zilina/web's 03:15
+/// behind the 03:00 crawls, its daily check on Saturday and its weekly crawl on Sunday).
+pub fn unread_minutes(
+    last: Option<time::OffsetDateTime>,
+    now: time::OffsetDateTime,
+) -> Vec<time::OffsetDateTime> {
+    let first = last.map_or(now, |last| {
+        (last + time::Duration::minutes(1)).max(now - time::Duration::minutes(CATCH_UP - 1))
+    });
+    let count = (now - first).whole_minutes().max(-1) + 1;
+    (0..count)
+        .map(|m| first + time::Duration::minutes(m))
+        .collect()
+}
+
 /// When the source was last read, `None` before its first crawl.
 async fn last_crawl(
     pool: &PgPool,

@@ -162,6 +162,7 @@ async fn migrations_apply_and_indexes_exist() {
         "i_entities_loc_ambiguous",
         "i_entities_first_type_id",
         "i_entities_multi_type_id",
+        "i_entities_multi_type_id_bytes",
         "i_entities_types_multi",
     ] {
         let n: i64 = sqlx::query(
