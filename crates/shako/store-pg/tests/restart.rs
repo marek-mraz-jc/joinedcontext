@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::disallowed_methods)] // Tests read their database URL; jc runs none of this.
 //! A restart keeps state: a new `PgStore` on the same database serves the instance and the
-//! repositories an earlier one wrote, once `hydrate_tenant` loaded them under the tenant's RLS
-//! context, and loads nothing of another tenant.
+//! repositories an earlier one wrote, read under the tenant's RLS context, and nothing of
+//! another tenant.
 //!
 //! `SHAKO_TEST_DATABASE_URL` names an admin (superuser) connection; the test creates a fresh
 //! database, migrates it as the admin and connects the store as a NOSUPERUSER NOBYPASSRLS login
@@ -95,6 +95,10 @@ async fn a_restarted_store_serves_what_the_last_one_wrote() {
         .await
         .expect("write repo");
     first
+        .adjust_quota_usage(instance_id, org_id, 1, 1234, 0)
+        .await
+        .expect("write usage");
+    first
         .create_repo(repo(instance_id, other_org, "elsewhere"))
         .await
         .expect("write another tenant's repo");
@@ -104,15 +108,6 @@ async fn a_restarted_store_serves_what_the_last_one_wrote() {
     let second = PgStore::connect_with(app_opts, 2)
         .await
         .expect("second start");
-    let loaded = second
-        .hydrate_tenant(instance_id, org_id)
-        .await
-        .expect("hydrate");
-    assert_eq!(
-        loaded, 1,
-        "one repository of this tenant, none of the other"
-    );
-
     let instance = second
         .get_instance(instance_id, org_id)
         .await
@@ -132,19 +127,17 @@ async fn a_restarted_store_serves_what_the_last_one_wrote() {
         second.list_repos(instance_id, org_id).await.unwrap().len(),
         1
     );
-    assert!(
-        second
-            .list_repos(instance_id, other_org)
-            .await
-            .unwrap()
-            .is_empty(),
-        "a tenant nobody hydrated stays empty"
+    let other = second.list_repos(instance_id, other_org).await.unwrap();
+    assert_eq!(
+        other.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["elsewhere"],
+        "the other tenant reads its own repository alone"
     );
     let quota = second.get_quota_usage(instance_id, org_id).await.unwrap();
     assert_eq!((quota.repo_count, quota.git_bytes), (1, 1234));
 
     // A second hydrate of the same tenant changes nothing.
-    assert_eq!(second.hydrate_tenant(instance_id, org_id).await.unwrap(), 1);
+    assert_eq!(second.hydrate(instance_id, org_id).await.unwrap(), 0);
     let quota = second.get_quota_usage(instance_id, org_id).await.unwrap();
     assert_eq!((quota.repo_count, quota.git_bytes), (1, 1234));
 

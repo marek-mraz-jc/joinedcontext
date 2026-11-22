@@ -436,7 +436,8 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
   of the module's schema, and every table there has forced RLS and a policy. Antares runs with `require_rls`
   forced whenever it has a database.
 - shako keeps every record (repos, PRs, issues, counters...) through an op log `shako.store_log` (forced RLS)
-  replayed into its mirror at start; its repositories live under `<state_dir>/shako`, no longer a temp dir.
+  beside the typed tables every read answers from, which a log an earlier release left is projected into
+  before serving (T-7508; no mirror, replace rather than roll that update); its repositories live under `<state_dir>/shako`, no longer a temp dir.
 - ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
   stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
   save refuses the create; a refused delete keeps the stream.

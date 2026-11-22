@@ -183,7 +183,10 @@ async fn handle_post_receive_pack(
         Err(e) => return gitea_error_response(&state, &e),
     };
 
-    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await;
+    let instance = match state.instance_for(ctx.instance_id, ctx.org_id).await {
+        Ok(instance) => instance,
+        Err(e) => return gitea_error_response(&state, &e),
+    };
     let usage = match state
         .store()
         .get_quota_usage(ctx.instance_id, ctx.org_id)

@@ -2,7 +2,8 @@
 //! and the host-root `/v2` container registry router (`shako_server::registry_router`).
 //!
 //! Records live in Postgres when `[shako.database]` is set (`shako_store_pg::PgStore`: boot RLS
-//! check, the store log replayed for jc's one tenant before serving), else in memory. Git data
+//! check, what a previous release left in the store log projected for jc's one tenant before
+//! serving), else in memory. Git data
 //! lives under `repo_root`, by default `<state_dir>/shako`, so it survives a restart too.
 
 use crate::app::StartError;
@@ -20,6 +21,9 @@ use shako_store_memory::MemoryStore;
 use shako_store_pg::{PgSecretStore, PgStore};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
@@ -48,7 +52,7 @@ pub(crate) const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from
 pub(crate) const ORG: OrgId = OrgId::from_u128(1);
 
 /// The configured stores: Postgres (migrated first when a migration role is set, boot RLS
-/// check, log replayed for `(INSTANCE, org_id)`), its hook and mirror secrets sealed in
+/// check, log projected for `(INSTANCE, org_id)`), its hook and mirror secrets sealed in
 /// `shako.secret` with the installation's KEK (T-7280); or memory for both without a database
 /// section.
 async fn open_store(
@@ -82,8 +86,8 @@ async fn open_store(
     let store = PgStore::connect_with(db.app_options().map_err(err)?, db.max_connections())
         .await
         .map_err(err)?;
-    let replayed = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
-    tracing::info!(replayed, "shako: records loaded from Postgres");
+    let projected = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
+    tracing::info!(projected, "shako: the typed tables hold the store log");
     let secrets = PgSecretStore::new(&store, INSTANCE, &kek).map_err(err)?;
     Ok((Arc::new(store), Arc::new(secrets)))
 }
@@ -144,6 +148,35 @@ pub async fn build_state(
     Ok(state)
 }
 
+/// How often the outbox is looked at beside each write's own dispatch.
+const OUTBOX_POLL: Duration = Duration::from_secs(30);
+
+/// Sends what the outbox still holds: the events of a process that died before it sent them,
+/// which wait for no next write (T-7508).
+pub fn spawn_outbox(state: ShakoState, shutdown: CancellationToken, tasks: &TaskTracker) {
+    poll_outbox(state, OUTBOX_POLL, shutdown, tasks);
+}
+
+fn poll_outbox(
+    state: ShakoState,
+    every: Duration,
+    shutdown: CancellationToken,
+    tasks: &TaskTracker,
+) {
+    tasks.spawn(async move {
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(every) => {
+                    if let Err(e) = shako_server::dispatch_pending_outbox(&state, ORG).await {
+                        tracing::warn!(error = %e, "shako: the outbox was not sent, trying again");
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// `portal` is the Portal's public base: a browser asking shako's pages without a credential is
 /// sent there (shako keeps no sessions).
 pub fn build(state: ShakoState, mount: Mount, portal: &str) -> (Router, Router) {
@@ -157,6 +190,50 @@ pub fn build(state: ShakoState, mount: Mount, portal: &str) -> (Router, Router) 
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[tokio::test]
+    async fn the_poller_sends_what_no_write_dispatched() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = ShakoState::new(
+            INSTANCE,
+            ORG,
+            dir.path().to_path_buf(),
+            Arc::new(MemoryStore::new()),
+            Arc::new(LocalAuthorizer::new(Vec::new())),
+            TokenVerifier::new(ShakoSigningKey::from_text("1".repeat(64).as_bytes()).unwrap()),
+            shako_core::OutboundGuard::default(),
+        );
+        let event = serde_json::json!({"id": "0190a000-0000-7000-8000-000000000001", "instanceId": INSTANCE,
+            "orgId": ORG, "repoId": null, "eventKind": "push", "idempotencyKey": "left",
+            "payload": {}, "dispatched": false, "createdAt": "2026-11-20T10:00:00Z",
+            "dispatchedAt": null});
+        let event = serde_json::from_value(event).unwrap();
+        state.store().append_outbox(event).await.unwrap();
+
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        poll_outbox(
+            state.clone(),
+            Duration::from_millis(5),
+            shutdown.clone(),
+            &tasks,
+        );
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !state
+                .store()
+                .list_undispatched_outbox(INSTANCE, ORG)
+                .await
+                .unwrap()
+                .is_empty()
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the event is sent");
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+    }
 
     #[test]
     fn signing_key_is_kept_across_boots_and_missing_refuses_the_start() {

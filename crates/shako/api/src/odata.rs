@@ -240,7 +240,7 @@ async fn build_entity_table(
 
     let rows: Vec<Value> = match set_name {
         "Instances" => {
-            let inst = state.instance_for(ctx.instance_id, ctx.org_id).await;
+            let inst = state.instance_for(ctx.instance_id, ctx.org_id).await?;
             let usage = state
                 .store()
                 .get_quota_usage(ctx.instance_id, ctx.org_id)

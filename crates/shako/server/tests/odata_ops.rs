@@ -35,6 +35,7 @@ type Delivered = Arc<parking_lot::Mutex<Vec<(Vec<(String, String)>, Vec<u8>)>>>;
 struct World {
     _tmp: tempfile::TempDir,
     state: ShakoState,
+    store: Arc<MemoryStore>,
     app: Router,
     delivered: Delivered,
 }
@@ -97,11 +98,12 @@ async fn world() -> World {
         })),
         ..OutboundPolicy::default()
     });
+    let store = Arc::new(MemoryStore::new());
     let state = ShakoState::new(
         InstanceId::from_u128(1),
         org_a,
         tmp.path().to_path_buf(),
-        Arc::new(MemoryStore::new()),
+        store.clone(),
         authz,
         verifier,
         guard,
@@ -117,6 +119,7 @@ async fn world() -> World {
     World {
         _tmp: tmp,
         state,
+        store,
         app,
         delivered,
     }
@@ -1032,6 +1035,87 @@ async fn pull_request_parts_check_the_repository_read() {
         .await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{part}: {body}");
     }
+}
+
+/// T-7508: a store that cannot say what protects a branch protects it: no merge and no
+/// self-approval runs on an empty answer in its place.
+#[tokio::test]
+async fn an_unreadable_store_never_reads_as_no_rules() {
+    let w = world().await;
+    create_repo(&w, "helsinki").await;
+    let branch = json!({"NewBranchName": "f"});
+    let files = json!([{"operation": "create", "path": "f.yaml", "content": b64("f\n")}]);
+    let post = |path: String, body: Value| {
+        let app = w.app.clone();
+        async move {
+            call(&app, "POST", &path, Some("portal-token"), Some(body))
+                .await
+                .0
+        }
+    };
+    assert_eq!(
+        post(format!("{R}/Shako.CreateBranch"), branch).await,
+        StatusCode::OK
+    );
+    assert_eq!(commit(&w, R, "f", files).await.0, StatusCode::OK);
+    let open = json!({"Head": "f", "Base": "main", "Title": "t"});
+    assert_eq!(
+        post(format!("{R}/Shako.OpenPullRequest"), open).await,
+        StatusCode::OK
+    );
+    let main = head_of(&w, "main").await;
+
+    let merge = format!("{R}/PullRequests(1)/Shako.Merge");
+    for table in ["reviews", "commit_statuses", "protection_rules"] {
+        w.store.simulate_read_failure(table, true);
+        let refused = post(merge.clone(), json!({"Style": "merge"})).await;
+        assert_eq!(
+            refused,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "merge without {table}"
+        );
+        w.store.simulate_read_failure(table, false);
+    }
+    w.store.simulate_read_failure("protection_rules", true);
+    let approve = format!("{R}/PullRequests(1)/Shako.Review");
+    let refused = post(approve, json!({"Event": "APPROVED"})).await;
+    assert_eq!(
+        refused,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "self-approval without the rules"
+    );
+    let (head, _, _) = call(
+        &w.app,
+        "GET",
+        &format!("{R}/Branches('main')"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        head,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "protected or not is unknown"
+    );
+    w.store.simulate_read_failure("protection_rules", false);
+    assert_eq!(head_of(&w, "main").await, main);
+    assert_eq!(post(merge, json!({"Style": "merge"})).await, StatusCode::OK);
+}
+
+/// T-7508: an unreadable quota is refused, never replaced by the wider defaults.
+#[tokio::test]
+async fn an_unreadable_quota_never_reads_as_the_defaults() {
+    let w = world().await;
+    w.store.simulate_read_failure("instances", true);
+    let (st, body, _) = call(
+        &w.app,
+        "POST",
+        "/odata/CreateRepository",
+        Some("portal-token"),
+        Some(json!({"Owner": "joinedcontext", "Name": "helsinki", "DefaultBranch": "main"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
 }
 
 /// Redelivering a hook goes only to a hook of the named repository.

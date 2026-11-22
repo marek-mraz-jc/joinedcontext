@@ -13,7 +13,7 @@ read-only web pages.
 shako-core
   ├── shako-git          (pkt-line, upload-pack v0/v2, receive-pack, quarantine, send-pack, bundle, merge, archive, compact, fsck)
   ├── shako-store-memory (in-memory Store + OData MemoryTable)
-  ├── shako-store-pg     (PostgreSQL Store, forced RLS, boot check, LISTEN/NOTIFY, outbox dispatcher)
+  ├── shako-store-pg     (PostgreSQL Store, forced RLS, boot check, reads from the typed tables, outbox lease)
   ├── shako-registry     (OCI distribution /v2/*, /v2/token, generic packages, cosign simple-signing)
   └── shako-api          (native REST, Gitea compat 39 rows, OData 4.01 service, PRs/merge, contents, webhooks, mirrors)
         ├── shako-mcp    (jc_forge_* MCP tools from OperationRegistry)
