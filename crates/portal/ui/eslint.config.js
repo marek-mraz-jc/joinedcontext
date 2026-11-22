@@ -14,6 +14,12 @@ export default tseslint.config(
     languageOptions: { sourceType: "script", globals: { ...globals.browser } },
   },
   {
+    // A function the browser tests evaluate in the page (T-7512): one expression, browser globals.
+    files: ["e2e/*.browser.js"],
+    languageOptions: { sourceType: "script", globals: { ...globals.browser } },
+    rules: { "@typescript-eslint/no-unused-expressions": "off" },
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2022,
