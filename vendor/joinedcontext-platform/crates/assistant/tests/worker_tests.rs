@@ -176,6 +176,27 @@ fn a_source_is_due_before_its_first_crawl_then_when_its_schedule_names_the_minut
 }
 
 #[test]
+fn the_minutes_a_long_crawl_ran_past_are_queued_after_it() {
+    let now = datetime!(2026-11-22 05:15 UTC);
+    assert_eq!(worker::unread_minutes(None, now), vec![now]);
+    assert_eq!(
+        worker::unread_minutes(Some(now), now),
+        Vec::<time::OffsetDateTime>::new()
+    );
+    let behind = worker::unread_minutes(Some(datetime!(2026-11-22 03:00 UTC)), now);
+    assert_eq!(behind.first(), Some(&datetime!(2026-11-22 03:01 UTC)));
+    assert_eq!(behind.last(), Some(&now));
+    assert_eq!(behind.len(), 135);
+    // The 03:15 slot a source's schedule names is among them (T-7493).
+    let weekly = spec("https://example.org/", Some("15 3 * * 0"));
+    let last = Some(datetime!(2026-11-16 21:10 UTC));
+    assert!(behind.iter().any(|m| worker::due(&weekly, last, *m)));
+    // A day down catches up the last six hours only.
+    let day = worker::unread_minutes(Some(now - time::Duration::days(1)), now);
+    assert_eq!((day.len(), day.last()), (360, Some(&now)));
+}
+
+#[test]
 fn the_sources_are_read_from_the_organizations_checkout_and_a_broken_one_is_left_out() {
     let dir = std::env::temp_dir().join(format!("jc-assistant-worker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
