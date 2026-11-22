@@ -279,6 +279,118 @@ async fn rows_stored_before_the_index_are_reaped_and_audit_rows_never() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_leaf_large_enough_for_a_parallel_build_gets_a_valid_index_and_is_reaped() {
+    let mut db = own_database(&require_db!(), "parallel").await;
+    if db.backend != TemporalBackend::Partitioned {
+        eprintln!("SKIP: the index is named after a partition");
+        return;
+    }
+    db.instances("live", 20_000, "'2999-01-01T00:00:00Z'", None)
+        .await;
+    db.instances("gone", 2_000, EXPIRED, None).await;
+    // Any leaf is large enough for a parallel btree build in this database.
+    db.owner
+        .execute(
+            "DO $$ BEGIN
+               EXECUTE format('ALTER DATABASE %I SET min_parallel_table_scan_size = 0', current_database());
+               EXECUTE format('ALTER DATABASE %I SET max_parallel_maintenance_workers = 2', current_database());
+               EXECUTE format('ALTER DATABASE %I SET maintenance_work_mem = %L', current_database(), '128MB');
+             END $$",
+        )
+        .await
+        .expect("parallel settings");
+    db.owner.close().await;
+    db.owner = pg::connect(&db.url, 4).await.expect("reconnect");
+
+    let line = maintenance::history_expiry_index(&db.owner, db.backend)
+        .await
+        .expect("index build")
+        .expect("leaves to build on");
+    assert!(!line.contains("deferred"), "{line}");
+    let (valid, parallel): (bool, String) = sqlx::query_as(
+        "SELECT (SELECT indisvalid FROM pg_index
+                  WHERE indexrelid = 'public.attr_instances_default_expiry'::regclass),
+                (SELECT proparallel::text FROM pg_proc
+                  WHERE oid = 'public.history_expires_at(jsonb)'::regprocedure)",
+    )
+    .fetch_one(&db.owner)
+    .await
+    .expect("catalog");
+    assert!(valid, "{line}");
+    // PostgreSQL 17 lets the build pass either way; 16 is what dev and prod run.
+    assert_eq!(
+        parallel, "u",
+        "a subtransaction cannot start in parallel mode"
+    );
+    let reap = maintenance::reap_expired_instances(&db.owner, db.backend)
+        .await
+        .expect("pass")
+        .expect("the lock is free");
+    assert!(reap.failed.is_empty(), "{reap:?}");
+    assert_eq!(reap.deleted, 2_000, "{reap:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_history_step_has_released_its_lock_when_it_returns() {
+    let db = own_database(&require_db!(), "unlock").await;
+    if db.backend != TemporalBackend::Partitioned {
+        eprintln!("SKIP: the one-index and audit steps build on partitions");
+        return;
+    }
+    let mut probe = db.owner.acquire().await.expect("probe");
+    // A backend with temporary tables drops them before its exit releases its locks, so a
+    // lock left to the close is still held when the probe asks.
+    let slow_exit = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                conn.execute(
+                    "DO $$ BEGIN FOR i IN 1..300 LOOP
+                       EXECUTE format('CREATE TEMP TABLE slow_exit_%s (n int)', i);
+                     END LOOP; END $$",
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .connect(&db.url)
+        .await
+        .expect("pool");
+    for step in [
+        "history_expiry_index",
+        "history_reap",
+        "history_one_index",
+        "history_audit_index",
+    ] {
+        let ran = match step {
+            "history_expiry_index" => maintenance::history_expiry_index(&slow_exit, db.backend)
+                .await
+                .expect(step)
+                .is_some(),
+            "history_reap" => maintenance::reap_expired_instances(&slow_exit, db.backend)
+                .await
+                .expect(step)
+                .is_some(),
+            "history_one_index" => maintenance::history_one_index(&slow_exit)
+                .await
+                .expect(step)
+                .is_some(),
+            _ => maintenance::history_audit_index(&slow_exit)
+                .await
+                .expect(step)
+                .is_some(),
+        };
+        assert!(ran, "{step} had nothing to do");
+        let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
+            .bind(format!("antares.{step}"))
+            .fetch_one(&mut *probe)
+            .await
+            .expect("probe");
+        assert!(free, "{step} returned with its lock still held");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_reap_reads_the_index_for_its_batch_alone_and_the_app_role_still_writes() {
     let db = own_database(&require_db!(), "plan").await;
     if db.backend != TemporalBackend::Partitioned {

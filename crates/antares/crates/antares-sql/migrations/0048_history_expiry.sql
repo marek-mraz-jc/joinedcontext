@@ -8,12 +8,17 @@
 -- try_timestamptz answers. A changed body needs each `*_expiry` index
 -- rebuilt.
 --
+-- PARALLEL UNSAFE, because of the EXCEPTION block: before PostgreSQL 17 a
+-- subtransaction cannot start in parallel mode, and a btree build goes
+-- parallel on a leaf over 8 MB. Marked safe, every such build failed and
+-- left its index invalid. The build is serial.
+--
 -- No index and no backfill here: the maintenance job builds the partial
 -- index `{leaf}_expiry` on each history leaf with CREATE INDEX CONCURRENTLY
 -- (store/pg/maintenance.rs `history_expiry_index`), which takes no lock
 -- against writes and covers the rows already stored.
 CREATE FUNCTION public.history_expires_at(data jsonb) RETURNS timestamptz
-  LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+  LANGUAGE plpgsql IMMUTABLE PARALLEL UNSAFE
   SET search_path = pg_catalog, pg_temp
   SET TimeZone = 'UTC'
   SET DateStyle = 'ISO, MDY'

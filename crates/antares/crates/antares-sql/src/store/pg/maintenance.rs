@@ -1435,8 +1435,8 @@ pub async fn reap_expired_instances(
     pool: &PgPool,
     backend: TemporalBackend,
 ) -> Result<Option<InstanceReap>, sqlx::Error> {
-    // A session lock over many transactions: a connection of its own, whose
-    // close releases it, also when this future is dropped half way.
+    // A session lock over many transactions: a connection of its own, so the
+    // lock ends with it also when this future is dropped half way.
     let mut conn = pool.acquire().await?.detach();
     let held: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_reap'))")
@@ -1447,9 +1447,20 @@ pub async fn reap_expired_instances(
     } else {
         Ok(None)
     };
-    use sqlx::Connection;
-    conn.close().await?;
+    end_session(conn).await?;
     reap
+}
+
+/// End the detached connection of a step under a session advisory lock:
+/// release the lock, then close. The close alone does not wait for the
+/// backend's exit, so the next call could read the lock as held and skip.
+/// When the release fails, or the step is dropped before it, the socket's
+/// close ends the session and the lock with it.
+async fn end_session(mut conn: sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut conn)
+        .await?;
+    sqlx::Connection::close(conn).await
 }
 
 async fn reap_pass(
@@ -1678,7 +1689,7 @@ pub async fn history_expiry_index(
         return Ok(None);
     }
     // As in history_one_index: a concurrent build runs outside a transaction
-    // on a connection of its own, and closing it releases the advisory locks.
+    // on a connection of its own, whose end releases the advisory locks.
     let mut conn = pool.acquire().await?.detach();
     let held: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_expiry_index'))")
@@ -1689,8 +1700,7 @@ pub async fn history_expiry_index(
     } else {
         Ok(None)
     };
-    use sqlx::Connection;
-    conn.close().await?;
+    end_session(conn).await?;
     line
 }
 
@@ -1841,9 +1851,7 @@ pub async fn history_one_index(pool: &PgPool) -> Result<Option<String>, sqlx::Er
         return Ok(None);
     }
     let line = one_index_step(&mut conn).await;
-    use sqlx::Connection;
-    // Closing the session releases the advisory lock with it.
-    conn.close().await?;
+    end_session(conn).await?;
     line.map(Some)
 }
 
@@ -1999,7 +2007,7 @@ pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::
         return Ok(None);
     }
     // As in history_one_index: a concurrent build runs outside a transaction
-    // on a connection of its own, and closing it releases the advisory lock.
+    // on a connection of its own, whose end releases the advisory lock.
     let mut conn = pool.acquire().await?.detach();
     let held: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_audit_index'))")
@@ -2042,8 +2050,7 @@ pub async fn history_audit_index(pool: &PgPool) -> Result<Option<String>, sqlx::
             built = built.saturating_add(1);
         }
     }
-    use sqlx::Connection;
-    conn.close().await?;
+    end_session(conn).await?;
     result?;
     Ok(Some(format!(
         "audit index built on {built} of {} partitions",
