@@ -200,7 +200,7 @@ impl MemoryBudget {
         st.max_answer_bytes = MAX_ANSWER_BYTES.min(pool);
         st.context_bytes = self.implicit_contexts();
         if let Some(text) = *CONTEXT_BYTES_PER_TENANT {
-            st.context_bytes = text.saturating_mul(crate::contexts::HEAP_PER_TEXT_BYTE);
+            st.context_bytes = text.saturating_mul(HEAP_PER_TEXT_BYTE);
         }
     }
 }
@@ -522,6 +522,12 @@ pub static MAX_BATCH_ITEMS: std::sync::LazyLock<usize> = std::sync::LazyLock::ne
         .filter(|n| *n > 0)
         .unwrap_or(1_000)
 });
+/// What a stored @context costs of `AppState::context_bytes` per
+/// byte of its JSON text: the memory store holds it as a `serde_json::Value`,
+/// measured at ~4.3x the text (a 2 000-term @context, 92 KB of text, held
+/// ~390 KB; T-5895). The count cap alone let 1 000 of them hold ~390 MB.
+pub(crate) const HEAP_PER_TEXT_BYTE: u64 = 4;
+
 /// Deployment knob (ANTARES_CONTEXTS_PER_TENANT): the @contexts of one kind
 /// (Hosted, ImplicitlyCreated) one Tenant stores (S4-15). Each kind has the
 /// cap to itself, so reads with inline @contexts cannot use up what the

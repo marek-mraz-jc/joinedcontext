@@ -189,17 +189,11 @@ pub async fn purge_tenant(st: &AppState, tenant: &TenantId) -> Result<(), NgsiEr
     Ok(())
 }
 
-/// What a stored @context costs of `AppState::context_bytes` per
-/// byte of its JSON text: the memory store holds it as a `serde_json::Value`,
-/// measured at ~4.3x the text (a 2 000-term @context, 92 KB of text, held
-/// ~390 KB; T-5895). The count cap alone let 1 000 of them hold ~390 MB.
-pub(crate) const HEAP_PER_TEXT_BYTE: u64 = 4;
-
 /// What one Tenant may store of each kind of @context (S4-15).
 fn caps(st: &AppState) -> antares_store::ContextCaps {
     antares_store::ContextCaps {
         count: *crate::bounds::CONTEXTS_PER_TENANT,
-        bytes: st.context_bytes / HEAP_PER_TEXT_BYTE,
+        bytes: st.context_bytes / crate::bounds::HEAP_PER_TEXT_BYTE,
     }
 }
 
@@ -845,7 +839,7 @@ mod tests {
         );
         assert!(linked < 64, "all 64 were hosted: {charged} bytes of text");
         assert!(
-            charged.saturating_mul(HEAP_PER_TEXT_BYTE) <= st.context_bytes,
+            charged.saturating_mul(crate::bounds::HEAP_PER_TEXT_BYTE) <= st.context_bytes,
             "{charged} bytes of text charged over the share"
         );
     }

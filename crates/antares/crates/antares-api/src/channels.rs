@@ -1027,12 +1027,14 @@ fn tenant_of(headers: &HeaderMap) -> ApiResult<(TenantId, Option<String>)> {
 /// The stored Channel `id` of this tenant, when this subject bound it: a
 /// Channel another subject bound answers as an absent one.
 /// Who a Channel of `subject` acts as: the identity the engine names and
-/// nothing else it held (S4-17). Without an engine the subject decides
-/// nothing, so the write carries none, unless the API requires one.
+/// nothing else it held (S4-17). Without an engine no header decides
+/// anything: the write carries none, or the subject where the API admits
+/// no write without one (T-5032).
 fn acting(st: &AppState, subject: &Subject) -> Option<Vec<(String, String)>> {
     match &st.policy {
         Some(engine) => crate::policy::identity(engine.as_ref(), subject),
-        None => (!st.subject_required).then(Vec::new),
+        None if st.subject_required => Some(subject.headers.clone()),
+        None => Some(Vec::new()),
     }
 }
 
