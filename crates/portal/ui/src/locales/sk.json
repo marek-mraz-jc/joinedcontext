@@ -1856,7 +1856,6 @@
         "overTime": "V čase",
         "add": "Pridať graf",
         "name": "Názov",
-        "nameHint": "Malé písmená, číslice a pomlčky; jedinečný v tomto endpointe.",
         "chartTitle": "Nadpis",
         "description": "Popis",
         "template": "Graf",
@@ -1864,7 +1863,6 @@
         "fill": "Vyplniť podľa grafu",
         "pickRoles": "Vyberte stĺpec pre každú os, ktorú graf potrebuje.",
         "spec": "Špecifikácia Vega-Lite",
-        "specHint": "Môžete ju upraviť ako JSON; kontrola pred návrhom odmietne všetko, čo siaha mimo endpoint.",
         "badJson": "Špecifikácia nie je platný JSON.",
         "noSource": "Tento endpoint neposkytuje žiadny zo zdrojov, ktoré graf číta.",
         "incomplete": "Zadajte grafu názov, nadpis, popis a špecifikáciu.",
@@ -1893,7 +1891,8 @@
           "range": "Server neprijal obdobie „{value}“. Vyberte {choices}.",
           "granularity": "Server neprijal podrobnosť „{value}“. Vyberte {choices}.",
           "method": "Server neprijal výpočet „{value}“. Vyberte {choices}.",
-          "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova."
+          "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova.",
+          "spec": "Kontrola neprijala „{at}“. Použite platný Vega-Lite, ktorý číta len tento endpoint, napr. {example}, alebo špecifikáciu vyplňte znova."
         },
         "range": "Predvolené obdobie",
         "ranges": {
@@ -1921,7 +1920,26 @@
           "controls": "Panelom nad grafom si čitatelia menia tieto nastavenia, napr. vyberú iné obdobie.",
           "locked": "Čitatelia vždy vidia nastavenia nižšie, napr. vybrané obdobie, a nemôžu ich meniť.",
           "raw": "Kreslí každé zapísané meranie, napr. každých desať minút. Výpočet netreba.",
-          "fixedRange": "Obdobie, ktoré čitatelia vždy vidia, napr. 7 dní pre posledný týždeň."
+          "fixedRange": "Obdobie, ktoré čitatelia vždy vidia, napr. 7 dní pre posledný týždeň.",
+          "name": "Malé písmená, číslice a pomlčky, jedinečné v tomto endpointe, napr. no2-week.",
+          "title": "Nadpis, ktorý čitatelia vidia nad grafom, napr. NO2 tento týždeň.",
+          "description": "Jedna veta o tom, čo graf ukazuje, napr. Denné maximum NO2 na každej stanici.",
+          "template": "Tvar grafu, napr. Priebeh v čase pre merania za týždeň.",
+          "type": "Druh vecí, ktoré graf číta, napr. AirQualityObserved pre merania kvality ovzdušia.",
+          "noTypes": "Dátový model zatiaľ nemá žiadny typ. Najprv ho doň pridajte, napr. AirQualityObserved.",
+          "noColumns": "Dátový model tu nemá žiadny stĺpec. Najprv pridajte typu atribút, napr. no2.",
+          "time": "Čas každého merania, napr. 14:00. Graf v čase vždy používa observedAt.",
+          "x": "Stĺpec pozdĺž spodku grafu, napr. dateObserved pre čas.",
+          "bars": "Stĺpec, ktorý pomenuje každý pruh, napr. name pre jeden pruh na stanicu.",
+          "y": "Číslo, ktoré graf kreslí, napr. no2.",
+          "color": "Nepovinné. Farba pre každú hodnotu, napr. name pre jednu farbu na stanicu.",
+          "facet": "Malý graf pre každú hodnotu, napr. name pre jeden panel na stanicu.",
+          "heatmap": {
+            "x": "Stĺpce mriežky, napr. dateObserved pre jeden stĺpec na čas.",
+            "y": "Riadky mriežky, napr. name pre jeden riadok na stanicu.",
+            "color": "Číslo, ktoré určuje farbu políčka, napr. no2."
+          },
+          "spec": "Vyplnenie ju zapíše z polí vyššie a môžete ju upraviť ako JSON. Smie čítať len tento endpoint, napr. {example}."
         },
         "templates": {
           "bar": "Stĺpcový graf",

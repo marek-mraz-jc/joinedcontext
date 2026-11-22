@@ -1856,7 +1856,6 @@
         "overTime": "Zeitverlauf",
         "add": "Diagramm hinzufügen",
         "name": "Name",
-        "nameHint": "Kleinbuchstaben, Ziffern und Bindestriche; eindeutig an diesem Endpoint.",
         "chartTitle": "Titel",
         "description": "Beschreibung",
         "template": "Diagramm",
@@ -1864,7 +1863,6 @@
         "fill": "Aus dem Diagramm füllen",
         "pickRoles": "Wählen Sie für jede Achse, die das Diagramm braucht, eine Spalte.",
         "spec": "Vega-Lite-Spezifikation",
-        "specHint": "Sie können sie als JSON bearbeiten; die Prüfung vor dem Vorschlag lehnt alles ab, was über den Endpoint hinausgreift.",
         "badJson": "Die Spezifikation ist kein gültiges JSON.",
         "noSource": "Dieser Endpoint liefert keine der Quellen, die das Diagramm liest.",
         "incomplete": "Geben Sie dem Diagramm einen Namen, einen Titel, eine Beschreibung und eine Spezifikation.",
@@ -1893,7 +1891,8 @@
           "range": "Der Server hat den Zeitraum „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "granularity": "Der Server hat die Auflösung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
-          "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
+          "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
+          "spec": "Die Prüfung hat „{at}“ nicht angenommen. Nutzen Sie gültiges Vega-Lite, das nur diesen Endpoint liest, z. B. {example}, oder füllen Sie erneut."
         },
         "range": "Standardzeitraum",
         "ranges": {
@@ -1921,7 +1920,26 @@
           "controls": "Mit der Leiste über dem Diagramm ändern Lesende diese Einstellungen, z. B. den Zeitraum.",
           "locked": "Lesende sehen immer die Einstellungen unten, z. B. den gewählten Zeitraum, und können sie nicht ändern.",
           "raw": "Zeichnet jede Messung, z. B. alle zehn Minuten. Keine Berechnung nötig.",
-          "fixedRange": "Der Zeitraum, den Lesende immer sehen, z. B. 7 Tage für die letzte Woche."
+          "fixedRange": "Der Zeitraum, den Lesende immer sehen, z. B. 7 Tage für die letzte Woche.",
+          "name": "Kleinbuchstaben, Ziffern und Bindestriche, an diesem Endpoint eindeutig, z. B. no2-week.",
+          "title": "Die Überschrift, die Lesende über dem Diagramm sehen, z. B. NO2 diese Woche.",
+          "description": "Ein Satz dazu, was das Diagramm zeigt, z. B. Der Tageshöchstwert von NO2 je Station.",
+          "template": "Die Form des Diagramms, z. B. Verlauf über die Zeit für Messungen einer Woche.",
+          "type": "Die Art der Dinge, die das Diagramm liest, z. B. AirQualityObserved für Luftmessungen.",
+          "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. AirQualityObserved.",
+          "noColumns": "Das Datenmodell hat hier keine Spalte. Fügen Sie dem Typ zuerst ein Attribut hinzu, z. B. no2.",
+          "time": "Die Zeit jeder Messung, z. B. 14:00. Ein Zeitverlauf nutzt immer observedAt.",
+          "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
+          "bars": "Die Spalte, die jeden Balken benennt, z. B. name für einen Balken je Station.",
+          "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
+          "color": "Optional. Eine Farbe je Wert, z. B. name für eine Farbe je Station.",
+          "facet": "Ein kleines Diagramm je Wert, z. B. name für ein Feld je Station.",
+          "heatmap": {
+            "x": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
+            "y": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
+            "color": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
+          },
+          "spec": "Das Füllen schreibt sie aus den Feldern oben, und Sie können sie als JSON bearbeiten. Sie darf nur diesen Endpoint lesen, z. B. {example}."
         },
         "templates": {
           "bar": "Balkendiagramm",

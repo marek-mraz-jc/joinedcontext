@@ -23,9 +23,11 @@ import {
   METHODS,
   RANGES,
   TEMPLATES,
+  columnsFor,
   complete,
   defaultData,
   refusedSettings,
+  refusedSpec,
   sourceOf,
   visualizationsOf,
   withVisualizations,
@@ -38,6 +40,8 @@ import type {
   Visualization,
 } from "./visualizations";
 
+/** What the specification's hint and refusal show as an example. */
+const SPEC_EXAMPLE = '"data": {"name": "source"}';
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
@@ -75,7 +79,7 @@ export function VisualizationsSection({
   const [picked, setType] = useState("");
   // The model loads after the Endpoint: until a type is picked, the first one listed is the type.
   const type = types.includes(picked) ? picked : (types[0] ?? "");
-  const [columns, setColumns] = useState<Partial<Record<Role, string>>>({});
+  const [picks, setPicks] = useState<Partial<Record<Role, string>>>({});
   const [specText, setSpecText] = useState("");
   const [temporal, setTemporal] = useState<TemporalDefaults>(DEFAULT_TEMPORAL);
   const [failed, setFailed] = useState<string | null>(null);
@@ -90,11 +94,21 @@ export function VisualizationsSection({
     setDescription("");
     setTemplate("line");
     setType("");
-    setColumns({});
+    setPicks({});
     setSpecText("");
     setTemporal(DEFAULT_TEMPORAL);
     if (editor.current) editor.current.open = false;
   });
+  const roles = [...TEMPLATES[template].required, ...TEMPLATES[template].optional] as Role[];
+  const source = sourceOf(template, served);
+  const offered = (role: Role) => columnsFor(role, source, columnsOf(type));
+  // The history has one time column, so it is placed unasked; a pick the chart does not offer is none.
+  const columns: Partial<Record<Role, string>> = {};
+  for (const role of roles) {
+    const column =
+      source === "temporal" && role === "x" ? offered(role)[0] : offered(role).find((one) => one === picks[role]);
+    if (column) columns[role] = column;
+  }
   const propose = (next: Visualization[], at: { added?: number; removed?: Visualization }) => {
     setFailed(null);
     setSent({ charts: next, ...at });
@@ -192,6 +206,9 @@ export function VisualizationsSection({
   // A refused field's sentence takes the place of its hint, right under the control.
   const hintOf = (field: RefusedSetting["field"], hint: string) =>
     own.some((one) => one.field === field) ? undefined : hint;
+  // An edited specification the check refused, said on its box.
+  const badSpec = proposal.error ? refusedSpec(proposal.error) : undefined;
+  const ownSpec = badSpec && badSpec.index === sent.added ? badSpec : undefined;
   const blocking = other ? sent.charts[other.index] : undefined;
   const blocked = blocking && {
     chart: titleOf(blocking),
@@ -211,7 +228,10 @@ export function VisualizationsSection({
       : t("endpoints.page.visualizations.refusedOther", blocked)
     : own.length > 0
       ? t("endpoints.page.visualizations.refusedOwn", { fields: fieldsOf(own) })
-      : proposal.error;
+      : ownSpec
+        ? t("endpoints.page.visualizations.refusedOwn", { fields: t("endpoints.page.visualizations.spec") })
+        : proposal.error;
+  const refusedField = own.length > 0 ? own[0].field : ownSpec ? "spec" : undefined;
   const alert =
     failed || refusal ? (
       <Alert
@@ -232,11 +252,11 @@ export function VisualizationsSection({
             >
               {t("endpoints.page.visualizations.removeBlocking", { chart: titleOf(blocking) })}
             </Button>
-          ) : own.length > 0 ? (
+          ) : refusedField ? (
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => document.getElementById(`viz-${own[0].field}`)?.focus()}
+              onClick={() => document.getElementById(`viz-${refusedField}`)?.focus()}
             >
               {t("endpoints.page.visualizations.showField")}
             </Button>
@@ -290,11 +310,16 @@ export function VisualizationsSection({
     </p>
   );
 
-  const roles = [
-    ...TEMPLATES[template].required,
-    ...TEMPLATES[template].optional,
-  ] as Role[];
+  /** What a role's column is for, in the chart picked, or what to do when there is none. */
+  const roleHint = (role: Role) => {
+    if (offered(role).length === 0) return t("endpoints.page.visualizations.hint.noColumns");
+    if (template === "heatmap") return t(`endpoints.page.visualizations.hint.heatmap.${role}`);
+    if (role === "x" && source === "temporal") return t("endpoints.page.visualizations.hint.time");
+    if (role === "x" && template === "bar") return t("endpoints.page.visualizations.hint.bars");
+    return t(`endpoints.page.visualizations.hint.${role}`);
+  };
   const nameOk = DNS_LABEL.test(name) && !list.some((one) => one.name === name);
+  const badName = name !== "" && !nameOk;
   const ready =
     nameOk &&
     title.trim() !== "" &&
@@ -374,8 +399,8 @@ export function VisualizationsSection({
       {canEdit ? (
         <details
           ref={editor}
-          // At phone width the hints are read at body size.
-          className="rounded-lg border border-border p-3 max-sm:[&_p]:text-body"
+          // In this form the hints, and what to do on a refusal, are read at body size.
+          className="rounded-lg border border-border p-3 [&_[role=alert]]:text-body [&_p]:text-body"
         >
           <summary className="cursor-pointer text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
@@ -384,12 +409,8 @@ export function VisualizationsSection({
             <Field
               id="viz-name"
               label={t("endpoints.page.visualizations.name")}
-              help={t("endpoints.page.visualizations.nameHint")}
-              errors={
-                name === "" || nameOk
-                  ? undefined
-                  : [t("endpoints.page.visualizations.nameHint")]
-              }
+              help={badName ? undefined : t("endpoints.page.visualizations.hint.name")}
+              errors={badName ? [t("endpoints.page.visualizations.hint.name")] : undefined}
             >
               <Input
                 id="viz-name"
@@ -400,6 +421,7 @@ export function VisualizationsSection({
             <Field
               id="viz-title"
               label={t("endpoints.page.visualizations.chartTitle")}
+              help={t("endpoints.page.visualizations.hint.title")}
             >
               <Input
                 id="viz-title"
@@ -410,6 +432,7 @@ export function VisualizationsSection({
             <Field
               id="viz-description"
               label={t("endpoints.page.visualizations.description")}
+              help={t("endpoints.page.visualizations.hint.description")}
               className="sm:col-span-2"
             >
               <Input
@@ -421,6 +444,7 @@ export function VisualizationsSection({
             <Field
               id="viz-template"
               label={t("endpoints.page.visualizations.template")}
+              help={t("endpoints.page.visualizations.hint.template")}
             >
               <Select
                 id="viz-template"
@@ -437,13 +461,21 @@ export function VisualizationsSection({
                 ))}
               </Select>
             </Field>
-            <Field id="viz-type" label={t("endpoints.field.types")}>
+            <Field
+              id="viz-type"
+              label={t("endpoints.field.types")}
+              help={t(
+                types.length
+                  ? "endpoints.page.visualizations.hint.type"
+                  : "endpoints.page.visualizations.hint.noTypes",
+              )}
+            >
               <Select
                 id="viz-type"
                 value={type}
                 onChange={(event) => {
                   setType(event.target.value);
-                  setColumns({});
+                  setPicks({});
                 }}
               >
                 {types.map((one) => (
@@ -458,18 +490,21 @@ export function VisualizationsSection({
                 key={role}
                 id={`viz-${role}`}
                 label={t(`endpoints.page.visualizations.roles.${role}`)}
+                help={roleHint(role)}
               >
                 <Select
                   id={`viz-${role}`}
                   value={columns[role] ?? ""}
                   onChange={(event) =>
-                    setColumns({ ...columns, [role]: event.target.value })
+                    setPicks({ ...picks, [role]: event.target.value })
                   }
                 >
-                  <option value="">
-                    {t("endpoints.page.visualizations.noColumn")}
-                  </option>
-                  {columnsOf(type).map((column) => (
+                  {source === "temporal" && role === "x" ? null : (
+                    <option value="">
+                      {t("endpoints.page.visualizations.noColumn")}
+                    </option>
+                  )}
+                  {offered(role).map((column) => (
                     <option key={column} value={column}>
                       {column}
                     </option>
@@ -478,39 +513,9 @@ export function VisualizationsSection({
               </Field>
             ))}
           </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="mt-3"
-            disabled={!complete(template, columns)}
-            disabledReason={t("endpoints.page.visualizations.pickRoles")}
-            onClick={() => void fill()}
-          >
-            {t("endpoints.page.visualizations.fill")}
-          </Button>
-          {complete(template, columns) ? null : (
-            <p className="mt-1 text-caption text-fg-muted">
-              {t("endpoints.page.visualizations.pickRoles")}
-            </p>
-          )}
-          <Field
-            id="viz-spec"
-            label={t("endpoints.page.visualizations.spec")}
-            help={t("endpoints.page.visualizations.specHint")}
-            className="mt-3"
-          >
-            <Textarea
-              id="viz-spec"
-              rows={12}
-              className="font-mono text-caption"
-              value={specText}
-              onChange={(event) => setSpecText(event.target.value)}
-            />
-          </Field>
-          {sourceOf(template, served) === "temporal" ? (
+          {source === "temporal" ? (
             <fieldset
-              // A refusal says what to pick, so it is set at body size.
-              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3 [&_[role=alert]]:text-body"
+              className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
               data-testid="viz-temporal"
             >
               <legend className="px-1 text-sm font-medium text-fg">
@@ -629,6 +634,46 @@ export function VisualizationsSection({
               )}
             </fieldset>
           ) : null}
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            disabled={!complete(template, columns)}
+            disabledReason={t("endpoints.page.visualizations.pickRoles")}
+            onClick={() => void fill()}
+          >
+            {t("endpoints.page.visualizations.fill")}
+          </Button>
+          {complete(template, columns) ? null : (
+            <p className="mt-1 text-caption text-fg-muted">
+              {t("endpoints.page.visualizations.pickRoles")}
+            </p>
+          )}
+          <Field
+            id="viz-spec"
+            label={t("endpoints.page.visualizations.spec")}
+            help={ownSpec ? undefined : t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
+            errors={
+              ownSpec
+                ? [
+                    t("endpoints.page.visualizations.fix.spec", {
+                      at: ownSpec.member || t("endpoints.page.visualizations.spec"),
+                      example: SPEC_EXAMPLE,
+                    }),
+                  ]
+                : undefined
+            }
+            className="mt-3"
+          >
+            <Textarea
+              id="viz-spec"
+              // Short until Fill or a paste puts something to read in it.
+              rows={specText ? 12 : 4}
+              className="font-mono text-caption"
+              value={specText}
+              onChange={(event) => setSpecText(event.target.value)}
+            />
+          </Field>
           {removing ? null : alert}
           {ready ? null : (
             <p className="mt-3 text-caption text-fg-muted">

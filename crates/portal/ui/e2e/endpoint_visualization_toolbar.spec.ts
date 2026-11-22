@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { doorsAsRest, manifestReadsAsRest } from "./manifestReads";
 
 test.beforeEach(({ page }) => {
@@ -20,7 +20,7 @@ const LINE = {
   $schema: "https://vega.github.io/schema/vega-lite/v5.json",
   data: { name: "source" },
   mark: "line",
-  encoding: { x: { field: "dateObserved", type: "temporal" }, y: { field: "no2", type: "quantitative" } },
+  encoding: { x: { field: "observedAt", type: "temporal" }, y: { field: "no2", type: "quantitative" } },
 };
 const CHART = {
   name: "no2-week",
@@ -42,6 +42,11 @@ const FIXED = {
   title: { en: "NO2 readings" },
   data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "PT24H", controls: false },
 };
+
+// As the Portal words each refusal: judge's source check, and jc-core's spec check behind its prefix.
+const OVER_31_DAYS = "invalid /spec/catalog/visualizations/0/data/last: source: `P90D` is not an ISO 8601 duration up to P31D";
+const SPEC_READS_A_URL =
+  "spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: the rows come from the Endpoint's declared source, never a URL";
 
 // Written by hand, before the check refused it: a range over 31 days.
 const BROKEN = { ...CHART, name: "no2-quarter", title: { en: "NO2 this quarter" }, data: { ...CHART.data, last: "P90D" } };
@@ -66,8 +71,8 @@ const MODEL = { apiVersion: API, kind: "DataModel", metadata: { name: "air", nam
 interface Stub {
   verbs: string[];
   charts: unknown[];
-  /** The place in the list of the chart whose range the check refuses. */
-  refuse?: number;
+  /** The sentence the check refuses with. */
+  refuse?: string;
   puts: { url: URL; body: Record<string, unknown> }[];
 }
 
@@ -87,7 +92,7 @@ async function stub(page: Page, s: Stub) {
       s.puts.push({ url, body: JSON.parse(request.postData() ?? "{}") });
       if (s.refuse !== undefined) {
         // As the Portal's check answers: a verdict, the pointer in the sentence, no path.
-        const message = `invalid /spec/catalog/visualizations/${s.refuse}/data/last: source: \`P31D\` is not an ISO 8601 duration up to P31D`;
+        const message = s.refuse;
         return json({ valid: false, verdict: { ok: false, findings: [{ level: "error", path: "", message }] } });
       }
       if (url.searchParams.get("dryRun")) return json({ valid: true });
@@ -100,6 +105,13 @@ async function stub(page: Page, s: Stub) {
   });
   await page.route("**/cs/**", (route) => route.fulfill({ contentType: "application/ld+json", body: "[]" }));
   await page.route("**/api/endpoint/**", (route) => route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
+}
+
+/** The whole form in one picture, in a window tall enough that nothing floats over it. */
+async function shootForm(page: Page, file: string, width: number) {
+  await page.setViewportSize({ width, height: 2600 });
+  await page.getByTestId("visualizations").locator("details").screenshot({ path: join(DIR, file) });
+  await page.setViewportSize({ width, height: 1000 });
 }
 
 const DIR = join("test-results", "T-7491");
@@ -118,8 +130,13 @@ for (const width of [1440, 400]) {
     await section.getByText("Add a chart").click();
     const toolbar = section.getByTestId("viz-temporal");
     await expect(toolbar).toBeVisible();
-    await toolbar.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(DIR, `toolbar-empty-${width}.png`) });
+    // Every field says what it takes, with an example, at the size of the body text.
+    for (const field of await section.locator("details input, details select, details textarea").all()) {
+      await expect(field).toHaveAccessibleDescription(/e\.g\./);
+    }
+    const size = (locator: Locator) => locator.evaluate((node) => getComputedStyle(node).fontSize);
+    expect(await size(section.locator("#viz-title__help"))).toBe(await size(section.locator("label[for=viz-title]")));
+    await shootForm(page, `toolbar-empty-${width}.png`, width);
 
     // Raw readings take no method.
     await page.getByLabel("Default granularity").selectOption("raw");
@@ -133,15 +150,14 @@ for (const width of [1440, 400]) {
     await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
     await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/always see the settings below/);
 
-    await page.getByLabel("Horizontal axis").selectOption("dateObserved");
+    await expect(page.getByLabel("Horizontal axis")).toHaveValue("observedAt");
     await page.getByLabel("Measure").selectOption("no2");
     await page.getByRole("button", { name: "Fill from the chart" }).click();
-    await expect(page.getByLabel("Vega-Lite specification")).toHaveValue(/dateObserved/);
+    await expect(page.getByLabel("Vega-Lite specification")).toHaveValue(/observedAt/);
     await page.getByLabel("Name", { exact: true }).fill("no2-week");
     await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
     await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
-    await toolbar.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(DIR, `toolbar-filled-${width}.png`) });
+    await shootForm(page, `toolbar-filled-${width}.png`, width);
 
     await page.getByRole("button", { name: "Propose the chart" }).click();
     await expect.poll(() => s.puts.length).toBe(2);
@@ -152,39 +168,39 @@ for (const width of [1440, 400]) {
     await page.screenshot({ path: join(DIR, `toolbar-proposed-${width}.png`) });
   });
 
-  test(`a refused default says what to pick on its field at ${width} px (T-7491)`, async ({ page }) => {
+  test(`a refused specification says what to change on its field at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    const s: Stub = { verbs: ["read", "propose", "approve"], charts: [], puts: [], refuse: 0 };
+    const s: Stub = { verbs: ["read", "propose", "approve"], charts: [], puts: [], refuse: SPEC_READS_A_URL };
     await stub(page, s);
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await section.getByText("Add a chart").click();
-    await page.getByLabel("Horizontal axis").selectOption("dateObserved");
     await page.getByLabel("Measure").selectOption("no2");
     await page.getByRole("button", { name: "Fill from the chart" }).click();
-    await expect(page.getByLabel("Vega-Lite specification")).toHaveValue(/dateObserved/);
+    const spec = page.getByLabel("Vega-Lite specification");
+    await expect(spec).toHaveValue(/observedAt/);
+    // Edited by hand to read another server: the one refusal this form can get for a new chart.
+    await spec.fill(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }, null, 2));
     await page.getByLabel("Name", { exact: true }).fill("no2-week");
     await page.getByLabel("Title", { exact: true }).fill("NO2 this week");
     await page.getByLabel("Description", { exact: true }).fill("Daily peak.");
-    await page.getByLabel("Default range").selectOption("month");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
-    await expect(alert).toContainText("Nothing was proposed. Correct “Default range” above");
+    await expect(alert).toContainText("Nothing was proposed. Correct “Vega-Lite specification” above");
     await expect(section).not.toContainText("/spec/catalog");
-    const range = page.getByLabel("Default range");
-    await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/The server did not accept 31 days as the range. Pick 24 hours or 7 days/);
+    await expect(spec).toHaveAttribute("aria-invalid", "true");
+    await expect(spec).toHaveAccessibleDescription(/did not accept “data\.url”/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
-    await expect(range).toBeFocused();
-    await section.getByTestId("viz-temporal").scrollIntoViewIfNeeded();
+    await expect(spec).toBeFocused();
+    await spec.evaluate((box) => (box.scrollTop = 0));
     await page.screenshot({ path: join(DIR, `toolbar-refused-${width}.png`) });
   });
 
   test(`a saved chart that blocks a removal is named at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: 0 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: OVER_31_DAYS });
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
@@ -199,7 +215,7 @@ for (const width of [1440, 400]) {
 
   test(`a refusal is said in the person's language at ${width} px (T-7491)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: 0 });
+    await stub(page, { verbs: ["read", "propose", "approve"], charts: [SHOWN, BROKEN], puts: [], refuse: OVER_31_DAYS });
     await page.goto("/projects/ovzdusie/endpoints/air?lang=sk");
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Odstrániť" }).first().click();
@@ -217,8 +233,7 @@ for (const width of [1440, 400]) {
     await section.getByText("Add a chart").click();
     await page.getByLabel("Chart", { exact: true }).selectOption("bar");
     await expect(section.getByTestId("viz-temporal")).toHaveCount(0);
-    await section.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(DIR, `toolbar-bar-${width}.png`) });
+    await shootForm(page, `toolbar-bar-${width}.png`, width);
   });
 
   test(`a reader without the propose right sees the charts and no editor at ${width} px (T-7491)`, async ({ page }) => {

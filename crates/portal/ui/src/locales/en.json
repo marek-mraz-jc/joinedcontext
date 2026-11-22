@@ -1856,7 +1856,6 @@
         "overTime": "Over time",
         "add": "Add a chart",
         "name": "Name",
-        "nameHint": "Lower-case letters, digits and hyphens; unique on this endpoint.",
         "chartTitle": "Title",
         "description": "Description",
         "template": "Chart",
@@ -1864,7 +1863,6 @@
         "fill": "Fill from the chart",
         "pickRoles": "Pick a column for each axis the chart needs.",
         "spec": "Vega-Lite specification",
-        "specHint": "Edit it as JSON if you like; the check before the proposal refuses anything that reaches outside the endpoint.",
         "badJson": "The specification is not valid JSON.",
         "noSource": "This endpoint serves none of the sources this chart reads.",
         "incomplete": "Give the chart a name, a title, a description and a specification.",
@@ -1893,7 +1891,8 @@
           "range": "The server did not accept {value} as the range. Pick {choices}.",
           "granularity": "The server did not accept {value} as the granularity. Pick {choices}.",
           "method": "The server did not accept {value} as the method. Pick {choices}.",
-          "controls": "This setting was not accepted. Tick or untick the box, then propose again."
+          "controls": "This setting was not accepted. Tick or untick the box, then propose again.",
+          "spec": "The check did not accept “{at}”. Use valid Vega-Lite that reads only this endpoint, e.g. {example}, or fill it again."
         },
         "range": "Default range",
         "ranges": {
@@ -1921,7 +1920,26 @@
           "controls": "The toolbar above the chart lets readers change these settings, e.g. pick another range.",
           "locked": "Readers always see the settings below, e.g. the range you pick, and cannot change them.",
           "raw": "Draws every recorded reading, e.g. one every ten minutes. No method is needed.",
-          "fixedRange": "The period readers always see, e.g. 7 days for the last week."
+          "fixedRange": "The period readers always see, e.g. 7 days for the last week.",
+          "name": "Lower-case letters, digits and hyphens, unique on this endpoint, e.g. no2-week.",
+          "title": "The heading readers see above the chart, e.g. NO2 this week.",
+          "description": "One sentence on what the chart shows, e.g. The daily peak of NO2 at each station.",
+          "template": "The shape of the chart, e.g. Line over time for readings through a week.",
+          "type": "The kind of thing the chart reads, e.g. AirQualityObserved for air quality readings.",
+          "noTypes": "The data model lists no type yet. Add one to the model first, e.g. AirQualityObserved.",
+          "noColumns": "The data model lists no column here. Add an attribute to the type first, e.g. no2.",
+          "time": "The time each reading was taken, e.g. 14:00. A chart over time always uses observedAt.",
+          "x": "The column along the bottom of the chart, e.g. dateObserved for time.",
+          "bars": "The column that names each bar, e.g. name for one bar per station.",
+          "y": "The number the chart draws, e.g. no2.",
+          "color": "Optional. A colour for each value, e.g. name for one colour per station.",
+          "facet": "A small chart for each value, e.g. name for one panel per station.",
+          "heatmap": {
+            "x": "The columns of the grid, e.g. dateObserved for one column per time.",
+            "y": "The rows of the grid, e.g. name for one row per station.",
+            "color": "The number that sets the colour of each cell, e.g. no2."
+          },
+          "spec": "Fill writes it from the fields above and you can edit it as JSON. It may read only this endpoint, e.g. {example}."
         },
         "templates": {
           "bar": "Bar chart",

@@ -87,7 +87,7 @@ describe("VisualizationsSection", () => {
     vi.unstubAllGlobals();
   });
 
-  function mount(manifest: Manifest, canEdit: boolean) {
+  function mount(manifest: Manifest, canEdit: boolean, columns = ["dateObserved", "no2", "name"]) {
     vi.stubGlobal("fetch", vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const request =
@@ -125,7 +125,7 @@ describe("VisualizationsSection", () => {
             project="ovzdusie"
             manifest={manifest}
             types={["AirQualityObserved"]}
-            columnsOf={() => ["dateObserved", "no2", "name"]}
+            columnsOf={() => columns}
             served={["ngsi-ld", "csv"]}
             canEdit={canEdit}
           />
@@ -142,14 +142,14 @@ describe("VisualizationsSection", () => {
     expect(fill).toHaveAttribute("aria-disabled", "true");
     await userEvent.selectOptions(
       screen.getByLabelText(V.roles.x),
-      "dateObserved",
+      "observedAt",
     );
     await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
     await userEvent.click(fill);
     const get = sent.find((r) => r.method === "GET")!;
     expect(get.url.pathname).toBe("/api/v1/visualization-templates/line");
     expect(Object.fromEntries(get.url.searchParams)).toEqual({
-      x: "dateObserved",
+      x: "observedAt",
       y: "no2",
     });
     await waitFor(() =>
@@ -217,7 +217,7 @@ describe("VisualizationsSection", () => {
     await userEvent.selectOptions(screen.getByLabelText(V.method), "max");
     await userEvent.click(screen.getByLabelText(V.controls));
 
-    await userEvent.selectOptions(screen.getByLabelText(V.roles.x), "dateObserved");
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.x), "observedAt");
     await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
     await userEvent.click(screen.getByRole("button", { name: V.fill }));
     await waitFor(() =>
@@ -312,10 +312,81 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     refusal = [
       "/spec/catalog/visualizations/0/data/last: source: not allowed",
-      "/spec/catalog/visualizations/0/spec/data: spec: a URL is not allowed",
+      "/spec/catalog/visualizations/0/data/attrs: source: a URL is not allowed",
     ];
     await proposeLine();
     expect(await screen.findByText(/a URL is not allowed/)).toBeVisible();
+  });
+
+  it.each(["bar", "line", "heatmap", "small-multiples", "linked-brush"])(
+    "gives every field of a %s chart a hint with an example (T-7491)",
+    async (template) => {
+      mount(endpoint(), true);
+      await userEvent.click(screen.getByText(V.add));
+      await userEvent.selectOptions(screen.getByLabelText(V.template), template);
+      const fields = [...document.querySelectorAll("details input, details select, details textarea")];
+      expect(fields.length).toBeGreaterThan(6);
+      for (const field of fields) expect(field, field.id).toHaveAccessibleDescription(/e\.g\./);
+    },
+  );
+
+  it.each(["sk", "cs", "de"] as const)("describes every field in %s (T-7491)", async (language) => {
+    await i18n.changeLanguage(language);
+    mount(endpoint(), true);
+    await userEvent.click(document.querySelector("summary")!);
+    for (const field of document.querySelectorAll("details input, details select, details textarea"))
+      expect(field, field.id).toHaveAccessibleDescription(/napr\.|např\.|z\. B\./);
+  });
+
+  it("offers a history chart only the columns its readings carry (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    const offered = (label: string) =>
+      [...(screen.getByLabelText(label) as HTMLSelectElement).options].map((option) => option.value);
+    expect(offered(V.roles.x)).toEqual(["observedAt"]);
+    expect(offered(V.roles.color)).toEqual(["", "name", "id"]);
+    expect(offered(V.roles.y)).toEqual(["", "dateObserved", "no2", "name"]);
+    await userEvent.selectOptions(screen.getByLabelText(V.template), "bar");
+    expect(offered(V.roles.x)).toEqual(["", "dateObserved", "no2", "name"]);
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.color), "dateObserved");
+    await userEvent.selectOptions(screen.getByLabelText(V.template), "line");
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
+    doorsAsRest();
+    await userEvent.click(screen.getByRole("button", { name: V.fill }));
+    await waitFor(() => expect(sent.some((r) => r.method === "GET")).toBe(true));
+    // The bar's colour column is not one of the readings' columns: it is not sent.
+    expect(Object.fromEntries(sent.find((r) => r.method === "GET")!.url.searchParams)).toEqual({ x: "observedAt", y: "no2" });
+  });
+
+  it("says what to do when the model lists no column (T-7491)", async () => {
+    mount(endpoint(), true, []);
+    await userEvent.click(screen.getByText(V.add));
+    expect(screen.getByLabelText(V.roles.y)).toHaveAccessibleDescription(V.hint.noColumns);
+  });
+
+  it("puts what readers see before the button that fills the specification (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    const fill = screen.getByRole("button", { name: V.fill });
+    expect(screen.getByTestId("viz-temporal").compareDocumentPosition(fill)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(fill.compareDocumentPosition(screen.getByLabelText(V.spec))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it.each([
+    ["/data/url: data-source: the rows come from the Endpoint's declared source, never a URL", "data.url"],
+    ["/data/name: data-source: the one named dataset is `source`; others hold inline values or derive from it", "data.name"],
+    [": schema: a spec is a JSON object", V.spec],
+  ])("says on the specification what the check refused, without the pointer: %s (T-7491)", async (refused, at) => {
+    mount(endpoint({ visualizations: [BAR] }), true);
+    doorsAsRest();
+    refusal = [`spec is not a valid Endpoint: invalid /spec/catalog/visualizations/1/spec${refused}`];
+    await proposeLine();
+    const spec = screen.getByLabelText(V.spec);
+    await waitFor(() => expect(spec).toHaveAttribute("aria-invalid", "true"));
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining(`did not accept “${at}”`));
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+    await userEvent.click(screen.getByRole("button", { name: V.showField }));
+    expect(spec).toHaveFocus();
   });
 
   it("lists what readers start from, and what they are locked to without the toolbar (T-7491)", () => {
