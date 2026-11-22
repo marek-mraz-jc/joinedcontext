@@ -99,6 +99,8 @@ async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
 # T-7233: chrono -> jiff; RFC 3339 written byte for byte as chrono did, Postgres timestamptz
 jc-time = { path = "../shared/jc-time" }
+# T-7499: where every pool of jc starts
+jc-pool = { path = "../shared/jc-pool" }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # 4.23.3 EXAMPLES 6/7: orderBy collation — ICU4X collator, compiled data
 icu_collator = "2"

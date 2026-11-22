@@ -185,7 +185,8 @@ def test_a_known_gap_stays_listed_but_only_a_new_failure_turns_the_verdict_red(t
                                   r"^orgs/pipelines\.  # every pipelines row",
                                   r"^subscriptions/transport\.edge-upgrade$  # T-7478",
                                   r"^subscriptions/transport\.  # every transport row",
-                                  r"^orgs/database\.pool$  # T-7494", r"pipelines\.recorded  # T-7494"])
+                                  r"^orgs/database\.pool$  # T-7494", r"pipelines\.recorded  # T-7494",
+                                  r"^orgs/database\.held$  # T-7499"])
 def test_the_known_list_refuses_a_line_that_would_hold_a_silent_pipeline(tmp_path, line):
     known = tmp_path / "known.txt"
     known.write_text("^good/two$  # filed\n" + line + "\n")

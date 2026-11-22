@@ -1,0 +1,12 @@
+[package]
+name = "jc-pool"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The one place a sqlx pool of jc starts: a failed release ping closes gracefully, an idle connection leaves within two minutes (T-7499)"
+
+[dependencies]
+# Not the sqlx umbrella: ekiben links the driver crates alone (crates/ekiben/Cargo.toml).
+sqlx-core = { version = "0.9", default-features = false }
+tracing = "0.1"

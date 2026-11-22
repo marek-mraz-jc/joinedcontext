@@ -12,8 +12,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlSslMode};
-use crate::sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
+use crate::sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
+use crate::sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 use ekiben_core::config::parse_duration_str;
 use ekiben_core::{CoreError, OrgContext};
 use serde_json::Value as JsonValue;
@@ -636,8 +636,8 @@ pub async fn open(
 ) -> Result<Db, CoreError> {
     let (max_open, min_idle) = settings.pool_limits();
     macro_rules! pool {
-        ($opts:ty) => {
-            <$opts>::new()
+        ($db:ty) => {
+            jc_pool::options::<$db>()
                 .max_connections(max_open)
                 .min_connections(0)
                 .idle_timeout(settings.conn_max_idle_time.filter(|d| !d.is_zero()))
@@ -654,7 +654,7 @@ pub async fn open(
             let checked =
                 ekiben_io_http::outbound::resolve_host_checked(o.get_host(), o.get_port(), org)
                     .await?;
-            let mut pool = pool!(PgPoolOptions);
+            let mut pool = pool!(crate::sqlx::postgres::Postgres);
             if let Some(t) = connect_timeout {
                 pool = pool.acquire_timeout(*t);
             }
@@ -672,7 +672,7 @@ pub async fn open(
                 (MySqlSslMode::VerifyIdentity, _) | (_, None) => o.clone(),
                 (_, Some(addr)) => o.clone().host(&addr.ip().to_string()),
             };
-            Db::MySql(pool!(MySqlPoolOptions).connect_lazy_with(o))
+            Db::MySql(pool!(crate::sqlx::mysql::MySql).connect_lazy_with(o))
         }
         Target::Sqlite(t) => Db::Sqlite(crate::sqlite::SqliteDb::open(t).map_err(|e| {
             CoreError::other(format!("could not establish connection to database: {e}"))

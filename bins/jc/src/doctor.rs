@@ -885,7 +885,7 @@ impl World for Net {
     fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>> {
         let url = self.portal_database_url.as_deref()?;
         Some(self.rt.block_on(async {
-            let pool = sqlx::postgres::PgPoolOptions::new()
+            let pool = jc_pool::options::<sqlx::Postgres>()
                 .max_connections(1)
                 .acquire_timeout(TIMEOUT)
                 .connect(url)

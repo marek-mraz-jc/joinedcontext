@@ -19,7 +19,7 @@ use shako_core::{
     SecretStore, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId,
     WebhookRecord,
 };
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool};
 use sqlx::{Postgres, Row, Transaction};
 use std::collections::HashSet;
 use std::path::Path;
@@ -182,7 +182,7 @@ impl PgStore {
 
     /// Connects with explicit options and runs the boot RLS check; refuses a role that bypasses RLS.
     pub async fn connect_with(opts: PgConnectOptions, max_connections: u32) -> ShakoResult<Self> {
-        let pool = PgPoolOptions::new()
+        let pool = jc_pool::options::<sqlx::Postgres>()
             .max_connections(max_connections.clamp(1, 20))
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts)
