@@ -25,9 +25,6 @@ pub const RETIRED_ATTRIBUTE: &str = "jc.splitRealm.retiredTo";
 const MANAGED_BY: &str = "managed-by";
 const MANAGED_VALUE: &str = "joinedcontext";
 
-/// Groups and members read per group; an installation has a few hundred people.
-/// ponytail: one page of 100 000, page through `first` once a realm grows past it.
-
 #[derive(Parser, Debug)]
 #[command(
     name = "jc kaisatsu split-realm",
