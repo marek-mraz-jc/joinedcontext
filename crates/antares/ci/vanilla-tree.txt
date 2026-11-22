@@ -2250,6 +2250,10 @@ antares-broker v0.3.0
 │   │   │       └── sqlx-core feature "uuid" (*)
 │   │   ├── ngsild-ql feature "default" (*)
 │   │   ├── regex feature "default" (*)
+│   │   ├── jc-pool feature "default"
+│   │   │   └── jc-pool v0.1.0
+│   │   │       ├── sqlx-core v0.9.0 (*)
+│   │   │       └── tracing feature "default" (*)
 │   │   ├── metrics feature "default"
 │   │   │   └── metrics v0.24.6
 │   │   │       └── rapidhash v4.5.1
