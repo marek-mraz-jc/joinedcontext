@@ -444,23 +444,18 @@ fn repetition(t: &Type) -> Repetition {
     }
 }
 
+// The converted type alone decides, as in `is_unsigned`: parquet's group builder fills it from a
+// List or Map logical type.
 fn is_list(t: &Type) -> bool {
-    !t.is_primitive()
-        && (matches!(
-            t.get_basic_info().logical_type_ref(),
-            Some(LogicalType::List)
-        ) || t.get_basic_info().converted_type() == ConvertedType::LIST)
+    !t.is_primitive() && t.get_basic_info().converted_type() == ConvertedType::LIST
 }
 
 fn is_map(t: &Type) -> bool {
     !t.is_primitive()
-        && (matches!(
-            t.get_basic_info().logical_type_ref(),
-            Some(LogicalType::Map)
-        ) || matches!(
+        && matches!(
             t.get_basic_info().converted_type(),
             ConvertedType::MAP | ConvertedType::MAP_KEY_VALUE
-        ))
+        )
 }
 
 /// `reconstructFuncOf`: optional, repeated, list, map, then required.
