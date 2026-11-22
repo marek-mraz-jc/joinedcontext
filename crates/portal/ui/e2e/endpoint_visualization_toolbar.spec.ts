@@ -190,7 +190,7 @@ for (const width of [1440, 400]) {
     await expect(alert).toContainText("Nothing was proposed. Correct “Chart specification (Vega-Lite)” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
-    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Remove https:\/\/example\.org\/no2\.csv/);
+    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data\. Replace "url": "https:\/\/example\.org\/no2\.csv" with "name": "source"/);
     // The shots show the member that was refused, at the top of the box.
     await spec.evaluate((box) => (box.scrollTop = 0));
     await alert.scrollIntoViewIfNeeded();

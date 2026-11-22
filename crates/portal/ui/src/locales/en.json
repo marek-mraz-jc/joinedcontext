@@ -1859,7 +1859,7 @@
         "chartTitle": "Title",
         "description": "Description",
         "template": "Chart",
-        "noColumn": "None",
+        "noColumn": "One colour",
         "fill": "Write it from the fields above",
         "pickRoles": "Pick a column for each axis the chart needs.",
         "spec": "Chart specification (Vega-Lite)",
@@ -1894,7 +1894,8 @@
           "controls": "This setting was not accepted. Tick or untick the box, then propose again.",
           "spec": "This is not a valid Vega-Lite chart. Correct it, or press “Write it from the fields above”, which replaces your edits.",
           "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Write it from the fields above”, which replaces your edits.",
-          "address": "A chart may use only this endpoint's data. Remove {address}, or press “Write it from the fields above”, which replaces your edits."
+          "address": "A chart may use only this endpoint's data. Remove {address}, or press “Write it from the fields above”, which replaces your edits.",
+          "dataLink": "A chart may use only this endpoint's data. Replace {link} with {example}, or press “Write it from the fields above”, which replaces your edits."
         },
         "range": "Default range",
         "ranges": {
@@ -1966,7 +1967,7 @@
         "chooseColumn": "Choose a column",
         "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",
         "setRange": "Propose {range} for “{chart}”",
-        "edited": "The chart is drawn from what you wrote under Advanced. The chart and column fields do not change it. Empty that box to use them again."
+        "edited": "What you wrote under Advanced replaces the chart and column fields above, so they do not change the chart. Empty that box to use them again."
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",

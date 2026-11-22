@@ -242,11 +242,16 @@ export function VisualizationsSection({
     ownSpec && /^(url|href)$/.test(ownSpec.path.at(-1) ?? "")
       ? textAt(sent.charts[ownSpec.index]?.spec, ownSpec.path)
       : undefined;
+  const dataLink = address !== undefined && ownSpec?.path.slice(-2).join("/") === "data/url";
   const showRefused = () => {
     const field = document.getElementById(`viz-${refusedField}`);
     field?.focus();
-    const at = address && field instanceof HTMLTextAreaElement ? field.value.indexOf(address) : -1;
-    if (address && at >= 0) (field as HTMLTextAreaElement).setSelectionRange(at, at + address.length);
+    if (!address || !(field instanceof HTMLTextAreaElement)) return;
+    const at = field.value.indexOf(address);
+    if (at < 0) return;
+    // A data link is replaced whole, member and value.
+    const member = dataLink ? field.value.lastIndexOf('"url"', at) : -1;
+    field.setSelectionRange(member >= 0 ? member : at, at + address.length + (member >= 0 ? 1 : 0));
   };
   const blocking = other ? sent.charts[other.index] : undefined;
   const blocked = blocking && {
@@ -492,11 +497,6 @@ export function VisualizationsSection({
           <summary className="cursor-pointer content-center text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
           </summary>
-          {specText.trim() && specText !== filled ? (
-            <Alert tone="info" className="mt-3">
-              {t("endpoints.page.visualizations.edited")}
-            </Alert>
-          ) : null}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field
               id="viz-name"
@@ -620,6 +620,11 @@ export function VisualizationsSection({
               </Field>
             ))}
           </div>
+          {specText.trim() && specText !== filled ? (
+            <Alert tone="info" className="mt-3">
+              {t("endpoints.page.visualizations.edited")}
+            </Alert>
+          ) : null}
           {source === "temporal" ? (
             <fieldset
               className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-border p-3 sm:grid-cols-3"
@@ -772,7 +777,11 @@ export function VisualizationsSection({
                 ownSpec
                   ? [
                     address
-                      ? t("endpoints.page.visualizations.fix.address", { address })
+                      ? t(`endpoints.page.visualizations.fix.${dataLink ? "dataLink" : "address"}`, {
+                          address,
+                          link: `"url": "${address}"`,
+                          example: '"name": "source"',
+                        })
                       : t(`endpoints.page.visualizations.fix.${ownSpec.why}`),
                   ]
                   : undefined

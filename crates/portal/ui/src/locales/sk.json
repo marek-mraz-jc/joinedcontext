@@ -1859,7 +1859,7 @@
         "chartTitle": "Nadpis",
         "description": "Popis",
         "template": "Graf",
-        "noColumn": "Bez stĺpca",
+        "noColumn": "Jedna farba",
         "fill": "Zapísať z polí vyššie",
         "pickRoles": "Vyberte stĺpec pre každú os, ktorú graf potrebuje.",
         "spec": "Špecifikácia grafu (Vega-Lite)",
@@ -1894,7 +1894,8 @@
           "controls": "Toto nastavenie nebolo prijaté. Zmeňte zaškrtnutie a navrhnite znova.",
           "spec": "Toto nie je platný graf Vega-Lite. Opravte ho alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
           "outside": "Graf smie používať len údaje tohto endpointu. Odstráňte odkaz na inú adresu alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
-          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu."
+          "address": "Graf smie používať len údaje tohto endpointu. Odstráňte {address} alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu.",
+          "dataLink": "Graf smie používať len údaje tohto endpointu. Nahraďte {link} za {example} alebo stlačte „Zapísať z polí vyššie“, čím sa vaše úpravy prepíšu."
         },
         "range": "Predvolené obdobie",
         "ranges": {
@@ -1966,7 +1967,7 @@
         "chooseColumn": "Vyberte stĺpec",
         "removeThenRemove": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny znova odstráňte „{removed}“.",
         "setRange": "Navrhnúť {range} pre „{chart}“",
-        "edited": "Graf sa kreslí z toho, čo ste napísali v časti Pokročilé. Polia grafu a stĺpcov ho nemenia. Ak ich chcete znova použiť, vyprázdnite ten rámček."
+        "edited": "To, čo ste napísali v časti Pokročilé, nahrádza polia grafu a stĺpcov vyššie, preto graf nemenia. Ak ich chcete znova použiť, vyprázdnite ten rámček."
       },
       "firstCall": "Prvé volanie",
       "firstCallOpen": "Otvoriť v prehliadači",

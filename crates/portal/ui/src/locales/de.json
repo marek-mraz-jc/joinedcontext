@@ -1859,7 +1859,7 @@
         "chartTitle": "Titel",
         "description": "Beschreibung",
         "template": "Diagramm",
-        "noColumn": "Keine",
+        "noColumn": "Eine Farbe",
         "fill": "Aus den Feldern oben schreiben",
         "pickRoles": "Wählen Sie für jede Achse, die das Diagramm braucht, eine Spalte.",
         "spec": "Diagrammspezifikation (Vega-Lite)",
@@ -1894,7 +1894,8 @@
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
           "spec": "Das ist kein gültiges Vega-Lite-Diagramm. Korrigieren Sie es oder drücken Sie „Aus den Feldern oben schreiben“, das Ihre Änderungen ersetzt.",
           "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder drücken Sie „Aus den Feldern oben schreiben“, das Ihre Änderungen ersetzt.",
-          "address": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie {address} oder drücken Sie „Aus den Feldern oben schreiben“, das Ihre Änderungen ersetzt."
+          "address": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie {address} oder drücken Sie „Aus den Feldern oben schreiben“, das Ihre Änderungen ersetzt.",
+          "dataLink": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Ersetzen Sie {link} durch {example} oder drücken Sie „Aus den Feldern oben schreiben“, das Ihre Änderungen ersetzt."
         },
         "range": "Standardzeitraum",
         "ranges": {
@@ -1966,7 +1967,7 @@
         "chooseColumn": "Spalte wählen",
         "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",
         "setRange": "{range} für „{chart}“ vorschlagen",
-        "edited": "Das Diagramm wird aus dem gezeichnet, was Sie unter Erweitert geschrieben haben. Die Felder für Diagramm und Spalten ändern es nicht. Leeren Sie das Feld, um sie wieder zu nutzen."
+        "edited": "Was Sie unter Erweitert geschrieben haben, ersetzt die Felder für Diagramm und Spalten oben, sie ändern das Diagramm also nicht. Leeren Sie das Feld, um sie wieder zu nutzen."
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

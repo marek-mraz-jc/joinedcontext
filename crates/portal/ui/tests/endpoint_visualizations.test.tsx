@@ -467,8 +467,8 @@ describe("VisualizationsSection", () => {
     refusal = ["spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: never a URL"];
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
     await userEvent.click(await screen.findByRole("button", { name: V.showField }));
-    expect(spec).toHaveAccessibleDescription(expect.stringContaining("Remove https://example.org/no2.csv,"));
-    expect(spec.value.slice(spec.selectionStart, spec.selectionEnd)).toBe("https://example.org/no2.csv");
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining('Replace "url": "https://example.org/no2.csv" with "name": "source",'));
+    expect(spec.value.slice(spec.selectionStart, spec.selectionEnd)).toBe('"url":"https://example.org/no2.csv"');
   });
 
   it("sets a blocking chart's range to one that is allowed, and leaves the rest of it (T-7491)", async () => {
