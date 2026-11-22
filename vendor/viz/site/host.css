@@ -34,4 +34,6 @@ html[data-theme="dark"] .control select, html[data-theme="dark"] .control input 
 html[data-theme="dark"] .hint { color: #a0a8b3; }
 @media (max-width: 480px) { .control { max-width: none; flex-basis: 40%; } }
 .retry { font: inherit; margin: 0 0 8px; padding: 6px 14px; border: 1px solid #1d4ed8; border-radius: 6px; background: #1d4ed8; color: #fff; cursor: pointer; }
+.skeleton { height: 320px; margin: 8px 0; border-radius: 8px; background: #f1f5f9; }
+html[data-theme="dark"] .skeleton { background: #22272e; }
 .retry:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }

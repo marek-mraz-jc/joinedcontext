@@ -299,6 +299,11 @@
     return isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== text ? null : ms;
   }
 
+  // A date keeps its parts on one line ("14. 11. 2026").
+  function nb(text) {
+    return String(text).replace(/ /g, "\u00a0");
+  }
+
   function iso(ms) {
     return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
   }
@@ -444,12 +449,12 @@
     if (color && !enc.opacity) {
       copy.params = [{ name: "pick", select: { type: "point", fields: [color] }, bind: "legend" }];
       enc.opacity = { condition: { param: "pick", value: 1 }, value: 0.15 };
-      enc.color.legend = Object.assign({ orient: "bottom", columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, enc.color.legend);
+      enc.color.legend = Object.assign({ orient: "bottom", columns: opts.width < 480 ? 2 : 4, labelLimit: 0 }, Array.isArray(opts.shown) && opts.shown.length ? { values: opts.shown } : {}, enc.color.legend);
     }
     var strip = {
       width: width,
       height: 44,
-      mark: { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains" },
+      mark: { type: "line", strokeWidth: 1, invalid: "break-paths-show-domains", point: opts.dense ? false : { size: 8, filled: true } },
       params: [{ name: "brush", select: { type: "interval", encodings: ["x"] } }],
       encoding: {
         x: { field: enc.x.field, type: "temporal", title: null, axis: { format: "%-d. %-m.", labelOverlap: "greedy", labelSeparation: 8, tickMinStep: DAY, tickCount: Math.max(Math.floor(width / 80), 2) } },
@@ -820,7 +825,7 @@
           // The span the rows cover: a cut answer can miss either end of the range picked.
           var times = out.map(function (row) { return row.observedAt; }).sort();
           var stamp = function (at) {
-            return at ? new Date(at).toLocaleString(lang, { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : "?";
+            return at ? nb(new Date(at).toLocaleString(lang, { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })) : "?";
           };
           data.partial = (PARTIAL[lang] || PARTIAL.en).replace("{from}", stamp(times[0])).replace("{to}", stamp(times[times.length - 1]));
         }
@@ -963,6 +968,11 @@
       retry.hidden = true;
       retry.addEventListener("click", function () { read(); });
       status.parentNode.insertBefore(retry, status.nextSibling);
+      var skeleton = document.createElement("div");
+      skeleton.className = "skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      skeleton.hidden = true;
+      frame.parentNode.insertBefore(skeleton, frame);
       var zoom = document.createElement("p");
       zoom.className = "hint";
       zoom.textContent = t.zoom;
@@ -1009,8 +1019,10 @@
         var dense = Object.keys(series).some(function (k) { return series[k] > 60; });
         var width = Math.max(frame.clientWidth || document.body.clientWidth || 600, 200) - 70;
         var names = Object.keys(all.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
-        var key = [attr, m && m.title, dense, daily, names.join(","), Math.round(width / 40)].join("|");
-        if (bar) bar.stations(all, state.stations);
+        var shownNames = Object.keys(rows.reduce(function (seen, row) { seen[row.name] = true; return seen; }, {})).sort();
+        var key = [attr, m && m.title, dense, daily, names.join(","), shownNames.join(","), Math.round(width / 40)].join("|");
+        // An empty answer keeps the last station list, so the reader can still change it.
+        if (bar && all.length) bar.stations(all, state.stations);
         frame.hidden = zoom.hidden = reset.hidden = !rows.length;
         if (!rows.length) return say(t.empty, "note");
         if (drawn === key) {
@@ -1018,7 +1030,7 @@
           return;
         }
         drawn = key;
-        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, names: names, from: authored, to: state.attr }) : spec;
+        var shown = attr ? interactive(spec, { attr: attr, measure: m, lang: lang, width: width, dense: dense, daily: daily, names: names, shown: shownNames, from: authored, to: state.attr }) : spec;
         frame.contentWindow.postMessage({ type: "jc-viz-render", spec: shown, data: { format: "json", rows: rows }, lang: lang }, "*");
         if (shown.vconcat && !zoom.parentNode) {
           frame.parentNode.insertBefore(zoom, frame.nextSibling);
@@ -1031,6 +1043,9 @@
         frame.setAttribute("aria-busy", "true");
         say(t.loading, "loading");
         retry.hidden = true;
+        // The chart's place stays taken while the first rows load, so the page does not jump.
+        if (!plan) frame.hidden = true;
+        skeleton.hidden = !frame.hidden;
         var p;
         try {
           p = load(view, h.api, lang, fetcher, Date.now(), null, state);
@@ -1054,7 +1069,7 @@
           var first = all.reduce(function (m, row) { var at = Date.parse(row.observedAt); return at < m ? at : m; }, Infinity);
           // A cut answer has its own note: what is missing there is the page's limit, not the source.
           if (!data.partial && first !== Infinity && first - plan.start > Math.max(DAY, (plan.end - plan.start) / 10)) {
-            late = t.firstData.replace("{d}", new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" }));
+            late = t.firstData.replace("{d}", nb(new Date(first).toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" })));
           }
           if (plan.capped) notes.push(t.capped.replace(/\{n\}/g, plan.capped));
           note.textContent = notes.join(" ");
@@ -1070,6 +1085,7 @@
           retry.hidden = false;
         }).then(function () {
           if (mine !== controller) return;
+          skeleton.hidden = true;
           clearTimeout(timer);
           frame.removeAttribute("aria-busy");
           if (bar) bar.busy(false);

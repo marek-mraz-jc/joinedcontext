@@ -180,7 +180,7 @@ for (const width of [1440, 400]) {
     expect(walk.length).toBeGreaterThanOrEqual(2);
     for (const u of walk) expect(u.searchParams.get("timerel")).toBe("between");
     // The walk's earlier windows came back empty: the chart says where the data starts.
-    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14. 11. 2026");
+    await expect(host.locator("#status")).toContainText("Prvé údaje vo vybranom období sú z 14.\u00a011.\u00a02026");
     await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
     await expect(chart.locator("g.concat_0_group g.role-axis-label text").first()).toHaveText(/^\d+\. \d+\.$/);
     await shot(page, "daily-walk", width);
@@ -231,7 +231,7 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#status")).toContainText(/od 14\. 11\. 2026 \d\d:\d\d do 21\. 11\. 2026 \d\d:\d\d/);
+    await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 21\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
     await shot(page, "cut", width);
 
     state.mode = "error";
