@@ -111,3 +111,26 @@ test("two assistant charts load the bundle once and need no unsafe-eval", async 
   for (const policy of policies) expect(policy).not.toContain("unsafe-eval");
   expect(refused).toEqual([]);
 });
+
+test("the chart's menu is a 44 px target in the theme's colours at 400 px", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await page.goto(`${origin}/render.html`);
+  await page.evaluate(
+    (message) => window.postMessage(message, "*"),
+    { type: "jc-viz-render", spec: DECADES.spec, data: { format: "json", rows: DECADES.rows }, lang: "en", theme: "dark" } as const,
+  );
+  const menu = page.locator("#chart summary");
+  await expect(menu).toBeVisible({ timeout: 20_000 });
+  const box = await menu.boundingBox();
+  expect(Math.min(box?.width ?? 0, box?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  const [drawn, theme] = await menu.evaluate((element) => {
+    const dark = (self as unknown as { jcTheme: { dark: { background: string; text: { color: string } } } }).jcTheme.dark;
+    const probe = document.body.appendChild(document.createElement("i"));
+    const computed = (colour: string) => ((probe.style.color = colour), getComputedStyle(probe).color);
+    const style = getComputedStyle(element);
+    return [[getComputedStyle(document.body).backgroundColor, style.backgroundColor, style.color], [computed(dark.background), "rgba(0, 0, 0, 0)", computed(dark.text.color)]];
+  });
+  expect(drawn).toEqual(theme);
+  await context.close();
+});

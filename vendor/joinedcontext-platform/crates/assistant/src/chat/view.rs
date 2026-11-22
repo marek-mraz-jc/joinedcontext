@@ -22,7 +22,8 @@ pub const POINTS: usize = 500;
 const SERIES: usize = 8;
 /// The categories a split names; the rest are one row.
 const GROUPS: usize = 8;
-/// The categories the model is given to say; the rest are one number.
+/// The categories the model is given to say; the rest are one number. The chart's rest is past
+/// [`GROUPS`], a smaller number, so its bar is named for that and never "others" too.
 const SAID_GROUPS: usize = 3;
 /// Past this many categories, names that share their head before `, ` or ` - ` count as one
 /// (an organisation's regional branches).
@@ -547,11 +548,11 @@ pub fn show_split(table: &mut Table, attribute: &str, split: &Split, counted: u6
     for (key, _) in &split.rows {
         let said: &[(&str, &str)] = match key.as_str() {
             OTHER => &[
-                ("sk", "Ostatné"),
-                ("cs", "Ostatní"),
-                ("en", "Other"),
-                ("de", "Übrige"),
-                ("fi", "Muut"),
+                ("sk", "Mimo 8 najväčších"),
+                ("cs", "Mimo 8 největších"),
+                ("en", "Outside the top 8"),
+                ("de", "Außerhalb der 8 größten"),
+                ("fi", "8 suurimman ulkopuolella"),
             ],
             NONE => &[
                 ("sk", "Neuvedené"),
@@ -1038,6 +1039,12 @@ mod tests {
         );
         assert_eq!(said["other"], 42);
         assert!(said.get("of").is_none(), "all of them were counted");
+        // The bar past the eight holds 10 of those 42, so it is not called "others" as well.
+        let named = table.enums[0].as_ref().and_then(|words| words.get(OTHER));
+        assert_eq!(
+            named.and_then(|words| words.get("en")).map(String::as_str),
+            Some("Outside the top 8")
+        );
         let sum: u64 = table.rows.iter().filter_map(|r| r[1].as_u64()).sum();
         assert_eq!(sum, 1651, "one attribute: the parts sum to the total");
         assert!(table.map.is_none() && table.geometries.is_empty() && !table.counted);

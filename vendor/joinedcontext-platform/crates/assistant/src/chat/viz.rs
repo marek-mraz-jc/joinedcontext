@@ -481,13 +481,18 @@ pub fn aggregated(table: &Table) -> Option<Value> {
             "y": {"field": "label", "type": "nominal", "sort": null, "title": null},
             "x": spec["encoding"]["x"].clone(),
         });
-        spec["mark"] = json!({"type": "bar", "tooltip": true});
+        // Two beside 298 is a bar of no pixel, so each says its number.
+        spec["layer"] = json!([
+            {"mark": {"type": "bar", "tooltip": true}},
+            {"mark": {"type": "text", "align": "left", "baseline": "middle", "dx": 3, "fontSize": 12},
+             "encoding": {"text": {"field": "value", "type": "quantitative", "format": ","}}},
+        ]);
         spec["height"] = json!(table.rows.len() * 18);
-        spec.as_object_mut()?.remove("layer");
+        spec.as_object_mut()?.remove("mark");
     } else {
         // Periods read left to right, in time.
         spec["encoding"] = json!({
-            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -90, "labelFontSize": 11, "labelOverlap": "greedy"}},
+            "x": {"field": "label", "type": "nominal", "sort": null, "title": null, "axis": {"labelAngle": -90, "labelFontSize": 12, "labelOverlap": "greedy"}},
             "y": spec["encoding"]["x"].clone(),
         });
         spec["mark"] = json!({"type": "bar", "tooltip": true});
@@ -1036,7 +1041,13 @@ mod tests {
             partial: false,
         });
         let event = aggregated(&table).expect("a chart");
-        assert_eq!(event["spec"]["mark"]["type"], "bar");
+        assert_eq!(event["spec"]["layer"][0]["mark"]["type"], "bar");
+        // A decade of two among hundreds is a bar of no pixel: its number says it is there.
+        assert_eq!(event["spec"]["layer"][1]["mark"]["type"], "text");
+        assert_eq!(
+            event["spec"]["layer"][1]["encoding"]["text"]["field"],
+            "value"
+        );
         assert_eq!(event["spec"]["encoding"]["y"]["field"], "label");
         assert_eq!(event["spec"]["encoding"]["x"]["field"], "value");
         assert_eq!(event["aggregation"]["per"], "decade");
@@ -1046,6 +1057,10 @@ mod tests {
         }
         let upright = aggregated(&years).expect("a chart");
         assert_eq!(upright["spec"]["encoding"]["x"]["field"], "label");
+        assert_eq!(
+            upright["spec"]["encoding"]["x"]["axis"]["labelFontSize"],
+            12
+        );
         table.labels = vec![
             Some([("sk".to_owned(), "Rok výstavby".to_owned())].into()),
             None,

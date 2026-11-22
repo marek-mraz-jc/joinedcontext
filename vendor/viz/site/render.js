@@ -57,6 +57,8 @@
     var mode = message.theme === "dark" ? "dark" : "light";
     document.documentElement.dataset.theme = mode;
     document.body.style.backgroundColor = self.jcTheme[mode].background;
+    // What is no chart (the export menu's button, render.css) takes the theme's text colour.
+    document.body.style.color = self.jcTheme[mode].text.color;
     var errors = self.jcRefuse(message.spec, domain);
     if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
     var data = message.data || {};
