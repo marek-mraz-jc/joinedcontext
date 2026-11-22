@@ -1081,13 +1081,19 @@ mod tests {
     #[tokio::test]
     async fn an_mqtt5_publish_connects_with_v5_and_is_pooled() {
         let sink = MqttSink::new(2, Duration::from_secs(2));
-        let ep = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+        let (port, accepted, _) = stub(OnPublish::Ack, Vec::new()).await;
+        let ep = ep_at(port);
         for qos in [0, 1] {
             let sent = sink
                 .publish_message(&ep, MqttParams { qos, v5: true }, b"{}")
                 .await;
             assert!(sent.is_ok(), "v5 QoS {qos}: {sent:?}");
         }
+        assert_eq!(
+            accepted.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the second publish reused the pooled connection"
+        );
         let pool = sink.pool.lock().expect("pool");
         assert_eq!(
             pool.len(),
@@ -1181,10 +1187,20 @@ mod tests {
     /// is dropped, and dropping it closes its connection to the broker.
     #[tokio::test]
     async fn the_pool_evicts_the_least_recently_used_session() {
-        let sink = MqttSink::new(1, Duration::from_secs(2));
         let params = MqttParams { qos: 1, v5: false };
         let (first_port, _, first_seen) = stub(OnPublish::Ack, Vec::new()).await;
         let first = ep_at(first_port);
+        // under the cap, a live session stays pooled beside the next one
+        let roomy = MqttSink::new(2, Duration::from_secs(2));
+        for _ in 0..2 {
+            let ep = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
+            roomy
+                .publish_message(&ep, params, b"{}")
+                .await
+                .expect("pooled");
+        }
+        assert_eq!(roomy.pool.lock().expect("pool").len(), 2);
+        let sink = MqttSink::new(1, Duration::from_secs(2));
         let second = ep_at(stub(OnPublish::Ack, Vec::new()).await.0);
         sink.publish_message(&first, params, b"{}")
             .await
