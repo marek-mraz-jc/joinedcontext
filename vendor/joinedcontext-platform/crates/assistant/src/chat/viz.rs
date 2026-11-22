@@ -466,6 +466,13 @@ pub fn aggregated(table: &Table) -> Option<Value> {
         spec.as_object_mut()?.remove("layer");
     }
     event["aggregation"] = json!(made);
+    // What was split is named with the model's own words, as in the table's caption.
+    if let (true, Some(Some(words))) = (counts, table.labels.first()) {
+        if !event["labels"].is_object() {
+            event["labels"] = json!({});
+        }
+        event["labels"][made.of.as_str()] = json!(words);
+    }
     if let Some(Some(words)) = table.enums.first() {
         event["enums"] = json!(words);
     }
@@ -999,6 +1006,12 @@ mod tests {
         assert_eq!(event["spec"]["encoding"]["x"]["field"], "label");
         assert_eq!(event["spec"]["encoding"]["y"]["field"], "value");
         assert_eq!(event["aggregation"]["per"], "decade");
+        table.labels = vec![
+            Some([("sk".to_owned(), "Rok výstavby".to_owned())].into()),
+            None,
+        ];
+        let labelled = aggregated(&table).expect("a chart");
+        assert_eq!(labelled["labels"]["yearBuilt"]["sk"], "Rok výstavby");
         assert_eq!(event["rows"].as_array().map(Vec::len), Some(2));
         table.aggregation = None;
         assert_eq!(aggregated(&table), None);

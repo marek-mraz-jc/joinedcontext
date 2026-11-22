@@ -21,7 +21,7 @@ pub const POINTS: usize = 500;
 /// The most series one history chart draws.
 const SERIES: usize = 8;
 /// The categories a split names; the rest are one row.
-const GROUPS: usize = 12;
+const GROUPS: usize = 8;
 /// The categories the model is given to say; the rest are one number.
 const SAID_GROUPS: usize = 3;
 /// Past this many categories, names that share their head before `, ` or ` - ` count as one
@@ -331,6 +331,21 @@ fn head(name: &str) -> &str {
         .unwrap_or(name)
 }
 
+/// Every period from the first to the last, the empty ones as 0, so an axis of time has no gap
+/// drawn as no distance; as counted when that would be more than a chart draws.
+fn run(mut counts: BTreeMap<i64, u64>, step: i64) -> BTreeMap<i64, u64> {
+    if let (Some(&first), Some(&last)) = (counts.keys().next(), counts.keys().next_back()) {
+        if (last - first) / step < POINTS as i64 {
+            let mut at = first;
+            while at < last {
+                counts.entry(at).or_insert(0);
+                at += step;
+            }
+        }
+    }
+    counts
+}
+
 fn tally<T: Ord>(items: impl Iterator<Item = T>) -> BTreeMap<T, u64> {
     let mut counts = BTreeMap::new();
     for item in items {
@@ -361,30 +376,45 @@ pub fn split(attribute: &str, values: &[Option<Value>]) -> Option<Split> {
             .all(|t| t.len() >= 10 && t.is_char_boundary(10) && is_day(&t[..10]));
 
     let (per, mut rows): (&'static str, Vec<(String, u64)>) = if year {
-        let decades = numbers.iter().collect::<BTreeSet<_>>().len() > YEARS;
-        let counts = tally(numbers.iter().map(|&y| match decades {
-            true if y < OLD_YEAR => i64::MIN,
-            true => y - y % 10,
-            false => y,
-        }));
-        let named = counts.into_iter().map(|(from, n)| {
-            let name = match decades {
-                true if from == i64::MIN => BEFORE.to_owned(),
-                true => format!("{from}–{}", from + 9),
-                false => from.to_string(),
-            };
-            (name, n)
-        });
-        (if decades { "decade" } else { "year" }, named.collect())
+        let distinct: BTreeSet<i64> = numbers.iter().copied().collect();
+        let span = distinct
+            .last()
+            .zip(distinct.first())
+            .map_or(0, |(b, a)| b - a);
+        let decades = distinct.len() > YEARS || span > 3 * YEARS as i64;
+        let (old, new): (Vec<i64>, Vec<i64>) =
+            numbers.iter().partition(|&&y| decades && y < OLD_YEAR);
+        let step = if decades { 10 } else { 1 };
+        let counts = run(tally(new.iter().map(|y| y - y % step)), step);
+        let mut named: Vec<(String, u64)> = counts
+            .into_iter()
+            .map(|(from, n)| match decades {
+                true => (format!("{from}–{}", from + 9), n),
+                false => (from.to_string(), n),
+            })
+            .collect();
+        if !old.is_empty() {
+            named.insert(0, (BEFORE.to_owned(), old.len() as u64));
+        }
+        (if decades { "decade" } else { "year" }, named)
     } else if dated {
-        let months = tally(texts.iter().map(|t| &t[..7]));
-        let (per, counts) = if months.len() > MONTHS {
-            ("year", tally(texts.iter().map(|t| &t[..4])))
+        // `is_day` left digits alone where the year and the month are.
+        let number = |text: &str| text.parse::<i64>().unwrap_or_default();
+        let at: Vec<(i64, i64)> = texts
+            .iter()
+            .map(|t| (number(&t[..4]), number(&t[5..7]).clamp(1, 12) - 1))
+            .collect();
+        let months = run(tally(at.iter().map(|(y, m)| y * 12 + m)), 1);
+        if months.len() > MONTHS {
+            let years = run(tally(at.iter().map(|(y, _)| *y)), 1);
+            let named = years.into_iter().map(|(y, n)| (format!("{y:04}"), n));
+            ("year", named.collect())
         } else {
-            ("month", months)
-        };
-        let named = counts.into_iter().map(|(at, n)| (at.to_owned(), n));
-        (per, named.collect())
+            let named = months
+                .into_iter()
+                .map(|(m, n)| (format!("{:04}-{:02}", m / 12, m % 12 + 1), n));
+            ("month", named.collect())
+        }
     } else {
         let mut names: Vec<String> = present
             .iter()
