@@ -225,7 +225,7 @@ describe("the interactive chart", () => {
   it("parts more than four stations by dash too, in one legend", () => {
     const names = ["A", "B", "C", "D", "E", "F", "G"];
     const measure = host.measure("relativeHumidity", null, "sk", [0.7]);
-    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 270, names });
+    const spec = host.interactive(SPEC, { attr: "relativeHumidity", measure, lang: "sk", width: 900, names, shown: names });
     const [detail] = spec.vconcat as { encoding: { strokeDash: { scale: { domain: string[] } } } }[];
     expect(detail.encoding.strokeDash.scale.domain).toEqual(names);
     const vega = vegaLite.compile(spec as unknown as vegaLite.TopLevelSpec).spec;

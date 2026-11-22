@@ -174,14 +174,14 @@ for (const width of [1440, 400]) {
     await expect(host.getByLabel("Obdobie")).toHaveValue("P7D");
     await expect(host.getByLabel("Výpočet")).toBeHidden();
     await expect(host.locator("#c-stations option:checked")).toHaveText(["Všetky stanice"]);
-    await expect(host.locator("#data-note")).toContainText("v tom čase nie sú merania");
+    await expect(host.locator("#data-note")).toContainText("Medzera v čiare: v tom čase nie sú merania");
     // Readings have none from 19. 11. 00:00Z to 20. 11. 06:50Z: each line breaks there.
     for (const count of await strokes(chart)) expect(count).toBeGreaterThan(1);
     await shot(page, "normal", width);
 
     // Hourly, the same days: drawn as answered, the held value included, and said so in one line.
     await host.getByLabel("Podrobnosť").selectOption("PT1H");
-    await expect(host.locator("#data-note.carried")).toContainText("môže opakovať poslednú hodnotu");
+    await expect(host.locator("#data-note.carried")).toContainText("opakovaná cez čas bez meraní");
     await expect(host.locator("#data-note")).toContainText("„Merania“");
     await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
     await expect(host.locator("#axis-note")).toContainText("v miestnom čase");
@@ -212,13 +212,12 @@ for (const width of [1440, 400]) {
     expect(walk.length).toBeGreaterThanOrEqual(2);
     for (const u of walk) expect(u.searchParams.get("timerel")).toBe("between");
     // The walk's earlier windows came back empty: the chart says where the data starts.
-    await expect(host.locator("#range-note")).toContainText("uložené údaje až od 14.\u00a011.\u00a02026");
+    await expect(host.locator("#controls-note")).toContainText("Pred 14.\u00a011.\u00a02026 v tomto období nie sú uložené údaje");
     await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
-    await expect(host.locator("#range-note")).toContainText("skoršie uložené nie sú");
     // Daily buckets are UTC days: the axis says that in place of local time.
     await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
     await expect(host.locator("#axis-note")).not.toContainText("miestnom");
-    await expect(host.locator("#data-note.carried")).toContainText("môže opakovať poslednú hodnotu");
+    await expect(host.locator("#data-note.carried")).toContainText("prenesenú z predošlého dňa");
     await expect(host.locator("#c-from-hint")).toContainText("1. nov. 2026 (UTC)");
     await expect.poll(() => strokes(chart)).toEqual([1, 1, 1]);
     // No tick label runs out of the chart.
@@ -237,7 +236,7 @@ for (const width of [1440, 400]) {
     await pick(host, ["urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11518", "urn:ngsi-ld:WeatherObserved:hel.fi:praha-mesto:chmi-0-20000-0-11519"]);
     await expect(chart.locator("g.mark-line path")).toHaveCount(4);
     // The closed list names both picks.
-    await expect(host.locator("#c-stations-picker summary")).toHaveText(/^Praha, \S+; Praha, \S+$/);
+    await expect(host.locator("#c-stations-picker summary")).toHaveText(/^2: \S+, \S+$/);
     expect(state.asked.length).toBe(reads);
     await shot(page, "two-stations", width);
 
@@ -288,7 +287,7 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#range-note")).toContainText("Skoršie údaje v tomto období uložené nie sú");
+    await expect(host.locator("#status")).toContainText("Skoršie údaje v tomto období uložené nie sú");
     await expect(host.locator("#status")).toContainText("novšie údaje");
     await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
@@ -310,6 +309,9 @@ for (const width of [1440, 400]) {
     state.mode = "slow";
     await host.getByLabel("Obdobie").selectOption("PT24H");
     await expect(host.locator("iframe#frame[aria-busy=true]")).toBeVisible();
+    await expect(host.locator("#status")).toContainText("24 hodín");
+    // The note of the chart still drawn stays with it.
+    await expect(host.locator("#data-note.carried")).toBeVisible();
     await shot(page, "reloading", width);
 
     // The choice survives in the fragment: a reload keeps 7 days and the view's default granularity.
@@ -336,6 +338,6 @@ test("a link's fragment restores the toolbar and a bad value is dropped", async 
   await expect(host.getByLabel("Výpočet")).toHaveValue("min");
   await expect.poll(() => state.asked.length).toBeGreaterThan(0);
   expect(Object.fromEntries(state.asked[0].searchParams)).toMatchObject({ aggrMethods: "min", aggrPeriodDuration: "P1D", timeAt: "2026-11-20T00:00:00Z" });
-  await expect(host.locator("#c-stations-picker summary")).toHaveText("Praha, Libuš");
+  await expect(host.locator("#c-stations-picker summary")).toHaveText("Libuš");
   await expect(host.locator("#c-stations option:checked")).toHaveText(["Praha, Libuš"]);
 });

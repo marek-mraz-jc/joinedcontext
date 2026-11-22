@@ -26,7 +26,9 @@ a { color: #1d4ed8; }
 .control label { font-weight: 600; font-size: 0.85rem; }
 .control select, .control input, .control summary { box-sizing: border-box; width: 100%; min-height: 2.2rem; font: inherit; padding: 4px 6px; border: 1px solid #94a3b8; border-radius: 6px; background: #fff; color: inherit; }
 .control input { height: 2.2rem; }
-.control summary { cursor: pointer; }
+.control summary { cursor: pointer; display: block; height: 2.2rem; line-height: 1.5rem; padding-inline-end: 24px; position: relative; list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.control summary::-webkit-details-marker { display: none; }
+.control summary::after { content: "\25BE"; position: absolute; right: 8px; }
 #c-stations { margin-top: 4px; }
 #c-stations option { padding: 4px 2px; }
 .inline .controls { padding: 3px; }
@@ -35,10 +37,10 @@ a { color: #1d4ed8; }
 #controls-note { flex: 1 1 100%; }
 #controls-note:empty { display: none; }
 /* Laid over the chart it replaces, so nothing under it moves. */
-#status.loading { position: absolute; z-index: 1; background: #eff6ff; color: #1e3a8a; }
-#status.loading:not([hidden]) ~ #data-note { visibility: hidden; }
+#status.loading { position: absolute; z-index: 1; left: 50%; transform: translateX(-50%); margin-top: 180px; white-space: nowrap; background: #eff6ff; color: #1e3a8a; }
 iframe[aria-busy="true"] { opacity: 0.4; }
-#status.blank { box-sizing: border-box; min-height: 260px; display: flex; align-items: center; justify-content: center; text-align: center; }
+#status.blank { box-sizing: border-box; min-height: 420px; display: flex; align-items: center; justify-content: center; text-align: center; }
+#status.note:not(.blank) { margin: 6px 0; padding: 5px 10px; border-left: 3px solid #d97706; border-radius: 0; font-size: 0.85rem; }
 #data-note { margin: 6px 0; }
 #data-note.carried { padding: 5px 10px; border-left: 3px solid #d97706; background: #fffbeb; color: #78350f; font-size: 0.85rem; }
 html[data-theme="dark"] #data-note.carried { background: #422006; color: #fde68a; }
@@ -55,4 +57,6 @@ html[data-theme="dark"] .hint { color: #a0a8b3; }
 .skeleton { height: 420px; margin: 8px 0; border-radius: 8px; background: #f1f5f9; }
 html[data-theme="dark"] .skeleton { background: #22272e; }
 .retry.reset { margin: 4px 0; }
+/* The retry sits in the panel that says what failed. */
+#status.blank + .retry { display: block; position: relative; top: -150px; margin: 0 auto; }
 .retry:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
