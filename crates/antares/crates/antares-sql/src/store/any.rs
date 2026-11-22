@@ -1912,6 +1912,38 @@ impl AnyStore {
         }
     }
 
+    pub async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        // ADR-0021, as in `context_put`; a Cached row has no Tenant to cap
+        if antares_store::context_row_owner(&doc).is_none()
+            || !antares_store::context_row_visible(&doc, Some(tenant))
+        {
+            return Err(NgsiError::InternalError(
+                "a capped @context is the writing tenant's own".into(),
+            ));
+        }
+        match self {
+            AnyStore::Mem(s) => s.context_put_capped(tenant, id, doc, caps),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                let kind = doc
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| NgsiError::InternalError("@context row without a kind".into()))?
+                    .to_owned();
+                p.docs
+                    .context_put_capped(tenant, id, &doc, &kind, caps)
+                    .await
+                    .map_err(db)
+            }
+        }
+    }
+
     pub async fn context_get(
         &self,
         tenant: Option<&TenantId>,
@@ -2591,6 +2623,15 @@ impl antares_store::CurrentStateDriver for AnyStore {
         doc: Value,
     ) -> Result<(), NgsiError> {
         AnyStore::context_put(self, tenant, id, doc).await
+    }
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        AnyStore::context_put_capped(self, tenant, id, doc, caps).await
     }
     async fn context_get(
         &self,

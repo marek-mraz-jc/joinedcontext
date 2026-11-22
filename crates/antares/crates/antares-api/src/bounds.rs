@@ -70,7 +70,7 @@ pub const ANSWER_POOL_WAIT: std::time::Duration = std::time::Duration::from_secs
 /// | LinkML models (`linkml_model`) | 8 | 8 MiB |
 /// | regex programs (`antares_ql`) | 16 | 16 MiB |
 /// | rendered LinkML schemas (`antares_linkml`) | 8 | 8 MiB |
-/// | ImplicitlyCreated @contexts per Tenant | 8 | 8 MiB |
+/// | stored @contexts per Tenant and kind | 8 | 8 MiB |
 /// | buffered answers ([`AnswerPool`]) | 64 | 64 MiB |
 ///
 /// The 28 parts left are the process itself: code, runtime, connection
@@ -193,12 +193,15 @@ impl MemoryBudget {
 
     /// Sets the budget's state fields on `st`: the answer pool, the
     /// per-answer bound (never above [`MAX_ANSWER_BYTES`] nor the pool) and
-    /// the ImplicitlyCreated byte cap.
+    /// the per-Tenant @context byte cap.
     pub fn set_on(self, st: &mut crate::AppState) {
         let pool = usize::try_from(self.answers()).unwrap_or(usize::MAX);
         st.answer_pool = AnswerPool::new(pool);
         st.max_answer_bytes = MAX_ANSWER_BYTES.min(pool);
-        st.implicit_context_bytes = self.implicit_contexts();
+        st.context_bytes = self.implicit_contexts();
+        if let Some(text) = *CONTEXT_BYTES_PER_TENANT {
+            st.context_bytes = text.saturating_mul(crate::contexts::HEAP_PER_TEXT_BYTE);
+        }
     }
 }
 
@@ -519,6 +522,28 @@ pub static MAX_BATCH_ITEMS: std::sync::LazyLock<usize> = std::sync::LazyLock::ne
         .filter(|n| *n > 0)
         .unwrap_or(1_000)
 });
+/// Deployment knob (ANTARES_CONTEXTS_PER_TENANT): the @contexts of one kind
+/// (Hosted, ImplicitlyCreated) one Tenant stores (S4-15). Each kind has the
+/// cap to itself, so reads with inline @contexts cannot use up what the
+/// Tenant may host. 1,000 unless set.
+pub static CONTEXTS_PER_TENANT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("ANTARES_CONTEXTS_PER_TENANT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(1_000)
+});
+/// Deployment knob (ANTARES_CONTEXT_BYTES_PER_TENANT): the bytes of JSON text
+/// those @contexts hold together. Unset, the memory budget's share
+/// ([`MemoryBudget::implicit_contexts`]) over what a byte of text costs in
+/// memory, 2 MiB at the default budget.
+pub static CONTEXT_BYTES_PER_TENANT: std::sync::LazyLock<Option<u64>> =
+    std::sync::LazyLock::new(|| {
+        std::env::var("ANTARES_CONTEXT_BYTES_PER_TENANT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n > 0)
+    });
 /// Deployment knob (ANTARES_MAX_LIMIT): the most Entities one query page
 /// answers (`limit`, 6.3.9; past it 403 TooManyResults). 1,000 unless set;
 /// read once at first use, and advertised by the MCP tools as their `limit`
@@ -907,6 +932,7 @@ impl LimitStats {
             "maxGeoVertices": MAX_GEO_VERTICES,
             "maxBatchItems": *MAX_BATCH_ITEMS,
             "maxLimit": *MAX_LIMIT,
+            "contextsPerTenant": *CONTEXTS_PER_TENANT,
             "defaultLimit": *DEFAULT_LIMIT,
             "temporalInstanceLimit": temporal_instance_limit(),
             "temporalDefaultInstances": temporal_default_instances(),

@@ -189,22 +189,26 @@ pub async fn purge_tenant(st: &AppState, tenant: &TenantId) -> Result<(), NgsiEr
     Ok(())
 }
 
-/// Most ImplicitlyCreated @contexts one Tenant may hold. A read with an inline
-/// @context writes one row per DISTINCT @context, so a caller who may only
-/// read could otherwise grow the store without bound by varying it.
-const MAX_IMPLICIT_CONTEXTS: usize = 1_000;
-
-/// What a stored @context costs of `AppState::implicit_context_bytes` per
+/// What a stored @context costs of `AppState::context_bytes` per
 /// byte of its JSON text: the memory store holds it as a `serde_json::Value`,
 /// measured at ~4.3x the text (a 2 000-term @context, 92 KB of text, held
 /// ~390 KB; T-5895). The count cap alone let 1 000 of them hold ~390 MB.
-const IMPLICIT_HEAP_PER_TEXT_BYTE: u64 = 4;
+pub(crate) const HEAP_PER_TEXT_BYTE: u64 = 4;
+
+/// What one Tenant may store of each kind of @context (S4-15).
+fn caps(st: &AppState) -> antares_store::ContextCaps {
+    antares_store::ContextCaps {
+        count: *crate::bounds::CONTEXTS_PER_TENANT,
+        bytes: st.context_bytes / HEAP_PER_TEXT_BYTE,
+    }
+}
 
 /// Host the inline @context `source` as Tenant `tenant`'s ImplicitlyCreated
 /// @context (TS 104 175 13.1) and answer its URL; `None` past
-/// [`MAX_IMPLICIT_CONTEXTS`] or past the Tenant's share of the memory budget
-/// in bytes. The local id is content-addressed per Tenant, so the same
-/// @context is one row behind one URL whoever asks for it.
+/// [`caps`] in count or in bytes. The local id is content-addressed per Tenant, so the same
+/// @context is one row behind one URL whoever asks for it. A read with an
+/// inline @context writes one row per DISTINCT @context, so the caps hold
+/// here too: a caller who may only read cannot grow the store without bound.
 pub(crate) async fn host_implicit(
     st: &AppState,
     tenant: &TenantId,
@@ -225,48 +229,36 @@ pub(crate) async fn host_implicit(
         }
         Some(_) => None,
         None => {
-            let rows = st.store.context_list_meta(Some(tenant)).await?;
-            let implicit = rows.iter().filter(|r| {
-                r.get("kind").and_then(Value::as_str) == Some("ImplicitlyCreated")
-                    && row_visible(r, tenant)
-            });
-            let (held, held_bytes) = implicit.fold((0usize, 0u64), |(n, b), r| {
-                let bytes = r.get("bytes").and_then(Value::as_u64).unwrap_or(0);
-                (n.saturating_add(1), b.saturating_add(bytes))
-            });
-            let charge = u64::try_from(body.len()).unwrap_or(u64::MAX);
-            let over_bytes = held_bytes
-                .saturating_add(charge)
-                .saturating_mul(IMPLICIT_HEAP_PER_TEXT_BYTE)
-                > st.implicit_context_bytes;
-            if held >= MAX_IMPLICIT_CONTEXTS || over_bytes {
+            let url = format!("{}/{local_id}", base_url(headers));
+            let put = st
+                .store
+                .context_put_capped(
+                    tenant,
+                    &local_id,
+                    json!({
+                        "url": url,
+                        "localId": local_id,
+                        "kind": "ImplicitlyCreated",
+                        "createdAt": now_iso(),
+                        "owner": tenant.as_str(),
+                        // its charge against the Tenant's byte cap
+                        "bytes": u64::try_from(body.len()).unwrap_or(u64::MAX),
+                        "body": {"@context": source.clone()},
+                    }),
+                    caps(st),
+                )
+                .await?;
+            if put == antares_store::ContextPut::Stored {
+                st.loader
+                    .put_local_for(tenant, url.clone(), source.clone())
+                    .await;
+                Some(url)
+            } else {
                 tracing::warn!(
                     tenant = tenant.as_str(),
                     "ImplicitlyCreated @context cap reached"
                 );
                 None
-            } else {
-                let url = format!("{}/{local_id}", base_url(headers));
-                st.store
-                    .context_put(
-                        Some(tenant),
-                        &local_id,
-                        json!({
-                            "url": url,
-                            "localId": local_id,
-                            "kind": "ImplicitlyCreated",
-                            "createdAt": now_iso(),
-                            "owner": tenant.as_str(),
-                            // its charge against the Tenant's byte cap
-                            "bytes": charge,
-                            "body": {"@context": source.clone()},
-                        }),
-                    )
-                    .await?;
-                st.loader
-                    .put_local_for(tenant, url.clone(), source.clone())
-                    .await;
-                Some(url)
             }
         }
     })
@@ -278,9 +270,8 @@ pub(crate) async fn host_implicit(
 /// hosts it as an ImplicitlyCreated @context (TS 104 175 13.1) and answers
 /// with a copy of `ctx` whose source is that URL. The local id is
 /// content-addressed per Tenant: the same inline @context, request after
-/// request, is one row behind one URL. Past [`MAX_IMPLICIT_CONTEXTS`], or
-/// past the Tenant's share of the memory budget in bytes, the response keeps
-/// the Core @context Link it had before.
+/// request, is one row behind one URL. Past [`caps`] the response keeps the
+/// Core @context Link it had before.
 pub(crate) async fn linkable(
     st: &AppState,
     tenant: &TenantId,
@@ -418,9 +409,30 @@ pub async fn add_context(
             "createdAt": now_iso(),
             // the adding tenant owns the entry (5.13.1 Hosted)
             "owner": tenant.as_str(),
+            // its charge against the Tenant's byte cap
+            "bytes": u64::try_from(ctx_val.to_string().len()).unwrap_or(u64::MAX),
             "body": {"@context": ctx_val.clone()},
         });
-        st.store.context_put(Some(&tenant), &local_id, doc).await?;
+        let caps = caps(&st);
+        let put = st
+            .store
+            .context_put_capped(&tenant, &local_id, doc, caps)
+            .await?;
+        let past = match put {
+            antares_store::ContextPut::Stored => None,
+            antares_store::ContextPut::PastCount => Some(format!(
+                "this Tenant hosts {} @contexts, the most this broker keeps for one (ANTARES_CONTEXTS_PER_TENANT): delete one, or ask the operator to raise it",
+                caps.count
+            )),
+            antares_store::ContextPut::PastBytes => Some(format!(
+                "this @context would take the Tenant past {} bytes of hosted @contexts (ANTARES_CONTEXT_BYTES_PER_TENANT): delete one, or ask the operator to raise it",
+                caps.bytes
+            )),
+        };
+        if let Some(why) = past {
+            metrics::counter!("antares_tenant_cap_refused_total", "cap" => "contexts").increment(1);
+            return Err(NgsiError::TooManyResults(why).into());
+        }
         // stored FOR the adding Tenant (5.13.1 Hosted): 5.5.10 confines the
         // mappings to that Tenant's operations, so resolution is scoped the
         // same way the serve/list/delete paths above are
@@ -796,7 +808,7 @@ mod tests {
     #[tokio::test]
     async fn implicit_contexts_stop_at_the_tenant_byte_share() {
         let mut st = AppState::new("antares-ctx-implicit-bytes".into());
-        st.implicit_context_bytes = 4 << 20;
+        st.context_bytes = 4 << 20;
         let tenant = TenantId::new("bytes").expect("tenant");
         let mut linked = 0;
         for k in 0..64 {
@@ -833,7 +845,7 @@ mod tests {
         );
         assert!(linked < 64, "all 64 were hosted: {charged} bytes of text");
         assert!(
-            charged.saturating_mul(IMPLICIT_HEAP_PER_TEXT_BYTE) <= st.implicit_context_bytes,
+            charged.saturating_mul(HEAP_PER_TEXT_BYTE) <= st.context_bytes,
             "{charged} bytes of text charged over the share"
         );
     }

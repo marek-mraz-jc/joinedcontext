@@ -867,3 +867,50 @@ async fn a_tenant_past_the_hosted_context_cap_is_refused_naming_it() {
         }
     }
 }
+
+/// S4-15 (T-7547): the bytes of hosted @contexts are capped per Tenant, and
+/// one Tenant at its cap takes nothing from another.
+#[tokio::test]
+async fn hosted_context_bytes_are_capped_per_tenant() {
+    let mut st = state();
+    // four bytes of memory per byte of text: room for one of the two
+    st.context_bytes = 4 * 100;
+    // 5.13.2 creates no Tenant, so both exist first
+    for name in ["full", "other"] {
+        let tenant = antares_model::TenantId::new(name).expect("tenant");
+        let id = "urn:ngsi-ld:Car:seed";
+        st.store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                id,
+                json!({"id": id, "type": "Car"}),
+            )
+            .await
+            .expect("seed");
+    }
+    let post = |tenant: &'static str, term: &'static str| {
+        let body = json!({"@context": {term: format!("https://example.org/{}", "t".repeat(40))}})
+            .to_string();
+        Request::builder()
+            .method("POST")
+            .uri("/ngsi-ld/v1/jsonldContexts")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .header("NGSILD-Tenant", tenant)
+            .body(Body::from(body))
+            .expect("request")
+    };
+    let (status, _, answer) = send(&st, post("full", "a")).await;
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    let (status, _, answer) = send(&st, post("full", "b")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert!(
+        answer
+            .to_string()
+            .contains("ANTARES_CONTEXT_BYTES_PER_TENANT"),
+        "{answer}"
+    );
+    let (status, _, answer) = send(&st, post("other", "b")).await;
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+}
