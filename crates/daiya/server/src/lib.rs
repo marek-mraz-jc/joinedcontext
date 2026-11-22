@@ -6,23 +6,25 @@
 //! provider, and performs no environment variable reads (R11).
 
 use axum::body::Body;
-use axum::extract::{Extension, State};
-use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+use axum::extract::Extension;
+use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 pub use daiya_api::DaiyaState;
-use daiya_api::{api_router, resolve_request_ctx};
-use daiya_mcp::{call_mcp_tool, list_mcp_tools};
-use daiya_model::{CrError, CrResult, InputLimits, OrgQuotas, RequestCtx};
+use daiya_api::api_router;
+use daiya_model::{InputLimits, OrgQuotas};
 pub use daiya_query::{EndpointBase, OperatorReach, OwnReach};
 use jc_router::Mount;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::net::SocketAddr;
 
 pub mod config;
+mod operations;
+
+pub use operations::execute_cli_command;
 
 /// Server configuration passed as a struct (R11: no env reads in library code).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,37 +41,6 @@ impl Default for ServerConfig {
             listen_addr: SocketAddr::from(([127, 0, 0, 1], 3000)),
             limits: InputLimits::default(),
             default_quotas: OrgQuotas::default(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct McpCallPayload {
-    name: String,
-    #[serde(default)]
-    arguments: Value,
-}
-
-async fn http_mcp_list(State(state): State<DaiyaState>) -> Response {
-    let tools = list_mcp_tools(&state);
-    (StatusCode::OK, Json(json!({ "tools": tools }))).into_response()
-}
-
-async fn http_mcp_call(
-    State(state): State<DaiyaState>,
-    headers: HeaderMap,
-    Json(payload): Json<McpCallPayload>,
-) -> Response {
-    let ctx = match resolve_request_ctx(&state, &headers).await {
-        Ok(ctx) => ctx,
-        Err(e) => return daiya_api::state::error_response(&e),
-    };
-    match call_mcp_tool(&state, &ctx, &payload.name, payload.arguments).await {
-        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
-        Err(err) => {
-            let status = StatusCode::from_u16(err.status_code())
-                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            (status, Json(err.to_odata_error())).into_response()
         }
     }
 }
@@ -144,36 +115,16 @@ async fn security_and_mount_headers(
 
 /// Builds the mountable `daiya` [`Router`] honouring `jc_router::Mount` (R11).
 pub fn router(state: DaiyaState, mount: Mount) -> Router {
-    let mcp_routes = Router::new()
-        .route("/mcp/tools", get(http_mcp_list))
-        .route("/mcp/call", post(http_mcp_call))
+    let mount_info = Router::new()
         .route("/mount-info", get(http_mount_info))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             daiya_api::state::refuse_unknown_credential,
-        ))
-        .with_state(state.clone());
+        ));
 
     Router::new()
         .merge(api_router(state, mount.clone()))
-        .merge(mcp_routes)
+        .merge(mount_info)
         .layer(middleware::from_fn(security_and_mount_headers))
         .layer(Extension(DefaultMount(mount)))
-}
-
-/// Executes a CLI subcommand (`query`, `datasource-health`, `editor-schema`, `datasource-resource`,
-/// `render-panel`, `export`, `import`, `plan`, `apply`, `rotate-public-token`, `public-query`,
-/// `allowed`) through the exact same registry and operation handlers as OData and MCP (R10a).
-pub async fn execute_cli_command(
-    state: &DaiyaState,
-    ctx: &RequestCtx,
-    cli_command: &str,
-    args: Value,
-) -> CrResult<Value> {
-    let op = state
-        .registry
-        .find_operation(cli_command)
-        .ok_or_else(|| CrError::NotFound(format!("unknown CLI command '{cli_command}'")))?;
-    let tool_name = op.mcp_tool.clone();
-    call_mcp_tool(state, ctx, &tool_name, args).await
 }

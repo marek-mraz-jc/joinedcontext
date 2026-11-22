@@ -1,18 +1,17 @@
 #![forbid(unsafe_code)]
-//! Every MCP tool against a real state (R10, R10a): the tool list mirrors the operation
-//! registry, each tool runs the same operation and authorizer decision as OData and the CLI,
-//! a missing or malformed argument is a 400 (never an empty uid or panel 1), an unknown tool
-//! a 404, and a viewer sees no more through MCP than through the HTTP API.
+//! Every CLI operation against a real state (R10a): each runs the operation and authorizer
+//! decision OData runs, a missing or malformed argument is a 400 (never an empty uid or panel
+//! 1), an unknown command a 404, and a viewer sees no more than through the HTTP API.
 
 use axum::Router;
 use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
-use daiya_mcp::{call_mcp_tool, list_mcp_tools};
 use daiya_model::{
     GrafanaRole, InstallationId, InstanceId, OrgId, PolicyAuthorizer, RequestCtx, RoleBinding,
     Subject,
 };
 use daiya_query::{OpenedNetwork, OutboundPolicy};
+use daiya_server::execute_cli_command;
 use daiya_store_memory::MemoryStore;
 use http::Request;
 use http_body_util::BodyExt;
@@ -164,72 +163,21 @@ async fn fixture() -> Fixture {
 }
 
 #[tokio::test]
-async fn the_tool_list_mirrors_the_registry_with_required_parameters() {
+async fn an_unknown_command_is_404() {
     let f = fixture().await;
-    let tools = list_mcp_tools(&f.state);
-    assert_eq!(tools.len(), f.state.registry.operations.len() + 1);
-    assert_eq!(tools[0].name, "daiya_list_dashboards");
-    for op in &f.state.registry.operations {
-        let tool = tools.iter().find(|t| t.name == op.mcp_tool).unwrap();
-        assert_eq!(tool.input_schema["type"], "object");
-        for p in &op.params {
-            assert_eq!(
-                tool.input_schema["properties"][&p.name]["type"], p.json_type,
-                "{} {}",
-                op.mcp_tool, p.name
-            );
-            let required = tool.input_schema["required"].as_array().unwrap();
-            assert_eq!(
-                required.contains(&Value::String(p.name.clone())),
-                p.required,
-                "{} {}",
-                op.mcp_tool,
-                p.name
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn list_dashboards_filters_by_title_and_hides_what_the_caller_cannot_read() {
-    let f = fixture().await;
-    let all = call_mcp_tool(&f.state, &f.admin, "daiya_list_dashboards", json!({}))
-        .await
-        .unwrap();
-    assert_eq!(all["value"].as_array().unwrap().len(), 2, "{all}");
-    let filtered = call_mcp_tool(
-        &f.state,
-        &f.viewer,
-        "daiya_list_dashboards",
-        json!({ "query": "TRAFFIC" }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(filtered["value"].as_array().unwrap().len(), 1, "{filtered}");
-    assert_eq!(filtered["value"][0]["uid"], "web");
-    assert_eq!(filtered["value"][0]["panelCount"], 1);
-    let none = call_mcp_tool(&f.state, &f.stranger, "daiya_list_dashboards", json!({}))
-        .await
-        .unwrap();
-    assert_eq!(none["value"], json!([]), "{none}");
-}
-
-#[tokio::test]
-async fn an_unknown_tool_is_404() {
-    let f = fixture().await;
-    let err = call_mcp_tool(&f.state, &f.admin, "daiya_drop_tables", json!({}))
+    let err = execute_cli_command(&f.state, &f.admin, "drop-tables", json!({}))
         .await
         .unwrap_err();
     assert_eq!(err.status_code(), 404);
 }
 
 #[tokio::test]
-async fn datasource_tools_query_health_schema_and_resources() {
+async fn datasource_commands_query_health_schema_and_resources() {
     let f = fixture().await;
-    let answer = call_mcp_tool(
+    let answer = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_datasource_query",
+        "query",
         json!({
             "from": "1700000000000", "to": "1700000600000",
             "queries": [{ "refId": "A", "datasource": { "uid": "prom" }, "expr": "up" }]
@@ -239,40 +187,40 @@ async fn datasource_tools_query_health_schema_and_resources() {
     .unwrap();
     assert!(answer.to_string().contains('7'), "{answer}");
 
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_datasource_query",
+        "query",
         json!({ "queries": "not-a-list" }),
     )
     .await
     .unwrap_err();
     assert_eq!(err.status_code(), 400);
 
-    let health = call_mcp_tool(
+    let health = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_datasource_health",
+        "datasource-health",
         json!({ "uid": "prom" }),
     )
     .await
     .unwrap();
     assert_eq!(health["status"], "ok", "{health}");
 
-    let schema = call_mcp_tool(
+    let schema = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_datasource_editor_schema",
+        "editor-schema",
         json!({ "uid": "prom" }),
     )
     .await
     .unwrap();
     assert!(schema.is_object(), "{schema}");
 
-    let labels = call_mcp_tool(
+    let labels = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_datasource_resource",
+        "datasource-resource",
         json!({ "uid": "prom", "path": "api/v1/labels", "params": { "match[]": "up" } }),
     )
     .await
@@ -280,10 +228,10 @@ async fn datasource_tools_query_health_schema_and_resources() {
     assert!(labels.to_string().contains("instance"), "{labels}");
 
     // A datasource of the organization the caller cannot see is a 404, like over HTTP.
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.stranger,
-        "daiya_datasource_health",
+        "datasource-health",
         json!({ "uid": "prom" }),
     )
     .await
@@ -295,71 +243,55 @@ async fn datasource_tools_query_health_schema_and_resources() {
 async fn missing_or_malformed_arguments_are_400_not_defaults() {
     let f = fixture().await;
     let cases = [
-        ("daiya_datasource_health", json!({})),
-        ("daiya_datasource_editor_schema", json!({ "uid": 7 })),
-        ("daiya_datasource_resource", json!({ "uid": "prom" })),
-        ("daiya_export_dashboard", json!({})),
-        ("daiya_render_panel", json!({ "uid": "web" })),
-        ("daiya_render_panel", json!({ "uid": "web", "panelId": -1 })),
+        ("datasource-health", json!({})),
+        ("editor-schema", json!({ "uid": 7 })),
+        ("datasource-resource", json!({ "uid": "prom" })),
+        ("export", json!({})),
+        ("render-panel", json!({ "uid": "web" })),
+        ("render-panel", json!({ "uid": "web", "panelId": -1 })),
         (
-            "daiya_render_panel",
+            "render-panel",
             json!({ "uid": "web", "panelId": 4_294_967_297_u64 }),
         ),
-        ("daiya_rotate_public_dashboard", json!({})),
-        ("daiya_public_dashboard_query", json!({ "panelId": 1 })),
-        (
-            "daiya_public_dashboard_query",
-            json!({ "accessToken": "t" }),
-        ),
-        ("daiya_allowed", json!({})),
-        ("daiya_import", json!({ "dryRun": "yes" })),
-        ("daiya_plan", json!({ "bundle": { "folders": 3 } })),
-        ("daiya_apply", json!({ "plan": { "orgId": "x" } })),
+        ("rotate-public-token", json!({})),
+        ("public-query", json!({ "panelId": 1 })),
+        ("public-query", json!({ "accessToken": "t" })),
+        ("allowed", json!({})),
+        ("import", json!({ "dryRun": "yes" })),
+        ("plan", json!({ "bundle": { "folders": 3 } })),
+        ("apply", json!({ "plan": { "orgId": "x" } })),
     ];
-    for (tool, args) in cases {
-        let tool_name = f
-            .state
-            .registry
-            .operations
-            .iter()
-            .find(|o| o.mcp_tool == tool)
-            .map(|o| o.mcp_tool.clone())
-            .unwrap_or_else(|| panic!("no tool {tool}"));
-        let err = call_mcp_tool(&f.state, &f.admin, &tool_name, args.clone())
+    for (command, args) in cases {
+        let err = execute_cli_command(&f.state, &f.admin, command, args.clone())
             .await
             .unwrap_err();
-        assert_eq!(err.status_code(), 400, "{tool} {args}: {err}");
+        assert_eq!(err.status_code(), 400, "{command} {args}: {err}");
     }
 }
 
 #[tokio::test]
 async fn render_panel_and_export_run_the_dashboard_operations() {
     let f = fixture().await;
-    let view = call_mcp_tool(
+    let view = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_render_panel",
+        "render-panel",
         json!({ "uid": "web", "panelId": 1, "from": "now-6h", "to": "now" }),
     )
     .await
     .unwrap();
     assert_eq!(view["panelTitle"], "Web", "{view}");
 
-    let exported = call_mcp_tool(
-        &f.state,
-        &f.viewer,
-        "daiya_export_dashboard",
-        json!({ "uid": "db" }),
-    )
-    .await
-    .unwrap();
+    let exported = execute_cli_command(&f.state, &f.viewer, "export", json!({ "uid": "db" }))
+        .await
+        .unwrap();
     assert_eq!(exported["uid"], "db", "{exported}");
     assert_eq!(exported["schemaVersion"], 42);
 
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_render_panel",
+        "render-panel",
         json!({ "uid": "web", "panelId": 99 }),
     )
     .await
@@ -370,10 +302,10 @@ async fn render_panel_and_export_run_the_dashboard_operations() {
 #[tokio::test]
 async fn import_plan_and_apply_write_only_for_an_editor() {
     let f = fixture().await;
-    let dry = call_mcp_tool(
+    let dry = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_import",
+        "import",
         json!({ "dryRun": true, "dashboard": dashboard("new", "New one") }),
     )
     .await
@@ -388,30 +320,30 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
             .is_none()
     );
 
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_import",
+        "import",
         json!({ "dashboard": dashboard("new", "New one") }),
     )
     .await
     .unwrap_err();
     assert!(matches!(err.status_code(), 403 | 404), "{err}");
 
-    let plan = call_mcp_tool(
+    let plan = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_plan",
+        "plan",
         json!({ "bundle": { "dashboards": [{ "rawJson": dashboard("planned", "Planned") }] } }),
     )
     .await
     .unwrap();
     assert_eq!(plan["hasChanges"], true, "{plan}");
     // The bundle may also be given as the arguments themselves.
-    let same = call_mcp_tool(
+    let same = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_plan",
+        "plan",
         json!({ "dashboards": [{ "rawJson": dashboard("planned", "Planned") }] }),
     )
     .await
@@ -423,13 +355,13 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
         json!({ "plan": plan.clone() }),
         json!({ "digest": plan["digest"], "desired": plan["desired"] }),
     ] {
-        let err = call_mcp_tool(&f.state, &f.admin, "daiya_apply", args)
+        let err = execute_cli_command(&f.state, &f.admin, "apply", args)
             .await
             .unwrap_err();
         assert_eq!(err.status_code(), 400, "{err}");
     }
     let by_digest = json!({ "digest": plan["digest"] });
-    let applied = call_mcp_tool(&f.state, &f.admin, "daiya_apply", by_digest.clone())
+    let applied = execute_cli_command(&f.state, &f.admin, "apply", by_digest.clone())
         .await
         .unwrap();
     assert_eq!(applied["dashboards"][0]["uid"], "planned", "{applied}");
@@ -442,14 +374,14 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
             .is_some()
     );
     // The same plan again is stale: the state it was computed on is gone.
-    let err = call_mcp_tool(&f.state, &f.admin, "daiya_apply", by_digest)
+    let err = execute_cli_command(&f.state, &f.admin, "apply", by_digest)
         .await
         .unwrap_err();
     assert_eq!(err.status_code(), 409, "{err}");
 }
 
 #[tokio::test]
-async fn public_dashboard_tools_rotate_query_and_decide() {
+async fn public_dashboard_commands_rotate_query_and_decide() {
     let f = fixture().await;
     // A public dashboard reads only an Endpoint (WRK-04).
     let source = json!({ "type": "ngsild-grafana-datasource", "uid": "site" });
@@ -481,30 +413,30 @@ async fn public_dashboard_tools_rotate_query_and_decide() {
     assert_eq!(st, 200, "{created}");
     let old_token = created["accessToken"].as_str().unwrap().to_owned();
 
-    let answer = call_mcp_tool(
+    let answer = execute_cli_command(
         &f.state,
         &f.stranger,
-        "daiya_public_dashboard_query",
+        "public-query",
         json!({ "accessToken": old_token, "panelId": 1 }),
     )
     .await
     .unwrap();
     assert!(answer["value"].to_string().contains('7'), "{answer}");
 
-    let rotated = call_mcp_tool(
+    let rotated = execute_cli_command(
         &f.state,
         &f.admin,
-        "daiya_rotate_public_dashboard",
+        "rotate-public-token",
         json!({ "uid": "published" }),
     )
     .await
     .unwrap();
     let new_token = rotated["accessToken"].as_str().unwrap();
     assert_ne!(new_token, old_token);
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.stranger,
-        "daiya_public_dashboard_query",
+        "public-query",
         json!({ "accessToken": old_token, "panelId": 1 }),
     )
     .await
@@ -512,29 +444,29 @@ async fn public_dashboard_tools_rotate_query_and_decide() {
     assert_eq!(err.status_code(), 404, "a rotated token is gone");
 
     // A viewer may not rotate.
-    let err = call_mcp_tool(
+    let err = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_rotate_public_dashboard",
+        "rotate-public-token",
         json!({ "uid": "published" }),
     )
     .await
     .unwrap_err();
     assert!(matches!(err.status_code(), 403 | 404), "{err}");
 
-    let yes = call_mcp_tool(
+    let yes = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_allowed",
+        "allowed",
         json!({ "operation": "export", "object": "Dashboard:web" }),
     )
     .await
     .unwrap();
     assert_eq!(yes["allowed"], true, "{yes}");
-    let no = call_mcp_tool(
+    let no = execute_cli_command(
         &f.state,
         &f.viewer,
-        "daiya_allowed",
+        "allowed",
         json!({ "operation": "apply" }),
     )
     .await

@@ -41,7 +41,6 @@ members = [
   "crates/daiya/store-pg",
   "crates/daiya/import",
   "crates/daiya/api",
-  "crates/daiya/mcp",
   "crates/daiya/server",
   "crates/shako/core",
   "crates/shako/git",

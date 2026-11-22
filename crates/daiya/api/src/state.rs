@@ -563,6 +563,20 @@ pub async fn refuse_unknown_credential(
     next.run(request).await
 }
 
+/// Answers a path daiya does not serve: 401 to a caller who is nobody, 404 to a signed one.
+pub(crate) async fn unknown_path(
+    axum::extract::State(state): axum::extract::State<DaiyaState>,
+    headers: HeaderMap,
+) -> Response {
+    error_response(&match caller(&state, &headers).await {
+        Ok((subject, _)) if subject.is_anonymous() => {
+            CrError::Unauthorized("sign in: the request carries no accepted credential".into())
+        }
+        Ok(_) => CrError::NotFound("no such path".into()),
+        Err(e) => e,
+    })
+}
+
 /// The Organization `X-Daiya-Org-Id` (a UUID) or else `X-Grafana-Org-Id` (a UUID or a Grafana
 /// numeric id) chooses; `None` when neither is sent. A number names a live Organization of the
 /// store. A UUID never names a retired one, and the server administrator's only a live one (I-18:
