@@ -346,6 +346,7 @@ mod tests {
             filter: None,
             map: None,
             geometries,
+            ..Default::default()
         }
     }
 

@@ -132,7 +132,7 @@ pub enum Event {
     /// The next characters of the answer as the answering model streams them (T-4139).
     Delta(String),
     /// Rows a data round read from a connector, for the person to see as a table (T-4140).
-    Data(Table),
+    Data(Box<Table>),
     /// A chart or a map the model asked for, built by code from a table's rows (T-4657).
     Visualization(Value),
     /// Up to three questions to offer after the answer (T-4174).
@@ -262,8 +262,25 @@ pub struct Table {
     pub profile: Option<String>,
     /// The `q` the read kept its rows by, when it had one: the answer call reads it beside the
     /// table, so a filtered `total` is told from the type's whole count (T-5784).
-    #[serde(skip)]
+    /// The chat says a word it holds every row to once, over them (T-7504); its step shows it too.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// How many rows answer a question for the most or the least, ties included; `total` is then
+    /// how many they were ranked among (T-7504).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<usize>,
+    /// What the rows are when code computed them: a split count or a history's points (T-7504).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregation: Option<super::view::Aggregation>,
+    /// How many of `total` have a location, for a map of part of them.
+    #[serde(skip)]
+    pub located: Option<u64>,
+    /// The read only counted the whole type: its rows are no answer and are never shown.
+    #[serde(skip)]
+    pub counted: bool,
+    /// A ranked read's placeholder rows, named by the answer and never shown (T-4803).
+    #[serde(skip)]
+    pub set_aside: Vec<Vec<Value>>,
 }
 
 /// Everything one question is answered with.

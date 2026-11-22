@@ -108,7 +108,7 @@
   var MAP_SCHEMA = "urn:joinedcontext:map:v1";
   var MAP_FEATURES = 1000;
   var MAP_BYTES = 2 * 1024 * 1024;
-  var MAP_MEMBERS = ["$schema", "title", "data", "label", "popup", "time", "link"];
+  var MAP_MEMBERS = ["$schema", "title", "data", "label", "popup", "time", "link", "count"];
   var GEOMETRIES = { Point: 0, MultiPoint: 1, LineString: 1, MultiLineString: 2, Polygon: 2, MultiPolygon: 3 };
 
   // A position is [longitude, latitude] within range; `depth` is how far the positions nest.
@@ -155,6 +155,15 @@
     if (!data || data.type !== "FeatureCollection" || !Array.isArray(data.features) || Object.keys(data).length !== 2) {
       no("/data", "a GeoJSON FeatureCollection");
       return errors;
+    }
+    // "N shown of TOTAL · K without a location" (T-7504): counts alone, never a text.
+    if (spec.count !== undefined) {
+      var c = spec.count;
+      var whole = function (v) { return typeof v === "number" && isFinite(v) && v >= 0 && Math.floor(v) === v; };
+      var fits = !!c && typeof c === "object" && !Array.isArray(c) && whole(c.total) && c.total >= data.features.length &&
+        Object.keys(c).every(function (k) { return k === "total" || k === "unlocated"; }) &&
+        (c.unlocated === undefined || (whole(c.unlocated) && c.unlocated <= c.total - data.features.length));
+      if (!fits) no("/count", "the total and how many of it have no location, as whole numbers");
     }
     if (data.features.length > MAP_FEATURES) no("/data/features", "at most " + MAP_FEATURES + " features");
     data.features.slice(0, MAP_FEATURES).forEach(function (f, i) {

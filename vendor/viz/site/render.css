@@ -5,3 +5,13 @@ body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-seri
 #chart .vega-embed { width: 100%; }
 /* T-7490: the export menu's button reads at rest, not only under a pointer. */
 #chart summary { opacity: 1; }
+/* T-7504: the menu's button is no white disc on a dark chart. */
+html[data-theme="dark"] #chart summary { background: transparent; color: inherit; border-color: currentColor; }
+html[data-theme="dark"] #chart summary svg { fill: currentColor; }
+/* T-7504: a finger's target, and room for it beside the chart. */
+@media (max-width: 600px), (pointer: coarse) {
+  #chart summary { box-sizing: border-box; width: 44px; height: 44px; padding: 14px; }
+  #chart.has-actions { padding-right: 50px; }
+  #chart .vega-actions { top: 50px; }
+  #chart .vega-actions a { padding-block: 14px; }
+}

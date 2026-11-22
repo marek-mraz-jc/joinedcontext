@@ -385,10 +385,14 @@ for (const [width, height] of [[1366, 768], [768, 1024], [390, 844], [320, 640]]
     expect(head.y, "the header stays at the top after a long answer").toBeLessThanOrEqual(frameBox.y + 1);
     expect(await panel.boundingBox(), "a long answer leaves the panel as it opened").toEqual(opened);
     if (width <= 480) {
-      const controls = [".jc-head button", ".jc-form button", ".jc-answer-tools button", ".jc-cards > li", ".jc-followups button", ".jc-privacy-line .jc-more"].map((s) => s + ":visible").join(", ");
+      const controls = [".jc-head button", ".jc-form button", ".jc-answer-tools button", ".jc-cards > li", ".jc-followups button", ".jc-privacy-line .jc-more", ".jc-cite a", ".jc-form textarea"].map((s) => s + ":visible").join(", ");
       for (const control of await frame.locator(controls).all()) {
         const box = await control.boundingBox();
         expect(Math.min(box.width, box.height), "a tap target of 44 px").toBeGreaterThanOrEqual(44);
+      }
+      for (const small of [".jc-time", ".jc-cite a", ".jc-privacy-line", ".jc-role", ".jc-card-n"]) {
+        const size = await frame.locator(small).first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+        expect(size, `${small} is 12 px or more on a phone`).toBeGreaterThanOrEqual(12);
       }
     }
 
@@ -406,6 +410,18 @@ test("the full page that names ?lang= does not ask", async ({ page }) => {
   await expect(page.locator("#jc-question")).toBeVisible();
   await expect(page.locator(".jc-choose-list")).toHaveCount(0);
   await expect(page.locator(".jc-langs button[aria-pressed=true]")).toHaveText("EN");
+});
+
+test("the composer is one line again once a wrapped question is sent", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 844 });
+  await page.goto(`${base}/d/bb?lang=en`);
+  const box = page.locator("#jc-question");
+  const one = (await box.boundingBox()).height;
+  await box.fill("Which bridge of the whole region has the longest bridged length of them all?");
+  expect((await box.boundingBox()).height).toBeGreaterThan(one);
+  await box.press("Enter");
+  await expect(box).toHaveValue("");
+  expect((await box.boundingBox()).height, "one line, rounded up to a whole pixel").toBeLessThanOrEqual(one + 1);
 });
 
 // T-4761: a dark system paints the chat dark, but a light host page that asks ?scheme=light

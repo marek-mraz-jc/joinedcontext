@@ -155,6 +155,7 @@ pub fn catalogue_read(
             kind: "Organization".into(),
             q: None,
             order: None,
+            view: Default::default(),
         });
     }
     let about = asks_for_datasets
@@ -171,6 +172,7 @@ pub fn catalogue_read(
             kind: "Dataset".into(),
             q: Some(format!("refPublisher==\"{}\"", publisher.id)),
             order: None,
+            view: Default::default(),
         })
 }
 
@@ -256,6 +258,7 @@ mod tests {
                     kind: "Organization".into(),
                     q: None,
                     order: None,
+                    view: Default::default(),
                 }),
                 "{question}"
             );
@@ -271,6 +274,7 @@ mod tests {
                 kind: "Dataset".into(),
                 q: Some(format!("refPublisher==\"urn:ngsi-ld:Organization:{org}\"")),
                 order: None,
+                view: Default::default(),
             })
         };
         assert_eq!(read("Aké dáta publikuje Helsinki?", true), by("hel-fi"));
@@ -320,6 +324,7 @@ mod tests {
             kind: "Organization".into(),
             q: None,
             order: None,
+            view: Default::default(),
         };
         let r = routed(routing.clone(), Some(read.clone()));
         assert!(r.data && !r.rag && !r.catalogue && r.reads == [read.clone()]);

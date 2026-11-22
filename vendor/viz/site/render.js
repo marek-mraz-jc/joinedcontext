@@ -6,7 +6,7 @@
   "use strict";
 
   var chart = document.getElementById("chart");
-  var domain = location.hostname.replace(/^viz\./, "");
+  var domain = location.hostname.replace(/^(?:embed|viz)\./, "");
 
   // To any parent: beside the Portal (jc slug mode) the host page is an opaque origin too, which no
   // named target matches, and a ready, a height or a refusal tells a framer nothing it lacks.
@@ -45,11 +45,20 @@
     return Object.assign({ dateTime: "%-d. %-m. %Y %H:%M:%S", date: "%-d. %-m. %Y", time: "%H:%M:%S", periods: ["", ""] }, names);
   }
 
+  // T-7504: numbers too, or a Slovak reader takes "1,037" bridges for one.
+  function numberLocale(lang) {
+    var comma = { sk: "\u00a0", cs: "\u00a0", fi: "\u00a0", de: "." };
+    if (!Object.prototype.hasOwnProperty.call(comma, lang)) return undefined;
+    return { decimal: ",", thousands: comma[lang], grouping: [3], currency: ["", ""] };
+  }
+
   function draw(message) {
     // The chart theme (theme.js, T-6886) of the host page's scheme: light unless it says dark.
     var mode = message.theme === "dark" ? "dark" : "light";
     document.documentElement.dataset.theme = mode;
     document.body.style.backgroundColor = self.jcTheme[mode].background;
+    // What is no chart (the export menu's button, render.css) takes the theme's text colour.
+    document.body.style.color = self.jcTheme[mode].text.color;
     var errors = self.jcRefuse(message.spec, domain);
     if (errors.length) throw new Error("The chart was refused: " + errors[0].pointer + " — " + errors[0].rule + ".");
     var data = message.data || {};
@@ -62,6 +71,7 @@
       expr: vega.expressionInterpreter,
       loader: loader,
       renderer: "svg",
+      formatLocale: numberLocale(document.documentElement.lang),
       timeFormatLocale: timeLocale(document.documentElement.lang),
       // Export only: no source, no compiled spec, no "open in the editor" (which posts the spec
       // to another site).
