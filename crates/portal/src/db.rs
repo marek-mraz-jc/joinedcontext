@@ -8,7 +8,7 @@ use crate::agents::run::{AgentRun, AgentRunEvent};
 // else: no caller value ever reaches the SQL text, every value is a bound parameter. That is
 // what the wrapper asserts.
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::{AssertSqlSafe, Connection};
+use sqlx::AssertSqlSafe;
 use std::str::FromStr;
 use std::time::Duration;
 use time::OffsetDateTime;
