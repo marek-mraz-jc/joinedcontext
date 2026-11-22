@@ -1037,9 +1037,15 @@ mod tests {
         });
         let event = aggregated(&table).expect("a chart");
         assert_eq!(event["spec"]["mark"]["type"], "bar");
-        assert_eq!(event["spec"]["encoding"]["x"]["field"], "label");
-        assert_eq!(event["spec"]["encoding"]["y"]["field"], "value");
+        assert_eq!(event["spec"]["encoding"]["y"]["field"], "label");
+        assert_eq!(event["spec"]["encoding"]["x"]["field"], "value");
         assert_eq!(event["aggregation"]["per"], "decade");
+        let mut years = table.clone();
+        if let Some(made) = years.aggregation.as_mut() {
+            made.per = "year";
+        }
+        let upright = aggregated(&years).expect("a chart");
+        assert_eq!(upright["spec"]["encoding"]["x"]["field"], "label");
         table.labels = vec![
             Some([("sk".to_owned(), "Rok výstavby".to_owned())].into()),
             None,
