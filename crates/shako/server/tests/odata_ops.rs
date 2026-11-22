@@ -109,15 +109,12 @@ async fn world() -> World {
     let store = Arc::new(MemoryStore::new());
     let state = ShakoState::new(
         InstanceId::from_u128(1),
-        org_a,
         tmp.path().to_path_buf(),
         store.clone(),
         authz,
         verifier,
         guard,
     );
-    state.register_owner_org("joinedcontext", org_a);
-    state.register_owner_org("bbsk", org_b);
     let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
@@ -296,6 +293,18 @@ async fn a_name_another_organization_holds_answers_as_a_free_name() {
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, _, _) = call(&w.app, "GET", R, Some(org_b), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "theirs, before a twin exists");
+    let stolen = json!({"SourceOwner": "joinedcontext", "SourceName": "helsinki", "RepoOwner": "mine", "RepoName": "copy"});
+    let (st, _, _) = call(
+        &w.app,
+        "POST",
+        "/odata/ImportRepository",
+        Some(org_b),
+        Some(stolen),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "theirs is no source to import");
 
     for op in ["CreateRepository", "ImportRepository"] {
         let mut answers = Vec::new();
@@ -332,6 +341,14 @@ async fn a_name_another_organization_holds_answers_as_a_free_name() {
     assert_ne!(
         ours["Id"], theirs["Id"],
         "two repositories, one per Organization"
+    );
+    let (st, _, _) = call(&w.app, "DELETE", R, Some(org_b), None).await;
+    assert!(st.is_success(), "{st}");
+    let (st, kept, _) = call(&w.app, "GET", R, Some("portal-token"), None).await;
+    assert_eq!(
+        (st, &kept["Id"]),
+        (StatusCode::OK, &ours["Id"]),
+        "a twin's delete leaves it"
     );
 }
 

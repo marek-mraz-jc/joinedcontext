@@ -181,15 +181,12 @@ async fn setup_world() -> TestWorld {
 
     let state = ShakoState::new(
         inst,
-        org_a,
         tmp.path().to_path_buf(),
         store,
         authz,
         verifier,
         guard,
     );
-    state.register_owner_org("joinedcontext", org_a);
-    state.register_owner_org("bbsk", org_b);
     let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
@@ -1070,26 +1067,29 @@ async fn create_repo(world: &TestWorld, name: &str) {
 /// The Organization routes act only for a member of the Organization the owner names, never
 /// write tenant data, and report rights the caller holds.
 #[tokio::test]
-async fn organization_routes_refuse_outsiders_and_report_real_rights() {
+async fn organization_routes_answer_alike_for_held_and_free_names_and_report_real_rights() {
     let world = setup_world().await;
     let inst = InstanceId::from_u128(1);
+    create_repo(&world, "helsinki").await;
     for (method, uri) in [
-        ("GET", "/api/v1/orgs/joinedcontext/teams"),
-        ("POST", "/api/v1/orgs/joinedcontext/teams"),
-        (
-            "GET",
-            "/api/v1/users/admin-b/orgs/joinedcontext/permissions",
-        ),
+        ("GET", "/api/v1/orgs/{org}/teams"),
+        ("POST", "/api/v1/orgs/{org}/teams"),
+        ("GET", "/api/v1/users/admin-b/orgs/{org}/permissions"),
     ] {
-        let (st, _) = send_json(
-            &world.app,
-            method,
-            uri,
-            Some("org-b-token"),
-            Some(json!({ "name": "intruders" })),
-        )
-        .await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}");
+        let mut answers = Vec::new();
+        // Held by the other Organization, then free: no route says which.
+        for org in ["joinedcontext", "nobody"] {
+            let answer = send_json(
+                &world.app,
+                method,
+                &uri.replace("{org}", org),
+                Some("org-b-token"),
+                Some(json!({ "name": "intruders" })),
+            )
+            .await;
+            answers.push(answer);
+        }
+        assert_eq!(answers[0], answers[1], "{method} {uri}");
     }
     let (st, _) = send_json(
         &world.app,
@@ -1347,8 +1347,55 @@ async fn an_open_upload_is_invisible_to_another_organization() {
         .await
         .unwrap();
     assert_eq!(theirs.status(), StatusCode::NOT_FOUND);
-    let ours = upload("PATCH", location, "portal-token").await.unwrap();
+    let ours = upload("PATCH", location.clone(), "portal-token")
+        .await
+        .unwrap();
     assert_eq!(ours.status(), StatusCode::ACCEPTED);
+
+    // The PUT's body is the last chunk: three "part" in all.
+    let digest = format!("sha256:{}", shako_core::sha256_hex(b"partpartpart"));
+    let last = format!("{location}?digest={digest}");
+    let theirs = upload("PUT", last.clone(), "org-b-token").await.unwrap();
+    assert_eq!(theirs.status(), StatusCode::NOT_FOUND);
+    let ours = upload("PUT", last, "portal-token").await.unwrap();
+    assert_eq!(
+        ours.status(),
+        StatusCode::CREATED,
+        "another's PUT dropped nothing"
+    );
+    let blob = format!("/v2/city/app/blobs/{digest}");
+    let theirs = upload("GET", blob.clone(), "org-b-token").await.unwrap();
+    assert_eq!(
+        theirs.status(),
+        StatusCode::NOT_FOUND,
+        "a twin name reads no blob"
+    );
+    let ours = upload("GET", blob, "portal-token").await.unwrap();
+    assert_eq!(ours.status(), StatusCode::OK);
+}
+
+/// A token names the one Organization it acts in: none, or several in either order, act in none
+/// and mint no registry token.
+#[tokio::test]
+async fn a_token_without_exactly_one_organization_acts_in_none() {
+    let mut world = setup_world().await;
+    let (a, b) = (world.org_a, world.org_b);
+    let portal = |orgs| Subject::authenticated("jc-portal", "jc-portal", orgs);
+    let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
+        .with_static_tokens(vec![
+            StaticTokenBinding::new("none", portal(vec![])),
+            StaticTokenBinding::new("both", portal(vec![a, b])),
+            StaticTokenBinding::new("reordered", portal(vec![b, a])),
+        ]);
+    world.state.token_verifier = verifier;
+    let mount = Mount::new("shako", "https", "city.example", "/git").expect("mount");
+    let app = router(world.state.clone(), mount);
+    for token in ["none", "both", "reordered"] {
+        let (st, _) = send_json(&app, "GET", "/api/v1/user", Some(token), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{token}");
+        let (st, body) = send_json(&app, "GET", "/v2/token", Some(token), None).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{token}: {body}");
+    }
 }
 
 #[tokio::test]
@@ -1916,6 +1963,20 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
             .state
             .signing_key()
             .verify_cosign_payload(&payload_bytes, sig_b64)
+    );
+    let signed: Value = serde_json::from_slice(&payload_bytes).unwrap();
+    assert_eq!(signed["optional"]["org_id"], json!(world.org_a.to_string()));
+    let events = world
+        .state
+        .store()
+        .list_outbox_events(InstanceId::from_u128(1), world.org_a)
+        .await
+        .unwrap();
+    assert!(
+        events.iter().any(|e| e
+            .idempotency_key
+            .starts_with(&format!("oci:{}:", world.org_a))),
+        "the package event's key names its Organization"
     );
     // The signature manifest's config blob is pullable too: cosign and crane fetch it.
     let config_digest = sig_man["config"]["digest"].as_str().unwrap();

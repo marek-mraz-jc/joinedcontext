@@ -125,15 +125,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
-        state.register_owner_org(APPS_OWNER, apps_org);
         state
             .secret_store
             .put_secret(org, "portal-webhook", WEBHOOK_SECRET)

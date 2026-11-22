@@ -82,15 +82,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
-        state.register_owner_org(APPS_OWNER, apps_org);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let host = listener.local_addr().unwrap().to_string();

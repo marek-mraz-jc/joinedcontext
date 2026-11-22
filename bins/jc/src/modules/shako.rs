@@ -149,7 +149,6 @@ pub async fn build_state(
     let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
     let mut state = ShakoState::new(
         INSTANCE,
-        org_id,
         root,
         store,
         authz,
@@ -208,7 +207,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = ShakoState::new(
             INSTANCE,
-            ORG,
             dir.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             Arc::new(LocalAuthorizer::new(Vec::new())),

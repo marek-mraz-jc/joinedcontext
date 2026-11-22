@@ -112,8 +112,8 @@ fn build_standalone_state(
             Subject::authenticated("admin", "admin", vec![org_id]),
         ));
     }
-    let state = ShakoState::for_standalone(root, store, authz, org_id, tokens)
-        .map_err(|e| e.to_string())?;
+    let state =
+        ShakoState::for_standalone(root, store, authz, tokens).map_err(|e| e.to_string())?;
     Ok((state, org_id))
 }
 

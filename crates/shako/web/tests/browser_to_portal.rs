@@ -34,7 +34,6 @@ async fn shako(tmp: &tempfile::TempDir, with_repo: bool) -> Router {
     let subject = Subject::authenticated("jc-portal", "jc-portal", vec![org]);
     let state = ShakoState::new(
         InstanceId::from_u128(1),
-        org,
         tmp.path().to_path_buf(),
         Arc::new(MemoryStore::new()),
         Arc::new(LocalAuthorizer::new(vec![RoleBinding {
@@ -48,7 +47,6 @@ async fn shako(tmp: &tempfile::TempDir, with_repo: bool) -> Router {
             .with_static_tokens(vec![StaticTokenBinding::new(TOKEN, subject.clone())]),
         OutboundGuard::default(),
     );
-    state.register_owner_org("joinedcontext", org);
     if with_repo {
         let ctx = RequestCtx::new(InstanceId::from_u128(1), org, subject);
         let repo = NewRepository {

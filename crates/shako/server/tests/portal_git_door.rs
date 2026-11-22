@@ -68,14 +68,12 @@ async fn world() -> World {
     });
     let shako = ShakoState::new(
         InstanceId::from_u128(1),
-        org,
         tmp.path().to_path_buf(),
         Arc::new(MemoryStore::new()),
         authz,
         verifier,
         guard,
     );
-    shako.register_owner_org(OWNER, org);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let host = listener.local_addr().unwrap().to_string();
     let jc = JcRouterBuilder::new("http", host.clone())

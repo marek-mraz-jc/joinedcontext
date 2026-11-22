@@ -118,7 +118,6 @@ impl Registry {
         let orgs = [("city", CITY), ("town", TOWN)];
         let state = ShakoState::new(
             INSTANCE,
-            CITY,
             repositories.path().to_path_buf(),
             store.clone(),
             Arc::new(LocalAuthorizer::new(
@@ -142,9 +141,6 @@ impl Registry {
             ),
             OutboundGuard::new(OutboundPolicy::default()),
         );
-        for (name, org) in orgs {
-            state.register_owner_org(name, org);
-        }
         let mount = jc_router::Mount::new("shako", "https", "city.example", "/git").expect("mount");
         let app = router(state.clone(), mount);
         Some(Self {

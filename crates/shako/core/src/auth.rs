@@ -149,6 +149,16 @@ impl Subject {
         self.login().is_empty()
     }
 
+    /// The Organization the caller acts in: the one its token names. A token naming none or
+    /// several acts in none (TEN-04).
+    #[must_use]
+    pub fn organization(&self) -> Option<OrgId> {
+        match self.organizations.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        }
+    }
+
     /// The caller's account name in the forge: the subject id.
     #[must_use]
     pub fn login(&self) -> &str {

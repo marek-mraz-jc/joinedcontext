@@ -61,14 +61,12 @@ impl World {
         });
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            org,
             tmp.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             authz,
             verifier,
             guard,
         );
-        state.register_owner_org(OWNER, org);
         let host = listener.local_addr().unwrap().to_string();
         let git_mount = Mount::new("shako", "http", host.clone(), "/git").unwrap();
         let jc = JcRouterBuilder::new("http", host.clone())
