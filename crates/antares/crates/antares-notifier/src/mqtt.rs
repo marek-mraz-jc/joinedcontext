@@ -1029,6 +1029,8 @@ mod tests {
                                     vec![0x20, 0x02, 0x00, 0x00]
                                 }
                             }
+                            // QoS 0 (flag bits 1-2 clear) takes no PUBACK
+                            Some(3) if packet.first().is_some_and(|b| b & 0x06 == 0) => continue,
                             Some(3)
                                 if on_publish == OnPublish::Ack
                                     || on_publish == OnPublish::AckThenHang =>
@@ -1208,13 +1210,14 @@ mod tests {
         sink.publish_message(&second, params, b"{}")
             .await
             .expect("second");
-        let pool = sink.pool.lock().expect("pool");
-        assert_eq!(pool.len(), 1);
-        assert!(
-            pool.contains_key(&pool_key(&second, params)),
-            "the newest session stays"
-        );
-        drop(pool);
+        {
+            let pool = sink.pool.lock().expect("pool");
+            assert_eq!(pool.len(), 1);
+            assert!(
+                pool.contains_key(&pool_key(&second, params)),
+                "the newest session stays"
+            );
+        }
         let deadline = Instant::now() + Duration::from_secs(5);
         while !first_seen.lock().expect("seen").iter().any(Vec::is_empty) {
             assert!(
