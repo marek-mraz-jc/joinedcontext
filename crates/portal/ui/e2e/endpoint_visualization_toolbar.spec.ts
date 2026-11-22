@@ -154,7 +154,7 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Measure").selectOption("no2");
     // Nobody has to open the JSON: proposing writes it.
     await expect(page.getByLabel("Vega-Lite specification")).toBeHidden();
-    await page.getByRole("textbox", { name: "Name", exact: true }).fill("no2-week");
+    await page.getByRole("textbox", { name: "Short ID", exact: true }).fill("no2-week");
     await page.getByRole("textbox", { name: "Title", exact: true }).fill("NO2 this week");
     await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await shootForm(page, `toolbar-filled-${width}.png`, width);
@@ -182,7 +182,7 @@ for (const width of [1440, 400]) {
     await expect(spec).toHaveValue(/observedAt/);
     // Edited by hand to read another server: the one refusal this form can get for a new chart.
     await spec.fill(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }, null, 2));
-    await page.getByRole("textbox", { name: "Name", exact: true }).fill("no2-week");
+    await page.getByRole("textbox", { name: "Short ID", exact: true }).fill("no2-week");
     await page.getByRole("textbox", { name: "Title", exact: true }).fill("NO2 this week");
     await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
@@ -190,7 +190,7 @@ for (const width of [1440, 400]) {
     await expect(alert).toContainText("Nothing was proposed. Correct “Vega-Lite specification” above");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
-    await expect(spec).toHaveAccessibleDescription(/takes data or a link from another address/);
+    await expect(spec).toHaveAccessibleDescription(/may use only this endpoint's data/);
     // The shots show the member that was refused, at the top of the box.
     await spec.evaluate((box) => (box.scrollTop = 0));
     await alert.scrollIntoViewIfNeeded();
@@ -208,6 +208,7 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
     await expect(section.getByRole("button", { name: "Remove “NO2 this quarter”" })).toBeVisible();
+    await expect(section.getByRole("button", { name: "Set “NO2 this quarter” to 31 days" })).toBeVisible();
     await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
     await expect(section.getByText("Range: 90 days · Granularity: Daily · Method: Maximum")).toBeVisible();
     await expect(section.getByText("90 days is not an allowed range")).toBeVisible();

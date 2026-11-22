@@ -1855,7 +1855,7 @@
         "awaiting": "Waiting for approval",
         "overTime": "Over time",
         "add": "Add a chart",
-        "name": "Name",
+        "name": "Short ID",
         "chartTitle": "Title",
         "description": "Description",
         "template": "Chart",
@@ -1892,8 +1892,8 @@
           "granularity": "The server did not accept {value} as the granularity. Pick {choices}.",
           "method": "The server did not accept {value} as the method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again.",
-          "spec": "The check cannot draw a chart from this. Press “Fill from the chart” to write it again from the fields above.",
-          "outside": "The chart takes data or a link from another address, and it may show only this endpoint's data. Press “Fill from the chart” to write it again."
+          "spec": "This is not a valid Vega-Lite chart. Correct it, or press “Fill from the chart”, which replaces your edits.",
+          "outside": "A chart may use only this endpoint's data. Remove the link to another address, or press “Fill from the chart”, which replaces your edits."
         },
         "range": "Default range",
         "ranges": {
@@ -1926,16 +1926,16 @@
           "title": "The heading readers see above the chart, e.g. NO2 this week.",
           "description": "One sentence on what the chart shows, e.g. The daily peak of NO2 at each station.",
           "template": "The shape of the chart, e.g. Line over time for readings through a week.",
-          "type": "What the chart reads, e.g. the type for air quality readings.",
+          "type": "What the chart reads, e.g. {example}.",
           "noTypes": "The data model lists no type yet. Add one to the model first, e.g. a type for air quality readings.",
           "noColumns": "The data model lists no column here. Add an attribute to the type first, e.g. no2.",
-          "time": "The time each reading was taken, e.g. 14:00. A chart over time has no other time.",
+          "time": "When each reading was taken, e.g. 14:00. It is set for you on every chart over time.",
           "x": "The column along the bottom of the chart, e.g. dateObserved for time.",
           "bars": "The column that names each bar, e.g. name for one bar per station.",
           "y": "The number the chart draws, e.g. no2.",
-          "color": "Optional. A colour for each value, e.g. name for one colour per station.",
-          "facet": "A small chart for each value, e.g. name for one panel per station.",
-          "spec": "Optional. The chart is written from the fields above when you propose it. An edit may read only this endpoint, e.g. {example}.",
+          "color": "Optional. A colour for each value, e.g. “name” for one colour per station.",
+          "facet": "A small chart for each value, e.g. “name” for one panel per station.",
+          "spec": "Optional. What you write here is used for drawing in place of the chart built from the fields above, e.g. {example} reads this endpoint.",
           "gridX": "The columns of the grid, e.g. dateObserved for one column per time.",
           "gridY": "The rows of the grid, e.g. name for one row per station.",
           "gridColor": "The number that sets the colour of each cell, e.g. no2."
@@ -1953,13 +1953,14 @@
           "color": "Colour",
           "facet": "Panel per"
         },
-        "removeFirst": "Remove “{chart}” first. Once that is approved, propose your chart again. You can then add “{chart}” again with allowed settings.",
+        "removeFirst": "Correct or remove “{chart}” first. Once that change is approved, propose your chart again.",
         "removeBlocking": "Remove “{chart}”",
         "advanced": "Advanced: edit the chart's specification",
         "type": "Entity type",
         "readingTime": "Time of the reading (observedAt)",
         "chooseColumn": "Choose a column",
-        "removeThenRemove": "Remove “{chart}” first. Once that is approved, remove “{removed}” again. You can then add “{chart}” again with allowed settings."
+        "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",
+        "setRange": "Set “{chart}” to {range}"
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",

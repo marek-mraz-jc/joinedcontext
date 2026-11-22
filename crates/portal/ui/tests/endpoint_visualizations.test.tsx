@@ -381,7 +381,7 @@ describe("VisualizationsSection", () => {
     doorsAsRest();
     await userEvent.click(screen.getByText(V.add));
     expect(screen.getByLabelText(V.spec)).not.toBeVisible();
-    expect(screen.getAllByText(/To propose the chart, fill in: Name, Title, Description,? and Measure/)[0]).toBeVisible();
+    expect(screen.getAllByText(/To propose the chart, fill in: Short ID, Title, Description,? and Measure/)[0]).toBeVisible();
     await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-day");
     await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "NO2 today");
     await userEvent.type(screen.getByLabelText(marked(V.description)), "Hourly mean.");
@@ -420,10 +420,11 @@ describe("VisualizationsSection", () => {
     await proposeLine();
     const spec = screen.getByLabelText(V.spec);
     await waitFor(() => expect(spec).toHaveAttribute("aria-invalid", "true"));
-    expect(spec).toHaveAccessibleDescription(says);
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining(says));
     expect(document.body.textContent).not.toContain("/spec/catalog");
     await userEvent.click(screen.getByRole("button", { name: V.showField }));
     expect(spec).toBeVisible();
+    expect(spec).toHaveAccessibleDescription(/e\.g\./);
     expect(spec).toHaveFocus();
   });
 
@@ -449,6 +450,23 @@ describe("VisualizationsSection", () => {
     await userEvent.click(fix);
     await waitFor(() => expect(sent.filter((one) => one.method === "PUT")).toHaveLength(2));
     expect(JSON.parse(sent.filter((one) => one.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([BAR]);
+  });
+
+  it("sets a blocking chart's range to one that is allowed, and leaves the rest of it (T-7491)", async () => {
+    const long = { ...WEEK, data: { ...WEEK.data, last: "P90D" } };
+    mount(endpoint({ visualizations: [BAR, long] }), true);
+    doorsAsRest();
+    refusal = ["invalid /spec/catalog/visualizations/0/data/last: source: `P90D` is not an ISO 8601 duration up to P31D"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const set = await screen.findByRole("button", { name: "Set “NO2 week” to 31 days" });
+    refusal = undefined;
+    sent.length = 0;
+    await userEvent.click(set);
+    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    expect(JSON.parse(sent.filter((r) => r.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([
+      BAR,
+      { ...WEEK, data: { ...WEEK.data, last: "P31D" } },
+    ]);
   });
 
   it("tells the editor what an unticked toolbar means for readers (T-7491)", async () => {

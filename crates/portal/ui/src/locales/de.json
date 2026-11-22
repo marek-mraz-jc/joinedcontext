@@ -1855,7 +1855,7 @@
         "awaiting": "Wartet auf Genehmigung",
         "overTime": "Zeitverlauf",
         "add": "Diagramm hinzufügen",
-        "name": "Name",
+        "name": "Kurz-ID",
         "chartTitle": "Titel",
         "description": "Beschreibung",
         "template": "Diagramm",
@@ -1892,8 +1892,8 @@
           "granularity": "Der Server hat die Auflösung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor.",
-          "spec": "Daraus lässt sich kein Diagramm zeichnen. Schreiben Sie es mit „Aus dem Diagramm füllen“ aus den Feldern oben neu.",
-          "outside": "Das Diagramm nimmt Daten oder einen Link von einer anderen Adresse und darf nur die Daten dieses Endpoints zeigen. Schreiben Sie es mit „Aus dem Diagramm füllen“ neu."
+          "spec": "Das ist kein gültiges Vega-Lite-Diagramm. Korrigieren Sie es oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt.",
+          "outside": "Ein Diagramm darf nur Daten dieses Endpoints nutzen. Entfernen Sie den Link zur anderen Adresse oder drücken Sie „Aus dem Diagramm füllen“, das Ihre Änderungen ersetzt."
         },
         "range": "Standardzeitraum",
         "ranges": {
@@ -1926,16 +1926,16 @@
           "title": "Die Überschrift, die Lesende über dem Diagramm sehen, z. B. NO2 diese Woche.",
           "description": "Ein Satz dazu, was das Diagramm zeigt, z. B. Der Tageshöchstwert von NO2 je Station.",
           "template": "Die Form des Diagramms, z. B. Verlauf über die Zeit für Messungen einer Woche.",
-          "type": "Was das Diagramm liest, z. B. der Typ für Luftmessungen.",
+          "type": "Was das Diagramm liest, z. B. {example}.",
           "noTypes": "Das Datenmodell hat noch keinen Typ. Fügen Sie zuerst einen hinzu, z. B. einen Typ für Luftmessungen.",
           "noColumns": "Das Datenmodell hat hier keine Spalte. Fügen Sie dem Typ zuerst ein Attribut hinzu, z. B. no2.",
-          "time": "Die Zeit jeder Messung, z. B. 14:00. Ein Zeitverlauf hat keine andere Zeit.",
+          "time": "Wann gemessen wurde, z. B. 14:00. Bei jedem Zeitverlauf ist sie schon gesetzt.",
           "x": "Die Spalte entlang der Unterkante, z. B. dateObserved für die Zeit.",
           "bars": "Die Spalte, die jeden Balken benennt, z. B. name für einen Balken je Station.",
           "y": "Die Zahl, die das Diagramm zeichnet, z. B. no2.",
-          "color": "Optional. Eine Farbe je Wert, z. B. name für eine Farbe je Station.",
-          "facet": "Ein kleines Diagramm je Wert, z. B. name für ein Feld je Station.",
-          "spec": "Optional. Das Diagramm wird beim Vorschlagen aus den Feldern oben geschrieben. Eine Änderung darf nur diesen Endpoint lesen, z. B. {example}.",
+          "color": "Optional. Eine Farbe je Wert, z. B. „name“ für eine Farbe je Station.",
+          "facet": "Ein kleines Diagramm je Wert, z. B. „name“ für ein Feld je Station.",
+          "spec": "Optional. Was Sie hier schreiben, wird statt des Diagramms aus den Feldern oben gezeichnet, z. B. {example} liest diesen Endpoint.",
           "gridX": "Die Spalten des Rasters, z. B. dateObserved für eine Spalte je Zeitpunkt.",
           "gridY": "Die Zeilen des Rasters, z. B. name für eine Zeile je Station.",
           "gridColor": "Die Zahl, die die Farbe jedes Felds bestimmt, z. B. no2."
@@ -1953,13 +1953,14 @@
           "color": "Farbe",
           "facet": "Feld je"
         },
-        "removeFirst": "Entfernen Sie zuerst „{chart}“. Schlagen Sie Ihr Diagramm nach der Genehmigung erneut vor. Danach können Sie „{chart}“ mit zulässigen Einstellungen neu hinzufügen.",
+        "removeFirst": "Korrigieren oder entfernen Sie zuerst „{chart}“. Schlagen Sie Ihr Diagramm nach der Genehmigung erneut vor.",
         "removeBlocking": "„{chart}“ entfernen",
         "advanced": "Erweitert: Spezifikation des Diagramms bearbeiten",
         "type": "Entitätstyp",
         "readingTime": "Zeit der Messung (observedAt)",
         "chooseColumn": "Spalte wählen",
-        "removeThenRemove": "Entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“. Danach können Sie „{chart}“ mit zulässigen Einstellungen neu hinzufügen."
+        "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",
+        "setRange": "„{chart}“ auf {range} setzen"
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

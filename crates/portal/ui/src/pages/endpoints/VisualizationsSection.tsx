@@ -239,6 +239,9 @@ export function VisualizationsSection({
       )
       .join(", "),
   };
+  // A range over the limit has an allowed value nearest to it: the chart need not be made again.
+  const tooLong =
+    blocking && refused.filter((one) => one.index === other?.index).every((one) => one.field === "range");
   const refusal = blocked
     ? sent.removed
       ? t("endpoints.page.visualizations.refusedRemoval", {
@@ -260,18 +263,41 @@ export function VisualizationsSection({
         className="mt-3"
         actions={
           failed ? undefined : blocking ? (
-            // The one remedy, so nobody has to find the right of several Remove buttons.
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={proposal.mutation.isPending}
-              disabledReason={t("app.busyReason")}
-              onClick={() =>
-                propose(list.filter((one) => one.name !== blocking.name), { removed: blocking })
-              }
-            >
-              {t("endpoints.page.visualizations.removeBlocking", { chart: titleOf(blocking) })}
-            </Button>
+            // The remedies, so nobody has to find the right of several Remove buttons.
+            <>
+              {tooLong ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={proposal.mutation.isPending}
+                  disabledReason={t("app.busyReason")}
+                  onClick={() =>
+                    propose(
+                      list.map((one) =>
+                        one.name === blocking.name ? { ...one, data: { ...one.data, last: RANGES.month } } : one,
+                      ),
+                      {},
+                    )
+                  }
+                >
+                  {t("endpoints.page.visualizations.setRange", {
+                    chart: titleOf(blocking),
+                    range: t("endpoints.page.visualizations.ranges.month"),
+                  })}
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={proposal.mutation.isPending}
+                disabledReason={t("app.busyReason")}
+                onClick={() =>
+                  propose(list.filter((one) => one.name !== blocking.name), { removed: blocking })
+                }
+              >
+                {t("endpoints.page.visualizations.removeBlocking", { chart: titleOf(blocking) })}
+              </Button>
+            </>
           ) : refusedField ? (
             <Button
               size="sm"
@@ -509,6 +535,7 @@ export function VisualizationsSection({
                 types.length
                   ? "endpoints.page.visualizations.hint.type"
                   : "endpoints.page.visualizations.hint.noTypes",
+                { example: type },
               )}
             >
               <Select
@@ -708,7 +735,7 @@ export function VisualizationsSection({
             <Field
               id="viz-spec"
               label={t("endpoints.page.visualizations.spec")}
-              help={ownSpec ? undefined : t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
+              help={t("endpoints.page.visualizations.hint.spec", { example: SPEC_EXAMPLE })}
               errors={
                 ownSpec
                   ? [t(`endpoints.page.visualizations.fix.${ownSpec.why}`)]
@@ -734,7 +761,7 @@ export function VisualizationsSection({
           )}
           <Button
             variant="primary"
-            className="mt-3"
+            className="mt-3 max-sm:w-full"
             disabled={!ready || filling || proposal.mutation.isPending}
             disabledReason={ready ? t("app.busyReason") : incomplete}
             onClick={() => void add()}

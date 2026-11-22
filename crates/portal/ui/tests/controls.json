@@ -1511,7 +1511,7 @@
     },
     "src/pages/endpoints/VisualizationsSection.tsx": {
       "controls": {
-        "Button": 5,
+        "Button": 6,
         "Checkbox": 1
       },
       "tests": [
