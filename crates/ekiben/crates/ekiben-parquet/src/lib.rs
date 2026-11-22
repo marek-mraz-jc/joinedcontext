@@ -408,7 +408,7 @@ fn to_decimal_digits(be: &[u8]) -> Vec<u8> {
     while !num.is_empty() {
         let mut rem: u32 = 0;
         for b in num.iter_mut() {
-            let cur = (rem << 8) | u32::from(*b);
+            let cur = rem * 256 + u32::from(*b);
             *b = (cur / 10) as u8;
             rem = cur % 10;
         }
