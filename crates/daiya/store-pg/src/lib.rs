@@ -15,7 +15,7 @@ use daiya_model::{
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{Connection, PgPool, Postgres, Row, Transaction};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -154,10 +154,10 @@ const MIGRATION_LOCK_KEY: i64 = 0x6461_6979_615f_6d67;
 /// Runs the schema migrations (`migrations/`) on `pool` under an advisory lock. The pool
 /// must belong to the migrating role (the table owner), not to the application role.
 ///
-/// The applied migration's SHA-256 is recorded in `daiya_schema_migrations`; when it matches,
-/// nothing runs. Re-running the DDL (policies, grants) on a live database takes exclusive
-/// locks and deadlocks against application transactions, so a replica that boots next to a
-/// serving one must not do it.
+/// Each applied migration's SHA-256 is recorded in `daiya_schema_migrations`; when they match,
+/// nothing runs, and one that runs again takes every later one with it. Re-running the DDL
+/// (policies, grants) on a live database takes exclusive locks and deadlocks against application
+/// transactions, so a replica that boots next to a serving one must not do it.
 pub async fn migrate(pool: &PgPool) -> CrResult<()> {
     let mut conn = pool
         .acquire()
@@ -190,31 +190,34 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     .execute(&mut *conn)
     .await
     .map_err(failed)?;
+    // A version that runs again replaces what a later one altered (a function's search_path),
+    // so every later one follows it, and all of them commit at once.
+    let mut tx = conn.begin().await.map_err(failed)?;
+    let mut behind = false;
     for (version, sql) in [(1_i32, MIGRATION_SQL), (2, ORGANIZATIONS_SQL)] {
         let checksum = daiya_model::sha256_hex(sql.as_bytes());
         let applied: Option<String> =
             sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = $1")
                 .bind(version)
-                .fetch_optional(&mut *conn)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(failed)?;
-        if applied.as_deref() == Some(checksum.as_str()) {
+        if !behind && applied.as_deref() == Some(checksum.as_str()) {
             continue;
         }
-        sqlx::raw_sql(sql)
-            .execute(&mut *conn)
-            .await
-            .map_err(failed)?;
+        behind = true;
+        sqlx::raw_sql(sql).execute(&mut *tx).await.map_err(failed)?;
         sqlx::query(
             "INSERT INTO daiya_schema_migrations (version, checksum) VALUES ($1, $2)
              ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = NOW()",
         )
         .bind(version)
         .bind(&checksum)
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await
         .map_err(failed)?;
     }
+    tx.commit().await.map_err(failed)?;
     Ok(())
 }
 
