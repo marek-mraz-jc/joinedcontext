@@ -1871,11 +1871,11 @@
         "propose": "Diagramm vorschlagen",
         "remove": "Entfernen",
         "toolbar": "Was Lesende sehen",
-        "startsWith": "Standardansicht {settings}",
-        "lockedTo": "Lesende sehen nur {settings}",
+        "startsWith": "Lesende können diese Einstellungen ändern. Zu Beginn sehen sie:",
+        "lockedTo": "Lesende können diese Einstellungen nicht ändern. Sie sehen immer:",
         "refusedOwn": "Es wurde nichts vorgeschlagen. Korrigieren Sie „{fields}“ oben und schlagen Sie erneut vor.",
-        "refusedOther": "Es wurde nichts vorgeschlagen, weil „{chart}“ eine unzulässige Einstellung hat: {fields}. Ein gespeichertes Diagramm lässt sich hier nicht bearbeiten: Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und schlagen Sie Ihr Diagramm dann erneut vor.",
-        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat: {fields}. Ein gespeichertes Diagramm lässt sich hier nicht bearbeiten: Entfernen Sie „{chart}“, warten Sie auf die Genehmigung und entfernen Sie dann „{removed}“ erneut.",
+        "refusedOther": "Es wurde nichts vorgeschlagen, weil „{chart}“ eine unzulässige Einstellung hat: {fields}.",
+        "refusedRemoval": "„{removed}“ wurde nicht entfernt, weil „{chart}“ eine unzulässige Einstellung hat: {fields}.",
         "days": "{count, plural, one {# Tag} other {# Tage}}",
         "fixed": {
           "range": "Zeitraum",
@@ -1890,9 +1890,9 @@
         },
         "showField": "Zum Feld",
         "fix": {
-          "range": "Der Zeitraum „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
-          "granularity": "Die Auflösung „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
-          "method": "Die Berechnung „{value}“ wurde für dieses Diagramm nicht angenommen. Wählen Sie {choices}.",
+          "range": "Der Server hat den Zeitraum „{value}“ nicht angenommen. Wählen Sie {choices}.",
+          "granularity": "Der Server hat die Auflösung „{value}“ nicht angenommen. Wählen Sie {choices}.",
+          "method": "Der Server hat die Berechnung „{value}“ nicht angenommen. Wählen Sie {choices}.",
           "controls": "Diese Einstellung wurde nicht angenommen. Ändern Sie das Häkchen und schlagen Sie erneut vor."
         },
         "range": "Standardzeitraum",
@@ -1935,7 +1935,9 @@
           "y": "Messgröße",
           "color": "Farbe",
           "facet": "Feld je"
-        }
+        },
+        "removeFirst": "Entfernen Sie zuerst dieses Diagramm. Versuchen Sie es nach der Genehmigung erneut.",
+        "removeBlocking": "„{chart}“ entfernen"
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

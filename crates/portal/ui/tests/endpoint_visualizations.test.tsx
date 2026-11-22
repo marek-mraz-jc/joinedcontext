@@ -251,9 +251,9 @@ describe("VisualizationsSection", () => {
   }
 
   it.each([
-    ["last", "range", "24 hours was not accepted as this chart's range. Pick 7 days or 31 days."],
-    ["aggrPeriod", "granularity", "Hourly was not accepted as this chart's granularity. Pick Raw readings or Daily."],
-    ["aggrMethod", "method", "Average was not accepted as this chart's method. Pick Minimum or Maximum."],
+    ["last", "range", "The server did not accept 24 hours as the range. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "The server did not accept Hourly as the granularity. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "The server did not accept Average as the method. Pick Minimum or Maximum."],
     ["controls", "controls", V.fix.controls],
   ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
     mount(endpoint({ visualizations: [BAR] }), true);
@@ -322,9 +322,24 @@ describe("VisualizationsSection", () => {
     const long = { ...WEEK, name: "no2-long", data: { ...WEEK.data, last: "P14D" } };
     const raw = { ...WEEK, name: "no2-raw", data: { source: "temporal", type: "T", attrs: ["no2"], last: "PT24H", controls: false } };
     mount(endpoint({ visualizations: [WEEK, raw, long] }), false);
-    expect(screen.getByText("Readers start with Range: 14 days · Granularity: Daily · Method: Maximum")).toBeVisible();
-    expect(screen.getByText("Readers start with Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
-    expect(screen.getByText("Readers see only Range: 24 hours · Granularity: Raw readings")).toBeVisible();
+    expect(screen.getByText("Range: 14 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Range: 24 hours · Granularity: Raw readings")).toBeVisible();
+    expect(screen.getAllByText(V.startsWith)).toHaveLength(2);
+    expect(screen.getByText(V.lockedTo)).toBeVisible();
+  });
+
+  it("offers the removal of the blocking chart itself (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const fix = await screen.findByRole("button", { name: "Remove “NO2 week”" });
+    refusal = undefined;
+    sent = [];
+    await userEvent.click(fix);
+    await waitFor(() => expect(sent.filter((one) => one.method === "PUT")).toHaveLength(2));
+    expect(JSON.parse(sent.filter((one) => one.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([BAR]);
   });
 
   it("tells the editor what an unticked toolbar means for readers (T-7491)", async () => {

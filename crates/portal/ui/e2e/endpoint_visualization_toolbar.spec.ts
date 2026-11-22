@@ -173,7 +173,7 @@ for (const width of [1440, 400]) {
     await expect(section).not.toContainText("/spec/catalog");
     const range = page.getByLabel("Default range");
     await expect(range).toHaveAttribute("aria-invalid", "true");
-    await expect(range).toHaveAccessibleDescription(/31 days was not accepted as this chart's range. Pick 24 hours or 7 days/);
+    await expect(range).toHaveAccessibleDescription(/The server did not accept 31 days as the range. Pick 24 hours or 7 days/);
     await alert.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-refused-banner-${width}.png`) });
     await section.getByRole("button", { name: "Go to the field" }).click();
@@ -188,8 +188,9 @@ for (const width of [1440, 400]) {
     await page.goto("/projects/ovzdusie/endpoints/air?lang=en");
     const section = page.getByTestId("visualizations");
     await section.getByRole("button", { name: "Remove" }).first().click();
+    await expect(section.getByRole("button", { name: "Remove “NO2 this quarter”" })).toBeVisible();
     await expect(section.getByRole("alert").filter({ hasText: "was not removed" })).toContainText("“NO2 this quarter”");
-    await expect(section.getByText("Readers see only Range: 90 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    await expect(section.getByText("Range: 90 days · Granularity: Daily · Method: Maximum")).toBeVisible();
     await expect(section.getByText("90 days is not an allowed range")).toBeVisible();
     await expect(section).not.toContainText("/spec/catalog");
     await section.getByRole("alert").filter({ hasText: "was not removed" }).scrollIntoViewIfNeeded();
@@ -227,9 +228,9 @@ for (const width of [1440, 400]) {
     const section = page.getByTestId("visualizations");
     await expect(section.getByText("NO2 this week")).toBeVisible();
     await expect(section.getByText("Add a chart")).toHaveCount(0);
-    await expect(section.getByText("Readers start with Range: 24 hours · Granularity: Hourly · Method: Average")).toBeVisible();
-    await expect(section.getByText("Readers see only Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
-    await expect(section.getByText("Readers see only Range: 24 hours · Granularity: Raw readings")).toBeVisible();
+    await expect(section.getByText("Range: 24 hours · Granularity: Hourly · Method: Average")).toBeVisible();
+    await expect(section.getByText("Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    await expect(section.getByText("Range: 24 hours · Granularity: Raw readings")).toBeVisible();
     await section.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(DIR, `toolbar-reader-${width}.png`) });
   });

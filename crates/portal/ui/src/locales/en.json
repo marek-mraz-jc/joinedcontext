@@ -1871,11 +1871,11 @@
         "propose": "Propose the chart",
         "remove": "Remove",
         "toolbar": "What readers see",
-        "startsWith": "Readers start with {settings}",
-        "lockedTo": "Readers see only {settings}",
+        "startsWith": "Readers can change these settings. They start with:",
+        "lockedTo": "Readers cannot change these settings. They always see:",
         "refusedOwn": "Nothing was proposed. Correct “{fields}” above, then propose again.",
-        "refusedOther": "Nothing was proposed, because “{chart}” has a setting that is not allowed: {fields}. A saved chart cannot be edited here: remove “{chart}”, wait until that change is approved, then propose your chart again.",
-        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed: {fields}. A saved chart cannot be edited here: remove “{chart}”, wait until that change is approved, then remove “{removed}” again.",
+        "refusedOther": "Nothing was proposed, because “{chart}” has a setting that is not allowed: {fields}.",
+        "refusedRemoval": "“{removed}” was not removed, because “{chart}” has a setting that is not allowed: {fields}.",
         "days": "{count, plural, one {# day} other {# days}}",
         "fixed": {
           "range": "Range",
@@ -1890,9 +1890,9 @@
         },
         "showField": "Go to the field",
         "fix": {
-          "range": "{value} was not accepted as this chart's range. Pick {choices}.",
-          "granularity": "{value} was not accepted as this chart's granularity. Pick {choices}.",
-          "method": "{value} was not accepted as this chart's method. Pick {choices}.",
+          "range": "The server did not accept {value} as the range. Pick {choices}.",
+          "granularity": "The server did not accept {value} as the granularity. Pick {choices}.",
+          "method": "The server did not accept {value} as the method. Pick {choices}.",
           "controls": "This setting was not accepted. Tick or untick the box, then propose again."
         },
         "range": "Default range",
@@ -1935,7 +1935,9 @@
           "y": "Measure",
           "color": "Colour",
           "facet": "Panel per"
-        }
+        },
+        "removeFirst": "Remove that chart first. Once the change is approved, try again.",
+        "removeBlocking": "Remove “{chart}”"
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",

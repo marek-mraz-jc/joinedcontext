@@ -1871,11 +1871,11 @@
         "propose": "Navrhnout graf",
         "remove": "Odebrat",
         "toolbar": "Co uvidí čtenáři",
-        "startsWith": "Ve výchozím stavu se zobrazí {settings}",
-        "lockedTo": "Čtenáři vidí pouze {settings}",
+        "startsWith": "Čtenáři mohou tato nastavení měnit. Na začátku vidí:",
+        "lockedTo": "Čtenáři nemohou tato nastavení měnit. Vždy vidí:",
         "refusedOwn": "Nic se nenavrhlo. Opravte „{fields}“ výše a navrhněte znovu.",
-        "refusedOther": "Nic se nenavrhlo, protože graf „{chart}“ má nepovolené nastavení: {fields}. Uložený graf zde nelze upravit: odeberte „{chart}“, počkejte na schválení změny a pak svůj graf navrhněte znovu.",
-        "refusedRemoval": "Graf „{removed}“ se neodebral, protože „{chart}“ má nepovolené nastavení: {fields}. Uložený graf zde nelze upravit: odeberte „{chart}“, počkejte na schválení změny a pak znovu odeberte „{removed}“.",
+        "refusedOther": "Nic se nenavrhlo, protože graf „{chart}“ má nepovolené nastavení: {fields}.",
+        "refusedRemoval": "Graf „{removed}“ se neodebral, protože „{chart}“ má nepovolené nastavení: {fields}.",
         "days": "{count, plural, one {# den} few {# dny} other {# dní}}",
         "fixed": {
           "range": "Období",
@@ -1890,9 +1890,9 @@
         },
         "showField": "Přejít na pole",
         "fix": {
-          "range": "Období „{value}“ nebylo pro tento graf přijato. Vyberte {choices}.",
-          "granularity": "Podrobnost „{value}“ nebyla pro tento graf přijata. Vyberte {choices}.",
-          "method": "Výpočet „{value}“ nebyl pro tento graf přijat. Vyberte {choices}.",
+          "range": "Server nepřijal období „{value}“. Vyberte {choices}.",
+          "granularity": "Server nepřijal podrobnost „{value}“. Vyberte {choices}.",
+          "method": "Server nepřijal výpočet „{value}“. Vyberte {choices}.",
           "controls": "Toto nastavení nebylo přijato. Změňte zaškrtnutí a navrhněte znovu."
         },
         "range": "Výchozí období",
@@ -1935,7 +1935,9 @@
           "y": "Veličina",
           "color": "Barva",
           "facet": "Panel podle"
-        }
+        },
+        "removeFirst": "Nejdřív ten graf odeberte. Po schválení změny to zkuste znovu.",
+        "removeBlocking": "Odebrat „{chart}“"
       },
       "firstCall": "První volání",
       "firstCallOpen": "Otevřít v prohlížeči",

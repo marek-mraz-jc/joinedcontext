@@ -219,7 +219,20 @@ export function VisualizationsSection({
         tone="danger"
         className="mt-3"
         actions={
-          !failed && !blocking && own.length > 0 ? (
+          failed ? undefined : blocking ? (
+            // The one remedy, so nobody has to find the right of several Remove buttons.
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={proposal.mutation.isPending}
+              disabledReason={t("app.busyReason")}
+              onClick={() =>
+                propose(list.filter((one) => one.name !== blocking.name), { removed: blocking })
+              }
+            >
+              {t("endpoints.page.visualizations.removeBlocking", { chart: titleOf(blocking) })}
+            </Button>
+          ) : own.length > 0 ? (
             <Button
               size="sm"
               variant="secondary"
@@ -231,6 +244,9 @@ export function VisualizationsSection({
         }
       >
         {failed ?? refusal}
+        {!failed && blocking ? (
+          <span className="mt-1 block">{t("endpoints.page.visualizations.removeFirst")}</span>
+        ) : null}
       </Alert>
     ) : null;
   // A refused removal is said under the list: the editor is closed then.
@@ -260,6 +276,20 @@ export function VisualizationsSection({
   // Proposed and not yet approved: the Endpoint read back does not list it.
   const awaiting = added && !list.some((one) => one.name === added.name) ? added : undefined;
 
+  /** Whether readers may change a temporal chart, and the settings they get. */
+  const readersGet = (data: Visualization["data"]) => (
+    <p className="w-full text-body text-fg">
+      <span className="block text-fg-muted">
+        {t(
+          data.controls === false
+            ? "endpoints.page.visualizations.lockedTo"
+            : "endpoints.page.visualizations.startsWith",
+        )}
+      </span>
+      {settingsOf(data)}
+    </p>
+  );
+
   const roles = [
     ...TEMPLATES[template].required,
     ...TEMPLATES[template].optional,
@@ -282,16 +312,7 @@ export function VisualizationsSection({
               <Badge>{t("endpoints.page.visualizations.overTime")}</Badge>
             ) : null}
             <Badge>{t("endpoints.page.visualizations.awaiting")}</Badge>
-            {awaiting.data.source === "temporal" ? (
-              <p className="w-full text-body text-fg">
-                {t(
-                  awaiting.data.controls === false
-                    ? "endpoints.page.visualizations.lockedTo"
-                    : "endpoints.page.visualizations.startsWith",
-                  { settings: settingsOf(awaiting.data) },
-                )}
-              </p>
-            ) : null}
+            {awaiting.data.source === "temporal" ? readersGet(awaiting.data) : null}
           </div>
           {change ? <ChangeNotice change={change} project={project} /> : null}
         </>
@@ -332,16 +353,7 @@ export function VisualizationsSection({
                   {t("endpoints.page.visualizations.remove")}
                 </Button>
               ) : null}
-              {one.data.source === "temporal" ? (
-                <p className="w-full text-body text-fg">
-                  {t(
-                    one.data.controls === false
-                      ? "endpoints.page.visualizations.lockedTo"
-                      : "endpoints.page.visualizations.startsWith",
-                    { settings: settingsOf(one.data) },
-                  )}
-                </p>
-              ) : null}
+              {one.data.source === "temporal" ? readersGet(one.data) : null}
               {one.name === blocking?.name
                 ? refused
                     .filter((at) => at.index === other?.index)
@@ -360,7 +372,11 @@ export function VisualizationsSection({
       {removing ? alert : null}
 
       {canEdit ? (
-        <details ref={editor} className="rounded-lg border border-border p-3">
+        <details
+          ref={editor}
+          // At phone width the hints are read at body size.
+          className="rounded-lg border border-border p-3 max-sm:[&_p]:text-body"
+        >
           <summary className="cursor-pointer text-body font-semibold text-fg">
             {t("endpoints.page.visualizations.add")}
           </summary>
@@ -620,6 +636,7 @@ export function VisualizationsSection({
             </p>
           )}
           <Button
+            variant="primary"
             className="mt-3"
             disabled={!ready || proposal.mutation.isPending}
             disabledReason={t("endpoints.page.visualizations.incomplete")}
