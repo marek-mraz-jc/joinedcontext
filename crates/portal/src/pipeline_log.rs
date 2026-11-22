@@ -239,6 +239,113 @@ async fn trim(
     tx.commit().await
 }
 
+/// How many rows of gone pipelines one statement deletes. In index order 120 000 hashes took
+/// 16.5 s from a cold cache (T-7497), too near the 30 s a request's statement has.
+pub const FORGET_ROWS: usize = 5000;
+/// How many such statements one pass runs per table of a project; the next pass takes the rest,
+/// so a pipeline of a million hashes does not hold the sync.
+const FORGET_BATCHES: usize = 20;
+
+/// The planner while [`gone_rows`] looks, for that transaction alone. Forced row-level security
+/// puts the key's columns in every condition, and on a guess of few rows Postgres sorts the whole
+/// project by the key's index at each step of the walk: 2.5M pages where the ordered index reads
+/// 500. With no sort and no bitmap that index is the only plan left, and JIT off saves the 300 ms it
+/// spends compiling a plan with that disabled cost.
+const IN_INDEX_ORDER: &str = "SELECT set_config('enable_sort', 'off', true), \
+     set_config('enable_bitmapscan', 'off', true), set_config('jit', 'off', true)";
+/// The planner while the found rows are deleted, after [`IN_INDEX_ORDER`] in the same transaction:
+/// it goes to their addresses instead of reading the project again. The plan is made for these
+/// addresses: Postgres 16 takes no address scan from a generic plan under row-level security and
+/// read the whole project past the 30 s timeout.
+const BY_ADDRESS: &str = "SELECT set_config('enable_indexscan', 'off', true), \
+     set_config('enable_seqscan', 'off', true), \
+     set_config('plan_cache_mode', 'force_custom_plan', true)";
+
+/// The addresses of at most `$3` rows of `$table` whose pipeline project `$1` no longer names in
+/// `$2`. It steps the `(project, pipeline, ..)` index from one pipeline name to the next instead
+/// of reading every row the project keeps (T-7497). The two bounds on a gone name, rather than an
+/// equality, keep `ORDER BY` from being dropped, and with it the index.
+macro_rules! gone_rows {
+    ($table:literal) => {
+        concat!(
+            "WITH RECURSIVE held (pipeline) AS (",
+            "(SELECT pipeline FROM ",
+            $table,
+            " WHERE project = $1 ORDER BY pipeline LIMIT 1) ",
+            "UNION ALL SELECT next.pipeline FROM held, LATERAL (SELECT t.pipeline FROM ",
+            $table,
+            " t WHERE t.project = $1 AND t.pipeline > held.pipeline ORDER BY t.pipeline LIMIT 1) AS next) ",
+            "SELECT gone.address FROM held, LATERAL (SELECT t.ctid::text AS address FROM ",
+            $table,
+            " t WHERE t.project = $1 AND t.pipeline >= held.pipeline AND t.pipeline <= held.pipeline ",
+            "ORDER BY t.pipeline LIMIT $3) AS gone ",
+            "WHERE NOT (held.pipeline = ANY($2)) LIMIT $3"
+        )
+    };
+}
+
+/// Deletes the rows at `$3`. An address can be another row's by then, so the project and its
+/// pipelines `$2` are asked again.
+macro_rules! delete_gone {
+    ($table:literal) => {
+        concat!(
+            "DELETE FROM ",
+            $table,
+            " WHERE ctid = ANY($3::text[]::tid[]) AND project = $1 AND NOT (pipeline = ANY($2))"
+        )
+    };
+}
+
+/// Each table [`LogStore::forget_gone`] cleans: what finds the gone rows, what deletes them.
+const FORGET: [(&str, &str); 3] = [
+    (gone_rows!("pipeline_log"), delete_gone!("pipeline_log")),
+    (gone_rows!("pipeline_runs"), delete_gone!("pipeline_runs")),
+    (
+        gone_rows!("pipeline_record_hashes"),
+        delete_gone!("pipeline_record_hashes"),
+    ),
+];
+
+/// Deletes what `project` keeps of pipelines `names` no longer holds, each batch in a transaction
+/// of its own, so one that fails loses none of the batches before it.
+async fn forget_gone_of(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    project: &str,
+    names: &[&str],
+) -> Result<(), sqlx::Error> {
+    // A project with no key has no keyed rows to drop.
+    let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+        return Ok(());
+    };
+    for (find, delete) in FORGET {
+        for _ in 0..FORGET_BATCHES {
+            let mut tx = crate::db::tenant_tx(pool, key).await?;
+            sqlx::query(IN_INDEX_ORDER).execute(&mut *tx).await?;
+            let gone: Vec<String> = sqlx::query_scalar(find)
+                .bind(project)
+                .bind(names)
+                .bind(FORGET_ROWS as i64)
+                .fetch_all(&mut *tx)
+                .await?;
+            if !gone.is_empty() {
+                sqlx::query(BY_ADDRESS).execute(&mut *tx).await?;
+                sqlx::query(delete)
+                    .bind(project)
+                    .bind(names)
+                    .bind(&gone)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            if gone.len() < FORGET_ROWS {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The runs and logs of every pipeline.
 pub struct LogStore {
     inner: Inner,
@@ -788,28 +895,14 @@ impl LogStore {
     ) -> Result<(), sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
-                // Project by project, each in its own key (STO-07); a project with no key has
-                // no keyed rows to drop.
+                // Project by project, each in its own key (STO-07).
+                let mut failed = None;
                 for (project, names) in loaded {
-                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await?
-                    else {
-                        continue;
-                    };
                     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-                    for statement in [
-                        "DELETE FROM pipeline_log WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                        "DELETE FROM pipeline_runs WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                        "DELETE FROM pipeline_record_hashes WHERE project = $1 AND NOT (pipeline = ANY($2))",
-                    ] {
-                        sqlx::query(statement)
-                            .bind(project)
-                            .bind(&names)
-                            .execute(&mut *tx)
-                            .await?;
-                    }
-                    tx.commit().await?;
+                    let done = forget_gone_of(pool, mirror, project, &names).await;
+                    crate::db::next_project(project, done, &mut failed)?;
                 }
-                Ok(())
+                failed.map_or(Ok(()), Err)
             }
             Inner::Memory(map) => {
                 map.write()
@@ -1760,6 +1853,75 @@ mod tests {
             .await
             .expect("lines")
             .is_empty());
+    }
+
+    /// Under forced row-level security the walk reads the ordered index and the delete goes to the
+    /// rows' addresses, whatever the table's statistics say (T-7497).
+    #[tokio::test]
+    async fn the_cleanup_never_sorts_or_rereads_the_project_under_its_key() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: the cleanup's plans are not read");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("a database");
+        // The role lives in this transaction alone, which is rolled back.
+        let mut tx = pool.begin().await.expect("begin");
+        let role = format!("forget_plan_{}", jc_types::ProjectId::mint()).replace('-', "_");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE ROLE {role} NOLOGIN NOBYPASSRLS; GRANT USAGE ON SCHEMA public TO {role}; \
+             GRANT SELECT, DELETE ON pipeline_log, pipeline_runs, pipeline_record_hashes TO {role}; \
+             SET LOCAL ROLE {role};"
+        )))
+        .execute(&mut *tx)
+        .await
+        .expect("a role row-level security holds");
+        for (n, (find, delete)) in FORGET.into_iter().enumerate() {
+            let mut savepoint = sqlx::Acquire::begin(&mut *tx).await.expect("savepoint");
+            // The plan a pooled connection keeps after five runs, which a first EXPLAIN never shows.
+            sqlx::raw_sql("SET LOCAL plan_cache_mode = force_generic_plan")
+                .execute(&mut *savepoint)
+                .await
+                .expect("set");
+            sqlx::query(IN_INDEX_ORDER)
+                .execute(&mut *savepoint)
+                .await
+                .expect("set");
+            let walk: Vec<String> = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "PREPARE forget_find_{n} (text, text[], bigint) AS {find}; \
+                 EXPLAIN EXECUTE forget_find_{n} ('p', ARRAY['kept'], {FORGET_ROWS})"
+            )))
+            .fetch_all(&mut *savepoint)
+            .await
+            .expect("a plan")
+            .iter()
+            .map(|row| sqlx::Row::get(row, 0))
+            .collect();
+            let walk = walk.join("\n");
+            assert!(
+                !walk.contains("Sort") && !walk.contains("_by_key"),
+                "{walk}"
+            );
+            sqlx::query(BY_ADDRESS)
+                .execute(&mut *savepoint)
+                .await
+                .expect("set");
+            let deleted: Vec<String> = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "PREPARE forget_delete_{n} (text, text[], text[]) AS {delete}; \
+                 EXPLAIN EXECUTE forget_delete_{n} ('p', ARRAY['kept'], ARRAY['(0,1)'])"
+            )))
+            .fetch_all(&mut *savepoint)
+            .await
+            .expect("a plan")
+            .iter()
+            .map(|row| sqlx::Row::get(row, 0))
+            .collect();
+            let deleted = deleted.join("\n");
+            assert!(deleted.contains("Tid Scan"), "{deleted}");
+            savepoint.rollback().await.expect("rolled back");
+        }
     }
 
     /// The database trims a pipeline's log on its first write, then once a minute or per
