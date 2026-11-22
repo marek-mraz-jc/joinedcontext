@@ -1,0 +1,110 @@
+name: mutants-diff
+# Mutation testing of what a branch changed (T-7529): `cargo mutants --in-diff` over the functions a
+# branch touches, per Cargo workspace, against the merge base with jc-portal-1. A mutant that
+# survives in a changed function fails the job, unless .github/mutants.toml lists it as equivalent
+# with its reason. Advisory for its first week (not read by the merge train; decision in T-7529),
+# then a required check once its measured time fits beside ci.yml. Only the mutated crates' own
+# tests run (cargo mutants' default). A push mutates the root, antares and platform workspaces;
+# portal and ekiben need the swap and services of their ci.yml jobs, so they run on dispatch only.
+on:
+  push:
+    branches: ["agent/**"]
+    paths: ["**/*.rs"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "mutants-diff-${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  KAISATSU_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/kaisatsu
+  DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
+  DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
+  SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
+  JC_TIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/antares
+  JC_PORTAL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/portal
+  JC_APPS_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  JC_WASM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+jobs:
+  diff:
+    runs-on: ubuntu-24.04
+    outputs: { workspaces: "${{ steps.split.outputs.workspaces }}" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      # One diff per workspace, its paths relative to that workspace (cargo mutants reads them so).
+      - id: split
+        run: |
+          base=$(git merge-base origin/jc-portal-1 HEAD)
+          mkdir -p "$RUNNER_TEMP/diffs"; list=""
+          pairs="root:. antares:crates/antares platform:vendor/joinedcontext-platform"
+          [ "${{ github.event_name }}" = workflow_dispatch ] && pairs="$pairs ekiben:crates/ekiben portal:crates/portal"
+          for pair in $pairs; do
+            ws=${pair%%:*} dir=${pair#*:}
+            if [ "$ws" = root ]; then
+              git diff "$base" HEAD -- '*.rs' ':!crates/antares' ':!crates/ekiben' ':!crates/portal' ':!vendor' > "$RUNNER_TEMP/diffs/$ws.diff"
+            else
+              git diff --relative="$dir" "$base" HEAD -- '*.rs' > "$RUNNER_TEMP/diffs/$ws.diff"
+            fi
+            [ -s "$RUNNER_TEMP/diffs/$ws.diff" ] && list="$list{\"ws\":\"$ws\",\"dir\":\"$dir\"},"
+          done
+          echo "workspaces=[${list%,}]" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: diffs, path: "${{ runner.temp }}/diffs", retention-days: 7 }
+  mutants:
+    needs: diff
+    if: needs.diff.outputs.workspaces != '[]'
+    name: mutants-${{ matrix.ws }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: { include: "${{ fromJSON(needs.diff.outputs.workspaces) }}" }
+    defaults: { run: { working-directory: "${{ matrix.dir }}" } }
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with: { name: diffs, path: "${{ runner.temp }}/diffs" }
+      - run: |
+          for db in kaisatsu dataroom daiya shako antares portal; do
+            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+          done
+      - if: matrix.ws == 'portal'
+        run: |
+          sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
+          sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
+          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
+      - if: matrix.ws == 'platform'
+        run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+      - uses: ./.github/actions/rust
+        with: { workspace: "${{ matrix.dir }}", key: "mutants-${{ matrix.ws }}" }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-mutants@27.1.0 }
+      - name: mutate the changed functions
+        timeout-minutes: 50
+        run: |
+          start=$(date +%s); status=0
+          timeout 45m cargo mutants --workspace --in-diff "$RUNNER_TEMP/diffs/${{ matrix.ws }}.diff" \
+            --config "$GITHUB_WORKSPACE/.github/mutants.toml" --output "$RUNNER_TEMP" || status=$?
+          echo "${{ matrix.ws }}: $(( $(date +%s) - start )) s, exit $status" >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$RUNNER_TEMP/mutants.out/missed.txt" ] && { echo "Missed:"; cat "$RUNNER_TEMP/mutants.out/missed.txt"; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 124 ] && echo "::warning::${{ matrix.ws }}: the 45 min bound ended the run; outcomes.json counts what ran"
+          # 0: every mutant caught or unviable; 2: a mutant survived; 124: the bound; else the baseline failed
+          exit "$status"
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: "mutants-diff-${{ matrix.ws }}"
+          path: "${{ runner.temp }}/mutants.out"
+          if-no-files-found: ignore
+          retention-days: 14
