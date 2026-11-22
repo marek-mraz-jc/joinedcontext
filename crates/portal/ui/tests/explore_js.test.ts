@@ -13,7 +13,7 @@ interface Explore {
   boundsOf(features: Feature[]): [[number, number], [number, number]] | null;
   inBox(features: Feature[], box: number[]): number;
   viewPlan(held: Feature[] | null, lastUrl: string | null, url: string, box: number[]): { local?: number; skip?: boolean; read?: string };
-  countLine(t: object, c: { inView: number; total: number; none: number; tiled?: boolean }): string;
+  countLine(t: object, c: { inView: number; total: number; none: number; drawn?: number; tiled?: boolean }): string;
   matchLine(t: object, matching: number, all: number): string;
   capLine(t: object, read: number, total: number | null): string;
   badges(points: Feature[], zoom: number, merge: boolean): Badge[];
@@ -86,9 +86,11 @@ describe("explore.js map view", () => {
     const upcoming = PODUJATIA.filter(([, later]) => later);
     expect([all, located(PODUJATIA), upcoming.length, located(upcoming)]).toEqual([234, 231, 200, 197]);
     const en = { ...X.TEXT.en, locale: "en-GB" };
-    expect(X.countLine(en, { inView: 49, total: all, none: all - located(PODUJATIA) })).toBe("49 in view · 231 with a location · 3 without");
-    expect(X.countLine(en, { inView: 49, total: 200, none: 3 })).toBe("49 in view · 197 with a location · 3 without");
-    expect(X.countLine({ ...X.TEXT.sk, locale: "sk-SK" }, { inView: 49, total: 200, none: 3 })).toBe("Vo výreze: 49 · s polohou: 197 · bez polohy: 3");
+    expect(X.countLine(en, { inView: 49, total: all, none: all - located(PODUJATIA) })).toBe("49 in view · 231 of 234 with a location · 3 without");
+    expect(X.countLine(en, { inView: 49, total: 200, none: 3 })).toBe("49 in view · 197 of 200 with a location · 3 without");
+    // A capped read draws fewer than are in view, and says how many.
+    expect(X.countLine(en, { inView: 231, total: all, none: 3, drawn: 197 })).toBe("231 in view · 231 of 234 with a location · 3 without · 197 drawn");
+    expect(X.countLine({ ...X.TEXT.sk, locale: "sk-SK" }, { inView: 49, total: 200, none: 3 })).toBe("Vo výreze: 49 · s polohou: 197 z 200 · bez polohy: 3");
     expect(X.matchLine(en, upcoming.length, all)).toBe("200 of 234 records match the filter.");
     expect(X.matchLine({ ...X.TEXT.sk, locale: "sk-SK" }, upcoming.length, all)).toBe("Filtru vyhovuje 200 z 234 záznamov.");
     // A read cap below the total is named as one, never shown as the total.

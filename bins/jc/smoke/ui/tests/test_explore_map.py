@@ -296,10 +296,16 @@ def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, widt
     try:
         page, errors = open_explorer(browser, srv, width, lang, q)
         if not points:
-            # No row has a place: the page says so, whether or not it draws an empty map.
-            page.wait_for_function("() => document.getElementById('map-note').textContent.match(/has a location|nemá polohu/)", timeout=40_000)
+            # No row has a place: the reason stands in the map's box, with no empty map above it.
+            page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+            note = page.locator("#map-note").inner_text()
+            assert note.startswith({"en": f"None of the {none} records", "sk": f"Žiadny zo záznamov tohto dopytu ({none}) nemá polohu"}[lang])
+            assert page.locator("#map").is_hidden() and page.locator("#map-count").is_hidden()
+            shot(page, f"map-{case}-open-{width}")
+            assert errors == []
+            return
         wait_drawn(page)
-        line = {"en": f"{n} in view · {n} with a location · {none} without", "sk": f"Vo výreze: {n} · s polohou: {n} · bez polohy: {none}"}[lang]
+        line = {"en": f"{n} in view · {n} of {n + none} with a location · {none} without", "sk": f"Vo výreze: {n} · s polohou: {n} z {n + none} · bez polohy: {none}"}[lang]
         assert page.locator("#map-count").inner_text() == line
         of = page.locator("#grid-count")
         if q:
@@ -315,17 +321,16 @@ def test_the_map_opens_on_every_point_with_true_counts_and_apart_badges(pw, widt
         assert overlaps(view["badges"]) == []
         page.wait_for_timeout(800)
         shot(page, f"map-{case}-open-{width}")
-        if points:
-            zoom = page.evaluate("() => self.jcExploreMap.getZoom()")
-            for step in (1, 1.6, 3):
-                page.evaluate("(z) => self.jcExploreMap.jumpTo({zoom: z})", zoom + step)
-                page.wait_for_function("() => self.jcExploreMap.loaded()", timeout=20_000)
-                view = page.evaluate(DRAWN)
-                assert sum(b["n"] for b in view["badges"]) == n
-                assert overlaps(view["badges"]) == [], step
-                page.wait_for_timeout(500)
-                if step == 1:
-                    shot(page, f"map-{case}-zoomed-{width}")
+        zoom = page.evaluate("() => self.jcExploreMap.getZoom()")
+        for step in (1, 1.6, 3):
+            page.evaluate("(z) => self.jcExploreMap.jumpTo({zoom: z})", zoom + step)
+            page.wait_for_function("() => self.jcExploreMap.loaded()", timeout=20_000)
+            view = page.evaluate(DRAWN)
+            assert sum(b["n"] for b in view["badges"]) == n
+            assert overlaps(view["badges"]) == [], step
+            page.wait_for_timeout(500)
+            if step == 1:
+                shot(page, f"map-{case}-zoomed-{width}")
         assert errors == []
     finally:
         browser.close()
@@ -339,7 +344,29 @@ def test_a_read_that_stops_short_says_first_n_of_the_total(pw):
         page, errors = open_explorer(browser, srv, 1440)
         wait_drawn(page)
         assert page.locator("#map-note").inner_text() == "The map opens on the first 200 of 234 records; zoom in for the rest."
-        assert page.locator("#map-count").inner_text().endswith("231 with a location · 3 without")
+        drawn = sum(1 for e in PODUJATIA[:200] if e["geometry"])
+        tail = f"231 of 234 with a location · 3 without · {drawn} drawn"
+        page.wait_for_function("(tail) => document.getElementById('map-count').textContent.endsWith(tail)", arg=tail, timeout=10_000)
+        assert errors == []
+    finally:
+        browser.close()
+        srv.shutdown()
+
+
+def test_a_query_with_places_after_one_without_fits_its_points_again(pw):
+    browser = pw.chromium.launch(args=WEBGL)
+    placeless = [{**e, "geometry": e["geometry"] if not e["properties"]["upcoming"] else None} for e in PODUJATIA]
+    srv = serve(lambda: True, placeless)
+    try:
+        page, errors = open_explorer(browser, srv, 1440, q="upcoming==true")
+        page.wait_for_function("() => document.getElementById('map-section').classList.contains('map-empty')", timeout=40_000)
+        page.get_by_role("button", name=re.compile("Clear (all )?filters", re.I)).first.click()
+        page.wait_for_selector("#map", state="visible", timeout=20_000)
+        wait_drawn(page)
+        view = page.evaluate(DRAWN)
+        (west, south), (east, north) = view["bounds"]
+        points = [e["geometry"]["coordinates"] for e in placeless if e["geometry"]]
+        assert view["w"] > 0 and all(west <= x <= east and south <= y <= north for x, y in points), view["bounds"]
         assert errors == []
     finally:
         browser.close()

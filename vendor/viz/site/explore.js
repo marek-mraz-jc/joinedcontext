@@ -84,7 +84,8 @@
       noWidget: "The table could not start. Reload the page; if it stays, the catalogue's administrators can see why in the browser console.",
       mapHint: "Click a point to open its details. The table lists the same entities.", mapCap: "The map shows the first {n} of {total} in view; zoom in for the rest.",
       mapFirst: "The map opens on the first {n} of {total} records; zoom in for the rest.", matches: "{n} of {total} records match the filter.",
-      mapNone: "No entity of this query has a location.", mapLoading: "Loading map…",
+      mapNone: "No entity of this query has a location.", mapNoneOf: "None of the {n} records of this query has a location, so there is nothing to map. The table above lists them.",
+      mapViewEmpty: "No point of this query is in view; zoom out to find them.", mapLoading: "Loading map…",
       mapOff: { webgl: "This browser cannot draw the map: it needs WebGL 2, which is off or not supported here. Turning on hardware acceleration in the browser's settings usually brings it back. The table above lists the same rows.",
         start: "The map could not load. The table above lists the same rows.",
         lost: "The map stopped drawing because the browser took back its graphics memory. The table above lists the same rows." },
@@ -99,7 +100,7 @@
       filterIs: "filter {q}", orderIs: "ordered by {col}", desc: " (descending)",
       code: "Code to paste", copy: "Copy code", copied: "Copied. Paste it into your page's HTML.", copySelect: "Selected: press Ctrl+C to copy.", preview: "Open the widget alone",
       invalid: "Check this setting: {why}.", source: "Source", licence: "Licence", licenceSee: "see the dataset", catalogue: "open data catalogue",
-      count: "{n} in view · {located} with a location · {none} without", countTiles: " · drawn as tiles", other: "Other",
+      count: "{n} in view · {located} of {total} with a location · {none} without", countDrawn: " · {n} drawn", countTiles: " · drawn as tiles", other: "Other",
       panelOpen: "Map settings", pointsFrom: "Points from: {attr}", panel: "Map settings", geoLabel: "Location from", geoHint: "Which place of the entity the map draws, e.g. Location.",
       colorLabel: "Colour by", colorNone: "One colour", colorType: "Type", colorHint: "Points take a colour per value, e.g. Status; the legend is under the map.",
       popLabel: "In the bubble", popHint: "What a pointer over a point shows besides the title, e.g. Start and Web.",
@@ -114,7 +115,8 @@
       noWidget: "Tabuľka sa nespustila. Načítajte stránku znova; ak to pretrváva, správcovia katalógu vidia príčinu v konzole prehliadača.",
       mapHint: "Kliknite na bod a otvorí sa jeho detail. Tabuľka uvádza tie isté entity.", mapCap: "Mapa ukazuje prvých {n} z {total} vo výreze; priblížte pre ďalšie.",
       mapFirst: "Mapa sa otvára na prvých {n} z {total} záznamov; priblížte pre ďalšie.", matches: "Filtru vyhovuje {n} z {total} záznamov.",
-      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapLoading: "Načítavam mapu…",
+      mapNone: "Žiadna entita tohto dopytu nemá polohu.", mapNoneOf: "Žiadny zo záznamov tohto dopytu ({n}) nemá polohu, preto ich mapa nemá kde ukázať. Uvádza ich tabuľka vyššie.",
+      mapViewEmpty: "Vo výreze nie je žiadny bod tohto dopytu; oddiaľte mapu.", mapLoading: "Načítavam mapu…",
       mapOff: { webgl: "Tento prehliadač nevie nakresliť mapu: potrebuje WebGL 2, ktoré je tu vypnuté alebo nepodporované. Zvyčajne ho vráti zapnutie hardvérovej akcelerácie v nastaveniach prehliadača. Tabuľka vyššie uvádza tie isté riadky.",
         start: "Mapu sa nepodarilo načítať. Tabuľka vyššie uvádza tie isté riadky.",
         lost: "Mapa prestala kresliť, lebo prehliadač si vzal späť grafickú pamäť. Tabuľka vyššie uvádza tie isté riadky." },
@@ -129,7 +131,7 @@
       filterIs: "filter {q}", orderIs: "zoradené podľa {col}", desc: " (zostupne)",
       code: "Kód na vloženie", copy: "Kopírovať kód", copied: "Skopírované. Vložte ho do HTML svojej stránky.", copySelect: "Označené: skopírujte stlačením Ctrl+C.", preview: "Otvoriť samotný widget",
       invalid: "Skontrolujte toto nastavenie: {why}.", source: "Zdroj", licence: "Licencia", licenceSee: "pozri dataset", catalogue: "katalóg otvorených dát",
-      count: "Vo výreze: {n} · s polohou: {located} · bez polohy: {none}", countTiles: " · kreslené ako dlaždice", other: "Iné",
+      count: "Vo výreze: {n} · s polohou: {located} z {total} · bez polohy: {none}", countDrawn: " · nakreslených: {n}", countTiles: " · kreslené ako dlaždice", other: "Iné",
       panelOpen: "Nastaviť mapu", pointsFrom: "Body z: {attr}", panel: "Nastavenie mapy", geoLabel: "Poloha z", geoHint: "Ktoré miesto entity mapa kreslí, napr. Poloha.",
       colorLabel: "Farba podľa", colorNone: "Jedna farba", colorType: "Typ", colorHint: "Body dostanú farbu podľa hodnoty, napr. Stav; legenda je pod mapou.",
       popLabel: "V bubline", popHint: "Čo ukáže kurzor nad bodom okrem názvu, napr. Začiatok a Web.",
@@ -502,7 +504,7 @@
     var sized = function (g) {
       var span = Math.max(g.box[1][0] - g.box[0][0], g.box[1][1] - g.box[0][1]);
       g.cluster = span > SAME_PLACE;
-      g.r = g.cluster ? (g.n < 50 ? 16 : g.n < 200 ? 20 : 26) : g.n > 1 ? 19 : 14;
+      g.r = g.cluster ? (g.n < 10 ? 16 : g.n < 50 ? 19 : g.n < 200 ? 22 : 26) : g.n > 1 ? 19 : 14;
       var sin = Math.sin(Math.max(-85.05, Math.min(85.05, g.lat)) * Math.PI / 180);
       g.x = (g.lon + 180) / 360 * size;
       g.y = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size;
@@ -575,10 +577,12 @@
 
   function number(t, v) { return new Intl.NumberFormat(t.locale).format(v); }
 
-  // "Vo výreze: 412 · s polohou: 1 584 · bez polohy: 96": the last two add up to the query's count.
+  // "Vo výreze: 412 · s polohou: 1 584 z 1 680 · bez polohy: 96", and how many are drawn when a
+  // capped read draws fewer than are in view.
   function countLine(t, c) {
     var none = Math.max(0, c.none);
-    return say(t.count, { n: number(t, c.inView), located: number(t, Math.max(0, c.total - none)), none: number(t, none) }) + (c.tiled ? t.countTiles : "");
+    var drawn = c.drawn !== undefined && c.drawn < c.inView ? say(t.countDrawn, { n: number(t, c.drawn) }) : "";
+    return say(t.count, { n: number(t, c.inView), located: number(t, Math.max(0, c.total - none)), total: number(t, c.total), none: number(t, none) }) + (c.tiled ? t.countTiles : drawn);
   }
 
   // "Filtru vyhovuje 200 z 234 záznamov.": the pager's total beside the type's, both the broker's.
@@ -1023,12 +1027,21 @@
         state.viewUrl = null;
         paint(got.features);
         var box = boundsOf(got.features);
+        // Every row read and none with a place: the reason stands where the map would.
+        state.empty = got.whole && !box;
         state.fitting = true;
         try {
+          $("map-section").classList.toggle("map-empty", state.empty);
+          map.resize(); // shown again after such a query, it fits in its own size
           if (box && box[0][0] === box[1][0] && box[0][1] === box[1][1]) map.jumpTo({ center: box[0], zoom: 14 });
           else if (box) map.fitBounds(box, { padding: BADGE_ROOM, maxZoom: 15, animate: false });
         } finally { state.fitting = false; }
-        if (!got.features.length) { $("map-note").textContent = t.mapNone; state.inView = 0; showCount(); return; }
+        if (state.empty) {
+          $("map-note").textContent = got.total ? say(t.mapNoneOf, { n: number(t, got.total) }) : t.mapNone;
+          state.inView = 0;
+          height();
+          return showCount();
+        }
         if (got.whole) return mapMoved();
         // The view now shows what the read held; its count in view comes from the query.
         var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
@@ -1096,7 +1109,7 @@
     function showCount() {
       var ok = [state.inView, state.total, state.none].every(function (v) { return typeof v === "number" && isFinite(v); });
       $("map-count").hidden = !ok;
-      if (ok) $("map-count").textContent = countLine(t, { inView: state.inView, total: state.total, none: state.none, tiled: !!state.tiled });
+      if (ok) $("map-count").textContent = countLine(t, { inView: state.inView, total: state.total, none: state.none, drawn: (state.mapData || []).length, tiled: !!state.tiled });
     }
 
     // The filter's count beside the type's: the pager says only the first (T-7503: 200 read as all of 234).
@@ -1166,7 +1179,7 @@
 
     function mapMoved() {
       var map = state.map;
-      if (!map || !map.getSource("jc") || !state.mapping || state.fitting) return;
+      if (!map || !map.getSource("jc") || !state.mapping || state.fitting || state.empty) return;
       if (state.tiled && (state.tiled !== state.type || state.q || geoOf() !== "location")) untile();
       counts();
       var b = map.getBounds(), bb = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
@@ -1182,7 +1195,7 @@
       if (plan.local !== undefined) {
         state.inView = plan.local;
         showCount();
-        $("map-note").textContent = state.held.length ? t.mapHint : t.mapNone;
+        $("map-note").textContent = t.mapHint;
         return;
       }
       if (plan.skip) return;
@@ -1196,7 +1209,7 @@
         paint(features);
         var total = answer.count === null ? features.length : +answer.count;
         shown(total);
-        $("map-note").textContent = !features.length ? t.mapNone : total > features.length ? say(t.mapCap, { n: features.length, total: total }) : t.mapHint;
+        $("map-note").textContent = !features.length ? t.mapViewEmpty : total > features.length ? say(t.mapCap, { n: features.length, total: total }) : t.mapHint;
         if (total > features.length && !state.q) {
           tile(state.type).then(function (on) { if (on && asked === state.mapAsk) $("map-note").textContent = t.mapHint; });
         }
