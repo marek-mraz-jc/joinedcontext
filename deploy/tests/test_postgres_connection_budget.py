@@ -5,7 +5,8 @@ pool (ceiling 100 by default) grew to 10 and Gitea's has no ceiling, the 47 slot
 CNPG's superuser reserve filled, and Postgres refused Gitea's token lookups (53300) until every
 Gitea token answered 401.
 
-For each role the Cluster manages, this test reads the ceiling of the workload that logs in as
+For each login the render holds in the Cluster (its managed roles, and the roles the databases
+chart's role Jobs create from `additionalRoles`, T-7498), this test reads the ceiling of the workload that logs in as
 it from the render (or, where the ceiling is compiled into the program, from the constant
 below with its source), multiplies by replicas, and asserts
 
@@ -46,8 +47,10 @@ SUPERUSER_RESERVED_DEFAULT = 3
 # joinedcontext-portal src/state.rs: the Portal's apps admin pool in apps-db, 4.
 # jc (monorepo crates/portal/src/db.rs): the same Portal pool inside the one binary, 5; jc renders
 # no apps-db, so the Portal opens no apps admin pool there. It serves as jc_portal_app and migrates
-# at start as jc_portal (T-7179), whose pool closes after the grant; both counted at 5.
+# at start as jc_portal (T-7179), whose pool closes after the grant; both counted at 5, the serving
+# role with PORTAL_SESSIONS more.
 COMPILED = {"portal": ("portal", 5), "assistant": ("jc-assistant", 10), "jc_apps_admin": ("portal", 4), "jc_portal": ("jc", 5), "jc_portal_app": ("jc", 5)}
+PORTAL_SESSIONS = 3  # db::session_pool beside the five: two LISTENs and the leader's lock (T-7494)
 # Drivers' own defaults, used when the render sets nothing.
 ANTARES_DEFAULT = 20  # antares-broker main.rs parse_pg_pool
 KEYCLOAK_DEFAULT = 100  # Quarkus/Agroal KC_DB_POOL_MAX_SIZE
@@ -219,6 +222,27 @@ def compiled(role: str):
     return count
 
 
+def jc_replicas(docs: list[dict]) -> int:
+    return sum(replicas(w) for w in named(docs, "jc"))
+
+
+def jc_backup(module: str):
+    # The Portal's backup reads each module on a pool of one (crates/portal/src/org_backup/modules.rs).
+    def count(docs: list[dict]) -> int:
+        key = f"JC_PORTAL_BACKUP_{module.upper()}_DATABASE_URL"
+        return sum(replicas(w) for w in named(docs, "jc") if key in env_of(w))
+
+    return count
+
+
+# Logins whose connections another login's counter already holds: a module's request role under the
+# owner of its database, CKAN's DataStore reader among the engines of `ckan`.
+COUNTED_UNDER = {
+    **{f"{m}_app": f"{m}_migrate" for m in ("kaisatsu", "shako", "daiya", "dataroom", "ekiben")},
+    "ckan_datastore_read": "ckan",
+}
+
+
 # A catalogue beside `catalogue` logs in as ckan_<name>; every CKAN is counted once, under `ckan`.
 CLIENTS = {
     "antares": antares,
@@ -230,7 +254,7 @@ CLIENTS = {
     "jc_apps_admin": compiled("jc_apps_admin"),
     "decidim": decidim,
     "jc_portal": compiled("jc_portal"),
-    "jc_portal_app": compiled("jc_portal_app"),
+    "jc_portal_app": lambda docs: compiled("jc_portal_app")(docs) + PORTAL_SESSIONS * jc_replicas(docs),
     "jc_antares": lambda docs: antares(docs, jc=True, role="jc_antares"),
     "jc_antares_app": lambda docs: antares(docs, jc=True, role="jc_antares_app"),
     "jc_antares_maint": lambda docs: antares(docs, jc=True, role="jc_antares_maint"),
@@ -238,6 +262,7 @@ CLIENTS = {
     **{f"{m}_migrate": jc_module(m) for m in ("shako", "daiya", "dataroom", "ekiben")},
     "jc_assistant": jc_assistant(app=False),
     "jc_assistant_app": jc_assistant(app=True),
+    **{f"{m}_backup": jc_backup(m) for m in ("antares", "kaisatsu", "shako", "daiya", "dataroom")},
     # The branch previews' group never logs in; each member pv_{slug} has CONNECTION LIMIT 5, the
     # preview Portal's pool, and scripts/preview.sh starts at most PREVIEW_MAX = 2 of them (T-5548).
     "pv_previews": lambda docs: 2 * COMPILED["portal"][1],
@@ -248,6 +273,16 @@ def cnpg_clusters(docs: list[dict]) -> dict[str, dict]:
     return {d["metadata"]["name"]: d["spec"] for d in docs if d.get("kind") == "Cluster" and d["apiVersion"].startswith("postgresql.cnpg.io/")}
 
 
+def job_logins(docs: list[dict], cluster: str) -> list[str]:
+    # The role Jobs' ROLE_NAME (components/postgres/charts/databases/templates/role-job.yaml).
+    envs = [
+        env_of(d)
+        for d in docs
+        if d.get("kind") == "Job" and (d["metadata"].get("labels") or {}).get("app.kubernetes.io/component") == "database-role-setup"
+    ]
+    return [e["ROLE_NAME"] for e in envs if "ROLE_NAME" in e and e.get("PGHOST", "").startswith(f"{cluster}-rw.")]
+
+
 def counter(role: str):
     shard = re.fullmatch(r"wasm_host_(\d+)", role)
     return wasm_host(shard[1]) if shard else CLIENTS.get(role)
@@ -256,8 +291,8 @@ def counter(role: str):
 def budget(docs: list[dict], cluster: str = "postgres-cluster") -> tuple[dict[str, int], int, int]:
     spec = cnpg_clusters(docs)[cluster]
     parameters = spec["postgresql"].get("parameters", {})
-    roles = [r["name"] for r in spec.get("managed", {}).get("roles", [])]
-    clients = {"ckan" if r.startswith("ckan_") else r for r in roles}
+    roles = [r["name"] for r in spec.get("managed", {}).get("roles", [])] + job_logins(docs, cluster)
+    clients = {"ckan" if r.startswith("ckan_") else COUNTED_UNDER.get(r, r) for r in roles}
     unknown = sorted(c for c in clients if counter(c) is None)
     assert not unknown, f"{cluster}: no pool ceiling known for role(s) {unknown}: add them to CLIENTS"
     pools = {client: counter(client)(docs) for client in clients}
@@ -288,6 +323,25 @@ def memory_need(spec: dict, cluster: str) -> tuple[float, float]:
     assert limit, f"Cluster {cluster} sets no memory limit"
     buffers = mib(parameters["shared_buffers"], POSTGRES_UNITS) if "shared_buffers" in parameters else SHARED_BUFFERS_DEFAULT_MIB
     return buffers + int(parameters.get("max_connections", 100)) * MIB_PER_BACKEND[cluster], mib(limit, KUBERNETES_UNITS)
+
+
+def test_the_sum_counts_the_logins_of_the_role_jobs():
+    # jc-dev 2026-11-22: the Portal serves as a login only its role Job creates (T-7498).
+    cluster = {"kind": "Cluster", "apiVersion": "postgresql.cnpg.io/v1", "metadata": {"name": "postgres-cluster"},
+               "spec": {"postgresql": {}, "managed": {"roles": [{"name": "jc_portal"}]}}}
+    env = [{"name": "JC_PORTAL_MIGRATION_DATABASE_URL", "value": "postgres://jc_portal@pg/jc_portal"}]
+    jc = {"kind": "Deployment", "metadata": {"name": "jc"},
+          "spec": {"template": {"spec": {"containers": [{"env": env}]}}}}
+
+    def job(role: str, host: str = "postgres-cluster-rw.jc.svc") -> dict:
+        env = [{"name": "ROLE_NAME", "value": role}, {"name": "PGHOST", "value": host}]
+        return {"kind": "Job", "metadata": {"name": role, "labels": {"app.kubernetes.io/component": "database-role-setup"}},
+                "spec": {"template": {"spec": {"containers": [{"env": env}]}}}}
+
+    assert budget([cluster, jc, job("jc_portal_app")])[0] == {"jc_portal": 5, "jc_portal_app": 8}
+    assert budget([cluster, jc, job("elsewhere", "other-rw.jc.svc")])[0].keys() == {"jc_portal"}
+    with pytest.raises(AssertionError, match="no pool ceiling known.*unknown_app"):
+        budget([cluster, jc, job("unknown_app")])
 
 
 def test_the_memory_rule_refuses_apps_db_as_it_ran():
