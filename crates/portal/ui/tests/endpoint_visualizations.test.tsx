@@ -24,6 +24,8 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const V = en.endpoints.page.visualizations;
+/** A field's label, with or without the star of a required one. */
+const marked = (label: string) => new RegExp(`^${label}\\*?$`);
 const LINE = {
   $schema: "https://vega.github.io/schema/vega-lite/v5.json",
   data: { name: "source" },
@@ -39,6 +41,14 @@ const BAR = {
   description: { en: "Per station." },
   data: { source: "csv", type: "AirQualityObserved" },
   spec: { data: { name: "source" }, mark: "bar" },
+};
+
+const WEEK = {
+  name: "no2-week",
+  title: { en: "NO2 week" },
+  description: { en: "Daily peak." },
+  data: { source: "temporal", type: "AirQualityObserved", attrs: ["no2"], last: "P7D", aggrMethod: "max", aggrPeriod: "P1D" },
+  spec: LINE,
 };
 
 function endpoint(catalog?: Record<string, unknown>): Manifest {
@@ -66,15 +76,20 @@ function respond(body: unknown, status = 200): Response {
 describe("VisualizationsSection", () => {
   let sent: { method: string; url: URL; body: string }[];
 
+  let refusal: string[] | undefined;
+  let passesCheck: boolean;
+
   beforeEach(async () => {
     sent = [];
+    refusal = undefined;
+    passesCheck = false;
     await i18n.changeLanguage("en");
   });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  function mount(manifest: Manifest, canEdit: boolean) {
+  function mount(manifest: Manifest, canEdit: boolean, columns = ["dateObserved", "no2", "name"]) {
     vi.stubGlobal("fetch", vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const request =
@@ -87,6 +102,11 @@ describe("VisualizationsSection", () => {
           url,
           body: request.method === "GET" ? "" : await request.clone().text(),
         });
+        // The check answers a verdict whose findings carry the pointer in the sentence, no path.
+        if (request.method === "PUT" && refusal && !passesCheck && url.searchParams.get("dryRun"))
+          return respond({ valid: false, verdict: { ok: false, findings: refusal.map((message) => ({ path: "", message })) } });
+        if (request.method === "PUT" && refusal && !url.searchParams.get("dryRun"))
+          return respond({ title: "Not valid", status: 422, detail: refusal.join("\n"), errors: refusal }, 422);
         if (url.pathname.startsWith("/api/v1/visualization-templates/"))
           return respond(LINE);
         if (url.searchParams.get("dryRun")) return respond({ valid: true });
@@ -107,7 +127,7 @@ describe("VisualizationsSection", () => {
             project="ovzdusie"
             manifest={manifest}
             types={["AirQualityObserved"]}
-            columnsOf={() => ["dateObserved", "no2", "name"]}
+            columnsOf={() => columns}
             served={["ngsi-ld", "csv"]}
             canEdit={canEdit}
           />
@@ -122,16 +142,12 @@ describe("VisualizationsSection", () => {
     await userEvent.click(screen.getByText(V.add));
     const fill = screen.getByRole("button", { name: V.fill });
     expect(fill).toHaveAttribute("aria-disabled", "true");
-    await userEvent.selectOptions(
-      screen.getByLabelText(V.roles.x),
-      "dateObserved",
-    );
-    await userEvent.selectOptions(screen.getByLabelText(V.roles.y), "no2");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
     await userEvent.click(fill);
     const get = sent.find((r) => r.method === "GET")!;
     expect(get.url.pathname).toBe("/api/v1/visualization-templates/line");
     expect(Object.fromEntries(get.url.searchParams)).toEqual({
-      x: "dateObserved",
+      x: "observedAt",
       y: "no2",
     });
     await waitFor(() =>
@@ -140,9 +156,9 @@ describe("VisualizationsSection", () => {
       ).toContain("dateObserved"),
     );
 
-    await userEvent.type(screen.getByLabelText(V.name), "no2-day");
-    await userEvent.type(screen.getByLabelText(V.chartTitle), "NO2 today");
-    await userEvent.type(screen.getByLabelText(V.description), "Hourly mean.");
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-day");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "NO2 today");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "Hourly mean.");
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
 
     await waitFor(() =>
@@ -173,22 +189,374 @@ describe("VisualizationsSection", () => {
     ]);
   });
 
+  it("proposes the reader's toolbar defaults and switch picked for a temporal chart (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    const toolbar = screen.getByTestId("viz-temporal");
+    expect(toolbar).toHaveAccessibleName(V.toolbar);
+    // Each field has its hint with an example, read after the control's name.
+    expect(screen.getByLabelText(V.range)).toHaveAccessibleDescription(V.hint.range);
+    expect(screen.getByLabelText(V.granularity)).toHaveAccessibleDescription(V.hint.granularity);
+    expect(screen.getByLabelText(V.method)).toHaveAccessibleDescription(V.hint.method);
+    expect(screen.getByLabelText(V.controls)).toHaveAccessibleDescription(V.hint.controls);
+    // Only the allow-listed values are offered.
+    const options = (label: string) =>
+      Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.text);
+    expect(options(V.range)).toEqual([V.ranges.day, V.ranges.week, V.ranges.month]);
+    expect(options(V.granularity)).toEqual([V.granularities.raw, V.granularities.hourly, V.granularities.daily]);
+    expect(options(V.method)).toEqual([V.methods.avg, V.methods.min, V.methods.max]);
+
+    // Raw readings take no method: the field goes and the data block holds no aggregation.
+    await userEvent.selectOptions(screen.getByLabelText(V.granularity), "raw");
+    expect(screen.queryByLabelText(V.method)).toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText(V.granularity), "daily");
+    await userEvent.selectOptions(screen.getByLabelText(V.range), "week");
+    await userEvent.selectOptions(screen.getByLabelText(V.method), "max");
+    await userEvent.click(screen.getByLabelText(V.controls));
+
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByRole("button", { name: V.fill }));
+    await waitFor(() =>
+      expect((screen.getByLabelText(V.spec) as HTMLTextAreaElement).value).toContain("dateObserved"),
+    );
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-week");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "NO2 this week");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "Daily peak.");
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    const put = sent.filter((r) => r.method === "PUT")[1];
+    expect(JSON.parse(put.body).spec.catalog.visualizations[0].data).toEqual({
+      source: "temporal",
+      type: "AirQualityObserved",
+      attrs: ["no2"],
+      last: "P7D",
+      aggrMethod: "max",
+      aggrPeriod: "P1D",
+      controls: false,
+    });
+  });
+
+  async function proposeLine() {
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByText(V.advanced));
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-new");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "New");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "New.");
+    await userEvent.click(screen.getByLabelText(V.spec));
+    await userEvent.paste(JSON.stringify(LINE));
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+  }
+
+  it.each([
+    ["last", "range", "The server did not accept 24 hours as the range. Pick 7 days or 31 days."],
+    ["aggrPeriod", "granularity", "The server did not accept Hourly as the granularity. Pick Raw readings or Daily."],
+    ["aggrMethod", "method", "The server did not accept Average as the method. Pick Minimum or Maximum."],
+    ["controls", "controls", V.fix.controls],
+  ] as const)("says what to pick on the refused %s of the chart being added, without the pointer (T-7491)", async (member, field, says) => {
+    mount(endpoint({ visualizations: [BAR] }), true);
+    doorsAsRest();
+    refusal = [`invalid /spec/catalog/visualizations/1/data/${member}: source: not allowed`];
+    await proposeLine();
+    const control = screen.getByLabelText(V[field]);
+    await waitFor(() => expect(control).toHaveAttribute("aria-invalid", "true"));
+    expect(control).toHaveAccessibleDescription(expect.stringContaining(says));
+    if (field !== "controls") expect(control).not.toHaveAccessibleDescription(expect.stringContaining(V.hint[field]));
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+    expect(screen.getAllByText(new RegExp(`Nothing was proposed.*${V[field]}`))).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: V.showField }));
+    expect(control).toHaveFocus();
+  });
+
+  it("leaves the new chart's fields alone when another chart is the one refused (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/1/data/last: source: not allowed"];
+    await proposeLine();
+    expect(await screen.findByText(/Nothing was proposed.*NO2 week/)).toBeVisible();
+    expect(screen.getByText(/^7 days is not an allowed range/)).toBeVisible();
+    expect(screen.getByLabelText(V.range)).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByRole("button", { name: V.showField })).toBeNull();
+  });
+
+  it("names the chart that blocks a removal, by its place in what was sent, outside the closed editor (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const alert = await screen.findByText(/“NO2 now” was not removed, because “NO2 week”/);
+    expect(screen.getByText(/^7 days is not an allowed range/).closest("li")).toHaveTextContent("no2-week");
+    expect(alert).toBeVisible();
+    expect(alert.closest("details")).toBeNull();
+    expect(screen.getByLabelText(V.range, { selector: "select" })).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("reads the proposal's own 422 as it reads the check's verdict (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    passesCheck = true;
+    refusal = [
+      "/spec/catalog/visualizations/0/data/last: source: not allowed",
+      "/spec/catalog/visualizations/0/data/aggrMethod: not allowed",
+    ];
+    await proposeLine();
+    await waitFor(() => expect(screen.getByLabelText(V.range)).toHaveAttribute("aria-invalid", "true"));
+    expect(screen.getByLabelText(V.method)).toHaveAttribute("aria-invalid", "true");
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+  });
+
+  it("keeps the server's sentence for a refusal it has no words for (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    refusal = [
+      "/spec/catalog/visualizations/0/data/last: source: not allowed",
+      "/spec/catalog/visualizations/0/data/attrs: source: a URL is not allowed",
+    ];
+    await proposeLine();
+    expect(await screen.findByText(/a URL is not allowed/)).toBeVisible();
+  });
+
+  it.each(["bar", "line", "heatmap", "small-multiples", "linked-brush"])(
+    "gives every field of a %s chart a hint with an example (T-7491)",
+    async (template) => {
+      mount(endpoint(), true);
+      await userEvent.click(screen.getByText(V.add));
+      await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), template);
+      const fields = [...document.querySelectorAll("details input, details select, details textarea")];
+      expect(fields.length).toBeGreaterThan(6);
+      for (const field of fields) expect(field, field.id).toHaveAccessibleDescription(/e\.g\./);
+    },
+  );
+
+  it.each(["sk", "cs", "de"] as const)("describes every field in %s (T-7491)", async (language) => {
+    await i18n.changeLanguage(language);
+    mount(endpoint(), true);
+    await userEvent.click(document.querySelector("summary")!);
+    for (const field of document.querySelectorAll("details input, details select, details textarea"))
+      expect(field, field.id).toHaveAccessibleDescription(/napr\.|např\.|z\. B\./);
+  });
+
+  it("offers a history chart only the columns its readings carry (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    const offered = (label: string | RegExp) =>
+      [...(screen.getByLabelText(label) as HTMLSelectElement).options].map((option) => option.value);
+    // Nothing to pick, so it is text under its label, read with its hint.
+    expect(screen.getByLabelText(V.roles.x).tagName).toBe("OUTPUT");
+    expect(screen.getByLabelText(V.roles.x)).toHaveTextContent(V.readingTime);
+    expect(screen.getByLabelText(V.roles.x)).toHaveAccessibleDescription(V.hint.time);
+    expect(offered(V.roles.color)).toEqual(["", "name", "id"]);
+    expect(offered(marked(V.roles.y))).toEqual(["", "dateObserved", "no2", "name"]);
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "bar");
+    expect(offered(marked(V.roles.x))).toEqual(["", "dateObserved", "no2", "name"]);
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.color), "dateObserved");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "line");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    doorsAsRest();
+    await userEvent.click(screen.getByRole("button", { name: V.fill }));
+    await waitFor(() => expect(sent.some((r) => r.method === "GET")).toBe(true));
+    // The bar's colour column is not one of the readings' columns: it is not sent.
+    expect(Object.fromEntries(sent.find((r) => r.method === "GET")!.url.searchParams)).toEqual({ x: "observedAt", y: "no2" });
+  });
+
+  it("says what to do when the model lists no column (T-7491)", async () => {
+    mount(endpoint(), true, []);
+    await userEvent.click(screen.getByText(V.add));
+    expect(screen.getByLabelText(marked(V.roles.y))).toHaveAccessibleDescription(V.hint.noColumns);
+  });
+
+  it("puts what readers see before the button that fills the specification (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    const fill = screen.getByRole("button", { name: V.fill });
+    expect(screen.getByTestId("viz-temporal").compareDocumentPosition(fill)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(fill.compareDocumentPosition(screen.getByLabelText(V.spec))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("writes the specification itself on propose, so nobody has to see JSON (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    expect(screen.getByLabelText(V.spec)).not.toBeVisible();
+    expect(screen.getAllByText(/To propose the chart, fill in: Short ID, Title, Description,? and Measure/)[0]).toBeVisible();
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-day");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "NO2 today");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "Hourly mean.");
+    expect(screen.getByLabelText(marked(V.roles.y))).toBeRequired();
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    expect(JSON.parse(sent.filter((r) => r.method === "PUT")[1].body).spec.catalog.visualizations[0].spec).toEqual(LINE);
+  });
+
+  it("drops a filled specification when a column changes, and keeps one edited by hand (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.click(screen.getByText(V.advanced));
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByRole("button", { name: V.fill }));
+    const spec = screen.getByLabelText(V.spec);
+    await waitFor(() => expect(spec).not.toHaveValue(""));
+    await userEvent.selectOptions(screen.getByLabelText(V.roles.color), "name");
+    expect(spec).toHaveValue("");
+    await userEvent.click(spec);
+    await userEvent.paste("{}");
+    expect(screen.getByLabelText(V.roles.color)).toBeDisabled();
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "name");
+    expect(spec).toHaveValue("{}");
+  });
+
+  it.each([
+    ["/data/url: data-source: the rows come from the Endpoint's declared source, never a URL", V.fix.outside],
+    ["/data/name: data-source: the one named dataset is `source`; others hold inline values or derive from it", V.fix.outside],
+    [": schema: a spec is a JSON object", V.fix.spec],
+  ])("says on the specification what the check refused, without the pointer: %s (T-7491)", async (refused, says) => {
+    mount(endpoint({ visualizations: [BAR] }), true);
+    doorsAsRest();
+    refusal = [`spec is not a valid Endpoint: invalid /spec/catalog/visualizations/1/spec${refused}`];
+    await proposeLine();
+    const spec = screen.getByLabelText(V.spec);
+    await waitFor(() => expect(spec).toHaveAttribute("aria-invalid", "true"));
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining(says));
+    expect(document.body.textContent).not.toContain("/spec/catalog");
+    await userEvent.click(screen.getByRole("button", { name: V.showField }));
+    expect(spec).toBeVisible();
+    expect(spec).toHaveAccessibleDescription(/e\.g\./);
+    expect(spec).toHaveFocus();
+  });
+
+  it("lists what readers start from, and what they are locked to without the toolbar (T-7491)", () => {
+    const long = { ...WEEK, name: "no2-long", data: { ...WEEK.data, last: "P14D" } };
+    const raw = { ...WEEK, name: "no2-raw", data: { source: "temporal", type: "T", attrs: ["no2"], last: "PT24H", controls: false } };
+    mount(endpoint({ visualizations: [WEEK, raw, long] }), false);
+    expect(screen.getByText("Range: 14 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Range: 7 days · Granularity: Daily · Method: Maximum")).toBeVisible();
+    expect(screen.getByText("Range: 24 hours · Granularity: Raw readings")).toBeVisible();
+    expect(screen.getAllByText(V.startsWith)).toHaveLength(2);
+    expect(screen.getByText(V.lockedTo)).toBeVisible();
+  });
+
+  it("offers the removal of the blocking chart itself (T-7491)", async () => {
+    mount(endpoint({ visualizations: [BAR, WEEK] }), true);
+    doorsAsRest();
+    refusal = ["/spec/catalog/visualizations/0/data/last: source: not allowed"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const fix = await screen.findByRole("button", { name: "Remove “NO2 week”" });
+    refusal = undefined;
+    sent = [];
+    await userEvent.click(fix);
+    await waitFor(() => expect(sent.filter((one) => one.method === "PUT")).toHaveLength(2));
+    expect(JSON.parse(sent.filter((one) => one.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([BAR]);
+  });
+
+  it("names the address a refused specification links to, selects it, and says the edit replaces the fields (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    expect(screen.queryByText(V.edited)).toBeNull();
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-new");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "New");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "New.");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
+    await userEvent.click(screen.getByText(V.advanced));
+    const spec = screen.getByLabelText(V.spec) as HTMLTextAreaElement;
+    await userEvent.click(spec);
+    await userEvent.paste(JSON.stringify({ ...LINE, data: { url: "https://example.org/no2.csv" } }));
+    expect(screen.getByText(V.edited)).toBeVisible();
+    // One way back, named by what it does.
+    expect(screen.queryByRole("button", { name: V.fill })).toBeNull();
+    expect(screen.getByLabelText(marked(V.roles.y))).toHaveAccessibleDescription(V.hint.measureKept);
+    refusal = ["spec is not a valid Endpoint: invalid /spec/catalog/visualizations/0/spec/data/url: data-source: never a URL"];
+    await userEvent.click(screen.getByRole("button", { name: V.propose }));
+    await userEvent.click(await screen.findByRole("button", { name: V.showField }));
+    expect(spec).toHaveAccessibleDescription(expect.stringContaining("replace https://example.org/no2.csv and keep your other edits"));
+    expect(spec.value.slice(spec.selectionStart, spec.selectionEnd)).toBe('"url":"https://example.org/no2.csv"');
+    // The fields it replaces take no pick; the measure, which is also what is read, still does.
+    expect(screen.getByLabelText(marked(V.template))).toBeDisabled();
+    expect(screen.getByLabelText(V.roles.color)).toBeDisabled();
+    expect(screen.getByLabelText(marked(V.roles.y))).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: V.useSource }));
+    expect(JSON.parse(spec.value)).toEqual(LINE);
+    await waitFor(() => expect(spec).not.toHaveAttribute("aria-invalid"));
+    await userEvent.click(screen.getByRole("button", { name: V.useFields }));
+    expect(spec).toHaveValue("");
+    expect(screen.getByLabelText(marked(V.template))).toBeEnabled();
+  });
+
+  it("sets a blocking chart's range to one that is allowed, and leaves the rest of it (T-7491)", async () => {
+    const long = { ...WEEK, data: { ...WEEK.data, last: "P90D" } };
+    mount(endpoint({ visualizations: [BAR, long] }), true);
+    doorsAsRest();
+    refusal = ["invalid /spec/catalog/visualizations/0/data/last: source: `P90D` is not an ISO 8601 duration up to P31D"];
+    await userEvent.click(screen.getAllByRole("button", { name: V.remove })[0]);
+    const set = await screen.findByRole("button", { name: "Propose 31 days for “NO2 week”" });
+    refusal = undefined;
+    sent.length = 0;
+    await userEvent.click(set);
+    await waitFor(() => expect(sent.filter((r) => r.method === "PUT")).toHaveLength(2));
+    expect(JSON.parse(sent.filter((r) => r.method === "PUT")[1].body).spec.catalog.visualizations).toEqual([
+      BAR,
+      { ...WEEK, data: { ...WEEK.data, last: "P31D" } },
+    ]);
+  });
+
+  it("tells the editor what an unticked toolbar means for readers (T-7491)", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.click(screen.getByLabelText(V.controls));
+    expect(screen.getByLabelText(V.fixed.range)).toBeInTheDocument();
+    const box = screen.getByLabelText(V.controls);
+    expect(box).toHaveAccessibleDescription(V.hint.locked);
+    expect(box).not.toHaveAccessibleDescription(V.hint.controls);
+  });
+
+  it("empties the form once the chart is proposed, so it is not proposed twice (T-7491)", async () => {
+    mount(endpoint(), true);
+    doorsAsRest();
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.click(screen.getByLabelText(V.controls));
+    await userEvent.selectOptions(screen.getByLabelText(V.fixed.range), "week");
+    await userEvent.click(screen.getByText(V.add));
+    await proposeLine();
+    await waitFor(() => expect(screen.getByLabelText(marked(V.name))).toHaveValue(""));
+    expect(screen.getByLabelText(V.controls)).toBeChecked();
+    expect(screen.getByLabelText(V.range)).toHaveValue("day");
+    expect(screen.getByText(V.add).closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(V.awaiting.replace("{chart}", "New"))).toBeVisible();
+    expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("offers no toolbar defaults for a chart that does not read the history", async () => {
+    mount(endpoint(), true);
+    await userEvent.click(screen.getByText(V.add));
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.template)), "bar");
+    expect(screen.queryByTestId("viz-temporal")).toBeNull();
+  });
+
   it("refuses a name already taken and a spec that is not JSON before anything is sent", async () => {
     mount(endpoint({ visualizations: [BAR] }), true);
     await userEvent.click(screen.getByText(V.add));
-    await userEvent.type(screen.getByLabelText(V.name), "no2-now");
-    await userEvent.type(screen.getByLabelText(V.chartTitle), "T");
-    await userEvent.type(screen.getByLabelText(V.description), "D");
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "no2-now");
+    await userEvent.type(screen.getByLabelText(marked(V.chartTitle)), "T");
+    await userEvent.type(screen.getByLabelText(marked(V.description)), "D");
+    await userEvent.selectOptions(screen.getByLabelText(marked(V.roles.y)), "no2");
     await userEvent.type(screen.getByLabelText(V.spec), "not json");
     expect(screen.getByRole("button", { name: V.propose })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
-    await userEvent.clear(screen.getByLabelText(V.name));
-    await userEvent.type(screen.getByLabelText(V.name), "other");
+    await userEvent.clear(screen.getByLabelText(marked(V.name)));
+    await userEvent.type(screen.getByLabelText(marked(V.name)), "other");
     await userEvent.click(screen.getByRole("button", { name: V.propose }));
     expect(screen.getByRole("alert")).toHaveTextContent(V.badJson);
     expect(sent).toHaveLength(0);
+  });
+
+  it("tells a reader who can change the charts (T-7491)", () => {
+    mount(endpoint({ visualizations: [WEEK] }), false);
+    expect(screen.getByText(V.readOnly)).toBeVisible();
   });
 
   it("shows a reader the charts and nothing to change", () => {
@@ -219,6 +587,12 @@ describe("visualization data", () => {
       type: "T",
     });
     expect(defaultData("heatmap", "T", "v", ["ogc-features"])).toBeUndefined();
+  });
+
+  it("writes raw readings without an aggregation and a shown toolbar without the switch", () => {
+    expect(
+      defaultData("line", "T", "v", ["ngsi-ld"], { range: "month", granularity: "raw", method: "max", controls: true }),
+    ).toEqual({ source: "temporal", type: "T", attrs: ["v"], last: "P31D" });
   });
 
   it("keeps the rest of the catalogue when the list empties", () => {

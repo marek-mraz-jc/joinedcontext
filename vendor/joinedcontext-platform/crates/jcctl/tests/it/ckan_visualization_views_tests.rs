@@ -315,6 +315,26 @@ fn no_dataset_or_no_publication_does_nothing() {
     );
 }
 
+#[test]
+fn a_temporal_view_carries_its_toolbar_defaults_and_switch_into_the_view_source() {
+    // T-7491: the reader's toolbar (vendor/viz/site/host.js) takes its defaults from the view's
+    // `source` and hides itself on `controls: false`, so the publisher copies them as written.
+    let temporal = chart("teplota-tyzden", "Teplota").replace(
+        "data: { source: csv, type: AirQualityObserved }",
+        "data: { source: temporal, type: AirQualityObserved, attrs: [no2], last: P7D, aggrMethod: max, aggrPeriod: P1D, controls: false }",
+    );
+    let endpoint = endpoint(&[temporal]);
+    let (mut ckan, first) = published(&endpoint);
+    publish_views(&mut ckan, &endpoint, &settings(), &[]).expect("views");
+    let [view] = ours(&ckan, &first).try_into().expect("one view");
+    let source: Value = serde_json::from_str(view["source"].as_str().expect("text")).expect("JSON");
+    assert_eq!(
+        source,
+        json!({ "source": "temporal", "type": "AirQualityObserved", "attrs": ["no2"], "last": "P7D",
+                "aggrMethod": "max", "aggrPeriod": "P1D", "controls": false })
+    );
+}
+
 /// A `model.schema.json` as the gateway serves it: one type observed over time, one register.
 fn schema() -> Value {
     json!({ "definitions": {

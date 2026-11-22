@@ -64,6 +64,11 @@ const VIEW_JSON = {
     spec: JSON.stringify(SPEC),
   },
 };
+// The same view when its author hid the toolbar (T-7491): daily maxima of the last week.
+const FIXED_JSON = {
+  ...VIEW_JSON,
+  result: { ...VIEW_JSON.result, source: JSON.stringify({ ...JSON.parse(VIEW_JSON.result.source), controls: false, aggrMethod: "max", aggrPeriod: "P1D" }) },
+};
 
 type Mode = "normal" | "empty" | "error" | "cut" | "slow";
 // The buckets a cut answer brings before the page's limit: up to 2026-11-20 00:00Z.
@@ -84,14 +89,14 @@ function answer(url: URL): unknown {
   });
 }
 
-async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPage: string) {
+async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPage: string, view = VIEW_JSON) {
   await page.route("**/*", async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.origin !== JC) return route.fulfill({ status: 404, body: "" });
     const opaque = request.headers()["origin"] === "null" ? { "access-control-allow-origin": "null", vary: "Origin" } : {};
     if (url.pathname === "/opendata/api/3/action/resource_view_show" && url.searchParams.get("id") === VIEW) {
-      return route.fulfill({ status: 200, headers: opaque, contentType: "application/json", body: JSON.stringify(VIEW_JSON) });
+      return route.fulfill({ status: 200, headers: opaque, contentType: "application/json", body: JSON.stringify(view) });
     }
     if (url.pathname === "/opendata/dataset/praha-pocasi") {
       return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: datasetPage });
@@ -128,12 +133,12 @@ async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPag
 
 // The catalogue's frame of the chart host: sandboxed, without allow-same-origin, sized by the
 // host's jc-viz-height message as the catalogue sizes it.
-async function open(page: Page, state: { mode: Mode; asked: URL[] }, hash = "") {
+async function open(page: Page, state: { mode: Mode; asked: URL[] }, hash = "", view = VIEW_JSON) {
   await page.clock.setFixedTime(NOW);
   await serve(page, state, `<!doctype html><html lang="sk"><body style="margin:0;padding:16px;font:16px system-ui">
 <h1>Počasie Praha</h1><iframe title="Relatívna vlhkosť" src="${JC}/embed/#${VIEW}&inline&lang=sk${hash}" sandbox="allow-scripts allow-downloads"
  style="width:100%;height:900px;border:0"></iframe>
-<script>addEventListener("message", (e) => { if (e.data && e.data.type === "jc-viz-height") document.querySelector("iframe").style.height = Math.min(e.data.height, 3000) + "px"; });</script></body></html>`);
+<script>addEventListener("message", (e) => { if (e.data && e.data.type === "jc-viz-height") document.querySelector("iframe").style.height = Math.min(e.data.height, 3000) + "px"; });</script></body></html>`, view);
   await page.goto(`${JC}/opendata/dataset/praha-pocasi`);
   const host = page.frameLocator('iframe[title="Relatívna vlhkosť"]');
   return { host, chart: host.frameLocator("iframe#frame") };
@@ -347,6 +352,19 @@ for (const width of [1440, 400]) {
     await expect(host.locator("#status")).toContainText("Načítavam", { timeout: 20_000 });
     await expect(host.locator("#c-stations option")).toHaveCount(4);
     await shot(page, "first-loading", width);
+  });
+
+  test(`a fixed chart ignores the link and fits its frame (${width}, T-7491)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = { mode: "normal" as Mode, asked: [] as URL[] };
+    const { host, chart } = await open(page, state, "&r=PT24H&g=PT1H&m=min", FIXED_JSON);
+    await expect(chart.locator("g.mark-group").first()).toBeAttached({ timeout: 20_000 });
+    await expect(host.locator("#data-note")).toBeVisible();
+    await expect(host.locator("select, #data-note button")).toHaveCount(0);
+    expect(Object.fromEntries(state.asked[0].searchParams)).toMatchObject({ aggrMethods: "max", aggrPeriodDuration: "P1D" });
+    // The catalogue sizes the frame by the host's message: nothing of the chart's notes is cut off.
+    await expect.poll(() => host.locator("html").evaluate((h) => h.scrollHeight - h.clientHeight), { timeout: 5_000 }).toBe(0);
+    await shot(page, "fixed", width);
   });
   });
 }
