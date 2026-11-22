@@ -625,6 +625,76 @@ async fn a_walk_passes_over_entities_without_history_in_one_call() {
     );
 }
 
+/// S5-22: an Entity whose current instances are gone but whose superseded
+/// versions remain is not bare: the bare sweep keeps it in the walk, so
+/// retention still trims those versions at the cut.
+#[tokio::test(flavor = "multi_thread")]
+async fn superseded_versions_keep_an_entity_in_the_retention_walk() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let t = "retain-versions";
+    let tenant = TenantId::new(t).expect("tenant");
+    pg::ensure_tenant(&pool, &tenant).await.expect("tenant row");
+    for sql in [
+        "DELETE FROM attr_versions WHERE tenant_id = $1",
+        "DELETE FROM temporal_entities WHERE tenant_id = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(t)
+            .execute(&pool)
+            .await
+            .expect("clean");
+    }
+    let id = "urn:v:versions-only";
+    sqlx::query(
+        "INSERT INTO temporal_entities (tenant_id, id, types, meta, created_at, modified_at)
+         VALUES ($1, $2, ARRAY[$3], '{}'::jsonb, now(), now())",
+    )
+    .bind(t)
+    .bind(id)
+    .bind(V)
+    .execute(&pool)
+    .await
+    .expect("shell");
+    sqlx::query(
+        "INSERT INTO attr_versions (tenant_id, entity_id, attr_id, instance_id, observed_at, version, data)
+         VALUES ($1, $2, 'https://example.org/speed', 'urn:i:old', $3::timestamptz, 1, '{}'::jsonb)",
+    )
+    .bind(t)
+    .bind(id)
+    .bind(ago(60))
+    .execute(&pool)
+    .await
+    .expect("superseded version");
+    antares_sql::store::pg::maintenance::mark_bare(&pool, std::time::Duration::from_secs(60))
+        .await
+        .expect("bare sweep");
+    let bare: bool =
+        sqlx::query_scalar("SELECT bare FROM temporal_entities WHERE tenant_id = $1 AND id = $2")
+            .bind(t)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("mark");
+    assert!(!bare, "an Entity holding versions is not bare");
+    assert_eq!(
+        retain_history(&pool, t, ty(V), &ago(5), 100, false)
+            .await
+            .expect("walk"),
+        1,
+        "the superseded version before the cut goes"
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM attr_versions WHERE tenant_id = $1",
+            t
+        )
+        .await,
+        0
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_past_partition_the_sweeps_emptied_is_dropped_and_a_held_one_stays() {
     let url = require_db!();
