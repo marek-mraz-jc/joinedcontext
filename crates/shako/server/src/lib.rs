@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub use shako_api::service::{blob_path, write_blob_file};
 pub use shako_api::{ShakoState, dispatch_pending_outbox};
-use shako_api::{api_router, authenticate_request, exec_odata_operation, odata_error_response};
+use shako_api::{
+    authenticate_request, compat_and_native_rest_router, exec_odata_operation,
+    odata_error_response, odata_router, smart_http_router,
+};
 use shako_core::{
     BranchProtectionRule, InstanceRecord, OrgId, ProtectionRuleRecord, PushMirrorRecord, RepoId,
     RepoRecord, RequestCtx, ShakoError, ShakoResult, WebhookFormat, WebhookId, WebhookRecord,
@@ -117,11 +120,19 @@ pub fn router(state: ShakoState, mount: Mount) -> Router {
         .route("/mcp/tools", get(http_mcp_list))
         .route("/mcp/call", post(http_mcp_call));
 
-    Router::new()
-        .merge(api_router())
+    // The operation doors run each write request as one unit (jc-audit): its audit row commits
+    // with the change, or neither stands (S6-20). Smart HTTP stays outside: a push streams its
+    // pack, and a unit would hold a connection for all of it.
+    let doors = Router::new()
+        .merge(compat_and_native_rest_router())
+        .merge(odata_router())
         .merge(oci_v2_routes())
         .merge(mcp_router)
         .merge(web_router())
+        .layer(middleware::from_fn(jc_audit::layer));
+    Router::new()
+        .merge(smart_http_router())
+        .merge(doors)
         .with_state(state)
         .layer(middleware::from_fn(security_and_mount_headers))
         .layer(Extension(DefaultMount(mount)))
@@ -130,6 +141,7 @@ pub fn router(state: ShakoState, mount: Mount) -> Router {
 /// Builds the host-root `/v2` container registry router for `jc-router` (Contract S1).
 pub fn registry_router(state: ShakoState, mount: Mount) -> Router {
     stripped_v2_registry_routes()
+        .layer(middleware::from_fn(jc_audit::layer))
         .with_state(state)
         .layer(middleware::from_fn(security_and_mount_headers))
         .layer(Extension(DefaultMount(mount)))

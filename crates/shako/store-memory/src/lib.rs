@@ -5,8 +5,8 @@
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
-    PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
+    AuditRecord, BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
+    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
     ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
@@ -30,6 +30,7 @@ struct TenantState {
     package_files: BTreeMap<(String, String, String, String), PackageFileRecord>,
     blobs: BTreeMap<(String, String, String), BlobRecord>,
     outbox: Vec<OutboxEvent>,
+    audit: Vec<AuditRecord>,
 }
 
 #[derive(Debug, Default)]
@@ -1104,6 +1105,34 @@ impl Store for MemoryStore {
                 .tenants
                 .get(&(instance_id, org_id))
                 .map(|t| t.outbox.clone())
+                .unwrap_or_default())
+        })
+    }
+
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            guard
+                .tenants
+                .entry((row.instance_id, row.org_id))
+                .or_default()
+                .audit
+                .push(row);
+            Ok(())
+        })
+    }
+
+    fn list_audit(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Vec<AuditRecord>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            Ok(guard
+                .tenants
+                .get(&(instance_id, org_id))
+                .map(|t| t.audit.clone())
                 .unwrap_or_default())
         })
     }

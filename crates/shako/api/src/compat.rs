@@ -913,7 +913,22 @@ async fn compat_post_commit_status(
         target_url: req.target_url.unwrap_or_default(),
         updated_at: TimestampTz::now(),
     };
-    match state.store().upsert_commit_status(rec).await {
+    let saved = async {
+        let saved = state.store().upsert_commit_status(rec).await?;
+        service::audit(
+            &state,
+            &ctx,
+            "SetCommitStatus",
+            format!(
+                "repos/{}/commits/{}/statuses/{}",
+                repo.id, saved.sha, saved.id
+            ),
+        )
+        .await?;
+        Ok::<_, ShakoError>(saved)
+    }
+    .await;
+    match saved {
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }

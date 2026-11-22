@@ -13,14 +13,14 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
-    PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
+    AuditRecord, BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
+    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
     SecretStore, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId,
     WebhookRecord,
 };
+use sqlx::Row;
 use sqlx::postgres::{PgConnectOptions, PgPool};
-use sqlx::{Postgres, Row, Transaction};
 use std::collections::HashSet;
 use std::path::Path;
 use std::str::FromStr;
@@ -40,6 +40,9 @@ pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/000
 
 /// Keys led by the Organization (T-7549), in a ledger of its own for the same reason.
 pub const KEYS_0001_SQL: &str = include_str!("../migrations/keys/0001_org_keys.sql");
+
+/// The audit rows (S6-20), in a ledger of its own for the same reason.
+pub const AUDIT_0001_SQL: &str = include_str!("../migrations/audit/0001_audit.sql");
 
 /// How long a claimed event is this process's to send; after it another may claim it again, so
 /// an event is sent once, or again when its sender died or took longer.
@@ -64,6 +67,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "outbox",
     "store_log",
     "projection",
+    "audit",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +259,13 @@ impl PgStore {
         keys.run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("key migration failed: {e}")))?;
+        let mut audit = Migrator::with_migrations(vec![migration(1, "audit", AUDIT_0001_SQL)]);
+        audit.create_schema("shako_audit_migrations");
+        audit.dangerous_set_table_name("shako_audit_migrations._sqlx_migrations");
+        audit
+            .run(migrate_pool)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("audit migration failed: {e}")))?;
         Ok(())
     }
 
@@ -268,9 +279,22 @@ impl PgStore {
         let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
         projection::lock(&mut tx, tenant).await?;
         let count = projection::catch_up(&mut tx, tenant).await?;
-        tx.commit().await.map_err(tables::failed)?;
-        self.ready_tenants().insert(tenant);
+        jc_audit::commit(tx).await.map_err(tables::failed)?;
+        self.mark_ready(tenant).await;
         Ok(count)
+    }
+
+    /// Marks `tenant`'s tables caught up, once that stands: a request's unit that rolls back
+    /// leaves the tenant to be caught up again.
+    async fn mark_ready(&self, tenant: (InstanceId, OrgId)) {
+        let ready = Arc::clone(&self.ready);
+        jc_audit::after_commit(async move {
+            ready
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(tenant);
+        })
+        .await;
     }
 
     fn ready_tenants(&self) -> std::sync::MutexGuard<'_, HashSet<(InstanceId, OrgId)>> {
@@ -281,7 +305,7 @@ impl PgStore {
     }
 
     /// A transaction to read `tenant` in: its tables hold its log and its RLS context is set.
-    async fn read_tx(&self, tenant: (InstanceId, OrgId)) -> ShakoResult<Transaction<'_, Postgres>> {
+    async fn read_tx(&self, tenant: (InstanceId, OrgId)) -> ShakoResult<jc_audit::Tx> {
         let ready = self.ready_tenants().contains(&tenant);
         if !ready {
             self.hydrate(tenant.0, tenant.1).await?;
@@ -298,7 +322,7 @@ impl PgStore {
     ) -> ShakoResult<Vec<T>> {
         let mut tx = self.read_tx(tenant).await?;
         let rows = tables::select(&mut tx, tenant, table, rest, binds).await?;
-        tx.commit().await.map_err(tables::failed)?;
+        jc_audit::commit(tx).await.map_err(tables::failed)?;
         Ok(rows)
     }
 
@@ -307,7 +331,7 @@ impl PgStore {
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
-    ) -> ShakoResult<Transaction<'_, Postgres>> {
+    ) -> ShakoResult<jc_audit::Tx> {
         tenant_tx(&self.pool, instance_id, org_id).await
     }
 }
@@ -318,9 +342,10 @@ async fn tenant_tx(
     pool: &PgPool,
     instance_id: InstanceId,
     org_id: OrgId,
-) -> ShakoResult<Transaction<'_, Postgres>> {
-    let mut tx = pool
-        .begin()
+) -> ShakoResult<jc_audit::Tx> {
+    // Inside a write request's unit this is a savepoint of its one transaction, so the audit row
+    // commits with the change it records (S6-20).
+    let mut tx = jc_audit::begin(pool)
         .await
         .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
     sqlx::query(
@@ -365,7 +390,7 @@ impl PgSecretStore {
         format!("shako-secret\0{}\0{org_id}\0{secret_ref}", self.instance_id).into_bytes()
     }
 
-    async fn tenant_tx(&self, org_id: OrgId) -> ShakoResult<Transaction<'_, Postgres>> {
+    async fn tenant_tx(&self, org_id: OrgId) -> ShakoResult<jc_audit::Tx> {
         tenant_tx(&self.pool, self.instance_id, org_id).await
     }
 }
@@ -387,7 +412,7 @@ impl SecretStore for PgSecretStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
-            tx.commit()
+            jc_audit::commit(tx)
                 .await
                 .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
             let Some(sealed) = sealed else {
@@ -433,7 +458,7 @@ impl SecretStore for PgSecretStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))?;
-            tx.commit()
+            jc_audit::commit(tx)
                 .await
                 .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))
         })
@@ -1079,7 +1104,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(tables::failed)?;
-            tx.commit().await.map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
             Ok(tags)
         })
     }
@@ -1239,12 +1264,71 @@ impl Store for PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(tables::failed)?;
-            tx.commit().await.map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
             row.map(|row| {
                 serde_json::from_value(tables::to_record(&tables::OUTBOX, row)?)
                     .map_err(|e| ShakoError::Storage(e.to_string()))
             })
             .transpose()
+        })
+    }
+
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = tenant_tx(&self.pool, row.instance_id, row.org_id).await?;
+            sqlx::query(
+                "INSERT INTO shako.audit (id, instance_id, org_id, kind, operation, actor_id,
+                     target, decision, request_id, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            )
+            .bind(row.id)
+            .bind(row.instance_id.as_uuid())
+            .bind(row.org_id.as_uuid())
+            .bind(&row.kind)
+            .bind(&row.operation)
+            .bind(&row.actor_id)
+            .bind(&row.target)
+            .bind(&row.decision)
+            .bind(&row.request_id)
+            .bind(row.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("audit write failed: {e}")))?;
+            jc_audit::commit(tx).await.map_err(tables::failed)
+        })
+    }
+
+    fn list_audit(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Vec<AuditRecord>> {
+        Box::pin(async move {
+            let mut tx = tenant_tx(&self.pool, instance_id, org_id).await?;
+            let rows = sqlx::query(
+                "SELECT id, kind, operation, actor_id, target, decision, request_id, created_at
+                 FROM shako.audit ORDER BY created_at, id",
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            rows.iter()
+                .map(|r| {
+                    Ok(AuditRecord {
+                        id: r.try_get("id").map_err(tables::failed)?,
+                        instance_id,
+                        org_id,
+                        kind: r.try_get("kind").map_err(tables::failed)?,
+                        operation: r.try_get("operation").map_err(tables::failed)?,
+                        actor_id: r.try_get("actor_id").map_err(tables::failed)?,
+                        target: r.try_get("target").map_err(tables::failed)?,
+                        decision: r.try_get("decision").map_err(tables::failed)?,
+                        request_id: r.try_get("request_id").map_err(tables::failed)?,
+                        created_at: r.try_get("created_at").map_err(tables::failed)?,
+                    })
+                })
+                .collect()
         })
     }
 
@@ -1392,8 +1476,8 @@ impl PgStore {
             projection::projected(&mut tx, tenant, at.seq()).await?;
             let answer = serde_json::from_value(answer)
                 .map_err(|e| ShakoError::Storage(format!("unexpected store answer: {e}")))?;
-            tx.commit().await.map_err(tables::failed)?;
-            self.ready_tenants().insert(tenant);
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            self.mark_ready(tenant).await;
             Ok(answer)
         })
     }
@@ -1419,7 +1503,7 @@ impl PgStore {
         .await?
         .pop();
         if let Some(held) = held {
-            tx.commit().await.map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
             return Ok(held);
         }
         if let Some(limit) = storage_limit {
@@ -1449,8 +1533,8 @@ impl PgStore {
             projection::apply(&mut tx, tenant, op, &at).await?;
             projection::projected(&mut tx, tenant, at.seq()).await?;
         }
-        tx.commit().await.map_err(tables::failed)?;
-        self.ready_tenants().insert(tenant);
+        jc_audit::commit(tx).await.map_err(tables::failed)?;
+        self.mark_ready(tenant).await;
         Ok(blob)
     }
 }
