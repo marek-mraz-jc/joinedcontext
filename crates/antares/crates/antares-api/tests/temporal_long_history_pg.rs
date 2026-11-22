@@ -129,10 +129,19 @@ async fn seeded() -> Option<(antares_sql::sqlx::PgPool, String)> {
             .expect(stmt);
     }
     tx.commit().await.expect("commit");
-    antares_sql::sqlx::query("ANALYZE attr_instances")
-        .execute(&pool)
-        .await
-        .expect("analyze");
+    // the tests of this file seed at once, and two ANALYZEs of one table wait on each other
+    let mut tx = pool.begin().await.expect("tx");
+    for stmt in [
+        "SET LOCAL lock_timeout = 0",
+        "SET LOCAL statement_timeout = 0",
+        "ANALYZE attr_instances",
+    ] {
+        antares_sql::sqlx::query(stmt)
+            .execute(&mut *tx)
+            .await
+            .expect(stmt);
+    }
+    tx.commit().await.expect("analyze");
     Some((pool, tenant))
 }
 
@@ -578,7 +587,7 @@ fn reconciled(shown: &[(&str, &[&str], Option<Window>)]) -> Filter {
     let mut rules: Vec<Rule> = Vec::new();
     for (kind, attributes, window) in shown {
         let attributes: Vec<String> = attributes.iter().map(|a| iri(a)).collect();
-        let temporal: Vec<Window> = window.clone().into_iter().collect();
+        let temporal: Vec<Window> = (*window).into_iter().collect();
         match rules
             .iter_mut()
             .find(|r| r.attributes == attributes && r.temporal == temporal)

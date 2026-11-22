@@ -395,7 +395,8 @@ pub(crate) async fn query_temporal_collected(
     // costs, whether the store aggregates it or not, and a read run again
     // below spends the same budget
     let deadline = (qry.types_rule.is_some() && qry.trepr.aggregated)
-        .then(|| std::time::Instant::now() + crate::bounds::AGGREGATE_BUDGET);
+        .then(|| std::time::Instant::now().checked_add(crate::bounds::AGGREGATE_BUDGET))
+        .flatten();
     let mut plan = Pushdown::plan(&req, &qry, geos.is_empty(), true).await?;
     let mut outcome = fetch_temporal(&req, &qry, &geos, &plan, deadline).await?;
     // an Entity of the page may carry a type not asked for that records one of
