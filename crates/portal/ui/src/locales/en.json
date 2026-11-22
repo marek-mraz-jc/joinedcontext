@@ -1945,7 +1945,7 @@
           "gridShape": "A grid coloured by a number, e.g. stations against days.",
           "panelsShape": "One small chart for each thing, e.g. a panel per station.",
           "detailShape": "The whole period with a part enlarged, e.g. one day within a month.",
-          "measureKept": "Still the reading the chart is fed, e.g. no2, also with a specification of your own."
+          "measureKept": "The chart still reads this column, e.g. no2, even with your own specification."
         },
         "templates": {
           "bar": "Bar chart",
@@ -1964,14 +1964,15 @@
         "removeBlocking": "Remove “{chart}”",
         "advanced": "Advanced: edit the chart's specification",
         "type": "Entity type",
-        "readingTime": "Time of the reading (observedAt)",
+        "readingTime": "Time of the reading",
         "chooseColumn": "Choose a column",
         "removeThenRemove": "Correct or remove “{chart}” first. Once that change is approved, remove “{removed}” again.",
         "setRange": "Propose {range} for “{chart}”",
         "edited": "What you wrote under Advanced replaces the greyed fields above.",
         "useFields": "Discard my edits",
         "useSource": "Use this endpoint's data",
-        "readOnly": "You can see these charts. To change them, ask someone who may change this endpoint."
+        "readOnly": "You can see these charts. To change them, ask someone who may change this endpoint.",
+        "refusedLink": "Nothing was proposed. Press “{fix}”, or correct the specification, then propose again."
       },
       "firstCall": "First call",
       "firstCallOpen": "Open in the browser",

@@ -155,7 +155,7 @@ for (const width of [1440, 400]) {
     await expect(page.getByLabel("Range", { exact: true })).toHaveValue("week");
     await expect(page.getByLabel("Show the toolbar to readers")).toHaveAccessibleDescription(/always see the settings below/);
 
-    await expect(page.getByLabel("Horizontal axis")).toHaveText("Time of the reading (observedAt)");
+    await expect(page.getByLabel("Horizontal axis")).toHaveText("Time of the reading");
     await page.getByLabel("Measure").selectOption("no2");
     // Nobody has to open the JSON: proposing writes it.
     await expect(page.getByLabel("Chart specification (Vega-Lite)")).toBeHidden();
@@ -192,7 +192,7 @@ for (const width of [1440, 400]) {
     await page.getByRole("textbox", { name: "Description", exact: true }).fill("Daily peak.");
     await page.getByRole("button", { name: "Propose the chart" }).click();
     const alert = section.getByRole("alert").last();
-    await expect(alert).toContainText("Nothing was proposed. Correct “Chart specification (Vega-Lite)” above");
+    await expect(alert).toContainText("Nothing was proposed. Press “Use this endpoint's data”, or correct the specification");
     await expect(section).not.toContainText("/spec/catalog");
     await expect(spec).toHaveAttribute("aria-invalid", "true");
     if (width === 400) {

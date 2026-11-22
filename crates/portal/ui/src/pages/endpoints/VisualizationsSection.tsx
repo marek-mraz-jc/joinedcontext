@@ -290,7 +290,9 @@ export function VisualizationsSection({
     : own.length > 0
       ? t("endpoints.page.visualizations.refusedOwn", { fields: fieldsOf(own) })
       : ownSpec
-        ? t("endpoints.page.visualizations.refusedOwn", { fields: t("endpoints.page.visualizations.spec") })
+        ? dataLink
+          ? t("endpoints.page.visualizations.refusedLink", { fix: t("endpoints.page.visualizations.useSource") })
+          : t("endpoints.page.visualizations.refusedOwn", { fields: t("endpoints.page.visualizations.spec") })
         : proposal.error;
   const refusedField = own.length > 0 ? own[0].field : ownSpec ? "spec" : undefined;
   const alert =
@@ -441,7 +443,7 @@ export function VisualizationsSection({
   });
 
   return (
-    <div className="space-y-3 max-sm:[&_button]:text-title max-sm:[&_summary]:text-title" data-testid="visualizations">
+    <div className="space-y-3 max-sm:[&_:is(button,summary,legend,p)]:text-title" data-testid="visualizations">
       {awaiting ? (
         <>
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-3">
@@ -622,7 +624,7 @@ export function VisualizationsSection({
                 help={roleHint(role)}
               >
                 {fixedAxis(role) ? (
-                  <output id={`viz-${role}`} className="py-1.5 text-body text-fg">
+                  <output id={`viz-${role}`} className={`py-1.5 text-body ${edited ? "text-fg-subtle line-through" : "text-fg"}`}>
                     {t("endpoints.page.visualizations.readingTime")}
                   </output>
                 ) : (

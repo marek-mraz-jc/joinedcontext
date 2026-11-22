@@ -1945,7 +1945,7 @@
           "gridShape": "Ein nach einer Zahl gefärbtes Raster, z. B. Stationen nach Tagen.",
           "panelsShape": "Ein kleines Diagramm je Sache, z. B. ein Feld je Station.",
           "detailShape": "Der ganze Zeitraum mit vergrößertem Teil, z. B. ein Tag im Monat.",
-          "measureKept": "Bestimmt weiterhin, wessen Verlauf gelesen wird, z. B. no2, auch bei eigener Spezifikation."
+          "measureKept": "Das Diagramm liest weiterhin diese Spalte, z. B. no2, auch mit Ihrer eigenen Spezifikation."
         },
         "templates": {
           "bar": "Balkendiagramm",
@@ -1964,14 +1964,15 @@
         "removeBlocking": "„{chart}“ entfernen",
         "advanced": "Erweitert: Spezifikation des Diagramms bearbeiten",
         "type": "Entitätstyp",
-        "readingTime": "Zeit der Messung (observedAt)",
+        "readingTime": "Zeit der Messung",
         "chooseColumn": "Spalte wählen",
         "removeThenRemove": "Korrigieren oder entfernen Sie zuerst „{chart}“. Entfernen Sie nach der Genehmigung erneut „{removed}“.",
         "setRange": "{range} für „{chart}“ vorschlagen",
         "edited": "Was Sie unter Erweitert geschrieben haben, ersetzt die grauen Felder oben.",
         "useFields": "Meine Änderungen verwerfen",
         "useSource": "Daten dieses Endpoints nutzen",
-        "readOnly": "Sie können diese Diagramme ansehen. Bitten Sie für Änderungen jemanden, der diesen Endpoint ändern darf."
+        "readOnly": "Sie können diese Diagramme ansehen. Bitten Sie für Änderungen jemanden, der diesen Endpoint ändern darf.",
+        "refusedLink": "Es wurde nichts vorgeschlagen. Drücken Sie „{fix}“ oder korrigieren Sie die Spezifikation und schlagen Sie erneut vor."
       },
       "firstCall": "Erster Aufruf",
       "firstCallOpen": "Im Browser öffnen",

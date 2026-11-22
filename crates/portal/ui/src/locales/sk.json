@@ -1945,7 +1945,7 @@
           "gridShape": "Mriežka zafarbená číslom, napr. stanice podľa dní.",
           "panelsShape": "Malý graf pre každú vec, napr. panel na stanicu.",
           "detailShape": "Celé obdobie so zväčšenou časťou, napr. jeden deň v mesiaci.",
-          "measureKept": "Stále určuje, ktorej veličiny história sa číta, napr. no2, aj pri vlastnej špecifikácii."
+          "measureKept": "Graf stále číta tento stĺpec, napr. no2, aj s vašou vlastnou špecifikáciou."
         },
         "templates": {
           "bar": "Stĺpcový graf",
@@ -1964,14 +1964,15 @@
         "removeBlocking": "Odstrániť „{chart}“",
         "advanced": "Pokročilé: upraviť špecifikáciu grafu",
         "type": "Typ entity",
-        "readingTime": "Čas merania (observedAt)",
+        "readingTime": "Čas merania",
         "chooseColumn": "Vyberte stĺpec",
         "removeThenRemove": "Najprv opravte alebo odstráňte „{chart}“. Po schválení tejto zmeny znova odstráňte „{removed}“.",
         "setRange": "Navrhnúť {range} pre „{chart}“",
         "edited": "To, čo ste napísali v časti Pokročilé, nahrádza sivé polia vyššie.",
         "useFields": "Zahodiť moje úpravy",
         "useSource": "Použiť údaje tohto endpointu",
-        "readOnly": "Tieto grafy môžete prezerať. Ak ich chcete zmeniť, požiadajte niekoho, kto smie meniť tento endpoint."
+        "readOnly": "Tieto grafy môžete prezerať. Ak ich chcete zmeniť, požiadajte niekoho, kto smie meniť tento endpoint.",
+        "refusedLink": "Nič sa nenavrhlo. Stlačte „{fix}“ alebo opravte špecifikáciu a navrhnite znova."
       },
       "firstCall": "Prvé volanie",
       "firstCallOpen": "Otvoriť v prehliadači",
