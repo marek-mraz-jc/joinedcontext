@@ -4,6 +4,7 @@
 use crate::authz::{Authorizer, RequestCtx};
 use crate::branding::BrandingBlock;
 use crate::error::Result;
+use crate::listing::{FieldMatch, GroupField, GroupWithMembers, ListPage, PersonField};
 use crate::model::*;
 use futures_core::future::BoxFuture;
 use odata_table::{Answer, QueryOptions};
@@ -77,6 +78,8 @@ pub trait Store: Send + Sync {
         allowed_orgs: Option<&'a [String]>,
         identifier: &'a str,
     ) -> StoreFuture<'a, Option<UserRepresentation>>;
+    /// People ordered by username, at most [`crate::MAX_PAGE`]. A `search` given, also an empty
+    /// one, leaves service accounts out (Keycloak's rule), before `first` and `max` count.
     #[allow(clippy::too_many_arguments)]
     fn list_users<'a>(
         &'a self,
@@ -89,6 +92,15 @@ pub trait Store: Send + Sync {
         first: usize,
         max: usize,
     ) -> StoreFuture<'a, Vec<UserRepresentation>>;
+    /// One page, ordered by username, of the people every condition matches, and their number.
+    fn find_users<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<PersonField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<UserRepresentation>>;
 
     // Credentials
     fn upsert_credential<'a>(&'a self, cred: CredentialRecord) -> StoreFuture<'a, ()>;
@@ -128,6 +140,22 @@ pub trait Store: Send + Sync {
         search: Option<&'a str>,
         exact: bool,
     ) -> StoreFuture<'a, Vec<GroupRepresentation>>;
+    /// The subtree under `parent`, as `list_groups` nests it.
+    fn list_child_groups<'a>(
+        &'a self,
+        allowed_orgs: Option<&'a [String]>,
+        parent: &'a GroupRepresentation,
+    ) -> StoreFuture<'a, Vec<GroupRepresentation>>;
+    /// One page, flat and ordered by path, of the groups every condition matches, each with
+    /// its members, and the number of groups.
+    fn find_groups<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<GroupField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<GroupWithMembers>>;
     fn delete_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -156,6 +184,7 @@ pub trait Store: Send + Sync {
         realm_id: &'a str,
         allowed_orgs: Option<&'a [String]>,
         group_id: &'a str,
+        first: usize,
         max: usize,
     ) -> StoreFuture<'a, Vec<UserRepresentation>>;
 
@@ -237,6 +266,18 @@ pub trait Store: Send + Sync {
     fn list_client_scopes<'a>(
         &'a self,
         realm_id: &'a str,
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>>;
+    /// The realm's scopes whose name or id is one of `keys`.
+    fn get_client_scopes<'a>(
+        &'a self,
+        realm_id: &'a str,
+        keys: &'a [String],
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>>;
+    /// The realm's scopes whose name starts with `prefix`.
+    fn list_client_scopes_with_prefix<'a>(
+        &'a self,
+        realm_id: &'a str,
+        prefix: &'a str,
     ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>>;
     fn delete_client_scope<'a>(
         &'a self,

@@ -13,6 +13,49 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+fn attach_children(parent: &mut GroupRepresentation, all: &[GroupRepresentation]) {
+    let mut children: Vec<GroupRepresentation> = all
+        .iter()
+        .filter(|c| {
+            c.parent_id.as_deref() == Some(parent.id.as_str())
+                || (c.parent_id.is_none()
+                    && c.path.starts_with(&format!("{}/", parent.path))
+                    && !c.path[parent.path.len() + 1..].contains('/'))
+        })
+        .cloned()
+        .collect();
+    children.sort_by(|a, b| a.name.cmp(&b.name));
+    for ch in &mut children {
+        attach_children(ch, all);
+    }
+    parent.sub_groups = children;
+}
+
+/// A page of the group's members, in the order they joined the realm.
+fn members_of(
+    st: &State,
+    group: &GroupRepresentation,
+    first: usize,
+    max: usize,
+) -> Vec<UserRepresentation> {
+    let member_ids: Vec<&str> = st
+        .group_members
+        .iter()
+        .filter(|gm| gm.realm_id == group.realm_id && gm.group_id == group.id)
+        .map(|gm| gm.user_id.as_str())
+        .collect();
+    st.users
+        .iter()
+        .filter(|u| {
+            u.realm_id == group.realm_id
+                && (member_ids.contains(&u.id.as_str()) || u.groups.contains(&group.path))
+        })
+        .skip(first)
+        .take(max)
+        .cloned()
+        .collect()
+}
+
 #[derive(Default)]
 struct State {
     realms: HashMap<String, RealmConfig>,
@@ -698,6 +741,10 @@ impl Store for MemoryStore {
                             return false;
                         }
                     }
+                    // Keycloak's `search` leaves service accounts out.
+                    if search_lower.is_some() && u.service_account_client_id.is_some() {
+                        return false;
+                    }
                     if let Some(q) = &search_lower
                         && !q.is_empty()
                     {
@@ -717,8 +764,41 @@ impl Store for MemoryStore {
                 })
                 .cloned()
                 .collect();
-            out.sort_by(|a, b| a.username.cmp(&b.username));
-            Ok(out.into_iter().skip(first).take(max.max(1)).collect())
+            out.sort_by_cached_key(|u| u.username.to_ascii_lowercase());
+            Ok(out
+                .into_iter()
+                .skip(first)
+                .take(max.clamp(1, MAX_PAGE))
+                .collect())
+        })
+    }
+
+    fn find_users<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<PersonField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<UserRepresentation>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            let mut found: Vec<&UserRepresentation> = st
+                .users
+                .iter()
+                .filter(|u| Self::user_visible(&st, realm_id, allowed_orgs, u))
+                .filter(|u| filter.iter().all(|m| m.matches(u)))
+                .collect();
+            found.sort_by_cached_key(|u| u.username.to_ascii_lowercase());
+            Ok(ListPage {
+                total: found.len(),
+                items: found
+                    .into_iter()
+                    .skip(first)
+                    .take(max.min(MAX_PAGE))
+                    .cloned()
+                    .collect(),
+            })
         })
     }
 
@@ -916,24 +996,6 @@ impl Store for MemoryStore {
 
             // Build nested tree for subgroups so `/groups?search=members&exact=true` returns
             // root groups with `subGroups` populated (matching Portal `people.rs:503` `GroupNode`).
-            fn attach_children(parent: &mut GroupRepresentation, all: &[GroupRepresentation]) {
-                let mut children: Vec<GroupRepresentation> = all
-                    .iter()
-                    .filter(|c| {
-                        c.parent_id.as_deref() == Some(parent.id.as_str())
-                            || (c.parent_id.is_none()
-                                && c.path.starts_with(&format!("{}/", parent.path))
-                                && !c.path[parent.path.len() + 1..].contains('/'))
-                    })
-                    .cloned()
-                    .collect();
-                children.sort_by(|a, b| a.name.cmp(&b.name));
-                for ch in &mut children {
-                    attach_children(ch, all);
-                }
-                parent.sub_groups = children;
-            }
-
             let mut roots: Vec<GroupRepresentation> = visible
                 .iter()
                 .filter(|g| {
@@ -967,6 +1029,65 @@ impl Store for MemoryStore {
             }
             roots.retain_mut(|r| matches_or_has_matching_child(r, &q_lower, exact));
             Ok(roots)
+        })
+    }
+
+    fn list_child_groups<'a>(
+        &'a self,
+        allowed_orgs: Option<&'a [String]>,
+        parent: &'a GroupRepresentation,
+    ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
+        Box::pin(async move {
+            let below = format!("{}/", parent.path.trim_end_matches('/'));
+            let st = self.inner.read();
+            let subtree: Vec<GroupRepresentation> = st
+                .groups
+                .iter()
+                .filter(|g| {
+                    g.realm_id == parent.realm_id
+                        && g.path.starts_with(&below)
+                        && Self::org_allowed(allowed_orgs, g.org_id.as_deref())
+                })
+                .cloned()
+                .collect();
+            let mut top = parent.clone();
+            attach_children(&mut top, &subtree);
+            Ok(top.sub_groups)
+        })
+    }
+
+    fn find_groups<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<GroupField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<GroupWithMembers>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            let mut found: Vec<&GroupRepresentation> = st
+                .groups
+                .iter()
+                .filter(|g| {
+                    g.realm_id == realm_id
+                        && Self::org_allowed(allowed_orgs, g.org_id.as_deref())
+                        && filter.iter().all(|m| m.matches(g))
+                })
+                .collect();
+            found.sort_by(|a, b| a.path.cmp(&b.path));
+            Ok(ListPage {
+                total: found.len(),
+                items: found
+                    .into_iter()
+                    .skip(first)
+                    .take(max.min(MAX_PAGE))
+                    .map(|g| GroupWithMembers {
+                        group: g.clone(),
+                        members: members_of(&st, g, 0, MAX_PAGE),
+                    })
+                    .collect(),
+            })
         })
     }
 
@@ -1104,6 +1225,7 @@ impl Store for MemoryStore {
         realm_id: &'a str,
         allowed_orgs: Option<&'a [String]>,
         group_id: &'a str,
+        first: usize,
         max: usize,
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
         Box::pin(async move {
@@ -1118,23 +1240,7 @@ impl Store for MemoryStore {
             if !Self::org_allowed(allowed_orgs, group.org_id.as_deref()) {
                 return Err(KaisatsuError::NotFound("group not found".into()));
             }
-            let member_ids: Vec<&str> = st
-                .group_members
-                .iter()
-                .filter(|gm| gm.realm_id == realm_id && gm.group_id == group_id)
-                .map(|gm| gm.user_id.as_str())
-                .collect();
-            let out: Vec<UserRepresentation> = st
-                .users
-                .iter()
-                .filter(|u| {
-                    u.realm_id == realm_id
-                        && (member_ids.contains(&u.id.as_str()) || u.groups.contains(&group.path))
-                })
-                .take(max.max(1))
-                .cloned()
-                .collect();
-            Ok(out)
+            Ok(members_of(&st, group, first, max.clamp(1, MAX_PAGE)))
         })
     }
 
@@ -1566,6 +1672,40 @@ impl Store for MemoryStore {
                 .client_scopes
                 .iter()
                 .filter(|s| s.realm_id == realm_id)
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn get_client_scopes<'a>(
+        &'a self,
+        realm_id: &'a str,
+        keys: &'a [String],
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .client_scopes
+                .iter()
+                .filter(|s| {
+                    s.realm_id == realm_id && (keys.contains(&s.name) || keys.contains(&s.id))
+                })
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn list_client_scopes_with_prefix<'a>(
+        &'a self,
+        realm_id: &'a str,
+        prefix: &'a str,
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .client_scopes
+                .iter()
+                .filter(|s| s.realm_id == realm_id && s.name.starts_with(prefix))
                 .cloned()
                 .collect())
         })

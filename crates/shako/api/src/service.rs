@@ -1578,16 +1578,104 @@ pub fn authorize_package(
 /// Where a blob of `owner` lives on disk, by its SHA-256.
 #[must_use]
 pub fn blob_disk_path(state: &ShakoState, owner: &str, sha256_hex_digest: &str) -> PathBuf {
+    blob_path(
+        state.repo_root(),
+        state.default_instance_id,
+        owner,
+        sha256_hex_digest,
+    )
+}
+
+/// [`blob_disk_path`] for a caller that has no state yet (the manifest copy at start).
+#[must_use]
+pub fn blob_path(
+    repo_root: &std::path::Path,
+    instance_id: shako_core::InstanceId,
+    owner: &str,
+    sha256_hex_digest: &str,
+) -> PathBuf {
     let hex_part = sha256_hex_digest
         .strip_prefix("sha256:")
         .unwrap_or(sha256_hex_digest);
-    state
-        .repo_root()
-        .join(state.default_instance_id.to_string())
+    repo_root
+        .join(instance_id.to_string())
         .join("blobs")
         .join(owner)
         .join("sha256")
         .join(hex_part)
+}
+
+/// The one writer of blob files: a temporary file of its own in the same directory, synced, renamed
+/// over the name, and the directory synced. A crash leaves the old file or the new one, and two
+/// writers of one digest leave the same bytes.
+pub async fn write_blob_file(path: PathBuf, bytes: Vec<u8>) -> ShakoResult<()> {
+    let failed = |e: std::io::Error| ShakoError::Storage(format!("blob write failed: {e}"));
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write as _;
+        let dir = path
+            .parent()
+            .ok_or_else(|| ShakoError::Storage("a blob path names a file".into()))?;
+        std::fs::create_dir_all(dir).map_err(failed)?;
+        let mut file = tempfile::NamedTempFile::new_in(dir).map_err(failed)?;
+        file.write_all(&bytes).map_err(failed)?;
+        file.as_file().sync_all().map_err(failed)?;
+        file.persist(&path).map_err(|e| failed(e.error))?;
+        std::fs::File::open(dir)
+            .and_then(|dir| dir.sync_all())
+            .map_err(failed)
+    })
+    .await
+    .map_err(|e| ShakoError::Internal(e.to_string()))?
+}
+
+/// Stores `bytes` as a blob of `owner`'s `image` in `org_id` and answers its digest. A blob new
+/// to the image counts in the Organization's quota and past it is `QuotaExceeded`; one the image
+/// holds counts nothing, also when the quota is used up.
+pub async fn store_image_blob(
+    state: &ShakoState,
+    instance_id: shako_core::InstanceId,
+    org_id: shako_core::OrgId,
+    owner: &str,
+    image: &str,
+    bytes: Vec<u8>,
+) -> ShakoResult<String> {
+    let digest = format!("sha256:{}", sha256_hex(&bytes));
+    let size_bytes = bytes.len() as u64;
+    let limit = state
+        .instance_for(instance_id, org_id)
+        .await?
+        .max_storage_bytes;
+    let store = state.store();
+    let held = store
+        .get_blob(instance_id, org_id, owner, Some(image), &digest)
+        .await?
+        .is_some();
+    // Looked at before the file is written; `store_blob` decides again under its lock.
+    if !held {
+        let used = store
+            .get_quota_usage(instance_id, org_id)
+            .await?
+            .total_bytes();
+        if used.saturating_add(size_bytes) > limit {
+            return Err(ShakoError::QuotaExceeded {
+                resource: "package storage".into(),
+                limit,
+            });
+        }
+    }
+    write_blob_file(blob_disk_path(state, owner, &digest), bytes).await?;
+    let blob = shako_core::BlobRecord {
+        id: uuid::Uuid::now_v7(),
+        instance_id,
+        org_id,
+        owner: owner.to_owned(),
+        repo_name: image.to_owned(),
+        digest: digest.clone(),
+        size_bytes,
+        created_at: TimestampTz::now(),
+    };
+    store.store_blob(blob, Some(limit)).await?;
+    Ok(digest)
 }
 
 fn check_package_names(pkg: &str, ver: &str, file: &str) -> ShakoResult<()> {
@@ -1645,14 +1733,8 @@ pub async fn publish_generic_file(
     }
     let sha256 = sha256_hex(&bytes);
     let disk_path = blob_disk_path(state, owner, &sha256);
-    if let Some(p) = disk_path.parent() {
-        tokio::fs::create_dir_all(p)
-            .await
-            .map_err(|e| ShakoError::Storage(e.to_string()))?;
-    }
-    tokio::fs::write(&disk_path, &bytes)
-        .await
-        .map_err(|e| ShakoError::Storage(e.to_string()))?;
+    let size_bytes = bytes.len() as u64;
+    write_blob_file(disk_path, bytes).await?;
     let now = TimestampTz::now();
     let pkg_rec = state
         .store()
@@ -1688,10 +1770,9 @@ pub async fn publish_generic_file(
                     version: ver.to_owned(),
                     digest: format!("sha256:{sha256}"),
                     media_type: "application/octet-stream".into(),
-                    manifest_bytes: Vec::new(),
                     subject_digest: None,
                     artifact_type: None,
-                    size_bytes: bytes.len() as u64,
+                    size_bytes,
                     signed: false,
                     created_at: now,
                 })
@@ -1710,13 +1791,13 @@ pub async fn publish_generic_file(
             version: ver.to_owned(),
             filename: file.to_owned(),
             sha256,
-            size_bytes: bytes.len() as u64,
+            size_bytes,
             created_at: now,
         })
         .await?;
     let _ = state
         .store()
-        .adjust_quota_usage(ctx.instance_id, target_org, 0, 0, bytes.len() as i64)
+        .adjust_quota_usage(ctx.instance_id, target_org, 0, 0, size_bytes as i64)
         .await;
     Ok(saved)
 }

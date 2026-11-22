@@ -25,7 +25,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgListener, PgPool};
-use sqlx::{PgConnection, Postgres, Transaction};
+use sqlx::{PgConnection, Postgres, QueryBuilder, Transaction};
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -222,6 +223,87 @@ fn matches_or_has_matching_child(
     node.sub_groups
         .retain_mut(|ch| matches_or_has_matching_child(ch, q_lower, exact));
     self_matches || !node.sub_groups.is_empty()
+}
+
+/// `expr op $value` on text already ASCII-lowered; a value Postgres cannot hold (NUL) matches
+/// nothing, as no stored text holds it.
+fn push_match(sql: &mut QueryBuilder<Postgres>, expr: &'static str, op: MatchOp, value: &str) {
+    if value.contains('\0') {
+        sql.push(" AND FALSE");
+        return;
+    }
+    let value = value.to_ascii_lowercase();
+    match op {
+        MatchOp::Equals => sql.push(" AND ").push(expr).push(" = ").push_bind(value),
+        MatchOp::Contains => sql
+            .push(" AND position(")
+            .push_bind(value)
+            .push(" IN ")
+            .push(expr)
+            .push(") > 0"),
+        MatchOp::StartsWith => sql
+            .push(" AND starts_with(")
+            .push(expr)
+            .push(", ")
+            .push_bind(value)
+            .push(")"),
+    };
+}
+
+fn push_email_match(sql: &mut QueryBuilder<Postgres>, op: MatchOp, value: &str) {
+    // The bare column is what the unique index serves; only an empty value also matches no e-mail.
+    let expr = if op == MatchOp::Equals && !value.is_empty() {
+        "email_lower"
+    } else {
+        "coalesce(email_lower, '')"
+    };
+    push_match(sql, expr, op, value);
+}
+
+fn push_person_filter(sql: &mut QueryBuilder<Postgres>, filter: &[FieldMatch<PersonField>]) {
+    for m in filter {
+        let expr = match m.field {
+            PersonField::Email => {
+                push_email_match(sql, m.op, &m.value);
+                continue;
+            }
+            PersonField::Username => "username_lower",
+            PersonField::Id => "lower(id)",
+            PersonField::FirstName => r#"lower(coalesce(doc->>'firstName', '') COLLATE "C")"#,
+            PersonField::LastName => r#"lower(coalesce(doc->>'lastName', '') COLLATE "C")"#,
+        };
+        push_match(sql, expr, m.op, &m.value);
+    }
+}
+
+fn push_group_filter(sql: &mut QueryBuilder<Postgres>, filter: &[FieldMatch<GroupField>]) {
+    for m in filter {
+        let expr = match m.field {
+            GroupField::Id => "lower(id)",
+            GroupField::Name => GROUP_NAME_LOWER,
+        };
+        push_match(sql, expr, m.op, &m.value);
+    }
+}
+
+const GROUP_NAME_LOWER: &str = r#"lower(coalesce(doc->>'name', '') COLLATE "C")"#;
+
+const PERSON_SEARCH_TEXT: &str = r#"lower((coalesce(doc->>'username', '') || ' ' || coalesce(doc->>'email', '') || ' ' || coalesce(doc->>'firstName', '') || ' ' || coalesce(doc->>'lastName', '')) COLLATE "C")"#;
+
+fn push_page(sql: &mut QueryBuilder<Postgres>, first: usize, max: usize) {
+    sql.push(" OFFSET ")
+        .push_bind(i64::try_from(first).unwrap_or(i64::MAX))
+        .push(" LIMIT ")
+        .push_bind(i64::try_from(max.min(MAX_PAGE)).unwrap_or(i64::MAX));
+}
+
+/// A count reads every row its filter selects, so it may not run without an end (STO-18).
+async fn limit_count_time(conn: &mut PgConnection) -> Result<()> {
+    sqlx::query("SELECT set_config('statement_timeout', '5s', true)")
+        .execute(conn)
+        .await
+        .map_err(storage)?;
+    Ok(())
 }
 
 impl PgStore {
@@ -1084,49 +1166,79 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let docs: Vec<Value> = sqlx::query_scalar(
-                "SELECT doc FROM kaisatsu.people WHERE realm_id = $1 AND NOT transient
-                 ORDER BY username_lower",
-            )
-            .bind(realm_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(storage)?;
-            tx.commit().await.map_err(storage)?;
-            let users: Vec<UserRepresentation> = from_docs(docs)?;
-            let search_lower = search.map(str::to_ascii_lowercase);
-            let email_lower = email.map(str::to_ascii_lowercase);
-            let user_lower = username.map(str::to_ascii_lowercase);
-            let field_matches = |value: &str, wanted: &Option<String>| match wanted {
-                None => true,
-                Some(w) if exact => value == w,
-                Some(w) => value.contains(w.as_str()),
+            let mut sql =
+                QueryBuilder::<Postgres>::new("SELECT doc FROM kaisatsu.people WHERE realm_id = ");
+            sql.push_bind(realm_id).push(" AND NOT transient");
+            let op = if exact {
+                MatchOp::Equals
+            } else {
+                MatchOp::Contains
             };
-            Ok(users
-                .into_iter()
-                .filter(|u| {
-                    let u_em = u.email.as_deref().unwrap_or_default().to_ascii_lowercase();
-                    if !field_matches(&u_em, &email_lower)
-                        || !field_matches(&u.username.to_ascii_lowercase(), &user_lower)
-                    {
-                        return false;
-                    }
-                    match &search_lower {
-                        Some(q) if !q.is_empty() => format!(
-                            "{} {} {} {}",
-                            u.username,
-                            u.email.as_deref().unwrap_or_default(),
-                            u.first_name.as_deref().unwrap_or_default(),
-                            u.last_name.as_deref().unwrap_or_default(),
-                        )
-                        .to_ascii_lowercase()
-                        .contains(q.as_str()),
-                        _ => true,
-                    }
-                })
-                .skip(first)
-                .take(max.max(1))
-                .collect())
+            if let Some(email) = email {
+                push_email_match(&mut sql, op, email);
+            }
+            if let Some(username) = username {
+                push_match(&mut sql, "username_lower", op, username);
+            }
+            if let Some(q) = search {
+                // Keycloak's `search` leaves service accounts out (includeServiceAccounts false).
+                sql.push(" AND doc->>'serviceAccountClientId' IS NULL");
+                if !q.is_empty() {
+                    push_match(&mut sql, PERSON_SEARCH_TEXT, MatchOp::Contains, q);
+                }
+            }
+            sql.push(" ORDER BY username_lower");
+            push_page(&mut sql, first, max.max(1));
+            let docs: Vec<Value> = sql
+                .build_query_scalar()
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
+    fn find_users<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<PersonField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<UserRepresentation>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            limit_count_time(&mut tx).await?;
+            let select = |what: &'static str| {
+                let mut sql = QueryBuilder::<Postgres>::new(what);
+                sql.push(" FROM kaisatsu.people WHERE realm_id = ")
+                    .push_bind(realm_id)
+                    .push(" AND NOT transient");
+                push_person_filter(&mut sql, filter);
+                sql
+            };
+            let total: i64 = select("SELECT count(*)")
+                .build_query_scalar()
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?;
+            let mut docs: Vec<Value> = Vec::new();
+            if max > 0 {
+                let mut sql = select("SELECT doc");
+                sql.push(" ORDER BY username_lower");
+                push_page(&mut sql, first, max);
+                docs = sql
+                    .build_query_scalar()
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+            }
+            tx.commit().await.map_err(storage)?;
+            Ok(ListPage {
+                items: from_docs(docs)?,
+                total: usize::try_from(total).unwrap_or_default(),
+            })
         })
     }
 
@@ -1351,13 +1463,44 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let docs: Vec<Value> = sqlx::query_scalar(
-                "SELECT doc FROM kaisatsu.groups WHERE realm_id = $1 ORDER BY seq",
-            )
-            .bind(realm_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(storage)?;
+            let search = search.filter(|s| !s.is_empty());
+            let mut sql;
+            if let Some(q) = search {
+                // The matches and the chain of parents above each: all the tree below keeps.
+                sql = QueryBuilder::<Postgres>::new(
+                    "WITH RECURSIVE keep(id, parent, path) AS (
+                         SELECT id, doc->>'parentId', path FROM kaisatsu.groups WHERE realm_id = ",
+                );
+                sql.push_bind(realm_id);
+                let op = if exact {
+                    MatchOp::Equals
+                } else {
+                    MatchOp::Contains
+                };
+                push_match(&mut sql, GROUP_NAME_LOWER, op, q);
+                sql.push(
+                    " UNION
+                         SELECT p.id, p.doc->>'parentId', p.path
+                         FROM keep k JOIN kaisatsu.groups p ON p.id = k.parent
+                             OR (k.parent IS NULL AND p.path = regexp_replace(k.path, '/[^/]*$', ''))
+                         WHERE p.realm_id = ",
+                );
+                sql.push_bind(realm_id).push(
+                    ") SELECT g.doc FROM kaisatsu.groups g
+                       WHERE g.id IN (SELECT id FROM keep) AND g.realm_id = ",
+                );
+                sql.push_bind(realm_id).push(" ORDER BY g.seq");
+            } else {
+                sql = QueryBuilder::<Postgres>::new(
+                    "SELECT doc FROM kaisatsu.groups WHERE realm_id = ",
+                );
+                sql.push_bind(realm_id).push(" ORDER BY seq");
+            }
+            let docs: Vec<Value> = sql
+                .build_query_scalar()
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(storage)?;
             tx.commit().await.map_err(storage)?;
             let visible: Vec<GroupRepresentation> = from_docs(docs)?;
             let mut roots: Vec<GroupRepresentation> = visible
@@ -1372,12 +1515,122 @@ impl Store for PgStore {
             for r in &mut roots {
                 attach_children(r, &visible);
             }
-            let Some(q) = search.filter(|s| !s.is_empty()) else {
+            let Some(q) = search else {
                 return Ok(roots);
             };
             let q_lower = q.to_ascii_lowercase();
             roots.retain_mut(|r| matches_or_has_matching_child(r, &q_lower, exact));
             Ok(roots)
+        })
+    }
+
+    fn list_child_groups<'a>(
+        &'a self,
+        allowed_orgs: Option<&'a [String]>,
+        parent: &'a GroupRepresentation,
+    ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
+        Box::pin(async move {
+            let base = parent.path.trim_end_matches('/');
+            let mut tx = self.begin(&parent.realm_id, allowed_orgs).await?;
+            // A child's path extends its parent's and '0' follows '/' in "C": an index range.
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.groups
+                 WHERE realm_id = $1 AND path > $2 AND path < $3 ORDER BY seq",
+            )
+            .bind(&parent.realm_id)
+            .bind(format!("{base}/"))
+            .bind(format!("{base}0"))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            let mut top = parent.clone();
+            attach_children(&mut top, &from_docs(docs)?);
+            Ok(top.sub_groups)
+        })
+    }
+
+    fn find_groups<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        filter: &'a [FieldMatch<GroupField>],
+        first: usize,
+        max: usize,
+    ) -> StoreFuture<'a, ListPage<GroupWithMembers>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            limit_count_time(&mut tx).await?;
+            let select = |what: &'static str| {
+                let mut sql = QueryBuilder::<Postgres>::new(what);
+                sql.push(" FROM kaisatsu.groups WHERE realm_id = ")
+                    .push_bind(realm_id);
+                push_group_filter(&mut sql, filter);
+                sql
+            };
+            let total: i64 = select("SELECT count(*)")
+                .build_query_scalar()
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?;
+            let mut groups: Vec<GroupRepresentation> = Vec::new();
+            if max > 0 {
+                let mut sql = select("SELECT doc");
+                sql.push(" ORDER BY path");
+                push_page(&mut sql, first, max);
+                groups = from_docs(
+                    sql.build_query_scalar()
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(storage)?,
+                )?;
+            }
+            let mut members: HashMap<String, Vec<UserRepresentation>> = HashMap::new();
+            if !groups.is_empty() {
+                let ids: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
+                let paths: Vec<&str> = groups.iter().map(|g| g.path.as_str()).collect();
+                // The page is what the caller may see; its members are listed whatever their home.
+                set_scope(&mut tx, realm_id, None).await?;
+                let pairs: Vec<(String, Value)> = sqlx::query_as(
+                    "WITH joined AS (
+                         SELECT group_id, user_id FROM kaisatsu.group_members
+                         WHERE realm_id = $1 AND group_id = ANY($2)
+                     ), named AS (
+                         SELECT g.id AS group_id, p.id AS user_id
+                         FROM kaisatsu.people p
+                         JOIN unnest($2::text[], $3::text[]) AS g(id, path)
+                             ON p.doc->'groups' ? g.path
+                         WHERE p.realm_id = $1 AND p.doc->'groups' ?| $3
+                     ), ranked AS (
+                         SELECT m.group_id, p.doc, p.seq,
+                                row_number() OVER (PARTITION BY m.group_id ORDER BY p.seq) AS place
+                         FROM (SELECT * FROM joined UNION SELECT * FROM named) m
+                         JOIN kaisatsu.people p ON p.realm_id = $1 AND p.id = m.user_id
+                     )
+                     SELECT group_id::text, doc FROM ranked WHERE place <= $4 ORDER BY seq",
+                )
+                .bind(realm_id)
+                .bind(&ids)
+                .bind(&paths)
+                .bind(i64::try_from(MAX_PAGE).unwrap_or(i64::MAX))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(storage)?;
+                for (group_id, doc) in pairs {
+                    members.entry(group_id).or_default().push(from_doc(doc)?);
+                }
+            }
+            tx.commit().await.map_err(storage)?;
+            Ok(ListPage {
+                total: usize::try_from(total).unwrap_or_default(),
+                items: groups
+                    .into_iter()
+                    .map(|group| GroupWithMembers {
+                        members: members.remove(&group.id).unwrap_or_default(),
+                        group,
+                    })
+                    .collect(),
+            })
         })
     }
 
@@ -1552,6 +1805,7 @@ impl Store for PgStore {
         realm_id: &'a str,
         allowed_orgs: Option<&'a [String]>,
         group_id: &'a str,
+        first: usize,
         max: usize,
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
         Box::pin(async move {
@@ -1569,19 +1823,21 @@ impl Store for PgStore {
             };
             // The group is visible to the caller; its members are listed whatever their home.
             set_scope(&mut tx, realm_id, None).await?;
-            let limit = i64::try_from(max.max(1)).unwrap_or(i64::MAX);
+            let limit = i64::try_from(max.clamp(1, MAX_PAGE)).unwrap_or(i64::MAX);
+            let offset = i64::try_from(first).unwrap_or(i64::MAX);
             let docs: Vec<Value> = sqlx::query_scalar(
                 "SELECT p.doc FROM kaisatsu.people p
                  WHERE p.realm_id = $1 AND (
                      p.id IN (SELECT gm.user_id FROM kaisatsu.group_members gm
                               WHERE gm.realm_id = $1 AND gm.group_id = $2)
                      OR p.doc->'groups' ? $3)
-                 ORDER BY p.seq LIMIT $4",
+                 ORDER BY p.seq OFFSET $5 LIMIT $4",
             )
             .bind(realm_id)
             .bind(group_id)
             .bind(&path)
             .bind(limit)
+            .bind(offset)
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
@@ -2136,6 +2392,60 @@ impl Store for PgStore {
                 "SELECT doc FROM kaisatsu.client_scopes WHERE realm_id = $1 ORDER BY seq",
             )
             .bind(realm_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
+    fn get_client_scopes<'a>(
+        &'a self,
+        realm_id: &'a str,
+        keys: &'a [String],
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>> {
+        Box::pin(async move {
+            let keys: Vec<&str> = keys
+                .iter()
+                .map(String::as_str)
+                .filter(|k| !k.contains('\0'))
+                .collect();
+            let mut tx = self.begin(realm_id, None).await?;
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.client_scopes
+                 WHERE realm_id = $1 AND (name = ANY($2) OR id = ANY($2)) ORDER BY seq",
+            )
+            .bind(realm_id)
+            .bind(&keys)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
+    fn list_client_scopes_with_prefix<'a>(
+        &'a self,
+        realm_id: &'a str,
+        prefix: &'a str,
+    ) -> StoreFuture<'a, Vec<ClientScopeRepresentation>> {
+        Box::pin(async move {
+            if prefix.contains('\0') {
+                return Ok(Vec::new());
+            }
+            let mut tx = self.begin(realm_id, None).await?;
+            // `>=` and `<` are leakproof, so the unique name index serves them under RLS; no
+            // character sorts after U+10FFFF, and starts_with drops what the bound lets in.
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.client_scopes
+                 WHERE realm_id = $1 AND name >= $2 AND name < $3 AND starts_with(name, $2)
+                 ORDER BY seq",
+            )
+            .bind(realm_id)
+            .bind(prefix)
+            .bind(format!("{prefix}\u{10FFFF}"))
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;

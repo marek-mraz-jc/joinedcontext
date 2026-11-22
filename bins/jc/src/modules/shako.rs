@@ -52,12 +52,14 @@ pub(crate) const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from
 pub(crate) const ORG: OrgId = OrgId::from_u128(1);
 
 /// The configured stores: Postgres (migrated first when a migration role is set, boot RLS
-/// check, log projected for `(INSTANCE, org_id)`), its hook and mirror secrets sealed in
+/// check, log projected for `(INSTANCE, org_id)`, the manifests a release before T-7523 left in
+/// the rows copied to the blobs under `root`), its hook and mirror secrets sealed in
 /// `shako.secret` with the installation's KEK (T-7280); or memory for both without a database
 /// section.
 async fn open_store(
     cfg: &ShakoSection,
     org_id: OrgId,
+    root: &Path,
     setup: &crate::setup::Setup,
 ) -> Result<(Arc<dyn shako_core::Store>, Arc<dyn SecretStore>), StartError> {
     let Some(db) = &cfg.database else {
@@ -88,6 +90,16 @@ async fn open_store(
         .map_err(err)?;
     let projected = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
     tracing::info!(projected, "shako: the typed tables hold the store log");
+    // Before anything listens, so no pull meets a half-copied registry.
+    let started = std::time::Instant::now();
+    let copied = store
+        .copy_manifests(INSTANCE, org_id, |owner, digest, bytes| {
+            let path = shako_server::blob_path(root, INSTANCE, &owner, &digest);
+            shako_server::write_blob_file(path, bytes)
+        })
+        .await
+        .map_err(err)?;
+    tracing::info!(copied, took = ?started.elapsed(), "shako: the manifests are blobs");
     let secrets = PgSecretStore::new(&store, INSTANCE, &kek).map_err(err)?;
     Ok((Arc::new(store), Arc::new(secrets)))
 }
@@ -110,7 +122,7 @@ pub async fn build_state(
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
     let org_id = ORG;
-    let (store, secrets) = open_store(cfg, org_id, setup).await?;
+    let (store, secrets) = open_store(cfg, org_id, &root, setup).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),

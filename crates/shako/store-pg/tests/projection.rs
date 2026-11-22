@@ -238,10 +238,10 @@ async fn scenario(s: &dyn Store, n: &Ids) {
             .unwrap();
         assert_eq!(json!(kept.id), json!(id[14]), "the first package stays");
     }
-    for (version, bytes) in [(id[16], vec![1u8]), (id[17], vec![0, 123, 255])] {
+    for version in [id[16], id[17]] {
         s.upsert_package_version(n.record(json!({"id": version, "packageId": id[14],
             "owner": "jc-apps", "packageType": "container", "packageName": "app", "version": "v1",
-            "digest": "sha256:00", "mediaType": "application/json", "manifestBytes": bytes,
+            "digest": "sha256:00", "mediaType": "application/json",
             "subjectDigest": null, "artifactType": null, "sizeBytes": 3, "signed": false,
             "createdAt": WHEN})))
             .await
@@ -309,6 +309,9 @@ async fn answers(s: &dyn Store, n: &Ids) -> Value {
         "mirrors": s.list_push_mirrors(i, o, None).await.unwrap(),
         "packages": s.list_packages(i, o).await.unwrap(),
         "version": version,
+        "tags": s.list_package_tags(i, o, "jc-apps", "app", None, 10).await.unwrap(),
+        "tags_after": s.list_package_tags(i, o, "jc-apps", "app", Some("v1"), 10).await.unwrap(),
+        "referrers": s.list_referrers(i, o, "jc-apps", "app", "sha256:00").await.unwrap(),
         "versions": s.list_package_versions(i, o, Some("jc-apps"), None, None).await.unwrap(),
         "file": s.get_package_file(i, o, "jc-apps", "app", "v1", "a.tgz").await.unwrap(),
         "files": s.list_package_files(i, o).await.unwrap(),
@@ -323,7 +326,6 @@ async fn answers(s: &dyn Store, n: &Ids) -> Value {
         hook.secret_ref,
         hook.previous_secret_ref,
         s.list_push_mirrors(i, o, None).await.unwrap()[0].credential_secret_ref,
-        version.unwrap().manifest_bytes,
     ]);
     all
 }
