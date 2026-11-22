@@ -1,8 +1,8 @@
 //! A forge of two Organizations on a real listener, for the tests that drive it with `git`.
 
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, RoleBinding,
-    ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
+    Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
+    RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{ShakoState, router};
 use shako_store_memory::MemoryStore;
@@ -26,7 +26,7 @@ impl World {
         ];
         let bindings = orgs.map(|(name, org_id)| RoleBinding {
             org_id,
-            principal: name.into(),
+            principal: Principal::User(name.into()),
             actions: vec![Action::Admin, Action::Write],
             project_id: None,
             repo: None,
@@ -34,23 +34,19 @@ impl World {
         let tokens = orgs.map(|(name, org)| {
             StaticTokenBinding::new(
                 &format!("{name}-token"),
-                Subject::authenticated(name, name, vec![org], vec![]),
+                Subject::authenticated(name, name, vec![org]),
             )
         });
         let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
             .with_static_tokens(tokens.to_vec());
         let state = ShakoState::new(
             InstanceId::from_u128(1),
-            orgs[0].1,
             repositories.path().to_path_buf(),
             Arc::new(MemoryStore::new()),
             Arc::new(LocalAuthorizer::new(bindings.to_vec())),
             verifier,
             OutboundGuard::new(policy),
         );
-        for (name, org) in orgs {
-            state.register_owner_org(name, org);
-        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listen");

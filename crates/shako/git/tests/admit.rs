@@ -5,8 +5,8 @@
 //! fixed glibc mmap threshold, so a reading is what is held (jc runs jemalloc, which purges).
 
 use shako_core::{
-    Action, InstanceId, LocalAuthorizer, OrgId, RefPolicy, RepoId, RequestCtx, RoleBinding,
-    ShakoResult, Subject,
+    Action, InstanceId, LocalAuthorizer, OrgId, Principal, RefPolicy, RepoId, RequestCtx,
+    RoleBinding, ShakoResult, Subject,
 };
 use shako_git::{
     PushGuard, handle_receive_pack, handle_upload_pack, init_bare_repo, read_negotiation,
@@ -153,16 +153,12 @@ fn a_thin_delta_push_asks_for_its_base_and_result() {
     .expect("repository");
     let authz = LocalAuthorizer::new(vec![RoleBinding {
         org_id: org,
-        principal: "p".into(),
+        principal: Principal::User("p".into()),
         actions: vec![Action::Write],
         project_id: None,
         repo: None,
     }]);
-    let ctx = RequestCtx::new(
-        instance,
-        org,
-        Subject::authenticated("p", "p", vec![org], vec![]),
-    );
+    let ctx = RequestCtx::new(instance, org, Subject::authenticated("p", "p", vec![org]));
     let policy = RefPolicy::default();
     let guard = PushGuard {
         ctx: &ctx,

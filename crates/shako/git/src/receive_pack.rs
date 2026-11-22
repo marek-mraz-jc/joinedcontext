@@ -600,7 +600,7 @@ fn scan_pack(pack: &File, pack_start: u64) -> Result<(u64, u64), String> {
             entry.decompressed_size.saturating_mul(2)
         } else {
             let at = pack_start + entry.pack_offset + u64::from(entry.header_size);
-            let (base, result) = delta_sizes(pack, at)?;
+            let (base, result) = delta_sizes(pack, at, entry.compressed_size)?;
             if base.max(result) > MAX_SINGLE_OBJECT_BYTES {
                 return Err(too_large(base.max(result)));
             }
@@ -613,22 +613,18 @@ fn scan_pack(pack: &File, pack_start: u64) -> Result<(u64, u64), String> {
 }
 
 /// The base and result sizes a delta's data starts with (two little-endian base-128 numbers),
-/// read from its zlib stream at `at` in `pack` without moving the file's position.
-fn delta_sizes(pack: &File, at: u64) -> Result<(u64, u64), String> {
+/// read from its zlib stream of `len` bytes at `at` in `pack` without moving the file's position.
+/// A dynamic Huffman block's tables come before its first byte, so up to 4 KiB are read.
+fn delta_sizes(pack: &File, at: u64, len: u64) -> Result<(u64, u64), String> {
     use std::os::unix::fs::FileExt as _;
     let unreadable = |e: &dyn std::fmt::Display| format!("unreadable delta at {at}: {e}");
-    let mut compressed = [0u8; 64];
-    let got = pack
-        .read_at(&mut compressed, at)
+    let mut compressed = vec![0u8; usize::try_from(len.min(4096)).unwrap_or(4096)];
+    pack.read_exact_at(&mut compressed, at)
         .map_err(|e| unreadable(&e))?;
     let mut header = [0u8; 20];
     let mut inflate = flate2::Decompress::new(true);
     inflate
-        .decompress(
-            &compressed[..got],
-            &mut header,
-            flate2::FlushDecompress::Sync,
-        )
+        .decompress(&compressed, &mut header, flate2::FlushDecompress::Sync)
         .map_err(|e| unreadable(&e))?;
     let header = &header[..usize::try_from(inflate.total_out()).unwrap_or(0)];
     let mut sizes = header.iter().copied();
