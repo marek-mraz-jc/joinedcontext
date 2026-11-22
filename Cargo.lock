@@ -600,6 +600,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "futures-util",
+ "jc-pool",
  "jc-time",
  "jiff",
  "metrics",
@@ -860,6 +861,7 @@ dependencies = [
  "jc-core",
  "jc-embedder",
  "jc-manifest",
+ "jc-pool",
  "jsonschema",
  "kreuzberg",
  "lopdf",
@@ -2756,6 +2758,7 @@ dependencies = [
  "hex",
  "indexmap 2.14.2",
  "ipnet",
+ "jc-pool",
  "jc-time",
  "jiff",
  "parking_lot",
@@ -2827,6 +2830,7 @@ dependencies = [
  "daiya-model",
  "daiya-query",
  "daiya-store-memory",
+ "jc-pool",
  "jc-time",
  "jiff",
  "serde",
@@ -3070,6 +3074,7 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "http-body-util",
+ "jc-pool",
  "jc-time",
  "serde_json",
  "sqlx",
@@ -3855,6 +3860,7 @@ dependencies = [
  "ekiben-io-http",
  "futures",
  "glob",
+ "jc-pool",
  "jc-time",
  "jiff",
  "rusqlite",
@@ -6933,6 +6939,7 @@ dependencies = [
  "jc-core",
  "jc-door",
  "jc-manifest",
+ "jc-pool",
  "jc-router",
  "jc-secret",
  "jc-time",
@@ -7095,6 +7102,14 @@ dependencies = [
  "http",
  "jc-core",
  "serde_json",
+]
+
+[[package]]
+name = "jc-pool"
+version = "0.1.0"
+dependencies = [
+ "sqlx-core",
+ "tracing",
 ]
 
 [[package]]
@@ -7354,6 +7369,7 @@ dependencies = [
  "hmac 0.12.1",
  "jc-chart",
  "jc-core",
+ "jc-pool",
  "jc-router",
  "jc-time",
  "jc-types",
@@ -7716,6 +7732,7 @@ dependencies = [
  "http",
  "http-body-util",
  "ipnet",
+ "jc-pool",
  "jc-router",
  "jc-time",
  "jiff",
@@ -7771,6 +7788,7 @@ dependencies = [
 name = "kaisatsu-store-pg"
 version = "0.1.0"
 dependencies = [
+ "jc-pool",
  "jc-time",
  "jiff",
  "kaisatsu-core",
@@ -12514,6 +12532,7 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "ipnet",
+ "jc-pool",
  "jc-router",
  "jc-time",
  "joinedcontext-portal",
@@ -12557,6 +12576,7 @@ dependencies = [
 name = "shako-store-pg"
 version = "0.1.0"
 dependencies = [
+ "jc-pool",
  "jc-time",
  "kaisatsu-crypto",
  "serde",

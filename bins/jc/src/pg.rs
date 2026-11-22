@@ -9,7 +9,7 @@
 //! connection or a failed boot RLS check stops `jc`.
 
 use serde::Deserialize;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -253,7 +253,7 @@ fn options(url: &str, password_file: &Path) -> Result<PgConnectOptions, String> 
 /// A pool of at most `max` connections; a refused or unreachable server is an error (no retry
 /// beyond the acquire timeout, no fallback).
 pub async fn connect(opts: PgConnectOptions, max: u32) -> Result<PgPool, String> {
-    PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .max_connections(max.max(1))
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(opts)

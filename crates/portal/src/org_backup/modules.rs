@@ -822,7 +822,7 @@ async fn reader(state: &AppState, module: &str) -> Result<sqlx::PgPool, String> 
                 .map_or("", |(_, var)| var);
             format!("this Portal holds no reader of the {module} database ({var} is not set)")
         })?;
-    sqlx::postgres::PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .max_connections(1)
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect(url)
