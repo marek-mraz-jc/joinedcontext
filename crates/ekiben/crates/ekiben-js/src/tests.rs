@@ -473,7 +473,9 @@ fn lint_names_what_ekiben_refuses() {
     assert!(!lint(&json!({"code": "1", "memory_mb": 65})).is_empty());
 }
 
-/// Console lines reach the stream's log at the level the script chose.
+/// Console errors and warnings reach the stream's log at their own level. (The info line is not
+/// asserted: other tests log it on threads without a subscriber, and tracing caches a callsite's
+/// interest process-wide, so this subscriber can miss it.)
 #[tokio::test]
 async fn console_lines_are_logged_at_their_level() {
     #[derive(Clone)]
@@ -496,7 +498,7 @@ async fn console_lines_are_logged_at_their_level() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
     run(
-        "console.error('red'); console.warn('amber'); console.log('plain');",
+        "console.error('red'); console.warn('amber');",
         vec![Part::from_str("x")],
     )
     .await;
@@ -510,5 +512,4 @@ async fn console_lines_are_logged_at_their_level() {
     };
     assert_eq!(level("red").as_deref(), Some("ERROR"), "{logged}");
     assert_eq!(level("amber").as_deref(), Some("WARN"), "{logged}");
-    assert_eq!(level("plain").as_deref(), Some("INFO"), "{logged}");
 }
