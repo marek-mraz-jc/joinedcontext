@@ -2699,6 +2699,30 @@ mod tests {
             ds.landing_page = Some(fine.to_owned());
             assert_eq!(non_http_link(&ds), None, "{fine:?}");
         }
+        // Each field names itself, in the order a page reads them.
+        ds.landing_page = None;
+        let js = "javascript:x".to_owned();
+        ds.documentation = vec!["https://a.sk/doc".into(), js.clone()];
+        assert_eq!(non_http_link(&ds), Some("documentation"));
+        ds.documentation.clear();
+        let dist = |patch: Value| -> dataroom_core::Distribution {
+            let mut base =
+                json!({"id": "d", "datasetId": "x", "title": {}, "accessUrl": "https://a.sk/f"});
+            base.as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            serde_json::from_value(base).unwrap()
+        };
+        for (patch, field) in [
+            (json!({"downloadUrl": js}), "download link"),
+            (json!({"accessUrl": js}), "access link"),
+            (json!({"uri": js}), "distribution IRI"),
+        ] {
+            ds.distributions = vec![dist(json!({})), dist(patch)];
+            assert_eq!(non_http_link(&ds), Some(field));
+        }
+        ds.distributions = vec![dist(json!({"uri": "https://a.sk/d"}))];
+        assert_eq!(non_http_link(&ds), None);
     }
 
     #[tokio::test]

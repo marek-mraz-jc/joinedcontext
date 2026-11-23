@@ -443,6 +443,67 @@ async fn run_state(w: &World, run_id: &str) -> HarvestRun {
         .expect("run row")
 }
 
+/// A fetcher whose read panics, as a bug in a parser or a store would end a run's task.
+struct Panicky;
+
+impl OutboundFetcher for Panicky {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        Box::pin(async { panic!("the read broke") })
+    }
+}
+
+/// A started run whose task panics is recorded failed at once and frees its source, without
+/// waiting for the deadline.
+#[tokio::test]
+async fn a_run_whose_task_panics_is_recorded_failed_and_frees_the_source() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let (subject, grant) = harvest_principal(w.org, w.cat);
+    let ctx = RequestCtx::new(w.org, w.cat, subject);
+    let op_ctx = OpContext {
+        store: Arc::new(w.store.clone()),
+        authorizer: Arc::new(PolicyAuthorizer::new(vec![grant])),
+        validator: None,
+        harvester: Some(Arc::new(engine_on(Arc::new(Panicky)))),
+        sources_by_portal: false,
+        branding: None,
+    };
+    let answer = execute_operation(&op_ctx, &ctx, "harvest_run.start", json!({"source": "hub"}))
+        .await
+        .expect("started");
+    let run_id = answer["id"].as_str().expect("run id").to_owned();
+    let done = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let run = run_state(&w, &run_id).await;
+            if run.state != HarvestRunState::Running {
+                break run;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the lost run is released");
+    assert_eq!(done.state, HarvestRunState::Failed);
+    assert_eq!(done.error.as_deref(), Some("the run stopped unexpectedly"));
+    assert_eq!(
+        done.logs.last().map(|l| l.fingerprint.as_str()),
+        Some("harvest.lost")
+    );
+    assert!(done.finished_at.is_some());
+}
+
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the
 /// request that started it is dropped (a client or edge timeout); it then frees the source.
 #[tokio::test]
