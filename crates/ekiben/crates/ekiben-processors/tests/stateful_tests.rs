@@ -122,6 +122,43 @@ async fn test_group_by_errs() {
 }
 
 #[tokio::test]
+async fn group_by_refuses_a_bad_group_and_leaves_a_failing_check_groupless() {
+    let ctx = make_ctx();
+    for (yaml, want) in [
+        ("group_by: 1\n", "group_by: expected an array of groups"),
+        (
+            "group_by:\n  - check: root = (\n",
+            "group '0' parse error: ",
+        ),
+        (
+            "group_by:\n  - check: \"true\"\n    processors: 1\n",
+            "group '0' parse error: field processors must be a list",
+        ),
+    ] {
+        let err = build(&ctx, yaml)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {yaml}"));
+        assert!(err.contains(want), "{yaml}: {err}");
+    }
+    let proc = build(
+        &ctx,
+        "group_by:\n  - check: this.n > 1\n    processors:\n      - mapping: root = \"big\"\n",
+    )
+    .expect("built");
+    assert_eq!(proc.processor_type(), "group_by");
+    let out = run(&ctx, &proc, &[r#"{"n":5}"#, "not json", r#"{"n":0}"#]).await;
+    assert_eq!(
+        bodies(&out),
+        vec![
+            vec!["big".to_string()],
+            vec!["not json".to_string(), r#"{"n":0}"#.to_string()],
+        ]
+    );
+    assert!(out[1].iter().all(|p| !p.is_errored()));
+    proc.close().await.expect("closed");
+}
+
+#[tokio::test]
 async fn test_group_by_value_basic() {
     let ctx = make_ctx();
     let proc = build(&ctx, "group_by_value:\n  value: ${!json(\"foo\")}\n").expect("built");

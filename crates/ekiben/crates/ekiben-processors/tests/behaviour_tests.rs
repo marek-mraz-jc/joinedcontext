@@ -1344,6 +1344,20 @@ async fn unarchive_refuses_too_many_members_and_a_zip_bomb() {
     }
 }
 
+#[test]
+fn the_registry_builds_both_buffers_and_refuses_a_bad_window() {
+    let e = env();
+    for v in [
+        json!({"memory": {}}),
+        json!({"system_window": {"size": "1s"}}),
+    ] {
+        let c = ComponentConfig::from_json_value(&v, "none", None).unwrap();
+        assert!(e.reg.build_buffer(&c, &e.sctx).unwrap().is_some(), "{v}");
+    }
+    let c = ComponentConfig::from_json_value(&json!({"system_window": {}}), "none", None).unwrap();
+    assert!(e.reg.build_buffer(&c, &e.sctx).is_err());
+}
+
 #[tokio::test]
 async fn decompress_refuses_a_bomb() {
     let e = env();
