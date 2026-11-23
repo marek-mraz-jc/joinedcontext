@@ -703,6 +703,50 @@ pub async fn edges(store: &dyn Store) {
         .upsert_publisher(&ctx_b, publisher("kept"))
         .await
         .unwrap();
+    // The other catalogue holds a row of every kind, and its host is its own in the
+    // Organization too.
+    let b = store
+        .upsert_dataset(&ctx_b, dataset("b-data", "kept", "public"))
+        .await
+        .unwrap();
+    let b_resource = b.distributions[0].id.clone();
+    store
+        .upsert_resource_view(&ctx_b, view("view-b", &b_resource, 1))
+        .await
+        .unwrap();
+    store
+        .upsert_harvest_source(&ctx_b, harvest_source("b-src"))
+        .await
+        .unwrap();
+    store
+        .record_activity(
+            &ctx_b,
+            activity("act-b", "b-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_shacl_report(&ctx_b, shacl_report("pkg-b-data", "eu", true))
+        .await
+        .unwrap();
+    store
+        .upsert_profile(&ctx_b, profile("b-profile", "1.0"))
+        .await
+        .unwrap();
+    store
+        .upsert_page(&ctx_b, page("b-about", "sk"))
+        .await
+        .unwrap();
+    store.upsert_plugin(&ctx_b, plugin("b-map")).await.unwrap();
+    let b_host = store.get_catalogue(org, cat_b).await.unwrap().unwrap().host;
+    let (_, cat_c) = tenant();
+    let same_host = store
+        .upsert_catalogue(catalogue(org, cat_c, "edges-c", &b_host))
+        .await;
+    assert!(
+        matches!(same_host, Err(DataroomError::Conflict(_))),
+        "{same_host:?}"
+    );
     let resource = saved.distributions[0].id.clone();
     store
         .upsert_resource_view(&ctx, view("view-1", &resource, 1))
@@ -729,6 +773,98 @@ pub async fn edges(store: &dyn Store) {
         .await
         .unwrap()
         .is_empty());
+    let profiles = store.list_profiles(&ctx_b).await.unwrap();
+    let kept = [
+        store
+            .list_resource_views(&ctx_b, &b_resource)
+            .await
+            .unwrap()
+            .len(),
+        store.list_harvest_sources(&ctx_b).await.unwrap().len(),
+        store
+            .list_activity(&ctx_b, Some("b-object"), 10)
+            .await
+            .unwrap()
+            .len(),
+        store
+            .list_shacl_reports(&ctx_b, None, None)
+            .await
+            .unwrap()
+            .len(),
+        profiles.iter().filter(|p| p.id == "b-profile").count(),
+        store.list_pages(&ctx_b).await.unwrap().len(),
+        store.list_plugins(&ctx_b).await.unwrap().len(),
+    ];
+    assert_eq!(
+        kept, [1; 7],
+        "views, sources, activity, reports, profiles, pages, plugins"
+    );
+}
+
+/// Two catalogues of one Organization holding the same dataset slug, distribution id, view
+/// and report: every read and the purge stay inside the catalogue asked.
+pub async fn twin_catalogues(store: &dyn Store) {
+    let (org, cat_a) = tenant();
+    let (_, cat_b) = tenant();
+    let mut ctxs = Vec::new();
+    for (cat, name) in [(cat_a, "twin-a"), (cat_b, "twin-b")] {
+        store
+            .upsert_catalogue(catalogue(org, cat, name, &unique_host(name)))
+            .await
+            .unwrap();
+        let ctx = member_ctx(org, cat);
+        store
+            .upsert_publisher(&ctx, publisher("city"))
+            .await
+            .unwrap();
+        let mut twin = dataset("twin", "city", "public");
+        twin.title = [("sk".to_owned(), name.to_owned())].into();
+        let twin = store.upsert_dataset(&ctx, twin).await.unwrap();
+        let resource = twin.distributions[0].id.clone();
+        store
+            .upsert_resource_view(&ctx, view(&format!("view-{name}"), &resource, 1))
+            .await
+            .unwrap();
+        store
+            .upsert_shacl_report(&ctx, shacl_report(&twin.id, "eu", true))
+            .await
+            .unwrap();
+        ctxs.push((ctx, resource));
+    }
+    let [(a, resource), (b, _)] = <[_; 2]>::try_from(ctxs).unwrap();
+    let datasets = store.list_datasets(&a).await.unwrap();
+    assert_eq!(names(&datasets, |d| d.title["sk"].clone()), ["twin-a"]);
+    let (ds, _) = store
+        .get_distribution(&a, &resource)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.title["sk"], "twin-a");
+    let views = store.list_resource_views(&a, &resource).await.unwrap();
+    assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-a"]);
+
+    store.purge_dataset(&a, "twin").await.unwrap();
+    assert!(store
+        .list_resource_views(&a, &resource)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .list_shacl_reports(&a, None, None)
+        .await
+        .unwrap()
+        .is_empty());
+    let views = store.list_resource_views(&b, &resource).await.unwrap();
+    assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-b"]);
+    assert_eq!(
+        store
+            .list_shacl_reports(&b, None, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store.get_dataset(&b, "twin").await.unwrap().is_some());
 }
 
 pub async fn records(store: &dyn Store) {

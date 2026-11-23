@@ -44,5 +44,6 @@ both_stores!(
     isolation,
     deleted_catalogues,
     guarded_writes,
-    edges
+    edges,
+    twin_catalogues
 );
