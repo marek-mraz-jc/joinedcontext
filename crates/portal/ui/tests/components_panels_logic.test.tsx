@@ -9,6 +9,7 @@ import { resolveTime } from "../src/components/panels/timeRange";
 import { timeSeriesSpec } from "../src/components/panels/specs";
 import { chartTheme } from "../src/components/panels/VegaChart";
 import { TableCellValue, TablePanel, tableOf } from "../src/components/panels/TablePanel";
+import { markersOf } from "../src/components/panels/GeomapPanel";
 import * as frames from "./fixtures/panel_frames";
 
 describe("frames", () => {
@@ -99,5 +100,13 @@ describe("table", () => {
     render(<TablePanel title="Counts" frames={[{ name: "", fields: [{ name: "n", type: "number", values: [1] }] }]} fieldConfig={fieldConfig} locale="en" />);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getAllByText("n").length).toBeGreaterThan(0);
+  });
+});
+
+describe("geomap locator", () => {
+  it("places no marker in the geojson mode when no field holds a geometry", () => {
+    const plain = [{ name: "", fields: [{ name: "lat", type: "number" as const, values: [60.1] }, { name: "lon", type: "number" as const, values: [24.9] }] }];
+    expect(markersOf(plain, { layers: [{ location: { mode: "geojson" } }] }).features.features).toHaveLength(0);
+    expect(markersOf(plain, { layers: [{ location: { mode: "auto" } }] }).features.features).toHaveLength(1);
   });
 });
