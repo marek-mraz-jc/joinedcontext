@@ -433,9 +433,10 @@ fn converted_source(base: &str) -> (dataroom_core::HarvestSource, MapFetcher) {
     for (name, ty) in [("remote-trees", "Tree"), ("remote-benches", "Bench")] {
         src.converted.insert(
             name.into(),
-            serde_json::from_value(
-                json!({"endpoint": SLUG, "type": ty, "dataset": format!("urn:{name}")}),
-            )
+            serde_json::from_value(json!({
+                "endpoint": SLUG, "type": ty, "dataset": format!("urn:{name}"),
+                "location": true, "series": true
+            }))
             .expect("entry"),
         );
     }

@@ -226,6 +226,7 @@ fn extents_and_licences_read_as_the_catalogue_knows_them() {
         Some("cc-zero")
     );
     assert_eq!(open_licence("© Esri"), None);
+    assert_eq!(open_licence("CC-BY-SA").map(|l| l.0), Some("cc-by-sa"));
 }
 
 #[test]
@@ -473,10 +474,24 @@ async fn a_service_the_source_skips_by_id_is_listed_as_skipped_with_its_title() 
     let mut src = gis_source();
     src.skip_items
         .insert("Elevation/GlacierBay/MapServer".into(), "not ours".into());
-    let run = engine(&gis_fetcher())
+    let f = gis_fetcher();
+    // A service that answers an error is skipped with the reason, under its id.
+    f.insert(
+        format!("{GIS}/Census/MapServer?f=json"),
+        Some("application/json"),
+        json!({"error": {"code": 500, "message": "boom"}}).to_string(),
+    );
+    let run = engine(&f)
         .run_source(&w.ctx, &w.store, &src)
         .await
         .expect("run");
+    let census = run
+        .skipped
+        .iter()
+        .find(|s| s.item_id == "Census/MapServer")
+        .expect("census skipped");
+    assert_eq!(census.title, "Census/MapServer");
+    assert!(!census.reason.is_empty());
     let skipped: Vec<(&str, &str)> = run
         .skipped
         .iter()

@@ -118,6 +118,8 @@ async fn the_own_gateway_is_read_on_its_listener_and_nothing_else_skips_the_guar
         "http://localhost:42102.evil.example/api/endpoint/ep/schema/index.json",
         "http://127.0.0.1:42102/api/endpoint/ep/schema/index.json",
         "http://localhost:42102/api/endpoint/moved/",
+        // Dot segments the parser folds away leave the Endpoint reads.
+        "http://localhost:42102/api/endpoint/ep/../../admin",
     ] {
         let err = read(&own, &src, url).await.unwrap_err();
         assert!(err.to_string().contains("refused"), "{url}: {err}");

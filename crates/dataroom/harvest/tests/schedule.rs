@@ -123,6 +123,23 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
 }
 
 #[tokio::test]
+async fn the_scheduler_does_not_retry_a_source_another_run_holds() {
+    let (w, store, f) = scheduled_world(0).await;
+    let held = running(&w, "run-held", TimestampTz::now());
+    let since = TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range");
+    assert!(store.claim_harvest_run(&w.ctx, held, since).await.unwrap());
+    let out = scheduler(&w, store, f.clone(), true)
+        .run_due(at(3, 23))
+        .await;
+    assert!(
+        matches!(out[0].1, Err(DataroomError::Conflict(_))),
+        "{:?}",
+        out[0].1
+    );
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0, "no fetch and no retry");
+}
+
+#[tokio::test]
 async fn a_running_run_past_the_deadline_is_marked_failed_and_frees_the_source() {
     let w = world(&[]).await;
     let src = source("arc-gis-hub", "hub", HUB, &["hub.city.example"]);
