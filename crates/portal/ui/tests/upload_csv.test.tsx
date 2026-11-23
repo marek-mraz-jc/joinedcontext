@@ -53,7 +53,9 @@ const CSV = "name,totalSpotNumber,availableSpotNumber,lat,lon\nKamppi,500,120,60
 
 type Calls = { url: URL; body: unknown }[];
 
-function server(answers: { op?: () => Response; write?: () => Response; catalogue?: () => Promise<Response>; change?: () => Response } = {}): Calls {
+function server(
+  answers: { op?: () => Response; write?: () => Response; catalogue?: () => Promise<Response>; change?: () => Response; importSdm?: () => Response; permissions?: unknown } = {},
+): Calls {
   const calls: Calls = [];
   vi.stubGlobal(
     "fetch",
@@ -67,7 +69,8 @@ function server(answers: { op?: () => Response; write?: () => Response; catalogu
         return Response.json({ kind: "List", metadata: {}, items: [{ kind: "Endpoint", metadata: { name: "parking-all" }, spec: { contextSpaceRef: "parking", slug: "parkingslug" }, status: { phase: "Live" } }] });
       }
       if (url.pathname === "/api/v1/tools/sdm-catalog") return answers.catalogue?.() ?? Response.json(CATALOGUE);
-      if (url.pathname === "/api/v1/tools/import-sdm") return Response.json({ linkml: LINKML });
+      if (url.pathname === "/api/v1/tools/import-sdm") return answers.importSdm?.() ?? Response.json({ linkml: LINKML });
+      if (answers.permissions !== undefined && url.pathname.endsWith("/permissions/me")) return Response.json(answers.permissions);
       if (url.pathname.endsWith("/ops/jc_space_complete")) {
         return answers.op?.() ?? Response.json({ space: "parking", found: [], drafts: [], proposeReady: true, lane: "yellow", change: null });
       }
@@ -256,6 +259,28 @@ describe("Upload CSV", () => {
     expect(screen.getByRole("button", { name: i18n.t("spaces.import.downloadRefused") })).toBeInTheDocument();
   });
 
+  it("hands the refused rows over as a CSV named after the type", async () => {
+    const blobs: Blob[] = [];
+    // jsdom has no object URLs: these two stand in for the test and are removed after it.
+    Object.assign(URL, { createObjectURL: (blob: Blob) => (blobs.push(blob), "blob:refused"), revokeObjectURL: () => undefined });
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <LoadResult done={{ written: 1, rejected: [{ row: 3, reason: "no name" }] }} project="helsinki" space="parking" type="Garage" />
+      </I18nextProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: i18n.t("spaces.import.downloadRefused") }));
+    expect(names).toEqual(["Garage-refused.csv"]);
+    expect(blobs[0].type).toBe("text/csv");
+    expect(await blobs[0].text()).toContain("no name");
+    click.mockRestore();
+    Reflect.deleteProperty(URL, "createObjectURL");
+    Reflect.deleteProperty(URL, "revokeObjectURL");
+  });
+
   it("holds the write until the proposed change is live", async () => {
     let phase = "PendingApproval";
     const change = () => ({ kind: "Change", metadata: { name: "chg-1" }, spec: {}, status: { phase, lane: "yellow" } });
@@ -315,6 +340,51 @@ describe("Upload CSV", () => {
     expect(screen.queryByText(/Reading garages\.csv/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Propose the change" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+  });
+
+  it("offers the file's own model when the catalogue is unreachable", async () => {
+    server({ catalogue: () => Promise.resolve(new Response(null, { status: 503 })) });
+    const user = userEvent.setup();
+    page("parking");
+    await user.upload(screen.getByLabelText("Choose a CSV file or an Excel workbook (.xlsx)"), new File([CSV], "garages.csv", { type: "text/csv" }));
+    expect(await screen.findByText(/None of the Smart Data Models types fits/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /OffStreetParking/ })).toBeNull();
+    expect(screen.getByLabelText("Type name")).toHaveValue("Garage");
+  });
+
+  it("says a workbook it cannot read is unreadable, and ranks nothing", async () => {
+    const calls = server();
+    const user = userEvent.setup();
+    page("parking");
+    await user.upload(screen.getByLabelText("Choose a CSV file or an Excel workbook (.xlsx)"), new File(["not a zip archive"], "broken.xlsx"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Propose the change" })).toBeNull();
+    expect(calls.some((c) => c.url.pathname === "/api/v1/tools/sdm-catalog")).toBe(false);
+  });
+
+  it("says why the proposal failed when the model import cannot be reached", async () => {
+    server({
+      importSdm: () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const user = userEvent.setup();
+    page("parking");
+    await user.upload(screen.getByLabelText("Choose a CSV file or an Excel workbook (.xlsx)"), new File([CSV], "garages.csv", { type: "text/csv" }));
+    await screen.findByRole("radio", { name: /OffStreetParking/ });
+    // The background draft fails too, quietly: no picture, no alert before Propose.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Propose the change" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
+  });
+
+  it("tells a role that may not propose a space why, instead of a form that only refuses (T-4263)", async () => {
+    const calls = server({ permissions: { project: "helsinki", bootstrap: false, grants: [] } });
+    page("parking");
+    expect(await screen.findByText(i18n.t("form.mayNotCreate"))).toBeInTheDocument();
+    expect(screen.queryByLabelText("Choose a CSV file or an Excel workbook (.xlsx)")).toBeNull();
+    expect(calls.some((c) => c.url.pathname.endsWith("/permissions/me"))).toBe(true);
   });
 
   it("refuses an empty file before ranking anything", async () => {

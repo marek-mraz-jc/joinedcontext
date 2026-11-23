@@ -158,6 +158,9 @@ const PURGE_TABLES: &[&str] = &[
     "jsonld_context_usage",
     // pending write approvals and spent nonces (0047)
     "mcp_confirmations",
+    // the counts by Tenant of 0049, after the rows they count
+    "subscription_tenants",
+    "views_revision",
 ];
 
 /// Rows one purge statement takes at most (S5-04): a Tenant's whole share of
@@ -1133,6 +1136,21 @@ impl AnyStore {
         Ok(antares_store::digests(self.list(tenant, kind).await?))
     }
 
+    /// See `CurrentStateDriver::doc_revision`: Postgres keeps one for the
+    /// view documents (0049).
+    pub async fn doc_revision(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+    ) -> Result<Option<u64>, NgsiError> {
+        #[cfg(feature = "postgres")]
+        if let (AnyStore::Pg(p), Kind::View) = (self, kind) {
+            return p.docs.views_revision(tenant).await.map(Some).map_err(db);
+        }
+        let _ = (tenant, kind);
+        Ok(None)
+    }
+
     /// One id-ordered page of documents (see `CurrentStateDriver::list_page`).
     pub async fn list_page(
         &self,
@@ -1970,21 +1988,23 @@ impl AnyStore {
     pub async fn subscription_tenants(&self) -> Result<Vec<String>, NgsiError> {
         match self {
             AnyStore::Mem(s) => Ok(s.subscription_tenants()),
-            // Pg answers the superset the contract allows: every known
-            // tenant. Narrowing it would need a cross-tenant read of
-            // `subscriptions`, and that table is deliberately outside the
-            // maintenance escape (0042) — a subscription document carries
-            // endpoint.receiverInfo, i.e. the credentials the notification
-            // is sent with. The callers list per tenant under set_tenant
-            // afterwards, so the extra names cost one empty list each.
+            // Pg answers the Tenants `subscription_tenants` counts a
+            // subscription, context-source subscription or registration
+            // row for (0049,
+            // kept by triggers in the writing transaction), never the
+            // documents: a subscription carries the credentials its
+            // notifications are sent with, so the table stays outside the
+            // maintenance escape (0042). A Tenant at zero is a superset the
+            // contract allows.
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 async {
-                    let rows =
-                        sqlx::query_scalar::<_, String>("SELECT tenant_id FROM tenants ORDER BY 1")
-                            .fetch_all(p.docs.maint())
-                            .await
-                            .map_err(db)?;
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "SELECT tenant_id FROM subscription_tenants WHERE docs > 0 ORDER BY 1",
+                    )
+                    .fetch_all(p.docs.maint())
+                    .await
+                    .map_err(db)?;
                     Ok(rows)
                 }
                 .await
@@ -2311,6 +2331,9 @@ impl antares_store::CurrentStateDriver for AnyStore {
         kind: Kind,
     ) -> Result<Vec<(String, u64)>, NgsiError> {
         AnyStore::list_digests(self, tenant, kind).await
+    }
+    async fn doc_revision(&self, tenant: &TenantId, kind: Kind) -> Result<Option<u64>, NgsiError> {
+        AnyStore::doc_revision(self, tenant, kind).await
     }
     async fn list_page(
         &self,

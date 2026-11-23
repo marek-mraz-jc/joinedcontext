@@ -631,6 +631,13 @@ struct Reloader {
     cache: tokio::sync::Mutex<HashMap<String, Held>>,
     /// The bodies reloads fetched since the pod started.
     fetched: std::sync::atomic::AtomicU64,
+    /// The store's view revision the cache was last built at (S5-26);
+    /// [`NO_REVISION`] before the first reload or when the store keeps none.
+    seen: std::sync::atomic::AtomicU64,
+    /// The same for the policy rule documents.
+    policy_seen: std::sync::atomic::AtomicU64,
+    /// Reloads since the pod started, for the [`FULL_EVERY`] backstop.
+    reloads: std::sync::atomic::AtomicU64,
     /// The same for the policy engine's rule documents, per Tenant.
     policy: tokio::sync::Mutex<rule_documents::Cache>,
     /// [`SCHEMA_MAX_ENV`]; `None` refuses every schema write.
@@ -692,9 +699,26 @@ impl Held {
     }
 }
 
+/// [`Reloader::seen`] before a revision was read: never a stored one.
+const NO_REVISION: u64 = u64::MAX;
+
+/// Every this many reloads one lists whatever the revision says: a database
+/// restored under running pods can hand out a revision a pod already saw
+/// for other documents.
+const FULL_EVERY: u64 = 60;
+
 impl Reloader {
     async fn reload(&self) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        let full = self.reloads.fetch_add(1, Ordering::Relaxed) % FULL_EVERY == FULL_EVERY - 1;
         let mut cache = self.cache.lock().await;
+        // Read before the listing: a write between the two moves the
+        // revision past the one kept below, so the next reload lists again.
+        let stored = self.state.view_revision().await?.unwrap_or(NO_REVISION);
+        if !full && stored != NO_REVISION && stored == self.seen.load(Ordering::Acquire) {
+            drop(cache);
+            return self.reload_policy(full).await;
+        }
         let listed = self.state.view_digests().await?;
         let stale: Vec<&str> = listed
             .iter()
@@ -704,8 +728,9 @@ impl Reloader {
         // Nothing moved and nothing went: every table already holds what
         // the store holds, so none is rebuilt (F-R2ANT3-015).
         if stale.is_empty() && listed.len() == cache.len() {
+            self.seen.store(stored, Ordering::Release);
             drop(cache);
-            return rule_documents::reload(&self.state, &mut *self.policy.lock().await).await;
+            return self.reload_policy(full).await;
         }
         // Only the bodies whose digest moved, the first reload's being all of them. A body
         // written between the two reads is held under the older digest and fetched again on
@@ -778,8 +803,24 @@ impl Reloader {
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             Arc::new(quality::load(quality_docs.into_iter()));
         *cache = next;
+        self.seen.store(stored, Ordering::Release);
         drop(cache);
-        rule_documents::reload(&self.state, &mut *self.policy.lock().await).await
+        self.reload_policy(full).await
+    }
+}
+
+impl Reloader {
+    /// [`rule_documents::reload`] when the policy documents' revision moved
+    /// since the last one, or on a `full` reload.
+    async fn reload_policy(&self, full: bool) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        let stored = self.state.policy_revision().await?.unwrap_or(NO_REVISION);
+        if !full && stored != NO_REVISION && stored == self.policy_seen.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        rule_documents::reload(&self.state, &mut *self.policy.lock().await).await?;
+        self.policy_seen.store(stored, Ordering::Release);
+        Ok(())
     }
 }
 
@@ -917,6 +958,9 @@ pub(crate) async fn install_with(
         state: state.clone(),
         cache: tokio::sync::Mutex::new(HashMap::new()),
         fetched: std::sync::atomic::AtomicU64::new(0),
+        seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+        policy_seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+        reloads: std::sync::atomic::AtomicU64::new(0),
         policy: tokio::sync::Mutex::new(rule_documents::Cache::new()),
         schema_max: schema_max(
             std::env::var(SCHEMA_MAX_ENV)
@@ -1753,6 +1797,9 @@ mod tests {
             state: AppState::new("antares-test".into()),
             cache: tokio::sync::Mutex::new(HashMap::new()),
             fetched: std::sync::atomic::AtomicU64::new(0),
+            seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+            policy_seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+            reloads: std::sync::atomic::AtomicU64::new(0),
             policy: tokio::sync::Mutex::new(rule_documents::Cache::new()),
             schema_max: None,
             retention: std::sync::RwLock::default(),
@@ -1775,6 +1822,9 @@ mod tests {
             state: AppState::new("antares-test".into()),
             cache: tokio::sync::Mutex::new(HashMap::new()),
             fetched: std::sync::atomic::AtomicU64::new(0),
+            seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+            policy_seen: std::sync::atomic::AtomicU64::new(NO_REVISION),
+            reloads: std::sync::atomic::AtomicU64::new(0),
             policy: tokio::sync::Mutex::new(rule_documents::Cache::new()),
             schema_max: None,
             retention: std::sync::RwLock::default(),

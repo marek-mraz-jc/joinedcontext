@@ -989,12 +989,12 @@
         });
       };
       var answer = windowOf(plan.url, plan.url, 0, null);
-      var named = names(request.type).then(function (map) {
+      var labels = names(request.type).then(function (map) {
         if (onNames) onNames(map);
         return map;
       });
       return answer.then(function () {
-        return named;
+        return labels;
       }).then(function (map) {
         var out = rowsFromTemporal(merged.entities, request, map);
         // Data that starts inside a long range is read again from its start, by the granularity

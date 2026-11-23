@@ -719,6 +719,7 @@
       "proposeAll": "Propose all",
       "open": "Open",
       "noDrafts": "No drafts completed yet.",
+      "unreadable": "The service answered something that is not a completion. Try again; if it repeats, tell your administrator.",
       "needInput": "Give an endpoint URL or add a file first.",
       "filesHint": "A sample of the data as CSV, Excel (.xlsx), JSON or GeoJSON, with any manifests, README or .env that describe the source; up to 10 MB together. Example: stations.xlsx.",
       "review": {

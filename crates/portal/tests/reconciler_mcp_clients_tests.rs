@@ -8,7 +8,7 @@
 
 use joinedcontext_portal::config::ClientAuth;
 use joinedcontext_portal::reconciler::app_clients::{
-    audience_mapper, groups_mapper, organization_mappers,
+    audience_mapper, groups_mapper, organization_mappers, ClientOutcome,
 };
 use joinedcontext_portal::reconciler::groups::{MANAGED_BY, MANAGED_VALUE};
 use joinedcontext_portal::reconciler::mcp_clients::{
@@ -390,6 +390,265 @@ async fn a_foreign_client_of_that_id_is_never_touched() {
         "{outcomes:?}"
     );
     assert!(wrote(&keycloak).await.is_empty());
+}
+
+/// The error the run reported for one server, or a panic naming every outcome.
+fn error_of(outcomes: &[ClientOutcome], app: &str) -> String {
+    outcomes
+        .iter()
+        .find(|o| o.app == app)
+        .and_then(|o| o.error.clone())
+        .unwrap_or_else(|| panic!("no error for {app}: {outcomes:?}"))
+}
+
+async fn refuse(keycloak: &MockServer, verb: &str, at: &str, status: u16) {
+    Mock::given(method(verb))
+        .and(path(format!("{REALM}{at}")))
+        .respond_with(ResponseTemplate::new(status))
+        .with_priority(1)
+        .mount(keycloak)
+        .await;
+}
+
+/// A refused admin token stops the run before any client is looked at, as one `*` outcome.
+#[tokio::test]
+async fn a_refused_admin_token_is_one_failure_before_any_server() {
+    let keycloak = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/bb/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&keycloak)
+        .await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(
+        error_of(&outcomes, "*"),
+        "the realm refused the reconciler's client portal-api: 401 Unauthorized"
+    );
+}
+
+/// A refused client listing stops the run too: without it no stale client can be told apart.
+#[tokio::test]
+async fn a_refused_client_listing_is_one_failure_and_nothing_written() {
+    let keycloak = realm(json!([])).await;
+    refuse(&keycloak, "GET", "/clients", 503).await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(
+        error_of(&outcomes, "*"),
+        "listing the MCP server clients: GET /clients: 503 Service Unavailable"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+}
+
+/// Each refusal on the way to one server's client is that server's error alone; the other
+/// servers of the run still converge.
+#[tokio::test]
+async fn a_refused_lookup_create_or_write_back_fails_that_server_alone() {
+    // The lookup itself refused.
+    let keycloak = realm(json!([])).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", "mcp-helsinki-mobility"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&keycloak)
+        .await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "GET /clients: 500 Internal Server Error"
+    );
+    assert!(outcomes
+        .iter()
+        .any(|o| o.app == "org/all" && o.error.is_none()));
+
+    // A managed client the realm answers without an id.
+    let keycloak = realm(json!([])).await;
+    let mut no_id = held("x", "helsinki", "mobility");
+    no_id.as_object_mut().expect("object").remove("id");
+    lookup(&keycloak, "mcp-helsinki-mobility", json!([no_id])).await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "the realm answered mcp-helsinki-mobility without an id"
+    );
+
+    // A drifted client whose write-back is refused keeps no drift report.
+    let keycloak = realm(json!([])).await;
+    let mut changed = held("uuid-m", "helsinki", "mobility");
+    changed["consentRequired"] = json!(false);
+    lookup(&keycloak, "mcp-helsinki-mobility", json!([changed])).await;
+    refuse(&keycloak, "PUT", "/clients/uuid-m", 409).await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "PUT /clients/uuid-m: 409 Conflict"
+    );
+    let one = outcomes
+        .iter()
+        .find(|o| o.app == "helsinki/mobility")
+        .expect("outcome");
+    assert!(one.drift.is_empty(), "{one:?}");
+    assert!(!wrote(&keycloak)
+        .await
+        .iter()
+        .any(|w| w.contains("protocol-mappers")));
+
+    // A refused create.
+    let keycloak = realm(json!([])).await;
+    lookup(&keycloak, "mcp-helsinki-mobility", json!([])).await;
+    refuse(&keycloak, "POST", "/clients", 403).await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "POST /clients: 403 Forbidden"
+    );
+}
+
+/// A created client is read back for its uuid: missing, without an id or refused, the server
+/// fails with that reason and no mapper is written to a client it cannot name.
+#[tokio::test]
+async fn a_created_client_that_cannot_be_read_back_fails_with_the_reason() {
+    for (read_back, status, want) in [
+        (
+            json!([]),
+            200,
+            "mcp-helsinki-mobility was created and cannot be read back",
+        ),
+        (
+            json!([{ "clientId": "mcp-helsinki-mobility" }]),
+            200,
+            "the realm answered mcp-helsinki-mobility without an id",
+        ),
+        (json!([]), 502, "GET /clients: 502 Bad Gateway"),
+    ] {
+        let keycloak = realm(json!([])).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "mcp-helsinki-mobility"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&keycloak)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "mcp-helsinki-mobility"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(read_back))
+            .with_priority(2)
+            .mount(&keycloak)
+            .await;
+        let outcomes = sync(&keycloak)
+            .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+            .await;
+        assert_eq!(error_of(&outcomes, "helsinki/mobility"), want);
+        assert_eq!(
+            wrote(&keycloak).await,
+            vec![format!("POST {REALM}/clients")],
+            "{want}"
+        );
+    }
+}
+
+/// Mappers and scopes are both tried: a refusal of one does not hide the other's, and both are
+/// named in one error.
+#[tokio::test]
+async fn refused_mappers_and_scopes_are_both_named() {
+    let keycloak = realm(json!([])).await;
+    lookup(
+        &keycloak,
+        "mcp-helsinki-mobility",
+        json!([held("uuid-m", "helsinki", "mobility")]),
+    )
+    .await;
+    refuse(
+        &keycloak,
+        "GET",
+        "/clients/uuid-m/protocol-mappers/models",
+        500,
+    )
+    .await;
+    refuse(
+        &keycloak,
+        "GET",
+        "/clients/uuid-m/optional-client-scopes",
+        503,
+    )
+    .await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "mappers of mcp-helsinki-mobility: GET /clients/uuid-m/protocol-mappers/models: 500 \
+         Internal Server Error; scopes of mcp-helsinki-mobility: GET \
+         /clients/uuid-m/optional-client-scopes: 503 Service Unavailable"
+    );
+
+    // Scopes alone refused: their error stands alone.
+    let keycloak = realm(json!([])).await;
+    lookup(
+        &keycloak,
+        "mcp-helsinki-mobility",
+        json!([held("uuid-m", "helsinki", "mobility")]),
+    )
+    .await;
+    let mut own = audience_mapper("mcp-helsinki-mobility");
+    own["id"] = json!("a");
+    let mut groups = groups_mapper();
+    groups["id"] = json!("g");
+    mappers(
+        &keycloak,
+        "uuid-m",
+        json!([own, groups, org_held(0), org_held(1)]),
+    )
+    .await;
+    refuse(
+        &keycloak,
+        "GET",
+        "/clients/uuid-m/optional-client-scopes",
+        503,
+    )
+    .await;
+    let outcomes = sync(&keycloak)
+        .converge(&mirror_with(vec![server("helsinki", "mobility")]))
+        .await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/mobility"),
+        "scopes of mcp-helsinki-mobility: GET /clients/uuid-m/optional-client-scopes: 503 \
+         Service Unavailable"
+    );
+}
+
+/// A stale managed client whose delete is refused, or that the realm lists without an id, is
+/// reported under its server and kept for the next run.
+#[tokio::test]
+async fn a_stale_client_that_cannot_be_deleted_is_reported_under_its_server() {
+    let mut no_id = held("x", "helsinki", "nameless");
+    no_id.as_object_mut().expect("object").remove("id");
+    let keycloak = realm(json!([held("uuid-gone", "helsinki", "gone"), no_id])).await;
+    refuse(&keycloak, "DELETE", "/clients/uuid-gone", 500).await;
+    let outcomes = sync(&keycloak).converge(&mirror_with(vec![])).await;
+    assert_eq!(
+        error_of(&outcomes, "helsinki/gone"),
+        "DELETE /clients/uuid-gone: 500 Internal Server Error"
+    );
+    assert_eq!(
+        error_of(&outcomes, "helsinki/nameless"),
+        "the realm listed a client without an id"
+    );
 }
 
 /// A managed server client whose server is gone is deleted; a foreign or another wave's is not.
