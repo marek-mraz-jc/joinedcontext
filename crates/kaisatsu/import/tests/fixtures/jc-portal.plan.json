@@ -1,0 +1,75 @@
+{
+  "changes": [
+    {
+      "action": "create",
+      "id": "jc",
+      "kind": "Realm"
+    },
+    {
+      "action": "create",
+      "id": "connector",
+      "kind": "ClientScope"
+    },
+    {
+      "action": "create",
+      "id": "mcp:portal",
+      "kind": "ClientScope"
+    },
+    {
+      "action": "create",
+      "id": "gateway-hub",
+      "kind": "ClientScope"
+    },
+    {
+      "action": "create",
+      "id": "mfa-required",
+      "kind": "Role"
+    },
+    {
+      "action": "create",
+      "id": "portal-approver",
+      "kind": "Role"
+    },
+    {
+      "action": "create",
+      "id": "/platform-admins",
+      "kind": "Group"
+    },
+    {
+      "action": "create",
+      "id": "portal-api",
+      "kind": "Client"
+    },
+    {
+      "action": "create",
+      "id": "portal-ui",
+      "kind": "Client"
+    },
+    {
+      "action": "create",
+      "id": "portal-reconciler",
+      "kind": "Client"
+    },
+    {
+      "action": "create",
+      "id": "mcp-hub",
+      "kind": "Client"
+    },
+    {
+      "action": "create",
+      "id": "mcp-local",
+      "kind": "Client"
+    },
+    {
+      "action": "create",
+      "id": "service-account-portal-api",
+      "kind": "User"
+    },
+    {
+      "action": "create",
+      "id": "service-account-portal-reconciler",
+      "kind": "User"
+    }
+  ],
+  "warnings": []
+}

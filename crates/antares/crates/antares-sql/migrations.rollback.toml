@@ -200,3 +200,7 @@ note = "a new table only; the previous release never reads it and keeps open wri
 [0048]
 rollback = "compatible"
 note = "a function only, and per-leaf indexes the database maintains: the previous release reaps by its full scan and builds no index for the weeks it creates"
+
+[0049]
+rollback = "compatible"
+note = "two new tables and triggers the database runs for every release: an older release never reads the tables, lists every Tenant again and walks the seal pass at every boot; its subscription, registration and view writes keep both counts current, and its plaintext writes delete the seal marks through the triggers. Its Tenant purge leaves the two count rows behind, so a rename onto a name it purged is refused until they are deleted (DELETE FROM subscription_tenants / views_revision WHERE tenant_id = the name)"

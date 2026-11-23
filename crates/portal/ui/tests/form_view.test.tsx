@@ -134,6 +134,112 @@ describe("the form view", () => {
   });
 });
 
+describe("the form view's other fields", () => {
+  const MORE: LinkmlSlot[] = [
+    { name: "name", kind: "Property", required: true },
+    { name: "covered", kind: "Property", range: "boolean", description: "A roof over it" },
+    { name: "location", kind: "GeoProperty", required: true, description: "Where it is" },
+    { name: "refOperator", kind: "Relationship", range: "Organization" },
+  ];
+
+  it("ticks a yes-no, takes a point as two numbers, and picks the related entity from the space", async () => {
+    const posted: Record<string, unknown>[] = [];
+    renderPage(<FormView space="parking" type="ParkingSpot" slots={MORE} enums={{}} search={new URLSearchParams("name=Hlavná")} />, {
+      path: "/projects/city/spaces/parking",
+      answer: async (url, request) => {
+        if (request.method === "POST") {
+          posted.push((await request.json()) as Record<string, unknown>);
+          return new Response(null, { status: 201 });
+        }
+        if (url.pathname.startsWith("/cs/parking/") && url.searchParams.get("type") === "Organization") {
+          return new Response(JSON.stringify([{ id: "urn:ngsi-ld:Organization:city", type: "Organization", name: { type: "Property", value: "City" } }]), {
+            status: 200,
+            headers: { "Content-Type": "application/ld+json" },
+          });
+        }
+        return undefined;
+      },
+    });
+    const covered = await screen.findByRole("checkbox", { name: /covered/ });
+    await userEvent.click(covered);
+    expect(covered).toBeChecked();
+    // A required point left blank, then one coordinate out of range, is said under its legend.
+    await userEvent.click(screen.getByRole("button", { name: en.spaces.form.submit }));
+    const group = screen.getByRole("group", { name: /location/ });
+    expect(group).toHaveAccessibleDescription(en.spaces.form.problem.required);
+    await userEvent.type(screen.getByRole("textbox", { name: en.spaces.form.lat }), "48.7");
+    await userEvent.type(screen.getByRole("textbox", { name: en.spaces.form.lon }), "190");
+    expect(group).toHaveAccessibleDescription(en.spaces.form.problem.point);
+    await userEvent.clear(screen.getByRole("textbox", { name: en.spaces.form.lon }));
+    await userEvent.type(screen.getByRole("textbox", { name: en.spaces.form.lon }), "19.1");
+    expect(group).not.toHaveAttribute("aria-describedby");
+    await userEvent.click(screen.getByRole("combobox", { name: /refOperator/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /City/ }));
+    await userEvent.click(covered);
+    await userEvent.click(screen.getByRole("button", { name: en.spaces.form.submit }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    const { id: _id, ...rest } = posted[0];
+    expect(rest).toEqual({
+      type: "ParkingSpot",
+      name: { type: "Property", value: "Hlavná" },
+      covered: { type: "Property", value: false },
+      location: { type: "GeoProperty", value: { type: "Point", coordinates: [19.1, 48.7] } },
+      refOperator: { type: "Relationship", object: "urn:ngsi-ld:Organization:city" },
+    });
+  });
+
+  it("says a refusal that is no JSON in its own words, and a network failure", async () => {
+    let calls = 0;
+    renderPage(<FormView space="parking" type="ParkingSpot" slots={SLOTS} enums={ENUMS} search={new URLSearchParams("name=Hlavná")} />, {
+      path: "/projects/city/spaces/parking",
+      answer: async (_url, request) => {
+        if (request.method !== "POST") return undefined;
+        calls += 1;
+        if (calls === 1) return new Response("upstream timed out", { status: 502 });
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: en.spaces.form.submit }));
+    // The space surface reads no words from a body that is no problem document.
+    expect(await screen.findByText(/HTTP 502/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: en.spaces.form.submit }));
+    expect(await screen.findByText(/Failed to fetch/)).toBeInTheDocument();
+  });
+
+  it("says a public form's refusal that is no JSON in the gateway's own words, and a network failure", async () => {
+    let posts = 0;
+    renderPage(<PublicFormPage slug="abc" search={new URLSearchParams("name=Hlavná")} />, {
+      path: "/f/abc",
+      answer: async (url, request) => {
+        if (!url.pathname.startsWith("/api/endpoint/abc/")) return undefined;
+        if (url.pathname.endsWith("/schema/index.json")) return json({ models: [{ version: 1 }] });
+        if (url.pathname.endsWith("/schema/v1/json-schema")) {
+          return json({ definitions: { ParkingSpot: { required: ["id", "type"], properties: { id: { type: "string" }, type: { type: "string" }, name: { type: "string" } } } } });
+        }
+        if (request.method === "POST") {
+          posts += 1;
+          if (posts === 1) return new Response("upstream timed out", { status: 502 });
+          throw new TypeError("Failed to fetch");
+        }
+        return undefined;
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: en.spaces.form.submit }));
+    expect(await screen.findByText(/upstream timed out/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: en.spaces.form.submit }));
+    expect(await screen.findByText(/Failed to fetch/)).toBeInTheDocument();
+  });
+
+  it("says the type has nothing to ask when no slot is askable", async () => {
+    renderPage(<FormView space="parking" type="ParkingSpot" slots={[{ name: "code", kind: "Property", identifier: true }]} enums={{}} search={new URLSearchParams()} />, {
+      path: "/projects/city/spaces/parking",
+      answer: async () => undefined,
+    });
+    expect(await screen.findByText(en.spaces.form.noFields.replace("{type}", "ParkingSpot"))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.spaces.form.submit })).toBeNull();
+  });
+});
+
 describe("a public form", () => {
   it("builds its fields from the published schema and posts anonymously through the Endpoint", async () => {
     const requests: Request[] = [];

@@ -26,10 +26,11 @@ use shako_core::{
     validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    CommitAuthor, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
-    check_mergeability, commit_file_changes, compute_repo_size_bytes, copy_bare_repo,
-    create_branch as git_create_branch, delete_branch as git_delete_branch, diff_refs_files,
-    execute_pr_merge, init_bare_repo, open_isolated, set_ref_direct, update_pr_branch,
+    CommitAuthor, DEFAULT_PRUNE_GRACE, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions,
+    MergeStyle, check_mergeability, commit_file_changes, compact_repository, compaction_due,
+    compute_repo_size_bytes, copy_bare_repo, create_branch as git_create_branch,
+    delete_branch as git_delete_branch, diff_refs_files, execute_pr_merge, init_bare_repo,
+    open_isolated, set_ref_direct, update_pr_branch,
 };
 use std::path::PathBuf;
 
@@ -186,13 +187,29 @@ async fn record_new_repo(
     Ok(created)
 }
 
-/// Measures `repo` on disk again after a write and moves its Organization's git usage by the
-/// change, so the storage quota sees what a push, an API commit or a merge added.
-pub async fn record_repo_size(
+/// After a write, under the repository lock: compacts `repo` once it holds enough packs, then
+/// measures it on disk again and moves its Organization's git usage by the change, so the
+/// storage quota sees what a push, an API commit or a merge added.
+pub async fn settle_after_write(
     state: &ShakoState,
     repo: &mut RepoRecord,
     disk_path: &std::path::Path,
 ) {
+    // Each commit, merge and push adds a pack; once there are enough, they become one (S6-42).
+    // A compaction that fails leaves the write standing, and the next write tries again.
+    let path = disk_path.to_path_buf();
+    let compacted = state
+        .git_work
+        .run(repo.org_id, move |admit| {
+            if !compaction_due(&path) {
+                return Ok(());
+            }
+            compact_repository(&path, DEFAULT_PRUNE_GRACE, admit).map(drop)
+        })
+        .await;
+    if let Err(e) = compacted {
+        tracing::warn!(repo = %repo.id, error = %e, "repository not compacted after a write");
+    }
     let path = disk_path.to_path_buf();
     let Ok(new_size) = blocking(move || Ok(compute_repo_size_bytes(&path))).await else {
         return;
@@ -895,7 +912,7 @@ pub async fn commit_files(
         commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)
     })
     .await?;
-    record_repo_size(state, &mut repo, &disk_path).await;
+    settle_after_write(state, &mut repo, &disk_path).await;
 
     // Recorded under the repository's lock, so the next write to it comes after its event.
     let payload = build_push_webhook_payload(
@@ -1275,7 +1292,7 @@ pub async fn update_pull_branch(
     name: &str,
     number: u64,
 ) -> ShakoResult<String> {
-    let (repo, disk_path) =
+    let (mut repo, disk_path) =
         resolve_and_authorize_repo(state, ctx, owner, name, Action::Propose).await?;
     let mut pr = load_pull(state, &repo, number).await?;
     if pr.merged || pr.state == "closed" {
@@ -1314,15 +1331,17 @@ pub async fn update_pull_branch(
     )
     .await?;
     let author = caller_as_author(ctx);
+    let disk = disk_path.clone();
     let (new_head, m) = state
         .git_work
         .run(ctx.org_id, move |admit| {
             admit(MERGE_OPERATION_BYTES)?;
-            let new_head = update_pr_branch(&disk_path, &b, &h, &author)?;
-            let m = check_mergeability(&disk_path, &b, &h)?;
+            let new_head = update_pr_branch(&disk, &b, &h, &author)?;
+            let m = check_mergeability(&disk, &b, &h)?;
             Ok((new_head, m))
         })
         .await?;
+    settle_after_write(state, &mut repo, &disk_path).await;
     pr.head_sha = new_head.clone();
     pr.base_sha = m.base_sha;
     pr.merge_base = m.merge_base;
@@ -1455,7 +1474,7 @@ pub async fn merge_pull_request(
     pr.merge_commit_sha = merge_sha.clone();
     pr.closed_at = Some(TimestampTz::now());
     let saved = state.store().update_pull_request(pr).await?;
-    record_repo_size(state, &mut repo, &disk_path).await;
+    settle_after_write(state, &mut repo, &disk_path).await;
     let payload = build_pr_webhook_payload(&repo, &saved, "closed", ctx.subject.login());
     emit_and_dispatch_event(
         state,

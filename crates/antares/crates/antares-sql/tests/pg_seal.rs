@@ -307,7 +307,13 @@ async fn a_registration_is_sealed_and_its_index_keeps_no_header_copy() {
     assert!(candidates.iter().all(|d| csi(d) == TOKEN), "{candidates:?}");
 
     // no count: the other tests' boot passes share the database and may
-    // seal this row first
+    // seal this row first. The index copy above was written past the store,
+    // as an older release left it, so the walk's mark goes as on a database
+    // that release migrated (a walk marked later starts after the copy).
+    sqlx::query("DELETE FROM maintenance_jobs WHERE name = 'plaintext_sealed'")
+        .execute(&pool)
+        .await
+        .expect("forget the mark");
     s.seal_plaintext().await.expect("seal");
     let text = raw(&pool, &t, "csource_registrations", "registration", legacy).await;
     assert!(

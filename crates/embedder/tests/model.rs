@@ -103,14 +103,49 @@ async fn vectors_through_the_service_equal_the_in_process_ones() {
     assert_ne!(q, p);
 }
 
-/// The pinned model's own vector for one question: unit length, and its first numbers as this
-/// model and tokenizer gave them when they were pinned (mean pooling over every token, then
-/// normalized). Service and in-process run the same code, so only a reference catches a changed
-/// pooling or norm; thread count and ONNX Runtime builds move the fifth decimal at most.
+/// The pinned model's own vector for one question: unit length, and pointing where this model and
+/// tokenizer pointed when they were pinned (mean pooling over every token, then normalized).
+/// Service and in-process run the same code, so only a reference catches a changed pooling or norm.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "flaky on dev: T-7539, run 45135233711 (0.0628 vs 0.0729 on one runner, green on another); quarantine until 2026-11-24"]
 async fn the_pinned_model_gives_its_reference_vector() {
-    const REFERENCE: [f32; 4] = [0.072_945_38, -0.013_466_948, -0.008_591_671, -0.008_915_837];
+    // The int8 model's kernels differ by CPU (VNNI or not: 0.0628 against 0.0729 on one CI runner, run
+    // 45135233711), so the check is the direction of the first 32 numbers, not each value. A pooling
+    // that subtracts or a norm that does not divide turns the vector around or off unit length.
+    const REFERENCE: [f32; 32] = [
+        0.072_945_38,
+        -0.013_466_948,
+        -0.008_591_671,
+        -0.008_915_837,
+        0.090_851_33,
+        -0.055_048_26,
+        0.029_731_08,
+        0.086_602_02,
+        0.047_306_303,
+        0.016_226_903,
+        0.053_703_14,
+        -0.005_479_561,
+        0.025_197_761,
+        -0.092_675_85,
+        -0.016_596_88,
+        0.050_257_336,
+        0.054_185_066,
+        -0.029_046_122,
+        -0.038_041_33,
+        -0.036_105_86,
+        0.073_562_08,
+        -0.014_732_069,
+        -0.058_972_82,
+        0.039_645_232,
+        0.052_605_033,
+        0.036_623_698,
+        0.046_371_39,
+        0.002_135_763_6,
+        0.114_167_66,
+        -0.070_666_13,
+        -0.033_836_01,
+        -0.049_947_347,
+    ];
+    let length = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>().sqrt();
     for threads in [1, 2] {
         let local = Embedder::load(&model_dir(), threads).expect("model");
         let vector = &local
@@ -118,14 +153,15 @@ async fn the_pinned_model_gives_its_reference_vector() {
             .await
             .expect("vector")[0];
         assert_eq!(vector.len(), jc_embedder::DIMENSIONS);
-        let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let norm = length(vector);
         assert!((norm - 1.0).abs() < 1e-5, "unit length: {norm}");
-        for (at, (got, want)) in vector.iter().zip(REFERENCE).enumerate() {
-            assert!(
-                (got - want).abs() < 1e-4,
-                "{threads} threads, [{at}]: {got} vs {want}"
-            );
-        }
+        let head = &vector[..REFERENCE.len()];
+        let cosine = head.iter().zip(REFERENCE).map(|(g, w)| g * w).sum::<f32>()
+            / (length(head) * length(&REFERENCE));
+        assert!(
+            cosine > 0.9,
+            "{threads} threads: cosine {cosine} to the reference, got {head:?}"
+        );
     }
 }
 

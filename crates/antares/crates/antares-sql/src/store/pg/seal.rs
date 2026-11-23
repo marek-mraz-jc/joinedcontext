@@ -343,6 +343,9 @@ pub(crate) fn rename_tenant_header(
 
 /// The jsonpath that finds a row still holding a plaintext credential of
 /// `kind` (the boot pass's filter).
+///
+/// Migration 0049's `plaintext_seal_forget` triggers carry these paths as
+/// literals: a change here changes them too.
 pub(crate) fn plaintext_path(kind: DocKind) -> Option<&'static str> {
     match kind {
         DocKind::Subscription | DocKind::CSourceSubscription => Some(

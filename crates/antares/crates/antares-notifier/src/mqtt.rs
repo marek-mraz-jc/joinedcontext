@@ -1475,7 +1475,7 @@ mod tests {
             .deliver("mqtt://u:hunter2@127.0.0.1", &ok, Duration::from_secs(1))
             .await
             .expect_err("no topic");
-        assert!(!err.timed_out);
+        assert!(!err.unreachable);
         assert!(
             err.message.contains("unusable") && !err.message.contains("hunter2"),
             "{err:?}"
@@ -1489,7 +1489,7 @@ mod tests {
             )
             .await
             .expect_err("bad notifierInfo");
-        assert!(!err.timed_out);
+        assert!(!err.unreachable);
         assert!(err.message.contains("notifierInfo"), "{err:?}");
 
         let (port, _, _) = stub(OnPublish::Hang, Vec::new()).await;
@@ -1501,7 +1501,7 @@ mod tests {
             )
             .await
             .expect_err("never acknowledged");
-        assert!(err.timed_out, "{err:?}");
+        assert!(err.unreachable, "{err:?}");
     }
 
     /// The MQTT destination is client-supplied (`notification.endpoint.uri`,

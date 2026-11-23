@@ -181,6 +181,29 @@ describe("the API tab", () => {
     expect(window.location.search).toMatch(/^\?draft=webhook-bikehiredockingstation-/);
   });
 
+  it("says why a try or a new webhook failed, and opens nothing", async () => {
+    renderPage(<TypeApi project="helsinki" space="bikes" type="BikeHireDockingStation" endpoints={[endpoint("public-bikes", "abc")]} />, {
+      path: "/projects/helsinki/spaces/bikes",
+      answer: async (url, request) => {
+        if (url.pathname.startsWith("/api/endpoint/abc/")) throw new TypeError("Failed to fetch");
+        if (request.method === "PUT" && url.pathname.includes("/drafts/")) {
+          return new Response(JSON.stringify({ title: "Forbidden", status: 403, detail: "no right to draft a Subscription" }), {
+            status: 403,
+            headers: { "Content-Type": "application/problem+json" },
+          });
+        }
+        return undefined;
+      },
+    });
+    const api = await screen.findByTestId("view-api");
+    await userEvent.click(within(api).getByRole("button", { name: en.spaces.api.try }));
+    expect(await within(api).findByText(/Failed to fetch/)).toBeInTheDocument();
+    expect(within(api).queryByTestId("api-tried")).toBeNull();
+    await userEvent.click(within(api).getByRole("button", { name: en.spaces.api.newWebhook }));
+    expect(await within(api).findByText(/no right to draft a Subscription/)).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/projects/helsinki/spaces/bikes");
+  });
+
   it("shows one Endpoint at a time and the picker changes which", async () => {
     show([endpoint("public-bikes", "abc"), endpoint("second", "def")]);
     const picker = await screen.findByRole("combobox", { name: /Endpoint/ });

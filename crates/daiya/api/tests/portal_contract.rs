@@ -683,6 +683,9 @@ fn a_weak_server_admin_is_refused_without_echoing_the_password() {
     assert!(!err.to_string().contains(short), "{err}");
     assert!(state().with_server_admin("", PASSWORD).is_err());
     assert!(state().with_server_admin("a:b", PASSWORD).is_err());
+    // Sixteen characters is the floor: counted as characters, not bytes.
+    assert!(state().with_server_admin(USER, "ä23456789012345").is_err());
+    assert!(state().with_server_admin(USER, "ä234567890123456").is_ok());
 }
 
 #[tokio::test]
@@ -766,12 +769,13 @@ async fn the_host_page_reader_opens_the_page_for_a_signed_in_member_only() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("<h1>helsinki live</h1>"), "{body}");
     // The slugged link Grafana writes opens the same page.
-    let (status, _) = page(
+    let (status, body) = page(
         format!("/d/project-helsinki/helsinki-live?orgId={helsinki}"),
         member,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("<h1>helsinki live</h1>"), "{body}");
 
     // Another organization, no session, someone else's session: the refusal of a missing board.
     for (uri, cookie) in [

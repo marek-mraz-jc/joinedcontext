@@ -251,6 +251,13 @@ pub struct PlanRecord {
 /// (`CrError::QuotaExceeded` on `plans`).
 pub const MAX_LIVE_PLANS: u64 = 100;
 
+/// Versions kept per dashboard (STO-12): a save drops the oldest past this count. The newest
+/// version is the current one, so a trim never removes it.
+pub const DASHBOARD_VERSIONS_KEPT: i64 = 50;
+
+/// Import reports kept per organization (STO-13): an insert drops the oldest past this count.
+pub const IMPORT_REPORTS_KEPT: i64 = 100;
+
 /// Everything one `Apply` writes, in the order a store writes it inside one transaction:
 /// folders, then datasources, then dashboards (R2, §7.3). The store re-reads the organization's
 /// state under its lock and refuses the whole bundle when its etag is no longer `base_etag`.
