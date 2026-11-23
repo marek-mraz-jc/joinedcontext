@@ -9,7 +9,7 @@ use crate::odata::{
 };
 use crate::render::{PanelTimeRange, panel_view};
 use crate::sets::readable_rows;
-use crate::state::{DaiyaState, OrgCtx, error_response, installation_ctx};
+use crate::state::{DaiyaState, OrgCtx, audit, error_response, installation_ctx, unit};
 use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -93,10 +93,15 @@ async fn compat_create_org(
         return error_response(&e);
     }
     let first_id = org_id_for_name(&state, &req.name);
-    match state
-        .store
-        .create_org(state.installation_id, &req.name, None, first_id)
-        .await
+    match unit(async {
+        let org = state
+            .store
+            .create_org(state.installation_id, &req.name, None, first_id)
+            .await?;
+        audit(&state, &ctx, "CreateOrg", format!("orgs/{}", org.org_id)).await?;
+        Ok::<_, CrError>(org)
+    })
+    .await
     {
         Ok(org) => (
             StatusCode::OK,
@@ -139,7 +144,18 @@ async fn compat_delete_org(
             "the main organization cannot be deleted".into(),
         ));
     }
-    match state.store.retire_org(state.installation_id, number).await {
+    match unit(async {
+        let deleted = state
+            .store
+            .retire_org(state.installation_id, number)
+            .await?;
+        if deleted {
+            audit(&state, &ctx, "RetireOrg", format!("orgs/number/{number}")).await?;
+        }
+        Ok::<_, CrError>(deleted)
+    })
+    .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(json!({ "message": "Organization deleted" })),
@@ -474,7 +490,7 @@ async fn compat_add_datasource(
     OrgCtx(ctx): OrgCtx,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    answer(add_datasource(&state, &ctx, req).await)
+    answer(unit(add_datasource(&state, &ctx, req)).await)
 }
 
 async fn add_datasource(
@@ -517,6 +533,13 @@ async fn add_datasource(
     let record = req.into_record(state, ctx, uid);
     state.check_datasource_url(&record)?;
     let saved = state.store.upsert_datasource(record).await?;
+    audit(
+        state,
+        ctx,
+        "AddDatasource",
+        format!("datasources/{}", saved.uid),
+    )
+    .await?;
     Ok(json!({
         "message": "Datasource added",
         "id": 1,
@@ -531,7 +554,7 @@ async fn compat_update_datasource_by_uid(
     Path(uid): Path<String>,
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
-    answer(update_datasource(&state, &ctx, uid, req).await)
+    answer(unit(update_datasource(&state, &ctx, uid, req)).await)
 }
 
 /// Updates an existing datasource; as Grafana, an unknown uid is 404 and a provisioned
@@ -574,6 +597,13 @@ async fn update_datasource(
     let record = req.into_record(state, ctx, uid);
     state.check_datasource_url(&record)?;
     let saved = state.store.upsert_datasource(record).await?;
+    audit(
+        state,
+        ctx,
+        "UpdateDatasource",
+        format!("datasources/{}", saved.uid),
+    )
+    .await?;
     Ok(json!({
         "message": "Datasource updated",
         "id": 1,
@@ -621,7 +651,21 @@ async fn compat_delete_datasource_by_uid(
     if let Err(e) = dec.into_result("Data source not found") {
         return error_response(&e);
     }
-    match state.store.delete_datasource(ctx.org_id, &uid).await {
+    match unit(async {
+        let deleted = state.store.delete_datasource(ctx.org_id, &uid).await?;
+        if deleted {
+            audit(
+                &state,
+                &ctx,
+                "DeleteDatasource",
+                format!("datasources/{uid}"),
+            )
+            .await?;
+        }
+        Ok::<_, CrError>(deleted)
+    })
+    .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(json!({ "message": "Data source deleted", "id": 1 })),
@@ -670,7 +714,7 @@ async fn compat_create_folder(
     OrgCtx(ctx): OrgCtx,
     Json(req): Json<CreateFolderReq>,
 ) -> Response {
-    answer(create_folder(&state, &ctx, req).await)
+    answer(unit(create_folder(&state, &ctx, req)).await)
 }
 
 /// Creates a folder; as Grafana, an existing uid is 409 (`ErrFolderWithSameUIDExists`), never
@@ -713,6 +757,7 @@ async fn create_folder(
             updated_at: now,
         })
         .await?;
+    audit(state, ctx, "CreateFolder", format!("folders/{}", saved.uid)).await?;
     Ok(json!({
         "id": 1,
         "uid": saved.uid,
@@ -785,7 +830,15 @@ async fn compat_delete_folder_by_uid(
     if let Err(e) = dec.into_result("Folder not found") {
         return error_response(&e);
     }
-    match state.store.delete_folder(ctx.org_id, &uid).await {
+    match unit(async {
+        let deleted = state.store.delete_folder(ctx.org_id, &uid).await?;
+        if deleted {
+            audit(&state, &ctx, "DeleteFolder", format!("folders/{uid}")).await?;
+        }
+        Ok::<_, CrError>(deleted)
+    })
+    .await
+    {
         Ok(true) => (StatusCode::OK, Json(json!({ "message": "Folder deleted" }))).into_response(),
         Ok(false) => error_response(&CrError::NotFound("Folder not found".into())),
         Err(e) => error_response(&e),
@@ -912,7 +965,15 @@ async fn compat_delete_dashboard_by_uid(
     if let Err(e) = dec.into_result("Dashboard not found") {
         return error_response(&e);
     }
-    match state.store.delete_dashboard(ctx.org_id, &uid).await {
+    match unit(async {
+        let deleted = state.store.delete_dashboard(ctx.org_id, &uid).await?;
+        if deleted {
+            audit(&state, &ctx, "DeleteDashboard", format!("dashboards/{uid}")).await?;
+        }
+        Ok::<_, CrError>(deleted)
+    })
+    .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(json!({

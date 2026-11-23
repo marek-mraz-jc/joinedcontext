@@ -206,7 +206,15 @@ pub async fn emit_and_dispatch_event(
         })
         .await?;
 
-    dispatch_pending_outbox(state, org_id).await?;
+    // Sent once the event stands: inside a write request's unit after its commit (a rolled-back
+    // change sends nothing), outside one at once. A send that fails waits for the poller.
+    let st = state.clone();
+    jc_audit::after_commit(async move {
+        if let Err(e) = dispatch_pending_outbox(&st, org_id).await {
+            tracing::warn!(error = %e, "shako: the outbox was not sent, the poller tries again");
+        }
+    })
+    .await;
     Ok(event)
 }
 

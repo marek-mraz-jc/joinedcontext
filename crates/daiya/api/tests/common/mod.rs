@@ -7,10 +7,10 @@ use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
 use daiya_model::store::StoreFuture;
 use daiya_model::{
-    ApplyBundle, Authorizer, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, GrafanaRole, ImportReportRecord, InstallationId, InstanceId,
-    LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord, PolicyAuthorizer, PublicDashboardRecord,
-    RoleBinding, Subject,
+    ApplyBundle, AuditRecord, Authorizer, CrError, DaiyaStore, DashboardRecord,
+    DashboardVersionRecord, DatasourceRecord, FolderRecord, GrafanaRole, ImportReportRecord,
+    InstallationId, InstanceId, LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord, PolicyAuthorizer,
+    PublicDashboardRecord, RoleBinding, Subject,
 };
 use daiya_query::{OpenedNetwork, OutboundPolicy, OwnReach};
 use daiya_store_memory::MemoryStore;
@@ -335,6 +335,12 @@ impl DaiyaStore for FlakyStore {
             "insert_import_report",
             self.inner.insert_import_report(installation, report)
         )
+    }
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        guarded!(self, "append_audit", self.inner.append_audit(row))
+    }
+    fn list_audit(&self, org_id: OrgId) -> StoreFuture<'_, Vec<AuditRecord>> {
+        guarded!(self, "list_audit", self.inner.list_audit(org_id))
     }
     fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()> {
         guarded!(self, "insert_plan", self.inner.insert_plan(plan))
