@@ -146,6 +146,21 @@ mod chart_tests {
     use super::*;
     use crate::go_syslog::chart;
 
+    /// With best effort a failed parse keeps a partial message only when it has a priority.
+    #[test]
+    fn best_effort_needs_a_priority() {
+        let opts = Options {
+            best_effort: true,
+            year: 0,
+            rfc3339: false,
+            location: None,
+        };
+        let (m, e) = parse(b"<1>", &opts);
+        assert!(m.is_some() && e.is_some());
+        let (m, e) = parse(b"Dec  2", &opts);
+        assert!(m.is_none() && e.is_some());
+    }
+
     /// The machine over `input` with its EOF actions off (eof is never reached).
     fn step(input: &[u8], rfc3339: bool) -> (i32, Option<String>) {
         let mut m = Machine {
