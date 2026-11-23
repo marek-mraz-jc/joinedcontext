@@ -219,21 +219,6 @@ fn attach_children(parent: &mut GroupRepresentation, all: &[GroupRepresentation]
     parent.sub_groups = children;
 }
 
-fn matches_or_has_matching_child(
-    node: &mut GroupRepresentation,
-    q_lower: &str,
-    exact: bool,
-) -> bool {
-    let self_matches = if exact {
-        node.name.eq_ignore_ascii_case(q_lower)
-    } else {
-        node.name.to_ascii_lowercase().contains(q_lower)
-    };
-    node.sub_groups
-        .retain_mut(|ch| matches_or_has_matching_child(ch, q_lower, exact));
-    self_matches || !node.sub_groups.is_empty()
-}
-
 /// `expr op $value` on text already ASCII-lowered; a value Postgres cannot hold (NUL) matches
 /// nothing, as no stored text holds it.
 fn push_match(sql: &mut QueryBuilder<Postgres>, expr: &'static str, op: MatchOp, value: &str) {
@@ -1722,11 +1707,8 @@ impl Store for PgStore {
             for r in &mut roots {
                 attach_children(r, &visible);
             }
-            let Some(q) = search else {
-                return Ok(roots);
-            };
-            let q_lower = q.to_ascii_lowercase();
-            roots.retain_mut(|r| matches_or_has_matching_child(r, &q_lower, exact));
+            // With a search the query already kept only the matches and the parents above them,
+            // so every leaf of this tree is a match.
             Ok(roots)
         })
     }
