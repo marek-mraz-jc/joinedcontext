@@ -141,7 +141,8 @@ fn text_map(value: &str) -> Option<Node> {
 }
 
 /// `annotations:` as a person writes them: `tag: value`, or the expanded
-/// `tag`/`value` form with the value as a map when it is a language map.
+/// `tag`/`value` form with the value as a map when it is a language map. A
+/// model files every annotation under its own tag (`check_key`).
 fn annotations(map: &mut Vec<(String, Node)>, tagged: &BTreeMap<String, Annotation>) {
     if tagged.is_empty() {
         return;
@@ -149,14 +150,11 @@ fn annotations(map: &mut Vec<(String, Node)>, tagged: &BTreeMap<String, Annotati
     let body = tagged
         .iter()
         .map(|(k, a)| match text_map(&a.value) {
-            None if *k == a.tag => (k.clone(), Node::Str(a.value.clone())),
-            value => {
+            None => (k.clone(), Node::Str(a.value.clone())),
+            Some(map) => {
                 let pair = vec![
                     ("tag".to_owned(), Node::Str(a.tag.clone())),
-                    (
-                        "value".to_owned(),
-                        value.unwrap_or_else(|| Node::Str(a.value.clone())),
-                    ),
+                    ("value".to_owned(), map),
                 ];
                 (k.clone(), Node::Map(pair))
             }
@@ -1100,6 +1098,62 @@ pub fn markdown(model: &Model) -> String {
 mod tests {
     use crate::{Limits, Model};
     use serde_json::json;
+
+    #[test]
+    fn a_plain_scalar_starts_with_a_letter_an_underscore_or_a_slash() {
+        for text in ["name", "_id", "/x/views"] {
+            assert!(super::plain(text), "{text}");
+        }
+        for text in ["-x", "1a", "", "yes"] {
+            assert!(!super::plain(text), "{text}");
+        }
+    }
+
+    /// A class range is an inlined object when the slot says `inlined` or its kind is no
+    /// Relationship; a Relationship to a class is a link.
+    #[test]
+    fn a_class_range_is_an_object_unless_it_is_a_relationship() {
+        let m = Model::read(
+            br#"{"id": "https://e.org/s", "name": "s",
+              "classes": {"Event": {"slots": ["address", "organizer", "venue"]}, "Address": {}},
+              "slots": {"address": {"range": "Address", "inlined": true},
+                "organizer": {"range": "Address",
+                  "annotations": {"ngsi_ld_kind": {"tag": "ngsi_ld_kind", "value": "Property"}}},
+                "venue": {"range": "Address"}}}"#,
+            &crate::SURFACE_LIMITS,
+        )
+        .unwrap();
+        let schema: serde_json::Value = serde_json::from_str(&crate::json_schema(&m)).unwrap();
+        let props = &schema["definitions"]["Event"]["properties"];
+        assert_eq!(props["address"]["type"], "object");
+        assert_eq!(props["organizer"]["type"], "object");
+        assert_ne!(props["venue"]["type"], "object", "{props}");
+    }
+
+    #[test]
+    fn a_turtle_literal_escapes_quotes_breaks_and_control_characters() {
+        assert_eq!(
+            super::lit("a\"b\\c\n\r\t\u{7}é"),
+            r#""a\"b\\c\n\r\t\u0007é""#
+        );
+    }
+
+    /// Exact mappings are written, and a plain annotation as `tag: value`.
+    #[test]
+    fn the_yaml_keeps_exact_mappings_and_plain_annotations() {
+        // A read drops authored exact_mappings; a view's narrowing sets them on the schema.
+        let schema: crate::Schema = serde_json::from_str(
+            r#"{"id": "https://e.org/s", "name": "s",
+              "slots": {"plate": {"exact_mappings": ["schema:identifier"],
+                "annotations": {"same": {"tag": "same", "value": "plain"}}}}}"#,
+        )
+        .unwrap();
+        let m = Model::new(schema, &crate::SURFACE_LIMITS).unwrap();
+        let yaml = crate::yaml(&m);
+        assert!(yaml.contains("exact_mappings:\n"), "{yaml}");
+        assert!(yaml.contains("- schema:identifier\n"), "{yaml}");
+        assert!(yaml.contains("same: plain\n"), "{yaml}");
+    }
 
     #[test]
     fn bounds_and_patterns_reach_every_writer() {

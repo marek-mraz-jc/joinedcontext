@@ -1215,6 +1215,54 @@ mod tests {
     /// P-15: `validate --as-portal` finds in a checkout what the Portal would refuse at load,
     /// beside what `jcctl validate` finds, naming the file.
     #[test]
+    fn the_validate_command_answers_usage_valid_and_refused_by_exit_code() {
+        let dir = std::env::temp_dir().join(format!("jc-judge-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the tree");
+        let org = dir.to_string_lossy().into_owned();
+        let run = |args: &[&str]| {
+            validate_command(&args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>())
+        };
+        for usage in [
+            &[][..],
+            &["--as-portal"],
+            &["--repo-dir", &org, "--as-portal"],
+            &[
+                "--as-portal",
+                "--repo-dir",
+                &org,
+                "--project-dir",
+                "no-equals-sign",
+            ],
+            &["--as-portal", "--repo-dir", &org, "--colour", "red"],
+            &["--as-portal", "--repo-dir", &org, "--apex"],
+        ] {
+            assert_eq!(run(usage), 2, "{usage:?}");
+        }
+        assert_eq!(
+            run(&[
+                "--as-portal",
+                "--repo-dir",
+                &org,
+                "--apex",
+                "city.example",
+                "--project-dir",
+                "air=/nowhere"
+            ]),
+            0,
+            "nothing to refuse"
+        );
+        let file = dir.join("projects/city/spaces/air/endpoints/air.yaml");
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("the tree");
+        std::fs::write(&file, "kind: NoSuchKind\nmetadata: { name: air }\n").expect("the manifest");
+        assert_eq!(
+            run(&["--as-portal", "--repo-dir", &org]),
+            1,
+            "a manifest no kind reads"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_offline_validation_refuses_what_the_portal_would() {
         let dir = std::env::temp_dir().join(format!("jc-judge-{}", std::process::id()));
         let file = dir.join("projects/city/spaces/air/endpoints/air.yaml");

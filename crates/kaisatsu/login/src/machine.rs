@@ -666,6 +666,102 @@ mod tests {
         );
     }
 
+    /// The post-factor steps are reached only after the first factor; a call without it is an
+    /// invalid transition, whatever the context holds.
+    #[test]
+    fn post_factor_steps_refuse_a_login_without_its_first_factor() {
+        let ctx = LoginPolicyContext {
+            pending_actions: vec!["UPDATE_PASSWORD".into()],
+            ..LoginPolicyContext::default()
+        };
+        for second in [false, true] {
+            assert_eq!(
+                advance_post_factors("u1".into(), false, second, &ctx, None),
+                Err(TransitionError::InvalidTransition)
+            );
+        }
+    }
+
+    /// A step that carries no second factor while the person now holds one is refused; a
+    /// pending CONFIGURE_TOTP enrols one, an action the machine does not know is skipped, an
+    /// organization outside the candidates and a denied consent end the step.
+    #[test]
+    fn refusals_and_skipped_actions_after_the_first_factor() {
+        let plain = LoginPolicyContext {
+            second_factor_required: false,
+            has_totp_credential: false,
+            has_webauthn_credential: false,
+            pending_actions: vec!["SOMETHING_ELSE".into(), "CONFIGURE_TOTP".into()],
+            org_choices: Vec::new(),
+            pinned_org: None,
+            consent_required: false,
+            app_action: None,
+        };
+        let password = LoginState::Password {
+            user_id: "u1".into(),
+        };
+        assert_eq!(
+            transition(password.clone(), LoginInput::VerifyPasswordOk, &plain).unwrap(),
+            LoginState::EnrolTotp {
+                user_id: "u1".into(),
+                first_factor_passed: true,
+            }
+        );
+        let unknown_only = LoginPolicyContext {
+            pending_actions: vec!["SOMETHING_ELSE".into()],
+            ..plain.clone()
+        };
+        assert_eq!(
+            transition(password, LoginInput::VerifyPasswordOk, &unknown_only).unwrap(),
+            LoginState::Code {
+                user_id: "u1".into(),
+                acr: "pwd".into(),
+                amr: vec!["pwd".into()],
+                chosen_org: None,
+            }
+        );
+
+        let consent = LoginState::Consent {
+            user_id: "u1".into(),
+            first_factor_passed: true,
+            second_factor_passed: false,
+            chosen_org: None,
+        };
+        let enrolled_meanwhile = LoginPolicyContext {
+            has_totp_credential: true,
+            ..unknown_only.clone()
+        };
+        assert_eq!(
+            transition(
+                consent.clone(),
+                LoginInput::GrantConsent,
+                &enrolled_meanwhile
+            ),
+            Err(TransitionError::SecondFactorMissing)
+        );
+        assert_eq!(
+            transition(consent, LoginInput::DenyConsent, &unknown_only),
+            Err(TransitionError::ConsentDenied)
+        );
+
+        let choice = LoginState::OrganizationChoice {
+            user_id: "u1".into(),
+            first_factor_passed: true,
+            second_factor_passed: false,
+            candidates: vec!["helsinki".into(), "zilina".into()],
+        };
+        assert_eq!(
+            transition(
+                choice,
+                LoginInput::SelectOrganization {
+                    org_id: "espoo".into(),
+                },
+                &unknown_only,
+            ),
+            Err(TransitionError::InvalidOrganizationChoice)
+        );
+    }
+
     /// An application-initiated action runs after the factors and the required actions, also
     /// when the second factor already passed, and the login ends once the handler clears it.
     #[test]

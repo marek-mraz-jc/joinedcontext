@@ -213,7 +213,7 @@ async fn the_portal_catalogue_pages_by_twenty() {
             "orgId": a, "catalogueId": own, "id": format!("id-{name}"), "name": name,
             "title": {"en": format!("Dataset {name}")}, "description": {"en": "About"},
             "publisherId": publisher, "visibility": "public", "state": "active",
-            "datasetType": kind, "themes": ["ENVI"],
+            "datasetType": kind, "themes": [if kind == "dashboard" { "TRAN" } else { "ENVI" }],
             "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
         }))
         .expect("dataset");

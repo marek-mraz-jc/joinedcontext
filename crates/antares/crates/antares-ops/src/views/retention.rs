@@ -1216,8 +1216,9 @@ mod tests {
     /// cap, or fails, may leave one out of the exceptions, so only their own
     /// steps and current state run.
     #[test]
-    fn without_every_entity_that_rules_itself_no_history_runs_by_type_or_tenant() {
-        let t = TenantId::new("city").unwrap_or_else(|e| panic!("{e:?}"));
+    fn without_every_entity_that_rules_itself_no_history_runs_by_type_or_tenant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let t = TenantId::new("city")?;
         let rules = vec![(
             t,
             parse(br#"{"rules":[{"type":"https://e.org/V","current":"P1D","history":"P30D"},{"type":"*","history":"P7D"}]}"#)
@@ -1254,6 +1255,7 @@ mod tests {
             ["entity", "current", "type", "rest", "rest"]
         );
         assert_eq!(jobs(false, &port), ["entity", "current"]);
+        Ok(())
     }
 
     /// T-4906: a Tenant's floor is its oldest history cut, and only a Tenant
@@ -1261,16 +1263,17 @@ mod tests {
     /// platform default, none with a type kept forever, none while the
     /// Entities that rule themselves are not all read.
     #[test]
-    fn a_tenant_floor_is_its_oldest_cut_and_only_when_every_row_is_ruled() {
-        let tenant = |n: &str| TenantId::new(n).unwrap_or_else(|e| panic!("{e:?}"));
-        let doc = |d: &[u8]| parse(d).unwrap_or_else(|e| panic!("{e}"));
+    fn a_tenant_floor_is_its_oldest_cut_and_only_when_every_row_is_ruled(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tenant = TenantId::new;
+        let doc = parse;
         let rules = vec![
             // mixed: a type kept 30 days, the rest 7, one Entity a year
-            (tenant("city"), doc(br#"{"rules":[{"type":"https://e.org/V","history":"P30D"},{"type":"*","history":"P7D"}]}"#)),
+            (tenant("city")?, doc(br#"{"rules":[{"type":"https://e.org/V","history":"P30D"},{"type":"*","history":"P7D"}]}"#)?),
             // a type kept forever: no row of the Tenant may go by partition
-            (tenant("port"), doc(br#"{"rules":[{"type":"https://e.org/V","history":"forever"},{"type":"*","history":"P7D"}]}"#)),
+            (tenant("port")?, doc(br#"{"rules":[{"type":"https://e.org/V","history":"forever"},{"type":"*","history":"P7D"}]}"#)?),
             // no `*` rule and no platform default: the other types keep all
-            (tenant("farm"), doc(br#"{"rules":[{"type":"https://e.org/V","history":"P1D"}]}"#)),
+            (tenant("farm")?, doc(br#"{"rules":[{"type":"https://e.org/V","history":"P1D"}]}"#)?),
         ];
         let now = jc_time::parse_rfc3339("2026-10-20T00:00:00Z").expect("instant");
         let own = std::collections::BTreeMap::from([(
@@ -1308,6 +1311,7 @@ mod tests {
             floors_of(Some(Duration::from_hours(48)), false, &quiet),
             Vec::<(String, String)>::new()
         );
+        Ok(())
     }
 
     /// T-4906: what the drop did is logged, and a failure is no panic.

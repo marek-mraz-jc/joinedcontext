@@ -13,9 +13,8 @@ use parking_lot::RwLock;
 use serde_json::{Value, json};
 use shako_core::{
     Action, Authorizer, InstanceId, InstanceRecord, MemorySecretStore, ObjectTarget,
-    OperationRegistry, OrgId, OutboundGuard, ProblemDetails, RefPolicy, RepoRecord, RequestCtx,
-    SecretStore, ShakoError, ShakoResult, ShakoSigningKey, StaticTokenBinding, Store,
-    TokenVerifier,
+    OperationRegistry, OrgId, OutboundGuard, RefPolicy, RepoRecord, RequestCtx, SecretStore,
+    ShakoError, ShakoResult, ShakoSigningKey, StaticTokenBinding, Store, TokenVerifier,
 };
 use shako_git::RepoLocks;
 use std::path::PathBuf;
@@ -326,31 +325,6 @@ pub fn gitea_error_response(state: &ShakoState, err: &ShakoError) -> Response {
         status,
         [(header::CONTENT_TYPE, "application/json")],
         axum::Json(body),
-    )
-        .into_response()
-}
-
-/// Converts a [`ShakoError`] into an RFC 9457 `ProblemDetails` response (S8).
-#[must_use]
-pub fn problem_error_response(err: &ShakoError, instance: Option<String>) -> Response {
-    let status =
-        StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let problem: ProblemDetails = err.to_problem(instance);
-    if status == StatusCode::SERVICE_UNAVAILABLE {
-        return (
-            status,
-            [
-                (header::CONTENT_TYPE, "application/problem+json"),
-                (header::RETRY_AFTER, "5"),
-            ],
-            axum::Json(problem),
-        )
-            .into_response();
-    }
-    (
-        status,
-        [(header::CONTENT_TYPE, "application/problem+json")],
-        axum::Json(problem),
     )
         .into_response()
 }

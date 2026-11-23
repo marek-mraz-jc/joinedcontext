@@ -878,6 +878,51 @@ mod tests {
         qb.sql().as_str().to_owned()
     }
 
+    /// Every plain set pushes its query down to its own table, scoped to the bound realm; the
+    /// keyset fallback returns the same rows but stops at `MAX_FALLBACK_SCAN_ROWS`, so a set
+    /// that lost its subquery would silently cut a large realm short.
+    #[test]
+    fn plain_sets_push_down_to_their_own_table_in_the_bound_realm() {
+        let sets = [
+            ("Realms", "realms"),
+            ("Organizations", "organizations"),
+            ("People", "people"),
+            ("Memberships", "memberships"),
+            ("Groups", "groups"),
+            ("GroupMembers", "group_members"),
+            ("Roles", "roles"),
+            ("RoleMappings", "role_mappings"),
+            ("Applications", "applications"),
+            ("ClientScopes", "client_scopes"),
+            ("IdentityProviders", "identity_providers"),
+            ("Credentials", "credentials"),
+            ("Sessions", "sso_session"),
+            ("ClientSessions", "client_session"),
+            ("OfflineSessions", "offline_session"),
+            ("Consents", "consent"),
+            ("Events", "events"),
+            ("AdminEvents", "admin_events"),
+            ("SigningKeys", "signing_keys"),
+            ("RequiredActions", "required_actions"),
+            ("BrandingBlocks", "branding_blocks"),
+            ("WebAuthnCredentials", "webauthn_credential"),
+            ("EmailOutbox", "email_outbox"),
+            ("IdentityProviderLinks", "idp_links"),
+        ];
+        for (set, table) in sets {
+            let query = PgScopedTable::relation_subquery(set)
+                .unwrap_or_else(|| panic!("{set} has no pushed-down query"));
+            assert!(query.contains(&format!("FROM kaisatsu.{table}")), "{set}");
+            assert!(
+                query.contains("$1"),
+                "{set} is not scoped to the bound realm"
+            );
+        }
+        for set in ["OrganizationDomains", "ProtocolMappers", "Unknown"] {
+            assert!(PgScopedTable::relation_subquery(set).is_none(), "{set}");
+        }
+    }
+
     /// A key lookup and the default key order read the key column, which the primary key
     /// index serves; `row_json #> '{id}'` made every one scan the realm (P-2-06).
     #[test]

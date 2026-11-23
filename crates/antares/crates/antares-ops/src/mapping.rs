@@ -1337,9 +1337,10 @@ fn invert_comparison(
 /// boolean by its text.
 fn source_value(key: &str) -> QValue {
     match serde_json::from_str::<Value>(key) {
-        Ok(Value::Number(n)) => n
-            .as_f64()
-            .map_or_else(|| QValue::Str(key.to_owned()), QValue::Num),
+        Ok(Value::Number(n)) => match n.as_f64() {
+            Some(f) => QValue::Num(f),
+            None => QValue::Str(key.to_owned()),
+        },
         Ok(Value::Bool(b)) => QValue::Bool(b),
         _ => QValue::Str(key.to_owned()),
     }
