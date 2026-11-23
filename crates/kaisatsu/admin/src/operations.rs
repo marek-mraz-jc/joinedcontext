@@ -474,10 +474,9 @@ pub async fn execute(
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &user)))?;
             ensure_person_ceiling(state, ctx, &user).await?;
             let actions = str_list(params, "actions")?;
-            let realm_cfg = store
-                .get_realm(realm)
-                .await?
-                .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+            let Some(realm_cfg) = store.get_realm(realm).await? else {
+                return Err(KaisatsuError::NotFound("realm not found".into()));
+            };
             // Portal `people.rs:365`: without SMTP the call fails, so the Portal falls back to a
             // temporary password (PF-92). The person is not changed in that case.
             if realm_cfg.smtp_server.is_none() {

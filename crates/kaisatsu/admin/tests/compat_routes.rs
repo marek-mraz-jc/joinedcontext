@@ -662,6 +662,60 @@ async fn unknown_ids_answer_404_to_a_realm_admin() {
     );
 }
 
+/// Bodies the realm, client and import routes cannot read, and names they cannot find, are refused
+/// with the reason and write nothing.
+#[tokio::test]
+async fn malformed_bodies_and_unknown_names_are_refused() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    let cases = [
+        // An existing person, an unknown client: 404 before any mapping is written.
+        (
+            Method::POST,
+            format!("{R}/users/hel-user/role-mappings/clients/no-client"),
+            json!([{ "id": "r", "name": "r" }]),
+            StatusCode::NOT_FOUND,
+            "client not found",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!(["not", "an", "object"]),
+            StatusCode::BAD_REQUEST,
+            "JSON object",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!({ "accessTokenLifespan": "an hour" }),
+            StatusCode::BAD_REQUEST,
+            "realm body",
+        ),
+        (
+            Method::POST,
+            format!("{R}/clients"),
+            json!({ "clientId": 42 }),
+            StatusCode::BAD_REQUEST,
+            "invalid client",
+        ),
+        (
+            Method::POST,
+            format!("{R}/partialImport"),
+            json!({ "ifResourceExists": "SKIP",
+                    "users": [{ "id": "pi-nogroup", "username": "pi.nogroup", "groups": ["/no-such-group"] }] }),
+            StatusCode::BAD_REQUEST,
+            "group /no-such-group does not exist",
+        ),
+    ];
+    for (method, uri, body, status, needle) in cases {
+        let (st, _, ans) = call(&f.app, &method, &uri, a, Some(&body)).await;
+        assert_eq!(st, status, "{method} {uri}: {ans}");
+        assert!(ans.to_string().contains(needle), "{method} {uri}: {ans}");
+    }
+    let dev = f.store.get_realm("dev").await.unwrap().unwrap();
+    assert_eq!(dev.realm, "dev");
+}
+
 #[tokio::test]
 async fn another_organizations_objects_are_404_to_an_org_admin() {
     let f = fixture().await;

@@ -883,7 +883,9 @@ async fn compat_create_realm(
         ))?;
         ctx.get_or_insert(judged);
     }
-    let ctx = ctx.ok_or_else(|| KaisatsuError::BadRequest("realm is required".into()))?;
+    let Some(ctx) = ctx else {
+        return Err(KaisatsuError::BadRequest("realm is required".into()));
+    };
     if state.oidc.store.get_realm(&realm.realm).await?.is_some()
         || state.oidc.store.get_realm(&realm.id).await?.is_some()
     {
@@ -1122,12 +1124,15 @@ async fn compat_partial_import(
             }
         };
         for path in &paths {
-            let group = state
+            // Checked before anything was written; a group deleted since answers 404.
+            let Some(group) = state
                 .oidc
                 .store
                 .get_group_by_path(&realm_name, None, path)
                 .await?
-                .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
+            else {
+                return Err(KaisatsuError::NotFound(format!("Group {path} not found")));
+            };
             state
                 .oidc
                 .store
@@ -1282,10 +1287,9 @@ async fn compat_create_user(
         user.id = uuid::Uuid::now_v7().to_string();
     }
     let created = state.oidc.store.create_user(user).await?;
-    let member_add = state
-        .registry
-        .find("member_add")
-        .ok_or_else(|| KaisatsuError::NotSupported("unknown operation member_add".into()))?;
+    let Some(member_add) = state.registry.find("member_add") else {
+        return Err(KaisatsuError::NotSupported("unknown operation member_add".into()));
+    };
     for group_id in joins {
         crate::operations::execute(
             &state,
@@ -4030,9 +4034,8 @@ async fn run_registry_op(
 ) -> Result<Option<Value>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let op = state
-        .registry
-        .find(name)
-        .ok_or_else(|| KaisatsuError::NotSupported(format!("unknown operation {name}")))?;
+    let Some(op) = state.registry.find(name) else {
+        return Err(KaisatsuError::NotSupported(format!("unknown operation {name}")));
+    };
     crate::operations::execute(state, &mount, &ctx, op, key, params).await
 }

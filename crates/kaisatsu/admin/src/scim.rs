@@ -591,10 +591,9 @@ async fn run_op(
     key: Option<&str>,
     params: &Value,
 ) -> Result<Option<Value>> {
-    let op = state
-        .registry
-        .find(name)
-        .ok_or_else(|| KaisatsuError::NotSupported(name.to_owned()))?;
+    let Some(op) = state.registry.find(name) else {
+        return Err(KaisatsuError::NotSupported(name.to_owned()));
+    };
     crate::operations::execute(state, mount, ctx, op, key, params).await
 }
 
@@ -629,21 +628,17 @@ async fn scim_create_user(
         email_verified: false,
         ..Default::default()
     };
-    let body =
-        serde_json::to_value(&person).map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
-    let created = run_op(&state, &mount, &ctx, "person_create", None, &body)
-        .await?
-        .ok_or_else(|| KaisatsuError::Storage("person_create returned nothing".into()))?;
-    let id = created
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| KaisatsuError::Storage("created person has no id".into()))?;
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, None, id)
-        .await?
-        .ok_or_else(|| KaisatsuError::Storage("created person vanished".into()))?;
+    let body = match serde_json::to_value(&person) {
+        Ok(body) => body,
+        Err(e) => return Err(KaisatsuError::BadRequest(e.to_string())),
+    };
+    let created = run_op(&state, &mount, &ctx, "person_create", None, &body).await?;
+    let Some(id) = created.as_ref().and_then(|c| c.get("id")).and_then(Value::as_str) else {
+        return Err(KaisatsuError::Storage("person_create returned no id".into()));
+    };
+    let Some(user) = state.oidc.store.get_user_by_id(&realm, None, id).await? else {
+        return Err(KaisatsuError::Storage("created person vanished".into()));
+    };
     if let Some(ext) = payload.external_id {
         let mut u = user;
         u.attributes.insert("externalId".into(), vec![ext]);

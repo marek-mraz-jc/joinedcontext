@@ -117,14 +117,16 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
     let ns = service.namespace.clone();
     let csdl = service.model();
     let mut xml = Vec::new();
-    odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml)
-        .map_err(|e| KaisatsuError::Storage(format!("CSDL metadata: {e}")))?;
-    let mut text = String::from_utf8(xml)
-        .map_err(|_| KaisatsuError::Storage("CSDL metadata is not UTF-8".into()))?;
+    if let Err(e) = odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml) {
+        return Err(KaisatsuError::Storage(format!("CSDL metadata: {e}")));
+    }
+    let Ok(mut text) = String::from_utf8(xml) else {
+        return Err(KaisatsuError::Storage("CSDL metadata is not UTF-8".into()));
+    };
 
-    let container_at = text
-        .find("<EntityContainer")
-        .ok_or_else(|| KaisatsuError::Storage("CSDL has no entity container".into()))?;
+    let Some(container_at) = text.find("<EntityContainer") else {
+        return Err(KaisatsuError::Storage("CSDL has no entity container".into()));
+    };
     let line_start = text[..container_at].rfind('\n').map_or(0, |i| i + 1);
     let indent = text[line_start..container_at].to_owned();
     let inner = format!("{indent}  ");
@@ -189,9 +191,9 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
         }
     }
     text.insert_str(line_start, &ops_xml);
-    let close = text
-        .find("</EntityContainer>")
-        .ok_or_else(|| KaisatsuError::Storage("CSDL entity container is empty".into()))?;
+    let Some(close) = text.find("</EntityContainer>") else {
+        return Err(KaisatsuError::Storage("CSDL entity container is empty".into()));
+    };
     let close_line = text[..close].rfind('\n').map_or(0, |i| i + 1);
     text.insert_str(close_line, &imports);
     Ok(text)
@@ -415,10 +417,9 @@ async fn people_write(
     }
     let mount = state.oidc.mount_from(mount_ext.map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let op = state
-        .registry
-        .find(op_name)
-        .ok_or_else(|| KaisatsuError::NotSupported(op_name.to_owned()))?;
+    let Some(op) = state.registry.find(op_name) else {
+        return Err(KaisatsuError::NotSupported(op_name.to_owned()).into());
+    };
     let result = crate::operations::execute(state, &mount, &ctx, op, key.as_deref(), &body).await?;
     let status = if op_name == "person_create" {
         StatusCode::CREATED
