@@ -2539,6 +2539,12 @@ mod tests {
         // T-3822: `pick`, never `attrs`, which drops the Entities holding none
         let mut set = set();
         let none = Translated::default();
+        // nothing picked and nothing joined: the whole Entity, neither a pick nor attrs
+        let whole = query(&set, None, &[], &none);
+        assert!(
+            !whole.contains("pick=") && !whole.contains("attrs="),
+            "{whole}"
+        );
         let q = query(&set, Some(&["geo", "createdAt"]), &[], &none);
         assert!(
             q.ends_with(
