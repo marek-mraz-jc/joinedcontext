@@ -126,4 +126,50 @@ mod tests {
         assert!(!policy.contains(NONCE_SLOT), "{policy}");
         assert_eq!(body, NONCE_SLOT);
     }
+
+    #[tokio::test]
+    async fn a_policy_that_is_no_header_value_answers_500() {
+        let app = Router::new()
+            .route("/json", get(|| async { "body" }))
+            .layer(from_fn_with_state(
+                Arc::from("default-src\n'self'"),
+                middleware,
+            ));
+        let response = app
+            .oneshot(Request::get("/json").body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn an_html_answer_past_the_cap_answers_500_and_one_at_the_cap_is_stamped() {
+        fn page(len: usize) -> Router {
+            Router::new()
+                .route(
+                    "/page",
+                    get(move || async move { axum::response::Html("a".repeat(len)) }),
+                )
+                .layer(from_fn_with_state(Arc::from(POLICY), middleware))
+        }
+        let refused = page(MAX_HTML + 1)
+            .oneshot(Request::get("/page").body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let kept = page(MAX_HTML)
+            .oneshot(Request::get("/page").body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        assert_eq!(kept.status(), StatusCode::OK);
+        assert!(kept.headers().contains_key(header::CONTENT_SECURITY_POLICY));
+        let body = to_bytes(kept.into_body(), MAX_HTML + 1)
+            .await
+            .expect("body");
+        assert_eq!(body.len(), MAX_HTML);
+    }
 }

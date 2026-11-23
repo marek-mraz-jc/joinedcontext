@@ -337,6 +337,133 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     });
   });
 
+  describe("Check, the consumers of a breaking change and the types a model takes in", () => {
+    const json = (body: unknown, status = 200, type = "application/json") =>
+      Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } }));
+    const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
+    const manifest = (kind: string, name: string, spec: Record<string, unknown>) => ({
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind,
+      metadata: { name, namespace: "ovzdusie" },
+      spec,
+    });
+    const baseline = { name: "air-quality", version: "1.0.0", lifecycle: "published" } as const;
+
+    /** The model, its lists, and whatever `write` answers a PUT with. */
+    function serve(write: () => Promise<Response>, lists: Record<string, unknown[]> = {}, extra?: (url: string) => Promise<Response> | undefined) {
+      global.fetch = vi.fn().mockImplementation((req: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
+        const method = init?.method ?? (req instanceof Request ? req.method : "GET");
+        const own = extra?.(url);
+        if (own) return own;
+        if (url.includes("/datamodels/air-quality/source")) {
+          return method === "PUT" ? write() : Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
+        }
+        const plural = /\/projects\/ovzdusie\/([a-z]+)$/.exec(new URL(url, window.location.origin).pathname)?.[1];
+        return json(list(plural ? (lists[plural] ?? []) : []));
+      });
+    }
+
+    it("Check says what the edit would be and which version it becomes, and writes nothing", async () => {
+      const user = userEvent.setup();
+      serve(() => json({ severity: "additive", version: "1.1.0" }));
+      rememberPrefill("/", { source: EDITED_LINKML });
+      renderWithClient(<ModelsPage project="ovzdusie" baseline={baseline} />);
+      await user.click(await screen.findByRole("button", { name: en.models.source.saveCheck }));
+      expect(await screen.findByText(`${en.models.source.severity.additive} · ${en.models.source.willBecome.replace("{version}", "1.1.0")}`)).toBeInTheDocument();
+      const checks = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((call) => String((call[0] as Request).url).includes("dryRun=All"));
+      expect(checks.length).toBe(1);
+    });
+
+    it("says why Check is refused: the detail with its errors, the detail alone, and a missing verdict", async () => {
+      const user = userEvent.setup();
+      const answers = [
+        () => json({ title: "Invalid Request", status: 400, detail: "the model does not compile", errors: ["slot 'pm10' has no range"] }, 400, "application/problem+json"),
+        () => json({ title: "Unprocessable", status: 422, detail: "the model is not valid" }, 422, "application/problem+json"),
+        () => Promise.resolve(new Response("", { status: 502 })),
+        () => json(null),
+      ];
+      let next = 0;
+      serve(() => answers[next++]());
+      rememberPrefill("/", { source: EDITED_LINKML });
+      renderWithClient(<ModelsPage project="ovzdusie" baseline={baseline} />);
+      const check = await screen.findByRole("button", { name: en.models.source.saveCheck });
+      await user.click(check);
+      expect(await screen.findByRole("alert")).toHaveTextContent("the model does not compile: slot 'pm10' has no range");
+      await user.click(check);
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("the model is not valid"));
+      await user.click(check);
+      await waitFor(() => expect(screen.getByRole("alert").textContent).not.toMatch(/the model is not valid/));
+      expect(screen.getByRole("alert")).toHaveTextContent("HTTP 502");
+      await user.click(check);
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("came back with no verdict"));
+    });
+
+    it("says what the request met when Check or Save cannot be sent", async () => {
+      const user = userEvent.setup();
+      serve(() => Promise.reject(new Error("socket closed")));
+      rememberPrefill("/", { source: EDITED_LINKML });
+      renderWithClient(<ModelsPage project="ovzdusie" baseline={baseline} />);
+      await user.click(await screen.findByRole("button", { name: en.models.source.saveCheck }));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/socket closed|offline/));
+      await user.click(screen.getByRole("button", { name: PROPOSE }));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/socket closed|offline/));
+    });
+
+    it("names the space and the endpoints a breaking edit would reach", async () => {
+      serve(() => json({}), {
+        spaces: [manifest("ContextSpace", "air", { dataModelRef: "air-quality" })],
+        endpoints: [manifest("Endpoint", "air-public", { contextSpaceRef: "air" }), manifest("Endpoint", "other", { contextSpaceRef: "elsewhere" })],
+      });
+      rememberPrefill("/", { source: PUBLISHED_LINKML.replace("    required: true\n", "").replace("  dateObserved:\n    range: string\n", "").replace("      - dateObserved\n", "      []\n") });
+      renderWithClient(<ModelsPage project="ovzdusie" baseline={baseline} />);
+      const consumers = en.models.consumers.replace("{consumers}", "ContextSpace/air, Endpoint/air-public");
+      expect(await screen.findByText(consumers)).toBeInTheDocument();
+    });
+
+    it("keeps what the model has and names what an imported Smart Data Model could not add", async () => {
+      const user = userEvent.setup();
+      const catalogue = {
+        refreshedAt: "2026-09-06T04:00:00Z",
+        stale: false,
+        subjects: [
+          { name: "dataModel.Environment", title: "Environment", models: [{ id: "dataModel.Environment/AirQualityObserved", name: "AirQualityObserved", attributes: ["dateObserved"] }] },
+        ],
+      };
+      serve(() => json({}), {}, (url) =>
+        url.includes("/tools/sdm-catalog") ? json(catalogue) : url.includes("/tools/import-sdm") ? json({ linkml: PUBLISHED_LINKML.replace("https://example.org/aq/AirQualityObserved", "https://smartdatamodels.org/AirQualityObserved") }) : undefined,
+      );
+      renderWithClient(<ModelsPage project="ovzdusie" baseline={baseline} />);
+      await addTypeFrom(user, "sdm");
+      await user.click(await within(screen.getByRole("dialog")).findByRole("button", { name: /AirQualityObserved/ }));
+      await user.click(screen.getByRole("button", { name: "Import AirQualityObserved" }));
+      expect(await screen.findByText(en.models.sdm.mergedKept.replace("{names}", "classes: AirQualityObserved"))).toBeInTheDocument();
+    });
+
+    it("takes the types of a sheet into the model, and closes the window with Escape", async () => {
+      const user = userEvent.setup();
+      const inferred = "id: https://x.test/m\nname: m\nclasses:\n  Sensors: {}\nslots: {}\n";
+      serve(() => json({}), {}, (url) => (url.includes("/tools/infer-schema") ? json({ linkml: inferred, operations: [{ op: "addClass", name: "Sensors" }] }) : undefined));
+      window.history.replaceState(null, "", "/?new=blank");
+      try {
+        renderWithClient(<ModelsPage project="ovzdusie" />);
+        await nameNewModel(user, "Sensors model");
+        await addTypeFrom(user, "file");
+        await screen.findByRole("dialog", { name: en.models.addFrom.fileTitle });
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: en.models.addFrom.fileTitle })).toBeNull());
+        await addTypeFrom(user, "file");
+        const again = await screen.findByRole("dialog", { name: en.models.addFrom.fileTitle });
+        await user.upload(within(again).getByLabelText(en.models.infer.chooseFile), new File(["a,b\n1,2\n"], "sensors.json", { type: "application/json" }));
+        const draft = await screen.findByRole("dialog", { name: /Draft from sensors.json/ });
+        await user.click(within(draft).getByRole("button", { name: en.models.infer.populate }));
+        expect(await screen.findByRole("button", { name: "Sensors" })).toBeInTheDocument();
+      } finally {
+        window.history.replaceState(null, "", "/");
+      }
+    });
+  });
+
   it("keeps Save closed while the model has a broken relationship, and says why (DM-68, T-2736)", async () => {
     const user = userEvent.setup();
     const broken = `${PUBLISHED_LINKML}  station:

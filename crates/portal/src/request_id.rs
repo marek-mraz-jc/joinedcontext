@@ -240,6 +240,34 @@ mod tests {
         assert!(!text.contains("project=helsinki"), "{text}");
     }
 
+    /// An edge's plain id is the request's own and comes back on the answer; a forged one is
+    /// replaced by a fresh id, and a failed answer keeps its id too.
+    #[tokio::test]
+    async fn the_edges_plain_id_is_kept_and_a_forged_one_replaced() {
+        let app = axum::Router::new()
+            .fallback(|| async { axum::http::StatusCode::BAD_GATEWAY })
+            .layer(axum::middleware::from_fn(middleware));
+        let answer = |id: &'static str| {
+            let app = app.clone();
+            async move {
+                let request = axum::http::Request::builder()
+                    .uri("/api/v1/projects/helsinki/endpoints")
+                    .header(&HEADER, id)
+                    .body(axum::body::Body::empty())
+                    .expect("request");
+                tower::ServiceExt::oneshot(app, request)
+                    .await
+                    .expect("answer")
+            }
+        };
+        let kept = answer("3f2c1a9e-6b1d-4c3e-9a8f").await;
+        assert_eq!(kept.status(), axum::http::StatusCode::BAD_GATEWAY);
+        assert_eq!(kept.headers()[&HEADER], "3f2c1a9e-6b1d-4c3e-9a8f");
+        let replaced = answer("x").await;
+        let fresh = replaced.headers()[&HEADER].to_str().expect("ascii");
+        assert!(fresh != "x" && plain(fresh) && fresh.len() == 32, "{fresh}");
+    }
+
     #[test]
     fn a_minted_id_is_plain_and_new_each_time() {
         let (one, two) = (fresh(), fresh());

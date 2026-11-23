@@ -3,7 +3,7 @@
  * model's text never becomes markup, a link is checked before it is one, and a long entity id is
  * shortened with a button that copies it whole.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -108,6 +108,47 @@ describe("an answer's Markdown", () => {
     expect(writeText).toHaveBeenCalledWith(URN);
     expect(await screen.findByRole("button", { name: en.agentRun.prose.copied })).toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("keeps a short id as it is and cuts a long one with few parts at both ends", () => {
+    expect(shortId("urn:ngsi-ld:Event:x:y:z")).toBe("urn:ngsi-ld:Event:x:y:z");
+    const flat = `urn:ngsi-ld:Event:${"k".repeat(40)}`;
+    expect(shortId(flat)).toBe(`${flat.slice(0, 24)}…${"k".repeat(12)}`);
+  });
+
+  it("does not say the id was copied when the clipboard refuses", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("denied");
+    });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    prose(`The event ${URN}.`);
+    await userEvent.click(screen.getByRole("button", { name: en.agentRun.prose.copyId }));
+    expect(writeText).toHaveBeenCalledWith(URN);
+    expect(screen.getByRole("button", { name: en.agentRun.prose.copyId })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.agentRun.prose.copied })).toBeNull();
+  });
+
+  it("shortens an id written as code, and reads *italic* beside **bold**", () => {
+    const { container } = prose(`Look at \`${URN}\` and *this one* and **that one**.`);
+    expect(container.querySelector(".sr-only")?.textContent).toBe(URN);
+    expect(container.textContent).toContain(shortId(URN));
+    expect(container.querySelector("em")?.textContent).toBe("this one");
+    expect(container.querySelector("strong")?.textContent).toBe("that one");
+  });
+
+  it("leaves a modified or middle click on a Portal link to the browser, and a plain click to the page", async () => {
+    const opened = vi.fn();
+    prose("Open [Explore](/projects/helsinki/entities).", opened);
+    const link = screen.getByRole("link", { name: "Explore" });
+    // jsdom would try to navigate on an unhandled click; the browser's own meaning is not asked for here.
+    link.addEventListener("click", (event) => event.preventDefault());
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+      fireEvent.click(link, modifier);
+    }
+    expect(opened).not.toHaveBeenCalled();
+    await userEvent.click(link);
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveBeenCalledWith("/projects/helsinki/entities");
   });
 
   // T-3986: the app builder draws this card only in a model run, which the live walk cannot start (spend guard).

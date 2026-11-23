@@ -12,4 +12,6 @@ pub mod proposal;
 pub mod remote;
 pub mod schema_api;
 pub mod state;
+#[cfg(test)]
+mod tls_test;
 pub mod webhook_secrets;

@@ -318,6 +318,33 @@ mod tests {
         assert!(LabelSelector::parse("tier in (frontend").is_err());
         assert!(LabelSelector::parse("tier in ()").is_err());
         assert!(LabelSelector::parse("!").is_err());
+        let malformed = |input: &str| match LabelSelector::parse(input) {
+            Err(SelectorError::Malformed(message)) => message,
+            other => panic!("{input}: {other:?}"),
+        };
+        for (input, said) in [
+            ("tier)", "unbalanced parenthesis: tier)"),
+            ("tier in (a,b", "unclosed set parenthesis: tier in (a,b"),
+            ("tier in (a)x", "unclosed set parenthesis: tier in (a)x"),
+            (
+                "tier in (a,)",
+                "set values must be non-empty in: tier in (a,)",
+            ),
+            ("Bad Key notin (a)", "invalid key: Bad Key"),
+            ("Bad Key in (a)", "invalid key: Bad Key"),
+            (
+                "tier (a)",
+                "expected 'in' or 'notin' before parenthesis in: tier (a)",
+            ),
+            ("a,,b", "empty requirement in selector"),
+            ("!Bad Key", "invalid key in: !Bad Key"),
+            ("Bad Key==x", "invalid key in: Bad Key==x"),
+            ("Bad Key!=x", "invalid key in: Bad Key!=x"),
+            ("Bad Key=x", "invalid key in: Bad Key=x"),
+            ("Bad Key", "invalid key in: Bad Key"),
+        ] {
+            assert_eq!(malformed(input), said);
+        }
         assert!(LabelSelector::parse("")
             .expect("empty selector")
             .matches(&BTreeMap::new()));
@@ -358,6 +385,12 @@ mod tests {
 
         let fs4 = FieldSelector::parse("metadata.namespace=ovzdusie").expect("parse ns =");
         assert!(fs4.matches(&envelope));
+        let other_ns = FieldSelector::parse("metadata.namespace!=doprava").expect("parse ns !=");
+        assert!(other_ns.matches(&envelope));
+        let own_ns = FieldSelector::parse("metadata.namespace!=ovzdusie").expect("parse ns !=");
+        assert!(!own_ns.matches(&envelope));
+        let own_name = FieldSelector::parse("metadata.name!=public-air").expect("parse name !=");
+        assert!(!own_name.matches(&envelope));
 
         let fs5 = FieldSelector::parse("status.phase=Live").expect("parse phase =");
         assert!(fs5.matches(&envelope));
@@ -398,5 +431,20 @@ mod tests {
     fn field_selector_malformed_is_rejected() {
         let err = FieldSelector::parse("metadata.name").expect_err("missing operator");
         assert!(matches!(err, SelectorError::Malformed(_)));
+        assert_eq!(
+            FieldSelector::parse("metadata.name=a,,status.phase=Live"),
+            Err(SelectorError::Malformed("empty field requirement".into()))
+        );
+        assert!(matches!(
+            FieldSelector::parse("metadata.name=(a"),
+            Err(SelectorError::Malformed(_))
+        ));
+        assert_eq!(
+            FieldSelector::parse("  ")
+                .expect("an empty selector")
+                .requirements
+                .len(),
+            0
+        );
     }
 }
