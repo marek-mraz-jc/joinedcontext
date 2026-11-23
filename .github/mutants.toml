@@ -79,6 +79,9 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
+  # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
+  'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
   # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).

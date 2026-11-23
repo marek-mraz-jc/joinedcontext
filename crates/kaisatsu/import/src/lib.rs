@@ -729,20 +729,25 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
 
     // 3. Collect known groups (recursively)
     let mut known_group_paths: BTreeSet<String> = BTreeSet::new();
-    fn collect_groups(arr: &[Value], out: &mut BTreeSet<String>) {
+    // A group without a `path` gets its parent's path and its name, as the stores write it.
+    fn collect_groups(arr: &[Value], parent: &str, out: &mut BTreeSet<String>) {
         for g in arr {
-            if let Some(p) = g.get("path").and_then(Value::as_str) {
-                out.insert(p.to_owned());
-            } else if let Some(n) = g.get("name").and_then(Value::as_str) {
-                out.insert(format!("/{n}"));
-            }
+            let path = g.get("path").and_then(Value::as_str).map_or_else(
+                || {
+                    g.get("name")
+                        .and_then(Value::as_str)
+                        .map(|n| format!("{}/{n}", parent.trim_end_matches('/')))
+                },
+                |p| Some(p.to_owned()),
+            );
             if let Some(subs) = g.get("subGroups").and_then(Value::as_array) {
-                collect_groups(subs, out);
+                collect_groups(subs, path.as_deref().unwrap_or(parent), out);
             }
+            out.extend(path);
         }
     }
     if let Some(groups) = obj.get("groups").and_then(Value::as_array) {
-        collect_groups(groups, &mut known_group_paths);
+        collect_groups(groups, "", &mut known_group_paths);
     }
     if let Some(def_groups) = obj.get("defaultGroups").and_then(Value::as_array) {
         for (i, dg) in def_groups.iter().enumerate() {
@@ -1164,6 +1169,16 @@ async fn refuse_unset_secret_variables(
 /// Fields every store writes itself: an object's id, realm and owner mark.
 const STORE_KEYS: &[&str] = &["id", "realmId", "managedBy"];
 
+/// A realm file member that does not parse as its type.
+fn bad_request(e: impl std::fmt::Display) -> KaisatsuError {
+    KaisatsuError::BadRequest(e.to_string())
+}
+
+/// A stored object that does not serialize.
+fn storage(e: serde_json::Error) -> KaisatsuError {
+    KaisatsuError::Storage(e.to_string())
+}
+
 /// Whether a JSON value carries nothing: a missing key, `null`, `""`, `[]` and `{}` all read the
 /// same, since the types skip empty fields when they serialize.
 fn is_blank(v: Option<&Value>) -> bool {
@@ -1214,7 +1229,7 @@ fn merged_user(
     parsed: &UserRepresentation,
     admin_grants: Grants,
 ) -> Result<UserRepresentation> {
-    let mut doc = serde_json::to_value(prev).map_err(|e| KaisatsuError::Storage(e.to_string()))?;
+    let mut doc = serde_json::to_value(prev).map_err(storage)?;
     if let (Value::Object(stored), Some(named)) = (&mut doc, file.as_object()) {
         for (k, v) in named {
             match k.as_str() {
@@ -1228,13 +1243,13 @@ fn merged_user(
                 | "realmRoles"
                 | "clientRoles"
                 | "username" => {}
+                // Both are maps: the stored person always carries `attributes`, and the file's
+                // parsed as a map before this merge.
                 "attributes" => {
                     if let (Some(Value::Object(held)), Value::Object(given)) =
                         (stored.get_mut("attributes"), v)
                     {
                         held.extend(given.clone());
-                    } else {
-                        stored.insert(k.clone(), v.clone());
                     }
                 }
                 _ => {
@@ -1243,8 +1258,7 @@ fn merged_user(
             }
         }
     }
-    let mut user: UserRepresentation =
-        serde_json::from_value(doc).map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+    let mut user: UserRepresentation = serde_json::from_value(doc).map_err(bad_request)?;
     if let (Some(given), Some(held)) = (&user.email, &prev.email)
         && given.eq_ignore_ascii_case(held)
     {
@@ -1461,10 +1475,7 @@ async fn file_groups_hold(
         .into_iter()
         .flatten()
     {
-        pending.push(
-            serde_json::from_value(g_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?,
-        );
+        pending.push(serde_json::from_value(g_val.clone()).map_err(bad_request)?);
     }
     while let Some(mut grp) = pending.pop() {
         pending.append(&mut grp.sub_groups);
@@ -1494,9 +1505,9 @@ pub async fn apply_realm_files(
     let warnings = check_realm_value(&merged, opts)?;
     let file_checksum = apply_checksum(&merged, opts);
 
-    let obj = merged
-        .as_object()
-        .ok_or_else(|| KaisatsuError::BadRequest("not an object".into()))?;
+    let Some(obj) = merged.as_object() else {
+        return Err(KaisatsuError::BadRequest("not an object".into()));
+    };
     let realm_name = obj["realm"].as_str().unwrap_or("default").to_owned();
     // A realm's rows are keyed by its name, the key every admin route and token issuer uses: a
     // Keycloak export's UUID `id` is named in a warning and ignored for a new realm (S3-28).
@@ -1592,8 +1603,8 @@ pub async fn apply_realm_files(
     let mut file_scope_names = BTreeSet::new();
     if let Some(scopes) = obj.get("clientScopes").and_then(Value::as_array) {
         for sc_val in scopes {
-            let mut sc: ClientScopeRepresentation = serde_json::from_value(sc_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut sc: ClientScopeRepresentation =
+                serde_json::from_value(sc_val.clone()).map_err(bad_request)?;
             sc.realm_id = realm_id.clone();
             sc.managed_by = Some("apply".into());
             file_scope_names.insert(sc.name.clone());
@@ -1639,8 +1650,8 @@ pub async fn apply_realm_files(
         .and_then(Value::as_array)
     {
         for r_val in r_arr {
-            let mut role: RoleRepresentation = serde_json::from_value(r_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut role: RoleRepresentation =
+                serde_json::from_value(r_val.clone()).map_err(bad_request)?;
             role.realm_id = realm_id.clone();
             role.managed_by = Some("apply".into());
             file_role_names.insert(role.name.clone());
@@ -1678,8 +1689,8 @@ pub async fn apply_realm_files(
     let mut file_group_paths = BTreeSet::new();
     if let Some(g_arr) = obj.get("groups").and_then(Value::as_array) {
         for g_val in g_arr {
-            let mut grp: GroupRepresentation = serde_json::from_value(g_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut grp: GroupRepresentation =
+                serde_json::from_value(g_val.clone()).map_err(bad_request)?;
             grp.realm_id = realm_id.clone();
             grp.managed_by = Some("apply".into());
             for sub in &mut grp.sub_groups {
@@ -1712,8 +1723,7 @@ pub async fn apply_realm_files(
     if let Some(idps) = obj.get("identityProviders").and_then(Value::as_array) {
         for idp_val in idps {
             let mut idp: IdentityProviderRepresentation =
-                serde_json::from_value(idp_val.clone())
-                    .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+                serde_json::from_value(idp_val.clone()).map_err(bad_request)?;
             idp.realm_id = realm_id.clone();
             idp.managed_by = Some("apply".into());
             let prev = store.get_idp(&realm_id, &idp.alias).await?;
@@ -1748,8 +1758,8 @@ pub async fn apply_realm_files(
     let mut file_client_ids = BTreeSet::new();
     if let Some(c_arr) = obj.get("clients").and_then(Value::as_array) {
         for c_val in c_arr {
-            let mut client: ClientRepresentation = serde_json::from_value(c_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut client: ClientRepresentation =
+                serde_json::from_value(c_val.clone()).map_err(bad_request)?;
             client.realm_id = realm_id.clone();
             if client.managed_by.is_none() {
                 client.managed_by = Some("apply".into());
@@ -1932,8 +1942,8 @@ pub async fn apply_realm_files(
     // 7. Users & Credentials
     if let Some(u_arr) = obj.get("users").and_then(Value::as_array) {
         for u_val in u_arr {
-            let mut user: UserRepresentation = serde_json::from_value(u_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut user: UserRepresentation =
+                serde_json::from_value(u_val.clone()).map_err(bad_request)?;
             user.realm_id = realm_id.clone();
             if user.managed_by.is_none() {
                 user.managed_by = Some("apply".into());
@@ -1994,15 +2004,14 @@ pub async fn apply_realm_files(
                 };
                 // Link groups
                 for gpath in &file_groups {
-                    let grp = store
-                        .get_group_by_path(&realm_id, None, gpath)
-                        .await?
-                        .ok_or_else(|| {
-                            KaisatsuError::NotFound(format!(
-                                "user '{}': group '{gpath}' does not exist",
-                                saved.username
-                            ))
-                        })?;
+                    // The check refused every path the file's groups do not hold, and they
+                    // were written above.
+                    let Some(grp) = store.get_group_by_path(&realm_id, None, gpath).await? else {
+                        return Err(KaisatsuError::NotFound(format!(
+                            "user '{}': group '{gpath}' does not exist",
+                            saved.username
+                        )));
+                    };
                     store
                         .add_user_to_group(&realm_id, &saved.id, &grp.id)
                         .await?;
@@ -2281,8 +2290,7 @@ pub async fn export_realm(
         }
     }
 
-    let mut out =
-        serde_json::to_value(&realm).map_err(|e| KaisatsuError::Storage(e.to_string()))?;
+    let mut out = serde_json::to_value(&realm).map_err(storage)?;
     if let Value::Object(ref mut map) = out {
         map.remove("applyChecksum");
         map.insert(
