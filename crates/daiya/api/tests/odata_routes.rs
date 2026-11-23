@@ -1325,6 +1325,45 @@ async fn store_failures_are_errors_in_every_set_and_action() {
     assert_eq!(answer["responses"][0]["status"], 500);
 }
 
+/// A page ordered by a long title hands back a cursor of a few kilobytes; it is read back,
+/// well inside the 32 KiB a `$skiptoken` may hold.
+#[tokio::test]
+async fn a_cursor_after_a_long_title_is_read_back() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let long = "t".repeat(1_500);
+    let now = jc_time::TimestampTz::now();
+    for i in 0..501 {
+        w.store
+            .inner
+            .upsert_folder(daiya_model::FolderRecord {
+                installation_id: daiya_model::InstallationId::from_u128(1),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                project_id: None,
+                uid: format!("f{i:03}"),
+                parent_uid: None,
+                title: format!("{long}{i:03}"),
+                version: 1,
+                managed_by: None,
+                created_by: "t".into(),
+                updated_by: "t".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+    let first = w.ok("GET", "/odata/v4/Folders?$orderby=title", None).await;
+    let link = first["@odata.nextLink"].as_str().unwrap().to_owned();
+    assert!(link.len() > 2_000, "{}", link.len());
+    let (st, next) = w
+        .call("GET", &format!("/odata/v4/{link}"), Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{next}");
+    assert_eq!(next["value"][0]["uid"], "f500", "{next}");
+}
+
 /// An export stops at 10 000 rows and says how to narrow it, rather than holding a set of any
 /// size in memory.
 #[tokio::test]
