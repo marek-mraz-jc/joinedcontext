@@ -1004,6 +1004,7 @@ mod tests {
         writer.upsert(to.clone()).await.expect("to served");
         let mut kraj = from.publisher.clone();
         kraj.name = "kraj".into();
+        kraj.id = "src-kraj".into();
         store
             .upsert_publisher(&source, kraj)
             .await
@@ -1058,6 +1059,10 @@ mod tests {
             .expect("read")
             .expect("copied");
         assert_eq!(copied.catalogue_id, to.id);
+        assert_eq!(
+            copied.id, "pub-kraj",
+            "the target mints its own id for the copy"
+        );
         let taken = store
             .get_dataset(&target, "taken")
             .await
