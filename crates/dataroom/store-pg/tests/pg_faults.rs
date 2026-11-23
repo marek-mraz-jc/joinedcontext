@@ -7,7 +7,7 @@ mod common;
 
 use common::*;
 use dataroom_core::DataroomError;
-use dataroom_store_pg::{set_tenant_config, verify_rls_on_pool, PgStore};
+use dataroom_store_pg::{set_tenant_config, verify_rls_on_pool, PgStore, REQUIRED_RLS_TABLES};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{AssertSqlSafe, PgPool};
 use std::str::FromStr;
@@ -133,6 +133,29 @@ async fn a_refused_step_is_a_storage_error_naming_it() {
     let msg = storage(PgStore::from_pool_unchecked(pool.clone()).migrate().await);
     assert!(msg.starts_with("advisory lock"), "{msg}");
 
+    pool.close().await;
+    db.drop_it().await;
+}
+
+#[tokio::test]
+async fn a_schema_missing_one_required_table_is_refused_by_its_name() {
+    let Some(db) =
+        Scratch::create("a_schema_missing_one_required_table_is_refused_by_its_name").await
+    else {
+        return;
+    };
+    PgStore::from_pool_unchecked(db.admin.clone())
+        .migrate()
+        .await
+        .expect("migrate");
+    let last = REQUIRED_RLS_TABLES[REQUIRED_RLS_TABLES.len() - 1];
+    db.run(&format!("DROP TABLE dataroom.{last} CASCADE")).await;
+    let pool = db.limited().await;
+    let msg = storage(verify_rls_on_pool(&pool).await);
+    assert!(
+        msg.contains(&format!("dataroom.{last} does not exist")),
+        "{msg}"
+    );
     pool.close().await;
     db.drop_it().await;
 }
