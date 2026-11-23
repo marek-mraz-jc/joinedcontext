@@ -1123,6 +1123,27 @@ mod tests {
         }
     }
 
+    /// A rate refusal keeps its 429 for the anonymous viewer; any other failure reads as fixed
+    /// text that names nothing of the datasource.
+    #[test]
+    fn a_public_query_error_hides_the_cause_but_keeps_a_rate_refusal() {
+        let err = public_query_error(CrError::RateLimited("slow down".into()));
+        assert!(
+            matches!(err, CrError::RateLimited(ref why) if why == "slow down"),
+            "{err}"
+        );
+        let err = public_query_error(CrError::Forbidden("10.0.0.1 refused".into()));
+        assert!(
+            matches!(err, CrError::Forbidden(ref why) if why == SOURCE_REFUSED),
+            "{err}"
+        );
+        let err = public_query_error(CrError::Internal("pg: connection refused".into()));
+        assert!(
+            matches!(err, CrError::OutboundFailed(ref why) if !why.contains("pg")),
+            "{err}"
+        );
+    }
+
     /// A newcomer to a full table takes the place of the oldest window: the table never grows
     /// past its bound.
     #[test]
