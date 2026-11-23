@@ -4289,6 +4289,90 @@ mod tests {
         }
     }
 
+    fn scope(name: &str, attrs: &[(&str, &str)]) -> ClientScopeRepresentation {
+        ClientScopeRepresentation {
+            id: format!("id-{name}"),
+            realm_id: "dev".into(),
+            name: name.into(),
+            protocol: "openid-connect".into(),
+            attributes: attrs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Scope resolution (W1, PRF-08): a scope named twice is granted once, a mapper-only default
+    /// scope is active without a token entry, and a parameterized scope must be on the client and
+    /// match its pattern.
+    #[tokio::test]
+    async fn scopes_are_granted_once_and_parameterized_ones_are_checked() {
+        let state = state();
+        state
+            .store
+            .upsert_realm(RealmConfig {
+                realm: "dev".into(),
+                id: "dev".into(),
+                ..RealmConfig::default()
+            })
+            .await
+            .unwrap();
+        for sc in [
+            scope("hub", &[("include.in.token.scope", "false")]),
+            scope("mcp:portal", &[]),
+            scope(
+                "connector",
+                &[
+                    ("is.parameterized.scope", "true"),
+                    ("parameterized.scope.regexp", "[a-z]{4}"),
+                ],
+            ),
+            scope("device", &[("is.parameterized.scope", "true")]),
+        ] {
+            state.store.upsert_client_scope(sc).await.unwrap();
+        }
+        let realm = named_realm(&state, "dev").await.unwrap();
+        let client = ClientRepresentation {
+            client_id: "app".into(),
+            default_client_scopes: vec!["hub".into(), "profile".into()],
+            optional_client_scopes: vec![
+                "mcp:portal".into(),
+                "connector".into(),
+                "offline_access".into(),
+            ],
+            ..Default::default()
+        };
+        let (active, granted) = resolve_scopes_for_client(
+            &state.store,
+            &realm,
+            &client,
+            Some(
+                "openid profile profile mcp:portal mcp:portal connector:abcd connector:abcd \
+                 jc:read-only jc:read-only offline_access offline_access",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            granted,
+            "openid profile mcp:portal connector:abcd jc:read-only offline_access"
+        );
+        let mut names: Vec<_> = active.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["connector", "hub", "mcp:portal"]);
+
+        for (asked, why) in [
+            ("connector:ab12", "does not match required pattern"),
+            ("device:abc", "Invalid scopes: device:abc"),
+        ] {
+            let err = resolve_scopes_for_client(&state.store, &realm, &client, Some(asked))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(why), "{asked}: {err}");
+        }
+    }
+
     #[tokio::test]
     async fn a_realm_deleted_after_the_active_realm_check_answers_404() {
         let state = state();

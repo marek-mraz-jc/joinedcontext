@@ -294,6 +294,43 @@ async fn a_denied_device_gets_access_denied() {
     );
 }
 
+/// A client without a display name is shown by its client_id, the page speaks the language the
+/// browser asks for, and a decision other than allow or deny is refused.
+#[tokio::test]
+async fn a_nameless_client_is_shown_by_id_and_an_unknown_decision_is_refused() {
+    let (app, store) = app().await;
+    add_public(&store, "nameless", true).await;
+    let mut c = store
+        .get_client_by_client_id("dev", "nameless")
+        .await
+        .unwrap()
+        .unwrap();
+    c.name = None;
+    store.upsert_client(c).await.unwrap();
+    let (_, user_code) = authorize(&app, "nameless").await;
+    let sso = sign_in_at_page(&app, &user_code).await;
+
+    let req = Request::builder()
+        .uri(format!("{PAGE}?user_code={user_code}"))
+        .header(header::COOKIE, &sso)
+        .header(header::ACCEPT_LANGUAGE, "de")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let html = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    assert!(html.contains("lang=\"de\""), "{html}");
+
+    let csrf = page_form(&app, &sso, &user_code).await;
+    let (st, html) = answer(&app, &sso, &csrf, &user_code, None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("nameless"), "{html}");
+    let (st, body) = answer(&app, &sso, &csrf, &user_code, Some("maybe")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("decision is allow or deny"), "{body}");
+}
+
 #[tokio::test]
 async fn only_a_client_the_realm_enables_starts_or_polls_a_device_grant() {
     let (app, store) = app().await;
