@@ -301,6 +301,13 @@ async fn icsr_a_stored_document_that_is_no_grant_of_its_pair_grants_nothing() {
     ] {
         assert_eq!(ops.put_grant_doc(key, doc).await, Ok(false));
     }
+    // a stored pair with an internal Tenant on either side is no grant (C8)
+    for (target, source) in [("antares-views", "a"), ("a", "antares-views")] {
+        let doc = json!({"target": target, "source": source});
+        assert_eq!(ops.put_grant_doc(&format!("{target}~{source}"), doc).await, Ok(false));
+        let held = antares_icsr::held(&ops, target, source).await;
+        assert_eq!(held.map(|g| g.is_some()), Ok(false), "{target}~{source}");
+    }
     for path in ["/q/grants/b/a", "/q/grants/b/c", "/q/grants/b/d"] {
         let a = send(&app, "GET", path, None, None, None).await;
         assert_eq!(a.status, 404, "{path}: {}", a.body);

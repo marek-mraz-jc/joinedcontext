@@ -133,6 +133,11 @@ fn ws_both_surfaces_report_their_limits() {
         assert_eq!(info.pointer("/queued"), Some(&json!(0)), "{name}");
         assert_eq!(needs_view, name != "ws");
     }
+    // the names label each surface's Ops (its metrics and logs), one per surface
+    assert_eq!(
+        [Ws::process().name(), ViewWs::process().name(), StaMqtt::process().name()],
+        ["ws", "ws-views", "sta-mqtt"]
+    );
     assert_eq!(Ws::process().prefix(), "/x/ws");
 }
 
