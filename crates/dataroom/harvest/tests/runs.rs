@@ -839,6 +839,38 @@ async fn a_withdrawn_harvested_record_comes_back_when_the_source_lists_it_again(
 }
 
 #[tokio::test]
+async fn of_two_held_copies_of_an_item_the_active_one_is_the_one_compared() {
+    let w = world(&[]).await;
+    let base = "https://ckan.remote.example";
+    let src = source("ckan-action", "remote", base, &["ckan.remote.example"]);
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{base}/api/3/action/package_search?rows=1000&start=0"),
+        Some("application/json"),
+        ckan_page(1, vec![ckan_package("r-1", "remote-air", "Air")]),
+    );
+    let e = engine(&f);
+    e.run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("first run");
+    // A withdrawn copy of the same item under another name, as an older run left it.
+    let held = w.store.list_datasets(&w.ctx).await.unwrap();
+    let name = held[0].name.clone();
+    let mut copy = held[0].clone();
+    copy.id = "id-old-copy".into();
+    copy.name = format!("{name}-old");
+    copy.state = RecordState::Withdrawn;
+    copy.distributions.clear();
+    w.store.upsert_dataset(&w.ctx, copy).await.unwrap();
+    let run = e
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("second run");
+    assert_eq!((run.created_count, run.unchanged_count), (0, 1), "{run:?}");
+    assert_eq!(active_names(&w).await, [name]);
+}
+
+#[tokio::test]
 async fn a_run_needs_its_catalogue_and_its_publisher() {
     let w = world(&[]).await;
     let f = MapFetcher::new();
