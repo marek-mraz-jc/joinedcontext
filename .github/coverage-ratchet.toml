@@ -21,7 +21,7 @@
 "antares-wasm" = { lines = 94.40, functions = 100.00 }
 "antares-ws" = { lines = 99.03, functions = 99.18 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
-"daiya-expr" = { lines = 99.20, functions = 100.00 }
+"daiya-expr" = { lines = 99.25, functions = 100.00 }
 "daiya-import" = { lines = 99.29, functions = 99.29 }
 "daiya-model" = { lines = 99.80, functions = 99.10 }
 "daiya-query" = { lines = 99.05, functions = 99.78 }

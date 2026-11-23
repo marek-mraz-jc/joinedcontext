@@ -339,6 +339,87 @@ async fn a_repository_without_a_retired_app_removes_no_namespace() {
     assert!(namespaces.is_empty(), "{namespaces:?}");
 }
 
+/// PF-74, AP-116: an App over its project's quota is not deployed and says so; a resource of
+/// another kind beside it, and a `ui` or `wasm` App, put no pod and no namespace anywhere.
+#[tokio::test]
+async fn an_app_over_quota_and_the_apps_without_a_pod_deploy_nothing() {
+    let api = cluster().await;
+    let (repository, root) = scratch(
+        "quota",
+        &[
+            ("air", "ovzdusie", "fullstack", "published"),
+            ("site", "doprava", "ui", "published"),
+            ("notes", "doprava", "wasm", "retired"),
+        ],
+    );
+    std::fs::write(
+        root.join("projects/ovzdusie/apps/space.yaml"),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec: {}\n",
+    )
+    .expect("a further resource");
+    drop(repository);
+    let repository = Repository::load(&root).expect("the repository loads");
+    let beyond = [("ovzdusie".to_owned(), "air".to_owned())].into();
+    let report = converger(&api, settings())
+        .converge(&repository, &beyond)
+        .await;
+    let _ = std::fs::remove_dir_all(&root);
+    let air = report
+        .iter()
+        .find(|(id, _)| id.contains("air"))
+        .expect("a line for air");
+    assert!(
+        matches!(&air.1, Ok(Outcome::Skipped(why)) if why.contains("quota")),
+        "{air:?}"
+    );
+    assert!(
+        !report.iter().any(|(id, _)| id == "namespace doprava"),
+        "{report:?}"
+    );
+    let requests = api.received_requests().await.expect("recorded");
+    assert!(
+        !calls(&requests, "PATCH")
+            .iter()
+            .any(|p| p.contains("/deployments/")),
+        "no pod for an App over its quota"
+    );
+    assert!(
+        !calls(&requests, "DELETE").contains(&"/api/v1/namespaces/dev-doprava-apps".to_owned()),
+        "a retired wasm App ends no namespace"
+    );
+}
+
+/// AP-116: without the Portal's ServiceAccount nothing can be bound in a project's namespace,
+/// so the namespace says why and the App waits; the cluster is not written.
+#[tokio::test]
+async fn without_a_service_account_the_namespace_is_skipped_and_the_app_waits() {
+    let api = cluster().await;
+    let (repository, root) = scratch("nosa", &[("air", "ovzdusie", "fullstack", "published")]);
+    let report = converger(
+        &api,
+        Settings {
+            service_account: None,
+            ..settings()
+        },
+    )
+    .converge(&repository, &Default::default())
+    .await;
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        report.iter().any(|(id, o)| id == "namespace ovzdusie"
+            && matches!(o, Ok(Outcome::Skipped(why)) if why.contains("JC_PORTAL_SERVICE_ACCOUNT"))),
+        "{report:?}"
+    );
+    assert!(
+        report
+            .iter()
+            .any(|(_, o)| matches!(o, Ok(Outcome::Skipped(why)) if why.contains("not ready"))),
+        "{report:?}"
+    );
+    let requests = api.received_requests().await.expect("recorded");
+    assert!(calls(&requests, "PATCH").is_empty());
+}
+
 #[tokio::test]
 async fn without_a_release_or_a_pull_secret_no_app_is_deployed_and_each_says_why() {
     for (tag, settings, reason) in [
@@ -388,6 +469,58 @@ async fn without_a_release_or_a_pull_secret_no_app_is_deployed_and_each_says_why
             "no app object without its namespace"
         );
     }
+}
+
+/// AP-108: a pull Secret that holds no data is no pull Secret, so the namespace is not ready and
+/// no app object goes into it.
+#[tokio::test]
+async fn a_pull_secret_without_data_leaves_the_namespace_not_ready() {
+    let api = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/namespaces/joinedcontext/secrets/empty"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": { "name": "empty", "namespace": "joinedcontext" },
+            "type": "kubernetes.io/dockerconfigjson",
+        })))
+        .mount(&api)
+        .await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "kind": "Status" })))
+        .mount(&api)
+        .await;
+    let (repository, root) = scratch(
+        "emptypull",
+        &[("air", "ovzdusie", "fullstack", "published")],
+    );
+    let report = converger(
+        &api,
+        Settings {
+            pull_secret: Some("empty".into()),
+            ..settings()
+        },
+    )
+    .converge(&repository, &Default::default())
+    .await;
+    let _ = std::fs::remove_dir_all(&root);
+    let namespace = report
+        .iter()
+        .find(|(id, _)| id == "namespace ovzdusie")
+        .expect("a namespace line");
+    let said = namespace
+        .1
+        .as_ref()
+        .map(|o| format!("{o:?}"))
+        .unwrap_or_else(|err| err.to_string());
+    assert!(
+        said.contains("the pull secret empty is not in joinedcontext"),
+        "{said}"
+    );
+    let requests = api.received_requests().await.expect("recorded");
+    assert!(!calls(&requests, "PATCH")
+        .iter()
+        .any(|p| p.contains("/deployments/")));
 }
 
 #[tokio::test]

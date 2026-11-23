@@ -612,6 +612,9 @@ mod tests {
             ("INSERT INTO t VALUES ('open", "an unterminated string"),
             ("CREATE TABLE t (x text DEFAULT U&\"set\\005fconfig\"('role', 'x', true))", "a Unicode-escaped name or string (U&)"),
             ("CREATE TABLE t (x text DEFAULT u&'\\0041')", "a Unicode-escaped name or string (U&)"),
+            ("CREATE AGGREGATE a (sfunc = f, stype = int)", "an aggregate, operator or cast"),
+            ("CREATE TABLE \"a\"\"b\" (x int); DO 'x'", "a DO block"),
+            ("CREATE TABLE \"open (x int)", "an unterminated quoted name"),
         ] {
             assert_eq!(refused_in(sql), Some(what), "{sql}");
         }
@@ -633,6 +636,7 @@ mod tests {
             "INSERT INTO notes (body) VALUES ('create function; do; set role x; set_config'), (E'it''s \\' do')",
             "-- create function f\n/* do /* nested */ set role */ CREATE TABLE \"do\" (\"set\" int)",
             "COMMENT ON TABLE notes IS 'Trigger warnings live here'",
+            "PREPARE add (text) AS INSERT INTO notes (body) VALUES ($1)",
         ] {
             assert_eq!(refused_in(sql), None, "{sql}");
         }

@@ -736,10 +736,9 @@ fn app_container(
         },
         "volumeMounts": [{ "name": "tmp-app", "mountPath": "/tmp" }],
     });
-    // A ui-rust image is the binary at `/app` and nothing else, no entrypoint (AP-105).
-    if spec.class == jc_core::kinds::AppClass::UiRust {
-        container["command"] = json!(["/app"]);
-    }
+    // A ui-rust image is the binary at `/app` and nothing else, no entrypoint (AP-105); ui-rust
+    // is the one class that runs in a pod.
+    container["command"] = json!(["/app"]);
     container
 }
 

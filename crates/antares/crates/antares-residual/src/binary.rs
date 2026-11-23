@@ -95,6 +95,10 @@ mod tests {
         }
         assert_eq!(decode_base64(""), Some(Vec::new()));
         assert_eq!(decode_base64("AQID"), Some(vec![1, 2, 3]));
+        // padding is optional, but when present it completes a quantum
+        assert_eq!(decode_base64("dGVzdA"), Some(b"test".to_vec()));
+        assert_eq!(decode_base64("dGVzdA=="), Some(b"test".to_vec()));
+        assert_eq!(decode_base64("dGVzdA="), None);
         for bad in [
             "A",
             "AB=",
