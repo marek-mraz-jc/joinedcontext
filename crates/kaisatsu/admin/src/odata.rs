@@ -14,7 +14,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use jc_router::Mount;
 use kaisatsu_core::*;
-use odata_table::{Operation, allowed, export, key_options, query};
+use odata_table::{Operation, allowed, key_options};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -125,7 +125,9 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
     };
 
     let Some(container_at) = text.find("<EntityContainer") else {
-        return Err(KaisatsuError::Storage("CSDL has no entity container".into()));
+        return Err(KaisatsuError::Storage(
+            "CSDL has no entity container".into(),
+        ));
     };
     let line_start = text[..container_at].rfind('\n').map_or(0, |i| i + 1);
     let indent = text[line_start..container_at].to_owned();
@@ -192,7 +194,9 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
     }
     text.insert_str(line_start, &ops_xml);
     let Some(close) = text.find("</EntityContainer>") else {
-        return Err(KaisatsuError::Storage("CSDL entity container is empty".into()));
+        return Err(KaisatsuError::Storage(
+            "CSDL entity container is empty".into(),
+        ));
     };
     let close_line = text[..close].rfind('\n').map_or(0, |i| i + 1);
     text.insert_str(close_line, &imports);
@@ -678,7 +682,6 @@ async fn odata_set_export(
             None => break,
         }
     }
-    let _ = export::<odata_table::MemoryTable>;
     Ok(Json(all_rows))
 }
 
@@ -718,6 +721,5 @@ async fn odata_set_allowed(
         .unwrap_or_default();
     let table = odata_table::MemoryTable::new(info, ans.rows)?;
     let dec = allowed(&table, &scope, op, key_val.as_ref()).await?;
-    let _ = query::<odata_table::MemoryTable>;
     Ok(Json(dec.to_json()))
 }

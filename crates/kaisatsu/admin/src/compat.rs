@@ -960,8 +960,10 @@ fn realm_with_update(stored: RealmConfig, body: Value) -> Result<RealmConfig> {
             "send the realm as a JSON object, for example {\"displayName\": \"City\"}".into(),
         ));
     };
-    let mut doc = serde_json::to_value(&stored)
-        .map_err(|e| KaisatsuError::Storage(format!("realm encode: {e}")))?;
+    let mut doc = match serde_json::to_value(&stored) {
+        Ok(doc) => doc,
+        Err(e) => return Err(KaisatsuError::Storage(format!("realm encode: {e}"))),
+    };
     if let Value::Object(fields) = &mut doc {
         fields.extend(update);
     }
@@ -1288,7 +1290,9 @@ async fn compat_create_user(
     }
     let created = state.oidc.store.create_user(user).await?;
     let Some(member_add) = state.registry.find("member_add") else {
-        return Err(KaisatsuError::NotSupported("unknown operation member_add".into()));
+        return Err(KaisatsuError::NotSupported(
+            "unknown operation member_add".into(),
+        ));
     };
     for group_id in joins {
         crate::operations::execute(
@@ -4035,7 +4039,9 @@ async fn run_registry_op(
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
     let Some(op) = state.registry.find(name) else {
-        return Err(KaisatsuError::NotSupported(format!("unknown operation {name}")));
+        return Err(KaisatsuError::NotSupported(format!(
+            "unknown operation {name}"
+        )));
     };
     crate::operations::execute(state, &mount, &ctx, op, key, params).await
 }

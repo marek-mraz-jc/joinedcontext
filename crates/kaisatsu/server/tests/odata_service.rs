@@ -658,7 +658,10 @@ async fn credential_and_registry_operations_refuse_with_a_reason() {
     // Allowed names an unknown operation and a set it does not judge.
     for (q, needle) in [
         ("operation='frobnicate'", "unknown operation: frobnicate"),
-        ("operation='read',object='Nonsense'", "does not judge objects of Nonsense"),
+        (
+            "operation='read',object='Nonsense'",
+            "does not judge objects of Nonsense",
+        ),
     ] {
         let (st, _, err, raw) = api
             .call(Method::GET, &format!("{BASE}/Allowed({q})"), &admin, None)
@@ -1102,7 +1105,11 @@ async fn self_service_actions_and_honest_not_implemented() {
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{raw}");
-    let stored = api.store.list_webauthn_credentials("dev", ANALYST).await.unwrap();
+    let stored = api
+        .store
+        .list_webauthn_credentials("dev", ANALYST)
+        .await
+        .unwrap();
     let pk = stored
         .iter()
         .find(|c| c.credential_id == b64url(b"odata-passkey-1"))
@@ -1151,9 +1158,19 @@ async fn self_service_actions_and_honest_not_implemented() {
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{raw}");
-    let stored = api.store.list_webauthn_credentials("dev", ANALYST).await.unwrap();
-    let pk2 = stored.iter().find(|c| c.user_label.as_deref() == Some("Laptop")).unwrap();
-    assert_eq!((pk2.rp_id.as_str(), pk2.user_handle.as_str()), ("example.test", handle.as_str()));
+    let stored = api
+        .store
+        .list_webauthn_credentials("dev", ANALYST)
+        .await
+        .unwrap();
+    let pk2 = stored
+        .iter()
+        .find(|c| c.user_label.as_deref() == Some("Laptop"))
+        .unwrap();
+    assert_eq!(
+        (pk2.rp_id.as_str(), pk2.user_handle.as_str()),
+        ("example.test", handle.as_str())
+    );
     // An attestation signed for another rp id is refused.
     let c = passkey_challenge(&api, &me, "example.test").await;
     body["credential"] = passkey_registration(&c, "idm.dev.example.test", b"odata-passkey-3");
@@ -1263,6 +1280,65 @@ async fn self_service_actions_and_honest_not_implemented() {
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert_eq!(err["error"]["code"], "invalid-request");
+}
+
+/// Malformed function parameters, POST to an entity, paging and the export cap answer with the
+/// reason a caller can act on.
+#[tokio::test]
+async fn odata_parameters_paging_and_export_cap() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    for (uri, needle) in [
+        (
+            format!("{BASE}/Allowed(operation)"),
+            "malformed function parameters",
+        ),
+        (format!("{BASE}/Allowed(operation=abc)"), "bad literal abc"),
+        (format!("{BASE}/Allowed(%20=1)"), "empty parameter name"),
+    ] {
+        let (st, _, err, raw) = api.call(Method::GET, &uri, &admin, None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {raw}");
+        assert!(err.to_string().contains(needle), "{uri}: {err}");
+    }
+    let (st, _, err, _) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')"),
+            &admin,
+            Some(json!({ "username": "x@hel.fi" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(
+        err.to_string().contains("POST goes to the collection"),
+        "{err}"
+    );
+
+    // More people than one page: the page links the next one.
+    for n in 0..5_001 {
+        api.store
+            .create_user(UserRepresentation {
+                id: format!("bulk-{n}"),
+                realm_id: "dev".into(),
+                username: format!("bulk.{n}@example.test"),
+                enabled: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let (st, _, page, raw) = api
+        .call(Method::GET, &format!("{BASE}/People"), &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    let next = page["@odata.nextLink"].as_str().expect("next link");
+    assert!(next.contains("/odata/People?$skiptoken="), "{next}");
+    // The export stops at 5000 rows and says how to narrow it.
+    let (st, _, err, _) = api
+        .call(Method::GET, &format!("{BASE}/People/$export"), &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(err.to_string().contains("narrow it with $filter"), "{err}");
 }
 
 #[tokio::test]
