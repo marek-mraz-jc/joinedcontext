@@ -181,23 +181,16 @@ async fn shako(tmp: &tempfile::TempDir) -> Shako {
     )
     .await
     .expect("disk path");
-    let tagged = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&disk)
-        .args(["tag", "v1", &first])
-        .status()
-        .expect("git runs");
-    assert!(tagged.success());
-    let root = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&disk)
-        .args(["rev-list", "--max-parents=0", "main"])
-        .output()
-        .expect("git runs");
-    let root = String::from_utf8(root.stdout)
-        .expect("utf-8")
-        .trim()
-        .to_owned();
+    // A lightweight tag is a loose ref of the bare repository.
+    std::fs::create_dir_all(disk.join("refs/tags")).expect("tags dir");
+    std::fs::write(disk.join("refs/tags/v1"), format!("{first}\n")).expect("tag");
+    // The first commit's parent is the repository's root commit (auto_init's README).
+    let root = shako_git::read_commit_info(&disk, &first)
+        .expect("first commit")
+        .parent_shas
+        .first()
+        .cloned()
+        .expect("a parent");
     Shako {
         root,
         app: web_router().with_state(state),
