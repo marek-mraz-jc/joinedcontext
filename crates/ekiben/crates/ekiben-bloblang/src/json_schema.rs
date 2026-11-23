@@ -469,6 +469,43 @@ mod tests {
         );
     }
 
+    /// A chain of `levels` definitions, each wrapping a `$ref` to the next in `key` (or a bare
+    /// `$ref`), and a document nested as deep where the chain walks properties. Each `$ref` and each
+    /// wrapper is one level, so serde_json's own nesting limit is never what refuses it.
+    fn chain(key: &str, levels: usize) -> (String, serde_json::Value) {
+        let mut defs = serde_json::Map::new();
+        for i in 0..levels {
+            let r = serde_json::json!({ "$ref": format!("#/definitions/d{}", i + 1) });
+            let d = match key {
+                "$ref" => r,
+                "properties" => serde_json::json!({ "properties": { "a": r } }),
+                other => serde_json::json!({ other: [r] }),
+            };
+            defs.insert(format!("d{i}"), d);
+        }
+        defs.insert(format!("d{levels}"), serde_json::json!({}));
+        let schema = serde_json::json!({ "definitions": defs, "$ref": "#/definitions/d0" });
+        let doc = (0..levels).fold(serde_json::json!(1), |d, _| serde_json::json!({ "a": d }));
+        (schema.to_string(), doc)
+    }
+
+    #[test]
+    fn nesting_is_allowed_to_the_limit_and_refused_past_it() {
+        let over = Err("json schema: exceeded maximum nesting".to_string());
+        // The root `$ref` is one level: MAX_DEPTH - 1 more reach the limit exactly.
+        let (ok, doc) = chain("$ref", MAX_DEPTH - 1);
+        assert_eq!(run(&ok, doc), Ok(()));
+        let (deep, doc) = chain("$ref", MAX_DEPTH);
+        assert_eq!(run(&deep, doc), over);
+        // A wrapper and its `$ref` are two levels each.
+        for key in ["properties", "allOf", "anyOf"] {
+            let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
+            assert_eq!(run(&ok, doc), Ok(()), "{key}");
+            let (deep, doc) = chain(key, MAX_DEPTH / 2);
+            assert_eq!(run(&deep, doc), over, "{key}");
+        }
+    }
+
     #[test]
     fn refs_resolve_locally_and_a_cycle_or_missing_key_is_an_error() {
         assert_eq!(
