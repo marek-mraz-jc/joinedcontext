@@ -129,6 +129,11 @@ fn storage(e: sqlx::Error) -> KaisatsuError {
     KaisatsuError::Storage(format!("postgres: {e}"))
 }
 
+/// A boot check whose catalog query failed, naming the check.
+fn boot_query_failed(check: &'static str) -> impl FnOnce(sqlx::Error) -> KaisatsuError {
+    move |e| KaisatsuError::Storage(format!("boot check {check} query failed: {e}"))
+}
+
 fn encode_err(e: serde_json::Error) -> KaisatsuError {
     KaisatsuError::Storage(format!("cannot encode record: {e}"))
 }
@@ -1568,7 +1573,8 @@ impl Store for PgStore {
                 }
             }
             jc_audit::commit(tx).await.map_err(storage)?;
-            first.ok_or_else(|| KaisatsuError::Storage("group upsert wrote nothing".into()))
+            // the stack starts with the group itself, so `first` is always set here
+            first.ok_or(KaisatsuError::Storage("group upsert wrote nothing".into()))
         })
     }
 
@@ -4467,7 +4473,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check ownership query failed: {e}")))?;
+    .map_err(boot_query_failed("ownership"))?;
 
     if owned_tables > 0 {
         return Err(KaisatsuError::Storage(format!(
@@ -4482,7 +4488,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check grant query failed: {e}")))?;
+    .map_err(boot_query_failed("grant"))?;
 
     if external_grants > 0 {
         return Err(KaisatsuError::Storage(format!(
@@ -4496,7 +4502,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check schema query failed: {e}")))?;
+    .map_err(boot_query_failed("schema"))?;
     if tables == 0 {
         return Err(KaisatsuError::Storage(
             "boot check refused: schema kaisatsu has no tables; run `kaisatsu migrate` first (W2)"
@@ -4515,7 +4521,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check RLS query failed: {e}")))?;
+    .map_err(boot_query_failed("RLS"))?;
 
     if !unforced.is_empty() {
         return Err(KaisatsuError::Storage(format!(

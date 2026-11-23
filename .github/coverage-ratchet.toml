@@ -21,10 +21,17 @@
 "daiya-server" = { lines = 99.07, functions = 100.00 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
+"ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
 "ekiben-io-s3" = { lines = 99.02, functions = 100.00 }
 "ekiben-js" = { lines = 99.62, functions = 100.00 }
 "ekiben-parquet" = { lines = 99.68, functions = 100.00 }
 "ekiben-protobuf" = { lines = 99.91, functions = 100.00 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
+"kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
 "linkml-model" = { lines = 99.90, functions = 99.60 }
+"ngsild-jsonld" = { lines = 99.05, functions = 99.33 }
+"ngsild-matcher" = { lines = 100.00, functions = 100.00 }
+"ngsild-model" = { lines = 99.87, functions = 100.00 }
+"ngsild-ql" = { lines = 99.69, functions = 99.33 }
+"ngsild-residual" = { lines = 99.92, functions = 100.00 }

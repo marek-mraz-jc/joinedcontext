@@ -18,4 +18,19 @@ exclude_re = [
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
+  # ekiben-io-amqp read_batch: RabbitMQ refuses a message over its max_message_size (16 MiB by
+  # default) at publish, so no test broker can deliver one past MAX_MESSAGE_BYTES (64 MiB); the
+  # size guard and its reject serve brokers configured above 64 MiB (T-7580).
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace match guard d\.data\.len\(\) > MAX_MESSAGE_BYTES with false in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace > with (==|>=) in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: delete ! in <impl Input for AmqpInput>::read_batch',
+  # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
+  # way, since order() has no ordering between a Boolean and any other kind (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',
+  # ngsild-residual pow: the exact 1/b^e arm exists for platforms whose powf is not correctly
+  # rounded; on glibc powf gives the same bits for every integer case (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: delete match arm \(Val::Int\(b\), Val::Int\(e\)\) in call',
+  # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
+  # way, so the guard `if class` changes nothing observable (T-7599).
+  'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
 ]
