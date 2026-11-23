@@ -1368,7 +1368,7 @@ mod complexity_tests {
             assert!(check_type_selection(ok).is_ok(), "{ok}");
         }
         for bad in [
-            "(A;)", "A;", ";A", "()", "A,", ",A", "A;;B", "(A;B", "A)", "((A))", "",
+            "(A;)", "A;", ";A", "A;B", "()", "A,", ",A", "A;;B", "(A;B", "A)", "((A))", "",
         ] {
             assert!(check_type_selection(bad).is_err(), "{bad}");
         }

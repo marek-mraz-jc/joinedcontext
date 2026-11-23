@@ -1211,14 +1211,17 @@
       if (typeof data.turn === "string") item.resumable = data.turn;
     } else if (name === "stage" && item.status) {
       (item.stages = item.stages || []).push(Object.assign({}, data, { ms: Date.now() - (item.startedMs || Date.now()) }));
-      var line = JCRender.stage(data, lang);
+      var line = JCRender.live(data, lang);
       if (line) {
-        item.status.textContent = line;
+        liveStep(item, line, data.stage === "reading" || data.stage === "history" ? JCRender.liveKey(data)
+          : data.stage === "checking" ? "checking" : null);
         item.staged = true;
       }
     } else if (name === "tool" && data.status === "started" && item.status && !item.staged) {
       // A visitor's stream names no Endpoint (T-4654), and a tool's own name is no word for them.
-      item.status.textContent = w.reading + (data.endpoint ? " " + data.endpoint : "") + "…";
+      liveStep(item, w.reading + (data.endpoint ? " " + data.endpoint : "") + "…", null);
+    } else if (name === "tool" && data.status === "failed" && item.status) {
+      liveFailed(item);
     } else if (name === "script") {
       var details = el("details", "jc-script");
       details.appendChild(el("summary", "", w.script));
@@ -1262,6 +1265,7 @@
     } else if (name === "step") {
       // A read of the answer, listed under it by its source, query and count (T-4801).
       (item.reads = item.reads || []).push(data);
+      if (item.status) liveEnd(item, data);
     } else if (name === "followups") {
       chips(item, JCRender.followups(data));
       // Kept with the answer, so a page change shows them again under the last one (T-4685).
@@ -1273,6 +1277,76 @@
     } else if (name === "error") {
       fail(item, JCRender.trouble(data.status, data.title), data.detail);
     }
+  }
+
+  // The pending answer (T-7753): an answer-shaped bubble with an animated indicator, the newest
+  // step in full, the earlier ones ticked under it and the seconds since the question from 3 s
+  // on. Only the step line is live, so a screen reader hears each step once and never a second.
+  function progress(item) {
+    var box = el("div", "jc-progress");
+    var dots = box.appendChild(el("span", "jc-dots"));
+    dots.setAttribute("aria-hidden", "true");
+    for (var i = 0; i < 3; i++) dots.appendChild(el("i"));
+    var now = box.appendChild(el("p", "jc-now", w.thinking));
+    now.setAttribute("role", "status");
+    var clock = box.appendChild(el("span", "jc-elapsed"));
+    clock.setAttribute("aria-hidden", "true");
+    var done = box.appendChild(el("ol", "jc-done"));
+    item.appendChild(box);
+    item.status = box;
+    item.live = { now: now, done: done, steps: [] };
+    var tick = setInterval(function () {
+      if (!box.isConnected) return clearInterval(tick);
+      clock.textContent = JCRender.elapsed(Date.now() - item.startedMs) || "";
+    }, 1000);
+  }
+
+  // A new step: the previous one moves to the ticked list, the new one fills the line.
+  function liveStep(item, line, key) {
+    var track = item.live;
+    if (!track) return;
+    var last = track.steps[track.steps.length - 1];
+    if (last && last.line === line) return;
+    // A check's verdict replaces its own line.
+    if (last && key === "checking" && last.key === key) {
+      last.line = line;
+      track.now.textContent = line;
+      return;
+    }
+    if (last) last.li = tickStep(track.done, last);
+    track.steps.push({ line: line, key: key, end: null, failed: false });
+    track.now.textContent = line;
+  }
+
+  function tickStep(list, step) {
+    var li = step.li || list.appendChild(el("li"));
+    li.className = step.failed ? "jc-failed" : "";
+    li.textContent = (step.failed ? JCRender.failedLine(step.line, lang) : step.line.replace(/…$/, "")) +
+      (step.end ? " · " + step.end : "");
+    return li;
+  }
+
+  // A read's end: its row count and time beside its line, wherever the line is now.
+  function liveEnd(item, data) {
+    var track = item.live;
+    var end = JCRender.ended(data, lang);
+    if (!track || !end) return;
+    var key = JCRender.liveKey(data);
+    var step = track.steps.filter(function (s) { return s.key === key && !s.end; })[0];
+    if (!step) return;
+    step.end = end;
+    if (step === track.steps[track.steps.length - 1]) track.now.textContent = step.line.replace(/…$/, "") + " · " + end;
+    else if (step.li) tickStep(track.done, step);
+  }
+
+  // A failed step says so on its own line; the answer goes on without it.
+  function liveFailed(item) {
+    var track = item.live;
+    var step = track && track.steps.filter(function (s) { return !s.end && !s.failed; }).pop();
+    if (!step) return;
+    step.failed = true;
+    if (step === track.steps[track.steps.length - 1]) track.now.textContent = JCRender.failedLine(step.line, lang);
+    else if (step.li) tickStep(track.done, step);
   }
 
   // The collapsed list of the steps an answer took, made again when its stage times arrive.
@@ -1475,10 +1549,8 @@
     item.question = question;
     item.askedAt = askedAt;
     item.askedTime = time;
-    item.status = el("p", "jc-status", w.thinking);
-    item.status.setAttribute("role", "status");
-    item.appendChild(item.status);
     item.startedMs = Date.now();
+    progress(item);
     run(item, function (signal) { return ask(question, item, signal); });
   }
 

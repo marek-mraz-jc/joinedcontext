@@ -1193,6 +1193,11 @@ fn utc_second(at: time::OffsetDateTime) -> String {
     )
 }
 
+/// Whether a step's filter names an entity by its URN, which a visitor is never shown (T-4654).
+fn names_an_id(filter: &str) -> bool {
+    filter.to_ascii_lowercase().contains("urn:")
+}
+
 /// One event as the stream sends it. An anonymous channel's visitor gets no internals (T-4654):
 /// no Endpoint slug on a tool or a table, and a `done` without tokens, calls, providers or cost;
 /// those stay in the log, the usage and the timings (`record`).
@@ -1209,10 +1214,24 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
             }
             ("tool", data)
         }
-        Event::Stage { stage, topic } => {
-            let mut data = json!({"stage": stage});
-            if let Some(topic) = topic {
+        Event::Stage {
+            stage,
+            topic,
+            detail,
+        } => {
+            let mut data = json!(detail);
+            data["stage"] = json!(stage);
+            // A schema step's topic is its Endpoint's slug: a visitor reads its title (T-7753).
+            if let Some(topic) = topic
+                .as_ref()
+                .filter(|_| !(anonymous && *stage == "schema"))
+            {
                 data["topic"] = json!(topic);
+            }
+            if anonymous && detail.filter.as_deref().is_some_and(names_an_id) {
+                if let Some(d) = data.as_object_mut() {
+                    d.remove("filter");
+                }
             }
             ("stage", data)
         }
@@ -1230,7 +1249,15 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
         Event::Answer(text) => ("answer", json!({"text": text})),
         Event::Citations(citations) => ("citations", json!(citations)),
         Event::Followups(questions) => ("followups", json!({"questions": questions})),
-        Event::Step(step) => ("step", json!(step)),
+        Event::Step(step) => {
+            let mut data = json!(step);
+            if anonymous && step.q.as_deref().is_some_and(names_an_id) {
+                if let Some(d) = data.as_object_mut() {
+                    d.remove("q");
+                }
+            }
+            ("step", data)
+        }
         Event::Error {
             status,
             title,
@@ -2408,6 +2435,92 @@ mod tests {
             format!("{:?}", sse(&table, true)).contains("ovzdusie"),
             "the dataset link stays"
         );
+    }
+
+    /// T-7753: each step kind's stage carries what it does in words, and a visitor's stream keeps
+    /// no Endpoint slug or URN in it (T-4654), one assertion per step kind.
+    #[test]
+    fn each_step_says_what_it_does_and_a_visitor_sees_no_internal_id() {
+        let staged =
+            |stage: &'static str, topic: Option<&str>, detail: agent::Detail| Event::Stage {
+                stage,
+                topic: topic.map(str::to_owned),
+                detail,
+            };
+        let shown = |event: &Event, anonymous: bool| {
+            format!("{:?}", sse(event, anonymous)).replace('\\', "")
+        };
+        let counted = |count: u64| agent::Detail {
+            count: Some(count),
+            ..Default::default()
+        };
+        let read = agent::Detail {
+            source: Some("BBSK bridge register".into()),
+            filter: Some("yearBuilt<1950".into()),
+            ..Default::default()
+        };
+        let searching = staged("searching", Some("bridges BBSK"), counted(412));
+        assert!(shown(&searching, true).contains(r#""count":412"#));
+        assert!(shown(&searching, true).contains("bridges BBSK"));
+        let reading = staged("reading", Some("Bridge"), read.clone());
+        for anonymous in [true, false] {
+            let line = shown(&reading, anonymous);
+            assert!(
+                line.contains("BBSK bridge register") && line.contains("yearBuilt<1950"),
+                "{line}"
+            );
+        }
+        let by_id = agent::Detail {
+            filter: Some("refBridge==\"urn:ngsi-ld:Bridge:42\"".into()),
+            ..read.clone()
+        };
+        for stage in ["reading", "history"] {
+            let event = staged(stage, Some("Bridge"), by_id.clone());
+            assert!(
+                !shown(&event, true).contains("urn:"),
+                "{}",
+                shown(&event, true)
+            );
+            assert!(shown(&event, false).contains("urn:ngsi-ld:Bridge:42"));
+        }
+        let schema = staged("schema", Some("mosty-bbsk"), read.clone());
+        assert!(
+            !shown(&schema, true).contains("mosty-bbsk"),
+            "{}",
+            shown(&schema, true)
+        );
+        assert!(shown(&schema, true).contains("BBSK bridge register"));
+        assert!(shown(&schema, false).contains("mosty-bbsk"));
+        let checking = staged(
+            "checking",
+            None,
+            agent::Detail {
+                verdict: Some("answers"),
+                ..counted(6)
+            },
+        );
+        assert!(shown(&checking, true).contains(r#""verdict":"answers""#));
+        assert!(shown(&checking, true).contains(r#""count":6"#));
+        let answering = staged("answering", None, counted(3));
+        assert!(shown(&answering, true).contains(r#""count":3"#));
+        let mut end = agent::Step {
+            source: Some("BBSK bridge register".into()),
+            entity_type: Some("Bridge".into()),
+            q: Some("id==\"urn:ngsi-ld:Bridge:42\"".into()),
+            count: Some(1651),
+            ms: Some(800),
+            ..Default::default()
+        };
+        let step = Event::Step(end.clone());
+        assert!(shown(&step, true).contains(r#""ms":800"#));
+        assert!(
+            !shown(&step, true).contains("urn:"),
+            "{}",
+            shown(&step, true)
+        );
+        assert!(shown(&step, false).contains("urn:ngsi-ld:Bridge:42"));
+        end.q = Some("yearBuilt<1950".into());
+        assert!(shown(&Event::Step(end), true).contains("yearBuilt<1950"));
     }
 
     /// T-3059: the per-client key is the address the edge appended, past the cluster's own

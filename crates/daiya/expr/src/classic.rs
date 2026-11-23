@@ -330,6 +330,65 @@ mod tests {
         assert!(classic_reduce("p95", &p).is_err());
     }
 
+    /// A median of an even count averages the middle pair; of an odd count it is the middle.
+    /// Of equal minima or maxima the first one seen stays (the sign of a zero shows which).
+    #[test]
+    fn median_parity_and_ties_keep_the_first_seen() {
+        let r = |name: &str, v: &[Option<f64>]| classic_reduce(name, &pts(v)).unwrap();
+        assert_eq!(r("median", &[Some(3.0), Some(1.0)]), Some(2.0));
+        assert_eq!(r("median", &[Some(7.0)]), Some(7.0));
+        for name in ["min", "max"] {
+            let got = r(name, &[Some(0.0), Some(-0.0)]).expect("a value");
+            assert!(got == 0.0 && got.is_sign_positive(), "{name}: {got:?}");
+        }
+    }
+
+    /// Every comparison evaluator against a threshold of 2, below, at and above it.
+    #[test]
+    fn comparison_evaluators_truth_table() {
+        let table = [
+            ("gt", [false, false, true]),
+            ("lt", [true, false, false]),
+            ("eq", [false, true, false]),
+            ("ne", [true, false, true]),
+            ("gte", [false, true, true]),
+            ("lte", [true, true, false]),
+        ];
+        for (ty, want) in table {
+            for (x, w) in [1.0, 2.0, 3.0].into_iter().zip(want) {
+                assert_eq!(
+                    eval_classic_value(ty, &[2.0], Some(x)).unwrap(),
+                    w,
+                    "{ty} {x}"
+                );
+            }
+        }
+    }
+
+    /// Every range evaluator over [1, 3], the bounds in either order, at each bound, between
+    /// them and outside on both sides.
+    #[test]
+    fn range_evaluators_truth_table() {
+        let xs = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let table = [
+            ("within_range", [false, false, true, false, false]),
+            ("within_range_included", [false, true, true, true, false]),
+            ("outside_range", [true, false, false, false, true]),
+            ("outside_range_included", [true, true, false, true, true]),
+        ];
+        for (ty, want) in table {
+            for bounds in [[1.0, 3.0], [3.0, 1.0]] {
+                for (x, w) in xs.into_iter().zip(want) {
+                    assert_eq!(
+                        eval_classic_value(ty, &bounds, Some(x)).unwrap(),
+                        w,
+                        "{ty} {bounds:?} {x}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn diff_reducers_compare_newest_with_oldest_non_null() {
         let p = pts(&[None, Some(30.0), Some(40.0), Some(15.0), None]);
@@ -417,6 +476,18 @@ mod tests {
             ),
             Some(1.0)
         );
+        // No data joins like a truth value: `or` keeps it, `and` needs it on both sides.
+        let no_data_then = |op: &str| {
+            fire(
+                &[
+                    cond("avg", "gt", &[0.0], "and", "N"),
+                    cond("last", "gt", &[50.0], op, "A"),
+                ],
+                &vars,
+            )
+        };
+        assert_eq!(no_data_then("or"), None);
+        assert_eq!(no_data_then("and"), Some(0.0));
         // All values null: no data, unless the evaluator asks for no_value.
         assert_eq!(fire(&[cond("avg", "gt", &[0.0], "and", "N")], &vars), None);
         assert_eq!(

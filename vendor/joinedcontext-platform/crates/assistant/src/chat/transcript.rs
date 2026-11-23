@@ -707,6 +707,7 @@ mod tests {
             Event::Stage {
                 stage: "answering",
                 topic: None,
+                detail: Default::default(),
             },
             Event::Delta("Dnes ".into()),
             Event::Delta("prší.".into()),

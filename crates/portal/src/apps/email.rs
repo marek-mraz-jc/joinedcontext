@@ -568,4 +568,61 @@ mod tests {
             assert!(refusal(&send(to.clone(), "ok")).is_some(), "{to}");
         }
     }
+
+    fn said(refused: Option<Response>) -> String {
+        let response = refused.expect("refused");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            response.into_body(),
+            usize::MAX,
+        ))
+        .expect("a ready body")
+        .expect("the problem");
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// AP-168: each limit of a message is refused with the field and the limit it broke.
+    #[test]
+    fn each_limit_of_a_message_is_refused_by_name() {
+        let message = |text: String, html: Option<String>, to: serde_json::Value| -> Send {
+            serde_json::from_value(serde_json::json!({
+                "to": to, "subject": "ok", "text": text, "html": html,
+            }))
+            .expect("a message")
+        };
+        let me = || serde_json::json!("me");
+        let many: Vec<String> = (0..=MAX_RECIPIENTS).map(|n| format!("p-{n}")).collect();
+        for (send, why) in [
+            (
+                send(me(), &"x".repeat(MAX_SUBJECT_CHARS + 1)),
+                "subject is longer than 200",
+            ),
+            (message(" ".into(), None, me()), "text is empty"),
+            (
+                message("x".repeat(MAX_TEXT_BYTES + 1), None, me()),
+                "text is larger than",
+            ),
+            (
+                message("x".into(), Some("x".repeat(MAX_HTML_BYTES + 1)), me()),
+                "html is larger than",
+            ),
+            (
+                message("x".into(), None, serde_json::json!(many)),
+                "more than 50 people",
+            ),
+            (
+                message("x".into(), None, serde_json::json!("everyone")),
+                "\\\"me\\\"",
+            ),
+            (
+                message("x".into(), None, serde_json::json!([])),
+                "names nobody",
+            ),
+        ] {
+            let text = said(refusal(&send));
+            assert!(text.contains(why), "{why}: {text}");
+        }
+        assert!(refusal(&message("x".into(), Some("<p>x</p>".into()), me())).is_none());
+        assert!(!is_person_id(&"a".repeat(65)) && !is_person_id("") && is_person_id("4f1c-9a"));
+    }
 }

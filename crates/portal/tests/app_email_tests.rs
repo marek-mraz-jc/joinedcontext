@@ -78,6 +78,32 @@ async fn relay() -> (String, Inbox) {
     (url, inbox)
 }
 
+/// An SMTP server that refuses every recipient with a 550.
+async fn refusing_relay() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let url = format!("smtp://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let _ = write.write_all(b"220 fake ESMTP\r\n").await;
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let answer: &[u8] = if line.to_ascii_uppercase().starts_with("RCPT") {
+                        b"550 5.1.1 no such mailbox\r\n"
+                    } else {
+                        b"250 OK\r\n"
+                    };
+                    let _ = write.write_all(answer).await;
+                }
+            });
+        }
+    });
+    url
+}
+
 fn delivered(inbox: &Inbox) -> Vec<(Vec<String>, String)> {
     inbox.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -302,6 +328,161 @@ async fn the_send_past_the_quota_is_refused_with_429() {
     assert_eq!(delivered(&inbox).len(), 2);
 }
 
+/// `state` mailing through `relay`, or through no relay at all.
+fn with_relay(state: &AppState, relay: Option<&str>) -> AppState {
+    let mut config = (*state.config).clone();
+    config.smtp_url = relay.map(str::to_owned);
+    let mut state = state.clone();
+    state.config = Arc::new(config);
+    state
+}
+
+/// API/06 §3: a body sent as another media type or that is no message is refused; an
+/// installation without a relay, with a relay URL that does not parse or whose relay cannot be
+/// reached answers 503, and the relay hands nobody anything.
+#[tokio::test]
+async fn a_wrong_body_or_a_missing_misconfigured_or_unreachable_relay_sends_nothing() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("relays");
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
+
+    let token = common::REALM.person_token(APP, "jana", &[]);
+    let request = Request::post(format!("/apps/{APP}/api/services/email/send"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(to_me("plain").to_string()))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let (status, _, text) = send(&state, json!({ "to": "me", "body": "x" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    assert!(text.contains("not a message"), "{text}");
+
+    let refusing = refusing_relay().await;
+    for (relay, said) in [
+        (None, "sends no mail"),
+        (Some("relay.example.org:25"), "misconfigured"),
+        (Some("smtp://127.0.0.1:1"), "did not take the message"),
+        (Some(refusing.as_str()), "did not take the message"),
+    ] {
+        let (status, _, text) = send(&with_relay(&state, relay), to_me("defect")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{relay:?}: {text}");
+        assert!(text.contains(said), "{relay:?}: {text}");
+    }
+
+    // People named by id need the realm's admin client, and a realm that answers.
+    let by_id = json!({ "to": ["steward-1"], "subject": "Defect", "text": "Hlavná 4" });
+    let (status, _, text) = send(&state, by_id.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("no admin client"), "{text}");
+    let mut unreachable = state.clone();
+    unreachable.people = joinedcontext_portal::people::People::new(
+        "http://127.0.0.1:1/realms/banskabystrica",
+        "portal-admin".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    let (status, _, text) = send(&unreachable, by_id).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("unreachable"), "{text}");
+    assert!(delivered(&inbox).is_empty());
+}
+
+/// A database that stops answering is a server error, never a message sent or a stop lost
+/// silently.
+#[tokio::test]
+async fn a_database_that_stops_answering_sends_nothing_and_stops_nothing() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("db-down");
+    let state = state(&url, db.clone(), &project, app(json!(["email"]), json!({}))).await;
+    assert_eq!(send(&state, to_me("first")).await.0, StatusCode::ACCEPTED);
+    let link = unsubscribe_link(&delivered(&inbox)[0].1);
+    db.close().await;
+    let (status, _, text) = send(&state, to_me("second")).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    let (status, _, text) = call(&state, &link, "POST", Value::Null).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+    assert_eq!(delivered(&inbox).len(), 1);
+}
+
+/// AP-168: an HTML body travels beside the text as an alternative, its unsubscribe link escaped
+/// for an attribute.
+#[tokio::test]
+async fn an_html_body_is_an_alternative_part_with_its_own_unsubscribe_link() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("html");
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
+    // The App's title names the sender, its line breaks taken out.
+    let mut titled = envelope("App", APP, &project, app(json!(["email"]), json!({})));
+    titled.metadata.title = Some(jc_core::i18n::Text::from("Road\ndefects"));
+    state.mirror.upsert(titled);
+    let (status, _, text) = send(
+        &state,
+        json!({ "to": "me", "subject": "Defect", "text": "A pothole.", "html": "<p>A pothole.</p>" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{text}");
+    let data = delivered(&inbox)[0]
+        .1
+        .replace("=\r\n", "")
+        .replace("=\n", "");
+    assert!(
+        data.contains("From: Roaddefects <noreply@dev.joinedcontext.com>")
+            || data.contains("From: \"Roaddefects\""),
+        "{data}"
+    );
+    assert!(data.contains("multipart/alternative"), "{data}");
+    assert!(data.contains("text/html"), "{data}");
+    assert!(data.contains("To stop these messages</a>"), "{data}");
+    assert!(
+        data.contains("&amp;a=3D") || data.contains("&amp;a="),
+        "{data}"
+    );
+}
+
+/// The unsubscribe link of a delivered message. The plain part is quoted-printable or 7bit; the
+/// header's angle-bracketed URL is not folded by lettre below 76 characters per line, so it is
+/// read from the text part's footer.
+fn unsubscribe_link(data: &str) -> String {
+    let unfolded = data.replace("=\n", "").replace("=3D", "=");
+    let start = unfolded.find("/mail/unsubscribe?").expect("a link");
+    unfolded[start..]
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '>')
+        .collect()
+}
+
+/// AP-168: past 20 messages a day to one person the App is refused with that quota, even with
+/// its day not spent.
+#[tokio::test]
+async fn one_person_gets_at_most_twenty_messages_a_day() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("per-person");
+    let state = state(
+        &url,
+        db,
+        &project,
+        app(json!(["email"]), json!({ "emailsPerDay": 100 })),
+    )
+    .await;
+    for n in 0..20 {
+        let (status, _, text) = send(&state, to_me(&format!("defect {n}"))).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{text}");
+    }
+    let (status, body, text) = send(&state, to_me("one too many")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{text}");
+    assert_eq!(body["quota"], "emailsPerRecipientPerDay");
+    assert_eq!(delivered(&inbox).len(), 20);
+}
+
 /// T-3583 security: a line break in the subject is a header injection and is refused before
 /// anything is counted or sent; an address in `to` is no person id, so there is no open relay.
 #[tokio::test]
@@ -439,6 +620,20 @@ async fn a_person_of_another_organization_is_refused() {
             .mount(realm)
             .await;
     }
+    // A person whose groups the realm cannot list is not known to be inside.
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/banskabystrica/users/nogroups-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "nogroups-1", "username": "noa@hel.fi", "email": "noa@hel.fi",
+            "enabled": true, "emailVerified": true
+        })))
+        .mount(realm)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/banskabystrica/users/nogroups-1/groups"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(realm)
+        .await;
     state.people = joinedcontext_portal::people::People::new(
         &common::REALM.issuer,
         "portal-admin".into(),
@@ -449,7 +644,7 @@ async fn a_person_of_another_organization_is_refused() {
     let message = |to: Value| json!({ "to": to, "subject": "Defect", "text": "Hlavná 4" });
     let (status, _, text) = send(&state, message(json!(["hel-1"]))).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
-    for refused in ["zil-1", "hel-lookalike-1"] {
+    for refused in ["zil-1", "hel-lookalike-1", "nogroups-1"] {
         let (status, body, text) = send(&state, message(json!(["hel-1", refused]))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{text}");
         assert_eq!(body["to"], refused);
@@ -469,19 +664,14 @@ async fn an_unsubscribed_person_gets_nothing() {
     let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
 
     assert_eq!(send(&state, to_me("first")).await.0, StatusCode::ACCEPTED);
-    let data = delivered(&inbox)[0].1.clone();
-    // The plain part is quoted-printable or 7bit; the header's angle-bracketed URL is not folded
-    // by lettre below 76 characters per line, so read it from the text part's footer.
-    let unfolded = data.replace("=\n", "").replace("=3D", "=");
-    let start = unfolded.find("/mail/unsubscribe?").expect("a link");
-    let link: String = unfolded[start..]
-        .chars()
-        .take_while(|c| !c.is_whitespace() && *c != '>')
-        .collect();
+    let link = unsubscribe_link(&delivered(&inbox)[0].1);
 
     let forged = link.replace("&k=", "&k=AAAA");
     let (status, _, _) = call(&state, &forged, "POST", Value::Null).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, text) = call(&state, &forged, "GET", Value::Null).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(text.contains("not valid"), "{text}");
     let (status, _, text) = call(&state, &link, "GET", Value::Null).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert!(
@@ -498,6 +688,25 @@ async fn an_unsubscribed_person_gets_nothing() {
         1,
         "the unsubscribed person got nothing more"
     );
+
+    // Without its database the choice cannot be kept; a project that is gone has nothing to stop.
+    let mut no_db = state.clone();
+    no_db.db = None;
+    assert_eq!(
+        call(&no_db, &link, "POST", Value::Null).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: joinedcontext_portal::permissions::ORG_NAMESPACE.into(),
+            kind: "Project".into(),
+            name: project.clone(),
+        })
+        .expect("the project was in the mirror");
+    let (status, _, text) = call(&state, &link, "POST", Value::Null).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
+    assert!(text.contains("nothing to stop"), "{text}");
 }
 
 #[derive(Clone, Default)]
