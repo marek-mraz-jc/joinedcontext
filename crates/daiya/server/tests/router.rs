@@ -106,6 +106,23 @@ async fn mount_info_reports_the_default_mount() {
     );
 }
 
+/// A mount whose host holds a byte no header may carry still answers; it leaves out the public
+/// base it cannot write rather than send a broken value.
+#[tokio::test]
+async fn a_mount_that_is_no_header_value_answers_without_its_public_base() {
+    let (state, _) = app();
+    let app = router(
+        state,
+        Mount::new("daiya", "https", "dash\u{1}.example", "/d\u{1}").unwrap(),
+    );
+    let (st, headers, info) = send(&app, "GET", "/mount-info", None, None).await;
+    assert_eq!(st, 200, "{info}");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(headers.get("x-daiya-public-base").is_none(), "{headers:?}");
+    // The cookie name keeps only the characters a cookie name may hold.
+    assert_eq!(headers["x-daiya-cookie-name"], "__Secure-wk_cr_session");
+}
+
 #[tokio::test]
 async fn the_cli_dispatcher_refuses_an_unknown_command() {
     let (state, _) = app();

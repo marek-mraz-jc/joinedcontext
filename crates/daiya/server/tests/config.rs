@@ -800,6 +800,18 @@ async fn declared_organizations_are_provisioned_by_org_id_and_never_see_each_oth
         json!([{ "id": 4, "name": "Main Org." }]),
     ] {
         let cfg = config(json!({ "organizations": orgs })).unwrap();
-        assert!(build_state(&cfg).await.is_err(), "{orgs}");
+        let Err(err) = build_state(&cfg).await else {
+            panic!("{orgs} was accepted");
+        };
+        // The configuration is refused for itself, before the store is asked to hold it.
+        assert!(
+            err.to_string()
+                .contains("a number from 2 and a name no other organization holds"),
+            "{orgs}: {err}"
+        );
+        assert!(
+            !err.to_string().contains("the store holds"),
+            "{orgs}: {err}"
+        );
     }
 }
