@@ -47,7 +47,7 @@ const ROUTES: &[(&str, &str, &[&str])] = &[
     (
         "/dead-letters/{id}",
         "/q/dead-letters/urn:dl:1",
-        &["DELETE"],
+        &["GET", "DELETE"],
     ),
     (
         "/dead-letters/{id}/replay",
