@@ -1430,7 +1430,7 @@ pub fn expand_attr_fragment(obj: &Map<String, Value>, ctx: &Context) -> Result<V
                 }
             }
             "languageMap"
-                if !(is_ngsi_null(v) || is_ngsi_null_langmap(v) || valid_language_map(v)) =>
+                if !(is_ngsi_null_langmap(v) || valid_language_map(v)) =>
             {
                 return Err(bad("invalid languageMap in fragment (4.5.18.2)".into()));
             }
@@ -1444,7 +1444,6 @@ pub fn expand_attr_fragment(obj: &Map<String, Value>, ctx: &Context) -> Result<V
                     v,
                     &ctx.within(&iri),
                     ExpandOpts {
-                        fragment: true,
                         allow_null: true,
                         ..Default::default()
                     },
@@ -2123,6 +2122,110 @@ mod tests {
 
     fn core() -> std::sync::Arc<Context> {
         std::sync::Arc::new(crate::core_context())
+    }
+
+    const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+    fn nulls() -> ExpandOpts {
+        ExpandOpts {
+            allow_null: true,
+            ..Default::default()
+        }
+    }
+
+    fn entity_with(attr: serde_json::Value, opts: ExpandOpts) -> Result<Value, NgsiError> {
+        let doc = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T", "a": attr});
+        expand_entity(doc.as_object().expect("obj"), &core(), opts)
+    }
+
+    /// A deletion marker is a Null value under allow_null and nothing else:
+    /// a Property as location stays refused in a patch, a bad GeoJSON value
+    /// is validated, and a Relationship object must still be a URI.
+    #[test]
+    fn allow_null_lets_only_the_null_marker_skip_validation() {
+        let doc = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T",
+            "location": {"type": "Property", "value": "here"}});
+        let err = expand_entity(doc.as_object().expect("obj"), &core(), nulls()).unwrap_err();
+        assert!(err.to_string().contains("must be a GeoProperty"), "{err}");
+        let bad_geo = serde_json::json!({"type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": "x"}});
+        assert!(entity_with(bad_geo, nulls()).is_err());
+        let bad_rel = serde_json::json!({"type": "Relationship", "object": "not a uri"});
+        assert!(entity_with(bad_rel, nulls()).is_err());
+        let null_rel = serde_json::json!({"type": "Relationship", "object": "urn:ngsi-ld:null"});
+        let out = entity_with(null_rel, nulls()).expect("null object deletes");
+        assert_eq!(out[&format!("{DEFAULT}a")][0]["object"], "urn:ngsi-ld:null");
+    }
+
+    /// TS 104 175 4.5.22, step 2: the List deletion marker is accepted as a bare Null under
+    /// allow_null only; on a create the bare string is not an array.
+    #[test]
+    fn a_null_object_list_is_a_deletion_under_allow_null_only() {
+        let lr = serde_json::json!({"type": "ListRelationship", "objectList": "urn:ngsi-ld:null"});
+        let out = entity_with(lr.clone(), nulls()).expect("null list deletes");
+        assert_eq!(out[&format!("{DEFAULT}a")][0]["objectList"], "urn:ngsi-ld:null");
+        let err = entity_with(lr, ExpandOpts::default()).unwrap_err();
+        assert!(err.to_string().contains("objectList must be an array"), "{err}");
+    }
+
+    /// An entity type is a non-empty string, alone or in an array.
+    #[test]
+    fn an_empty_entity_type_is_refused() {
+        for t in [serde_json::json!(""), serde_json::json!(["T", ""])] {
+            let doc = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": t});
+            assert!(
+                expand_entity(doc.as_object().expect("obj"), &core(), ExpandOpts::default())
+                    .is_err(),
+                "{t}"
+            );
+        }
+    }
+
+    /// Sub-attributes nest nine levels (depth 0 to 8); the tenth is refused.
+    #[test]
+    fn sub_attributes_nest_nine_levels_and_not_ten() {
+        let nest = |n: usize| {
+            (1..n).fold(serde_json::json!({"type": "Property", "value": 1}), |v, _| {
+                serde_json::json!({"type": "Property", "value": 1, "s": v})
+            })
+        };
+        entity_with(nest(9), ExpandOpts::default()).expect("nine levels");
+        let err = entity_with(nest(10), ExpandOpts::default()).unwrap_err();
+        assert!(err.to_string().contains("nesting too deep"), "{err}");
+    }
+
+    /// A concise array of plain values is one Property whose value is the
+    /// array, not one instance per element.
+    #[test]
+    fn a_concise_array_of_plain_values_is_one_property() {
+        let out = entity_with(serde_json::json!([1, 2]), ExpandOpts::default()).expect("expand");
+        let attr = out[&format!("{DEFAULT}a")].as_array().expect("instances");
+        assert_eq!(attr.len(), 1, "{out}");
+        assert_eq!(attr[0]["value"], serde_json::json!([1, 2]));
+    }
+
+    /// A geometry type is a concise GeoProperty only with coordinates; a
+    /// Point without them, or an unknown type with them, is an invalid
+    /// attribute type.
+    #[test]
+    fn a_concise_geo_property_needs_a_geometry_type_and_coordinates() {
+        for attr in [
+            serde_json::json!({"type": "Point"}),
+            serde_json::json!({"type": "Spot", "coordinates": [1.0, 2.0]}),
+        ] {
+            let err = entity_with(attr.clone(), ExpandOpts::default()).unwrap_err();
+            assert!(err.to_string().contains("invalid attribute type"), "{attr}: {err}");
+        }
+    }
+
+    /// 5.5.12: a sub-attribute of a patch fragment may carry the Null to
+    /// delete itself, which a GeoProperty value would otherwise fail.
+    #[test]
+    fn a_fragment_sub_attribute_may_be_a_null_deletion() {
+        let f = serde_json::json!({"value": 1,
+            "where": {"type": "GeoProperty", "value": "urn:ngsi-ld:null"}});
+        let out = expand_attr_fragment(f.as_object().expect("obj"), &core()).expect("null deletes");
+        assert_eq!(out[&format!("{DEFAULT}where")][0]["value"], "urn:ngsi-ld:null");
     }
 
     #[test]
