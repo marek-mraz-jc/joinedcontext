@@ -39,7 +39,6 @@ spec:
     outputTokensPerAnswer: 700
     messagesPerConversation: 30
     questionChars: 1000
-  model: { router: google/gemini-3.8-flash, answer: google/gemini-3.8-flash }
   theme:
     title: { sk: Participácia, en: Participation }
     primaryColor: '#d62426'

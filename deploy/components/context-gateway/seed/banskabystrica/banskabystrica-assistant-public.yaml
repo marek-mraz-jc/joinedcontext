@@ -71,7 +71,6 @@ spec:
     messagesPerConversation: 30
     questionChars: 1000
   # Today's model for both calls; T-4144's comparison may change `answer` (T-4149 item 6).
-  model: { router: google/gemini-3.8-flash, answer: google/gemini-3.8-flash }
   theme:
     title: Banská Bystrica
     primaryColor: '#1f5fae'
