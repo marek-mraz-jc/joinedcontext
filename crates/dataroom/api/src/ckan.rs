@@ -377,7 +377,10 @@ async fn answer_ckan_action(
                 .await
                 .unwrap_or_default()
             {
-                views.entry(view.resource_id.clone()).or_default().push(view);
+                views
+                    .entry(view.resource_id.clone())
+                    .or_default()
+                    .push(view);
             }
             let ckan_dict = dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &cat.default_language);
             let cacheable = is_anon_get && ds.visibility == Visibility::Public;

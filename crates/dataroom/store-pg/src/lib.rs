@@ -9,8 +9,8 @@ use dataroom_core::odata_defs::{
 use dataroom_core::store::{changed_since_read, next_modified, BoxFuture};
 use dataroom_core::{
     text_in_lang, ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin,
-    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord,
-    PickPage, Publisher, RecordState, RequestCtx, ResourceView, Result, SearchCandidate,
+    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, PickPage,
+    ProfileRecord, Publisher, RecordState, RequestCtx, ResourceView, Result, SearchCandidate,
     SearchPage, SearchQuery, ShaclValidationReport, StaticPage, Store,
 };
 use dataroom_search::SearchLexemes;
@@ -1041,19 +1041,10 @@ impl Store for PgStore {
             // caller matches in Rust (their search columns are empty).
             let text_filter = match (query.terms.is_empty(), per_term.is_empty()) {
                 (true, _) => "",
-                (false, true) => {
-                    "AND id IN (SELECT id FROM dataroom.cat_dataset
-                                WHERE org_id = $1 AND catalogue_id = $2 AND search_v < $8)"
-                }
-                (false, false) => {
-                    "AND id IN (SELECT id FROM dataroom.cat_dataset
-                                WHERE org_id = $1 AND catalogue_id = $2
-                                  AND search_all @@ $6::tsquery
-                                UNION ALL
-                                SELECT id FROM dataroom.cat_dataset
-                                WHERE org_id = $1 AND catalogue_id = $2 AND search_v < $8)"
-                }
-            };
+                (false, true) => "AND search_v < {SEARCH_VERSION}",
+                (false, false) => "AND (search_all @@ $6::tsquery OR search_v < {SEARCH_VERSION})",
+            }
+            .replace("{SEARCH_VERSION}", &SEARCH_VERSION.to_string());
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
@@ -1063,8 +1054,8 @@ impl Store for PgStore {
             let rows: Vec<(Json<Dataset>, Option<i64>)> =
                 sqlx::query_as(sqlx::AssertSqlSafe(format!(
                     "WITH q AS (SELECT array_agg(t::tsquery) AS terms FROM unnest($5::text[]) t)
-                     SELECT CASE WHEN search_v >= $8 THEN {SLIM_DOC} ELSE doc END,
-                            CASE WHEN search_v >= $8 THEN
+                     SELECT CASE WHEN search_v >= {SEARCH_VERSION} THEN {SLIM_DOC} ELSE doc END,
+                            CASE WHEN search_v >= {SEARCH_VERSION} THEN
                                 (SELECT COALESCE(sum(
                                      CASE WHEN search_name @@ t THEN 8 ELSE 0 END
                                      + CASE WHEN search_title @@ t THEN 4 ELSE 0 END
@@ -1088,7 +1079,6 @@ impl Store for PgStore {
                 .bind(&per_term)
                 .bind(all)
                 .bind(query.public_only)
-                .bind(SEARCH_VERSION)
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(db_err)?;

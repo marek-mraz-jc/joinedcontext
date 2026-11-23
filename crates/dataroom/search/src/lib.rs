@@ -305,8 +305,10 @@ pub fn term_candidates(q: &str) -> Result<Vec<Vec<String>>> {
     Ok(parse_search_terms(q)?
         .iter()
         .map(|term| {
-            let mut cands: Vec<String> =
-                word_stem_candidates(term).into_iter().map(cut_lexeme).collect();
+            let mut cands: Vec<String> = word_stem_candidates(term)
+                .into_iter()
+                .map(cut_lexeme)
+                .collect();
             cands.dedup();
             cands
         })
@@ -384,7 +386,11 @@ impl SearchLexemes {
             if !hits.iter().any(|(hit, _)| *hit) {
                 return None;
             }
-            score += hits.iter().filter(|(hit, _)| *hit).map(|(_, w)| w).sum::<usize>();
+            score += hits
+                .iter()
+                .filter(|(hit, _)| *hit)
+                .map(|(_, w)| w)
+                .sum::<usize>();
         }
         Some(score)
     }
@@ -395,7 +401,12 @@ impl SearchLexemes {
 pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
     let candidates: Vec<Vec<String>> = terms
         .iter()
-        .map(|t| word_stem_candidates(t).into_iter().map(cut_lexeme).collect())
+        .map(|t| {
+            word_stem_candidates(t)
+                .into_iter()
+                .map(cut_lexeme)
+                .collect()
+        })
         .collect();
     match SearchLexemes::of(dataset).rank(&candidates) {
         Some(rank) => (true, rank),
@@ -741,11 +752,7 @@ pub fn search_candidates(
             continue;
         };
         filed.push(FiledDataset::from_dataset(
-            ds,
-            rank,
-            &pub_map,
-            lang,
-            this_year,
+            ds, rank, &pub_map, lang, this_year,
         ));
     }
 
@@ -1324,6 +1331,55 @@ mod tests {
                 "{bad}: {e:?}"
             );
         }
+    }
+
+    #[test]
+    fn lexemes_rank_and_cut_like_the_store_index() {
+        let mut ds = make_dataset(
+            "bike_Šharing-2",
+            "p",
+            "Kvalita ovzdušia",
+            &[],
+            &[],
+            Visibility::Public,
+        );
+        ds.description = BTreeMap::from([("en".into(), "Hourly PM10 data".into())]);
+        ds.tags = vec!["doprava".into()];
+        ds.keywords.insert("en".into(), vec!["mobility".into()]);
+        let lex = SearchLexemes::of(&ds);
+        assert_eq!(lex.name, "bike_sharing-2");
+        assert_eq!(lex.title, ["kvalita", "ovzdusia"]);
+        assert_eq!(lex.keywords, ["doprava", "mobility"]);
+        assert_eq!(lex.description, ["data", "hourly", "pm10"]);
+        let suffixes = lex.name_suffixes();
+        assert_eq!(suffixes.len(), 14);
+        assert_eq!(suffixes.last().map(String::as_str), Some("2"));
+
+        let rank = |q: &str| lex.rank(&term_candidates(q).unwrap());
+        assert_eq!(rank(""), Some(0));
+        assert_eq!(rank("sharing"), Some(8), "inside the name");
+        assert_eq!(rank("ovzdušie"), Some(4), "a declined title word");
+        assert_eq!(rank("mobil"), Some(2));
+        assert_eq!(rank("hour"), Some(1));
+        assert_eq!(rank("kvalita hour"), Some(5), "every term adds");
+        assert_eq!(rank("kvalita nikde"), None, "every term must match");
+        assert_eq!(
+            lex.rank(&[Vec::new()]),
+            None,
+            "a term with no prefix matches nothing"
+        );
+
+        // A word past a tsvector's 2046 bytes is cut at a character boundary, in the index and
+        // in the query alike.
+        let long = format!("{}ž", "a".repeat(MAX_LEXEME_BYTES - 1));
+        assert_eq!(cut_lexeme(long.clone()).len(), MAX_LEXEME_BYTES - 1);
+        ds.description.insert("sk".into(), long.clone());
+        let cut = SearchLexemes::of(&ds);
+        assert!(cut.description.iter().all(|w| w.len() <= MAX_LEXEME_BYTES));
+        assert!(term_candidates(&long).unwrap()[0]
+            .iter()
+            .all(|c| c.len() <= MAX_LEXEME_BYTES));
+        assert_eq!(cut.rank(&term_candidates(&long).unwrap()), Some(1));
     }
 
     #[test]
