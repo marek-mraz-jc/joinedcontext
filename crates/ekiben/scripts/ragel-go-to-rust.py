@@ -27,7 +27,7 @@ ACTIONS = {
     "output.timestampSet = true": "out.timestamp_set = true;",
     "output.timestamp = t": "out.timestamp = Some(t);",
     "output.timestamp = t.AddDate(m.yyyy, 0, 0)": "out.timestamp = Some(add_years(t, m.yyyy));",
-    "output.timestamp = output.timestamp.In(m.loc)": "out.timestamp = out.timestamp.map(|t| in_location(t, loc));",
+    "output.timestamp = output.timestamp.In(m.loc)": "out.timestamp = out.timestamp.take().map(|t| in_location(t, loc));",
     "output.hostname = string(m.text())": "out.hostname = go_string(m.text());",
     "output.appname = string(m.text())": "out.appname = go_string(m.text());",
     "output.procID = string(m.text())": "out.proc_id = go_string(m.text());",
@@ -263,6 +263,26 @@ class E:
         raise SystemExit(f"cannot emit {k}")
 
 
+def reachable(out):
+    """The emitted arms without those no `lbl = N` reaches from the entry (every jump and every
+    fall-through is an explicit `lbl = N`, so the text holds the whole graph)."""
+    head = re.compile(r"            (\d+) => \{ // ")
+    starts = [i for i, l in enumerate(out) if head.match(l)]
+    spans = {int(head.match(out[a]).group(1)): (a, b) for a, b in zip(starts, starts[1:] + [len(out)])}
+    seen, todo = {0}, [0]
+    while todo:
+        a, b = spans[todo.pop()]
+        for t in re.findall(r"lbl = (\d+)", "\n".join(out[a:b])):
+            if int(t) not in seen:
+                seen.add(int(t))
+                todo.append(int(t))
+    keep = out[:starts[0]]
+    for n, (a, b) in spans.items():
+        if n in seen:
+            keep += out[a:b]
+    return keep
+
+
 def main():
     src = open(sys.argv[1]).read().splitlines()
     start = next(i for i, l in enumerate(src) if l.strip() == "m.cs = start")
@@ -279,6 +299,15 @@ def main():
             arms.append((st[1], []))
         else:
             arms[-1][1].append(st)
+    # exec always runs from the start state (parse sets cs = START and calls it once), so the
+    # entry's resume dispatch over every state keeps only the start state's jump: the other arms
+    # are code nothing can reach.
+    start_state = next(re.fullmatch(r"const start int = (\d+)", l.strip()).group(1)
+                       for l in src if l.strip().startswith("const start int = "))
+    entry = arms[0][1]
+    at = next(i for i, st in enumerate(entry) if st[0] == "switch" and st[1] == "m.cs")
+    entry[at:at + 1] = next(body for vals, body in entry[at][2]
+                            if vals and start_state in [v.strip() for v in vals.split(",")])
     labels = {name: n for n, (name, _) in enumerate(arms)}
     e = E(labels)
     out = [
@@ -304,6 +333,7 @@ def main():
             else:
                 out.append(f"                lbl = {n + 1};")
         out.append("            }")
+    out = reachable(out)
     out += ["            _ => break,", "        }", "    }", "}"]
     if any("widec" in l for l in out):
         out.insert(out.index("    let mut lbl: u16 = 0;"), "    let mut widec: i16;")

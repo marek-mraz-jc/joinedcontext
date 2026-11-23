@@ -160,3 +160,41 @@ pub fn parse(input: &[u8], best_effort: bool) -> (Option<SyslogMessage>, Option<
     }
     (Some(out.export()), None)
 }
+
+#[cfg(test)]
+mod chart_tests {
+    use super::*;
+    use crate::go_syslog::chart;
+
+    /// The machine over `input` with its EOF actions off (eof is never reached).
+    fn step(input: &[u8]) -> (i32, Option<String>) {
+        let mut m = Machine {
+            data: input,
+            cs: START,
+            p: 0,
+            pe: isize::try_from(input.len()).expect("short input"),
+            eof: -1,
+            pb: 0,
+            err: None,
+            currentelem: String::new(),
+            currentparam: String::new(),
+            msgat: 0,
+            backslashat: Vec::new(),
+        };
+        machine::exec(&mut m, &mut Output::default());
+        (m.cs, m.err)
+    }
+
+    #[test]
+    fn the_parity_corpus_takes_every_transition_of_the_chart() {
+        let processor = serde_json::json!({"parse_log": {"format": "syslog_rfc5424"}});
+        let missing = chart::missing(&step, &processor, "parse_log rfc5424");
+        assert!(
+            missing.is_empty(),
+            "{} transitions no parity case takes; add these to tests/parity/cases.json and record them \
+             with scripts/record-text-parity.py:\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+    }
+}
