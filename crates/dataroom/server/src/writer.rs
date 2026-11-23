@@ -741,6 +741,50 @@ mod tests {
         }
     }
 
+    /// A declaration for no catalogue or a deleted one writes nothing; a repeated profile is pinned
+    /// once and one this build does not ship stays pinned with no version.
+    #[tokio::test]
+    async fn a_declaration_skips_a_missing_or_deleted_catalogue_and_pins_each_profile_once() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let declared = CatalogueDeclaration::default();
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared, None)
+            .await
+            .unwrap());
+
+        writer.upsert(spec.clone()).await.expect("served");
+        let chosen = [
+            dataroom_api::BASE_PROFILE.to_owned(),
+            "no-such-profile".to_owned(),
+            "no-such-profile".to_owned(),
+        ];
+        assert!(writer
+            .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+            .await
+            .unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let pins: Vec<(&str, &str)> = got
+            .active_profiles
+            .iter()
+            .map(|pin| (pin.profile_id.as_str(), pin.version.as_str()))
+            .collect();
+        assert_eq!(pins.len(), 2, "{pins:?}");
+        assert_eq!(pins[0].0, dataroom_api::BASE_PROFILE);
+        assert_eq!(pins[1], ("no-such-profile", ""));
+
+        assert!(writer.delete(spec.org_id, spec.id).await.unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+            .await
+            .unwrap());
+    }
+
     #[tokio::test]
     async fn a_declaration_is_written_once_and_clears_nothing() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
@@ -1001,8 +1045,6 @@ mod tests {
         );
     }
 
-    const TOKEN_A: &str = "portal-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
     fn dataset(org: OrgId, cat: CatalogueId, name: &str, extra: serde_json::Value) -> Dataset {
         let mut v = json!({
             "orgId": org, "catalogueId": cat, "id": "", "name": name,
@@ -1034,53 +1076,43 @@ mod tests {
     }
 
     fn principals(state: &DataroomState) -> Vec<String> {
-        read(&state.tokens)
-            .iter()
-            .filter_map(|b| b.subject.actor_id.clone())
+        read(&state.publishers)
+            .values()
+            .filter_map(|s| s.actor_id.clone())
             .collect()
     }
 
     #[tokio::test]
-    async fn a_publish_token_binds_one_catalogue_and_another_catalogue_cannot_take_it() {
+    async fn publishing_binds_one_publisher_per_catalogue_and_turning_it_off_removes_it() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let (state, writer) = started(store);
         let mut a = mobility(None);
-        a.publish_token = Some(TOKEN_A.into());
-        let shown = format!("{a:?}");
-        assert!(
-            shown.contains("<set>") && !shown.contains(TOKEN_A),
-            "{shown}"
-        );
+        a.publishes = true;
+        assert!(format!("{a:?}").contains("publishes: true"));
         writer.upsert(a.clone()).await.expect("bound");
         writer
             .upsert(a.clone())
             .await
             .expect("the same catalogue again");
-        assert_eq!(
-            principals(&state),
-            [principal_of(a.id)],
-            "one binding per catalogue"
-        );
+        let one = principals(&state);
+        assert_eq!(one.len(), 1, "one binding per catalogue: {one:?}");
+        assert!(one[0].ends_with(&a.id.to_string()), "{one:?}");
 
         let mut b = transit();
-        b.publish_token = Some(format!(" {TOKEN_A} "));
-        let err = writer.upsert(b.clone()).await.unwrap_err();
-        assert!(
-            matches!(&err, DataroomError::Conflict(m) if m.contains("another catalogue's")),
-            "{err}"
-        );
-        b.publish_token = Some("short".into());
-        assert!(
-            writer.upsert(b.clone()).await.is_err(),
-            "a weak token is refused"
-        );
-        b.publish_token = None;
-        writer.upsert(b).await.expect("no token, no binding");
-        assert_eq!(principals(&state), [principal_of(a.id)]);
+        writer
+            .upsert(b.clone())
+            .await
+            .expect("no publisher, no binding");
+        assert_eq!(principals(&state), one);
+        b.publishes = true;
+        writer.upsert(b.clone()).await.expect("a second catalogue");
+        assert_eq!(principals(&state).len(), 2);
 
-        a.publish_token = None;
-        writer.upsert(a).await.expect("the token taken away");
-        assert!(principals(&state).is_empty());
+        a.publishes = false;
+        writer.upsert(a).await.expect("publishing turned off");
+        let left = principals(&state);
+        assert_eq!(left.len(), 1);
+        assert!(left[0].ends_with(&b.id.to_string()), "{left:?}");
     }
 
     #[tokio::test]
@@ -1089,7 +1121,7 @@ mod tests {
         let (state, writer) = started(store.clone());
         let mut spec = mobility(Some("mobility.city.test"));
         spec.organization = Some("city".into());
-        spec.publish_token = Some(TOKEN_A.into());
+        spec.publishes = true;
         writer.upsert(spec.clone()).await.expect("served");
         let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
         store

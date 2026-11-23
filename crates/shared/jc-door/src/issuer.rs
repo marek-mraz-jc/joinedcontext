@@ -34,47 +34,20 @@ impl LocalIssuer {
     /// issuer by that listener's address.
     pub fn start(issuer: &str, kid: &str) -> Result<Self, String> {
         let rng = aws_lc_rs::rand::SystemRandom::new();
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).map_err(|e| format!("no key: {e}"))?;
-        let pair =
-            Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).map_err(|e| format!("no key: {e}"))?;
+        let Some((pair, pkcs8)) = Ed25519KeyPair::generate_pkcs8(&rng)
+            .ok()
+            .and_then(|pkcs8| Some((Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).ok()?, pkcs8)))
+        else {
+            return Err("no Ed25519 key from the platform's random source".to_owned());
+        };
         let jwks = json!({"keys": [{
             "kty": "OKP", "crv": "Ed25519", "use": "sig", "alg": "EdDSA", "kid": kid,
             "x": URL_SAFE_NO_PAD.encode(pair.public_key().as_ref()),
         }]});
-        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .and_then(|l| l.set_nonblocking(true).map(|()| l))
-            .map_err(|e| format!("no loopback listener for its keys: {e}"))?;
-        let addr = listener
-            .local_addr()
-            .map_err(|e| format!("no loopback listener for its keys: {e}"))?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .build()
-            .map_err(|e| format!("no runtime for its keys: {e}"))?;
-        let app = axum::Router::new().route(
-            "/certs",
-            axum::routing::get(move || {
-                let jwks = jwks.clone();
-                async move { axum::Json(jwks) }
-            }),
-        );
-        std::thread::Builder::new()
-            .name("jc-door-issuer".into())
-            .spawn(move || {
-                runtime.block_on(async move {
-                    match tokio::net::TcpListener::from_std(listener) {
-                        Ok(listener) => {
-                            if let Err(e) = axum::serve(listener, app).await {
-                                tracing::error!(error = %e, "jc-door issuer: its keys are no longer served");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "jc-door issuer: no listener for its keys");
-                        }
-                    }
-                });
-            })
-            .map_err(|e| format!("no thread for its keys: {e}"))?;
+        let addr = match serve(jwks) {
+            Ok(addr) => addr,
+            Err(e) => return Err(format!("its keys cannot be served: {e}")),
+        };
         let base = format!("http://{addr}");
         Ok(Self {
             issuer: if issuer.is_empty() {
@@ -103,11 +76,10 @@ impl LocalIssuer {
     /// A token of `client` for `audience` that expires `life` seconds from now (negative: in
     /// the past).
     pub fn token(&self, client: &str, audience: &str, life: i64) -> Result<String, String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("clock before 1970: {e}"))?
-            .as_secs()
-            .cast_signed();
+        let Ok(since) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            return Err("the clock is before 1970".to_owned());
+        };
+        let now = since.as_secs().cast_signed();
         self.sign(&json!({
             "iss": self.issuer, "aud": audience, "azp": client,
             "iat": now, "exp": now + life,
@@ -120,4 +92,33 @@ impl LocalIssuer {
         header.kid = Some(self.kid.clone());
         encode(&header, claims, &self.key).map_err(|e| format!("not signed: {e}"))
     }
+}
+
+/// `jwks` on `/certs` of a free loopback port, served by a thread of its own with its own runtime
+/// for the life of the process; the address it listens on. Only a platform without sockets,
+/// threads or an event loop fails here.
+fn serve(jwks: serde_json::Value) -> std::io::Result<std::net::SocketAddr> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()?;
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let addr = listener.local_addr()?;
+    // Registered with the issuer's own runtime here, so a caller inside another runtime can start one.
+    let listener = {
+        let _entered = runtime.enter();
+        tokio::net::TcpListener::from_std(listener)?
+    };
+    let app = axum::Router::new().route(
+        "/certs",
+        axum::routing::get(move || {
+            let jwks = jwks.clone();
+            async move { axum::Json(jwks) }
+        }),
+    );
+    std::thread::Builder::new()
+        .name("jc-door-issuer".into())
+        // axum::serve never completes: it retries a failed accept itself.
+        .spawn(move || runtime.block_on(async move { axum::serve(listener, app).await }))?;
+    Ok(addr)
 }

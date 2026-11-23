@@ -483,6 +483,20 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
         "{err:?}"
     );
 
+    // Started as an operation, the run goes on in a task: the command waits for its end and
+    // prints the finished run, failed by the same guard.
+    let run = run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_run.start",
+        "--input",
+        r#"{"source": "cli-pg-loop2"}"#,
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(run["state"], "failed", "{run}");
+    assert!(run["error"].to_string().contains("127.0.0.1"), "{run}");
+
     let err = run_cli(pg(&["harvest", "--source", "cli-pg-none"]))
         .await
         .unwrap_err();

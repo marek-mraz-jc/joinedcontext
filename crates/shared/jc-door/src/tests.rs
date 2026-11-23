@@ -392,6 +392,50 @@ async fn fetch_token_reuses_a_token_until_30_s_before_it_expires() {
     assert!(!err.contains("s3cret"), "{err}");
 }
 
+/// The issuer's Debug names where it signs and serves, never its key; an empty issuer is named
+/// by its listener, and a token carries its kid and the claims it was given.
+#[test]
+fn a_local_issuer_debug_hides_its_key_and_its_tokens_carry_kid_and_claims() {
+    let issuer =
+        crate::issuer::LocalIssuer::start("https://id.a.example/realms/a", "k7").expect("issuer");
+    assert_eq!(issuer.issuer(), "https://id.a.example/realms/a");
+    assert!(issuer.jwks_url().starts_with("http://127.0.0.1:"));
+    assert!(issuer.jwks_url().ends_with("/certs"));
+    let debug = format!("{issuer:?}");
+    assert_eq!(
+        debug,
+        format!(
+            "LocalIssuer {{ issuer: \"https://id.a.example/realms/a\", jwks_url: {:?}, .. }}",
+            issuer.jwks_url()
+        )
+    );
+    let token = issuer
+        .token("portal-publisher", "dataroom", 60)
+        .expect("token");
+    assert_eq!(
+        jsonwebtoken::decode_header(&token)
+            .expect("header")
+            .kid
+            .as_deref(),
+        Some("k7")
+    );
+    let claims: serde_json::Value = serde_json::from_slice(
+        &base64::Engine::decode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            token.split('.').nth(1).expect("payload"),
+        )
+        .expect("base64"),
+    )
+    .expect("json");
+    assert_eq!(claims["iss"], "https://id.a.example/realms/a");
+    assert_eq!(claims["azp"], "portal-publisher");
+    assert_eq!(claims["aud"], "dataroom");
+    assert_eq!(
+        claims["exp"].as_i64().expect("exp") - claims["iat"].as_i64().expect("iat"),
+        60
+    );
+}
+
 /// The in-process issuer serves its keys on a thread of its own: a token it signs verifies in a
 /// runtime started after the one that created it ended, and only for the client it names.
 #[test]
