@@ -129,8 +129,56 @@ for (const width of [1440, 400]) {
       await expect(page.getByText(/contrast of at least 4.5:1 on its background/).first()).toBeVisible();
       await shoot(page, width, info.outputPath(`appearance-refusal-${width}.png`));
     });
+
+    // T-7745: the portal's own stylesheet, none, set, reset and refused with its line.
+    test("stylesheet: none, set on the portal, reset and refused", async ({ page }, info) => {
+      const sheet = page.getByLabel(/^Stylesheet/);
+      await stub(page, undefined);
+      await openAppearance(page);
+      await sheet.scrollIntoViewIfNeeded();
+      await expect(page.getByText("None: the theme alone")).toBeVisible();
+      await shoot(page, width, info.outputPath(`css-default-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+      await noOverflow(page);
+
+      await page.unrouteAll();
+      await manifestReadsAsRest(page);
+      await stub(page, { css: ".site-header {\n  background: #0b5394;\n  color: #ffffff;\n}\n.hero h1 { font-weight: 700 }" });
+      await openAppearance(page);
+      await expect(sheet).toHaveValue(/background: #0b5394/);
+      await shoot(page, width, info.outputPath(`css-overridden-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+      await noOverflow(page);
+
+      await page.getByRole("button", { name: "Reset Stylesheet to inherited" }).click();
+      await expect(sheet).toHaveValue("");
+      await expect(page.getByText("Unpublished changes: publish to propose them for approval.")).toBeVisible();
+      await shoot(page, width, info.outputPath(`css-reset-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+
+      await page.unrouteAll();
+      await manifestReadsAsRest(page);
+      await stub(page, undefined, "spec.appearance.css: must be free of `position`, a property a portal stylesheet may not set (line 2)");
+      await openAppearance(page);
+      await sheet.fill(".site-header {\n  position: fixed;\n}");
+      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await expect(page.getByText("The appearance was refused")).toBeVisible();
+      await expect(page.getByText(/may not set \(line 2\)/).first()).toBeVisible();
+      await shoot(page, width, info.outputPath(`css-refusal-${width}.png`));
+    });
   });
 }
+
+test("write a stylesheet for the portal's header and publish it as one checked Change", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sent = await stub(page, undefined);
+  await openAppearance(page);
+  await page.getByLabel(/^Stylesheet/).fill(".site-header { background: #0b5394; color: #ffffff }");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(page.getByText(/chg-7744/)).toBeVisible();
+  expect(sent).toHaveLength(2);
+  expect((sent[1] as { spec: { appearance: unknown } }).spec.appearance).toEqual({ css: ".site-header { background: #0b5394; color: #ffffff }" });
+});
 
 test("set header colours, outlined buttons and a text size and publish one checked Change", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
