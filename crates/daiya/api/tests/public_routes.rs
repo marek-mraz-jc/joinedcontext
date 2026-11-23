@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{World, endpoint_dashboard, gateway, world_beside};
+use common::{World, endpoint_dashboard, gateway, upstream, world_beside};
 use daiya_api::{PublicCaller, PublicRateLimiter};
 use http::StatusCode;
 use serde_json::{Value, json};
@@ -666,6 +666,112 @@ async fn panel_queries_run_only_the_saved_targets() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_public_query_takes_the_callers_variable_the_last_six_hours_and_its_transformations() {
+    let (url, seen) = gateway().await;
+    let w = world_beside(&url).await;
+    for (uid, selection) in [("vars-a", true), ("vars-b", false)] {
+        // No saved time range: the query runs over the last six hours, with or without selection.
+        let mut d = templated(uid);
+        d.as_object_mut().unwrap().remove("time");
+        w.add_dashboard(d, None).await;
+        let created = w
+            .ok(
+                "POST",
+                &format!("/api/dashboards/uid/{uid}/public-dashboards"),
+                Some(json!({ "isEnabled": true, "timeSelectionEnabled": selection })),
+            )
+            .await;
+        let token = created["accessToken"].as_str().unwrap();
+        let (st, answer) = w
+            .call(
+                "POST",
+                &format!("/api/public/dashboards/{token}/panels/1/query"),
+                None,
+                Some(json!({ "variables": { "job": "core" } })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{uid}: {answer}");
+        // The caller's value, not the saved default `edge`, reaches the Endpoint.
+        let head = seen.lock().last().cloned().unwrap();
+        let line = head.lines().next().unwrap();
+        assert!(line.contains("core") && !line.contains("edge"), "{line}");
+        assert_eq!(
+            answer["results"]["A"]["frames"],
+            json!([]),
+            "the readings are older"
+        );
+    }
+    // Over a range holding both readings, the panel's limit transformation keeps one.
+    let (url, _) = upstream(vec![(
+        "/api/endpoint/air/ngsi-ld/v1/",
+        json!([{ "id": "urn:ngsi-ld:AirQualityObserved:edge", "type": "AirQualityObserved",
+                 "pm10": { "type": "Property", "values": [
+                     [41, "2023-11-14T22:13:20Z"], [42, "2023-11-14T22:14:20Z"]
+                 ] } }]),
+    )])
+    .await;
+    let w = world_beside(&url).await;
+    let mut d = endpoint_dashboard("limited");
+    d["time"] = json!({ "from": "1700000000000", "to": "1700000600000" });
+    d["panels"][0]["transformations"] = json!([{ "id": "limit", "options": { "limitField": 1 } }]);
+    w.add_dashboard(d, None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/limited/public-dashboards",
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap();
+    let answer = w
+        .call(
+            "POST",
+            &format!("/api/public/dashboards/{token}/panels/1/query"),
+            None,
+            Some(json!({})),
+        )
+        .await
+        .1;
+    assert_eq!(
+        answer["results"]["A"]["frames"][0]["fields"][1]["values"],
+        json!([41.0]),
+        "{answer}"
+    );
+}
+
+#[tokio::test]
+async fn the_public_interval_is_never_finer_than_the_range_allows() {
+    let (url, seen) = gateway().await;
+    let w = world_beside(&url).await;
+    // 61 hours: 11 000 points of 20 s, above the organization's 15 s floor.
+    let mut d = endpoint_dashboard("wide");
+    d["time"] = json!({ "from": "1699780000000", "to": "1700000000000" });
+    w.add_dashboard(d, None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/wide/public-dashboards",
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    let uri = format!(
+        "/api/public/dashboards/{}/panels/1/query",
+        created["accessToken"].as_str().unwrap()
+    );
+    for interval in [1_000, 19_000, 25_000] {
+        let (st, body) = w
+            .call("POST", &uri, None, Some(json!({ "intervalMs": interval })))
+            .await;
+        assert_eq!(st, StatusCode::OK, "{interval}: {body}");
+    }
+    assert_eq!(
+        seen.lock().len(),
+        2,
+        "1 s and 19 s both run at the 20 s the range allows (one cached query); 25 s is its own"
+    );
 }
 
 #[tokio::test]

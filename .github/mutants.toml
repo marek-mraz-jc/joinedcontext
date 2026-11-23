@@ -53,6 +53,9 @@ exclude_re = [
   # daiya-store-memory: insert_plan drops plans whose expires_at is before `now`, read inside the call; a
   # plan expiring at that exact microsecond is the only one `>` and `>=` treat apart, and no test can pin it.
   'crates/daiya/store-memory/src/lib\.rs:.*replace > with >= in <impl DaiyaStore for MemoryStore>::insert_plan',
+  # daiya-api execute_public_dashboard_query: a span exactly at the organization's maximum is capped to
+  # to - max, which is the `from` it already has, so `>` and `>=` give the same range (T-7684).
+  'crates/daiya/api/src/public\.rs:\d+:\d+: replace > with >= in execute_public_dashboard_query',
   # antares-notifier: the retry jitter is 1 + j * (2n - 1) with n uniform clock noise in [0, 1); 1 - j * (2n - 1)
   # has the same distribution over the same range [1 - j, 1 + j], so no test can tell the two apart.
   'crates/antares-notifier/src/lib\.rs:\d+:26: replace \+ with - in DeliveryPolicy::next_delay',
