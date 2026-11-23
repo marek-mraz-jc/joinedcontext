@@ -469,6 +469,19 @@ impl SubMirror {
             .unwrap_or_default()
     }
 
+    /// The tenants holding a periodic subscription: the interval sweep's
+    /// domain when only the subscription half is due (S5-28), read here in
+    /// memory instead of listing every Tenant of the store.
+    pub(crate) fn periodic_tenants(&self) -> Vec<String> {
+        self.map
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(_, t)| t.docs.values().any(|d| d.get("timeInterval").is_some()))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     /// The interval sweep's whole input: the tenant's periodic (5.2.12
     /// `timeInterval`) subscriptions. The walk is over every subscription the
     /// tenant holds, but only the periodic ones are carried out of it — the
@@ -607,6 +620,28 @@ impl DocMirror {
             .keys()
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod periodic {
+    use super::SubMirror;
+    use serde_json::json;
+
+    /// S5-28: only tenants holding a periodic subscription are in the
+    /// sweep's domain, and a tenant leaves it with its last one.
+    #[test]
+    fn the_sweep_visits_only_tenants_with_periodic_subscriptions() {
+        let m = SubMirror::default();
+        m.apply("a", "s:1", Some(json!({"id": "s:1", "timeInterval": 60})));
+        m.apply(
+            "b",
+            "s:2",
+            Some(json!({"id": "s:2", "entities": [{"type": "Car"}]})),
+        );
+        assert_eq!(m.periodic_tenants(), ["a"]);
+        m.apply("a", "s:1", None);
+        assert!(m.periodic_tenants().is_empty());
     }
 }
 

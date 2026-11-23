@@ -752,9 +752,14 @@ async fn a_past_partition_the_sweeps_emptied_is_dropped_and_a_held_one_stays() {
     // next tick, as the broker's maintenance loop does: tick again.
     let mut done = String::new();
     for _ in 0..50 {
-        done = temporal_maintenance(&pool, TemporalBackend::Partitioned, None)
-            .await
-            .expect("maintenance");
+        done = temporal_maintenance(
+            &pool,
+            TemporalBackend::Partitioned,
+            None,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .expect("maintenance");
         if !exists("attr_instances_2001w02").await {
             break;
         }
@@ -983,9 +988,14 @@ async fn an_expired_entity_goes_with_its_history() {
     .expect("entities");
     let mut done = String::new();
     for _ in 0..50 {
-        done = temporal_maintenance(&pool, TemporalBackend::Partitioned, None)
-            .await
-            .expect("maintenance");
+        done = temporal_maintenance(
+            &pool,
+            TemporalBackend::Partitioned,
+            None,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .expect("maintenance");
         if !done.starts_with("skipped") {
             break;
         }

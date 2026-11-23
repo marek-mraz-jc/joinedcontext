@@ -161,10 +161,17 @@ pub async fn interval_tick(st: &AppState) {
     // a subscription cannot be fired twice for one period.
     #[cfg(not(target_arch = "wasm32"))]
     let mut sending = tokio::task::JoinSet::new();
-    for tenant_str in read_or_warn(
-        st.store.subscription_tenants().await,
-        "the tenants with subscriptions",
-    ) {
+    // Only the subscription half due: the mirror names the tenants holding a
+    // periodic subscription, with no store read (S5-28). The registration
+    // half is not mirrored and still walks the store's tenants.
+    let tenants = match (&st.sub_mirror, sweep_csubs) {
+        (Some(m), false) => m.periodic_tenants(),
+        _ => read_or_warn(
+            st.store.subscription_tenants().await,
+            "the tenants with subscriptions",
+        ),
+    };
+    for tenant_str in tenants {
         let Ok(tenant) = TenantId::new_internal(&tenant_str) else {
             continue;
         };
