@@ -15,6 +15,8 @@ import {
   type Attribute,
   type MapperState,
 } from "../src/pages/pipelines/outputMapper";
+import { withEntityEnd } from "../src/pages/pipelines/OutputMapper";
+import { sampleValues } from "../src/pages/pipelines/MapperSources";
 
 const text = (name: string): Attribute => ({ name, kind: "Property", valueType: "string", required: false });
 const typed = (name: string, valueType: Attribute["valueType"]): Attribute => ({ name, kind: "Property", valueType, required: false });
@@ -133,5 +135,28 @@ describe("the mapper's preview", () => {
   it("writes no expiresAt when the lifetime's fixed time is not a time", () => {
     const [entity] = preview({ type: "T", attributes: {} }, [], [{}], "air", "city.example", 0, { at: "soon" });
     expect(entity).toEqual({ type: "T" });
+  });
+});
+
+describe("the entity end of a type in the lifetime", () => {
+  it("sets, replaces and removes a type's entity end and keeps its attribute ends", () => {
+    const attributes = [{ names: ["pm10"], rolling: "PT1H" }];
+    expect(withEntityEnd(undefined, "T", { rolling: "PT1M" })).toEqual([{ type: "T", entity: { rolling: "PT1M" } }]);
+    expect(withEntityEnd(undefined, "T", undefined)).toBeUndefined();
+    const other = { type: "U", entity: { rolling: "P1D" } };
+    expect(withEntityEnd([other, { type: "T", attributes }], "T", { from: "dateObserved" })).toEqual([
+      other,
+      { type: "T", attributes, entity: { from: "dateObserved" } },
+    ]);
+    expect(withEntityEnd([other, { type: "T", attributes, entity: { rolling: "PT1M" } }], "T", undefined)).toEqual([other, { type: "T", attributes }]);
+    expect(withEntityEnd([{ type: "T", entity: { rolling: "PT1M" } }], "T", undefined)).toBeUndefined();
+  });
+});
+
+describe("the sample values a lookup lists", () => {
+  it("lists each value once, as text, skipping empty ones, up to twenty", () => {
+    const records = Array.from({ length: 25 }, (_, n) => ({ code: `c${n}` }));
+    expect(sampleValues(records, "code")).toHaveLength(20);
+    expect(sampleValues([{ code: 1 }, { code: 1 }, { code: "" }, { code: null }, {}, { code: { a: 1 } }], "code")).toEqual(["1", '{"a":1}']);
   });
 });
