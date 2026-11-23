@@ -6,7 +6,7 @@
  * step hints each slot of the model with its type, whether it is required, its enum values and an
  * example; a refused sample says why; the verdict reaches the dialog only for the mapping it ran.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
@@ -22,10 +22,12 @@ import { PipelineWorkbench, answeredHtml, classOfMapping, exampleOf, flatten, ma
 import { expectAxeClean, jsonResponse, problem } from "./pageHarness";
 import { pageFindings } from "./pageChecks";
 import { plainValue } from "../src/pages/pipelines/PipelineStudio";
+import { generate, HEADER, type Attribute } from "../src/pages/pipelines/outputMapper";
 
 // The Lifetime step links the space's retention rules; this harness renders the steps without a
 // router, so the link is a plain anchor here (T-4842).
-vi.mock("../src/components/RecordLink", () => ({
+vi.mock("../src/components/RecordLink", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/components/RecordLink")>()),
   RecordLink: ({ children }: { children: ReactNode }) => <a href="#space">{children}</a>,
 }));
 
@@ -85,6 +87,10 @@ interface Answers {
   validate?: unknown;
   /** The target model, when a test needs another than LINKML. */
   linkml?: string;
+  /** What the endpoint's page answers the person's session, when not ENDPOINT_PAGE. */
+  endpointPage?: Response;
+  /** The target type's attributes, as the space's model types them. */
+  attributes?: unknown;
 }
 
 interface Seen {
@@ -108,13 +114,14 @@ function stub(answers: Answers, seen: Seen) {
       }
       if (path.startsWith("/api/endpoint/")) {
         seen.ops.push({ name: `read ${path}`, body: {} });
-        return jsonResponse(ENDPOINT_PAGE);
+        return answers.endpointPage ?? jsonResponse(ENDPOINT_PAGE);
       }
       if (path.endsWith("/spaces")) {
         return jsonResponse({
           items: [manifest("ContextSpace", "ovzdusie", { dataModelRef: { kind: "DataModel", name: "air" } })],
         });
       }
+      if (answers.attributes && path.endsWith("/attributes")) return jsonResponse(answers.attributes);
       if (path.endsWith("/datamodels")) {
         return jsonResponse({ items: [manifest("DataModel", "air", { linkml: answers.linkml ?? LINKML, classes: ["AirQualityObserved"] })] });
       }
@@ -212,6 +219,7 @@ describe("the pipeline workbench", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -243,6 +251,19 @@ describe("the pipeline workbench", () => {
     await userEvent.click(within(sample).getByRole("button", { name: en.pipelines.workbench.sample.listenAgain }));
     await waitFor(() => expect(seen.ops.filter((op) => op.name === "jc_pipeline_sample_source")).toHaveLength(2));
     await expectAxeClean(sample);
+  });
+
+  it("counts the seconds it has listened while the stream is open", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    let release = () => undefined as void;
+    stub({ sample: STREAMED, mapping: MAPPED, validate: ONE_BAD, sampleGate: new Promise<void>((done) => (release = done)) }, { ops: [] });
+    show({ source: { dataSourceRef: "hsl-hfp" }, compute: { kind: "bloblang", bloblang: MAPPING }, targetEndpoint: URN });
+    const sample = step(en.pipelines.workbench.sample.title);
+    expect(await within(sample).findByRole("status")).toHaveTextContent("0 of 5 s");
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(within(sample).getByRole("status")).toHaveTextContent("2 of 5 s");
+    release();
+    await within(sample).findByRole("table", { name: en.pipelines.workbench.sample.caption });
   });
 
   it("says a quiet topic sent nothing, and why that may be, with a way to listen again", async () => {
@@ -317,6 +338,148 @@ describe("the pipeline workbench", () => {
     const value = (screen.getByLabelText(en.pipelines.field.bloblang) as HTMLTextAreaElement).value;
     expect(value.startsWith(MAPPING)).toBe(true);
     expect(value.split("\n").at(-1)).toBe('root.quality = { "type": "Property", "value": "good" }');
+  });
+
+  it("reads the type an endpoint source is queried for from the endpoint's model", async () => {
+    stub({ sample: SAMPLE, mapping: MAPPED, validate: ONE_BAD }, { ops: [] });
+    show({ targetEndpoint: URN, source: { endpointRef: "air-write" } });
+    const type = await screen.findByLabelText(en.pipelines.workbench.source.type);
+    await waitFor(() => expect(within(type).getByRole("option", { name: "AirQualityObserved" })).toBeInTheDocument());
+    await userEvent.selectOptions(type, "AirQualityObserved");
+    expect(type).toHaveValue("AirQualityObserved");
+    await userEvent.selectOptions(type, "");
+    expect(type).toHaveValue("");
+  });
+
+  it("says why an endpoint's page could not be read for the sample", async () => {
+    stub({ endpointPage: problem(403, "you may not read ep-air"), mapping: MAPPED, validate: ONE_BAD }, { ops: [] });
+    show({ targetEndpoint: URN, source: { endpointRef: "air-write", query: { type: "AirQualityObserved" } } });
+    expect(await within(step(en.pipelines.workbench.sample.title)).findByText(/you may not read ep-air/)).toBeInTheDocument();
+  });
+
+  it("refuses a sample file over the size the test reads", async () => {
+    const seen: Seen = { ops: [] };
+    stub({ sample: SAMPLE }, seen);
+    show({ targetEndpoint: URN });
+    const file = new File(["station,pm10\n"], "huge.csv", { type: "text/csv" });
+    Object.defineProperty(file, "size", { value: 6 * 1024 * 1024 });
+    await userEvent.upload(screen.getByLabelText(en.pipelines.workbench.source.file), file);
+    expect(await screen.findByText(en.pipelines.test.tooLarge)).toBeInTheDocument();
+    expect(seen.ops.map((op) => op.name)).not.toContain("jc_pipeline_sample_source");
+  });
+
+  it("lists the messages a stream skipped, three at most", async () => {
+    const errors = [1, 2, 3, 4].map((n) => ({ message: `message ${n} is not JSON` }));
+    stub({ sample: { ...STREAMED, errors }, mapping: MAPPED, validate: ONE_BAD }, { ops: [] });
+    show({ targetEndpoint: URN, source: { dataSourceRef: "hsl-hfp" } });
+    expect(await screen.findByText("message 1 is not JSON")).toBeInTheDocument();
+    expect(screen.getByText("message 3 is not JSON")).toBeInTheDocument();
+    expect(screen.queryByText("message 4 is not JSON")).toBeNull();
+  });
+
+  it("points a mapping error at its step and line, takes typed Bloblang and a picked class", async () => {
+    const seen: Seen = { ops: [] };
+    const linkml = LINKML.replace("slots:\n  pm10:", "  Station:\n    slots: [pm10]\nslots:\n  pm10:");
+    stub({ sample: SAMPLE, mapping: { records: [], errors: [{ step: 0, line: 3, message: "expected number" }] }, validate: ONE_BAD, linkml }, seen);
+    show({ targetEndpoint: URN, source: { dataSourceRef: "shmu-csv" }, compute: { kind: "bloblang", bloblang: MAPPING } });
+    const alert = await screen.findByText(/expected number/);
+    expect(alert.closest("[role=alert]")).toHaveTextContent(/1.*3.*expected number/);
+    const editor = screen.getByLabelText(en.pipelines.field.bloblang);
+    await userEvent.type(editor, "\nroot.extra = 1");
+    expect((editor as HTMLTextAreaElement).value.endsWith("root.extra = 1")).toBe(true);
+    const picker = await screen.findByLabelText(en.pipelines.workbench.mapping.type);
+    await userEvent.selectOptions(picker, "Station");
+    expect(picker).toHaveValue("Station");
+  });
+
+  it("keeps a history plan and a lifetime per attribute of the target type, and shows history refusals", async () => {
+    const validate = {
+      ...ONE_BAD,
+      verdicts: [
+        { index: 0, ok: true, problems: [], findings: [] },
+        { index: 1, ok: false, problems: [], findings: [{ source: "history", rule: "history-time", field: "pm10", reason: "pm10 has no time to keep it by" }] },
+      ],
+    };
+    const attributes = {
+      model: "air",
+      version: "1.0.0",
+      type: "AirQualityObserved",
+      attributes: [
+        { name: "dateObserved", kind: "Property", valueType: "string", format: "date-time", required: false },
+        { name: "pm10", kind: "Property", valueType: "number", required: true },
+      ],
+    };
+    stub({ sample: SAMPLE, mapping: MAPPED, validate, attributes }, { ops: [] });
+    show({
+      targetEndpoint: URN,
+      source: { dataSourceRef: "shmu-csv" },
+      compute: { kind: "bloblang", bloblang: MAPPING },
+      lifetime: [{ type: "Other", entity: { rolling: "PT1H" } }],
+    });
+    const keep = await screen.findByRole("combobox", { name: "What to keep of pm10" });
+    await userEvent.selectOptions(keep, within(keep).getAllByRole("option")[1]);
+    expect(keep).not.toHaveValue("");
+    expect((await screen.findAllByText(/pm10 has no time to keep it by/)).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("radio", { name: new RegExp(en.pipelines.lifetime.entity) }));
+    expect(screen.getByRole("radio", { name: new RegExp(en.pipelines.lifetime.entity) })).toBeChecked();
+  });
+
+  it("maps in the form: moves a step's own expiry into the lifetime and rewrites the step as fields are picked", async () => {
+    const attributes = {
+      model: "air",
+      version: "1.0.0",
+      type: "AirQualityObserved",
+      attributes: [{ name: "pm10", kind: "Property", valueType: "number", required: false }],
+    };
+    stub({ sample: SAMPLE, mapping: MAPPED, validate: ONE_BAD, attributes }, { ops: [] });
+    const header = `${HEADER}${JSON.stringify({ type: "AirQualityObserved", idField: "station", attributes: {}, expires: { plus: "PT1H" } })}`;
+    const step = generate({ type: "AirQualityObserved", idField: "station", attributes: {}, expires: { plus: "PT1H" } }, attributes.attributes as Attribute[], "ovzdusie");
+    expect(step.startsWith(header)).toBe(true);
+    show({ targetEndpoint: URN, source: { dataSourceRef: "shmu-csv" }, compute: { kind: "bloblang", bloblang: step } });
+    await userEvent.click(screen.getByRole("radio", { name: en.pipelines.mapper.modeMap }));
+    const pm10 = await screen.findByTestId("mapper-attribute-pm10");
+    await waitFor(() => expect(screen.queryByText(/now the pipeline's lifetime, in the Lifetime step/)).toBeInTheDocument());
+    await userEvent.selectOptions(within(pm10).getByRole("combobox", { name: /Source of pm10/ }), "field:pm10");
+    await userEvent.click(screen.getByRole("radio", { name: en.pipelines.mapper.modeCode }));
+    const code = (screen.getByLabelText(en.pipelines.field.bloblang) as HTMLTextAreaElement).value;
+    expect(code).toContain("this.pm10");
+    expect(code).not.toContain("expiresAt");
+  });
+
+  it("shows no slots for a target model it cannot read", async () => {
+    stub({ sample: SAMPLE, mapping: MAPPED, validate: ONE_BAD, linkml: "classes: [unclosed" }, { ops: [] });
+    show({ targetEndpoint: URN, compute: { kind: "bloblang", bloblang: MAPPING } });
+    expect(await screen.findByText(/ovzdusie/, { selector: "p" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add the line for/ })).toBeNull();
+  });
+
+  it("shows a pipeline's mapping file in place of the Bloblang box and edits it on request", async () => {
+    stub({ sample: SAMPLE, mapping: MAPPED, validate: ONE_BAD }, { ops: [] });
+    const onText = vi.fn();
+    const onEditing = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <PipelineWorkbench
+            project="ovzdusie"
+            draft={{ targetEndpoint: URN }}
+            onChange={() => undefined}
+            dataSources={DATASOURCES}
+            endpoints={ENDPOINTS}
+            targets={TARGETS}
+            toManifest={(form) => ({ kind: "Pipeline", metadata: { name: "air" }, spec: form })}
+            onVerdict={() => undefined}
+            mappingFile={{ state: "loaded", text: "input:\n  generate: {}\n", editing: true, onText, onEditing }}
+          />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    const file = await screen.findByLabelText(en.pipelines.workbench.mapping.file);
+    expect(screen.queryByLabelText(en.pipelines.field.bloblang)).toBeNull();
+    await userEvent.type(file, "x");
+    expect(onText).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("checkbox", { name: en.pipelines.workbench.mapping.fileEdit }));
+    expect(onEditing).toHaveBeenCalledWith(false);
   });
 
   it("shows_eight_steps_in_order_each_with_its_hint", () => {
@@ -671,6 +834,10 @@ describe("what the workbench reads from an answer", () => {
     expect(readValidation({ verdicts: [{ index: "x", ok: "yes", problems: [null] }] }).verdicts).toEqual([
       { index: 0, ok: false, problems: [] },
     ]);
+    // An access request naming an operation the server does not offer is no request at all.
+    const finding = (operations: string) => ({ source: "endpoint", rule: "grant", field: "pm10", reason: "r", access: { project: "p", name: "ep", operations } });
+    const [refused] = readValidation({ verdicts: [{ index: 0, ok: false, problems: [], findings: [finding("delete"), finding("write")] }] }).verdicts;
+    expect(refused.findings?.map((one) => one.access)).toEqual([undefined, { project: "p", name: "ep", operations: "write" }]);
   });
 
   it("names_the_class_a_mapping_writes_and_an_example_per_range", () => {
@@ -694,6 +861,11 @@ describe("what the workbench reads from an answer", () => {
     expect(exampleOf({ range: "Station", kind: "Relationship" })).toBe('"urn:ngsi-ld:Station:…"');
     expect(exampleOf({ range: "Course", kind: "Relationship", multivalued: true })).toBe('["urn:ngsi-ld:Course:…"]');
     expect(exampleOf({ range: "Level", kind: "Property" }, "good")).toBe('"good"');
+    expect(exampleOf({ range: "boolean", kind: "Property" })).toBe("true");
+    expect(exampleOf({ range: "date", kind: "Property" })).toBe('"2026-09-25"');
+    expect(exampleOf({ range: "datetime", kind: "Property" })).toBe('"2026-09-25T08:00:00Z"');
+    expect(exampleOf({ range: "uri", kind: "Property" })).toBe('"…"');
+    expect(exampleOf({ kind: "Property" })).toBe('"…"');
   });
 });
 
