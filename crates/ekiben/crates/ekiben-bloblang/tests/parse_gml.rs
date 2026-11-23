@@ -252,6 +252,88 @@ fn malformed_gml_is_an_error_naming_the_fault() {
 }
 
 #[test]
+fn every_gml_shape_and_fault_reads_as_named() {
+    let ok = |gml: &str| {
+        parse_gml(&text(gml), None, None)
+            .expect(gml)
+            .to_json_value()
+    };
+    let ring = "<gml:exterior><gml:LinearRing><gml:posList>0 0 1 0 1 1 0 0</gml:posList></gml:LinearRing></gml:exterior>";
+    for (gml, want) in [
+        // CDATA, a character reference, a comment and a declaration are text and trivia.
+        ("<?xml version=\"1.0\"?><!-- c --><gml:Point><gml:pos><![CDATA[1 2]]></gml:pos></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
+        ("<gml:Point><gml:pos>1&#32;2</gml:pos></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
+        // GML 2 coordinates with their own separators, and a coord with X and Y.
+        (r#"<gml:LineString><gml:coordinates cs=";" ts="|" decimal=",">0,5;1|2;3</gml:coordinates></gml:LineString>"#, json!({"type": "LineString", "coordinates": [[0.5, 1], [2, 3]]})),
+        ("<gml:Point><gml:coord><gml:X>1</gml:X><gml:Y>2</gml:Y></gml:coord></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
+        ("<gml:LineString><gml:pointProperty><gml:Point><gml:pos>0 0</gml:pos></gml:Point></gml:pointProperty><gml:Point><gml:pos>1 1</gml:pos></gml:Point></gml:LineString>", json!({"type": "LineString", "coordinates": [[0, 0], [1, 1]]})),
+        (&format!("<gml:Surface><gml:patches><gml:PolygonPatch>{ring}</gml:PolygonPatch></gml:patches></gml:Surface>"), json!({"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]})),
+        (&format!("<gml:Surface><gml:patches><gml:PolygonPatch>{ring}</gml:PolygonPatch><gml:PolygonPatch>{ring}</gml:PolygonPatch></gml:patches></gml:Surface>"), json!({"type": "MultiPolygon", "coordinates": [[[[0, 0], [1, 0], [1, 1], [0, 0]]], [[[0, 0], [1, 0], [1, 1], [0, 0]]]]})),
+        ("<gml:MultiCurve><gml:curveMember><gml:LineString><gml:posList>0 0 1 1</gml:posList></gml:LineString></gml:curveMember></gml:MultiCurve>", json!({"type": "MultiLineString", "coordinates": [[[0, 0], [1, 1]]]})),
+    ] {
+        assert_eq!(ok(gml), want, "{gml}");
+    }
+    // An arc in 3D keeps its height, interpolated along the arc.
+    let arc = ok(
+        r#"<gml:Curve srsDimension="3"><gml:segments><gml:ArcString><gml:posList>0 0 0 1 1 5 2 0 10</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#,
+    );
+    let pts = arc["coordinates"].as_array().expect("positions");
+    assert!(
+        pts.len() > 3
+            && pts
+                .iter()
+                .all(|p| p.as_array().is_some_and(|p| p.len() == 3)),
+        "{arc}"
+    );
+    assert_eq!(pts.last(), Some(&json!([2, 0, 10])));
+    let cases: &[(&str, &str)] = &[
+        ("<gml:Point/>", "gml:Point holds no position"),
+        (r#"<gml:LineString><gml:coordinates cs="," ts=",">0,0</gml:coordinates></gml:LineString>"#, "needs distinct cs, ts and decimal"),
+        ("<gml:Point><gml:coord><gml:Y>2</gml:Y></gml:coord></gml:Point>", "gml:coord needs X"),
+        ("<gml:Point><gml:coord><gml:X>2</gml:X></gml:coord></gml:Point>", "gml:coord needs Y"),
+        ("<gml:LineString><gml:pointProperty><gml:LineString/></gml:pointProperty></gml:LineString>", "gml:LineString is not a gml:Point"),
+        ("<gml:Point><gml:pos>1 2</gml:pos><gml:pos>3 4</gml:pos></gml:Point>", "a gml:Point holds 2 positions"),
+        ("<gml:MultiPoint><gml:pointMember></gml:pointMember></gml:MultiPoint>", "gml:pointMember holds no geometry"),
+        ("<gml:MultiPoint><gml:pointMember><gml:Point><gml:pos>1 2</gml:pos></gml:Point><gml:Point><gml:pos>1 2</gml:pos></gml:Point></gml:pointMember></gml:MultiPoint>", "gml:pointMember holds more than one geometry"),
+        ("<gml:MultiPoint><gml:foo/></gml:MultiPoint>", "unexpected gml:foo in gml:MultiPoint"),
+        ("<gml:Curve><gml:foo/></gml:Curve>", "unexpected gml:foo in gml:Curve"),
+        ("<gml:Polygon><gml:exterior><gml:Ring><gml:foo/></gml:Ring></gml:exterior></gml:Polygon>", "unexpected gml:foo in gml:Ring"),
+        ("<gml:Polygon><gml:exterior><gml:Point><gml:pos>1 2</gml:pos></gml:Point></gml:exterior></gml:Polygon>", "gml:Point is not a curve"),
+        ("<gml:LineString><gml:pos>1 2</gml:pos></gml:LineString>", "gml:LineString needs two positions"),
+        ("<gml:Polygon><gml:foo/></gml:Polygon>", "unexpected gml:foo in gml:Polygon"),
+        ("<gml:Surface><gml:foo/></gml:Surface>", "unexpected gml:foo in gml:Surface"),
+        ("<gml:Surface><gml:patches><gml:Polygon/></gml:patches></gml:Surface>", "unexpected gml:Polygon in gml:patches"),
+        ("<gml:Surface></gml:Surface>", "gml:Surface holds no patch"),
+        ("<gml:MultiSurface><gml:surfaceMember><gml:Point><gml:pos>1 2</gml:pos></gml:Point></gml:surfaceMember></gml:MultiSurface>", "gml:Point is not a surface"),
+        ("<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1e150 0 0 1e140</gml:posList></gml:ArcString></gml:segments></gml:Curve>", "an arc has no finite circle"),
+    ];
+    for (gml, want) in cases {
+        let err = parse_gml(&text(gml), None, None).expect_err(gml);
+        assert!(err.contains(want), "{gml}: {err}");
+    }
+    // The object parse_xml makes: #text, scalars that are no text, bytes, and nesting.
+    let from_obj = |v: serde_json::Value| parse_gml(&Value::from_json_value(v), None, None);
+    assert_eq!(
+        from_obj(json!({"Point": {"pos": {"#text": "1 2"}}})).map(|g| g.to_json_value()),
+        Ok(json!({"type": "Point", "coordinates": [1, 2]}))
+    );
+    assert!(from_obj(json!({"Point": {"pos": 5}}))
+        .unwrap_err()
+        .contains("position of 1"));
+    assert!(from_obj(json!({"Point": {"pos": null}}))
+        .unwrap_err()
+        .contains("gml:pos holds null, not text"));
+    let mut deep = json!({"pos": "1 2"});
+    for _ in 0..200 {
+        deep = json!({"Point": deep});
+    }
+    assert!(from_obj(deep).unwrap_err().contains("nest deeper than"));
+    let bytes = Value::Bytes(b"<gml:Point><gml:pos>1 2</gml:pos></gml:Point>".to_vec());
+    assert!(parse_gml(&bytes, None, None).is_ok());
+    assert!(parse_gml(&Value::Bytes(vec![0xff]), None, None).is_err());
+}
+
+#[test]
 fn deep_nesting_is_refused_without_a_stack_overflow() {
     let deep = |n: usize| {
         format!(

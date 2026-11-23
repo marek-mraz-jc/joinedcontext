@@ -75,7 +75,7 @@ fn multi_wraps_instances_with_their_dataset_ids() {
 #[test]
 fn language_map_drops_empty_texts() {
     assert_eq!(
-        run(r#"root.name = ngsild_language_map({"fi": "Kaivopuisto", "sv": "", "en": null, "sk": ["a", ""]})"#)
+        run(r#"root.name = ngsild_language_map({"fi": "Kaivopuisto", "sv": "", "en": null, "sk": ["a", "", null]})"#)
             .expect("map"),
         json!({"name": {"type": "LanguageProperty", "languageMap": {"fi": "Kaivopuisto", "sk": ["a"]}}})
     );
@@ -87,6 +87,9 @@ root.name = ngsild_language_map({"fi": ""})"#)
     );
     assert!(run(r#"root = ngsild_language_map({"en_US": "x"})"#).is_err());
     assert!(run(r#"root = ngsild_language_map({"en": 3})"#).is_err());
+    assert!(run(r#"root = ngsild_language_map({"en": ["a", 3]})"#)
+        .unwrap_err()
+        .contains("the text for \"en\" must be a string"));
 }
 
 #[test]

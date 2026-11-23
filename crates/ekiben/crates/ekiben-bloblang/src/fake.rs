@@ -3,7 +3,7 @@
 //! shape go-faker gives; the numbers come from Go's math/rand algorithm seeded from the OS, so no two
 //! runs repeat, as in Bento.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use jiff::Timestamp;
 
@@ -97,9 +97,8 @@ fn faker() -> &'static Mutex<Faker> {
 /// go-faker's default 25-letter string. An unknown name is Bento's error.
 pub fn fake(name: &str) -> Result<Value, String> {
     let key = name.to_lowercase();
-    let mut guard = faker()
-        .lock()
-        .map_err(|_| "faker state poisoned".to_string())?;
+    // The state is an RNG and a cached card index: a panic elsewhere leaves it valid.
+    let mut guard = faker().lock().unwrap_or_else(PoisonError::into_inner);
     guard
         .generate(&key)
         .ok_or_else(|| format!("invalid faker function: {name}"))
@@ -176,10 +175,8 @@ impl Faker {
         for (i, w) in words.iter().enumerate() {
             if i == 0 {
                 let mut c = w.chars();
-                if let Some(f) = c.next() {
-                    out.extend(f.to_uppercase());
-                    out.push_str(c.as_str());
-                }
+                out.extend(c.next().into_iter().flat_map(char::to_uppercase));
+                out.push_str(c.as_str());
             } else {
                 out.push(' ');
                 out.push_str(w);
@@ -459,6 +456,17 @@ mod tests {
             fake("russian_first_name_male").unwrap_err(),
             "invalid faker function: russian_first_name_male"
         );
+    }
+
+    #[test]
+    fn a_panic_while_the_faker_is_held_does_not_break_later_calls() {
+        let poisoner = std::thread::spawn(|| {
+            let _held = faker().lock();
+            panic!("poison the faker");
+        });
+        assert!(poisoner.join().is_err());
+        assert!(faker().is_poisoned());
+        assert!(s("email").contains('@'));
     }
 
     #[test]
