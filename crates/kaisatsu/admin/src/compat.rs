@@ -990,6 +990,83 @@ struct PartialImportPayload {
     clients: Vec<ClientRepresentation>,
 }
 
+/// Recreates `old` as `new` under another id (partialImport OVERWRITE, PF-126) and moves what is
+/// keyed by the person's id: credentials, passkeys, groups, role grants and their mapping rows,
+/// and Organization memberships. Deleting the old person ends their sessions.
+async fn move_person(
+    store: &Arc<dyn Store>,
+    realm: &str,
+    old: UserRepresentation,
+    mut new: UserRepresentation,
+) -> Result<UserRepresentation> {
+    let credentials = store.list_credentials(realm, &old.id).await?;
+    let passkeys = store.list_webauthn_credentials(realm, &old.id).await?;
+    let groups = store.list_user_groups(realm, &old.id).await?;
+    let memberships = store.list_memberships_for_person(realm, &old.id).await?;
+    let mut mappings = store
+        .list_role_mappings_for_principal(realm, "user", &old.id, None)
+        .await?;
+    for client_id in old.client_roles.keys() {
+        if let Some(client) = store.get_client_by_client_id(realm, client_id).await? {
+            mappings.extend(
+                store
+                    .list_role_mappings_for_principal(realm, "user", &old.id, Some(&client.id))
+                    .await?,
+            );
+        }
+    }
+    store.delete_user(realm, None, &old.id).await?;
+    new.realm_roles = old.realm_roles;
+    new.client_roles = old.client_roles;
+    let written = store.create_user(new).await?;
+    store
+        .set_user_grants(
+            realm,
+            &written.id,
+            &written.realm_roles,
+            &written.client_roles,
+        )
+        .await?;
+    for cred in credentials {
+        store
+            .upsert_credential(CredentialRecord {
+                user_id: written.id.clone(),
+                ..cred
+            })
+            .await?;
+    }
+    for key in passkeys {
+        store
+            .insert_webauthn_credential(WebAuthnCredentialRecord {
+                user_id: written.id.clone(),
+                ..key
+            })
+            .await?;
+    }
+    for group in groups {
+        store
+            .add_user_to_group(realm, &written.id, &group.id)
+            .await?;
+    }
+    for mapping in mappings {
+        store
+            .add_role_mapping(RoleMappingRecord {
+                principal_id: written.id.clone(),
+                ..mapping
+            })
+            .await?;
+    }
+    for membership in memberships {
+        store
+            .upsert_membership(Membership {
+                person_id: written.id.clone(),
+                ..membership
+            })
+            .await?;
+    }
+    Ok(written)
+}
+
 fn default_if_exists() -> String {
     "FAIL".into()
 }
@@ -1025,42 +1102,100 @@ async fn compat_partial_import(
         c.check_signature_algorithms()?;
         state.oidc.guard.check_client(&c.attributes)?;
     }
-    // FAIL is all or nothing, as in Keycloak: a conflict is found before anything is written.
+    // Every resource's state is read before the first write (S3-27): FAIL refuses when any
+    // exists (all or nothing, as in Keycloak), SKIP leaves an existing one alone, OVERWRITE
+    // replaces it. The request runs as one transaction (`jc_audit::layer`), so a store error
+    // later still writes nothing.
+    let store = &state.oidc.store;
+    let mut groups_held = Vec::with_capacity(payload.groups.len());
+    for g in &payload.groups {
+        let path = if g.path.is_empty() {
+            format!("/{}", g.name)
+        } else {
+            g.path.clone()
+        };
+        let by_id = if g.id.is_empty() {
+            None
+        } else {
+            store.get_group(&realm_name, None, &g.id).await?
+        };
+        let held = by_id.is_some()
+            || store
+                .get_group_by_path(&realm_name, None, &path)
+                .await?
+                .is_some();
+        groups_held.push(held);
+    }
+    let mut clients_held = Vec::with_capacity(payload.clients.len());
+    for c in &payload.clients {
+        let by_uuid = if c.id.is_empty() {
+            None
+        } else {
+            store.get_client_by_uuid(&realm_name, None, &c.id).await?
+        };
+        let held = by_uuid.is_some()
+            || store
+                .get_client_by_client_id(&realm_name, &c.client_id)
+                .await?
+                .is_some();
+        clients_held.push(held);
+    }
+    let mut users_held = Vec::with_capacity(payload.users.len());
+    for u in &payload.users {
+        let by_id = if u.id.is_empty() {
+            None
+        } else {
+            store.get_user_by_id(&realm_name, None, &u.id).await?
+        };
+        let by_name = store
+            .get_user_by_username_or_email(&realm_name, None, &u.username)
+            .await?;
+        if let (Some(a), Some(b)) = (&by_id, &by_name)
+            && a.id != b.id
+        {
+            return Err(KaisatsuError::Conflict(format!(
+                "partialImport: id {} belongs to {}, not to {}: send the id {} holds or a free one",
+                u.id, a.username, u.username, u.username
+            )));
+        }
+        users_held.push(by_id.or(by_name));
+    }
     if mode == "FAIL" {
-        for u in &payload.users {
-            let by_id = if u.id.is_empty() {
-                None
-            } else {
-                state
-                    .oidc
-                    .store
-                    .get_user_by_id(&realm_name, None, &u.id)
-                    .await?
-            };
-            if by_id.is_some()
-                || state
-                    .oidc
-                    .store
-                    .get_user_by_username_or_email(&realm_name, None, &u.username)
-                    .await?
-                    .is_some()
-            {
-                return Err(KaisatsuError::Conflict(format!(
-                    "partialImport FAIL: user {} already exists",
-                    u.username
-                )));
-            }
+        let taken = payload
+            .groups
+            .iter()
+            .zip(&groups_held)
+            .find(|(_, held)| **held)
+            .map(|(g, _)| format!("group {}", g.name))
+            .or_else(|| {
+                payload
+                    .clients
+                    .iter()
+                    .zip(&clients_held)
+                    .find(|(_, held)| **held)
+                    .map(|(c, _)| format!("client {}", c.client_id))
+            })
+            .or_else(|| {
+                payload
+                    .users
+                    .iter()
+                    .zip(&users_held)
+                    .find(|(_, held)| held.is_some())
+                    .map(|(u, _)| format!("user {}", u.username))
+            });
+        if let Some(taken) = taken {
+            return Err(KaisatsuError::Conflict(format!(
+                "partialImport FAIL: {taken} already exists"
+            )));
         }
     }
     // Every path a person names is a stored group or one of this payload, found before anything
-    // is written: OVERWRITE deletes the person first.
+    // is written.
     let in_payload = payload_group_paths(&payload.groups);
     for path in payload.users.iter().flat_map(|u| &u.groups) {
         let norm = format!("/{}", path.trim_start_matches('/'));
         if !in_payload.contains(&norm)
-            && state
-                .oidc
-                .store
+            && store
                 .get_group_by_path(&realm_name, None, &norm)
                 .await?
                 .is_none()
@@ -1073,73 +1208,66 @@ async fn compat_partial_import(
     let mut added = 0u32;
     let mut overwritten = 0u32;
     let mut skipped = 0u32;
+    let mut count = |held: bool| -> bool {
+        match (held, mode.as_str()) {
+            (true, "SKIP") => {
+                skipped += 1;
+                false
+            }
+            (true, _) => {
+                overwritten += 1;
+                true
+            }
+            (false, _) => {
+                added += 1;
+                true
+            }
+        }
+    };
 
-    for mut g in payload.groups {
-        g.realm_id = realm_name.clone();
-        state.oidc.store.upsert_group(g).await?;
-        added += 1;
+    for (mut g, held) in payload.groups.into_iter().zip(groups_held) {
+        if count(held) {
+            g.realm_id = realm_name.clone();
+            store.upsert_group(g).await?;
+        }
     }
 
-    for mut u in payload.users {
+    for (mut u, held) in payload.users.into_iter().zip(users_held) {
+        if !count(held.is_some()) {
+            continue;
+        }
         u.realm_id = realm_name.clone();
         if u.org_id.is_none() {
             u.org_id = ctx.active_org_id.clone();
         }
-        let existing_by_name = state
-            .oidc
-            .store
-            .get_user_by_username_or_email(&realm_name, None, &u.username)
-            .await?;
-        let existing_by_id = if !u.id.is_empty() {
-            state
-                .oidc
-                .store
-                .get_user_by_id(&realm_name, None, &u.id)
-                .await?
-        } else {
-            None
-        };
-        let existing = existing_by_id.or(existing_by_name);
         let paths = std::mem::take(&mut u.groups);
-        let written = match existing {
-            Some(old) if mode == "OVERWRITE" => {
-                let _ = state
-                    .oidc
-                    .store
-                    .delete_user(&realm_name, None, &old.id)
-                    .await?;
-                overwritten += 1;
-                state.oidc.store.create_user(u).await?
+        let written = match held {
+            // The same person: replaced in place, keeping credentials, passkeys and grants.
+            Some(old) if u.id.is_empty() || u.id == old.id => {
+                u.id = old.id;
+                u.created_timestamp = old.created_timestamp;
+                store.update_user(u).await?
             }
-            // SKIP (FAIL found its conflicts before writing).
-            Some(_) => {
-                skipped += 1;
-                continue;
-            }
-            None => {
-                added += 1;
-                state.oidc.store.create_user(u).await?
-            }
+            // The person under a new fixed id (PF-126): everything keyed by the old id moves.
+            Some(old) => move_person(store, &realm_name, old, u).await?,
+            None => store.create_user(u).await?,
         };
         for path in &paths {
-            let group = state
-                .oidc
-                .store
+            let group = store
                 .get_group_by_path(&realm_name, None, path)
                 .await?
                 .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
-            state
-                .oidc
-                .store
+            store
                 .add_user_to_group(&realm_name, &written.id, &group.id)
                 .await?;
         }
     }
 
-    for mut c in payload.clients {
-        c.realm_id = realm_name.clone();
-        state.oidc.store.upsert_client(c).await?;
-        added += 1;
+    for (mut c, held) in payload.clients.into_iter().zip(clients_held) {
+        if count(held) {
+            c.realm_id = realm_name.clone();
+            store.upsert_client(c).await?;
+        }
     }
 
     record_admin_write(

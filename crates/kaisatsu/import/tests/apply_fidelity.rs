@@ -95,7 +95,10 @@ async fn a_changed_field_shows_in_the_plan_for_every_section() {
         .iter()
         .filter(|c| c.action != ChangeAction::Unchanged)
         .collect();
-    assert!(moved.is_empty(), "an unchanged file plans no change: {moved:?}");
+    assert!(
+        moved.is_empty(),
+        "an unchanged file plans no change: {moved:?}"
+    );
 
     let mut doc = city();
     doc["revokeRefreshToken"] = json!(false);
@@ -180,7 +183,11 @@ async fn organizations_client_roles_and_required_actions_are_written() {
     apply_realm_files(&store, &files(&doc), &opts())
         .await
         .expect("re-apply");
-    let org = store.get_organization("city", "hel").await.unwrap().unwrap();
+    let org = store
+        .get_organization("city", "hel")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(org.domains[0].verified);
 
     // --prune drops a client role the file no longer names.
@@ -226,7 +233,10 @@ async fn an_unsupported_section_is_refused_with_its_name() {
             .contains("$.components[\"org.keycloak.storage.UserStorageProvider\"]"),
         "{err}"
     );
-    assert!(store.get_realm("city").await.unwrap().is_none(), "nothing written");
+    assert!(
+        store.get_realm("city").await.unwrap().is_none(),
+        "nothing written"
+    );
 
     // An export's signing keys and user profile are named, their configuration never printed.
     doc["components"] = json!({
@@ -249,14 +259,18 @@ async fn an_unsupported_section_is_refused_with_its_name() {
         assert!(joined.contains(named), "{named} missing in {joined}");
     }
     assert!(!joined.contains("MIIE-secret"));
-    assert!(!joined.contains("UserProfileProvider"), "an empty section is no warning");
+    assert!(
+        !joined.contains("UserProfileProvider"),
+        "an empty section is no warning"
+    );
 }
 
 #[tokio::test]
 async fn a_persons_runtime_changes_survive_an_apply() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
     let mut doc = city();
-    doc["roles"]["realm"] = json!([{"name": "reader"}, {"name": "auditor"}, {"name": "portal-admin"}]);
+    doc["roles"]["realm"] =
+        json!([{"name": "reader"}, {"name": "auditor"}, {"name": "portal-admin"}]);
     doc["users"][0]["realmRoles"] = json!(["reader", "auditor"]);
     doc["users"][0]["attributes"] = json!({"locale": ["fi"]});
     apply_realm_files(&store, &files(&doc), &opts())
@@ -363,7 +377,10 @@ async fn a_realm_is_keyed_by_its_name() {
     apply_realm_files(&store, &files(&city()), &opts())
         .await
         .expect("apply onto the legacy realm");
-    assert_eq!(store.get_realm("city").await.unwrap().unwrap().id, "legacy-id");
+    assert_eq!(
+        store.get_realm("city").await.unwrap().unwrap().id,
+        "legacy-id"
+    );
     assert!(
         store
             .get_user_by_username_or_email("legacy-id", None, "ana")
@@ -387,7 +404,11 @@ async fn the_shipped_jc_realm_plans_as_the_golden() {
     }))
     .unwrap()
         + "\n";
-    assert_eq!(got, include_str!("fixtures/jc-portal.plan.json"), "plan:\n{got}");
+    assert_eq!(
+        got,
+        include_str!("fixtures/jc-portal.plan.json"),
+        "plan:\n{got}"
+    );
 
     // Applied, then planned again past the fast path, the shipped file changes nothing.
     apply_realm_files(&store, &files(&shipped), &opts())

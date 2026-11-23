@@ -1975,6 +1975,247 @@ async fn realm_partial_import_and_native_routes() {
     assert_eq!(st, StatusCode::BAD_REQUEST, "no symmetric token keys");
 }
 
+/// partialImport applies `ifResourceExists` to groups and clients as to people, and OVERWRITE of
+/// a person keeps their password, passkeys and grants, under the same id or a new fixed one (S3-27).
+#[tokio::test]
+async fn partial_import_follows_if_resource_exists_for_every_resource() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "pi-g".into(),
+            realm_id: "dev".into(),
+            name: "pi-g".into(),
+            path: "/pi-g".into(),
+            attributes: HashMap::from([("unit".into(), vec!["old".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_client(ClientRepresentation {
+            id: "pi-app-uuid".into(),
+            realm_id: "dev".into(),
+            client_id: "pi-app".into(),
+            redirect_uris: vec!["https://old.example/cb".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .create_user(UserRepresentation {
+            id: "pi-2".into(),
+            realm_id: "dev".into(),
+            username: "pi.two".into(),
+            realm_roles: vec!["auditor".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_credential(CredentialRecord {
+            id: "pi-2-pw".into(),
+            realm_id: "dev".into(),
+            user_id: "pi-2".into(),
+            credential_type: "password".into(),
+            user_label: None,
+            created_date: 1,
+            secret_data: "stored-hash".into(),
+            credential_data: String::new(),
+            temporary: false,
+        })
+        .await
+        .unwrap();
+    f.store
+        .insert_webauthn_credential(passkey("pi-2-key", "pi-2", None))
+        .await
+        .unwrap();
+    let group =
+        json!({ "id": "pi-g", "name": "pi-g", "path": "/pi-g", "attributes": { "unit": ["new"] } });
+    let client = json!({ "clientId": "pi-app", "redirectUris": ["https://new.example/cb"] });
+    let import = |mode: &str, body: Value| {
+        let mut body = body;
+        body["ifResourceExists"] = json!(mode);
+        body
+    };
+
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import("FAIL", json!({ "clients": [client] }))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "SKIP",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert_eq!(
+        (ans["added"].as_u64(), ans["skipped"].as_u64()),
+        (Some(0), Some(2))
+    );
+    let stored = f
+        .store
+        .get_group("dev", None, "pi-g")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.attributes["unit"], ["old"], "SKIP leaves the group");
+    let stored = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.redirect_uris,
+        ["https://old.example/cb"],
+        "SKIP leaves the client"
+    );
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert_eq!(
+        (ans["added"].as_u64(), ans["overwritten"].as_u64()),
+        (Some(0), Some(2))
+    );
+    let stored = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.redirect_uris, ["https://new.example/cb"]);
+
+    // OVERWRITE of the same person keeps what the representation cannot carry.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "users": [{ "id": "pi-2", "username": "pi.two", "firstName": "Pia" }] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    let pia = f
+        .store
+        .get_user_by_id("dev", None, "pi-2")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pia.first_name.as_deref(), Some("Pia"));
+    assert_eq!(pia.realm_roles, ["auditor"]);
+    assert_eq!(
+        f.store.list_credentials("dev", "pi-2").await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        f.store
+            .list_webauthn_credentials("dev", "pi-2")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // OVERWRITE under a new fixed id moves the person's credentials, passkeys and grants.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "users": [{ "id": "pi-3", "username": "pi.two" }] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert!(
+        f.store
+            .get_user_by_id("dev", None, "pi-2")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let moved = f
+        .store
+        .get_user_by_id("dev", None, "pi-3")
+        .await
+        .unwrap()
+        .expect("pi-3");
+    assert_eq!(moved.realm_roles, ["auditor"]);
+    let creds = f.store.list_credentials("dev", "pi-3").await.unwrap();
+    assert_eq!(
+        creds
+            .iter()
+            .map(|c| c.secret_data.as_str())
+            .collect::<Vec<_>>(),
+        ["stored-hash"]
+    );
+    assert_eq!(
+        f.store
+            .list_webauthn_credentials("dev", "pi-3")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // An id that names another person than the username is refused before any write.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({
+                "groups": [{ "name": "never-written", "path": "/never-written" }],
+                "users": [{ "id": "pi-3", "username": "hel-user" }]
+            }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/never-written")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        f.store
+            .get_user_by_id("dev", None, "pi-3")
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
 #[tokio::test]
 async fn an_org_admin_works_inside_its_organization_only() {
     let f = fixture().await;

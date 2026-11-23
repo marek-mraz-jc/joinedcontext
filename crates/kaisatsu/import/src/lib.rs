@@ -633,7 +633,10 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
         .flatten()
         .filter(|o| !is_blank(o.get("members")))
     {
-        let name = org.get("alias").or_else(|| org.get("name")).and_then(Value::as_str);
+        let name = org
+            .get("alias")
+            .or_else(|| org.get("name"))
+            .and_then(Value::as_str);
         warnings.push(format!(
             "$.organizations[{}].members are not imported: add each person in the Portal",
             name.unwrap_or_default()
@@ -1177,7 +1180,12 @@ fn is_blank(v: Option<&Value>) -> bool {
 /// stored one (S3-40). `skip` names the fields the store writes itself (ids, owner marks);
 /// `derived` the ones the store fills when the file leaves them out, compared only when the file
 /// gives one. Secrets are compared by value and reported by field name alone.
-fn changed_fields<T: Serialize>(prev: &T, next: &T, skip: &[&str], derived: &[&str]) -> Vec<String> {
+fn changed_fields<T: Serialize>(
+    prev: &T,
+    next: &T,
+    skip: &[&str],
+    derived: &[&str],
+) -> Vec<String> {
     let as_map = |v: &T| match serde_json::to_value(v) {
         Ok(Value::Object(m)) => m,
         _ => Map::new(),
@@ -1210,8 +1218,16 @@ fn merged_user(
     if let (Value::Object(stored), Some(named)) = (&mut doc, file.as_object()) {
         for (k, v) in named {
             match k.as_str() {
-                "id" | "realmId" | "createdTimestamp" | "transient" | "serviceAccountClientId"
-                | "credentials" | "groups" | "realmRoles" | "clientRoles" | "username" => {}
+                "id"
+                | "realmId"
+                | "createdTimestamp"
+                | "transient"
+                | "serviceAccountClientId"
+                | "credentials"
+                | "groups"
+                | "realmRoles"
+                | "clientRoles"
+                | "username" => {}
                 "attributes" => {
                     if let (Some(Value::Object(held)), Value::Object(given)) =
                         (stored.get_mut("attributes"), v)
@@ -1289,14 +1305,21 @@ async fn admin_grants(
 /// An Organization of a realm file (Keycloak's `OrganizationRepresentation`): its alias defaults
 /// to its name, and each domain arrives unverified.
 fn file_organization(realm_id: &str, val: &Value) -> Result<Organization> {
-    let text = |k: &str| val.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+    let text = |k: &str| {
+        val.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
     let name = text("name");
     if name.is_empty() {
         return Err(KaisatsuError::BadRequest(
             "$.organizations[].name is required, for example \"Helsinki\"".into(),
         ));
     }
-    let alias = Some(text("alias")).filter(|a| !a.is_empty()).unwrap_or_else(|| name.clone());
+    let alias = Some(text("alias"))
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| name.clone());
     let attributes = match val.get("attributes") {
         None | Some(Value::Null) => HashMap::new(),
         Some(a) => serde_json::from_value(a.clone()).map_err(|e| {
@@ -1769,8 +1792,10 @@ pub async fn apply_realm_files(
                 None => Vec::new(),
             };
             for r_val in r_arr.as_array().into_iter().flatten() {
-                let mut role: RoleRepresentation = serde_json::from_value(r_val.clone())
-                    .map_err(|e| KaisatsuError::BadRequest(format!("$.roles.client.{client_id}: {e}")))?;
+                let mut role: RoleRepresentation =
+                    serde_json::from_value(r_val.clone()).map_err(|e| {
+                        KaisatsuError::BadRequest(format!("$.roles.client.{client_id}: {e}"))
+                    })?;
                 role.realm_id = realm_id.clone();
                 role.client_role = true;
                 role.container_id = container_id.clone();
@@ -1900,7 +1925,12 @@ pub async fn apply_realm_files(
             let mut changed = Vec::new();
             if let Some(p) = &prev {
                 let next = merged_user(p, u_val, &user, admin_grants(store, &realm_id, p).await?)?;
-                changed = changed_fields(p, &next, &["id", "realmId", "createdTimestamp", "groups"], &[]);
+                changed = changed_fields(
+                    p,
+                    &next,
+                    &["id", "realmId", "createdTimestamp", "groups"],
+                    &[],
+                );
                 user = next;
             }
             if !in_every_group {
