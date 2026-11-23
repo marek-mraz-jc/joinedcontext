@@ -49,8 +49,6 @@ export function AssistantContextPreview({ project, manifest }: { project: string
   );
 }
 
-/** The preview's rows are already in hand: nothing is loading or failing inside the grid. */
-const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
 
 /** One resolved context: categories, the Endpoints and the sources, and what is missing. */
 export function ContextView({ context }: { context: AssistantContext }): JSX.Element {
@@ -99,7 +97,6 @@ export function ContextView({ context }: { context: AssistantContext }): JSX.Ele
         <p>{t("knowledge.context.noEndpoints")}</p>
       ) : (
         <AdminGrid<AssistantContext["endpoints"][number]>
-          query={LOADED}
           caption={t("knowledge.context.endpoints", { count: context.endpoints.length })}
           rows={context.endpoints}
           columns={columns}

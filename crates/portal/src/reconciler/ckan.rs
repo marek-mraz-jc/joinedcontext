@@ -214,8 +214,8 @@ impl CkanSync {
     }
 
     /// The client of `target`'s catalogue: its Organization's (that catalogue's API address,
-    /// reach and token file) or the instance's own (`apiTokenRef`), and the settings its
-    /// datasets link the Organization's data host with.
+    /// reach and a token minted for this publication or its token file) or the instance's own
+    /// (`apiTokenRef`), and the settings its datasets link the Organization's data host with.
     fn client(
         &self,
         target: &Target,
@@ -225,7 +225,16 @@ impl CkanSync {
         let mut settings = self.settings.clone();
         let Some(catalogue) = self.organization_catalogue(&target.instance) else {
             let api_url = self.api_url(&target.instance);
-            let token = project_token(target, repository, source)?;
+            // The installation's own catalogue in jc (the API route matched exactly) takes the
+            // Portal's service token (S11-23); every other instance its `apiTokenRef`.
+            let own = matches!(&self.api_route, Some((public, _)) if public == target.instance.base_url());
+            let token = match crate::organization_host::INSTALLATION_PUBLISHER
+                .get()
+                .filter(|_| own)
+            {
+                Some(publisher) => minted(publisher, "the installation")?,
+                None => project_token(target, repository, source)?,
+            };
             let reach = self
                 .api_reach
                 .filter(|_| api_url != target.instance.base_url());
@@ -241,11 +250,12 @@ impl CkanSync {
             .trim_end_matches('/')
             .to_owned();
         let token = match (&catalogue.token, &catalogue.token_file) {
-            (Some(held), _) => Some(held.0.duplicate()),
+            (Some(publisher), _) => Some(minted(publisher, &catalogue.organization)?),
             (None, Some(file)) => jcctl::secrets::SecretValue::from_file(file),
             (None, None) => {
                 return Err(format!(
-                    "{} was removed: nothing is published into its catalogue",
+                    "{}'s catalogue takes no publication: the Organization was removed, or jc \
+                     names no issuer of service tokens for it ([door] or [remote])",
                     catalogue.organization
                 ));
             }
@@ -1304,6 +1314,17 @@ pub fn withdraw_one(api: &mut impl CkanApi, target: &Target) -> Result<Publicati
     })
 }
 
+/// A service token from `publisher` for `whose` catalogue, asked on the blocking thread of the
+/// runtime every publication runs on (each caller's `spawn_blocking`).
+fn minted(
+    publisher: &crate::organization_host::PublisherToken,
+    whose: &str,
+) -> Result<jcctl::secrets::SecretValue, String> {
+    tokio::runtime::Handle::current()
+        .block_on(publisher.mint())
+        .map_err(|e| format!("no service token for {whose}'s catalogue: {e}"))
+}
+
 /// The instance's API token, resolved against the Endpoint's own project's secrets
 /// (`projects/{project}/secrets`, CC-06) and never the whole staged tree, so one project's
 /// `apiTokenRef` cannot name another project's secret (T-6227). The instance lives in that
@@ -1818,6 +1839,75 @@ mod tests {
         assert!(
             kept.is_empty(),
             "a dataset was withdrawn from an Organization's own catalogue"
+        );
+    }
+
+    /// S11-23: a catalogue jc named publishes with a token its source mints for each
+    /// publication, asked on the blocking thread the publication runs on; a source that has no
+    /// token fails the run with the Organization's name and no static fallback.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn a_jc_catalogue_publishes_with_a_token_minted_per_publication() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let repo = Repository::from_manifests(
+            vec![
+                manifest("Organization", "ba", json!({})),
+                manifest("Project", "bratislava", json!({ "organizationRef": "ba" })),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let mints = Arc::new(AtomicUsize::new(0));
+        let counted = mints.clone();
+        let source = crate::organization_host::PublisherToken(Arc::new(move || {
+            let n = counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(jcctl::secrets::SecretValue::minted(format!("eyJ.{n}.s"))) })
+        }));
+        let failing = crate::organization_host::PublisherToken(Arc::new(|| {
+            Box::pin(async { Err("kaisatsu answered 503".to_owned()) })
+        }));
+        let entry = |token| crate::organization_host::OrganizationCatalogue {
+            organization: "ba".to_owned(),
+            url: "https://opendata.ba.example".parse().unwrap(),
+            api: Some("https://portal.ba.example/data".parse().unwrap()),
+            reach: None,
+            data_host: None,
+            token_file: None,
+            token: Some(token),
+        };
+        let sync = Arc::new(CkanSync::new("portal.example").for_organizations(
+            crate::organization_host::OrganizationCatalogues::new(vec![entry(source)]),
+        ));
+        let failing_sync = Arc::new(CkanSync::new("portal.example").for_organizations(
+            crate::organization_host::OrganizationCatalogues::new(vec![entry(failing)]),
+        ));
+        let repo = Arc::new(repo);
+        let results = tokio::task::spawn_blocking(move || {
+            let tokens = publisher::TokenSource {
+                env: None,
+                age_key_file: None,
+            };
+            let dir = std::env::temp_dir();
+            let routed = sync.routed(&repo, target("bratislava"));
+            let first = sync.client(&routed, &dir, tokens).map(|(_, url, ..)| url);
+            let second = sync.client(&routed, &dir, tokens).map(|(_, url, ..)| url);
+            let refused = failing_sync
+                .client(
+                    &failing_sync.routed(&repo, target("bratislava")),
+                    &dir,
+                    tokens,
+                )
+                .map(|_| ());
+            (first, second, refused)
+        })
+        .await
+        .expect("blocking");
+        assert_eq!(results.0.as_deref(), Ok("https://portal.ba.example/data"));
+        assert!(results.1.is_ok());
+        assert_eq!(mints.load(Ordering::SeqCst), 2, "one mint per publication");
+        let err = results.2.expect_err("no token, no publication");
+        assert!(
+            err.contains("ba's catalogue") && err.contains("503"),
+            "{err}"
         );
     }
 

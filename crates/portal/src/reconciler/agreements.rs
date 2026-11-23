@@ -297,11 +297,9 @@ pub fn compile_all(
                     .map(|policies| (offer.context_space_ref.clone(), policies))
             }
         };
+        // `compile` answers a provider agreement with at least one grant or an error.
         match compiled {
-            Ok((space, policies)) if !policies.is_empty() => {
-                out.push(((project.clone(), space), policies));
-            }
-            Ok(_) => {}
+            Ok((space, policies)) => out.push(((project.clone(), space), policies)),
             Err(why) => tracing::warn!(
                 project = %project,
                 agreement = %name,
@@ -467,10 +465,11 @@ mod tests {
                 json!({"temporalQ": "timerel=after;timeAt=2020-01-01T00:00:00Z"}),
             ),
         ] {
-            match compile_read("p", &agreement("finalized", constraints), &fenced) {
-                Err(CompileError::Widens { dimension: d, .. }) => assert_eq!(d, dimension),
-                other => panic!("{dimension}: {other:?}"),
-            }
+            let refused = compile_read("p", &agreement("finalized", constraints), &fenced);
+            assert!(
+                matches!(&refused, Err(CompileError::Widens { dimension: d, .. }) if *d == dimension),
+                "{dimension}: {refused:?}"
+            );
         }
         // The same fence repeated is not a widening.
         let same = json!({"geoQ": "georel=within;geometry=Polygon"});
@@ -506,16 +505,154 @@ mod tests {
         let mut consumer = agreement("accepted", json!({}));
         consumer.role = AgreementRole::Consumer;
         assert_eq!(compile_read("p", &consumer, &offered()), Ok(Vec::new()));
-        let none = compile_all(
-            &[(
-                "helsinki".into(),
-                "p".into(),
-                agreement("accepted", json!({})),
-            )],
-            &BTreeMap::new(),
-            |_, _| offered(),
+    }
+
+    fn offer(endpoints: &[&str], action: &str) -> DataOfferSpec {
+        serde_json::from_value(json!({
+            "contextSpaceRef": "air",
+            "endpointRefs": endpoints.iter().map(|name| json!({"kind": "Endpoint", "name": name})).collect::<Vec<_>>(),
+            "policy": {"permission": [{"action": action}]}
+        }))
+        .expect("an offer")
+    }
+
+    /// DS-07: an offer's Endpoints bind Policies; one Policy bound to two of them is offered
+    /// once, the grant lands in the offer's space, and a consumer's or a refused agreement in
+    /// the same run grants nothing beside it.
+    #[test]
+    fn every_provider_agreement_compiles_under_its_offers_space_once_per_policy() {
+        let offers = BTreeMap::from([
+            (
+                ("helsinki".to_owned(), "air-offer".to_owned()),
+                offer(&["ep-a", "ep-b"], "odrl:read"),
+            ),
+            (
+                ("helsinki".to_owned(), "odd-offer".to_owned()),
+                offer(&["ep-a"], "odrl:use"),
+            ),
+        ]);
+        let mut consumer = agreement("accepted", json!({}));
+        consumer.role = AgreementRole::Consumer;
+        let mut odd = agreement("accepted", json!({}));
+        odd.offer_ref = Some(
+            serde_json::from_value(json!({"kind": "DataOffer", "name": "odd-offer"})).unwrap(),
         );
-        assert!(none.is_empty());
+        let asked = std::cell::RefCell::new(Vec::new());
+        let granted = compile_all(
+            &[
+                (
+                    "helsinki".into(),
+                    "partner".into(),
+                    agreement("accepted", json!({})),
+                ),
+                ("helsinki".into(), "mine".into(), consumer),
+                (
+                    "espoo".into(),
+                    "elsewhere".into(),
+                    agreement("accepted", json!({})),
+                ),
+                ("helsinki".into(), "odd".into(), odd),
+                (
+                    "helsinki".into(),
+                    "early".into(),
+                    agreement("requested", json!({})),
+                ),
+            ],
+            &offers,
+            |project, endpoint| {
+                asked.borrow_mut().push(format!("{project}/{endpoint}"));
+                offered()
+            },
+        );
+        assert_eq!(granted.len(), 1, "{granted:?}");
+        let ((project, space), policies) = &granted[0];
+        assert_eq!((project.as_str(), space.as_str()), ("helsinki", "air"));
+        let names: Vec<&str> = policies.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["agreement-partner-open", "agreement-partner-no-people"],
+            "the Policy both Endpoints bind is granted once"
+        );
+        assert!(
+            !asked
+                .borrow()
+                .iter()
+                .any(|e| e.contains("mine") || e.starts_with("espoo/")),
+            "a consumer agreement and one on an offer the project lacks ask for no binding"
+        );
+    }
+
+    /// The agreement's own filters where the offer names none: a scope, a time fence.
+    #[test]
+    fn an_agreement_fills_the_dimensions_the_offer_leaves_open() {
+        let compiled = compile_read(
+            "p",
+            &agreement(
+                "accepted",
+                json!({"scopeQ": "/org/a", "temporalQ": "timerel=after;timeAt=2026-10-01T00:00:00Z"}),
+            ),
+            &offered(),
+        )
+        .expect("compiles");
+        let permit = &compiled[0].1;
+        assert_eq!(permit.scope_q.as_deref(), Some("/org/a"));
+        assert_eq!(
+            permit.temporal_q.as_deref(),
+            Some("timerel=after;timeAt=2026-10-01T00:00:00Z")
+        );
+        // The offer's own scope repeated is the offer's, not a conjunction with itself.
+        let mut scoped = offered();
+        scoped[0].1.scope_q = Some("/geo".into());
+        scoped[0].1.q = Some("district==\"Kallio\"".into());
+        let same = compile_read(
+            "p",
+            &agreement(
+                "accepted",
+                json!({"scopeQ": "/geo", "q": "district==\"Kallio\""}),
+            ),
+            &scoped,
+        )
+        .expect("compiles");
+        assert_eq!(same[0].1.scope_q.as_deref(), Some("/geo"));
+        assert_eq!(same[0].1.q.as_deref(), Some("district==\"Kallio\""));
+    }
+
+    #[test]
+    fn the_overlap_takes_the_later_start_and_the_earlier_end() {
+        let at = |text: &str| Some(serde_json::from_value::<TimestampTz>(json!(text)).unwrap());
+        let period = |from: Option<TimestampTz>, to: Option<TimestampTz>| Validity { from, to };
+        let agreed = period(at("2026-10-01T00:00:00Z"), at("2026-12-31T00:00:00Z"));
+        let inner = period(at("2026-11-01T00:00:00Z"), at("2026-11-30T00:00:00Z"));
+        assert_eq!(overlap(Some(&inner), &agreed), Ok(inner.clone()));
+        assert_eq!(overlap(None, &agreed), Ok(agreed.clone()));
+        let open_end = period(at("2026-09-01T00:00:00Z"), None);
+        assert_eq!(overlap(Some(&open_end), &agreed), Ok(agreed.clone()));
+        let unbounded = period(None, None);
+        assert_eq!(overlap(Some(&inner), &unbounded), Ok(inner.clone()));
+        // One period ending the instant the other starts leaves no instant in both.
+        let touching = period(None, at("2026-10-01T00:00:00Z"));
+        assert_eq!(
+            overlap(Some(&touching), &agreed),
+            Err(CompileError::NoOverlap)
+        );
+        let one_second = period(None, at("2026-10-01T00:00:01Z"));
+        assert!(overlap(Some(&one_second), &agreed).is_ok());
+    }
+
+    #[test]
+    fn a_quoted_escape_keeps_the_quote_open_and_a_rule_without_action_names_none() {
+        assert!(one_group(r#"name=="a\")|(b""#));
+        assert!(
+            !one_group(r#"name=="a\""#),
+            "the escaped quote leaves the string open"
+        );
+        assert!(one_group("(a==1);(b==2)"));
+        assert!(!one_group("(a==1"));
+        assert_eq!(
+            offer_actions(&json!({"permission": [{"target": "x"}, {"action": "read"}]})),
+            Ok(OperationGroup::RetrieveOps.operations().to_vec())
+        );
+        assert_eq!(offer_actions(&json!({})), Ok(Vec::new()));
     }
 
     /// The integrator's case: an offered Endpoint carrying a public read Policy and a

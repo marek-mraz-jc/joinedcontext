@@ -206,6 +206,36 @@ describe("ManifestGrid", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
+  it("offers Retry for a failed read only when the read can be asked again, and draws held rows with no read", async () => {
+    const failed = (refetch?: () => unknown) => ({ isPending: false, isError: true, error: new ApiError(503, "the mirror is not ready", { type: "about:blank", title: "Unavailable", status: 503, detail: "the mirror is not ready" }), refetch });
+    const view = (query?: ReturnType<typeof failed>, rows: Manifest[] = []) => (
+      <ManifestGrid<Manifest>
+        caption="Endpoints"
+        storageKey="test-retry"
+        searchLabel="Search endpoints"
+        rows={rows}
+        rowKey={(row) => row.metadata.name}
+        query={query}
+        name={{ id: "name", label: "Name", text: (row) => row.metadata.name }}
+        columns={[]}
+        empty={<p>Nothing yet</p>}
+      />
+    );
+    const refetch = vi.fn();
+    const { unmount } = renderPage(view(failed(refetch)), { answer: async () => json({}) });
+    fireEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const again = renderPage(view(failed()), { answer: async () => json({}) });
+    expect(await screen.findByRole("alert")).toHaveTextContent("the mirror is not ready");
+    expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
+    again.unmount();
+
+    renderPage(view(undefined, [{ apiVersion: "joinedcontext.com/v1alpha1", kind: "Endpoint", metadata: { name: "air-quality" } } as Manifest]), { answer: async () => json({}) });
+    expect(await within(await screen.findByRole("table", { name: "Endpoints" })).findByText("air-quality")).toBeInTheDocument();
+  });
+
   it("hides a column until shown under Arrange columns, and the panel still shows it", async () => {
     const { answer } = harness(() => json({}));
     renderPage(grid(), { answer });

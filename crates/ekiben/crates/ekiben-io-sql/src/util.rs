@@ -1086,6 +1086,209 @@ mod tests {
     }
 
     #[test]
+    fn go_type_names_every_value_as_go_prints_it() {
+        let cases = [
+            (Value::Null, "<nil>"),
+            (Value::Nothing, "<nil>"),
+            (Value::Delete, "<nil>"),
+            (Value::Bool(true), "bool"),
+            (Value::Int(1), "int64"),
+            (Value::Uint(1), "uint64"),
+            (Value::Float(1.0), "float64"),
+            (Value::Number("1".into()), "json.Number"),
+            (Value::String("s".into()), "string"),
+            (Value::Bytes(b"b".to_vec()), "[]uint8"),
+            (Value::Array(vec![].into()), "[]interface {}"),
+            (Value::Object(Default::default()), "map[string]interface {}"),
+        ];
+        for (v, want) in cases {
+            assert_eq!(go_type(&v), want, "{v:?}");
+        }
+        assert_eq!(
+            go_type(&Value::Timestamp(
+                crate::sqlite::parse_time("2024-01-02T03:04:05Z").expect("a time")
+            )),
+            "time.Time"
+        );
+        assert_eq!(
+            args_from_value(Value::Array(vec![Value::Int(1)].into())).unwrap(),
+            vec![Value::Int(1)]
+        );
+    }
+
+    #[test]
+    fn database_sql_refuses_slices_maps_and_high_uints_only() {
+        assert_eq!(
+            check_arg(2, &Value::Array(vec![].into())).unwrap_err(),
+            "sql: converting argument $3 type: unsupported type []interface {}, a slice of interface"
+        );
+        assert!(check_arg(0, &Value::Uint((1 << 63) - 1)).is_ok());
+        assert!(check_arg(0, &Value::Uint(1 << 63)).is_err());
+        assert!(check_arg(0, &Value::String("x".into())).is_ok());
+    }
+
+    #[test]
+    fn lib_pq_text_of_every_scalar() {
+        let text = |v: Value| pq_text(&v).map(|b| String::from_utf8(b).unwrap());
+        assert_eq!(text(Value::Bool(false)).as_deref(), Some("false"));
+        assert_eq!(text(Value::Int(-3)).as_deref(), Some("-3"));
+        assert_eq!(
+            text(Value::Uint(u64::MAX)).as_deref(),
+            Some("18446744073709551615")
+        );
+        assert_eq!(
+            text(Value::Float(f64::INFINITY)).as_deref(),
+            Some("Infinity")
+        );
+        assert_eq!(
+            text(Value::Float(f64::NEG_INFINITY)).as_deref(),
+            Some("-Infinity")
+        );
+        assert_eq!(text(Value::Float(f64::NAN)).as_deref(), Some("NaN"));
+        assert_eq!(text(Value::Float(-0.25)).as_deref(), Some("-0.25"));
+        assert_eq!(text(Value::Number("1e3".into())).as_deref(), Some("1e3"));
+        assert_eq!(text(Value::Bytes(b"raw".to_vec())).as_deref(), Some("raw"));
+        assert_eq!(text(Value::Nothing), None);
+        assert_eq!(text(Value::Delete), None);
+        assert_eq!(text(Value::Array(vec![].into())), None);
+        assert_eq!(text(Value::Object(Default::default())), None);
+        let t = crate::sqlite::parse_time("2024-01-02T03:04:05Z").expect("a time");
+        assert_eq!(
+            text(Value::Timestamp(t)).as_deref(),
+            Some("2024-01-02 03:04:05Z")
+        );
+    }
+
+    #[test]
+    fn pq_timestamps_carry_negative_and_second_offsets() {
+        let t = crate::sqlite::parse_time("2024-01-02T03:04:05-05:30").expect("a time");
+        assert_eq!(format_pq_ts(&t), "2024-01-02 03:04:05-05:30");
+        let odd = jiff::Timestamp::from_second(0)
+            .unwrap()
+            .to_zoned(TimeZone::fixed(Offset::from_seconds(3600 + 125).unwrap()));
+        assert_eq!(format_pq_ts(&odd), "1970-01-01 01:02:05+01:02:05");
+    }
+
+    #[test]
+    fn postgres_text_input_of_every_encoded_type() {
+        let ok =
+            |oid, name, text: &str| pg_text_to_binary(oid, name, text.as_bytes(), false).unwrap();
+        let err = |oid, name, text: &str| {
+            pg_text_to_binary(oid, name, text.as_bytes(), false).unwrap_err()
+        };
+        for t in ["t", "TRUE", " yes ", "on", "1", "y"] {
+            assert_eq!(ok(16, "boolean", t), vec![1], "{t}");
+        }
+        for t in ["f", "false", "n", "no", "OFF", "0"] {
+            assert_eq!(ok(16, "boolean", t), vec![0], "{t}");
+        }
+        assert_eq!(
+            err(16, "boolean", "maybe"),
+            "pq: invalid input syntax for type boolean: \"maybe\""
+        );
+        assert_eq!(ok(21, "smallint", "-32768"), (-32768i16).to_be_bytes());
+        assert_eq!(ok(21, "smallint", "32767"), 32767i16.to_be_bytes());
+        assert_eq!(
+            err(21, "smallint", "32768"),
+            "pq: value \"32768\" is out of range for type smallint"
+        );
+        assert_eq!(
+            err(21, "smallint", "-32769"),
+            "pq: value \"-32769\" is out of range for type smallint"
+        );
+        assert_eq!(ok(23, "integer", " 7 "), 7i32.to_be_bytes());
+        assert_eq!(
+            err(23, "integer", "2147483648"),
+            "pq: value \"2147483648\" is out of range for type integer"
+        );
+        assert_eq!(
+            ok(20, "bigint", "-9223372036854775808"),
+            i64::MIN.to_be_bytes()
+        );
+        assert_eq!(ok(26, "oid", "4294967295"), u32::MAX.to_be_bytes());
+        assert_eq!(
+            err(26, "oid", "-1"),
+            "pq: invalid input syntax for type oid: \"-1\""
+        );
+        assert_eq!(ok(700, "real", "1.5"), 1.5f32.to_be_bytes());
+        assert_eq!(
+            ok(701, "double precision", "-2.25"),
+            (-2.25f64).to_be_bytes()
+        );
+        assert!(
+            f64::from_be_bytes(ok(701, "double precision", "NaN").try_into().unwrap()).is_nan()
+        );
+        for (t, want) in [
+            ("Infinity", f64::INFINITY),
+            ("inf", f64::INFINITY),
+            ("+infinity", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("-inf", f64::NEG_INFINITY),
+        ] {
+            assert_eq!(ok(701, "double precision", t), want.to_be_bytes(), "{t}");
+        }
+        assert_eq!(
+            err(701, "double precision", "x"),
+            "pq: invalid input syntax for type double precision: \"x\""
+        );
+        assert_eq!(
+            pg_text_to_binary(17, "bytea", b"\\x00", true).unwrap(),
+            b"\\x00"
+        );
+        assert_eq!(
+            err(17, "bytea", "\\x0"),
+            "pq: invalid input syntax for type bytea: \"\\x0\""
+        );
+        for oid in [25, 1043, 1042, 19, 114, 142, 705, 18] {
+            assert_eq!(ok(oid, "text", "abc"), b"abc", "{oid}");
+        }
+        assert_eq!(ok(3802, "jsonb", "{}"), b"\x01{}");
+        assert_eq!(
+            ok(2950, "uuid", "{a0eebc999c0b4ef8bb6d6bb9bd380a11}").len(),
+            16
+        );
+        assert_eq!(
+            err(2950, "uuid", "a0ee"),
+            "pq: invalid input syntax for type uuid: \"a0ee\""
+        );
+        assert_eq!(
+            err(2950, "uuid", "g0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"),
+            "pq: invalid input syntax for type uuid: \"g0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\""
+        );
+        assert_eq!(ok(1700, "numeric", "1.5"), encode_numeric("1.5").unwrap());
+        assert_eq!(
+            err(1700, "numeric", "one"),
+            "pq: invalid input syntax for type numeric: \"one\""
+        );
+        assert_eq!(
+            ok(1114, "timestamp", "2000-01-01 00:00:02"),
+            2_000_000i64.to_be_bytes()
+        );
+        assert_eq!(
+            err(1184, "timestamp with time zone", "soon"),
+            "pq: invalid input syntax for type timestamp with time zone: \"soon\""
+        );
+        assert_eq!(ok(1082, "date", "2000-01-03"), 2i32.to_be_bytes());
+        assert_eq!(ok(1082, "date", "1999-12-31 BC?"), (-1i32).to_be_bytes());
+        assert_eq!(
+            err(1082, "date", "2000"),
+            "pq: invalid input syntax for type date: \"2000\""
+        );
+    }
+
+    #[test]
+    fn bytea_escape_text_decodes_octets_and_backslashes() {
+        assert_eq!(
+            decode_bytea_text(b"a\\\\b\\001"),
+            Some(b"a\\b\x01".to_vec())
+        );
+        assert_eq!(decode_bytea_text(b"\\x"), Some(vec![]));
+        assert_eq!(decode_bytea_text(b"\\xzz"), None);
+        assert_eq!(decode_bytea_text(b"\\01"), None, "a cut octal escape");
+        assert_eq!(decode_bytea_text(b"\\999"), None, "no octal digits");
+    }
+
+    #[test]
     fn pq_text_formats() {
         let t = crate::sqlite::parse_time("2024-01-02T03:04:05.5+02:00").expect("a time");
         assert_eq!(format_pq_ts(&t), "2024-01-02 03:04:05.5+02:00");

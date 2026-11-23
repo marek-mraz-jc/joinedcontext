@@ -142,7 +142,6 @@ pub enum Secret {
     EkibenToken,
     AntaresAdminToken,
     DashboardsPassword,
-    CatalogueToken,
     /// The age identity of the Portal's SOPS backend (`AGE-SECRET-KEY-1...`): it decrypts the
     /// repository's `projects/{p}/secrets/*.enc.yaml`, which is how a `secretRef` or a
     /// CkanInstance `apiTokenRef` resolves.
@@ -164,7 +163,7 @@ pub enum Secret {
 }
 
 impl Secret {
-    pub const ALL: [Secret; 18] = [
+    pub const ALL: [Secret; 17] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -175,7 +174,6 @@ impl Secret {
         Secret::EkibenToken,
         Secret::AntaresAdminToken,
         Secret::DashboardsPassword,
-        Secret::CatalogueToken,
         Secret::PortalAgeKey,
         Secret::GatewayClientSecret,
         Secret::GatewayHopToken,
@@ -194,8 +192,9 @@ impl Secret {
             Module::Ekiben => Some(Secret::EkibenToken),
             Module::Antares => Some(Secret::AntaresAdminToken),
             Module::Daiya => Some(Secret::DashboardsPassword),
-            Module::Dataroom => Some(Secret::CatalogueToken),
-            Module::Kaisatsu
+            // dataroom names the Portal by its service token (S11-23), not by a credential.
+            Module::Dataroom
+            | Module::Kaisatsu
             | Module::Portal
             | Module::Gateway
             | Module::ModelTools
@@ -218,7 +217,6 @@ impl Secret {
             Secret::EkibenToken => "ekiben-token",
             Secret::AntaresAdminToken => "antares-admin-token",
             Secret::DashboardsPassword => "dashboards-password",
-            Secret::CatalogueToken => "catalogue-token",
             Secret::PortalAgeKey => "portal-age-key",
             Secret::GatewayClientSecret => "gateway-client-secret",
             Secret::GatewayHopToken => "gateway-hop-token",
@@ -262,7 +260,6 @@ impl Secret {
             Secret::EkibenToken => &[Module::Ekiben],
             Secret::AntaresAdminToken => &[Module::Antares],
             Secret::DashboardsPassword => &[Module::Daiya, Module::Portal],
-            Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
             Secret::PortalAgeKey => &[Module::Portal],
             Secret::GatewayClientSecret => &[Module::Kaisatsu, Module::Gateway, Module::Portal],
             Secret::GatewayHopToken => &[Module::Antares, Module::Gateway],
@@ -276,17 +273,14 @@ impl Secret {
 
     /// Whether the secret lives in a 0600 file of the state directory, kept across restarts.
     /// The service tokens between modules of one process (the Portal's calls to shako, ekiben,
-    /// daiya and dataroom) are made per boot and held in memory only; so is the Antares admin
+    /// and daiya) are made per boot and held in memory only; so is the Antares admin
     /// token while no Portal runs beside it (the Portal reads that one from a file,
     /// `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE`). Keys, client secrets kaisatsu stores, the cookie
     /// key and the webhook secret shako stores with its hooks must survive a restart.
     #[must_use]
     pub fn kept_on_disk(self, roles: &[Module]) -> bool {
         match self {
-            Secret::ShakoToken
-            | Secret::EkibenToken
-            | Secret::DashboardsPassword
-            | Secret::CatalogueToken => false,
+            Secret::ShakoToken | Secret::EkibenToken | Secret::DashboardsPassword => false,
             Secret::AntaresAdminToken => roles.contains(&Module::Portal),
             _ => true,
         }
@@ -949,7 +943,6 @@ mod tests {
             Secret::ShakoToken,
             Secret::EkibenToken,
             Secret::DashboardsPassword,
-            Secret::CatalogueToken,
         ];
         // A file an older jc wrote is removed, never read.
         std::fs::write(tmp.path().join("shako-token"), "old-token-from-disk").unwrap();

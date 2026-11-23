@@ -876,6 +876,19 @@ def test_a_refusal_of_a_jc_before_t7458_names_no_account_and_still_fails_by_slug
         "fail", "3 refused in the jc-server log of the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")
 
 
+def test_a_refusal_with_no_workload_account_is_no_pipelines():
+    """T-7704: the smoke's anonymous open-data writes (account `-`) failed the row on jc-dev with 1115
+    refusals and not one Pipeline among them."""
+    anon = {"project": "-", "account": "-", "reason": "open-data", "count": 1075}
+    facts = {"logWindow": "30m", "refusedWrites": [anon],
+             "refusedCounter": {"window": "30m", "rows": [anon, {**anon, "reason": "no-policy", "count": 40}]}}
+    assert orgs.refused_writes(facts) == ("pass", "0 refused writes of a Pipeline in the last 30m (gateway counter)")
+    osm = {"project": "banskabystrica", "account": "pl-osm", "reason": "open-data", "count": 4}
+    facts["refusedCounter"]["rows"].append(osm)
+    assert orgs.refused_writes(facts) == (
+        "fail", "4 refused in the last 30m (gateway counter): banskabystrica/pl-osm 4 (open-data)")
+
+
 # The lines jc writes on every cluster (log_format = "json"): the refusal exactly as the gateway's
 # test a_refused_write_names_the_workload_and_its_project writes it in .json() mode, the Portal's
 # report in the same shape (T-7458 bounce: the text regexes alone passed on 0 there).

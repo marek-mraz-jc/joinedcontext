@@ -149,8 +149,7 @@ pub struct Cli {
     /// shako: optional file holding a static service bearer token.
     #[arg(long, env = "JCBIN_SHAKO_TOKEN_FILE")]
     pub shako_token_file: Option<PathBuf>,
-    /// dataroom: file holding the CKAN API token the Portal publishes with (default: made per
-    /// boot, in memory).
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[arg(long, env = "JCBIN_DATAROOM_PORTAL_TOKEN_FILE")]
     pub dataroom_portal_token_file: Option<PathBuf>,
     /// daiya: file holding the password of the Portal's server administrator (default: made per
@@ -335,6 +334,7 @@ pub struct DaiyaSection {
 pub struct DataroomSection {
     pub org_id: String,
     pub catalogue_id: String,
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
     pub database: Option<DatabaseSection>,
@@ -486,7 +486,7 @@ pub struct OrganizationSection {
     pub same_site_apps: bool,
     /// The dataroom catalogue (a UUID) holding the Organization's datasets.
     pub catalogue_id: String,
-    /// The CKAN API token the Portal publishes into this catalogue with; none, no Portal grant.
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
     /// The e-mail address of the Organization realm's first administrator (T-7283), e.g.
@@ -1720,8 +1720,39 @@ pub struct Secrets {
     pub remote_client_secret: Option<Given>,
     /// The model provider's key the assistant's proxy holds (a file only).
     pub model_key: Option<Given>,
-    /// Each `[[organizations]]` entry's Portal publisher token, by Organization name.
-    pub organization_tokens: BTreeMap<String, Given>,
+}
+
+/// The Portal publisher token settings jc no longer reads (S11-23: the Portal publishes with a
+/// service token): each one still set is named in one warning, its file never opened.
+fn unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) -> Vec<String> {
+    let mut named: Vec<String> = [
+        "JCBIN_DATAROOM_PORTAL_TOKEN",
+        "JCBIN_DATAROOM_PORTAL_TOKEN_FILE",
+    ]
+    .into_iter()
+    .filter(|name| env.contains_key(*name))
+    .map(str::to_owned)
+    .collect();
+    if cfg.dataroom.portal_token_file.is_some() && named.is_empty() {
+        named.push("[dataroom] portal_token_file".to_owned());
+    }
+    named.extend(
+        cfg.organizations
+            .iter()
+            .filter(|org| org.portal_token_file.is_some())
+            .map(|org| format!("[[organizations]] {} portal_token_file", org.name)),
+    );
+    named
+}
+
+fn warn_unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) {
+    let named = unread_publisher_tokens(cfg, env);
+    if !named.is_empty() {
+        tracing::warn!(
+            settings = %named.join(", "),
+            "deprecated and not read: the Portal publishes with a short-lived service token; remove these settings"
+        );
+    }
 }
 
 impl Secrets {
@@ -1778,11 +1809,6 @@ impl Secrets {
                 cfg.shako.token_file.as_deref(),
             ),
             (
-                S::CatalogueToken,
-                "JCBIN_DATAROOM_PORTAL_TOKEN",
-                cfg.dataroom.portal_token_file.as_deref(),
-            ),
-            (
                 S::DashboardsPassword,
                 "JCBIN_DAIYA_PORTAL_PASSWORD",
                 cfg.daiya.portal_password_file.as_deref(),
@@ -1802,12 +1828,7 @@ impl Secrets {
             }
         }
         out.pipeline_client_secrets = pipeline_client_secrets(&cfg.ekiben)?;
-        for org in &cfg.organizations {
-            let name = format!("[[organizations]] {} portal_token_file", org.name);
-            if let Some(g) = given(&name, org.portal_token_file.as_deref())? {
-                out.organization_tokens.insert(org.name.clone(), g);
-            }
-        }
+        warn_unread_publisher_tokens(cfg, env);
         if env.contains_key("JCBIN_PORTAL_AGE_KEY") {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
@@ -2488,7 +2509,7 @@ path_prefix = "/api/endpoint"
     }
 
     /// Every secret `jc` takes from the operator, by its `NAME`, and the flag naming its file.
-    const GIVEN: [(&str, &str); 8] = [
+    const GIVEN: [(&str, &str); 7] = [
         ("JCBIN_ADMIN_TOKEN", "--admin-token-file"),
         ("JCBIN_SHAKO_SIGNING_KEY", "--shako-signing-key-file"),
         ("JCBIN_KAISATSU_KEK", "--kaisatsu-kek-file"),
@@ -2496,14 +2517,42 @@ path_prefix = "/api/endpoint"
         ("JCBIN_ANTARES_ADMIN_TOKEN", "--antares-admin-token-file"),
         ("JCBIN_SHAKO_TOKEN", "--shako-token-file"),
         (
-            "JCBIN_DATAROOM_PORTAL_TOKEN",
-            "--dataroom-portal-token-file",
-        ),
-        (
             "JCBIN_DAIYA_PORTAL_PASSWORD",
             "--daiya-portal-password-file",
         ),
     ];
+
+    /// S11-23: the old publisher token settings still parse, are named as unread and their
+    /// files are never opened (a path that does not exist loads).
+    #[test]
+    fn old_publisher_token_settings_parse_and_are_never_read() {
+        let text = format!(
+            "{}\n[dataroom]\nportal_token_file = \"/nonexistent/catalogue-token\"\n",
+            include_str!("../tests/fixtures/two-orgs.toml")
+        );
+        let mut cfg = Config::merge(
+            cli(&["--role", "portal,dataroom"]),
+            Config::parse_file(Path::new("jc.toml"), &text).expect("parses"),
+        )
+        .expect("config");
+        cfg.organizations[0].portal_token_file = Some("/nonexistent/alpha-token".into());
+        let env = BTreeMap::from([(
+            "JCBIN_DATAROOM_PORTAL_TOKEN".to_owned(),
+            "a-static-token".to_owned(),
+        )]);
+        assert!(Secrets::load_from(&cfg, &env).is_ok(), "no file is opened");
+        assert_eq!(
+            unread_publisher_tokens(&cfg, &env),
+            [
+                "JCBIN_DATAROOM_PORTAL_TOKEN",
+                "[[organizations]] alpha portal_token_file"
+            ]
+        );
+        assert_eq!(
+            unread_publisher_tokens(&cfg, &BTreeMap::new())[0],
+            "[dataroom] portal_token_file"
+        );
+    }
 
     #[test]
     fn every_secret_comes_from_name_or_name_file_and_both_is_refused() {

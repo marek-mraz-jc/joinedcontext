@@ -381,6 +381,7 @@ mod tests {
             json!({"type": "Relationship", "object": "urn:ngsi-ld:Place:1"}),
             json!({"type": "LanguageProperty", "languageMap": {"sk": "hudba"}}),
             json!({"type": "Property", "value": {"nested": "x"}}),
+            json!(["bare", 7]),
         ];
         let (values, truncated) = counted(attrs.iter(), None, 2);
         assert_eq!(

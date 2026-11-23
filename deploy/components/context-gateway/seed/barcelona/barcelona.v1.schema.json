@@ -1111,6 +1111,18 @@
           ],
           "x-ngsi-ld-kind": "Property"
         },
+        "organizer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Organizer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who runs the event: the museum, the library, the club or the city unit, never the feed or the register that announced it (that is `dataProvider` or `source`). Its name and, where the source names one, its web site; never a person's e-mail or phone. The same shape in every events space (praha-akce, slovensko-podujatia, bbsk-podujatia, banskabystrica-verejne), so one count per organizer reads across them.",
+          "x-ngsi-ld-kind": "Property"
+        },
         "source": {
           "description": "The open-data file or the Open Data BCN dataset the entity was read from.",
           "format": "uri",
@@ -1500,6 +1512,22 @@
         "type"
       ],
       "title": "OnStreetParking",
+      "type": "object"
+    },
+    "Organizer": {
+      "additionalProperties": false,
+      "description": "The value of `organizer`, never an entity of its own.",
+      "properties": {
+        "name": {
+          "description": "The organizer's name as the agenda writes it (`Futbol Club Barcelona`).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Organizer",
       "type": "object"
     },
     "PedestrianCrossing": {

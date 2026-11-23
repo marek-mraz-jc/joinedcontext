@@ -781,6 +781,119 @@ mod tests {
     }
 
     #[test]
+    fn lint_names_every_cloud_field_ekiben_cannot_honour() {
+        let lint = |v: serde_json::Value| lint_conn(v.as_object().unwrap());
+        assert_eq!(
+            lint(serde_json::json!({"driver": 5})),
+            vec!["field driver: expected string value"]
+        );
+        assert!(lint(serde_json::json!({})).is_empty());
+        let errs = lint(serde_json::json!({
+            "region": "eu", "endpoint": "x", "credentials": {}, "secret_name": "s",
+        }));
+        for field in ["region", "endpoint", "credentials", "secret_name"] {
+            assert!(
+                errs.iter()
+                    .any(|e| e.starts_with(&format!("field {field} is not supported"))),
+                "{field}: {errs:?}"
+            );
+        }
+        assert!(
+            !errs.iter().any(|e| e == SQL_CONN_LINT),
+            "no iam, no lint rule: {errs:?}"
+        );
+        let errs = lint(serde_json::json!({"iam_enabled": true}));
+        assert_eq!(
+            errs,
+            vec!["field iam_enabled is not supported by ekiben: RDS IAM tokens are not supported"]
+        );
+        assert!(
+            lint(serde_json::json!({"iam_enabled": false, "azure": {"entra_enabled": false}}))
+                .is_empty()
+        );
+        assert_eq!(
+            lint(serde_json::json!({"azure": {"entra_enabled": true}})),
+            vec!["field azure.entra_enabled is not supported by ekiben: Azure Entra tokens are not supported"]
+        );
+        assert!(
+            lint(serde_json::json!({"conn_max_idle_time": "30s", "conn_max_life_time": "1h"}))
+                .is_empty()
+        );
+        assert_eq!(
+            lint(serde_json::json!({"conn_max_idle_time": 30, "conn_max_life_time": "soon"})),
+            vec![
+                "field conn_max_idle_time: expected a duration such as 30s",
+                "field conn_max_life_time: expected a duration such as 30s",
+            ]
+        );
+    }
+
+    #[test]
+    fn conn_settings_read_every_field_and_refuse_wrong_types() {
+        let read = |v: serde_json::Value| ConnSettings::from_config(v.as_object().unwrap(), None);
+        let s = read(serde_json::json!({
+            "conn_max_life_time": "1m", "conn_max_idle_time": "5s", "conn_max_idle": 4,
+            "conn_max_open": 9, "init_statement": "SELECT 1", "init_verify_conn": true,
+        }))
+        .unwrap();
+        assert_eq!(s.conn_max_lifetime, Some(Duration::from_secs(60)));
+        assert_eq!(s.conn_max_idle_time, Some(Duration::from_secs(5)));
+        assert_eq!((s.max_idle_conns, s.max_open_conns), (4, 9));
+        assert_eq!(s.init_statement, "SELECT 1");
+        assert!(s.init_verify_conn);
+        let d = read(serde_json::json!({})).unwrap();
+        assert_eq!(
+            (d.conn_max_lifetime, d.max_idle_conns, d.max_open_conns),
+            (None, 2, 0)
+        );
+        assert!(!d.init_verify_conn && d.init_statement.is_empty());
+        let err = |v| read(v).err().expect("refused").to_string();
+        assert!(err(serde_json::json!({"conn_max_life_time": 60}))
+            .contains("field conn_max_life_time: expected a duration string"));
+        assert!(err(serde_json::json!({"conn_max_open": "9"}))
+            .contains("field conn_max_open: expected an integer"));
+        assert!(err(serde_json::json!({"init_files": "a.sql"}))
+            .contains("field init_files: expected a list of strings"));
+        assert!(err(serde_json::json!({"init_files": [1]}))
+            .contains("field init_files: expected a list of strings"));
+    }
+
+    #[test]
+    fn init_files_expand_globs_in_order_under_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("b.sql"), "CREATE TABLE b ()").unwrap();
+        std::fs::write(dir.path().join("a.sql"), "CREATE TABLE a ()").unwrap();
+        std::fs::write(dir.path().join("c.sql"), "CREATE TABLE c ()").unwrap();
+        let root = Some(dir.path());
+        let got = expand_init_files(&["*.sql".into()], root).unwrap();
+        let names: Vec<_> = got
+            .iter()
+            .map(|(p, _)| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(names, ["a.sql", "b.sql", "c.sql"]);
+        assert_eq!(got[0].1, "CREATE TABLE a ()");
+        let one = expand_init_files(&["c.sql".into()], root).unwrap();
+        assert_eq!(one.len(), 1);
+        assert!(expand_init_files(&["missing.sql".into()], root)
+            .expect_err("refused")
+            .to_string()
+            .contains("open "));
+        assert!(expand_init_files(&["[.sql".into()], root)
+            .expect_err("refused")
+            .to_string()
+            .contains("failed to expand init_files glob patterns"));
+        assert!(expand_init_files(&["none-*.sql".into()], root)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn postgres_url_and_kv_dsn() {
         let o = parse_postgres_dsn(
             "postgres://foouser:foo%40pass@db.example.com:5433/foodb?sslmode=disable&search_path=x",

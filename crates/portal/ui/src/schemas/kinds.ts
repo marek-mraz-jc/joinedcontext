@@ -1123,9 +1123,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
     let currUi = uiSchema as Record<string, unknown>;
 
     for (const seg of pathSegments) {
-      if (!currSchema.properties) {
-        currSchema.properties = {};
-      }
+      currSchema.properties ??= {};
       if (!currSchema.properties[seg]) {
         currSchema.properties[seg] = {
           type: "object",
@@ -1202,9 +1200,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
       };
     }
 
-    if (!objSchema.properties) {
-      objSchema.properties = {};
-    }
+    objSchema.properties ??= {};
     objSchema.properties[leafKey] = propSchema;
 
     if (Object.keys(propUi).length > 0) {
@@ -1212,9 +1208,7 @@ export function runnerInputSchema(input: CatalogInput): { schema: JsonSchema; ui
     }
 
     if (runnerRequires(f)) {
-      if (!objSchema.required) {
-        objSchema.required = [];
-      }
+      objSchema.required ??= [];
       objSchema.required.push(leafKey);
     }
   }

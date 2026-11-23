@@ -141,7 +141,10 @@ mod tests {
         ] {
             let node = parse_q(q).expect(q);
             let rendered = node.to_string();
-            let again = parse_q(&rendered).unwrap_or_else(|e| panic!("{q} → {rendered}: {e}"));
+            let again = match parse_q(&rendered) {
+                Ok(again) => again,
+                Err(e) => panic!("{q} → {rendered}: {e}"),
+            };
             assert_eq!(again, node, "{q} → {rendered}");
         }
     }
@@ -188,7 +191,10 @@ mod tests {
         ] {
             let node = parse_q(q).expect(q);
             let rendered = node.to_string();
-            let again = parse_q(&rendered).unwrap_or_else(|e| panic!("{q} → {rendered}: {e}"));
+            let again = match parse_q(&rendered) {
+                Ok(again) => again,
+                Err(e) => panic!("{q} → {rendered}: {e}"),
+            };
             assert_eq!(again, node, "{q} → {rendered}");
         }
     }

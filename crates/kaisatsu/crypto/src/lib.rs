@@ -35,9 +35,30 @@ pub use webauthn::{
     verify_authentication_response, verify_registration_challenge, verify_registration_response,
 };
 
+use kaisatsu_core::KaisatsuError;
 use rand::Rng as _;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+
+/// A `map_err` mapper to a fixed crypto error message (the cause stays out of the message).
+pub(crate) fn crypto_err<E>(msg: &'static str) -> impl FnOnce(E) -> KaisatsuError {
+    move |_| KaisatsuError::Crypto(msg.into())
+}
+
+/// A `map_err` mapper to a crypto error carrying the cause's text.
+pub(crate) fn crypto_display<E: std::fmt::Display>(err: E) -> KaisatsuError {
+    KaisatsuError::Crypto(err.to_string())
+}
+
+/// A `map_err` mapper to a fixed 400 message for malformed client input.
+pub(crate) fn bad_request<E>(msg: &'static str) -> impl FnOnce(E) -> KaisatsuError {
+    move |_| KaisatsuError::BadRequest(msg.into())
+}
+
+/// An `ok_or_else` mapper to a fixed 400 message for malformed client input.
+pub(crate) fn missing(msg: &'static str) -> impl FnOnce() -> KaisatsuError {
+    move || KaisatsuError::BadRequest(msg.into())
+}
 
 /// Constant-time comparison of two byte slices or strings (W10, W12).
 #[must_use]

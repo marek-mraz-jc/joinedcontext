@@ -143,10 +143,7 @@ pub fn verify_dpop_proof(
     expected_access_token: Option<&str>,
     expected_nonce: Option<&str>,
 ) -> Result<DpopProof> {
-    let header_part = proof_jwt
-        .split('.')
-        .next()
-        .ok_or_else(|| KaisatsuError::invalid_dpop_proof("malformed DPoP JWT"))?;
+    let header_part = proof_jwt.split('.').next().unwrap_or_default();
     let header_bytes = URL_SAFE_NO_PAD
         .decode(header_part)
         .map_err(|_| KaisatsuError::invalid_dpop_proof("malformed DPoP header base64"))?;
@@ -162,9 +159,15 @@ pub fn verify_dpop_proof(
             "DPoP header typ must be dpop+jwt",
         ));
     }
-    let jwk = raw_header
-        .get("jwk")
+    // The typed header holds the key the signature is checked with; the raw one is what the
+    // private-member check and the thumbprint read.
+    let header = decode_header(proof_jwt)
+        .map_err(|_| KaisatsuError::invalid_dpop_proof("invalid DPoP header"))?;
+    let jwk_parsed = header
+        .jwk
+        .as_ref()
         .ok_or_else(|| KaisatsuError::invalid_dpop_proof("DPoP header missing jwk"))?;
+    let jwk = &raw_header["jwk"];
     if jwk.get("d").is_some() {
         return Err(KaisatsuError::invalid_dpop_proof(
             "DPoP header jwk must not contain private key material",
@@ -172,14 +175,9 @@ pub fn verify_dpop_proof(
     }
 
     let jkt = compute_jwk_thumbprint(jwk)?;
-    let _ = decode_header(proof_jwt)
-        .map_err(|_| KaisatsuError::invalid_dpop_proof("invalid DPoP header"))?;
 
-    // Build a synthetic `exp` in claims validation by decoding signature against `jwk`
-    let payload_part = proof_jwt
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| KaisatsuError::invalid_dpop_proof("malformed DPoP payload"))?;
+    // decode_header accepted three dot-separated parts, so the payload part is there.
+    let payload_part = proof_jwt.split('.').nth(1).unwrap_or_default();
     let payload_bytes = URL_SAFE_NO_PAD
         .decode(payload_part)
         .map_err(|_| KaisatsuError::invalid_dpop_proof("malformed DPoP payload base64"))?;
@@ -215,9 +213,7 @@ pub fn verify_dpop_proof(
     }
 
     // Verify signature using `jsonwebtoken`
-    let alg = decode_header(proof_jwt)
-        .map_err(|_| KaisatsuError::invalid_dpop_proof("bad header"))?
-        .alg;
+    let alg = header.alg;
     // RFC 9449 §4.2: asymmetric algorithms only; a MAC (`HS*`) proof is refused outright.
     if !matches!(
         alg,
@@ -235,9 +231,7 @@ pub fn verify_dpop_proof(
     validation.validate_exp = false;
     validation.validate_aud = false;
     validation.required_spec_claims.clear();
-    let jwk_parsed: jsonwebtoken::jwk::Jwk = serde_json::from_value(jwk.clone())
-        .map_err(|_| KaisatsuError::invalid_dpop_proof("invalid DPoP JWK"))?;
-    let decoding_key = jsonwebtoken::DecodingKey::from_jwk(&jwk_parsed)
+    let decoding_key = jsonwebtoken::DecodingKey::from_jwk(jwk_parsed)
         .map_err(|_| KaisatsuError::invalid_dpop_proof("cannot decode DPoP JWK"))?;
     jsonwebtoken::decode::<Value>(proof_jwt, &decoding_key, &validation)
         .map_err(|_| KaisatsuError::invalid_dpop_proof("DPoP signature verification failed"))?;

@@ -285,7 +285,6 @@ function GrantTable({
     <AdminGrid
       stack
       storageKey={`${project}:access-${effect}`}
-      query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
       caption={caption}
       rows={rows}
       columns={columns}

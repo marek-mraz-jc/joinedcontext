@@ -461,3 +461,22 @@ pub(crate) async fn read(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The column tables are built at compile time; the builders still mark each column's nullability.
+    #[test]
+    fn columns_are_required_unless_built_nullable() {
+        let c = column("uid", "t.uid", Kind::Text);
+        assert_eq!((c.member, c.sql, c.nullable), ("uid", "t.uid", false));
+        assert!(c.kind == Kind::Text);
+        let n = nullable("folderUid", "t.folder_uid", Kind::Text);
+        assert_eq!(
+            (n.member, n.sql, n.nullable),
+            ("folderUid", "t.folder_uid", true)
+        );
+        assert!(DASHBOARDS.iter().any(|c| c.nullable) && DASHBOARDS.iter().any(|c| !c.nullable));
+    }
+}

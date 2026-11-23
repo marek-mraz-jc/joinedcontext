@@ -17,6 +17,7 @@ Desired specification of a `DelegationPolicy` (AG-150).
 |---|---|---|---|
 | `aboveCeiling` | [AboveCeiling](#aboveceiling) | no | A request above the ceiling is refused (default) or queued for an administrator. |
 | `allowedClients` | list of string | no | The OAuth clients a connector may name (a CIMD URL or a realm client id); absent: any client of the realm. |
+| `autonomous` | boolean | no | Whether a connector of theirs may approve what it writes as its owner, without a click (AG-150); valid only with `writes`, default false. |
 | `endpoints` | list of string | no | The Endpoints a connector may name; absent: the projects' Endpoints the person may read. |
 | `kinds` | list of [KindVerbs](#kindverbs) | no | Verbs per kind; absent: `read` on the kinds the segments reach, nothing more. |
 | `maxExpiry` | string | no | The longest expiry, an ISO 8601 duration in days such as `P90D`, at most `P365D`; absent: `P30D`. |

@@ -8,7 +8,7 @@
  * writes this project's own roles with project kinds only, Your access reads the caller's own
  * grants, and Delete project is never one click.
  */
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -23,7 +23,7 @@ import {
 import type { ProjectSettingsTab } from "../src/pages/projectSettings/ProjectSettingsPage";
 import { NOT_IN_A_PROJECT, organizationKindsIn } from "../src/pages/access/Roles";
 import { expectDenied } from "./checks";
-import { json, list, renderPage } from "./page_contract";
+import { json, list, problem, renderPage } from "./page_contract";
 
 const PROJECT = "helsinki";
 
@@ -76,8 +76,9 @@ const VIEWER = {
   grants: [{ role: "viewer", binding: "viewers", scope: "organization", rule: { kinds: ["Pipeline"], verbs: ["read"] } }],
 } as unknown as Effective;
 
-function renderTab(tab: ProjectSettingsTab, permissions: Effective = STEWARD) {
+function renderTab(tab: ProjectSettingsTab, permissions: Effective = STEWARD, manifestFails = 0) {
   const requests: string[] = [];
+  let manifestFailed = 0;
   const result = renderPage(<ProjectSettingsPage project={PROJECT} tab={tab} />, {
     path: `/projects/${PROJECT}/settings/${tab}`,
     answer: (url, request) => {
@@ -88,6 +89,10 @@ function renderTab(tab: ProjectSettingsTab, permissions: Effective = STEWARD) {
         return json({ ...permissions, project: "org", grants: [...permissions.grants, ORG_READER] });
       }
       if (url.pathname.endsWith("/permissions/me")) return json(permissions);
+      if (url.pathname === `/api/v1/projects/org/projects/${PROJECT}` && manifestFailed < manifestFails) {
+        manifestFailed += 1;
+        return problem(503, "the project store is not answering");
+      }
       if (url.pathname === `/api/v1/projects/org/projects/${PROJECT}`) return json(PROJECT_MANIFEST);
       if (url.pathname === "/api/v1/projects/org/organizations") {
         return json(
@@ -149,6 +154,20 @@ describe("General (PF-17, PF-61)", () => {
     expect(screen.getByText(en.organization.visibility.members)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Edit Helsinki city data/ })).toBeInTheDocument();    // No publisher saved, so no catalogue address to hand out (T-4595).
     expect(screen.getByText(en.projectSettings.general.noCatalog)).toBeInTheDocument();
+  });
+
+  it("says the project did not load and reads it again on Retry", async () => {
+    renderTab("general", STEWARD, 1);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("the project store is not answering");
+    fireEvent.click(within(alert).getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByText("Open data of the city.")).toBeInTheDocument();
+  });
+
+  it("opens another tab at its own address", async () => {
+    renderTab("general");
+    fireEvent.click(await screen.findByRole("tab", { name: en.projectSettings.tab.roles }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/projects/${PROJECT}/settings/roles`));
   });
 
   it("edits title, description and quotas and keeps organizationRef, the metadata and no status", () => {

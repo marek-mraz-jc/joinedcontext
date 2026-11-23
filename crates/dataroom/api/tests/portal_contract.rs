@@ -7,9 +7,7 @@
 //! stray sweep (`reconciler/ckan.rs` `sweep_with`) are sent as those functions send them, and
 //! the test asserts the fields they parse.
 
-use dataroom_api::{
-    mount, portal_publisher, portal_publisher_from_file, DataroomState, MIN_PORTAL_TOKEN_LEN,
-};
+use dataroom_api::{mount, portal_publisher, DataroomState};
 use dataroom_core::{
     Action, Catalogue, CatalogueId, ContactKind, ContactPoint, OrgId, PolicyAuthorizer, ProfilePin,
     Store, ThemeTokens,
@@ -30,7 +28,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-const TOKEN: &str = "portal-ckan-token-from-the-secret-file-0123456789";
 const ORGANIZATION: &str = "mesto-banska-bystrica";
 const PUBLIC_DATASET: &str = "kvalita-ovzdusia";
 const CLOSED_DATASET: &str = "kvalita-ovzdusia-interna";
@@ -87,7 +84,8 @@ fn catalogue(org_id: OrgId, id: CatalogueId) -> Catalogue {
 
 /// The router mounted at `/opendata` as `jc` mounts it, served on a loopback socket; the base
 /// URL the Portal's `JC_PORTAL_CKAN_API_URL` would name.
-async fn serve() -> String {
+/// The base of a served catalogue and a service token of the Portal for it.
+async fn serve() -> (String, String) {
     let org_id = OrgId::from_uuid(Uuid::from_u128(0x7100));
     let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x0007_1001));
     let store = Arc::new(MemoryStore::new());
@@ -95,10 +93,17 @@ async fn serve() -> String {
         .upsert_catalogue(catalogue(org_id, cat_id))
         .await
         .expect("catalogue");
-    // The binding `jc` gives the Portal (`portal_publisher_from_file`): Read and Propose only.
-    let (binding, grant) = portal_publisher(TOKEN, org_id, cat_id).expect("a valid token");
+    // What `jc` gives the Portal's service token here: Read and Propose only.
+    let issuer = jc_door::testing::Issuer::start("https://id.city.test", "k1").await;
+    let clients = ["portal-publisher".to_owned()];
+    let verifier =
+        jc_door::Verifier::new(&issuer.issuer, &issuer.jwks_url, &clients).expect("a verifier");
+    let token = issuer.token("portal-publisher", "dataroom", 300);
+    let (subject, grant) = portal_publisher(org_id, cat_id);
     let authorizer = Arc::new(PolicyAuthorizer::new(vec![grant]));
-    let state = DataroomState::new(store, authorizer, org_id, cat_id).with_tokens(vec![binding]);
+    let state = DataroomState::new(store, authorizer, org_id, cat_id)
+        .with_verifier(Arc::new(verifier))
+        .with_publishers([((org_id, cat_id), subject)].into());
     let app = mount("/opendata", state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -107,7 +112,7 @@ async fn serve() -> String {
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    format!("http://{addr}/opendata")
+    (format!("http://{addr}/opendata"), token)
 }
 
 fn endpoint(name: &str, dataset: &str, audience: &str, slug: &str) -> RawManifest {
@@ -181,7 +186,7 @@ fn settings(title: &str) -> Settings {
 /// `reconciler/ckan.rs` `one`: `HttpCkan::new(&api_url, token)`. A `SecretValue` is made only
 /// by jcctl's secret backends or from the environment, so the token goes through a variable.
 fn client(base: &str, token: &str) -> HttpCkan {
-    let variable = format!("DATAROOM_PORTAL_CONTRACT_{}", token.len());
+    let variable = format!("DATAROOM_PORTAL_CONTRACT_{}", Uuid::now_v7().simple());
     std::env::set_var(&variable, token);
     let secret = SecretValue::from_env(&variable).expect("the token");
     HttpCkan::new(base, secret).expect("a client")
@@ -263,13 +268,13 @@ const CLOSED_SLUG: &str = "ab4qm7ge2xdv6ksb3ncf5arw2y";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
-    let base = serve().await;
+    let (base, token) = serve().await;
 
     // publish (jcctl ckan.rs `publish`): organization_show 404 -> organization_create,
     // package_show 404 -> package_create.
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let (first, again) = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         let first = publish(
             &mut api,
@@ -352,9 +357,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     assert_eq!(portal_search(&base, "ovzdusia").await, [PUBLIC_DATASET]);
 
     // publish_views (EP-132): resource_view_list, resource_view_create; a rerun writes nothing.
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let (views, views_again) = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         let s = settings("Mesto Banská Bystrica");
         (
@@ -376,9 +381,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     );
 
     // EP-139: a closed Endpoint's dataset is private: the Portal's token reads it, nobody else.
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let closed = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint(
             "ovzdusie-interna",
             CLOSED_DATASET,
@@ -402,9 +407,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     assert!(!portal_search(&base, "")
         .await
         .contains(&CLOSED_DATASET.to_owned()));
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let (held, mut swept) = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let held = api.show("package_show", CLOSED_DATASET).expect("show");
         (held, sweep_names(&mut api, ORGANIZATION))
     })
@@ -437,9 +442,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     );
 
     // An Endpoint that stops being public takes its dataset out of anonymous sight.
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let narrowed = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint(
             "ovzdusie-public",
             PUBLIC_DATASET,
@@ -457,9 +462,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     .await;
     assert_eq!(narrowed.expect("updated"), Outcome::Updated);
     assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_none());
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let widened = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         publish(
             &mut api,
@@ -474,9 +479,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_some());
 
     // The instance's declared title renames the organization (organization_patch).
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let renamed = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         publish(
             &mut api,
@@ -495,9 +500,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
 
     // withdraw (jcctl ckan.rs `withdraw`): package_show, package_delete; gone for everyone
     // reading anonymously, "not there" to a second withdraw, and back on republish.
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let (gone, gone_again) = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         (
             withdraw(&mut api, PUBLIC_DATASET),
             withdraw(&mut api, PUBLIC_DATASET),
@@ -508,9 +513,9 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     assert_eq!(gone_again.expect("idempotent"), Outcome::Unchanged);
     assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_none());
     assert!(portal_search(&base, "ovzdusia").await.is_empty());
-    let b = base.clone();
+    let (b, t) = (base.clone(), token.clone());
     let back = blocking(move || {
-        let mut api = client(&b, TOKEN);
+        let mut api = client(&b, &t);
         let ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         publish(
             &mut api,
@@ -527,7 +532,7 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     // The binding withdraws but never purges (§5): `dataset_purge` is refused and the record stays.
     let purge = reqwest::Client::new()
         .post(format!("{base}/api/3/action/dataset_purge"))
-        .bearer_auth(TOKEN)
+        .bearer_auth(&token)
         .json(&json!({ "id": PUBLIC_DATASET }))
         .send()
         .await
@@ -542,7 +547,7 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
 /// one leaves the other.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
-    let base = serve().await;
+    let (base, token) = serve().await;
     let manifest = || -> RawManifest {
         let mut ep = endpoint("ovzdusie-public", PUBLIC_DATASET, "public", PUBLIC_SLUG);
         ep.spec["catalog"]["datasets"] = json!([
@@ -556,8 +561,9 @@ async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
         ep
     };
     let run = |base: String| {
+        let token = token.clone();
         blocking(move || {
-            let mut api = client(&base, TOKEN);
+            let mut api = client(&base, &token);
             let ep = manifest();
             let spec: jc_core::kinds::EndpointSpec =
                 serde_json::from_value(ep.spec.clone()).expect("the spec");
@@ -630,8 +636,8 @@ async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
         "{page}"
     );
 
-    let b = base.clone();
-    let gone = blocking(move || withdraw(&mut client(&b, TOKEN), "bb-zle-ovzdusie")).await;
+    let (b, t) = (base.clone(), token.clone());
+    let gone = blocking(move || withdraw(&mut client(&b, &t), "bb-zle-ovzdusie")).await;
     assert_eq!(gone.expect("withdrawn"), Outcome::Withdrawn);
     assert!(portal_dataset(&base, "bb-zle-ovzdusie").await.is_none());
     assert!(portal_dataset(&base, "bb-pm").await.is_some());
@@ -639,7 +645,7 @@ async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_portal_publisher_without_a_valid_token_writes_nothing() {
-    let base = serve().await;
+    let (base, _) = serve().await;
     let b = base.clone();
     let (wrong, anon_write) = blocking(move || {
         let mut api = client(&b, "not-the-token");
@@ -672,32 +678,11 @@ async fn the_portal_publisher_without_a_valid_token_writes_nothing() {
 }
 
 #[test]
-fn the_portal_publisher_token_is_long_read_from_its_file_and_never_echoed() {
+fn the_portal_publisher_reads_and_proposes_on_its_catalogue_alone() {
     let org_id = OrgId::from_uuid(Uuid::from_u128(1));
     let cat_id = CatalogueId::from_uuid(Uuid::from_u128(2));
-    let short = "x".repeat(MIN_PORTAL_TOKEN_LEN - 1);
-    let refused = portal_publisher(&short, org_id, cat_id).expect_err("too short");
-    assert!(!refused.to_string().contains(&short), "{refused}");
-    let spaced = format!("{} {}", "a".repeat(20), "b".repeat(20));
-    assert!(portal_publisher(&spaced, org_id, cat_id).is_err());
-
-    let dir = std::env::temp_dir().join(format!("dataroom-portal-token-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("dir");
-    let file = dir.join("token");
-    std::fs::write(&file, format!("{TOKEN}\n")).expect("write");
-    let (binding, grant) = portal_publisher_from_file(&file, org_id, cat_id).expect("read");
-    assert!(
-        !format!("{binding:?}").contains(TOKEN),
-        "the token must not print"
-    );
-    assert_eq!(binding.token, TOKEN);
+    let (subject, grant) = portal_publisher(org_id, cat_id);
     assert_eq!(grant.actions, [Action::Read, Action::Propose]);
     assert_eq!(grant.catalogue_id, Some(cat_id));
-    let missing =
-        portal_publisher_from_file(&dir.join("none"), org_id, cat_id).expect_err("absent");
-    assert!(
-        missing.to_string().contains("could not be read"),
-        "{missing}"
-    );
-    std::fs::remove_dir_all(&dir).expect("cleanup");
+    assert_eq!(subject.organizations, [org_id]);
 }

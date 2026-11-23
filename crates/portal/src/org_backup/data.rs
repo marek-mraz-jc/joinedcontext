@@ -649,7 +649,7 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     ),
     (
         "connector_calls",
-        "a person's connector calls, not an Organization's",
+        "a person's connector and MCP calls, not an Organization's",
     ),
     ("user_preferences", "a person's own settings"),
     (
