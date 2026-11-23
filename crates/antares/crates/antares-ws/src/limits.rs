@@ -236,8 +236,35 @@ mod tests {
         let one = MAX_NOTIFICATION_BYTES.to_string();
         let exact = Limits::from_env(|k| (k == QUEUE_BYTES_ENV).then(|| one.clone()))?;
         assert_eq!(exact.queue_bytes, MAX_NOTIFICATION_BYTES);
-        let lived = Limits::from_env(|k| (k == MAX_LIFETIME_ENV).then(|| "60".to_owned()))?;
-        assert_eq!(lived.max_lifetime, Duration::from_secs(60));
+        // every variable reaches its own bound
+        let all = Limits::from_env(|k| {
+            let v = match k {
+                QUEUE_ENV => "7",
+                QUEUE_BYTES_ENV => "2097152",
+                RESUME_GRACE_ENV => "2",
+                SUBSCRIPTION_LEASE_ENV => "500",
+                MAX_LIFETIME_ENV => "60",
+                MAX_CONNECTIONS_ENV => "11",
+                MAX_CONNECTIONS_PER_TENANT_ENV => "5",
+                MAX_SUBSCRIPTIONS_ENV => "3",
+                ALLOWED_ORIGINS_ENV => "https://a.example",
+                _ => return None,
+            };
+            Some(v.to_owned())
+        })?;
+        let want = Limits {
+            queue: 7,
+            queue_bytes: 2_097_152,
+            resume_grace: Duration::from_secs(2),
+            subscription_lease: Duration::from_secs(500),
+            max_lifetime: Duration::from_secs(60),
+            max_connections: 11,
+            max_connections_per_tenant: 5,
+            max_subscriptions: 3,
+            allowed_origins: vec!["https://a.example".to_owned()],
+            ..Limits::default()
+        };
+        assert_eq!(all, want);
         // a lease the grace could outlast stops the broker
         let short = Limits::from_env(|k| (k == SUBSCRIPTION_LEASE_ENV).then(|| "120".to_owned()));
         assert!(short.is_err(), "{short:?}");
