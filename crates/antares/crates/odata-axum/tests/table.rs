@@ -277,6 +277,48 @@ async fn a_source_conflict_is_409_and_a_set_the_model_names_but_nobody_serves_is
 }
 
 #[tokio::test]
+async fn a_resource_the_table_router_does_not_serve_is_an_odata_error() -> Result<(), String> {
+    let unsupported = |what: &str| format!("{what} is not supported by this service");
+    for (method, uri, status, message) in [
+        (
+            "GET",
+            "/odata/$entity?$id=Things('t1')",
+            StatusCode::NOT_IMPLEMENTED,
+            unsupported("this resource"),
+        ),
+        (
+            "GET",
+            "/odata/Things('t1')/org",
+            StatusCode::NOT_IMPLEMENTED,
+            unsupported("this resource path"),
+        ),
+        (
+            "GET",
+            "/odata/Counters(1.5)",
+            StatusCode::BAD_REQUEST,
+            "a key is a string or an integer".into(),
+        ),
+        (
+            "DELETE",
+            "/odata/$entity?$id=Things('t1')",
+            StatusCode::NOT_IMPLEMENTED,
+            unsupported("this resource"),
+        ),
+        (
+            "GET",
+            "/odata/$crossjoin(Things,Counters)",
+            StatusCode::NOT_IMPLEMENTED,
+            "$crossjoin and $all: no NGSI-LD equivalent (ADR-0024 decision 5)".into(),
+        ),
+    ] {
+        let (got, _, body) = call(app(Some(Scope::all()))?, method, uri).await?;
+        assert_eq!(got, status, "{method} {uri}: {body}");
+        assert_eq!(body["error"]["message"], message.as_str(), "{method} {uri}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_bad_accept_or_version_header_is_refused_before_any_row() -> Result<(), String> {
     for (uri, header, value) in [
         (

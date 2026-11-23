@@ -276,7 +276,7 @@ async fn two_restrictions_must_both_hold() {
     let answer = query(&t, &QueryOptions::default(), &none, 10)
         .await
         .expect("an open read");
-    assert!(answer.rows.is_empty());
+    assert_eq!(answer.rows, [] as [Value; 0]);
 }
 
 #[test]

@@ -623,12 +623,14 @@ async fn a_pg_table_answers_every_condition_a_caller_builds() -> Result<(), Stri
         ["t3", "t4", "t6"]
     );
     // a list or an object value compares with nothing
-    assert!(fetched(compare(&["org"], CompareOp::Eq, json!(["a"])))
-        .await?
-        .is_empty());
-    assert!(fetched(compare(&["org"], CompareOp::Eq, json!(null)))
-        .await?
-        .is_empty());
+    assert_eq!(
+        fetched(compare(&["org"], CompareOp::Eq, json!(["a"]))).await?,
+        [] as [&str; 0]
+    );
+    assert_eq!(
+        fetched(compare(&["org"], CompareOp::Eq, json!(null))).await?,
+        [] as [&str; 0]
+    );
     for (path, missing) in [(&["nope"][..], "nope"), (&[][..], "")] {
         let plan = plan_with(compare(path, CompareOp::Eq, json!("a")))?;
         assert_eq!(
