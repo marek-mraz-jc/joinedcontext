@@ -379,6 +379,11 @@ async fn a_preview_over_its_bounds_or_with_a_bad_mapping_is_refused() {
             "x".repeat(antares_ical::MAX_PREVIEW_BYTES + 1),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
+        // a body of a few kilobytes is well under the bound: its own 400, not a 413
+        (
+            format!("{}{}", json!({"mapping": {}, "limit": 0}), " ".repeat(4096)),
+            StatusCode::BAD_REQUEST,
+        ),
     ] {
         let (status, answer) = send(&app, "POST", PREVIEW, &body, true).await;
         assert_eq!(status, want, "{}: {answer}", &body[..body.len().min(60)]);

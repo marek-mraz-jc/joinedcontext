@@ -161,6 +161,32 @@ async fn the_order_and_the_cursor_are_stable_across_views() -> Result<(), String
     assert_eq!(paged, whole);
     let again = pairs(&union(&f.app, "views=fleet,cars,history&type=Car,Person").await);
     assert_eq!(again, whole, "the same read answers the same order");
+    // one view holding more than a page: a full page is not its end
+    let first = union(&f.app, "views=cars&type=Car&limit=1").await;
+    assert_eq!(first.ids().len(), 1, "{}", first.text);
+    let next = first.link("next").ok_or("a full page of one view links the next")?;
+    let second = send(&f.app, Method::GET, &next, &[LD], None).await;
+    assert_eq!(second.ids().len(), 1, "{}", second.text);
+    assert_ne!(second.ids(), first.ids());
+    Ok(())
+}
+
+/// Each view is read with the request's headers: a Link naming a @context
+/// that cannot be retrieved is the views' 504, never a read that dropped it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_context_reaches_every_view() -> Result<(), String> {
+    let f = fixture().await?;
+    let link = "<http://127.0.0.1:9/missing.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"";
+    let a = send(
+        &f.app,
+        Method::GET,
+        &format!("{UNION}?views=cars&type=Car"),
+        &[("Link", link)],
+        None,
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::GATEWAY_TIMEOUT, "{}", a.text);
+    assert!(a.text.contains("LdContextNotAvailable"), "{}", a.text);
     Ok(())
 }
 

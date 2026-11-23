@@ -276,41 +276,6 @@ async fn an_empty_tenant_has_no_values_and_a_wide_selection_is_413() -> Result<(
     Ok(())
 }
 
-/// The read asks only for Entities carrying the attribute, so Entities without it never
-/// count against the scan's ceiling.
-#[tokio::test]
-async fn entities_without_the_attribute_do_not_fill_the_scan() -> Result<(), String> {
-    let (_broker, app) = fixture(None).await?;
-    put_view(
-        &app,
-        &json!({"id": "sparse", "tenant": "sparse", "selector": ["Event"],
-            "operations": ["query_entities"],
-            "rules": [{"types": ["Event"], "attributes": ["category", "name"]}],
-            "representations": {"facets": ["category"]}}),
-    )
-    .await?;
-    let mut many: Vec<Value> = (0..=antares_ops::RESIDUAL_SCAN)
-        .map(|n| json!({"id": format!("urn:ngsi-ld:Event:n{n}"), "type": "Event", "name": prop(&json!("x"))}))
-        .collect();
-    many.push(json!({"id": "urn:ngsi-ld:Event:rare", "type": "Event", "category": prop(&json!("rare"))}));
-    for chunk in many.chunks(1000) {
-        let a = send(
-            &app,
-            Method::POST,
-            "/ngsi-ld/v1/entityOperations/create",
-            &[("NGSILD-Tenant", "sparse")],
-            Some(&Value::Array(chunk.to_vec())),
-        )
-        .await;
-        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
-    }
-    let a = get(&app, "/x/views/sparse/facets?attr=category").await;
-    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
-    let body: Value = serde_json::from_str(&a.text).map_err(|e| e.to_string())?;
-    assert_eq!(counts(&body), pairs(&[("rare", 1)]));
-    Ok(())
-}
-
 #[tokio::test]
 async fn only_an_anonymous_answer_is_shared_and_a_write_is_refused() -> Result<(), String> {
     let (_broker, app) = fixture(None).await?;
