@@ -337,6 +337,16 @@ mod tests {
     }
 
     #[test]
+    fn the_memory_budget_sets_the_render_cache_bound() {
+        use std::sync::atomic::Ordering::Relaxed;
+        // Below the default, so the cache tests running beside this one stay under their bound.
+        set_cache_bytes(render::MAX_BYTES - 1, linkml_model::cache::MAX_BYTES);
+        let set = render::CACHE_BYTES.load(Relaxed);
+        set_cache_bytes(render::MAX_BYTES, linkml_model::cache::MAX_BYTES);
+        assert_eq!(set, render::MAX_BYTES - 1);
+    }
+
+    #[test]
     fn an_etag_named_in_if_none_match_is_304_without_a_body() {
         let body: Arc<[u8]> = Arc::from(&b"abc"[..]);
         let etag = format!("\"{}\"", render::sha256(&body));

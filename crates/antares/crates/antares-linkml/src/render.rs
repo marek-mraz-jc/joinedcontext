@@ -376,14 +376,22 @@ impl Cache {
             weight,
         });
         *held = held.saturating_add(weight);
-        // The oldest go first; a rendering past the whole budget alone would go too, answered
-        // and not kept (a 1 MiB schema renders a few MiB, so none does).
-        while entries.len() > crate::CACHE_ENTRIES
-            || *held > CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed)
-        {
+        Self::evict(
+            entries,
+            held,
+            crate::CACHE_ENTRIES,
+            CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        Some(rendered)
+    }
+
+    /// Drops the oldest of `entries` until at most `most` remain and they hold at most `bytes`;
+    /// a rendering past the whole budget alone would go too, answered and not kept (a 1 MiB
+    /// schema renders a few MiB, so none does).
+    fn evict(entries: &mut VecDeque<Entry>, held: &mut usize, most: usize, bytes: usize) {
+        while entries.len() > most || *held > bytes {
             *held = held.saturating_sub(entries.pop_front().map_or(0, |old| old.weight));
         }
-        Some(rendered)
     }
 
     #[cfg(test)]
@@ -490,6 +498,50 @@ mod tests {
             cache.get(&format!("v{i}"), rev(&schema), &schema, &visible(&[]));
         }
         assert_eq!(cache.len(), crate::CACHE_ENTRIES);
+    }
+
+    /// A rendering weighs its index and documents and the schema they come from, and the
+    /// oldest go until both bounds hold; an entry exactly at a bound stays.
+    #[test]
+    fn the_oldest_go_until_the_count_and_the_bytes_hold() {
+        let cache = Cache::default();
+        let schema: Arc<[u8]> = Arc::from(SCHEMA);
+        let rendered = cache
+            .get("v", rev(&schema), &schema, &visible(&["temperature"]))
+            .expect("renders");
+        let documents: usize = Artifact::ALL
+            .iter()
+            .filter_map(|a| rendered.document(*a))
+            .map(|d| d.len())
+            .sum();
+        assert!(documents > 0);
+        assert_eq!(rendered.bytes(), rendered.index.len() + documents);
+        assert_eq!(cache.held(), rendered.bytes() + schema.len());
+
+        let entry = |weight| Entry {
+            view: "v".into(),
+            schema: schema.clone(),
+            visible: visible(&[]),
+            rendered: rendered.clone(),
+            weight,
+        };
+        for (most, bytes, kept, held) in [
+            (2, 7, 2, 7),
+            (3, 7, 2, 7),
+            (2, 100, 2, 7),
+            (1, 100, 1, 4),
+            (2, 6, 1, 4),
+            (2, 3, 0, 0),
+        ] {
+            let mut entries = VecDeque::from([entry(3), entry(4)]);
+            let mut now = 7;
+            Cache::evict(&mut entries, &mut now, most, bytes);
+            assert_eq!(
+                (entries.len(), now),
+                (kept, held),
+                "at most {most}, {bytes} bytes"
+            );
+        }
     }
 
     /// 20 schemas of 1 MiB, each rendered for two visible sets, stay under the byte bound

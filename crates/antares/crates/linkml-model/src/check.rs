@@ -380,7 +380,7 @@ pub fn entity(rules: &Rules, doc: &Value, whole: bool) -> Result<(), Violation> 
                         attribute: name.clone(),
                         class: class.name.clone(),
                         rule: rule::CLOSED,
-                        component: component::CLOSED,
+                        component: component_of(rule::CLOSED),
                     });
                 }
             }
@@ -797,6 +797,8 @@ mod tests {
                 "{bad}"
             );
         }
+        let longest = "a".repeat(1024);
+        assert!(read(&format!(r#"{{"pattern": "{longest}"}}"#)).is_ok());
         let long = "a".repeat(1025);
         assert!(matches!(
             read(&format!(r#"{{"pattern": "{long}"}}"#)),
@@ -828,6 +830,7 @@ mod tests {
             read(r#"{"range": "float", "minimum_value": 2, "maximum_value": 1}"#),
             Err(crate::Error::Malformed(_))
         ));
+        assert!(read(r#"{"range": "integer", "minimum_value": 1, "maximum_value": 1}"#).is_ok());
         let model = Model::read(
             br#"{"id": "https://e.org/", "name": "s",
               "classes": {"C": {"slots": ["n"], "slot_usage": {"n": {"minimum_value": 0}}}},
@@ -865,6 +868,7 @@ mod tests {
             (rule::MINIMUM, component::MIN_INCLUSIVE),
             (rule::MAXIMUM, component::MAX_INCLUSIVE),
             (rule::PATTERN, component::PATTERN),
+            (rule::CLOSED, component::CLOSED),
             (rule::STRING, component::DATATYPE),
             (rule::INTEGER, component::DATATYPE),
             (rule::NUMBER, component::DATATYPE),

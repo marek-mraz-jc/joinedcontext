@@ -351,6 +351,8 @@ mod tests {
             .map(|i| output(&json!({"name": format!("b{i}")})))
             .collect();
         assert!(System::of(Some(&json!(many)), "b1").is_err());
+        let most = json!(many.iter().take(MAX_OUTPUTS).collect::<Vec<_>>());
+        assert_eq!(System::of(Some(&most), "b1")?.ok_or("absent")?.name, "b1");
         assert!(System::of(Some(&json!({"name": "bikes"})), "bikes").is_err());
         Ok(())
     }

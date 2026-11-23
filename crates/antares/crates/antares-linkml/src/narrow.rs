@@ -593,6 +593,54 @@ mod tests {
         assert_eq!(context["@context"]["status"], core("status"));
     }
 
+    /// A slot one class shows only by its core name reads as the core IRI, even when another
+    /// class's type shows the slot's own IRI: that class has no such slot, so its rule says
+    /// nothing about this one.
+    #[test]
+    fn a_slot_keeps_its_own_iri_only_where_a_class_of_it_shows_that_iri() {
+        let source = model(
+            r#"{"id": "https://e.org/m", "name": "m",
+              "prefixes": {"sdm": {"prefix_prefix": "sdm",
+                                   "prefix_reference": "https://smartdatamodels.org/"}},
+              "default_prefix": "sdm",
+              "classes": {"Bike": {"slots": ["status"]}, "Depot": {"slots": ["capacity"]}},
+              "slots": {"status": {}, "capacity": {}}}"#,
+        );
+        let core = |n: &str| format!("https://uri.etsi.org/ngsi-ld/default-context/{n}");
+        let own = |n: &str| format!("https://smartdatamodels.org/{n}");
+        let v = antares_ops::Visible::from_filter(&Filter {
+            rules: vec![
+                Rule {
+                    types: vec![core("Bike")],
+                    attributes: vec![core("status")],
+                    ..Rule::default()
+                },
+                Rule {
+                    types: vec![own("Depot")],
+                    attributes: vec![own("status"), own("capacity")],
+                    ..Rule::default()
+                },
+            ],
+            ..Filter::default()
+        });
+        let (m, _) = narrow(&source, &v, "bikes").expect("narrowed");
+        assert_eq!(m.slot_iri("status"), core("status"));
+        assert_eq!(m.slot_iri("capacity"), own("capacity"));
+    }
+
+    #[test]
+    fn an_authored_iri_is_kept_only_when_absolute_and_not_the_core_one() {
+        let core = "https://uri.etsi.org/ngsi-ld/default-context/speed";
+        let written = "city:speed".to_owned();
+        assert_eq!(authored(core, None, core), Vec::<String>::new());
+        assert_eq!(authored("nope:speed", None, core), Vec::<String>::new());
+        assert_eq!(
+            authored("https://e.org/city/speed", Some(&written), core),
+            ["city:speed"]
+        );
+        assert_eq!(authored("urn:x:speed", None, core), ["urn:x:speed"]);
+    }
+
     /// T-6747: a view naming an authored model's classes and slots by their stored IRIs keeps the
     /// model: its title, description and licence, each authored IRI as the element's exact
     /// mapping with the prefix it is written in, as plain LinkML YAML; a hidden slot and the prefix
@@ -710,6 +758,10 @@ mod tests {
         assert_eq!(s.slots["venue"].range.as_deref(), Some("uriorcurie"));
         assert_eq!(m.class_iri("Any"), "https://w3id.org/linkml/Any");
         assert!(!s.classes.contains_key("PostalAddress"), "LK1");
+        assert!(s.classes["Any"]
+            .description
+            .as_deref()
+            .is_some_and(|d| d.contains("does not show")));
         let j: serde_json::Value =
             serde_json::from_str(&linkml_model::json_schema(&m)).expect("json");
         assert_eq!(

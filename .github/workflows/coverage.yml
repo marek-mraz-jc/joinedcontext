@@ -218,6 +218,35 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: coverage-ui, path: crates/portal/ui/coverage/coverage-summary.json, if-no-files-found: ignore, retention-days: 35 }
+  # Mutation testing of the Portal UI's pure logic (T-7592): StrykerJS over one group of MUTATE_GROUPS
+  # in crates/portal/ui/stryker.config.mjs per weekday (Monday 1 to Sunday 7). The incremental file
+  # comes back from the cache, so a night re-tests only the mutants whose module or tests changed; the
+  # report is the mutants-ui artifact. Red when a mutant survives (the config's break threshold).
+  mutants-ui:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd ui && pnpm install --frozen-lockfile
+      - id: group
+        run: echo "n=$(date -u +%u)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: crates/portal/ui/reports/stryker-incremental.json
+          key: "stryker-ui-${{ github.run_id }}"
+          restore-keys: stryker-ui-
+      - run: cd ui && pnpm exec stryker run
+        env: { STRYKER_GROUP: "${{ steps.group.outputs.n }}" }
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: mutants-ui, path: crates/portal/ui/reports, if-no-files-found: ignore, retention-days: 35 }
   # One workspace a night (Monday root, Tuesday antares, Wednesday portal, Thursday platform; no
   # run Friday to Sunday), four shards of its mutants, each bounded so the shard still uploads what
   # it finished (a partial outcomes.json counts what ran). ekiben is not in the rotation: its
