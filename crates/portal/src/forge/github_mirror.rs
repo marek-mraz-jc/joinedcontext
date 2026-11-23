@@ -371,6 +371,24 @@ mod tests {
             ("JC_APP_MIRROR_GITHUB_API", "http://github.internal/api/v3"),
         ]))
         .is_err());
+        assert!(GithubMirror::from_env(env(&[
+            ("JC_APP_MIRROR_GITHUB_OWNER", "hel-apps"),
+            ("JC_APP_MIRROR_GITHUB_TOKEN", TOKEN),
+            ("JC_APP_MIRROR_GITHUB_URL", "http://github.internal"),
+        ]))
+        .is_err());
+        let garbled = GithubMirror::from_env(env(&[
+            ("JC_APP_MIRROR_GITHUB_OWNER", "hel-apps"),
+            ("JC_APP_MIRROR_GITHUB_TOKEN", TOKEN),
+            ("JC_APP_MIRROR_GITHUB_API", "github api"),
+        ]))
+        .expect_err("no address");
+        assert!(
+            garbled
+                .to_string()
+                .contains("invalid JC_APP_MIRROR_GITHUB_API"),
+            "{garbled}"
+        );
     }
 
     #[test]
@@ -477,6 +495,72 @@ mod tests {
             .await
             .expect("mirrored");
         assert_eq!(outcome, Mirrored::Current);
+    }
+
+    /// Each forge step that fails stops the mirror with the forge's error: reading the mirrors,
+    /// taking a broken one off, adding the new one and the first sync.
+    #[tokio::test]
+    async fn a_forge_step_that_fails_stops_the_mirror() {
+        let github = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/hel-apps/helsinki_bikes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&github)
+            .await;
+        let at = |action: &str| {
+            format!("/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/{action}")
+        };
+        let broken = serde_json::json!({ "value": [{
+            "Name": "remote_mirror_x",
+            "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+            "LastError": "authentication failed"
+        }] });
+        let none = serde_json::json!({ "value": [] });
+        let ok = || ResponseTemplate::new(200).set_body_json(serde_json::json!({}));
+        let fail = || ResponseTemplate::new(500);
+        for (step, mirrors, remove, add, sync) in [
+            ("read", fail(), ok(), ok(), ok()),
+            (
+                "remove",
+                ResponseTemplate::new(200).set_body_json(broken.clone()),
+                fail(),
+                ok(),
+                ok(),
+            ),
+            (
+                "add",
+                ResponseTemplate::new(200).set_body_json(none.clone()),
+                ok(),
+                fail(),
+                ok(),
+            ),
+            (
+                "sync",
+                ResponseTemplate::new(200).set_body_json(none.clone()),
+                ok(),
+                ok(),
+                fail(),
+            ),
+        ] {
+            let shako = MockServer::start().await;
+            for (verb, action, answer) in [
+                ("GET", "PushMirrors", mirrors),
+                ("POST", "Shako.RemovePushMirror", remove),
+                ("POST", "Shako.AddPushMirror", add),
+                ("POST", "Shako.SyncPushMirrors", sync),
+            ] {
+                Mock::given(method(verb))
+                    .and(path(at(action)))
+                    .respond_with(answer)
+                    .mount(&shako)
+                    .await;
+            }
+            let failed = mirror(&github, "hel-apps")
+                .mirror(&forge(&shako), "Application bikes")
+                .await
+                .expect_err(step);
+            assert!(!failed.to_string().contains(TOKEN), "{step}: {failed}");
+        }
     }
 
     #[tokio::test]
@@ -705,10 +789,14 @@ mod tests {
             TOKEN.to_owned(),
         )
         .expect("client");
-        match closed.ensure_repository("r", "x").await {
-            Err(GitError::Transport(m)) => assert!(!m.contains(TOKEN), "{m}"),
-            other => panic!("not a transport error: {other:?}"),
-        }
+        let refused = closed
+            .ensure_repository("r", "x")
+            .await
+            .expect_err("nothing answers");
+        assert!(
+            matches!(&refused, GitError::Transport(m) if !m.contains(TOKEN)),
+            "{refused:?}"
+        );
         assert_eq!(
             closed.web_url("r", ""),
             "https://github.com/hel-apps/r",

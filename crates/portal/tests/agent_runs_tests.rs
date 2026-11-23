@@ -29,6 +29,48 @@ use tower::ServiceExt;
 mod common;
 use common::csrf_echo::EchoCsrf;
 
+/// What the reaper logs while the guard lives, debug lines included.
+#[derive(Clone, Default)]
+struct Lines(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Lines {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned"))?
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Lines {
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let lines = Self::default();
+        let writer = lines.clone();
+        let guard = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish(),
+        );
+        (lines, guard)
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .into_owned()
+    }
+}
+
 const PROJECT: &str = "helsinki";
 const STEWARD: &str = "demo.steward";
 const SLUG: &str = "si6epqkx364lprho5uaigutk274r5grb";
@@ -2577,6 +2619,39 @@ async fn expired_runs_are_reaped_and_ticket_invalidated_while_live_runs_remain()
         )
     );
 
+    // The periodic reaper does the same on its first tick, and says so in the log.
+    let late_id = mint_run_id();
+    state
+        .agents
+        .create_run(&AgentRun {
+            id: late_id.clone(),
+            app_name: "late-app".to_owned(),
+            branch: format!("agent/app-late-app/{late_id}"),
+            ..expired_run.clone()
+        })
+        .await
+        .expect("create late run");
+    let (lines, guard) = Lines::capture();
+    reaper::spawn_periodic(state.clone());
+    let late = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let run = state.agents.get_run(&late_id).await.expect("read");
+            if let Some(run) = run.filter(|run| run.status == "expired") {
+                return run;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the first tick reaps");
+    drop(guard);
+    assert_eq!(late.status, "expired");
+    assert!(
+        lines.text().contains("reaped expired agent run") && lines.text().contains(&late_id),
+        "{}",
+        lines.text()
+    );
+
     let (_, context) = internal_call(
         &internal,
         Some(proxy_bearer()),
@@ -4105,8 +4180,19 @@ async fn a_change_closed_on_the_forge_ends_its_waiting_run() {
         .mount(&server)
         .await;
 
+    let (lines, guard) = Lines::capture();
     let ended = joinedcontext_portal::agents::reaper::end_closed_publications(&state).await;
+    drop(guard);
     assert_eq!(ended, 1);
+    let log = lines.text();
+    assert!(
+        log.contains("ended run whose change was closed") && log.contains("change=5"),
+        "{log}"
+    );
+    assert!(
+        log.contains("reaper: run's change not read") && log.contains(&unreadable.id),
+        "{log}"
+    );
     let run = status_of(&state, &closed).await;
     assert_eq!(run.status, "cancelled");
     assert!(

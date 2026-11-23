@@ -714,6 +714,14 @@ mod tests {
                 Some("Shako.RemovePushMirror"),
                 "500",
             ),
+            // An unscoped copy of our remote that the forge will not take off.
+            (
+                vec![ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"value": [mirror_row("copy", &failing, "", "")]}),
+                )],
+                Some("Shako.RemovePushMirror"),
+                "500",
+            ),
             (
                 vec![ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []}))],
                 Some("Shako.AddPushMirror"),
