@@ -198,7 +198,11 @@ pub fn copy_bare_repo(
         {
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
-            if name_str.ends_with(".pack") || name_str.ends_with(".idx") {
+            // A pack compaction superseded has no index and is left; a cruft pack's `.seen` times
+            // go with it, so the copy does not give its objects a new prune grace.
+            let served = !name_str.ends_with(".pack") || entry.path().with_extension("idx").is_file();
+            let pack_file = [".pack", ".idx", ".seen"].iter().any(|ext| name_str.ends_with(ext));
+            if pack_file && served {
                 std::fs::copy(entry.path(), dest_pack_dir.join(&file_name))
                     .map_err(|e| ShakoError::Storage(format!("copy pack: {e}")))?;
             }

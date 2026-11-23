@@ -12,7 +12,7 @@
 //! 4. Runs by itself after a write once a repository holds `AUTO_COMPACT_PACK_THRESHOLD` packs
 //!    (`compaction_due`).
 
-use crate::bundle::collect_all_objects_from_tips;
+use crate::bundle::{collect_all_objects_from_tips, collect_all_tree_objects};
 use crate::pack::{Admit, write_pack};
 use crate::repo::open_isolated;
 use crate::upload_pack::collect_advertised_refs;
@@ -30,6 +30,8 @@ pub const DEFAULT_PRUNE_GRACE: Duration = Duration::from_secs(14 * 24 * 3600);
 pub const AUTO_COMPACT_PACK_THRESHOLD: usize = 16;
 /// Beside a cruft pack: `<hex id> <unix seconds>` per line, when each object was first seen.
 const SEEN: &str = "seen";
+/// How long a superseded pack stays for readers that loaded its index: a fetch's transfer limit.
+const SUPERSEDED_KEPT: Duration = Duration::from_secs(3600);
 /// A push lives minutes (30 for its transfer); a quarantine this old was left by a crash.
 const STALE_QUARANTINE: Duration = Duration::from_secs(24 * 3600);
 
@@ -82,6 +84,7 @@ fn remove_stale_quarantines(repo_path: &Path) {
     }
 }
 
+/// The packs git serves: those with an index. A pack compaction superseded has none.
 fn list_pack_files(pack_dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(pack_dir) else {
         return Vec::new();
@@ -90,9 +93,49 @@ fn list_pack_files(pack_dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("pack"))
+        .filter(|p| p.with_extension("idx").is_file())
         .collect();
     packs.sort();
     packs
+}
+
+/// Takes `pack` out of what git reads: its index first, so no new reader finds it, while a
+/// reader that loaded the index before can still open the pack (`sweep_superseded` removes it
+/// after `SUPERSEDED_KEPT`). Its mtime marks when.
+fn supersede(pack: &Path) {
+    let _ = std::fs::remove_file(pack.with_extension("idx"));
+    let _ = std::fs::remove_file(pack.with_extension(SEEN));
+    let _ = std::fs::File::options()
+        .write(true)
+        .open(pack)
+        .and_then(|f| f.set_modified(SystemTime::now()));
+}
+
+/// Removes superseded packs older than `SUPERSEDED_KEPT`, and an index or `.seen` file whose
+/// pack a crash removed.
+fn sweep_superseded(pack_dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(pack_dir) else {
+        return;
+    };
+    for path in rd.flatten().map(|e| e.path()) {
+        let ext = path.extension().and_then(|s| s.to_str());
+        let stale = match ext {
+            Some("pack") => {
+                !path.with_extension("idx").exists()
+                    && path
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|at| at.elapsed().ok())
+                        .is_some_and(|age| age >= SUPERSEDED_KEPT)
+            }
+            Some("idx" | SEEN) => !path.with_extension("pack").exists(),
+            _ => false,
+        };
+        if stale {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 /// Whether `repo_path` holds enough packs that the next write should compact it.
@@ -145,6 +188,13 @@ fn write_bundle(
     if let Some(keep) = outcome.keep_path {
         let _ = std::fs::remove_file(keep);
     }
+    if let Some(pack) = &outcome.data_path {
+        for file in [pack.clone(), pack.with_extension("idx")] {
+            std::fs::File::open(&file)
+                .and_then(|f| f.sync_all())
+                .map_err(|e| ShakoError::Storage(format!("compact sync: {e}")))?;
+        }
+    }
     Ok(outcome.data_path)
 }
 
@@ -188,6 +238,7 @@ pub fn compact_repository(
     }
 
     let pack_dir = repo_path.join("objects/pack");
+    sweep_superseded(&pack_dir);
     let old_packs = list_pack_files(&pack_dir);
     if old_packs.is_empty() {
         return Ok(CompactOutcome {
@@ -203,13 +254,32 @@ pub fn compact_repository(
     let mut tips = Vec::new();
     let mut objects_to_keep: BTreeSet<ObjectId> = BTreeSet::new();
 
+    // Every ref peeled to its end: each tag of a chain, and a tree or blob a tag names.
+    let unreadable = |e: &dyn std::fmt::Display| ShakoError::Git(format!("compact walk: {e}"));
     for r in &refs {
-        objects_to_keep.insert(r.oid);
-        if let Some(p) = r.peeled {
-            objects_to_keep.insert(p);
-            tips.push(p);
-        } else if repo.find_commit(r.oid).is_ok() {
-            tips.push(r.oid);
+        let mut at = r.oid;
+        loop {
+            let object = repo.find_object(at).map_err(|e| unreadable(&e))?;
+            match object.kind {
+                gix_object::Kind::Tag => {
+                    objects_to_keep.insert(at);
+                    let tag = object.try_into_tag().map_err(|e| unreadable(&e))?;
+                    at = tag.target_id().map_err(|e| unreadable(&e))?.detach();
+                }
+                gix_object::Kind::Commit => {
+                    tips.push(at);
+                    break;
+                }
+                gix_object::Kind::Tree => {
+                    let tree = object.try_into_tree().map_err(|e| unreadable(&e))?;
+                    collect_all_tree_objects(&repo, &tree, &mut objects_to_keep)?;
+                    break;
+                }
+                gix_object::Kind::Blob => {
+                    objects_to_keep.insert(at);
+                    break;
+                }
+            }
         }
     }
     for oid in collect_all_objects_from_tips(&repo, &tips)? {
@@ -267,12 +337,13 @@ pub fn compact_repository(
         written.push(pack);
     }
 
-    // Delete old packs that were superseded by the written ones
+    // The new packs reach the disk before an old one leaves what git reads.
+    std::fs::File::open(&pack_dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| ShakoError::Storage(format!("compact sync: {e}")))?;
     for old_pack in &old_packs {
         if !written.contains(old_pack) {
-            let _ = std::fs::remove_file(old_pack);
-            let _ = std::fs::remove_file(old_pack.with_extension("idx"));
-            let _ = std::fs::remove_file(old_pack.with_extension(SEEN));
+            supersede(old_pack);
         }
     }
 
@@ -391,6 +462,91 @@ mod tests {
         compact(12 * DAY);
         assert!(!held(&repo, old), "compaction renewed the grace");
         assert!(held(&repo, new));
+        assert!(fsck_repository(&repo).is_ok());
+    }
+
+    fn object(kind: gix_object::Kind, raw: Vec<u8>) -> (ObjectId, gix_object::Kind, Vec<u8>) {
+        let id = gix_object::compute_hash(gix_hash::Kind::Sha1, kind, &raw).expect("hash");
+        (id, kind, raw)
+    }
+
+    fn tag(target: ObjectId, kind: &str, name: &str) -> (ObjectId, gix_object::Kind, Vec<u8>) {
+        let raw = format!(
+            "object {target}\ntype {kind}\ntag {name}\ntagger T <t@example.org> 0 +0000\n\n{name}\n"
+        );
+        object(gix_object::Kind::Tag, raw.into_bytes())
+    }
+
+    #[test]
+    fn a_tag_chain_that_names_a_tree_keeps_the_tree_and_its_blobs() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(9),
+            "main",
+            true,
+            "tags",
+        )
+        .expect("init");
+        let blob = object(gix_object::Kind::Blob, b"behind a tag\n".to_vec());
+        let mut tree_raw = b"100644 kept.txt\0".to_vec();
+        tree_raw.extend_from_slice(blob.0.as_bytes());
+        let tree = object(gix_object::Kind::Tree, tree_raw);
+        let inner = tag(tree.0, "tree", "inner");
+        let outer = tag(inner.0, "tag", "outer");
+        let ids = [blob.0, tree.0, inner.0, outer.0];
+        write_objects_as_pack(&repo, &[blob, tree, inner, outer]).expect("pack");
+        crate::repo::set_ref_direct(&repo, "refs/tags/outer", &ids[3].to_string()).expect("ref");
+        // A zero grace prunes every object the walk misses.
+        compact_repository(&repo, Duration::ZERO, &mut |_| Ok(())).expect("compact");
+        for id in ids {
+            assert!(held(&repo, id), "{id} lost");
+        }
+    }
+
+    #[test]
+    fn a_superseded_pack_stays_for_an_hour_for_readers_then_goes() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(10),
+            "main",
+            true,
+            "sweep",
+        )
+        .expect("init");
+        let pack_dir = repo.join("objects/pack");
+        // Two packs become one cruft pack, so both old names leave.
+        orphan(&repo, b"one\n", Duration::ZERO);
+        orphan(&repo, b"two\n", Duration::ZERO);
+        let before = list_pack_files(&pack_dir);
+        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        let superseded: Vec<_> = before
+            .iter()
+            .filter(|p| !list_pack_files(&pack_dir).contains(p))
+            .cloned()
+            .collect();
+        assert!(!superseded.is_empty());
+        for pack in &superseded {
+            assert!(pack.exists() && !pack.with_extension("idx").exists());
+        }
+        // A crash left an index without its pack.
+        let orphan_idx = pack_dir.join("pack-crashed.idx");
+        std::fs::write(&orphan_idx, b"x").expect("orphan idx");
+        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        assert!(superseded.iter().all(|p| p.exists()), "removed within the hour");
+        assert!(!orphan_idx.exists());
+        for pack in &superseded {
+            std::fs::File::options()
+                .write(true)
+                .open(pack)
+                .and_then(|f| f.set_modified(SystemTime::now() - SUPERSEDED_KEPT))
+                .expect("age");
+        }
+        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        assert!(superseded.iter().all(|p| !p.exists()));
         assert!(fsck_repository(&repo).is_ok());
     }
 
