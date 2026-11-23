@@ -233,6 +233,11 @@ mod tests {
         assert_eq!(bytes.queue_bytes, 2_097_152);
         let tiny = Limits::from_env(|k| (k == QUEUE_BYTES_ENV).then(|| "1000".to_owned()));
         assert!(tiny.is_err(), "under one notification at its cap");
+        let one = MAX_NOTIFICATION_BYTES.to_string();
+        let exact = Limits::from_env(|k| (k == QUEUE_BYTES_ENV).then(|| one.clone()))?;
+        assert_eq!(exact.queue_bytes, MAX_NOTIFICATION_BYTES);
+        let lived = Limits::from_env(|k| (k == MAX_LIFETIME_ENV).then(|| "60".to_owned()))?;
+        assert_eq!(lived.max_lifetime, Duration::from_secs(60));
         // a lease the grace could outlast stops the broker
         let short = Limits::from_env(|k| (k == SUBSCRIPTION_LEASE_ENV).then(|| "120".to_owned()));
         assert!(short.is_err(), "{short:?}");

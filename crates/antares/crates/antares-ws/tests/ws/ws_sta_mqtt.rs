@@ -428,9 +428,11 @@ async fn sta_mqtt_bounds_close_a_connection() -> Result<(), String> {
     }
     assert!(got.len() < 4, "{got:?}");
 
-    // keep alive 1 s: silent for 1.5 s ends it
+    // keep alive 1 s: silent for 1.5 s ends it, well before the 4 s lifetime
+    let started = std::time::Instant::now();
     let mut ws = connected(&b, "m5", 1).await?;
     assert_eq!(next(&mut ws, WAIT).await?, None, "keep alive");
+    assert!(started.elapsed() < Duration::from_secs(3), "{started:?}");
 
     // a subscribed connection renews its lease and ends at its lifetime
     let mut ws = connected(&b, "m5", 0).await?;
