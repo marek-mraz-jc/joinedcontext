@@ -328,7 +328,7 @@ export function Roles({
           searchLabel={t("grid.searchIn", { list: t("access.projectRoles.title") })}
           rows={rows}
           rowKey={(row) => `${row.home}/${row.name}`}
-          query={{ isPending: pending, isError: false, error: null, refetch: () => undefined }}
+          query={{ isPending: pending, isError: false, error: null }}
           name={{
             id: "role",
             label: t("access.projectRoles.role"),

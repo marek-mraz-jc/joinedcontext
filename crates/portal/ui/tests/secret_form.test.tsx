@@ -3,7 +3,7 @@
  * the page sends it once to the secrets door and clears it; a refusal names the field; a secret
  * that exists asks for every key it keeps.
  */
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";

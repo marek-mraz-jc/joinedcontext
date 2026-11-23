@@ -361,7 +361,6 @@ function YourAccess({
             isPending: permissions.isLoading,
             isError: false,
             error: null,
-            refetch: () => undefined,
           }}
           caption={t("projectSettings.access.caption", { project })}
           storageKey={`${project}:your-access`}
