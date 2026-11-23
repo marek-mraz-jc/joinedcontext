@@ -115,7 +115,7 @@ pipeline:
           - try:
               - cached:
                   cache: linked_events_orgs
-                  key: '${! content() }'
+                  key: ${! content() }
                   ttl: 24h
                   # A failed ask keeps the id as the message; never store that as the name.
                   skip_on: errored()
@@ -132,7 +132,7 @@ pipeline:
                         let name = if content().length() > 65536 { "" } else { this.name.or("") }
                         root = if $name.type() != "string" || $name.trim() == "" { throw("the organisation has no name") } else { $name }
           - catch:
-              - mapping: 'root = ""'
+              - mapping: root = ""
         result_map: meta publisher_name = content().string()
 
     - mapping: |

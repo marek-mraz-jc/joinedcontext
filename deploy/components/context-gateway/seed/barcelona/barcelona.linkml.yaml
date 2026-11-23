@@ -2380,7 +2380,16 @@ classes:
     is_a: Entity
     annotations:
       upstream_source: https://github.com/smart-data-models/dataModel.TourismDestinations
-    slots: [name, startDate, endDate, category, subCategory, address, organizer, contactPoint, source]
+    slots:
+      - name
+      - startDate
+      - endDate
+      - category
+      - subCategory
+      - address
+      - organizer
+      - contactPoint
+      - source
   TouristRental:
     class_uri: sdm:TouristRental
     description: >-
