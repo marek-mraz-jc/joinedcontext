@@ -593,10 +593,7 @@ async fn run_op(
     key: Option<&str>,
     params: &Value,
 ) -> Result<Option<Value>> {
-    let Some(op) = state.registry.find(name) else {
-        return Err(KaisatsuError::NotSupported(name.to_owned()));
-    };
-    crate::operations::execute(state, mount, ctx, op, key, params).await
+    crate::operations::execute_named(state, mount, ctx, name, key, params).await
 }
 
 /// Creates a person through the registry executor, so SCIM, REST, OData and MCP make the same

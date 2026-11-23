@@ -1289,17 +1289,12 @@ async fn compat_create_user(
         user.id = uuid::Uuid::now_v7().to_string();
     }
     let created = state.oidc.store.create_user(user).await?;
-    let Some(member_add) = state.registry.find("member_add") else {
-        return Err(KaisatsuError::NotSupported(
-            "unknown operation member_add".into(),
-        ));
-    };
     for group_id in joins {
-        crate::operations::execute(
+        crate::operations::execute_named(
             &state,
             &mount,
             &ctx,
-            member_add,
+            "member_add",
             Some(&created.id),
             &json!({ "groupId": group_id }),
         )
@@ -4038,10 +4033,5 @@ async fn run_registry_op(
 ) -> Result<Option<Value>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let Some(op) = state.registry.find(name) else {
-        return Err(KaisatsuError::NotSupported(format!(
-            "unknown operation {name}"
-        )));
-    };
-    crate::operations::execute(state, &mount, &ctx, op, key, params).await
+    crate::operations::execute_named(state, &mount, &ctx, name, key, params).await
 }

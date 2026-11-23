@@ -679,6 +679,44 @@ async fn group_lifecycle_refusals() {
             assert_eq!(err["scimType"], t, "{body}");
         }
     }
+    // A name another group holds is a conflict, through PUT and PATCH alike.
+    let (st, taken) = api
+        .call(
+            Method::POST,
+            &groups,
+            &admin,
+            Some(json!({ "displayName": "Scim Taken" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{taken}");
+    let (st, err) = api
+        .call(
+            Method::PUT,
+            &uri,
+            &admin,
+            Some(json!({ "displayName": "Scim Taken" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
+    let (st, err) = api
+        .patch(
+            &uri,
+            &admin,
+            json!([{ "op": "replace", "path": "displayName", "value": "Scim Taken" }]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{err}");
+    // PUT replaces the members with the ones it names.
+    let (st, g) = api
+        .call(
+            Method::PUT,
+            &uri,
+            &admin,
+            Some(json!({ "displayName": "Scim Errors", "members": [{ "value": MEMBER }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{g}");
+    assert_eq!(g["members"][0]["value"], MEMBER, "{g}");
 
     // PATCH envelope and operation refusals.
     let (st, err) = api

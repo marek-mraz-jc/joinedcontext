@@ -224,6 +224,24 @@ async fn ensure_own_credential_client(
     ))
 }
 
+/// Runs the registry operation named `name` (see [`execute`]); a name outside the registry is
+/// not supported.
+pub(crate) async fn execute_named(
+    state: &AdminState,
+    mount: &Mount,
+    ctx: &RequestCtx,
+    name: &str,
+    key: Option<&str>,
+    params: &Value,
+) -> Result<Option<Value>> {
+    let Some(op) = state.registry.find(name) else {
+        return Err(KaisatsuError::NotSupported(format!(
+            "unknown operation {name}"
+        )));
+    };
+    execute(state, mount, ctx, op, key, params).await
+}
+
 /// Runs registry operation `op` for `ctx`. `key` is the bound entity's key (or `None`),
 /// `params` the action/function parameters (or the entity body of a set write). `Ok(None)` is
 /// an operation without a result (OData answers 204).

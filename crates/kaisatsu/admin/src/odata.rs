@@ -120,9 +120,8 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
     if let Err(e) = odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml) {
         return Err(KaisatsuError::Storage(format!("CSDL metadata: {e}")));
     }
-    let Ok(mut text) = String::from_utf8(xml) else {
-        return Err(KaisatsuError::Storage("CSDL metadata is not UTF-8".into()));
-    };
+    // The CSDL writer writes UTF-8 XML.
+    let mut text = String::from_utf8_lossy(&xml).into_owned();
 
     let Some(container_at) = text.find("<EntityContainer") else {
         return Err(KaisatsuError::Storage(
@@ -421,10 +420,9 @@ async fn people_write(
     }
     let mount = state.oidc.mount_from(mount_ext.map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let Some(op) = state.registry.find(op_name) else {
-        return Err(KaisatsuError::NotSupported(op_name.to_owned()).into());
-    };
-    let result = crate::operations::execute(state, &mount, &ctx, op, key.as_deref(), &body).await?;
+    let result =
+        crate::operations::execute_named(state, &mount, &ctx, op_name, key.as_deref(), &body)
+            .await?;
     let status = if op_name == "person_create" {
         StatusCode::CREATED
     } else if result.is_none() {
@@ -585,9 +583,10 @@ async fn odata_set_query(
     if let Some(key) = key_opt {
         let service = kaisatsu_odata_service();
         let csdl = std::sync::Arc::new(service.model());
-        let info = service
-            .info(csdl, &set_name)
-            .ok_or_else(|| KaisatsuError::NotFound("unknown entity set".into()))?;
+        // parse_odata_options parsed `set_name` against this model, so the set exists.
+        let Some(info) = service.info(csdl, &set_name) else {
+            return Err(KaisatsuError::NotFound("unknown entity set".into()).into());
+        };
         options =
             key_options(&info, &Value::String(key), options.select).map_err(KaisatsuError::from)?;
         let ans = state

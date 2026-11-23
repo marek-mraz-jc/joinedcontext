@@ -669,6 +669,84 @@ async fn credential_and_registry_operations_refuse_with_a_reason() {
         assert_eq!(st, StatusCode::BAD_REQUEST, "{q}: {raw}");
         assert!(err.to_string().contains(needle), "{q}: {err}");
     }
+    // Allowed also takes the action verbs.
+    for verb in ["create", "self"] {
+        let (st, _, ans, raw) = api
+            .call(
+                Method::GET,
+                &format!("{BASE}/Allowed(operation='{verb}',object='People(''{ANALYST}'')')"),
+                &admin,
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{verb}: {raw}");
+        assert!(ans["value"]["allowed"].is_boolean(), "{verb}: {ans}");
+    }
+    // Recovery codes and TOTP are the person's own: an administrator gets 404.
+    for op in ["GenerateRecoveryCodes", "EnrolTotp"] {
+        let (st, _, _, raw) = post(
+            format!("{BASE}/People('{ANALYST}')/{op}"),
+            admin.clone(),
+            json!({}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{op}: {raw}");
+    }
+    // New recovery codes replace the old set.
+    for _ in 0..2 {
+        let (st, _, _, raw) = post(
+            format!("{BASE}/People('{ANALYST}')/GenerateRecoveryCodes"),
+            me.clone(),
+            json!({}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{raw}");
+    }
+    let sets = api.store.list_credentials("dev", ANALYST).await.unwrap();
+    assert_eq!(
+        sets.iter()
+            .filter(|c| c.credential_type == "recovery-authn-codes")
+            .count(),
+        1
+    );
+    // An administrator maps a client's roles to a person.
+    let client = api
+        .store
+        .get_client_by_client_id("dev", "portal-api")
+        .await
+        .unwrap()
+        .unwrap();
+    let (st, _, _, raw) = post(
+        format!("{BASE}/People('{ANALYST}')/MapClientRoles"),
+        admin.clone(),
+        json!({ "clientUuid": client.id, "roles": ["reader"] }),
+    )
+    .await;
+    assert!(st.is_success(), "{st} {raw}");
+    let mapped = api
+        .store
+        .list_role_mappings_for_principal("dev", "user", ANALYST, Some(&client.id))
+        .await
+        .unwrap();
+    assert!(mapped.iter().any(|m| m.role_name == "reader"), "{mapped:?}");
+    // Apply with prune as a dry run reports and writes nothing.
+    let (st, _, body, raw) = post(
+        format!("{BASE}/Realms('dev')/Apply"),
+        admin.clone(),
+        json!({ "configuration": { "displayName": "Pruned" }, "dryRun": true, "prune": true }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert_eq!(body["value"]["dryRun"], true);
+    assert_ne!(
+        api.store
+            .get_realm("dev")
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name,
+        "Pruned"
+    );
     // A person without realm administration cannot export the realm: 404 like another realm.
     let (st, _, _, raw) = api
         .call(
