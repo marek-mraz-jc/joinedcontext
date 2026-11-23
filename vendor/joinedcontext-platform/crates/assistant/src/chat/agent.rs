@@ -376,6 +376,7 @@ fn tool_specs(searchable: bool, scripts: bool, connectors: &[Connected]) -> Vec<
         }));
     }
     tools.extend(super::standard::standard(connectors));
+    tools.extend(super::across::spec(connectors));
     tools
 }
 
@@ -857,6 +858,8 @@ async fn answer_in_scope(
             } else if !seen.insert(format!("{name}\u{0}{arguments}")) {
                 repeated = true;
                 "This exact call was made already. Answer with what you have.".to_owned()
+            } else if name == super::across::TOOL {
+                run_across(ask, arguments, &mut citations, &mut kept, events).await
             } else {
                 run_tool(ask, name, arguments, &mut citations, &mut kept, events).await
             };
@@ -1074,6 +1077,39 @@ async fn run_tool(
         tracing::warn!(deployment = %ask.deployment, tool = %name, "the model asked for a tool it was not offered");
         "There is no tool of that name. Use only the tools you were given.".into()
     }
+}
+
+/// `count_across` (T-7566): one count-only `query_entities` per Endpoint named, each through
+/// [`run_tool`] as a direct call goes (schema check, trace, personal-data filter, citation), the
+/// answers as one list. `ponytail: counts run one after another; join them when latency matters.`
+async fn run_across(
+    ask: &Ask<'_>,
+    arguments: &str,
+    citations: &mut Vec<Citation>,
+    kept: &mut HashMap<usize, String>,
+    events: &Sender<Event>,
+) -> String {
+    let arguments: Value = serde_json::from_str(arguments).unwrap_or(Value::Null);
+    let members = match super::across::members(ask.connectors, &arguments) {
+        Ok(members) => members,
+        Err(why) => return why,
+    };
+    let mut counts = Vec::with_capacity(members.len());
+    for member in members {
+        let endpoint = member[super::standard::ENDPOINT].clone();
+        let answer = run_tool(
+            ask,
+            "query_entities",
+            &member.to_string(),
+            citations,
+            kept,
+            events,
+        )
+        .await;
+        let answer = serde_json::from_str::<Value>(&answer).unwrap_or(Value::String(answer));
+        counts.push(json!({"endpoint": endpoint, "answer": answer}));
+    }
+    json!({ "tool": super::across::TOOL, "counts": counts }).to_string()
 }
 
 /// `run_script` over a kept result (AG-112): the code and its output reach the person too.
@@ -1591,7 +1627,7 @@ mod tests {
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
-        assert_eq!(names, ["search", "query_entities"]);
+        assert_eq!(names, ["search", "query_entities", "count_across"]);
         assert_eq!(
             tools[1]["function"]["parameters"]["required"],
             json!(["endpoint"])

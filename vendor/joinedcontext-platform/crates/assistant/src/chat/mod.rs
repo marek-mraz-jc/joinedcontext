@@ -6,6 +6,7 @@
 //! `/internal/v1/projects/{project}/knowledge/deployments/{deployment}/chat` (API/05 §1.7,
 //! AG-115).
 
+pub mod across;
 pub mod admin;
 pub mod agent;
 pub mod brief;
