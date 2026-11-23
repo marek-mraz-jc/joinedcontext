@@ -408,6 +408,38 @@ async fn view_pages_past_the_answer_budget_together_are_413() -> Result<(), Stri
     Ok(())
 }
 
+/// A view page of more than a mebibyte is well under the 32 MiB one view may
+/// answer a read across views.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_view_page_over_a_mebibyte_is_read() -> Result<(), String> {
+    let f = fixture().await?;
+    put_view(
+        &f.app,
+        &json!({"id": "blobs", "tenant": "city", "selector": ["Blob"],
+                "rules": [{"types": ["Blob"], "attributes": ["data"]}], "operations": READS}),
+    )
+    .await?;
+    let data = "x".repeat(400 * 1024);
+    for i in 0..3 {
+        let entity = json!({"id": format!("urn:ngsi-ld:Blob:{i}"), "type": "Blob",
+                            "data": {"type": "Property", "value": data}});
+        let a = send(
+            &f.app,
+            Method::POST,
+            "/ngsi-ld/v1/entities",
+            &[("NGSILD-Tenant", "city")],
+            Some(&entity),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    }
+    let a = union(&f.app, "views=blobs&type=Blob").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    assert_eq!(a.ids().len(), 3);
+    assert!(a.text.len() > 1024 * 1024 + 32, "{}", a.text.len());
+    Ok(())
+}
+
 /// T-6666: the view pages of a read across views are read through the
 /// broker's one answer pool and held there until the read ends, so
 /// concurrent reads together hold what the pool allows, not one
