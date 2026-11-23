@@ -301,6 +301,13 @@ pub struct Table {
     /// Each row's location, checked and rounded, for the maps; never sent as it is (T-4657).
     #[serde(skip)]
     pub geometries: Vec<Option<Value>>,
+    /// The read behind a map of part of the matching entities, held as a map source when a
+    /// visitor asked (T-7755); never sent.
+    #[serde(skip)]
+    pub map_read: Option<super::map_source::Read>,
+    /// `/api/v1/d/{publicId}/map/{id}`: every located entity of the read, page by page (T-7755).
+    #[serde(rename = "mapSource", skip_serializing_if = "Option::is_none")]
+    pub map_source: Option<String>,
     /// The broker's profile of the type (`summarize`, T-4680) when the read was broad: the answer
     /// call reads it beside the first rows; the `data` event does not carry it.
     #[serde(skip)]

@@ -14354,7 +14354,7 @@
             }
           },
           "422": {
-            "description": "The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap",
+            "description": "The source is no webhook or names no single credential, `pipeline` reads no such source, or `body` is empty or over the cap",
             "content": {
               "application/json": {
                 "schema": {

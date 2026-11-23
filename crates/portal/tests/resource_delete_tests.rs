@@ -842,6 +842,8 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
             "projects/ovzdusie/spaces/mobility/datamodels/bikes.yaml",
             "projects/ovzdusie/spaces/mobility/datamodels/bikes.linkml.yaml",
             "projects/ovzdusie/spaces/mobility/datamodels/bikes.schema.json",
+            // Listed by the tree, gone by the time it is read (404): nothing to remove.
+            "projects/ovzdusie/spaces/mobility/datamodels/bikes/gone.json",
             // Another model's source, named after it and kept.
             "projects/ovzdusie/spaces/mobility/datamodels/shared.linkml.yaml",
             "projects/ovzdusie/spaces/mobility/space.yaml",
@@ -912,10 +914,10 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
     assert!(removed.contains(&"projects/ovzdusie/spaces/mobility/datamodels/bikes.linkml.yaml"));
     assert!(removed.contains(&"projects/ovzdusie/spaces/mobility/datamodels/bikes.schema.json"));
     assert!(
-        !removed
-            .iter()
-            .any(|path| path.contains("shared") || path.ends_with("space.yaml")),
-        "only the model's own files: {removed:?}"
+        !removed.iter().any(|path| path.contains("shared")
+            || path.ends_with("space.yaml")
+            || path.ends_with("gone.json")),
+        "only the model's own files, as they are: {removed:?}"
     );
     assert!(body["Files"]
         .as_array()

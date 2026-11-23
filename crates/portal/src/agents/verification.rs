@@ -439,4 +439,53 @@ mod tests {
         assert!(text.starts_with("What the preview rendered, page by page:\n### Stations\n002 "));
         assert!(text.chars().count() < 4100);
     }
+
+    #[test]
+    fn every_shape_of_a_failure_is_told_in_one_sentence() {
+        let since = [
+            event("preview_error", json!({ "file": "src/App.tsx" })),
+            event("preview_error", json!({ "message": "boom", "line": 3 })),
+            event("tool", json!({ "tool": "function:a", "status": "failed" })),
+            event(
+                "tool",
+                json!({ "tool": "function:b", "status": "failed", "error": "timed out" }),
+            ),
+            event(
+                "tool",
+                json!({ "tool": "function:c", "status": "failed", "error": 504 }),
+            ),
+            event("tool", json!({ "tool": "apply_patch", "status": "failed" })),
+            event("tool", json!({ "status": "failed" })),
+        ];
+        assert_eq!(
+            check(&json!({}), &since, None).problems,
+            [
+                "the preview threw: an error without a message (src/App.tsx)",
+                "the preview threw: boom",
+                "the function a failed: no reason given",
+                "the function b failed: timed out",
+                "the function c failed: 504",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_entity_with_no_name_or_only_a_short_id_cannot_be_looked_for() {
+        let samples = json!({
+            "Empty": [],
+            "Stop": [
+                { "id": "urn:ngsi-ld:Stop:7", "name": "  " },
+                { "id": "urn:ngsi-ld:Stop:7" }
+            ]
+        });
+        let observation =
+            json!({ "version": 1, "pages": [{ "label": "Stops", "text": "Stop 7" }] });
+        let found = check(&samples, &[], Some(&observation));
+        assert_eq!(found.sampled, 2);
+        assert_eq!(found.shown, 0);
+        assert_eq!(
+            found.problems,
+            ["no page shows any of the sampled Stop entities ()"]
+        );
+    }
 }

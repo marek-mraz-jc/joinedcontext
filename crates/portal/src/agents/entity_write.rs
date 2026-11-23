@@ -248,4 +248,20 @@ mod tests {
         assert_eq!(changed("capacity"), Some((Value::Null, json!(20))));
         assert_eq!(preview["type"], "BikeHireDockingStation");
     }
+
+    #[test]
+    fn a_grant_naming_no_attributes_reaches_every_one_and_a_held_map_reads_whole() {
+        let access =
+            json!({ "permissions": [{ "resource": { "type": "*" }, "actions": ["updateAttrs"] }] });
+        assert_eq!(refusal(&access, "Bus", &["speed", "position"]), None);
+        let entity = json!({
+            "name": { "type": "LanguageProperty", "languageMap": { "en": "Line 4" } },
+            "seats": { "type": "Property", "value": 40 },
+            "plain": 3
+        });
+        assert_eq!(value_of(&entity, "name"), entity["name"]);
+        assert_eq!(value_of(&entity, "seats"), json!(40));
+        assert_eq!(value_of(&entity, "plain"), json!(3));
+        assert_eq!(value_of(&entity, "missing"), Value::Null);
+    }
 }

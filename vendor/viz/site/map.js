@@ -24,12 +24,30 @@
   }
 
   // [[west, south], [east, north]] of all features, or null for none.
+  // One pass, no copies: a map of 20,000 points (T-7755) concatenated them in quadratic time.
   function bounds(features) {
-    var all = features.reduce(function (acc, f) { return acc.concat(flat(f.geometry.coordinates)); }, []);
-    if (!all.length) return null;
-    var lon = all.map(function (p) { return p[0]; });
-    var lat = all.map(function (p) { return p[1]; });
-    return [[Math.min.apply(null, lon), Math.min.apply(null, lat)], [Math.max.apply(null, lon), Math.max.apply(null, lat)]];
+    var box = null;
+    features.forEach(function (f) {
+      flat(f.geometry.coordinates).forEach(function (p) {
+        if (!box) box = [[p[0], p[1]], [p[0], p[1]]];
+        box[0][0] = Math.min(box[0][0], p[0]);
+        box[0][1] = Math.min(box[0][1], p[1]);
+        box[1][0] = Math.max(box[1][0], p[0]);
+        box[1][1] = Math.max(box[1][1], p[1]);
+      });
+    });
+    return box;
+  }
+
+  // The points a map draws as bubbles with their count once there are more than CLUSTER_FROM of
+  // them (T-7755): MapLibre's own clustering, each point carrying its feature's index.
+  var CLUSTER_FROM = 200;
+  function clustered(features) {
+    var points = features.filter(function (f) { return f.geometry.type === "Point"; });
+    if (points.length <= CLUSTER_FROM) return null;
+    return points.map(function (f) {
+      return { type: "Feature", geometry: f.geometry, properties: { jcIndex: f.id } };
+    });
   }
 
   // The feature whose first position lies closest to [lon, lat]: what Enter opens.
@@ -62,8 +80,10 @@
   function lines(spec, props, lang) {
     var t = TEXT[lang] || TEXT.en;
     var numbers = new Intl.NumberFormat(lang, { maximumFractionDigits: 3 });
-    var text = function (v) {
+    var text = function (v, field) {
       if (v === null || v === undefined || v === "") return "–";
+      // A year reads as a year, never "1 910" (T-7755).
+      if (typeof v === "number" && /year|rok/i.test(field || "") && Number.isInteger(v) && v > 999 && v < 10000) return String(v);
       if (typeof v === "number") return numbers.format(v);
       if (typeof v === "boolean") return v ? t.yes : t.no;
       return String(v);
@@ -73,7 +93,7 @@
     return {
       title: text(props[spec.label]),
       rows: spec.popup.map(function (f) {
-        var v = text(props[f.field]);
+        var v = text(props[f.field], f.field);
         return [f.label, f.unit && v !== "–" ? v + " " + f.unit : v];
       }),
       time: isNaN(stamp) ? null : new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(stamp),
@@ -156,13 +176,37 @@
     map.addLayer({ id: "jc-line", type: "line", source: "jc", filter: is(["LineString", "MultiLineString", "Polygon", "MultiPolygon"]), paint: { "line-color": COLOUR, "line-width": 3 } });
     map.addSource("jc-anchor", { type: "geojson", data: { type: "FeatureCollection", features: anchors(features) } });
     map.addLayer({ id: "jc-anchor", type: "circle", source: "jc-anchor", paint: { "circle-color": COLOUR, "circle-radius": 5, "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-    map.addLayer({ id: "jc-point", type: "circle", source: "jc", filter: is(["Point", "MultiPoint"]), paint: { "circle-color": COLOUR, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-    var layers = ["jc-point", "jc-anchor", "jc-line", "jc-fill"];
+    var dot = { "circle-color": COLOUR, "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2 };
+    var many = clustered(features);
+    if (many) {
+      // Points cluster, MultiPoints stay as they were; a click on a bubble zooms into it.
+      map.addLayer({ id: "jc-point", type: "circle", source: "jc", filter: is(["MultiPoint"]), paint: dot });
+      map.addSource("jc-pts", { type: "geojson", data: { type: "FeatureCollection", features: many }, cluster: true, clusterRadius: 44, clusterMaxZoom: 14 });
+      var bubble = { "circle-color": COLOUR, "circle-opacity": 0.85, "circle-radius": ["step", ["get", "point_count"], 13, 10, 16, 50, 20, 100, 24, 500, 30], "circle-stroke-color": "#fff", "circle-stroke-width": 2 };
+      map.addLayer({ id: "jc-cluster", type: "circle", source: "jc-pts", filter: ["has", "point_count"], paint: bubble });
+      // The count needs the style's glyphs; the basemap styles have them.
+      if (map.getStyle().glyphs) map.addLayer({ id: "jc-cluster-count", type: "symbol", source: "jc-pts", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12, "text-allow-overlap": true }, paint: { "text-color": "#fff" } });
+      map.addLayer({ id: "jc-single", type: "circle", source: "jc-pts", filter: ["!", ["has", "point_count"]], paint: dot });
+      map.on("click", "jc-cluster", function (e) {
+        var hit = e.features[0];
+        map.getSource("jc-pts").getClusterExpansionZoom(hit.properties.cluster_id).then(function (zoom) {
+          map.easeTo({ center: hit.geometry.coordinates, zoom: zoom });
+        });
+      });
+      map.on("mouseenter", "jc-cluster", function () { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", "jc-cluster", function () { map.getCanvas().style.cursor = ""; });
+    } else {
+      map.addLayer({ id: "jc-point", type: "circle", source: "jc", filter: is(["Point", "MultiPoint"]), paint: dot });
+    }
+    var layers = (many ? ["jc-single"] : []).concat(["jc-point", "jc-anchor", "jc-line", "jc-fill"]);
     var open = function (i, at) {
       new maplibre.Popup({ maxWidth: "280px" }).setLngLat(at).setDOMContent(popupNode(lines(spec, features[i].properties, lang))).addTo(map);
     };
     layers.forEach(function (layer) {
-      map.on("click", layer, function (e) { open(e.features[0].id, e.lngLat); });
+      map.on("click", layer, function (e) {
+        var f = e.features[0];
+        open(layer === "jc-single" ? f.properties.jcIndex : f.id, e.lngLat);
+      });
       map.on("mouseenter", layer, function () { map.getCanvas().style.cursor = "pointer"; });
       map.on("mouseleave", layer, function () { map.getCanvas().style.cursor = ""; });
     });
@@ -184,11 +228,13 @@
         new maplibre.Marker({ element: name, anchor: east ? "right" : "left", offset: [east ? -12 : 12, 0] }).setLngLat(at).addTo(map);
       });
     }
+    root.jcMap = map; // for the browser journey: what the layers hold
+    root.jcMapFeatures = features.length;
     root.jcMapReady = true; // for the browser journey
   }
 
   if (typeof module === "object" && module.exports) {
-    module.exports = { anchors: anchors, bounds: bounds, nearest: nearest, lines: lines, countText: countText };
+    module.exports = { anchors: anchors, bounds: bounds, clustered: clustered, nearest: nearest, lines: lines, countText: countText };
     return;
   }
   window.addEventListener("message", function (event) {

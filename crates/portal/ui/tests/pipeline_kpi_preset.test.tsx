@@ -288,6 +288,54 @@ describe("PipelineStudio KPI preset", () => {
     );
   });
 
+  it("carries name, aggregate and period into the KPI, and rebuilds it on a return to the preset", async () => {
+    mockFetch();
+    const { onChange } = renderStudio();
+    const last = () => (onChange as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as PipelineForm;
+    const preset = screen.getByLabelText(en.pipelines.studio.preset.title);
+    await userEvent.selectOptions(preset, "kpi");
+    await userEvent.selectOptions(await screen.findByLabelText(en.pipelines.studio.kpi.endpoint), "helsinki-all");
+    await userEvent.type(screen.getByLabelText(en.pipelines.studio.kpi.name), "docks");
+    await userEvent.selectOptions(screen.getByLabelText(en.pipelines.studio.kpi.aggregate), "sum");
+    const period = screen.getByLabelText(en.pipelines.studio.kpi.period);
+    await userEvent.clear(period);
+    await userEvent.type(period, "2h");
+    expect(last().compute?.bloblang).toContain("PT2H");
+    expect(last().compute?.bloblang).toContain("docks");
+    const calls = (onChange as ReturnType<typeof vi.fn>).mock.calls.length;
+    await userEvent.selectOptions(preset, "load");
+    await userEvent.selectOptions(preset, "kpi");
+    await waitFor(() => expect((onChange as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(calls));
+    expect(last().output?.type).toBe("KeyPerformanceIndicator");
+  });
+
+  it.each([
+    ["a red verdict with the gate's problem", { status: 200, body: { ...KPI_TEST_ANSWER, validation: [{ index: 0, ok: false, problems: ["currentValue is not a number"] }] } }, "currentValue is not a number"],
+    ["a red verdict with no problem named", { status: 200, body: { ...KPI_TEST_ANSWER, validation: [{ index: 0, ok: false }] } }, en.pipelines.test.gate],
+    ["nothing read", { status: 200, body: { ...KPI_TEST_ANSWER, mapping: [], validation: [] } }, en.pipelines.studio.kpi.nothingRead],
+    ["a test route that answers a problem", { status: 500, body: { title: "boom", detail: "the runner is down", status: 500 } }, "the runner is down"],
+  ])("says why the test has no value: %s", async (_name, answer, message) => {
+    mockFetch(answer);
+    const { onVerdict } = renderStudio();
+    await userEvent.selectOptions(screen.getByLabelText(en.pipelines.studio.preset.title), "kpi");
+    await userEvent.selectOptions(await screen.findByLabelText(en.pipelines.studio.kpi.endpoint), "helsinki-all");
+    await userEvent.click(screen.getByTestId("studio-kpi-test"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByTestId("studio-kpi-value")).toBeNull();
+    if (answer.status === 200) expect(onVerdict).toHaveBeenCalledWith(false, expect.any(String));
+  });
+
+  it("refuses a test on an Endpoint without a slug before reading anything", async () => {
+    const fetchMock = mockFetch({ status: 200, body: KPI_TEST_ANSWER });
+    const [all, writer] = ENDPOINTS;
+    renderStudio({ endpoints: [{ ...all, spec: { ...all.spec, slug: undefined } }, writer] });
+    await userEvent.selectOptions(screen.getByLabelText(en.pipelines.studio.preset.title), "kpi");
+    await userEvent.selectOptions(await screen.findByLabelText(en.pipelines.studio.kpi.endpoint), "helsinki-all");
+    await userEvent.click(screen.getByTestId("studio-kpi-test"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("0");
+    expect(sentTo(fetchMock, "/api/endpoint/")).toHaveLength(0);
+  });
+
   it("says the endpoint's refusal in words and asks the runner nothing", async () => {
     const fetchMock = mockFetch({ status: 200, body: KPI_TEST_ANSWER }, 401);
     renderStudio();
