@@ -43,12 +43,11 @@ export function RecipeGallery({ project, orgDomain, dataSources, endpoints, targ
   // The KPI reads an Endpoint: its space's model lists the types and their numbers.
   const sourceSpace = refName(endpoints.find((one) => one.metadata.name === source)?.spec.contextSpaceRef) || undefined;
 
-  const use = () => {
-    if (!picked) return;
+  const use = (recipe: Recipe) => {
     const values = { source, target, type, attribute };
-    const found = problemOf(picked, values);
+    const found = problemOf(recipe, values);
     setProblem(found ?? null);
-    if (!found) onUse(fromRecipe(picked, values, { project, endpoints, orgDomain }));
+    if (!found) onUse(fromRecipe(recipe, values, { project, endpoints, orgDomain }));
   };
 
   return (
@@ -168,7 +167,7 @@ export function RecipeGallery({ project, orgDomain, dataSources, endpoints, targ
             </Field>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" size="sm" onClick={use}>
+            <Button variant="primary" size="sm" onClick={() => use(picked)}>
               {t("pipelines.recipe.use")}
             </Button>
             {picked.id === "kpi" && onSeveralSources ? (

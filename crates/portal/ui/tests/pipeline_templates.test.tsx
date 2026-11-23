@@ -114,6 +114,18 @@ describe("pipeline templates of a project", () => {
     expect(sent.find((s) => s.method === "POST")?.body).toEqual({ title: "Air feed", manifest });
   });
 
+  it("puts the title field away on cancel and saves nothing", async () => {
+    stub([]);
+    const manifest = { apiVersion: "joinedcontext.com/v1alpha2", kind: "Pipeline", metadata: { name: "air" }, spec: SPEC } as Manifest;
+    wrap(<SaveAsTemplate project="helsinki" manifest={() => manifest} />);
+    await userEvent.click(screen.getByRole("button", { name: en.pipelines.templates.save }));
+    expect(screen.getByLabelText(new RegExp(en.pipelines.templates.titleField))).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: en.form.cancel }));
+    expect(screen.queryByLabelText(new RegExp(en.pipelines.templates.titleField))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.pipelines.templates.save })).toBeInTheDocument();
+    expect(sent.filter((s) => s.method === "POST")).toHaveLength(0);
+  });
+
   it("offers a viewer no save", () => {
     perms.propose = false;
     stub([]);

@@ -277,10 +277,12 @@ fn slots_of(class: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A class written without a body (`Vehicle:` in YAML) takes one: its slots are never dropped.
 fn set_slots(class: &mut Value, slots: Vec<String>) {
-    if let Some(fields) = class.as_object_mut() {
-        fields.insert("slots".to_owned(), json!(slots));
+    if !class.is_object() {
+        *class = json!({});
     }
+    class["slots"] = json!(slots);
 }
 
 fn valid_name(name: &str, what: &str) -> Result<(), String> {
@@ -478,7 +480,7 @@ fn mutate(model: &mut Value, operation: &Operation) -> Result<(), String> {
             delete_rule(on_delete)?;
             let pair = relationship_named(model, name)?;
             let slot = slot_object(model, &pair.source);
-            let annotations = slot.entry("annotations").or_insert_with(|| json!({}));
+            let annotations = slot.entry("annotations").or_insert(json!({}));
             if !annotations.is_object() {
                 *annotations = json!({});
             }
@@ -697,7 +699,7 @@ fn add_inverse(model: &mut Value, operation: &Operation) -> Result<(), String> {
     slot.insert("inverse".to_owned(), json!(inverse));
     slot.insert("inlined".to_owned(), json!(false));
     // The slot holding the data today is the source, so its entities do not change (DM-73).
-    let annotations = slot.entry("annotations").or_insert_with(|| json!({}));
+    let annotations = slot.entry("annotations").or_insert(json!({}));
     if annotations.get("on_delete").is_none() {
         annotations["on_delete"] = json!("restrict");
     }
@@ -780,9 +782,7 @@ fn slot_flag(model: &Value, slot: &str, field: &str) -> bool {
 
 /// A declared slot's fields; the caller has checked the slot exists.
 fn slot_object<'a>(model: &'a mut Value, name: &str) -> &'a mut Map<String, Value> {
-    let slot = section_mut(model, "slots")
-        .entry(name)
-        .or_insert_with(|| json!({}));
+    let slot = section_mut(model, "slots").entry(name).or_insert(json!({}));
     if !slot.is_object() {
         *slot = json!({});
     }
@@ -1007,6 +1007,157 @@ mod tests {
 
     fn op(json: Value) -> Operation {
         serde_json::from_value(json).expect("operation")
+    }
+
+    /// A model written by hand may give a class, a slot or an enum no body (`Vehicle:` in YAML):
+    /// every operation still lands on it, and an attached slot is never dropped.
+    #[test]
+    fn operations_land_on_classes_slots_and_enums_written_without_a_body() {
+        let model: Value = serde_norway::from_str(
+            "name: bikes\nid: https://bratislava.sk/models/bikes\nclasses:\n  Entity:\n  Vehicle:\nslots:\n  name:\nenums:\n  Status:\n  Kind: {}\n",
+        )
+        .expect("yaml");
+        let changed = apply(
+            &model,
+            &ops(json!([
+                { "op": "attachSlot", "class": "Vehicle", "slot": "name" },
+                { "op": "attachSlot", "class": "Vehicle", "slot": "name" },
+                { "op": "addSlot", "name": "speed", "class": "Entity", "range": "float" },
+                { "op": "addSlot", "name": "label", "kind": "Property" },
+                { "op": "setSlotSubsets", "name": "name", "subsets": ["core"] },
+                { "op": "setSlot", "name": "name", "field": "description", "value": "The name" },
+                { "op": "setSlot", "name": "speed", "field": "range", "value": " integer " },
+                { "op": "setClassParent", "name": "Vehicle", "parent": "Entity" },
+                { "op": "addEnumValue", "enum": "Status", "value": "open" },
+                { "op": "addEnumValue", "enum": "Kind", "value": "bike", "description": "A bike" }
+            ])),
+        )
+        .expect("applied");
+        assert_eq!(changed["classes"]["Vehicle"]["slots"], json!(["name"]));
+        assert_eq!(changed["classes"]["Entity"]["slots"], json!(["speed"]));
+        assert_eq!(changed["slots"]["speed"]["slot_uri"], json!("bikes:speed"));
+        assert_eq!(changed["slots"]["speed"]["range"], json!("integer"));
+        assert!(changed["slots"]["label"].get("annotations").is_none());
+        assert_eq!(changed["slots"]["name"]["subsets"], json!(["core"]));
+        assert_eq!(changed["slots"]["name"]["description"], json!("The name"));
+        assert_eq!(changed["classes"]["Vehicle"]["is_a"], json!("Entity"));
+        assert_eq!(
+            changed["enums"]["Status"]["permissible_values"],
+            json!({ "open": {} })
+        );
+        assert_eq!(
+            changed["enums"]["Kind"]["permissible_values"],
+            json!({ "bike": { "description": "A bike" } })
+        );
+        assert_eq!(
+            apply(
+                &changed,
+                &ops(json!([{ "op": "addEnumValue", "enum": "Status", "value": "  " }]))
+            ),
+            Err("operation 0: a value of enum 'Status' needs a text".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_model_or_section_of_another_type_becomes_an_object_and_a_prefix_needs_a_name_and_an_id() {
+        let add = ops(json!([{ "op": "addClass", "name": "Bike" }]));
+        for model in [json!([]), json!({ "classes": "none" })] {
+            let added = apply(&model, &add).expect("applied");
+            assert!(added["classes"]["Bike"].is_object(), "{added}");
+        }
+        for model in [
+            json!({ "name": "bikes", "id": 5 }),
+            json!({ "name": " ", "id": "https://bratislava.sk/models/bikes" }),
+        ] {
+            let added = apply(&model, &ops(json!([{ "op": "addSlot", "name": "speed" }])))
+                .expect("applied");
+            assert!(added["slots"]["speed"].get("slot_uri").is_none(), "{added}");
+        }
+    }
+
+    #[test]
+    fn a_slot_field_takes_only_its_kind_of_value() {
+        for (operation, reason) in [
+            (
+                json!({ "op": "setSlot", "name": "name", "field": "required", "value": "yes" }),
+                "operation 0: 'required' of slot 'name' takes true or false",
+            ),
+            (
+                json!({ "op": "setSlot", "name": "status", "field": "description", "value": 5 }),
+                "operation 0: 'description' of slot 'status' takes text",
+            ),
+            (
+                json!({ "op": "addInverse", "name": "status", "inverse": "owners" }),
+                "operation 0: slot 'status' is not a Relationship pointing at a class of this model",
+            ),
+        ] {
+            assert_eq!(apply(&bikes(), &ops(json!([operation]))), Err(reason.to_owned()));
+        }
+    }
+
+    #[test]
+    fn each_arm_refuses_another_operation() {
+        let other = op(json!({ "op": "removeClass", "name": "Vehicle" }));
+        let mut model = bikes();
+        assert_eq!(add_slot(&mut model, &other), Err("not add_slot".to_owned()));
+        assert_eq!(add_enum(&mut model, &other), Err("not add_enum".to_owned()));
+        assert_eq!(
+            add_relationship(&mut model, &other),
+            Err("not add_relationship".to_owned())
+        );
+        assert_eq!(
+            add_inverse(&mut model, &other),
+            Err("not add_inverse".to_owned())
+        );
+        assert_eq!(model, bikes(), "a refused operation writes nothing");
+    }
+
+    #[test]
+    fn renaming_a_parent_renames_every_is_a() {
+        let mut model = bikes();
+        rename_class(
+            &mut model,
+            &op(json!({ "op": "renameClass", "name": "Entity", "to": "Thing" })),
+        )
+        .expect("renamed");
+        assert_eq!(model["classes"]["Vehicle"]["is_a"], json!("Thing"));
+        assert_eq!(
+            model["classes"]["BikeHireDockingStation"]["is_a"],
+            json!("Thing")
+        );
+    }
+
+    #[test]
+    fn an_inverse_keeps_the_delete_rule_a_slot_already_names() {
+        let mut model = bikes();
+        model["slots"]["station"]["annotations"] =
+            json!({ "ngsi_ld_kind": "Relationship", "on_delete": "cascade" });
+        let added = apply(
+            &model,
+            &ops(json!([{ "op": "addInverse", "name": "station", "inverse": "vehicles" }])),
+        )
+        .expect("applied");
+        assert_eq!(
+            added["slots"]["station"]["annotations"]["on_delete"],
+            json!("cascade")
+        );
+        assert_eq!(added["slots"]["vehicles"]["inverse"], json!("station"));
+    }
+
+    #[test]
+    fn a_slot_naming_an_inverse_that_is_no_relationship_is_no_end() {
+        let mut model = bikes();
+        model["slots"]["station"]["annotations"] = json!({ "ngsi_ld_kind": "Relationship" });
+        model["slots"]["station"]["inverse"] = json!("name");
+        assert_eq!(
+            apply(
+                &model,
+                &ops(
+                    json!([{ "op": "setCardinality", "name": "station", "cardinality": "one-to-one" }])
+                )
+            ),
+            Err("operation 0: slot 'station' is not an end of a relationship".to_owned())
+        );
     }
 
     /// T-4470: the arms `mutate` was cut into, each called alone, and refusing another operation.
@@ -1443,6 +1594,28 @@ mod tests {
         .expect("applied");
         assert_eq!(changed["slots"]["users"]["multivalued"], json!(true));
         assert_eq!(changed["slots"]["school"]["multivalued"], json!(true));
+        // As many-to-many neither end stores the other's side alone: one end is computed on read
+        // and refuses required, the other takes it.
+        let refused = ["users", "school"]
+            .iter()
+            .filter(|end| {
+                apply(&changed, &ops(json!([{ "op": "setSlot", "name": end, "field": "required", "value": true }]))).is_err()
+            })
+            .count();
+        assert_eq!(refused, 1);
+        // Back to one-to-many: exactly one end is many again.
+        let back = apply(
+            &changed,
+            &ops(
+                json!([{ "op": "setCardinality", "name": "school", "cardinality": "one-to-many" }]),
+            ),
+        )
+        .expect("applied");
+        let many = ["users", "school"]
+            .iter()
+            .filter(|end| back["slots"][**end].get("multivalued").is_some())
+            .count();
+        assert_eq!(many, 1);
         assert_eq!(
             changed["slots"]["users"]["annotations"]["on_delete"],
             json!("cascade")
