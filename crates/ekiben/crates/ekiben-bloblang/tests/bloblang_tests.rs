@@ -491,6 +491,73 @@ root.sub_iso = "2026-10-20T12:00:00Z".ts_sub_iso8601("P1D").ts_format("2006-01-0
 }
 
 #[test]
+fn time_parsers_write_rfc3339_and_refuse_bad_arguments_and_overflows() {
+    let out = run_map(
+        r#"
+root.parsed = "2020-08-14".parse_timestamp("2006-01-02")
+root.strptime = "2020-08-14".parse_timestamp_strptime("%Y-%m-%d")
+root.local_hour = "2020-08-14T11:50:26Z".ts_strftime("%H", "Europe/Bratislava")
+"#,
+        r#"{}"#,
+    )
+    .unwrap()
+    .unwrap();
+    let jv: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(jv["parsed"], "2020-08-14T00:00:00Z");
+    assert_eq!(jv["strptime"], "2020-08-14T00:00:00Z");
+    assert_eq!(jv["local_hour"], "13");
+
+    for (mapping, says) in [
+        (r#"root = "2020".ts_parse(5)"#, "string"),
+        (r#"root = "2020".ts_strptime(5)"#, "string"),
+        (
+            r#"root = "2020-01-01T00:00:00Z".ts_add_iso8601(5)"#,
+            "string",
+        ),
+        (
+            r#"root = "2020-01-01T00:00:00Z".ts_sub_iso8601(5)"#,
+            "string",
+        ),
+        (
+            r#"root = "2300-01-01T00:00:00Z".ts_unix_nano()"#,
+            "timestamp out of nanosecond range",
+        ),
+        (
+            r#"root = "2300-01-01T00:00:00Z".ts_sub("1700-01-01T00:00:00Z")"#,
+            "timestamp difference overflows nanoseconds",
+        ),
+    ] {
+        let err = run_map(mapping, "{}").expect_err(mapping);
+        assert!(err.contains(says), "{mapping}: {err}");
+    }
+}
+
+#[test]
+fn msgpack_reads_bytes_or_a_string_and_json_path_answers_one_value_or_a_list() {
+    let out = run_map(
+        r#"
+root.from_string = (5).format_msgpack().string().parse_msgpack()
+root.plain = this.json_path("$.a.b")
+root.union = this.json_path("$.list[0,2]")
+root.slice = this.json_path("$.list[0:2]")
+"#,
+        r#"{"a":{"b":"x"},"list":[1,2,3]}"#,
+    )
+    .unwrap()
+    .unwrap();
+    let jv: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(jv["from_string"], 5);
+    assert_eq!(jv["plain"], "x");
+    assert_eq!(jv["union"], serde_json::json!([1, 3]));
+    assert_eq!(jv["slice"], serde_json::json!([1, 2]));
+
+    let err = run_map(r#"root = (5).parse_msgpack()"#, "{}").unwrap_err();
+    assert!(err.contains("expected bytes value, got number"), "{err}");
+    let err = run_map(r#"root = this.json_path("$.a.c")"#, r#"{"a":{"b":"x"}}"#).unwrap_err();
+    assert!(err.contains("unknown key a.c"), "{err}");
+}
+
+#[test]
 fn field_interpolation_and_imports_and_security_defaults() {
     // 1. Field interpolation with `${! ... }` and escaped `${{! ... }}`
     let env = Environment::new();
