@@ -337,10 +337,10 @@ fn parse_sasl(obj: &Map<String, JsonValue>) -> Result<Option<client::Sasl>, Stri
 
 pub(crate) fn parse(conf: &JsonValue) -> Result<Settings, String> {
     let errs = lint_fields(conf, FIELDS, &["seed_brokers", "topics"]);
-    if !errs.is_empty() {
+    // lint_fields refuses a config that is not an object
+    let Some(obj) = conf.as_object().filter(|_| errs.is_empty()) else {
         return Err(err(errs.join("; ")));
-    }
-    let obj = conf.as_object().ok_or_else(|| err("expected an object"))?;
+    };
     let mut seeds = Vec::new();
     for b in strings(obj, "seed_brokers")? {
         seeds.push(broker_address(&b).ok_or_else(|| {

@@ -354,18 +354,16 @@ impl Cluster {
         body: &[u8],
         timeout: Duration,
     ) -> Result<Dec, CoreError> {
-        if !self.conns.contains_key(&node) {
-            let b = self
-                .meta
-                .brokers
-                .get(&node)
-                .cloned()
-                .ok_or_else(|| failed(format!("broker {node} is not in the metadata")))?;
-            let c = Conn::connect(&b.host, b.port, &self.s).await?;
-            self.conns.insert(node, c);
-        }
-        let Some(conn) = self.conns.get_mut(&node) else {
-            return Err(failed(format!("broker {node} is not connected")));
+        let conn = match self.conns.entry(node) {
+            std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let b = self
+                    .meta
+                    .brokers
+                    .get(&node)
+                    .ok_or_else(|| failed(format!("broker {node} is not in the metadata")))?;
+                v.insert(Conn::connect(&b.host, b.port, &self.s).await?)
+            }
         };
         let r = conn.call(api_key, version, body, &self.s, timeout).await;
         if r.is_err() {

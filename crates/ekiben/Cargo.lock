@@ -1789,6 +1789,7 @@ dependencies = [
  "flate2",
  "hmac 0.13.0",
  "lz4_flex",
+ "rcgen",
  "regex",
  "rustls",
  "rustls-native-certs",
@@ -1800,6 +1801,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "zstd",
 ]

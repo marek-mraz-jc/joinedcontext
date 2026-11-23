@@ -354,7 +354,7 @@ impl KafkaInput {
         self.leaders = leaders;
     }
 
-    async fn coordinator(&mut self, group_id: &str) -> Result<i32, CoreError> {
+    async fn coordinator(&mut self, group_id: &str) -> Result<(i32, Broker), CoreError> {
         let node = *self
             .cluster
             .meta
@@ -384,8 +384,9 @@ impl KafkaInput {
         }
         let port =
             u16::try_from(port).map_err(|_| failed("the coordinator's port is out of range"))?;
-        self.cluster.meta.brokers.insert(id, Broker { host, port });
-        Ok(id)
+        let broker = Broker { host, port };
+        self.cluster.meta.brokers.insert(id, broker.clone());
+        Ok((id, broker))
     }
 
     async fn join(
@@ -393,7 +394,7 @@ impl KafkaInput {
         group_id: &str,
         topics: &[String],
     ) -> Result<(Assignment, HashMap<Tp, i64>), CoreError> {
-        let coordinator = self.coordinator(group_id).await?;
+        let (coordinator, broker) = self.coordinator(group_id).await?;
         let joined = loop {
             let body = group::join(group_id, SESSION_MS, REBALANCE_MS, &self.member_id, topics);
             let d = self
@@ -483,13 +484,6 @@ impl KafkaInput {
             }
         }
         let rejoin = Arc::new(AtomicBool::new(false));
-        let broker = self
-            .cluster
-            .meta
-            .brokers
-            .get(&coordinator)
-            .cloned()
-            .ok_or_else(|| failed("the coordinator left the metadata"))?;
         let conn = self.cluster.dial(&broker).await?;
         let heartbeat = tokio::spawn(heartbeats(
             conn,
@@ -615,15 +609,13 @@ impl KafkaInput {
         }
         let node = self.leaders[self.next_leader % self.leaders.len()];
         self.next_leader = self.next_leader.wrapping_add(1);
-        let queued: Vec<&Tp> = self.ready.iter().map(|r| &r.tp).collect();
+        // step fetches only once take_ready has emptied the queue, so no partition is queued here
         let want: Vec<(Tp, i64)> = self
             .lock()
             .parts
             .iter()
             .filter(|(tp, p)| {
-                self.leader(tp).ok() == Some(node)
-                    && p.unacked() < self.s.checkpoint_limit
-                    && !queued.contains(tp)
+                self.leader(tp).ok() == Some(node) && p.unacked() < self.s.checkpoint_limit
             })
             .map(|(tp, p)| (tp.clone(), p.fetch))
             .collect();
@@ -696,12 +688,10 @@ impl KafkaInput {
             };
             {
                 let mut shared = self.lock();
-                let Some(p) = shared.parts.get_mut(&tp) else {
+                // a nack rewound the partition while this fetch ran
+                let Some(p) = shared.parts.get_mut(&tp).filter(|p| p.fetch == from) else {
                     continue;
                 };
-                if p.fetch != from {
-                    continue; // a nack rewound the partition while this fetch ran
-                }
                 p.fetch = end;
                 p.high_watermark = f.high_watermark;
             }
@@ -721,12 +711,14 @@ impl KafkaInput {
         if !reset.is_empty() {
             let offsets = self.reset_offsets(&reset).await?;
             let mut shared = self.lock();
-            for (tp, off) in offsets {
-                if let Some(p) = shared.parts.get_mut(&tp) {
-                    p.fetch = off;
-                    p.deliver = off;
-                    p.pending.clear();
-                }
+            for (p, off) in shared
+                .parts
+                .iter_mut()
+                .filter_map(|(tp, p)| Some((p, *offsets.get(tp)?)))
+            {
+                p.fetch = off;
+                p.deliver = off;
+                p.pending.clear();
             }
         }
         Ok(())
@@ -746,8 +738,9 @@ impl KafkaInput {
             if self.s.multi_header {
                 let list: Vec<Value> = vs.into_iter().map(Value::String).collect();
                 part.meta_set(k, Value::Array(list.into()));
-            } else if let Some(v) = vs.into_iter().last() {
-                part.meta_set_str(k, v);
+            } else {
+                // every header name has at least one value
+                part.meta_set_str(k, vs.into_iter().last().unwrap_or_default());
             }
         }
         if let Some(k) = r.key {
@@ -772,12 +765,10 @@ impl KafkaInput {
             let id = BATCH_IDS.fetch_add(1, Ordering::Relaxed);
             {
                 let mut shared = self.lock();
-                let Some(p) = shared.parts.get_mut(&r.tp) else {
+                // stale: a nack rewound the partition
+                let Some(p) = shared.parts.get_mut(&r.tp).filter(|p| p.deliver == r.start) else {
                     continue;
                 };
-                if p.deliver != r.start {
-                    continue; // stale: a nack rewound the partition
-                }
                 p.deliver = r.end;
                 if r.parts.is_empty() {
                     continue; // only control or aborted batches: the position moves on
@@ -810,7 +801,7 @@ impl KafkaInput {
             self.refresh().await?;
             self.leaders_of_assignment();
         }
-        if self.member.is_some() && self.needs_rejoin() {
+        if self.needs_rejoin() {
             tracing::info!("kafka_franz input: the group rebalances; rejoining");
             self.drop_assignment().await;
         }
@@ -948,6 +939,10 @@ impl Input for KafkaInput {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/consumer.rs"]
+mod scripted;
 
 #[cfg(test)]
 pub(crate) mod tests {
