@@ -2059,6 +2059,60 @@ mod delivery_policy_tests {
         );
     }
 
+    /// S4-32: one tenant's large failing bodies stop at its byte share of
+    /// the retry ledger, and retries never charge the delivery lanes: another
+    /// tenant's retry and its fresh notifications still go.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retry_bytes_are_bounded_per_tenant() {
+        let (st, t) = state(policy(2, 30_000));
+        let other = TenantId::new("other-bytes").expect("tenant");
+        let (uri, _hits) = flaky_endpoint(usize::MAX).await;
+        let share = *RETRY_BYTES_PER_TENANT;
+        // each body a third of the share: three fit, the rest are parked
+        let note = "x".repeat(share / 3 - 64 * 1024);
+        let ctx = antares_jsonld::Loader::new().core();
+        let big = |sub: Value, tenant: TenantId| {
+            let (st, ctx, note) = (st.clone(), ctx.clone(), note.clone());
+            async move {
+                deliver_as(
+                    &st,
+                    &tenant,
+                    Kind::Subscription,
+                    &sub,
+                    "Notification",
+                    vec![json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "note": note})],
+                    &ctx,
+                    None,
+                )
+                .await;
+            }
+        };
+        let lanes_before = LANE_LEDGER.used();
+        for i in 0..8 {
+            let sub = subscribe(&st, &t, &format!("urn:ngsi-ld:Subscription:b{i}"), &uri).await;
+            big(sub, t.clone()).await;
+        }
+        let (count, bytes) = retries_held(&st, &t);
+        assert_eq!(count, 3, "three bodies fill the share");
+        assert!(bytes <= share, "{bytes} held, share {share}");
+        assert_eq!(letters(&st, &t).await.len(), 5, "the rest parked at once");
+        assert!(
+            LANE_LEDGER.used() < lanes_before.saturating_add(share / 3),
+            "retries charge their own ledger, not the lanes"
+        );
+        let sub = subscribe(&st, &other, SUB_ID, &uri).await;
+        big(sub, other.clone()).await;
+        assert_eq!(
+            retries_held(&st, &other).0,
+            1,
+            "another tenant still retries"
+        );
+        let (ok, hits) = flaky_endpoint(0).await;
+        let sub = subscribe(&st, &other, "urn:ngsi-ld:Subscription:fresh", &ok).await;
+        send(&st, &other, &sub).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "a fresh notification goes");
+    }
+
     /// S4-32: a refused connection is an unreachable peer and opens the
     /// breaker; an endpoint answering 500 is alive and does not.
     #[tokio::test(flavor = "multi_thread")]

@@ -17,21 +17,47 @@ pub(crate) fn dead_letters_written() -> u64 {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const RETRIES_PER_TENANT: usize = 64;
 
-/// Subscription ids by (broker, tenant).
+/// The estimated body bytes one tenant's sleeping retries may hold: an
+/// eighth of [`RETRY_LEDGER`]'s budget, so one tenant's large failing
+/// bodies leave room for the others' retries.
 #[cfg(not(target_arch = "wasm32"))]
-type Retrying = std::collections::HashMap<(usize, String), std::collections::HashSet<String>>;
+pub(crate) static RETRY_BYTES_PER_TENANT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| *crate::bounds::DELIVERY_LANE_BYTES / 8);
+
+/// What every sleeping retry holds, against
+/// [`crate::bounds::DELIVERY_LANE_BYTES`]: a ledger of its own, so retries
+/// never take the room fresh notifications need on the delivery lanes.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) static RETRY_LEDGER: super::throttle::Ledger = super::throttle::Ledger(
+    std::sync::atomic::AtomicUsize::new(0),
+    "antares_notification_retry_bytes",
+);
+
+/// One tenant's retries in flight on one broker.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct TenantRetries {
+    subs: std::collections::HashSet<String>,
+    bytes: usize,
+}
+
+/// Retries in flight by (broker, tenant).
+#[cfg(not(target_arch = "wasm32"))]
+type Retrying = std::collections::HashMap<(usize, String), TenantRetries>;
 
 /// The subscriptions with a retry task in flight.
 #[cfg(not(target_arch = "wasm32"))]
 static RETRYING: std::sync::LazyLock<std::sync::Mutex<Retrying>> =
     std::sync::LazyLock::new(Default::default);
 
-/// One subscription's place in [`RETRYING`] and its body's charge on the lane
-/// ledger, both given back when the retry task ends however it ends.
+/// One subscription's place in [`RETRYING`], its bytes on the tenant's
+/// share and its body's charge on [`RETRY_LEDGER`], all given back when the
+/// retry task ends however it ends.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct RetrySlot {
     key: (usize, String),
     sub_id: String,
+    bytes: usize,
     _held: super::throttle::Held,
 }
 
@@ -41,9 +67,10 @@ impl Drop for RetrySlot {
         let mut map = RETRYING
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(subs) = map.get_mut(&self.key) {
-            subs.remove(&self.sub_id);
-            if subs.is_empty() {
+        if let Some(t) = map.get_mut(&self.key) {
+            t.subs.remove(&self.sub_id);
+            t.bytes = t.bytes.saturating_sub(self.bytes);
+            if t.subs.is_empty() {
                 map.remove(&self.key);
             }
         }
@@ -51,8 +78,9 @@ impl Drop for RetrySlot {
 }
 
 /// A retry slot for `sub_id`, or why there is none: one retry in flight per
-/// subscription, [`RETRIES_PER_TENANT`] per tenant, and the body must fit
-/// the lane ledger every delivery lane shares.
+/// subscription, [`RETRIES_PER_TENANT`] and [`RETRY_BYTES_PER_TENANT`] per
+/// tenant (a body larger than the share still gets a retry when the tenant
+/// has none sleeping), and the body must fit [`RETRY_LEDGER`].
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn take_retry_slot(
     st: &AppState,
@@ -64,34 +92,45 @@ pub(super) fn take_retry_slot(
     let mut map = RETRYING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let subs = map.entry(key.clone()).or_default();
-    if subs.contains(sub_id) {
+    let held = map.entry(key.clone()).or_default();
+    if held.subs.contains(sub_id) {
         return Err("a retry for this subscription is already in flight");
     }
-    if subs.len() >= RETRIES_PER_TENANT {
+    if held.subs.len() >= RETRIES_PER_TENANT {
         return Err("the tenant has its most retries in flight");
     }
     let bytes = super::throttle::heap_estimate(&outbound.body);
-    let Some(held) = super::throttle::LANE_LEDGER.take(bytes, *crate::bounds::DELIVERY_LANE_BYTES)
-    else {
-        return Err("the delivery memory budget is spent");
+    if held.bytes > 0 && held.bytes.saturating_add(bytes) > *RETRY_BYTES_PER_TENANT {
+        return Err("the tenant's retry memory share is spent");
+    }
+    let Some(charge) = RETRY_LEDGER.take(bytes, *crate::bounds::DELIVERY_LANE_BYTES) else {
+        return Err("the retry memory budget is spent");
     };
-    subs.insert(sub_id.to_owned());
+    held.subs.insert(sub_id.to_owned());
+    held.bytes = held.bytes.saturating_add(bytes);
     Ok(RetrySlot {
         key,
         sub_id: sub_id.to_owned(),
-        _held: held,
+        bytes,
+        _held: charge,
     })
+}
+
+/// Retry tasks in flight for `tenant` on this broker, and the body bytes
+/// they hold.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(super) fn retries_held(st: &AppState, tenant: &TenantId) -> (usize, usize) {
+    RETRYING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&(st.broker(), tenant.as_str().to_owned()))
+        .map_or((0, 0), |t| (t.subs.len(), t.bytes))
 }
 
 /// Retry tasks in flight for `tenant` on this broker.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(super) fn retries_in_flight(st: &AppState, tenant: &TenantId) -> usize {
-    RETRYING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&(st.broker(), tenant.as_str().to_owned()))
-        .map_or(0, std::collections::HashSet::len)
+    retries_held(st, tenant).0
 }
 
 /// A failed first attempt that got no retry slot, as its `letter`: parked
