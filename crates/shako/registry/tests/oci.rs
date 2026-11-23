@@ -767,12 +767,19 @@ async fn a_manifest_is_stored_signed_and_listed_by_tag_and_referrer() {
         (a.status, a.code().as_str()),
         (StatusCode::INTERNAL_SERVER_ERROR, "UNKNOWN")
     );
-    std::fs::remove_file(shako_api::service::blob_disk_path(
-        &state(&tmp),
-        "city",
-        &md,
-    ))
-    .unwrap();
+    let file = shako_api::service::blob_disk_path(&state(&tmp), "city", &md);
+    std::fs::remove_file(&file).unwrap();
+    let a = send(
+        &app,
+        Method::GET,
+        "/v2/city/app/manifests/v1",
+        Some(PULLER),
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR);
+    // A directory in its place opens and then fails to read: still a storage error.
+    std::fs::create_dir(&file).unwrap();
     let a = send(
         &app,
         Method::GET,

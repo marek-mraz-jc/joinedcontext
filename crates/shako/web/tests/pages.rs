@@ -29,10 +29,11 @@ use tower::ServiceExt;
 const ADMIN: &str = "portal-token-0123456789";
 const READER: &str = "reader-token-0123456789";
 const README: &str = "# Helsinki\n\n<b>raw</b>\n\n![i](data:x) [a](/local) [b](mailto:a@b.example) \
-[c](ftp://x) [d](#top) [e](//evil) [f](vbscript:x) [g](http://city.example)\n";
+[c](ftp://x) [d](#top) [e](//evil) [f](vbscript:x) [g](http://city.example) ![logo](/logo.png)\n";
 
 struct Shako {
     app: Router,
+    root: String,
     first: String,
     second: String,
 }
@@ -187,7 +188,18 @@ async fn shako(tmp: &tempfile::TempDir) -> Shako {
         .status()
         .expect("git runs");
     assert!(tagged.success());
+    let root = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&disk)
+        .args(["rev-list", "--max-parents=0", "main"])
+        .output()
+        .expect("git runs");
+    let root = String::from_utf8(root.stdout)
+        .expect("utf-8")
+        .trim()
+        .to_owned();
     Shako {
+        root,
         app: web_router().with_state(state),
         first,
         second,

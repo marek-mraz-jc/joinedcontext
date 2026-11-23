@@ -163,21 +163,18 @@ mod tests {
         let mount = Mount::default();
         let key = "-----BEGIN PRIVATE KEY-----";
         // A secret is refused even for a tool that does not exist (before the lookup).
-        match call_mcp_tool(
+        let secret = call_mcp_tool(
             &state,
             &forge,
             &mount,
             "jc_forge_nothing",
             json!({ "k": key }),
         )
-        .await
-        {
-            Err(ShakoError::BadRequest(m)) => assert!(
-                m.starts_with("refused secret in MCP tool arguments: "),
-                "{m}"
-            ),
-            other => panic!("{other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&secret, Err(ShakoError::BadRequest(m)) if m.starts_with("refused secret in MCP tool arguments: ")),
+            "{secret:?}"
+        );
         let unknown = call_mcp_tool(&state, &forge, &mount, "jc_forge_nothing", json!({})).await;
         assert_eq!(
             unknown.err(),
