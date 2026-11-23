@@ -271,6 +271,54 @@ async fn memberships_and_a_pinned_session_organization_shape_the_login() {
     );
 }
 
+/// With two organizations the login asks which one; a choice outside them is refused (400)
+/// and a listed one ends in the code.
+#[tokio::test]
+async fn an_organization_outside_the_choices_is_refused_and_a_listed_one_signs_in() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let orgs: Vec<Organization> = ["espoo", "vantaa"]
+        .into_iter()
+        .map(|id| Organization {
+            id: id.into(),
+            realm_id: "dev".into(),
+            name: id.into(),
+            alias: id.into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: Default::default(),
+            managed_by: None,
+        })
+        .collect();
+    for org in &orgs {
+        store.upsert_organization(org.clone()).await.unwrap();
+    }
+    for (i, org) in orgs.iter().take(2).enumerate() {
+        store
+            .upsert_membership(Membership {
+                id: format!("m-member-{i}"),
+                realm_id: "dev".into(),
+                org_id: org.id.clone(),
+                person_id: member.id.clone(),
+                org_roles: Vec::new(),
+                created_at: TimestampTz::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let a = start(&app, None).await;
+    let (_, _, html) = a
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
+    assert_eq!(page_id(&html), "org-choice", "{html}");
+    let (st, _, _) = a.post(&app, &[("org_id", "not-an-organization")]).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let org = extract_hidden_input(&html, "org_id");
+    let (st, h, html) = a.post(&app, &[("org_id", &org)]).await;
+    assert!(is_code(st, &h), "{st} {html}");
+}
+
 /// A person deleted while their login waits on a step is refused at that step (401), never
 /// signed in as a ghost.
 #[tokio::test]
@@ -601,6 +649,7 @@ async fn action_link_password_forms_refuse_and_then_finish() {
             .len(),
         other + 1
     );
+    with_actions(&store, MEMBER, &["UPDATE_PASSWORD"]).await;
     let (st, h, _) = post(
         base(&[("new_password", NEW_PW), ("logout-sessions", "on")]),
         Some(cookie.clone()),
@@ -615,6 +664,7 @@ async fn action_link_password_forms_refuse_and_then_finish() {
             .unwrap()
             .is_empty()
     );
+    assert!(user(&store, MEMBER).await.required_actions.is_empty());
 
     // An action session that lost its person's id.
     let (cookie, csrf, session) = open(mint(&store, &member.id, &["UPDATE_PASSWORD"]).await).await;
@@ -740,6 +790,10 @@ async fn passkey_steps_need_their_challenge_and_complete_with_a_valid_response()
     let (st, _, html) = b.post(&app, &[("webauthn_assertion_response", "{}")]).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(page_id(&html), "webauthn-authenticate");
+    let (st, _, _) = b
+        .post(&app, &[("webauthn_assertion_response", "{not json")])
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
     let challenge = challenge_of(b.session.clone()).await.unwrap();
     let assertion = assertion_json(&pk, &challenge, rp_id, Some(&handle)).to_string();
     let (st, h, html) = b
@@ -758,7 +812,7 @@ async fn passkey_steps_need_their_challenge_and_complete_with_a_valid_response()
 }
 
 /// A recovery-code step whose codes were removed meanwhile counts a failure and says the
-/// code is wrong.
+/// code is wrong; once the failures reach the realm's limit the step is locked.
 #[tokio::test]
 async fn a_recovery_code_without_stored_codes_is_refused_on_the_page() {
     let (app, store) = app().await;
@@ -776,6 +830,20 @@ async fn a_recovery_code_without_stored_codes_is_refused_on_the_page() {
                 .unwrap();
         }
     }
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.failure_factor = 1;
+    store.upsert_realm(realm).await.unwrap();
+    let (st, _, html) = a.post(&app, &[("recovery_code", "ABCD-EFGH")]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "recovery-code");
+    assert!(html.contains("role=\"alert\""), "{html}");
+    // That failure reached the realm's limit: the next try is refused before any code check.
+    let locked = store
+        .get_login_failure("dev", &format!("user:{}", steward.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(locked.locked_until.is_some());
     let (st, _, html) = a.post(&app, &[("recovery_code", "ABCD-EFGH")]).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(page_id(&html), "recovery-code");
@@ -952,7 +1020,7 @@ async fn unusable_action_links_name_the_cause_and_the_next_step_for_their_action
 #[tokio::test]
 async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let (app, store) = app().await;
-    let member = user(&store, MEMBER).await;
+    let member = with_actions(&store, MEMBER, &["CONFIGURE_TOTP"]).await;
     let open = |link: String| {
         let app = app.clone();
         async move {
@@ -1013,6 +1081,7 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     assert_eq!(h[header::LOCATION], CALLBACK);
     let creds = store.list_credentials("dev", &member.id).await.unwrap();
     assert!(creds.iter().any(|c| c.credential_type == "otp"));
+    assert!(user(&store, MEMBER).await.required_actions.is_empty());
 
     // A TOTP form whose pending secret is gone.
     let link = mint(&store, &member.id, &["CONFIGURE_TOTP"]).await;

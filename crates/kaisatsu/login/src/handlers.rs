@@ -1204,12 +1204,10 @@ async fn authenticate_page_get(
     } = current_state
         && let Some(user_id) = auth_session.user_id.clone()
     {
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, &user_id)
-            .await?
-            .filter(|u| u.enabled)
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(&state, &realm, &user_id).await?;
+        if !user.enabled {
+            return Err(KaisatsuError::Unauthorized("user not found".into()));
+        }
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
         let next = step(
             current_state,
@@ -2340,8 +2338,10 @@ async fn advance_or_render(
             &auth_session.response_mode,
             &pairs,
         );
-        let cookie = header::HeaderValue::from_str(&set_cookie)
-            .map_err(|_| KaisatsuError::Storage("invalid session cookie".into()))?;
+        // A random URL-safe handle and a number: always a valid header value.
+        let Ok(cookie) = header::HeaderValue::from_str(&set_cookie) else {
+            return Err(KaisatsuError::Storage("invalid session cookie".into()));
+        };
         resp.headers_mut().append(header::SET_COOKIE, cookie);
         return Ok(resp);
     }
