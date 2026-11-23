@@ -452,6 +452,46 @@ async fn the_store_refuses_what_it_cannot_read_or_hold() {
     db.drop_it().await;
 }
 
+/// A log longer than one trim batch goes in batches until none is left, and the tables keep
+/// what it recorded.
+#[tokio::test]
+async fn a_log_longer_than_one_batch_is_trimmed_whole() {
+    let Some(db) = Db::create().await else {
+        return;
+    };
+    let store = PgStore::connect_with(db.member.clone(), 2)
+        .await
+        .expect("store");
+    let (inst, org) = (InstanceId::new(), OrgId::new());
+    sqlx::query(
+        "INSERT INTO shako.store_log (instance_id, org_id, op)
+         SELECT $1, $2, $3 FROM generate_series(1, 2100)",
+    )
+    .bind(inst.as_uuid())
+    .bind(org.as_uuid())
+    .bind(json!({"op": "adjust_quota_usage",
+                 "args": {"repo_delta": 0, "git_bytes_delta": 1, "package_bytes_delta": 0}}))
+    .execute(&db.admin)
+    .await
+    .expect("log entries");
+    assert_eq!(store.hydrate(inst, org).await.expect("replay"), 2100);
+    for table in ["store_log SET created_at", "projection SET since"] {
+        sqlx::query(AssertSqlSafe(format!(
+            "UPDATE shako.{table} = now() - interval '40 days' WHERE instance_id = $1 AND org_id = $2"
+        )))
+        .bind(inst.as_uuid())
+        .bind(org.as_uuid())
+        .execute(&db.admin)
+        .await
+        .expect("backdate");
+    }
+    assert_eq!(store.trim_log(inst, org).await.expect("trim"), 2100);
+    assert_eq!(store.trim_log(inst, org).await.expect("again"), 0);
+    let quota = store.get_quota_usage(inst, org).await.expect("quota");
+    assert_eq!(quota.git_bytes, 2100);
+    db.drop_it().await;
+}
+
 #[tokio::test]
 async fn manifests_left_in_the_column_are_copied_once_and_a_damaged_one_stays() {
     let Some(db) = Db::create().await else {

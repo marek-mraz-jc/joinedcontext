@@ -62,6 +62,30 @@ fn catalog_validation_refuses_unforced_rls_and_bypassrls_and_table_ownership() {
         policy_count: 1,
     });
     assert!(validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &with_rogue).is_err());
+
+    // A required table missing, or one lacking any of the three, is named with what it lacks.
+    let missing = &valid[1..];
+    let err = validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, missing)
+        .expect_err("a required table is missing")
+        .to_string();
+    assert!(
+        err.contains(&format!("'shako.{}' is missing", REQUIRED_RLS_TABLES[0])),
+        "{err}"
+    );
+    for (enabled, forced, policies) in [(false, true, 1), (true, false, 1), (true, true, 0)] {
+        let mut lacking = valid.clone();
+        lacking[0] = TableRlsStatus {
+            table_name: REQUIRED_RLS_TABLES[0].to_owned(),
+            rls_enabled: enabled,
+            rls_forced: forced,
+            policy_count: policies,
+        };
+        let err = validate_rls_catalog_rows("shako_app_login", false, false, 0, 0, &lacking)
+            .expect_err("a required table lacks forced RLS")
+            .to_string();
+        let lacks = format!("(enabled={enabled}, forced={forced}, policies={policies})");
+        assert!(err.contains(&lacks), "{err}");
+    }
 }
 
 #[test]
