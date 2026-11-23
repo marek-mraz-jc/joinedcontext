@@ -92,6 +92,92 @@ fn config_refusals_name_the_field_and_never_the_password() {
 }
 
 #[test]
+fn malformed_lists_are_refused_by_index() {
+    for (v, want) in [
+        (json!({"urls": [7], "queue": "q"}), "urls[0] must be a string"),
+        (json!({"urls": [" , "], "queue": "q"}), "urls needs at least one URL"),
+        (
+            json!({"urls": ["amqp://u:p@a.example.org/"], "queue": "q", "bindings_declare": ["amq.topic"]}),
+            "bindings_declare[0] must be an object",
+        ),
+        (
+            json!({"urls": ["amqp://u:p@a.example.org/"], "queue": "q", "nack_reject_patterns": [1]}),
+            "nack_reject_patterns[0]",
+        ),
+    ] {
+        let e = refusal(v.clone());
+        assert!(e.contains(want), "{v}: {e}");
+    }
+}
+
+#[test]
+fn declare_bindings_and_defaults_are_read_as_written() {
+    let url = "amqp://u:p@a.example.org:5672/";
+    let i = AmqpInput::from_config(&conf(json!({
+        "urls": [url],
+        "queue": "q",
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": true},
+        "bindings_declare": [{"exchange": "amq.topic", "key": "sensors.#"}, {"exchange": "amq.direct"}],
+        "consumer_tag": "ekiben-1",
+        "auto_ack": true,
+        "prefetch_count": 3,
+        "tls": {"root_cas": "PEM"},
+    })))
+    .expect("builds");
+    assert_eq!(i.s.declare, Some((false, true)));
+    assert_eq!(
+        i.s.bindings,
+        [
+            ("amq.topic".to_owned(), "sensors.#".to_owned()),
+            ("amq.direct".to_owned(), String::new())
+        ]
+    );
+    assert_eq!(i.s.consumer_tag, "ekiben-1");
+    assert!(i.s.auto_ack);
+    assert_eq!(i.s.prefetch_count, 3);
+    assert!(!i.s.tls, "root_cas alone does not turn TLS on");
+    assert_eq!(i.s.root_cas.as_deref(), Some("PEM"));
+
+    let defaults = AmqpInput::from_config(&conf(json!({
+        "urls": [url],
+        "queue": "q",
+        "queue_declare": {"enabled": true},
+        "prefetch_count": null,
+    })))
+    .expect("builds");
+    assert_eq!(defaults.s.declare, Some((true, false)));
+    assert_eq!(defaults.s.prefetch_count, 10);
+    assert!(!defaults.s.auto_ack);
+    let off = AmqpInput::from_config(&conf(json!({
+        "urls": [url], "queue": "q", "queue_declare": {"durable": true},
+    })))
+    .expect("builds");
+    assert_eq!(off.s.declare, None, "queue_declare without enabled declares nothing");
+}
+
+#[tokio::test]
+async fn register_all_builds_and_lints_the_input() {
+    let reg = Registry::new();
+    register_all(&reg);
+    let mut good = conf(json!({"urls": ["amqp://u:p@a.example.org/"], "queue": "q"}));
+    good.label = "sensors".into();
+    assert!(reg.lint_component("input", &good).is_empty());
+    let bad = conf(json!({"urls": ["amqp://u:p@a.example.org/"], "queue": ""}));
+    let errs = reg.lint_component("input", &bad);
+    assert!(
+        errs.len() == 1 && errs[0].contains("queue must name the queue"),
+        "{errs:?}"
+    );
+    let input = reg
+        .build_input(&good, &ctx(OrgQuotas::default()))
+        .expect("builds");
+    assert_eq!(input.input_type(), "amqp_0_9");
+    assert_eq!(input.label(), "sensors");
+    assert!(!input.is_connected());
+    assert!(reg.build_input(&bad, &ctx(OrgQuotas::default())).is_err());
+}
+
+#[test]
 fn comma_separated_urls_expand_and_stay_out_of_debug() {
     let i = AmqpInput::from_config(&conf(json!({
         "urls": ["amqp://u:hunter2@a.example.org:5672/, amqp://u:hunter2@b.example.org:5672/"],
@@ -131,6 +217,22 @@ fn properties_and_headers_become_bentos_metadata() {
         AMQPValue::LongString(LongString::from("s-1")),
     );
     headers.insert(ShortString::from("n"), AMQPValue::LongInt(7));
+    for (k, v) in [
+        ("short", AMQPValue::ShortString(ShortString::from("s"))),
+        ("flag", AMQPValue::Boolean(true)),
+        ("i8", AMQPValue::ShortShortInt(-8)),
+        ("u8", AMQPValue::ShortShortUInt(8)),
+        ("i16", AMQPValue::ShortInt(-16)),
+        ("u16", AMQPValue::ShortUInt(16)),
+        ("u32", AMQPValue::LongUInt(32)),
+        ("i64", AMQPValue::LongLongInt(-64)),
+        ("f32", AMQPValue::Float(1.5)),
+        ("f64", AMQPValue::Double(2.25)),
+        ("ts", AMQPValue::Timestamp(1_700_000_001)),
+        ("void", AMQPValue::Void),
+    ] {
+        headers.insert(ShortString::from(k), v);
+    }
     let p = lapin::BasicProperties::default()
         .with_content_type("application/json".into())
         .with_delivery_mode(2)
@@ -145,6 +247,22 @@ fn properties_and_headers_become_bentos_metadata() {
     assert_eq!(m["station"], "s-1");
     assert_eq!(m["n"], "7");
     assert!(!m.contains_key("amqp_priority"));
+    for (k, want) in [
+        ("short", "s"),
+        ("flag", "true"),
+        ("i8", "-8"),
+        ("u8", "8"),
+        ("i16", "-16"),
+        ("u16", "16"),
+        ("u32", "32"),
+        ("i64", "-64"),
+        ("f32", "1.5"),
+        ("f64", "2.25"),
+        ("ts", "1700000001"),
+    ] {
+        assert_eq!(m[k], want, "{k}");
+    }
+    assert!(!m.contains_key("void"), "a header without a text form is left out");
 }
 
 #[tokio::test]
@@ -175,4 +293,277 @@ async fn tls_is_spoken_on_the_wire_and_never_falls_back_to_plain() {
     let c = ctx(quotas);
     let _ = tokio::time::timeout(Duration::from_secs(2), i.read_batch(&c)).await;
     assert_eq!(first.await.expect("listener"), 22);
+}
+
+#[tokio::test]
+async fn a_broker_that_never_answers_times_out_the_handshake() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    // accepts and holds the socket without a byte of the AMQP handshake
+    let held = tokio::spawn(async move { listener.accept().await.map(|(s, _)| s) });
+    let i = AmqpInput::from_config(&conf(json!({
+        "urls": [format!("amqp://u:hunter2@localhost:{port}/")],
+        "queue": "q",
+    })))
+    .expect("builds");
+    let quotas = OrgQuotas {
+        allow_private_ips: true,
+        ..OrgQuotas::default()
+    };
+    let e = match i.dial(&ctx(quotas)).await {
+        Ok(_) => panic!("a silent listener completed the handshake"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("did not complete the handshake"), "{e}");
+    assert!(!e.contains("hunter2"), "{e}");
+    drop(held);
+}
+
+/// A certificate for `localhost` and its PEM, as a broker's CA would be given in `tls.root_cas`.
+fn localhost_tls() -> (String, tokio_rustls::TlsAcceptor) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("cert");
+    let pem = cert.cert.pem();
+    let key = rustls_pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("versions")
+    .with_no_client_auth()
+    .with_single_cert(vec![cert.cert.der().clone()], key)
+    .expect("server config");
+    (pem, tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// A broker whose certificate `tls.root_cas` names is talked to over TLS: the AMQP protocol
+/// header arrives inside the encrypted stream. A certificate from any other CA ends the
+/// connection before a byte of AMQP is sent.
+#[tokio::test]
+async fn tls_trusts_root_cas_and_nothing_else() {
+    use tokio::io::AsyncReadExt;
+    for trusted in [true, false] {
+        let (pem, acceptor) = localhost_tls();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            let mut s = acceptor.accept(s).await.ok()?;
+            let mut header = [0u8; 4];
+            s.read_exact(&mut header).await.ok()?;
+            Some(header)
+        });
+        let root_cas = if trusted {
+            pem
+        } else {
+            localhost_tls().0
+        };
+        let i = AmqpInput::from_config(&conf(json!({
+            "urls": [format!("amqps://u:p@localhost:{port}/")],
+            "queue": "q",
+            "tls": {"root_cas": root_cas},
+        })))
+        .expect("builds");
+        let dialed = tokio::time::timeout(Duration::from_secs(3), i.dial(&loopback())).await;
+        assert!(!matches!(dialed, Ok(Ok(_))), "no broker answered the handshake");
+        let header = server.await.expect("server");
+        if trusted {
+            assert_eq!(header, Some(*b"AMQP"));
+        } else {
+            assert_eq!(header, None, "the input talked to an untrusted broker");
+            let Ok(Err(e)) = dialed else {
+                panic!("an untrusted certificate must end the dial at once")
+            };
+            assert!(e.to_string().contains("connect"), "{e}");
+        }
+    }
+}
+
+/// The live broker of `AMQP_TEST_URL` (as tests/rabbitmq.rs), or `None` to skip.
+fn live_url(test: &str) -> Option<String> {
+    let url = std::env::var("AMQP_TEST_URL").ok();
+    if url.is_none() {
+        eprintln!("SKIP {test}: AMQP_TEST_URL unset");
+    }
+    url
+}
+
+fn loopback() -> StreamContext {
+    ctx(OrgQuotas {
+        allow_private_ips: true,
+        ..OrgQuotas::default()
+    })
+}
+
+/// What the broker refuses while the input sets up its consumer comes back as an error that
+/// names the step: a missing queue, an exchange that does not exist, a declare that
+/// contradicts the queue's settings.
+#[tokio::test]
+async fn the_broker_refusing_a_setup_step_names_the_step() {
+    let Some(url) = live_url("the_broker_refusing_a_setup_step_names_the_step") else {
+        return;
+    };
+    let queue = format!("ekiben-refuse-{}", std::process::id());
+    let dial = |extra: JsonValue| {
+        let mut v = json!({"urls": [url.clone()], "queue": queue.clone()});
+        v.as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        AmqpInput::from_config(&conf(v)).expect("builds")
+    };
+    let error = |i: AmqpInput| async move {
+        match i.dial(&loopback()).await {
+            Ok(_) => panic!("the broker accepted"),
+            Err(e) => e.to_string(),
+        }
+    };
+    let e = error(dial(json!({}))).await;
+    assert!(e.contains("consume"), "{e}");
+    let declare = json!({"queue_declare": {"enabled": true, "durable": false, "auto_delete": false}});
+    let live = dial(declare.clone()).dial(&loopback()).await.expect("declares");
+    let e = error(dial(json!({"queue_declare": {"enabled": true, "durable": true}}))).await;
+    assert!(e.contains("queue declare"), "{e}");
+    let mut bind = declare;
+    bind["bindings_declare"] = json!([{"exchange": "ekiben-no-such-exchange", "key": "k"}]);
+    let e = error(dial(bind)).await;
+    assert!(e.contains("queue bind"), "{e}");
+    let ch = live.conn.create_channel().await.expect("channel");
+    let _ = ch.queue_delete(queue.as_str().into(), Default::default()).await;
+    let _ = live.conn.close(200, "test done".into()).await;
+}
+
+/// With auto_ack the broker forgets a message once delivered, and a declared binding routes
+/// an exchange's messages into the queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
+    use lapin::options::BasicPublishOptions;
+    let Some(url) = live_url("auto_ack_and_a_declared_binding_deliver_from_the_exchange") else {
+        return;
+    };
+    let queue = format!("ekiben-bind-{}", std::process::id());
+    let mut input = AmqpInput::from_config(&conf(json!({
+        "urls": [url.clone()],
+        "queue": queue,
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": true},
+        "bindings_declare": [{"exchange": "amq.topic", "key": "ekiben.#"}],
+        "auto_ack": true,
+        "consumer_tag": "ekiben-auto",
+    })))
+    .expect("builds");
+    let c = loopback();
+    // the first read connects, declares and binds; nothing is queued yet
+    assert!(matches!(input.read_batch(&c).await, Err(CoreError::Timeout)));
+    assert!(input.is_connected());
+    let conn = Connection::connect(&url, ConnectionProperties::default())
+        .await
+        .expect("publisher connects");
+    let ch = conn.create_channel().await.expect("channel");
+    ch.basic_publish(
+        "amq.topic".into(),
+        "ekiben.station.1".into(),
+        BasicPublishOptions::default(),
+        b"reading",
+        lapin::BasicProperties::default(),
+    )
+    .await
+    .expect("publish")
+    .await
+    .expect("confirm");
+    let mut got = None;
+    for _ in 0..10 {
+        match input.read_batch(&c).await {
+            Ok(b) => {
+                got = Some(b);
+                break;
+            }
+            Err(CoreError::Timeout) => {}
+            Err(e) => panic!("read: {e}"),
+        }
+    }
+    let (batch, ack) = got.expect("a message in 10 s");
+    assert_eq!(&*batch[0].as_bytes_ref(), b"reading");
+    assert_eq!(batch[0].meta_get_str("amqp_exchange"), "amq.topic");
+    assert_eq!(batch[0].meta_get_str("amqp_routing_key"), "ekiben.station.1");
+    assert_eq!(batch[0].meta_get_str("amqp_consumer_tag"), "ekiben-auto");
+    // acknowledging is a no-op: the broker already forgot the message
+    ack.nack(ekiben_core::BatchError::new(batch, "ignored".to_string()));
+    assert!(matches!(input.read_batch(&c).await, Err(CoreError::Timeout)));
+    input.close().await.expect("close");
+    assert!(!input.is_connected());
+    let _ = conn.close(200, "test done".into()).await;
+}
+
+async fn read_one(input: &mut AmqpInput, c: &StreamContext) -> (Batch, AckResponder) {
+    for _ in 0..10 {
+        match input.read_batch(c).await {
+            Ok(b) => return b,
+            Err(CoreError::Timeout) => {}
+            Err(e) => panic!("read: {e}"),
+        }
+    }
+    panic!("no message in 10 s")
+}
+
+/// An acknowledgement that cannot reach the broker leaves the message with it: one given
+/// outside a runtime is never sent, one after the connection closed is dropped by the client,
+/// and the broker delivers the message again, marked redelivered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unsent_or_failed_ack_leaves_the_message_redelivered() {
+    use lapin::options::BasicPublishOptions;
+    let Some(url) = live_url("an_unsent_or_failed_ack_leaves_the_message_redelivered") else {
+        return;
+    };
+    let queue = format!("ekiben-ack-{}", std::process::id());
+    let config = json!({
+        "urls": [url.clone()],
+        "queue": queue,
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": false},
+    });
+    let c = loopback();
+    let mut input = AmqpInput::from_config(&conf(config.clone())).expect("builds");
+    assert!(matches!(input.read_batch(&c).await, Err(CoreError::Timeout)));
+    let conn = Connection::connect(&url, ConnectionProperties::default())
+        .await
+        .expect("publisher connects");
+    let ch = conn.create_channel().await.expect("channel");
+    ch.basic_publish(
+        "".into(),
+        queue.as_str().into(),
+        BasicPublishOptions::default(),
+        b"kept",
+        lapin::BasicProperties::default(),
+    )
+    .await
+    .expect("publish")
+    .await
+    .expect("confirm");
+
+    let (b, ack) = read_one(&mut input, &c).await;
+    assert_eq!(b[0].meta_get_str("amqp_redelivered"), "false");
+    std::thread::spawn(move || ack.ack()).join().expect("ack thread");
+    input.close().await.expect("close");
+
+    let mut input = AmqpInput::from_config(&conf(config.clone())).expect("builds");
+    let (b, ack) = read_one(&mut input, &c).await;
+    assert_eq!(&*b[0].as_bytes_ref(), b"kept");
+    assert_eq!(b[0].meta_get_str("amqp_redelivered"), "true");
+    input.close().await.expect("close");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut input = AmqpInput::from_config(&conf(config)).expect("builds");
+    let (b, ack) = read_one(&mut input, &c).await;
+    assert_eq!(&*b[0].as_bytes_ref(), b"kept", "the failed ack left the message queued");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    input.close().await.expect("close");
+    let q = ch
+        .queue_delete(queue.as_str().into(), Default::default())
+        .await
+        .expect("delete");
+    assert_eq!(q, 0, "the last ack removed the message");
+    let _ = conn.close(200, "test done".into()).await;
 }
