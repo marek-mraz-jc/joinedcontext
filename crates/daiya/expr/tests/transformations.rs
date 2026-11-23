@@ -977,10 +977,16 @@ fn edge_cases_of_names_replacements_and_join_keys() {
     );
     assert_eq!(names(&out[0]), ["ja-a1"]);
     let out = tx_rename_by_regex(
-        vec![g],
+        vec![g.clone()],
         &json!({ "regex": "(abc)(.*)", "renamePattern": "$2.$9 $" }),
     );
     assert_eq!(names(&out[0]), ["defghij.$9 $"]);
+    // `$$` is one dollar anywhere; a `$` before a letter is text, digits after the letter too
+    let out = tx_rename_by_regex(
+        vec![g],
+        &json!({ "regex": "(abc)(.*)", "renamePattern": "x$$y$x1$z" }),
+    );
+    assert_eq!(names(&out[0]), ["x$y$x1$z"]);
 
     // A null key sorts before the numbers of an outer join.
     let k1 = frame(
