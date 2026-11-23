@@ -1793,7 +1793,8 @@ async fn realm_partial_import_and_native_routes() {
         &Method::POST,
         "/admin/realms",
         Some(&master),
-        Some(&json!({ "realm": "stage2", "displayName": "Stage 2" })),
+        // A Keycloak export's UUID id is ignored: the admin routes key the realm by its name.
+        Some(&json!({ "realm": "stage2", "id": "0b1c2d3e-export-uuid", "displayName": "Stage 2" })),
     )
     .await;
     assert_eq!(st, StatusCode::CREATED, "{ans}");
@@ -1804,6 +1805,15 @@ async fn realm_partial_import_and_native_routes() {
         .unwrap()
         .expect("realm stage2");
     assert_eq!(stage.id, "stage2");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/stage2/users",
+        Some(&master),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
     assert!(f.store.get_realm("joinedcontext").await.unwrap().is_none());
     for bad in [json!({ "displayName": "no name" }), json!({ "realm": 7 })] {
         let (st, _, _) = call(

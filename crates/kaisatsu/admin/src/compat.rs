@@ -852,8 +852,6 @@ async fn compat_create_realm(
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let mut realm: RealmConfig = serde_json::from_value(raw.clone())
         .map_err(|e| KaisatsuError::BadRequest(format!("invalid realm: {e}")))?;
-    // keycloak-config-cli posts `{"realm": "x", ...}` without an id: the id is the realm name,
-    // never the type's default id.
     if raw
         .get("realm")
         .and_then(Value::as_str)
@@ -861,32 +859,18 @@ async fn compat_create_realm(
     {
         return Err(KaisatsuError::BadRequest("realm is required".into()));
     }
-    if raw
-        .get("id")
-        .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
-    {
-        realm.id = realm.realm.clone();
-    }
-    // The id and the name are both judged: a grant on one may not create the other.
-    let mut names = vec![realm.id.clone()];
-    if realm.realm != realm.id {
-        names.push(realm.realm.clone());
-    }
-    let mut ctx = None;
-    for name in names {
-        let judged = extract_admin_ctx(&state, &mount, &name, &headers).await?;
-        check_decision(state.authorizer.check(
-            &judged,
-            Action::Apply,
-            &ObjectTarget::Realm { realm_id: name },
-        ))?;
-        ctx.get_or_insert(judged);
-    }
-    let ctx = ctx.ok_or_else(|| KaisatsuError::BadRequest("realm is required".into()))?;
-    if state.oidc.store.get_realm(&realm.realm).await?.is_some()
-        || state.oidc.store.get_realm(&realm.id).await?.is_some()
-    {
+    // A realm's rows are keyed by its name, the key every admin route uses: a body's `id` (a
+    // Keycloak export's UUID) is ignored, never a second key (S3-28).
+    realm.id = realm.realm.clone();
+    let ctx = extract_admin_ctx(&state, &mount, &realm.realm, &headers).await?;
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Apply,
+        &ObjectTarget::Realm {
+            realm_id: realm.realm.clone(),
+        },
+    ))?;
+    if state.oidc.store.get_realm(&realm.realm).await?.is_some() {
         return Err(KaisatsuError::Conflict(format!(
             "Conflict detected. See logs for details: realm {} exists",
             realm.realm
