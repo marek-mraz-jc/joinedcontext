@@ -16,10 +16,10 @@ use crate::bundle::{collect_all_objects_from_tips, collect_all_tree_objects};
 use crate::pack::{Admit, write_pack};
 use crate::repo::open_isolated;
 use crate::upload_pack::collect_advertised_refs;
-use std::fmt::Display;
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Display;
 use std::io::{Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -549,7 +549,10 @@ mod tests {
         )
         .expect("init");
         // The broken ref stands for history only it names: a zero grace would prune the blob.
-        let blob = object(gix_object::Kind::Blob, b"named by the broken ref\n".to_vec());
+        let blob = object(
+            gix_object::Kind::Blob,
+            b"named by the broken ref\n".to_vec(),
+        );
         let id = blob.0;
         write_objects_as_pack(&repo, &[blob]).expect("pack");
         std::fs::write(repo.join("refs/heads/broken"), "not an object id\n").expect("bad ref");
