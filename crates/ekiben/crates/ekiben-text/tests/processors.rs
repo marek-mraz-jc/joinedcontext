@@ -318,6 +318,7 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
             Value::Uint(u64::MAX),
             Value::Number("12".into()),
             Value::Number(big.into()),
+            Value::Number(format!("-{big}")),
             Value::Number("1.5".into()),
         ]
         .into(),
@@ -325,7 +326,7 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     let out = p.process_batch(&c, vec![part(input)]).await.unwrap();
     assert_eq!(
         bytes(&out[0][0]),
-        format!("[18446744073709551615,12,{big},1.5]")
+        format!("[18446744073709551615,12,{big},-{big},1.5]")
     );
     let ts = ekiben_bloblang::time_format::utc("2026-01-02T03:04:05Z".parse().unwrap());
     for (v, want) in [
@@ -390,6 +391,17 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     .await;
     assert_eq!(out[0][0].error_get().map(|e| e.to_string()), None);
     assert_eq!(out[0][0].as_bytes_ref().len(), 64 << 20);
+    // a result nests at most 1000 levels, in arrays and in objects alike
+    for (query, nested) in [
+        ("reduce range(1000) as $i (0; [.])", false),
+        ("reduce range(1001) as $i (0; [.])", true),
+        ("reduce range(1001) as $i (0; {a: .})", true),
+    ] {
+        let out = run(&format!("jq:\n  query: '{query}'\n"), &["{}"]).await;
+        let err = out[0][0].error_get().map(|e| e.to_string());
+        let want = nested.then(|| "jq result is nested deeper than 1000 levels".to_string());
+        assert_eq!(err, want, "{query}");
+    }
     let out = run("jq:\n  query: range(100000)\n  output_raw: true\n", &["{}"]).await;
     assert_eq!(out[0][0].error_get().map(|e| e.to_string()), None);
     let out = run("jq:\n  query: range(100001)\n  output_raw: true\n", &["{}"]).await;
