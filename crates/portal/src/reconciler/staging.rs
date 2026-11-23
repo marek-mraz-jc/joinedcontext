@@ -665,22 +665,18 @@ mod tests {
         );
         let parent = base
             .write("file/inner.yaml", "x")
-            .err()
-            .expect("a file is no parent");
+            .expect_err("a file is no parent");
         assert!(
             matches!(&parent, SyncError::Scratch { path, .. } if path.ends_with("file")),
             "{parent}"
         );
         base.write("dir/inner.yaml", "x").expect("nested");
-        let onto = base
-            .write("dir", "x")
-            .err()
-            .expect("a directory is no file");
+        let onto = base.write("dir", "x").expect_err("a directory is no file");
         assert!(
             matches!(&onto, SyncError::Scratch { path, .. } if path.ends_with("dir")),
             "{onto}"
         );
-        let out = base.write("../escape", "x").err().expect("climbs out");
+        let out = base.write("../escape", "x").expect_err("climbs out");
         assert!(
             matches!(&out, SyncError::Scratch { path, .. } if path == Path::new("../escape")),
             "{out}"
