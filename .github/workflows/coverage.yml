@@ -269,7 +269,7 @@ jobs:
     if: needs.mutants-plan.outputs.ws != ''
     name: mutants-${{ needs.mutants-plan.outputs.ws }}-${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    timeout-minutes: 400
     strategy:
       fail-fast: false
       matrix: { shard: [0, 1, 2, 3] }
@@ -328,11 +328,29 @@ jobs:
         run: >-
           cargo mutants --workspace --no-shuffle --shard ${{ matrix.shard }}/4 --output "$RUNNER_TEMP"
           --config "$GITHUB_WORKSPACE/.github/mutants.toml"
+          ${{ needs.mutants-plan.outputs.ws == 'antares' && '--exclude crates/antares-jsonld/src/loader.rs' || '' }}
+      # ngsild-jsonld's loader sits behind its `fetch` feature, which the per-package test run of a
+      # mutant does not turn on: without it every loader mutant reads as missed (T-7693).
+      - name: mutate loader (fetch)
+        if: needs.mutants-plan.outputs.ws == 'antares'
+        timeout-minutes: 60
+        continue-on-error: true
+        run: >-
+          cargo mutants -p ngsild-jsonld --features fetch --file crates/antares-jsonld/src/loader.rs
+          --no-shuffle --shard ${{ matrix.shard }}/4 --output "$RUNNER_TEMP/fetch"
+          --config "$GITHUB_WORKSPACE/.github/mutants.toml"
       - if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: "mutants-${{ needs.mutants-plan.outputs.ws }}-${{ matrix.shard }}"
           path: "${{ runner.temp }}/mutants.out/outcomes.json"
+          if-no-files-found: ignore
+          retention-days: 35
+      - if: always() && needs.mutants-plan.outputs.ws == 'antares'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: "mutants-antares-fetch-${{ matrix.shard }}"
+          path: "${{ runner.temp }}/fetch/mutants.out/outcomes.json"
           if-no-files-found: ignore
           retention-days: 35
   table:

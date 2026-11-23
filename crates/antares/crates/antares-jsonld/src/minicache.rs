@@ -330,6 +330,21 @@ mod tests {
         assert_eq!(c.get(&2), Some(10), "the queue holds no stale key");
     }
 
+    /// A refused over-budget entry leaves the other residents in the FIFO
+    /// queue: the next insert past the budget still evicts the oldest.
+    #[test]
+    fn a_refused_entry_keeps_the_others_queued_for_eviction() {
+        let c = weighed(10);
+        c.insert(0, 4);
+        c.insert(1, 4);
+        c.insert(2, 11);
+        c.insert(3, 4);
+        assert_eq!(
+            (c.get(&0), c.get(&1), c.get(&3), c.weighted_size()),
+            (None, Some(4), Some(4), 8)
+        );
+    }
+
     /// Re-inserting a key with a new weight charges the new weight, and
     /// invalidating returns it to the budget.
     #[test]

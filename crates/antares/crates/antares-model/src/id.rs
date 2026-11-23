@@ -350,6 +350,10 @@ mod tests {
                 .expect("internal")
                 .is_internal());
         }
+        // a client's tenant is not one of the broker's own
+        assert!(!TenantId::new("acme")
+            .expect("a client tenant")
+            .is_internal());
         // The prefix and the exact names are matched literally: a tenant name
         // is a case-sensitive key in the store and in `SET LOCAL
         // antares.tenant`, so these share a keyspace with nothing and taking
