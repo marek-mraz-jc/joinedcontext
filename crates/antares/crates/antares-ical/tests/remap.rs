@@ -440,6 +440,12 @@ fn an_output_is_refused_with_its_reason() {
     let prague = json!({"name": "vsetky", "timezone": "Europe/Prague", "sources": [{}]});
     assert!(output(&prague).is_ok());
     let many: Vec<Value> = (0..11).map(|_| json!({})).collect();
+    // the bounds themselves hold: limit 10000, ten sources of distinct types
+    let ten: Vec<Value> = (0..10)
+        .map(|i| json!({"type": format!("T{i}"), "mapping": {"DTSTART": "startDate", "SUMMARY": "name"}}))
+        .collect();
+    assert!(output(&json!({"name": "vsetky", "limit": 10_000, "sources": [{}]})).is_ok());
+    assert!(output(&json!({"name": "vsetky", "sources": ten})).is_ok());
     for (bad, why) in [
         (json!({"version": 2}), "version"),
         (json!({"name": "Všetky"}), "1 to 40"),
@@ -450,6 +456,7 @@ fn an_output_is_refused_with_its_reason() {
         ),
         (json!({"lang": "slovensky"}), "language tag"),
         (json!({"limit": 0}), "limit"),
+        (json!({"limit": 10_001}), "limit"),
         (json!({"sort": "name"}), "start or -start"),
         (json!({"filter": {"q": "a==1\n"}}), "filter"),
         (json!({"sources": []}), "1 to 10"),
@@ -459,6 +466,14 @@ fn an_output_is_refused_with_its_reason() {
         (
             json!({"sources": [{"type": "Festival"}]}),
             "no calendar preset",
+        ),
+        (
+            json!({"sources": [{"type": "Festival", "preset": "sdm-event", "mapping": {"DTSTART": "startDate"}}]}),
+            "no calendar preset",
+        ),
+        (
+            json!({"sources": [{"mapping": {"SUMMARY": {"attribute": "name", "default": "x"}}}]}),
+            "does not take `map`",
         ),
     ] {
         let mut o = ok.clone();

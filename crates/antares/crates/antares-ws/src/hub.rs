@@ -786,6 +786,20 @@ mod tests {
         st.ring.iter().map(|(_, t)| t.len()).sum()
     }
 
+    /// A ring of exactly `count` texts under the budget keeps every one.
+    #[test]
+    fn a_ring_at_its_count_is_not_trimmed() {
+        let mut st = attached();
+        for seq in 1..=3u64 {
+            st.ring.push_back((seq, "t".to_owned()));
+        }
+        st.ring_bytes = 3;
+        st.trim(3, 1024, 0);
+        assert_eq!(st.ring.len(), 3);
+        st.trim(2, 1024, 0);
+        assert_eq!(st.ring.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [2, 3]);
+    }
+
     /// F-ANT3-001: 256 notifications of 900 KiB, each drained as it comes,
     /// leave the ring under the byte budget, not 256 of them.
     #[test]
