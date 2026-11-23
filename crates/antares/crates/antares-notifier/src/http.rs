@@ -409,8 +409,9 @@ mod tests {
             .expect_err("503 is not a delivery");
         assert_eq!(err, DeliveryError::failed("HTTP 503"));
 
-        // nothing listening: the driver's error, answered at once, so not a
-        // timeout, and the endpoint's credentials stay out of the message
+        // nothing listening: no connection could be made, which counts as
+        // unreachable for the breaker, and the endpoint's credentials stay out
+        // of the message
         let closed = tokio::net::TcpSocket::new_v4().expect("socket");
         closed
             .bind("127.0.0.1:0".parse().expect("addr"))
@@ -425,7 +426,7 @@ mod tests {
             .await
             .expect_err("refused");
         drop(closed);
-        assert!(!err.timed_out, "{err:?}");
+        assert!(err.unreachable, "{err:?}");
         assert!(!err.message.contains("s3cret"), "{err:?}");
     }
 
