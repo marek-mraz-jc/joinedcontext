@@ -69,6 +69,24 @@ pub struct OrganizationAppearance {
     /// fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font: Option<AppearanceFont>,
+    /// The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_font: Option<AppearanceFont>,
+    /// The body text's typeface over `font`, from the same fixed set, e.g. `system`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_font: Option<AppearanceFont>,
+    /// The base text size in pixels, 14 to 18, e.g. `16`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+    /// How wide the content runs: `narrow`, `normal` (the default) or `wide`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<ContentWidth>,
+    /// How buttons look: `filled` (the default) or `outline`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_style: Option<ButtonStyle>,
+    /// Whether cards carry a shadow: `soft` (the default) or `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_shadow: Option<CardShadow>,
     /// The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub radius: Option<u8>,
@@ -335,6 +353,54 @@ impl AppearanceFont {
     }
 }
 
+/// The smallest and largest base text size in pixels (T-7744).
+pub const MIN_FONT_SIZE: u8 = 14;
+/// See [`MIN_FONT_SIZE`].
+pub const MAX_FONT_SIZE: u8 = 18;
+
+/// `spec.appearance.width`: how wide the open data portal's content runs (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentWidth {
+    /// About 60 rem, for reading.
+    Narrow,
+    /// About 76 rem, the built-in width.
+    Normal,
+    /// About 90 rem, for wide tables.
+    Wide,
+}
+
+impl ContentWidth {
+    /// The CSS length of the content's largest width.
+    pub fn css(self) -> &'static str {
+        match self {
+            Self::Narrow => "60rem",
+            Self::Normal => "76rem",
+            Self::Wide => "90rem",
+        }
+    }
+}
+
+/// `spec.appearance.buttonStyle` (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonStyle {
+    /// The primary colour filled in.
+    Filled,
+    /// The primary colour as border and text.
+    Outline,
+}
+
+/// `spec.appearance.cardShadow` (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CardShadow {
+    /// Flat cards with a border only.
+    None,
+    /// A soft shadow under each card.
+    Soft,
+}
+
 /// `spec.appearance.datasetList`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -411,6 +477,21 @@ pub struct AppearanceColours {
     /// Body text, e.g. `#0f172a`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    /// The open data portal's header bar, e.g. `#0b5394`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_background: Option<String>,
+    /// Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_text: Option<String>,
+    /// The page footer, e.g. `#0f172a`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_background: Option<String>,
+    /// Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_text: Option<String>,
 }
 
 impl AppearanceColours {
@@ -419,13 +500,48 @@ impl AppearanceColours {
         *self == Self::default()
     }
 
-    fn named(&self) -> [(&'static str, &Option<String>); 5] {
+    fn named(&self) -> [(&'static str, &Option<String>); 10] {
         [
             ("spec.appearance.colours.primary", &self.primary),
             ("spec.appearance.colours.secondary", &self.secondary),
             ("spec.appearance.colours.accent", &self.accent),
             ("spec.appearance.colours.background", &self.background),
             ("spec.appearance.colours.text", &self.text),
+            ("spec.appearance.colours.link", &self.link),
+            (
+                "spec.appearance.colours.headerBackground",
+                &self.header_background,
+            ),
+            ("spec.appearance.colours.headerText", &self.header_text),
+            (
+                "spec.appearance.colours.footerBackground",
+                &self.footer_background,
+            ),
+            ("spec.appearance.colours.footerText", &self.footer_text),
+        ]
+    }
+
+    /// Each foreground colour with the background it is read on, both as set (T-7744): text,
+    /// primary and link on the page background, header and footer text on their own.
+    pub fn pairs(&self) -> [(&'static str, &Option<String>, &Option<String>); 5] {
+        [
+            ("spec.appearance.colours.text", &self.text, &self.background),
+            (
+                "spec.appearance.colours.primary",
+                &self.primary,
+                &self.background,
+            ),
+            ("spec.appearance.colours.link", &self.link, &self.background),
+            (
+                "spec.appearance.colours.headerText",
+                &self.header_text,
+                &self.header_background,
+            ),
+            (
+                "spec.appearance.colours.footerText",
+                &self.footer_text,
+                &self.footer_background,
+            ),
         ]
     }
 }
@@ -501,6 +617,12 @@ impl OrganizationAppearance {
         if self.radius.is_some_and(|r| r > MAX_APPEARANCE_RADIUS) {
             return Err(invalid("spec.appearance.radius", "0 to 24 pixels"));
         }
+        if self
+            .font_size
+            .is_some_and(|s| !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s))
+        {
+            return Err(invalid("spec.appearance.fontSize", "14 to 18 pixels"));
+        }
         if let Some(title) = &self.hero.title {
             plain_text("spec.appearance.hero.title", title)?;
         }
@@ -526,20 +648,15 @@ impl OrganizationAppearance {
     /// appearance sets both of the pair; a pair with one member set is checked where it meets
     /// the installation's colour, by the page that draws it.
     fn contrast(&self) -> Result<()> {
-        let Some(background) = &self.colours.background else {
-            return Ok(());
-        };
-        for (field, colour) in [
-            ("spec.appearance.colours.text", &self.colours.text),
-            ("spec.appearance.colours.primary", &self.colours.primary),
-        ] {
+        for (field, colour, background) in self.colours.pairs() {
             let ratio = colour
                 .as_deref()
-                .and_then(|c| contrast_ratio(c, background));
+                .zip(background.as_deref())
+                .and_then(|(c, b)| contrast_ratio(c, b));
             if ratio.is_some_and(|r| r < MIN_CONTRAST) {
                 return Err(invalid(
                     field,
-                    "a colour with a contrast of at least 4.5:1 on the background (WCAG AA)",
+                    "a colour with a contrast of at least 4.5:1 on its background (WCAG AA)",
                 ));
             }
         }
@@ -569,6 +686,11 @@ impl OrganizationAppearance {
                 accent: pick(&c.accent, &u.accent),
                 background: pick(&c.background, &u.background),
                 text: pick(&c.text, &u.text),
+                link: pick(&c.link, &u.link),
+                header_background: pick(&c.header_background, &u.header_background),
+                header_text: pick(&c.header_text, &u.header_text),
+                footer_background: pick(&c.footer_background, &u.footer_background),
+                footer_text: pick(&c.footer_text, &u.footer_text),
             },
             logo_svg: pick(&self.logo_svg, &under.logo_svg),
             favicon_svg: pick(&self.favicon_svg, &under.favicon_svg),
@@ -576,6 +698,12 @@ impl OrganizationAppearance {
             opendata_widgets: list(&self.opendata_widgets, &under.opendata_widgets),
             pages: list(&self.pages, &under.pages),
             font: self.font.or(under.font),
+            heading_font: self.heading_font.or(under.heading_font),
+            body_font: self.body_font.or(under.body_font),
+            font_size: self.font_size.or(under.font_size),
+            width: self.width.or(under.width),
+            button_style: self.button_style.or(under.button_style),
+            card_shadow: self.card_shadow.or(under.card_shadow),
             radius: self.radius.or(under.radius),
             hero: AppearanceHero {
                 title: pick(&self.hero.title, &under.hero.title),
@@ -832,6 +960,89 @@ mod tests {
         serde_json::from_value::<OrganizationAppearance>(appearance)
             .expect("parses")
             .validate()
+    }
+
+    /// T-7744: each style token is refused by its own path: a colour not hex, a text size out
+    /// of 14 to 18, a pair below WCAG AA; an unknown enum value does not parse.
+    #[test]
+    fn style_tokens_are_refused_by_their_path() {
+        let fine = json!({
+            "colours": { "link": "#1d4ed8", "headerBackground": "#0b5394", "headerText": "#ffffff",
+                         "footerBackground": "#0f172a", "footerText": "#ffffff" },
+            "headingFont": "serif", "bodyFont": "system", "fontSize": 16, "width": "wide",
+            "buttonStyle": "outline", "cardShadow": "none",
+        });
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        for (look, field) in [
+            (
+                json!({ "colours": { "link": "blue" } }),
+                "spec.appearance.colours.link",
+            ),
+            (
+                json!({ "colours": { "headerBackground": "#12" } }),
+                "spec.appearance.colours.headerBackground",
+            ),
+            (
+                json!({ "colours": { "footerText": "#fff;}" } }),
+                "spec.appearance.colours.footerText",
+            ),
+            (json!({ "fontSize": 13 }), "spec.appearance.fontSize"),
+            (json!({ "fontSize": 19 }), "spec.appearance.fontSize"),
+            (
+                json!({ "colours": { "headerText": "#777777", "headerBackground": "#888888" } }),
+                "spec.appearance.colours.headerText",
+            ),
+            (
+                json!({ "colours": { "footerText": "#0f172a", "footerBackground": "#000000" } }),
+                "spec.appearance.colours.footerText",
+            ),
+            (
+                json!({ "colours": { "link": "#eeeeee", "background": "#ffffff" } }),
+                "spec.appearance.colours.link",
+            ),
+        ] {
+            match checked(look.clone()) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{look}"),
+                other => panic!("{look}: {other:?}"),
+            }
+        }
+        for look in [
+            json!({ "width": "huge" }),
+            json!({ "buttonStyle": "ghost" }),
+            json!({ "cardShadow": "hard" }),
+            json!({ "headingFont": "comic" }),
+        ] {
+            assert!(
+                serde_json::from_value::<OrganizationAppearance>(look.clone()).is_err(),
+                "{look}"
+            );
+        }
+    }
+
+    /// T-7744: a Portal's token goes over its Organization's one by one; removing it (reset)
+    /// shows the Organization's again.
+    #[test]
+    fn style_tokens_cascade_and_reset() {
+        let look = |v: serde_json::Value| {
+            serde_json::from_value::<OrganizationAppearance>(v).expect("parses")
+        };
+        let org =
+            look(json!({ "colours": { "link": "#1d4ed8" }, "width": "wide", "fontSize": 15 }));
+        let portal = look(
+            json!({ "colours": { "headerBackground": "#0b5394" }, "fontSize": 17, "buttonStyle": "outline" }),
+        );
+        let shown = portal.over(&org);
+        assert_eq!(shown.colours.link.as_deref(), Some("#1d4ed8"));
+        assert_eq!(shown.colours.header_background.as_deref(), Some("#0b5394"));
+        assert_eq!(
+            (shown.font_size, shown.width, shown.button_style),
+            (
+                Some(17),
+                Some(ContentWidth::Wide),
+                Some(ButtonStyle::Outline)
+            )
+        );
+        assert_eq!(OrganizationAppearance::default().over(&org), org);
     }
 
     /// T-7743: a display names only known sections, about rows and list fields, each once,

@@ -64,8 +64,9 @@ pub use app::{
 };
 pub use appearance::{
     contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceDisplay,
-    AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, DatasetDisplay,
-    DatasetListDisplay, DatasetListLayout, DisplaySection, OrganizationAppearance,
+    AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, ButtonStyle, CardShadow,
+    ContentWidth, DatasetDisplay, DatasetListDisplay, DatasetListLayout, DisplaySection,
+    OrganizationAppearance,
 };
 pub use assistant::{
     AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,
