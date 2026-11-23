@@ -106,9 +106,7 @@ async fn logo_get(
     Path(realm_name): Path<String>,
     Query(query): Query<LogoQuery>,
 ) -> Result<Response> {
-    let Some(realm) = state.store.get_realm(&realm_name).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let realm = named_realm(&state, &realm_name).await?;
     let branding = branding_for(&state, &realm, [query.org.as_deref()]).await?;
     if branding.logo_svg.is_empty() {
         return Ok(StatusCode::NOT_FOUND.into_response());

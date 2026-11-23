@@ -87,15 +87,6 @@ struct Caller {
     mount: Mount,
 }
 
-async fn realm_of(state: &OidcState, name: &str) -> Result<RealmConfig> {
-    state
-        .store
-        .get_realm(name)
-        .await?
-        .filter(|r| r.enabled)
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
-}
-
 /// Verifies the bearer token: this realm's issuer and keys, audience `account`, an access token
 /// of the account console itself (`azp`, no `act`),
 /// DPoP when it is bound, not revoked, its SSO session alive and held by the token's person.
@@ -107,7 +98,7 @@ async fn caller(
     headers: &HeaderMap,
     mount_ext: Option<&Mount>,
 ) -> Result<Caller> {
-    let realm = realm_of(state, realm_name).await?;
+    let realm = kaisatsu_oidc::named_realm(state, realm_name).await?;
     let mount = state.mount_from(mount_ext);
     let (dpop_scheme, raw_token) = kaisatsu_oidc::parse_authz_header(headers)?;
     let keys = state.store.list_signing_keys(&realm.id).await?;
@@ -224,7 +215,7 @@ async fn allowed_origin(
     let Some(origin) = headers.get(header::ORIGIN) else {
         return Ok(None);
     };
-    let realm = realm_of(state, realm_name).await?;
+    let realm = kaisatsu_oidc::named_realm(state, realm_name).await?;
     let presented = origin.to_str().unwrap_or_default();
     if console_origins(state, &realm)
         .await?
@@ -906,7 +897,7 @@ async fn render_console(
     headers: &HeaderMap,
     mount_ext: Option<&Mount>,
 ) -> Result<Response> {
-    let realm = realm_of(state, realm_name).await?;
+    let realm = kaisatsu_oidc::named_realm(state, realm_name).await?;
     let mount = state.mount_from(mount_ext);
     let accept_lang = headers
         .get(header::ACCEPT_LANGUAGE)
