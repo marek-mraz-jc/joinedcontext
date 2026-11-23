@@ -364,6 +364,18 @@ async fn an_old_dataset_address_redirects() {
         .await
         .unwrap()
         .unwrap();
+    // A catalogue with no base of its own is no new home, though the installation has one.
+    let mut delta = cat.clone();
+    delta.id = CatalogueId::from_uuid(Uuid::from_u128(0xF1));
+    delta.name = "delta".into();
+    delta.host = "delta.city.test".into();
+    state.store.upsert_catalogue(delta).await.unwrap();
+    seed(&state, DEFAULT, ("van", "vanslug", "public"), true).await;
+    seed(&state, 0xF1, ("van", "vanslug", "public"), false).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/van").await,
+        (StatusCode::NOT_FOUND, None)
+    );
     seed(&state, GAMMA, ("air", "airslug", "public"), false).await;
     cat.hidden_datasets.insert("air".into(), "kept out".into());
     state.store.upsert_catalogue(cat.clone()).await.unwrap();

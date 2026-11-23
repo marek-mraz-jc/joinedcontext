@@ -904,6 +904,15 @@ async fn ckan_site_and_listing_actions() {
     // An authenticated GET is not publicly cacheable.
     let a = get(app, "/api/3/action/site_read", Some("tok-member")).await;
     assert_eq!(a.header("cache-control"), "private, no-store");
+    // A public dataset is publicly cacheable for anonymous callers alone.
+    for (token, cache) in [
+        (None, "public, max-age=60"),
+        (Some("tok-member"), "private, no-store"),
+    ] {
+        let a = get(app, "/api/3/action/package_show?id=open", token).await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.header("cache-control"), cache, "{token:?}");
+    }
 
     // tag_list: tags of public active datasets only.
     let tags = get(app, "/api/3/action/tag_list", None).await.json()["result"].clone();
@@ -1364,10 +1373,12 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["organization"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["organization"].is_object()
+            && v["result"]["search_facets"]["license_id"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = ckan(
         app,
         "package_search",
@@ -1387,10 +1398,19 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["tags"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["tags"].is_object()
+            && v["result"]["search_facets"]["organization"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    // An anonymous search is publicly cacheable unless it asks for private records.
+    for (flags, cache) in [
+        ("", "public, max-age=60"),
+        ("?include_private=true", "private, no-store"),
+    ] {
+        let a = get(app, &format!("/api/3/action/package_search{flags}"), None).await;
+        assert_eq!(a.header("cache-control"), cache, "{flags}");
+    }
     assert_eq!(v["result"]["sort"], "score desc, metadata_modified desc");
     let a = get(
         app,
@@ -1423,6 +1443,15 @@ async fn ckan_dataset_and_resource_writes() {
         "package_create",
         Some("tok-editor"),
         json!({"name": "open"}),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
+    // A caller who sees the dataset learns the name is taken, though it may not propose one.
+    let a = ckan(
+        app,
+        "package_create",
+        Some("tok-member"),
+        json!({"name": "open", "owner_org": "city"}),
     )
     .await;
     assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
@@ -2633,6 +2662,21 @@ async fn odata_rows_follow_package_show() {
     assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
     let a = get(app, "/odata/v4/Datasets('pkg-open')", None).await;
     assert_eq!(a.json()["name"], "open", "{}", a.body);
+    // The count keeps the filter and its aliases.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20'open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "the filter counts one");
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20@n&@n='open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "an alias fills the filter");
     let a = get(app, "/odata/v4/Distributions/$count", None).await;
     assert_eq!(a.body, "4", "two datasets with two distributions each");
     let a = get(app, "/odata/v4/Datasets?$count=true&$top=1", None).await;
@@ -4189,18 +4233,18 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     // `?lang=` picks an offered language; any other value leaves the default in place.
     let a = get(app, "/about?lang=en", None).await;
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
     // A language in the path outranks `?lang=`.
     let a = get(app, "/sk/about?lang=en", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
@@ -4438,6 +4482,33 @@ async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
         }
     }
 
+    // The flags widen an admin's search, one each: a draft, a withdrawn publisher's dataset.
+    for (flags, draft, orphan) in [
+        ("", false, false),
+        ("&include_drafts=true", true, false),
+        ("&include_private=true", false, true),
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50{flags}"),
+            Some("tok-admin"),
+        )
+        .await;
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            (
+                names.iter().any(|n| n == "draft-one"),
+                names.iter().any(|n| n == "orphan")
+            ),
+            (draft, orphan),
+            "{flags}: {names:?}"
+        );
+    }
     let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     assert!(!a.body.contains("veiled"), "{}", a.body);
