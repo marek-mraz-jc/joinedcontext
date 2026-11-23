@@ -252,7 +252,7 @@ pub fn format_rfc3339_nano(t: &GoTime) -> String {
     if off == 0 {
         s.push('Z');
     } else {
-        let sign = if off < 0 { '-' } else { '+' };
+        let sign = if off.is_negative() { '-' } else { '+' };
         let a = off.abs();
         s.push_str(&format!("{sign}{:02}:{:02}", a / 3600, a % 3600 / 60));
     }
