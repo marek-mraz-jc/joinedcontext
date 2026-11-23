@@ -798,6 +798,259 @@ async fn mirrors_packages_and_tags() {
     assert!(tags["value"].as_array().unwrap().is_empty());
 }
 
+/// Every write operation of the registry, through the door, leaves exactly one audit row that
+/// commits with it (S6-20), carrying the registry's `audit_kind`, the actor's subject id and ids,
+/// never a secret. A new write operation fails this test until it is in the table.
+#[tokio::test]
+async fn every_write_operation_leaves_one_audit_row() {
+    use shako_core::Store as _;
+    let w = world().await;
+    let copy_r = "/odata/Repositories(Owner='joinedcontext',Name='helsinki-copy')";
+    let compat = "/api/v1/repos/joinedcontext/helsinki";
+    let file =
+        |path: &str| json!([{"operation": "create", "path": path, "content": b64("x: 1\n")}]);
+    let commit_body = |branch: &str, path: &str| json!({"Branch": branch, "Message": "change", "Files": file(path)});
+    let mut steps: Vec<(&str, &str, String, Option<Value>)> = vec![
+        (
+            "CreateRepository",
+            "POST",
+            "/odata/CreateRepository".into(),
+            Some(json!({"Owner": "joinedcontext", "Name": "helsinki"})),
+        ),
+        (
+            "ImportRepository",
+            "POST",
+            "/odata/ImportRepository".into(),
+            Some(
+                json!({"SourceOwner": "joinedcontext", "SourceName": "helsinki", "RepoOwner": "joinedcontext", "RepoName": "helsinki-copy"}),
+            ),
+        ),
+        (
+            "Archive",
+            "POST",
+            format!("{copy_r}/Shako.Archive"),
+            Some(json!({})),
+        ),
+        ("Delete", "DELETE", copy_r.into(), None),
+        (
+            "AddWebhook",
+            "POST",
+            format!("{R}/Shako.AddWebhook"),
+            Some(json!({"Url": HOOK_URL, "Secret": HOOK_SECRET})),
+        ),
+        (
+            "CreateBranch",
+            "POST",
+            format!("{R}/Shako.CreateBranch"),
+            Some(json!({"NewBranchName": "feature", "OldBranchName": "main"})),
+        ),
+        (
+            "CommitFiles",
+            "POST",
+            format!("{R}/Shako.CommitFiles"),
+            Some(commit_body("feature", "a.yaml")),
+        ),
+        (
+            "OpenPullRequest",
+            "POST",
+            format!("{R}/Shako.OpenPullRequest"),
+            Some(json!({"Head": "feature", "Base": "main", "Title": "Add a", "Body": "why"})),
+        ),
+        (
+            "Review",
+            "POST",
+            format!("{R}/PullRequests(1)/Shako.Review"),
+            Some(json!({"Event": "COMMENT", "Body": "looks right"})),
+        ),
+        (
+            "CommitFiles",
+            "POST",
+            format!("{R}/Shako.CommitFiles"),
+            Some(commit_body("main", "b.yaml")),
+        ),
+        (
+            "UpdateBranch",
+            "POST",
+            format!("{R}/PullRequests(1)/Shako.UpdateBranch"),
+            Some(json!({})),
+        ),
+        (
+            "Merge",
+            "POST",
+            format!("{R}/PullRequests(1)/Shako.Merge"),
+            Some(json!({"Style": "merge"})),
+        ),
+        (
+            "CreateBranch",
+            "POST",
+            format!("{R}/Shako.CreateBranch"),
+            Some(json!({"NewBranchName": "second", "OldBranchName": "main"})),
+        ),
+        (
+            "CommitFiles",
+            "POST",
+            format!("{R}/Shako.CommitFiles"),
+            Some(commit_body("second", "c.yaml")),
+        ),
+        (
+            "OpenPullRequest",
+            "POST",
+            format!("{R}/Shako.OpenPullRequest"),
+            Some(json!({"Head": "second", "Base": "main", "Title": "Add c", "Body": "why"})),
+        ),
+        (
+            "PatchPullRequest",
+            "PATCH",
+            format!("{compat}/pulls/2"),
+            Some(json!({"title": "Add c, renamed"})),
+        ),
+        (
+            "Close",
+            "POST",
+            format!("{R}/PullRequests(2)/Shako.Close"),
+            Some(json!({})),
+        ),
+        (
+            "DeleteBranch",
+            "POST",
+            format!("{R}/Shako.DeleteBranch"),
+            Some(json!({"Branch": "second"})),
+        ),
+        (
+            "Protect",
+            "POST",
+            format!("{R}/Shako.Protect"),
+            Some(json!({"Rule": {"rule_name": "release"}})),
+        ),
+        (
+            "Unprotect",
+            "POST",
+            format!("{R}/Shako.Unprotect"),
+            Some(json!({"Pattern": "release"})),
+        ),
+        (
+            "AddPushMirror",
+            "POST",
+            format!("{R}/Shako.AddPushMirror"),
+            Some(
+                json!({"RemoteAddress": "https://github.com/joinedcontext-apps/helsinki.git", "Credential": "ghp_auditmirrorcredential12345", "SyncOnCommit": false}),
+            ),
+        ),
+        (
+            "SyncPushMirrors",
+            "POST",
+            format!("{R}/Shako.SyncPushMirrors"),
+            Some(json!({})),
+        ),
+        (
+            "PublishPackage",
+            "POST",
+            "/odata/PublishPackage".into(),
+            Some(
+                json!({"Owner": "joinedcontext", "Package": "bikes-ui", "Version": "1.0.0", "File": "app.tar", "ContentBase64": b64("bundle bytes")}),
+            ),
+        ),
+        (
+            "PatchRepository",
+            "PATCH",
+            compat.into(),
+            Some(json!({"description": "City bikes"})),
+        ),
+    ];
+    let rows = || {
+        w.store
+            .list_audit(InstanceId::from_u128(1), OrgId::from_u128(10))
+    };
+    let mut seen = Vec::new();
+    let mut i = 0;
+    while i < steps.len() {
+        let (operation, method, uri, body) = steps[i].clone();
+        let before = rows().await.expect("rows").len();
+        let (st, answer, _) = call(&w.app, method, &uri, Some("portal-token"), body).await;
+        assert!(st.is_success(), "{operation}: {st} {answer}");
+        let after = rows().await.expect("rows");
+        assert_eq!(after.len(), before + 1, "{operation} leaves one row");
+        let row = after.last().expect("row");
+        let kind = w
+            .state
+            .registry
+            .find(operation)
+            .filter(|op| op.name == operation)
+            .map_or_else(
+                || match operation {
+                    "PatchRepository" => "REPO_UPDATE",
+                    "PatchPullRequest" => "PR_UPDATE",
+                    _ => "STATUS_SET",
+                },
+                |op| op.audit_kind,
+            );
+        assert_eq!(
+            (row.operation.as_str(), row.kind.as_str()),
+            (operation, kind)
+        );
+        assert_eq!(row.actor_id, "jc-portal");
+        assert_eq!(row.decision, "allow");
+        let text = serde_json::to_string(row).expect("row json");
+        for never in [
+            HOOK_SECRET,
+            "ghp_auditmirrorcredential12345",
+            "bundle bytes",
+            "@",
+        ] {
+            assert!(
+                !text.contains(never),
+                "{operation}: the row holds {never}: {text}"
+            );
+        }
+        // The steps that need an id the previous answer gave.
+        match operation {
+            "AddWebhook" => {
+                let id = answer["Id"].as_str().expect("hook id").to_owned();
+                steps.push((
+                    "RedeliverWebhook",
+                    "POST",
+                    format!("/odata/Webhooks('{id}')/Shako.RedeliverWebhook"),
+                    Some(json!({})),
+                ));
+            }
+            "AddPushMirror" => {
+                let name = answer["Name"].as_str().expect("mirror name").to_owned();
+                steps.push((
+                    "RemovePushMirror",
+                    "POST",
+                    format!("{R}/Shako.RemovePushMirror"),
+                    Some(json!({"Name": name})),
+                ));
+            }
+            "Merge" => {
+                let sha = answer["Sha"].as_str().expect("merge sha").to_owned();
+                steps.push((
+                    "SetCommitStatus",
+                    "POST",
+                    format!("{compat}/statuses/{sha}"),
+                    Some(json!({"state": "success", "context": "ci"})),
+                ));
+            }
+            _ => {}
+        }
+        seen.push(operation);
+        i += 1;
+    }
+    let missing: Vec<&str> = w
+        .state
+        .registry
+        .operations()
+        .iter()
+        .filter(|op| op.rest_method != "GET")
+        .map(|op| op.name)
+        .filter(|name| !seen.contains(name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "write operations without an audit row step: {missing:?}"
+    );
+}
+
 /// `$expand` on a set without navigation properties is a 400, never a silently smaller answer.
 #[tokio::test]
 async fn an_expand_on_a_set_that_expands_nothing_is_400() {

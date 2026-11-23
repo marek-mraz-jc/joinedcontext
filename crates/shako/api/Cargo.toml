@@ -14,6 +14,7 @@ axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 bytes = "1.12"
 jc-time = { path = "../../shared/jc-time" }
+jc-audit = { path = "../../shared/jc-audit" }
 futures-util = "0.3"
 gix-ref = "0.69"
 hex = "0.4"

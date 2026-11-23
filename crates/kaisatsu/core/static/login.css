@@ -893,3 +893,6 @@ a {
     border: 2px solid var(--pf-v5-global--BorderColor--100);
     box-shadow: var(--pf-v5-global--BoxShadow--lg-right);
 }
+
+/* Touch screens: every button and the language picker are at least 44 px tall (WCAG 2.5.5). */
+@media (pointer: coarse) { .pf-v5-c-button, #login-select-toggle { min-height: 44px; } }

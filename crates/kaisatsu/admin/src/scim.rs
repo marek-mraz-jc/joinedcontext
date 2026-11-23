@@ -1435,7 +1435,7 @@ async fn scim_put_group(
         crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &grp)
             .await?;
     }
-    let grp = state.oidc.store.upsert_group(grp).await?;
+    let grp = state.oidc.store.update_group(grp).await?;
     record_admin_write(
         &state,
         &ctx,
@@ -1686,7 +1686,7 @@ async fn scim_patch_group(
             "a group with this displayName exists: choose another name",
         ));
     }
-    let grp = state.oidc.store.upsert_group(grp).await?;
+    let grp = state.oidc.store.update_group(grp).await?;
     record_admin_write(
         &state,
         &ctx,

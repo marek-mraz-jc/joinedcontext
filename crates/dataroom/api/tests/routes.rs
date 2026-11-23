@@ -76,6 +76,7 @@ impl Store for FailingStore {
         list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
         get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
         upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        save_catalogue<'a>(catalogue: Catalogue, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Catalogue;
         delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
@@ -85,6 +86,7 @@ impl Store for FailingStore {
         list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
         get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
         upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
+        save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Dataset;
         withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
         purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> ();
         get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
@@ -140,7 +142,11 @@ fn catalogue(org: OrgId, cat: CatalogueId) -> Catalogue {
         "title": {"sk": "Mestský katalóg", "en": "City catalogue"},
         "description": {"sk": "Otvorené dáta & <mesto>"},
         "defaultLanguage": "sk", "languages": ["sk", "en"],
-        "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [],
+        "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [
+            {"profileId": "dcat-ap-sk-2.0", "version": "2.0.1"},
+            {"profileId": "dcat-ap-cz", "version": "2026-09-23"},
+        ],
+        "publisherUri": "https://data.gov.sk/id/legal-subject/00313271",
         "hiddenDatasets": {"veiled": "quality check pending"},
         "modified": "2026-11-01T10:00:00Z"
     }))
@@ -166,7 +172,9 @@ fn dataset(name: &str, publisher: &str, visibility: &str, modified_day: u32) -> 
         "publisherId": publisher, "visibility": visibility, "state": "active",
         "licenceId": "cc-by", "themes": ["http://publications.europa.eu/resource/authority/data-theme/ENVI"],
         "keywords": {"sk": ["ovzdušie"]}, "tags": ["ovzdusie", name],
-        "spatial": ["SK032"],
+        "spatial": ["SK032"], "frequency": "daily",
+        "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+        "extras": {"personal_data": "does-not-contain"},
         "distributions": [
             {"id": "", "datasetId": "", "title": {"sk": format!("CSV {name}")},
              "accessUrl": format!("https://files.example.org/{name}.csv"), "format": "CSV"},
@@ -1945,7 +1953,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"package_id": "open"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_create",
             Some("tok-editor"),
             json!({"package_id": "open", "url": "https://f.example/x"}),
@@ -1957,7 +1965,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_update",
             Some("tok-editor"),
             json!({"id": "res-open-0", "name": "x"}),
@@ -1969,7 +1977,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_delete",
             Some("tok-editor"),
             json!({"id": "res-open-0"}),
@@ -2327,6 +2335,146 @@ async fn atom_feeds_list_public_datasets_newest_first() {
         "{}",
         a.body
     );
+}
+
+/// T-7521 C8: one selection for every feed and for a dataset's own RDF.
+#[tokio::test]
+async fn a_catalogue_serves_the_profiles_it_chose_and_no_other() {
+    let w = world().await;
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.active_profiles
+        .retain(|p| p.profile_id == "dcat-ap-sk-2.0");
+    w.store.upsert_catalogue(cat.clone()).await.unwrap();
+
+    // Named and not served: 404, whether installed, unknown or half a name.
+    for uri in [
+        "/profiles/dcat-ap-cz/catalog.ttl",
+        "/profiles/nobody/catalog.ttl",
+        "/profiles/dcat-ap-sk-2.0-draft/catalog.ttl",
+        "/profiles/dcat-ap-sk-2.0/catalog.csv",
+        "/catalog.ttl?_profile=cz",
+        "/dataset/open.ttl?_profile=dcat-ap-cz",
+    ] {
+        let a = get(&w.app, uri, None).await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{uri}: {}", a.body);
+    }
+    for uri in [
+        "/profiles/sk/catalog.rdf",
+        "/profiles/dcat-ap-sk-2.0/catalog.nt",
+        "/profiles/eu/catalog.ttl",
+    ] {
+        let a = get(&w.app, uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}: {}", a.body);
+    }
+    // An Accept-Profile entry not served is passed over.
+    let a = send(
+        &w.app,
+        Method::GET,
+        "/catalog.ttl",
+        None,
+        &[("accept-profile", "cz, sk;q=0.5")],
+        Body::empty(),
+    )
+    .await;
+    assert!(a.header("content-profile").contains("dcat-ap-sk-2.0"));
+
+    // 101 datasets: every page link keeps the profile.
+    let ctx = w.admin_ctx();
+    for n in 0..99 {
+        let more = dataset(&format!("more-{n}"), "city", "public", 3);
+        w.store.upsert_dataset(&ctx, more).await.unwrap();
+    }
+    let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
+    assert!(
+        a.body.contains("?page=2&_profile=dcat-ap-sk-2.0"),
+        "{}",
+        &a.body[..900]
+    );
+    let a = get(&w.app, "/catalog.ttl?page=2&_profile=dcat-ap-sk-2.0", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(a.header("content-profile").contains("dcat-ap-sk-2.0"));
+    let a = get(&w.app, "/catalog.ttl", None).await;
+    assert!(!a.body.contains("_profile="), "the default needs no name");
+
+    // A pin this build does not know: that feed alone is closed, never empty (C7).
+    cat.active_profiles
+        .push(serde_json::from_value(json!({"profileId": "dcat-ap-zz", "version": "1"})).unwrap());
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let a = get(&w.app, "/profiles/dcat-ap-zz/catalog.ttl", None).await;
+    assert_eq!(a.status, StatusCode::SERVICE_UNAVAILABLE, "{}", a.body);
+    let a = get(&w.app, "/catalog.ttl", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+}
+
+/// T-7521: the server re-checks a profile a catalogue takes up.
+#[tokio::test]
+async fn activation_refuses_what_a_portal_manages_or_a_publisher_is_missing_for() {
+    let w = world_with(|s| router(s.with_sources_by_portal(true))).await;
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.active_profiles.clear();
+    w.store.upsert_catalogue(cat.clone()).await.unwrap();
+    let activate = "/api/v1/profiles/dcat-ap-sk-2.0/activate";
+    let body = json!({"version": "2.0.1"});
+    let a = post(&w.app, activate, Some("tok-admin"), body.clone()).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    assert!(a.body.contains("spec.profiles"), "{}", a.body);
+
+    let w = world().await;
+    cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.active_profiles.clear();
+    cat.publisher_uri = None;
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let a = post(&w.app, activate, Some("tok-admin"), body.clone()).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    assert!(a.body.contains("publisherUri"), "{}", a.body);
+    let a = post(&w.app, activate, Some("tok-member"), body).await;
+    assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+}
+
+#[tokio::test]
+async fn a_national_feed_names_what_is_missing_and_is_never_empty() {
+    let w = world().await;
+    let ctx = w.admin_ctx();
+    let sk = "/profiles/dcat-ap-sk-2.0/catalog.ttl";
+    let a = get(&w.app, sk, None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(a.body.contains("open.csv"), "the complete dataset is in it");
+
+    // One dataset without a statement leaves that feed and stays in the EU one.
+    let mut open = w.store.get_dataset(&ctx, "open").await.unwrap().unwrap();
+    open.extras.remove("personal_data");
+    w.store.upsert_dataset(&ctx, open).await.unwrap();
+    let a = get(&w.app, sk, None).await;
+    assert!(!a.body.contains("open.csv"), "{}", a.body);
+    assert!(get(&w.app, "/catalog.ttl", None)
+        .await
+        .body
+        .contains("open.csv"));
+
+    // None left: a problem naming the field, never an empty catalogue.
+    for mut dataset in w.store.list_datasets(&ctx).await.unwrap() {
+        dataset.extras.remove("personal_data");
+        w.store.upsert_dataset(&ctx, dataset).await.unwrap();
+    }
+    let a = get(&w.app, sk, None).await;
+    assert_eq!(a.status, StatusCode::SERVICE_UNAVAILABLE, "{}", a.body);
+    assert!(a.body.contains("personal_data"), "{}", a.body);
+
+    // A placeholder is no publisher.
+    for uri in [None, Some("https://data.gov.sk/id/legal-subject/00000000")] {
+        let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+        cat.publisher_uri = uri.map(str::to_owned);
+        w.store.upsert_catalogue(cat).await.unwrap();
+        for national in [sk, "/profiles/dcat-ap-cz/catalog.jsonld"] {
+            let a = get(&w.app, national, None).await;
+            assert_eq!(a.status, StatusCode::SERVICE_UNAVAILABLE, "{}", a.body);
+            assert!(a.body.contains("missing publisher"), "{}", a.body);
+        }
+        assert_eq!(
+            get(&w.app, "/catalog.ttl", None).await.status,
+            StatusCode::OK
+        );
+    }
 }
 
 #[tokio::test]
@@ -2692,7 +2840,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
     let cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
     assert!(
-        cat.active_profiles.is_empty(),
+        cat.active_profiles.iter().all(|p| p.profile_id != "city"),
         "a refused upload activates nothing"
     );
     let a = post(
@@ -2757,8 +2905,8 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     .await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     let cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
-    assert_eq!(cat.active_profiles.len(), 1);
-    assert_eq!(cat.active_profiles[0].version, "1.1.0");
+    assert_eq!(cat.active_profiles.len(), 3, "beside the two it had");
+    assert_eq!(cat.active_profiles[2].version, "1.1.0");
 
     // Activate: Approve needed, unknown versions refused, make_main switches the main profile.
     let a = post(
@@ -2789,7 +2937,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     assert_eq!(v["catalogue"]["mainProfile"], "city");
     assert_eq!(
         v["catalogue"]["activeProfiles"].as_array().unwrap().len(),
-        1,
+        3,
         "re-activating replaces the pin"
     );
     let reports = w
@@ -2804,7 +2952,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
         ("list_datasets", "3.0.0"),
         ("list_publishers", "3.1.0"),
         ("upsert_profile", "3.2.0"),
-        ("upsert_catalogue", "3.3.0"),
+        ("save_catalogue", "3.3.0"),
     ] {
         w.store.fail(&[m]);
         let a = post(
@@ -2822,7 +2970,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
             a.body
         );
     }
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = post(
         app,
         "/api/v1/profiles/city/activate",
@@ -2994,7 +3142,7 @@ async fn branding_logo_and_static_assets() {
     );
     let a = get(app, "/robots.txt", None).await;
     assert_eq!(a.body, "User-agent: *\nDisallow: /\n");
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     assert_eq!(
         post(app, "/api/v1/branding", Some("tok-admin"), json!({}))
             .await
@@ -3044,7 +3192,7 @@ async fn branding_logo_and_static_assets() {
         get(app, "/assets/nothing.svg", None).await.status,
         StatusCode::NOT_FOUND
     );
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = send(
         app,
         Method::POST,

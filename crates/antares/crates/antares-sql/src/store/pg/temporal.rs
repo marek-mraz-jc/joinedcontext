@@ -12,6 +12,7 @@
 //! `(tenant_id, entity_id, attr_id, observed_at, instance_id)` index (0017).
 
 use antares_model::TenantId;
+use antares_store::filter::Period;
 use jc_time::TimestampTz;
 use jiff::tz::Offset;
 use jiff::Timestamp;
@@ -1191,6 +1192,18 @@ pub fn range_statement(f: &TemporalFilter<'_>) -> Result<RangeStatement, sqlx::E
     Ok(RangeStatement { sql, only, binds })
 }
 
+/// 4.22 in SQL, as `filter::strip_expired` reads it: the row `ai` is no expired instance.
+/// The bare NULL test first, so only a row naming an expiry pays the cast.
+const LIVE_INSTANCE: &str = " AND (ai.data ->> 'expiresAt' IS NULL \
+     OR try_timestamptz(ai.data ->> 'expiresAt') IS NULL \
+     OR try_timestamptz(ai.data ->> 'expiresAt') >= now())";
+
+/// Caps this transaction's statements at `$1` milliseconds, never above the
+/// session's own `statement_timeout` (0: none).
+const BUDGET: &str = "SELECT set_config('statement_timeout', \
+     (CASE WHEN s.ms = 0 THEN $1 ELSE least(s.ms, $1) END)::text, true) \
+     FROM (SELECT (extract(epoch FROM current_setting('statement_timeout')::interval) * 1000)::bigint AS ms) s";
+
 /// Timestamp text in the shape the API's aggregated rows carry.
 const BUCKET_TS: &str = r#"to_char({} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')"#;
 
@@ -1201,8 +1214,10 @@ const BUCKET_TS: &str = r#"to_char({} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:
 /// "Property", method: rows…}}}`. Only the numeric class (numbers and
 /// booleans, Table 4.5.19.1-1) is computed here; `bad` tells the caller to
 /// reconstruct instead so the API keeps every other class and the
-/// eligibility errors. Buckets: `period_secs` wide from the anchor (the
-/// request's timeAt, else the attribute's first instant); no period = one
+/// eligibility errors. Only the rows of `only`'s Attribute IRIs are read, and
+/// no expired one. Buckets: a period wide from the anchor (the request's
+/// timeAt, else the attribute's first instant), whole months in UTC with the
+/// day clamped as the API's `months_bucket` steps; a whole period = one
 /// bucket spanning the query's whole time range (4.5.19.1 PT0S), with the
 /// edge 4.11 leaves open closed by the attribute's own first or last
 /// instant — the API's own rule.
@@ -1210,8 +1225,13 @@ fn aggregate_expr(
     f: &TemporalFilter<'_>,
     agg: &crate::store::filter::Aggregate<'_>,
     first_bind: usize,
+    only: Option<usize>,
 ) -> Option<(String, Vec<String>)> {
-    let (range_and, mut binds) = window_sql(f, first_bind)?;
+    let (mut range_and, mut binds) = window_sql(f, first_bind)?;
+    if let Some(n) = only {
+        range_and.push_str(&format!(" AND ai.attr_id = ANY(${n})"));
+    }
+    range_and.push_str(LIVE_INSTANCE);
     let tp = first_bind;
     let col = match f.timeproperty {
         "observedAt" => "observed_at",
@@ -1229,8 +1249,16 @@ fn aggregate_expr(
         }
         None => format!("min(ai.{col}) OVER (PARTITION BY ai.attr_id)"),
     };
-    let (bs, be) = match agg.period_secs {
-        None => {
+    // the months from the anchor to the row's bucket, one column so the edges share it
+    let mut months = String::new();
+    // read by the whole period alone, and a window function sorts every row
+    let mut edges = String::new();
+    let (bs, be) = match agg.period {
+        Period::Whole => {
+            edges = format!(
+                ", min(ai.{col}) OVER (PARTITION BY ai.attr_id) AS first_ts, \
+                   max(ai.{col}) OVER (PARTITION BY ai.attr_id) AS last"
+            );
             // 4.5.19.1: a zero duration "is interpreted as a duration
             // spanning the whole time range specified by the temporal
             // query". `before` names only the range's end and `after` only
@@ -1263,7 +1291,26 @@ fn aggregate_expr(
             };
             (start, end)
         }
-        Some(sc) => {
+        Period::Months(m) => {
+            // a month has no length without a calendar: only from an anchor the request named
+            agg.anchor?;
+            let (t, a) = ("(r.ts AT TIME ZONE 'UTC')", "(r.anchor AT TIME ZONE 'UTC')");
+            // the month distance brackets the period within one step down
+            let k = format!(
+                "(floor(((extract(year FROM {t}) - extract(year FROM {a})) * 12 \
+                   + extract(month FROM {t}) - extract(month FROM {a})) / {m}) * {m})::int"
+            );
+            months = format!(
+                ", CASE WHEN {a} + make_interval(months => {k}) > {t} THEN {k} - {m} ELSE {k} END AS months"
+            );
+            let edge = |step: &str| {
+                format!(
+                    "(((s0.anchor AT TIME ZONE 'UTC') + make_interval(months => s0.months{step})) AT TIME ZONE 'UTC')"
+                )
+            };
+            (edge(""), edge(&format!(" + {m}")))
+        }
+        Period::Seconds(sc) => {
             binds.push(sc.to_string());
             let n = first_bind.saturating_add(binds.len()).saturating_sub(1);
             let start = format!("date_bin(make_interval(secs => ${n}::bigint), s0.ts, s0.anchor)");
@@ -1305,18 +1352,16 @@ fn aggregate_expr(
           FROM (SELECT g.attr_id, bool_or(g.bad) AS bad{rows} \
                 FROM (SELECT s.attr_id, s.bs, s.be, bool_or(s.bad) AS bad{aggs} \
                       FROM (SELECT s0.attr_id, s0.v, s0.bad, {bs} AS bs, {be} AS be \
-                            FROM (SELECT ai.attr_id, \
+                            FROM (SELECT r.*{months} FROM (SELECT ai.attr_id, \
                                    CASE WHEN jsonb_typeof(ai.data -> 'value') = 'boolean' \
                                           THEN (CASE WHEN (ai.data ->> 'value')::boolean THEN 1 ELSE 0 END)::float8 \
                                         WHEN jsonb_typeof(ai.data -> 'value') = 'number' \
                                           THEN (ai.data ->> 'value')::float8 END AS v, \
                                    jsonb_typeof(ai.data -> 'value') IS DISTINCT FROM 'number' \
                                      AND jsonb_typeof(ai.data -> 'value') IS DISTINCT FROM 'boolean' AS bad, \
-                                   ai.{col} AS ts, {anchor} AS anchor, \
-                                   min(ai.{col}) OVER (PARTITION BY ai.attr_id) AS first_ts, \
-                                   max(ai.{col}) OVER (PARTITION BY ai.attr_id) AS last \
+                                   ai.{col} AS ts, {anchor} AS anchor{edges} \
                                   FROM {hist} ai \
-                                  WHERE jsonb_typeof(ai.data -> ${tp}) = 'string'{range_and}) s0) s \
+                                  WHERE jsonb_typeof(ai.data -> ${tp}) = 'string'{range_and}) r) s0) s \
                       GROUP BY s.attr_id, s.bs, s.be) g \
                 GROUP BY g.attr_id) b)"
     );
@@ -1825,6 +1870,10 @@ impl PgTemporalStore {
                     preds.push_str(&format!(" AND {cb}"));
                 }
             }
+            // what `aggregate_expr` does not read qualifies no Entity for its page
+            if f.aggregate.is_some() {
+                preds.push_str(LIVE_INSTANCE);
+            }
             let dir = match &f.range {
                 Some(r) if r.timerel == "before" => "ASC",
                 _ => "DESC",
@@ -1909,13 +1958,16 @@ impl PgTemporalStore {
         }
         let n_where = binds.len();
         let where_sql = wheres.join(" AND ");
-        let agg = if push_agg {
-            f.aggregate
-                .as_ref()
-                .and_then(|a| aggregate_expr(f, a, n_where.saturating_add(1)))
-        } else {
-            None
-        };
+        let agg = f.aggregate.as_ref().filter(|_| push_agg).and_then(|a| {
+            // the Attribute list is the one array bind, ahead of the text ones
+            let only = a.attrs.map(|_| n_where.saturating_add(1));
+            let first = only.unwrap_or(n_where).saturating_add(1);
+            let compiled = aggregate_expr(f, a, first, only)?;
+            if let Some(attrs) = a.attrs {
+                binds.push(B::Arr(super::storable(attrs)));
+            }
+            Some(compiled)
+        });
         let aggregated = agg.is_some();
         let (attr_expr, extra) = match agg {
             Some((e, b)) => (format!("jsonb_build_object('$agg', {e})"), b),
@@ -1972,6 +2024,14 @@ impl PgTemporalStore {
         let first: Result<Option<TemporalOutcome>, sqlx::Error> = async {
             let mut tx = super::begin(&self.pool).await?;
             crate::store::pg::set_tenant(&mut tx, tenant).await?;
+            if let Some(deadline) = f.deadline {
+                // what is left of it: the fallback below runs on the same deadline
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                sqlx::query(BUDGET)
+                    .bind(i64::try_from(left.as_millis()).unwrap_or(i64::MAX).max(1))
+                    .execute(&mut *tx)
+                    .await?;
+            }
             // `sql` is compiler literals + $n placeholders only.
             let mut qy = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
             for b in &binds {

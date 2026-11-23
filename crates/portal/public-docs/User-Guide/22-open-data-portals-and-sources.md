@@ -39,7 +39,7 @@ A portal is configuration as code: one manifest in the Organization's repository
 | `spec.host` | its own host, one the operator listed for the Organization; absent means the path address | `mobility.bratislava.sk` |
 | `spec.slug` | with a `host`: `redirect` (the default) answers the path address with `308` to the same page on the host; `keep` answers both and names the host in every link and identifier | `keep` |
 | `spec.appearance` | overrides of the Organization's appearance (logo, colours) for this portal only | `{accent: "#0b6e4f"}` |
-| `spec.profiles` | the DCAT-AP profiles the portal's feeds serve | `[dcat-ap-3.0.1, dcat-ap-sk]` |
+| `spec.profiles` | the profiles the portal's feeds serve beside EU DCAT-AP, which is always served; `[]` is EU DCAT-AP alone, and leaving the field out keeps what the catalogue serves | `[dcat-ap-fi-2.0]` |
 | `spec.sources` | where its datasets come from (section 3) | |
 | `spec.hidden` | dataset names this portal does not list | `[test-upload]` |
 
@@ -58,7 +58,7 @@ spec:
     sk: Doprava v Bratislave
     en: Mobility in Bratislava
   languages: [sk, en]
-  profiles: [dcat-ap-3.0.1]
+  profiles: [dcat-ap-sk-2.0]
 ```
 
 ## 3. Sources

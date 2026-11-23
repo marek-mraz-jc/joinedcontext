@@ -1,0 +1,30 @@
+{
+  "@context": "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld",
+  "datová_sada": [
+    "https://opendata.example.org/dataset/air",
+    "https://data.gov.cz/lkod/mdcr/datové-sady/vld",
+    "https://data.gov.sk/set/vld"
+  ],
+  "domovská_stránka": "https://opendata.example.org",
+  "iri": "https://opendata.example.org/catalog",
+  "kontaktní_bod": {
+    "e-mail": "mailto:data@city.example",
+    "jméno": {
+      "sk": "Oddelenie dát"
+    },
+    "typ": "Organizace"
+  },
+  "název": {
+    "cs": "Katalog",
+    "en": "Catalogue",
+    "sk": "Katalóg"
+  },
+  "popis": {
+    "cs": "Popis katalogu",
+    "en": "Catalogue description",
+    "sk": "Popis katalógu"
+  },
+  "poskytovatel": "https://publisher.example.org/id/city",
+  "přístupový_bod": "https://opendata.example.org/catalog",
+  "typ": "Katalog"
+}

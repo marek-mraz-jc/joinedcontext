@@ -18,6 +18,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// The profile every catalogue serves, chosen or not.
+pub const BASE_PROFILE: &str = "dcat-ap-3.0.1";
+
 /// The `spec.path` of an Organization's own portal, at `/{org}/opendata/` (ODP-09).
 pub const DEFAULT_PORTAL: &str = "default";
 
@@ -182,9 +185,10 @@ pub struct PortalSpec {
     /// Overrides of the Organization's appearance for this portal only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appearance: Option<OrganizationAppearance>,
-    /// The DCAT-AP profiles its feeds serve, e.g. `[dcat-ap-3.0.1]`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub profiles: Vec<String>,
+    /// The profiles its feeds serve beside EU DCAT-AP, e.g. `[dcat-ap-fi-2.0]`; `[]` for EU
+    /// DCAT-AP alone. Absent, or naming only `dcat-ap-3.0.1`: the catalogue keeps what it serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<Vec<String>>,
     /// Where its datasets come from (ODP-10).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<PortalSource>,
@@ -238,6 +242,14 @@ impl PortalSpec {
     /// Whether this is the Organization's own portal at `/{org}/opendata/`.
     pub fn is_default(&self) -> bool {
         self.path == DEFAULT_PORTAL
+    }
+
+    /// The profiles it chooses, `[]` for none beside EU DCAT-AP. `None`: no choice is stated,
+    /// as in a list of EU DCAT-AP alone, what editors wrote before a choice existed (T-7521).
+    pub fn profile_choice(&self) -> Option<&[String]> {
+        self.profiles
+            .as_deref()
+            .filter(|chosen| !matches!(chosen, [only] if only == BASE_PROFILE))
     }
 
     /// The manifest alone: names, host, languages, sources and their URLs.
@@ -434,6 +446,26 @@ mod tests {
              - name: transport\n      type: endpoints\n      projects: [transport]\n"
         );
         parse(&yaml).expect("valid");
+    }
+
+    #[test]
+    fn a_profile_choice_is_stated_or_absent() {
+        let choice = |line: &str| {
+            let yaml = format!("{HEAD}spec:\n  organizationRef: ba\n  path: x\n{line}");
+            let held = ResourceEnvelope::<PortalSpec>::from_yaml(&yaml).expect("parses");
+            held.spec.profile_choice().map(<[String]>::to_vec)
+        };
+        assert_eq!(choice(""), None);
+        assert_eq!(
+            choice("  profiles: [dcat-ap-3.0.1]\n"),
+            None,
+            "what editors wrote unasked"
+        );
+        assert_eq!(choice("  profiles: []\n"), Some(Vec::new()));
+        assert_eq!(
+            choice("  profiles: [dcat-ap-fi-2.0]\n"),
+            Some(vec!["dcat-ap-fi-2.0".to_owned()])
+        );
     }
 
     #[test]

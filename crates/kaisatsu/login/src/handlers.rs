@@ -316,9 +316,14 @@ async fn build_policy_context(
     let store = &state.store;
     let creds = store.list_credentials(&realm.id, &user.id).await?;
     let has_totp = creds.iter().any(|c| c.credential_type == "otp");
+    // A passkey lives in its own table; a legacy row in the credential table counts too.
     let has_webauthn = creds
         .iter()
-        .any(|c| c.credential_type.starts_with("webauthn"));
+        .any(|c| c.credential_type.starts_with("webauthn"))
+        || !store
+            .list_webauthn_credentials(&realm.id, &user.id)
+            .await?
+            .is_empty();
     let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
     let realm_requires = second_factor_required(state, realm, user).await?;
     let step_up = auth_session.acr_requested.as_deref() == Some("mfa");
@@ -693,13 +698,34 @@ async fn render_state_page_with(
                     fresh
                 }
             };
-            let field = if matches!(login_state, LoginState::RegisterWebAuthn { .. }) {
+            let rp_id = crate::passkey::effective_rp_id(realm, mount, true);
+            let field = if let LoginState::RegisterWebAuthn { user_id, .. } = login_state {
+                // The creation options the browser needs: the person's handle names the passkey.
+                let mut user = user_of(user_id)
+                    .await?
+                    .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+                let handle =
+                    crate::passkey::ensure_user_handle(&state.store, &realm.id, &mut user).await?;
+                let rp_name = if realm.display_name.is_empty() {
+                    realm.realm.clone()
+                } else {
+                    realm.display_name.clone()
+                };
+                form.hidden.push(("webauthn_user_handle".into(), handle));
+                form.hidden
+                    .push(("webauthn_user_name".into(), user.username));
+                form.hidden.push(("webauthn_rp_name".into(), rp_name));
+                tpl.instructions
+                    .push(bundle.get("webauthnRegisterInstruction").to_owned());
                 "webauthn_register_response"
             } else {
+                tpl.instructions
+                    .push(bundle.get("webauthnLoginInstruction").to_owned());
                 "webauthn_assertion_response"
             };
             form.hidden.push((field.into(), String::new()));
             form.hidden.push(("webauthn_challenge".into(), challenge));
+            form.hidden.push(("webauthn_rp_id".into(), rp_id));
             form.submit_label = bundle.get("proceedWithAction").to_owned();
         }
         LoginState::Consent { .. } => {

@@ -618,6 +618,50 @@ impl CurrentStateDriver for ExampleStore {
         Ok(())
     }
 
+    /// 5.13.2 with the Tenant's caps: the count and the insert share one
+    /// write lock, so two requests cannot both take the last place (S4-15).
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        let mut rows = self
+            .contexts
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if rows.contains_key(id) {
+            return Ok(antares_store::ContextPut::Stored);
+        }
+        // a capped row is the Tenant's own, and has a kind as every row does
+        if !context_row_visible(&doc, Some(tenant)) {
+            return Err(NgsiError::InternalError(
+                "@context belongs to another tenant".into(),
+            ));
+        }
+        let Some(kind) = doc.get("kind").and_then(Value::as_str) else {
+            return Err(NgsiError::InternalError(
+                "@context row without a kind".into(),
+            ));
+        };
+        let (held, bytes) = rows
+            .values()
+            .filter(|row| {
+                row.get("kind").and_then(Value::as_str) == Some(kind)
+                    && context_row_visible(row, Some(tenant))
+            })
+            .fold((0_usize, 0_u64), |(n, total), row| {
+                let size = antares_store::context_row_bytes(row);
+                (n.saturating_add(1), total.saturating_add(size))
+            });
+        let put = caps.admit(held, bytes, antares_store::context_row_bytes(&doc));
+        if put == antares_store::ContextPut::Stored {
+            rows.insert(id.to_owned(), doc);
+        }
+        Ok(put)
+    }
+
     async fn context_get(
         &self,
         tenant: Option<&TenantId>,

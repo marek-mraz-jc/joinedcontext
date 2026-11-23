@@ -811,6 +811,59 @@ async fn dataset_propose_authorizes_validates_and_records() {
     .unwrap();
 }
 
+/// S11-25: a write built on a version another write replaced answers a conflict and changes
+/// nothing; `expectedModified` names the version the caller read (package_patch sends it).
+#[tokio::test]
+async fn dataset_propose_built_on_a_replaced_version_is_a_conflict() {
+    let w = world().await;
+    let ckan = json!({"name": "versioned", "title": "V1", "owner_org": "city"});
+    let first = w
+        .run(&w.admin(), "dataset.propose", json!({"dataset": ckan}))
+        .await
+        .unwrap();
+    let read = first["metadata_modified"].clone();
+    let second = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"dataset": {"name": "versioned", "title": "V2", "owner_org": "city"}, "expectedModified": read}),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        second["metadata_modified"], read,
+        "the write moved the version"
+    );
+    // A second writer still holding the first read loses nothing and changes nothing.
+    let stale = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"dataset": {"name": "versioned", "title": "V3", "owner_org": "city"}, "expectedModified": read}),
+        )
+        .await;
+    assert!(
+        matches!(stale, Err(DataroomError::Conflict(_))),
+        "{stale:?}"
+    );
+    let stored = w
+        .run(&w.admin(), "dataset.get", json!({"name": "versioned"}))
+        .await
+        .unwrap();
+    assert_eq!(stored["title"], "V2");
+    let bad = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"dataset": {"name": "versioned", "owner_org": "city"}, "expectedModified": "yesterday"}),
+        )
+        .await;
+    assert!(
+        matches!(&bad, Err(DataroomError::Validation { fields, .. }) if fields.contains_key("expectedModified")),
+        "{bad:?}"
+    );
+}
+
 #[tokio::test]
 async fn dataset_propose_cannot_take_over_another_publishers_dataset() {
     let w = world().await;
@@ -859,6 +912,75 @@ async fn dataset_propose_cannot_take_over_another_publishers_dataset() {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn declarations_are_closed_to_invented_values_and_borrowed_identities() {
+    let w = world().await;
+    let editor = w.dept_editor();
+    let package = |extras: Value| {
+        json!({"name": "dept-noise", "title": "Hluk", "owner_org": "dept", "private": true,
+               "extras": extras})
+    };
+    let r = w
+        .run(
+            &editor,
+            "dataset.propose",
+            package(json!([{"key": "personal_data", "value": "none"}])),
+        )
+        .await;
+    assert!(field(&r, "personal_data"), "{r:?}");
+    let body = json!([{"key": "publisher_uri",
+                       "value": "https://data.gov.sk/id/legal-subject/00151866"}]);
+    let r = w
+        .run(&editor, "dataset.propose", package(body.clone()))
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor publishes as another body: {r:?}"
+    );
+    w.run(&w.admin(), "dataset.propose", package(body))
+        .await
+        .expect("an administrator declares it");
+    w.run(
+        &editor,
+        "dataset.propose",
+        package(json!([{"key": "personal_data", "value": "does-not-contain"}])),
+    )
+    .await
+    .expect("an editor declares personal data and keeps the publisher");
+
+    let r = w
+        .run(
+            &editor,
+            "publisher.propose",
+            json!({"publisher": {"name": "dept", "title": {"sk": "Odbor"}, "description": {},
+                   "uri": "https://data.gov.sk/id/legal-subject/00151866", "state": "active"}}),
+        )
+        .await;
+    assert!(
+        is_forbidden(&r),
+        "an editor changes the publisher IRI: {r:?}"
+    );
+
+    let profile = |shapes: &str, built_in: bool| {
+        json!({"profile": {"id": "city", "version": "1", "uri": "https://city.example/profile",
+               "title": {"en": "City"}, "shapesTurtle": shapes, "requiredLanguages": [],
+               "builtIn": built_in, "formFields": []}})
+    };
+    let saved = w
+        .run(&w.admin(), "profile.propose", profile("", true))
+        .await
+        .expect("a first version");
+    assert_eq!(
+        saved["profile"]["builtIn"],
+        json!(false),
+        "an upload never becomes a built-in"
+    );
+    let r = w
+        .run(&w.admin(), "profile.propose", profile("# other", false))
+        .await;
+    assert!(matches!(r, Err(DataroomError::Conflict(_))), "{r:?}");
 }
 
 #[tokio::test]

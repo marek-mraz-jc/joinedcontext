@@ -544,6 +544,32 @@ async fn credentials_are_enrolled_only_through_the_account_console() {
     assert_eq!(st, StatusCode::OK, "{raw}");
 }
 
+/// A client named like the realm's own, but owned by an Organization, carries none of its trust.
+#[tokio::test]
+async fn an_organizations_client_named_account_console_enrols_nothing() {
+    let api = Api::new().await;
+    let mut console = api
+        .store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    console.org_id = Some("helsinki".into());
+    api.store.upsert_client(console).await.unwrap();
+    let token = api
+        .token(ANALYST, json!({ "azp": "account-console" }))
+        .await;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/GenerateRecoveryCodes"),
+            &token,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{raw}");
+}
+
 /// Every write operation of the registry leaves an admin event (S3-35, AUD-02): one row per
 /// operation of this table, and no write operation of the registry outside it.
 #[tokio::test]

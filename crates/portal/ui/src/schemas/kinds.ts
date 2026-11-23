@@ -3267,6 +3267,7 @@ export function organizationSchema(
           },
         },
       },
+      catalog: organizationCatalogProperty(t),
       projects: {
         type: "object",
         title: t("organization.field.projects"),
@@ -3534,6 +3535,34 @@ function linkList(t: (key: string) => string, key: "navLinks" | "footerLinks"): 
 
 /** The languages a publisher's name is given in, as the UI speaks them. */
 export const CATALOG_LANGUAGES = ["sk", "cs", "en", "de"] as const;
+
+/** The Organization's catalogue publisher (T-7520): its IRI and its name, declared together. */
+function organizationCatalogProperty(t: (key: string) => string): JsonSchema {
+  return {
+    type: "object",
+    title: t("projectSettings.field.catalog"),
+    properties: {
+      publisher: {
+        type: "object",
+        title: t("endpoints.field.catalog.publisher"),
+        properties: {
+          uri: { type: "string", title: t("projectSettings.field.publisherUri"), pattern: "^https?://\\S+$", maxLength: 2048 },
+          name: {
+            type: "object",
+            title: t("projectSettings.field.publisherName"),
+            properties: Object.fromEntries(
+              CATALOG_LANGUAGES.map((language) => [
+                language,
+                { type: "string", minLength: 1, maxLength: 256, title: t(`choice.language.${language}`) },
+              ]),
+            ),
+          },
+        },
+        dependencies: { uri: ["name"] },
+      },
+    },
+  };
+}
 
 /**
  * The project's catalogue publisher, flat for the form (T-4595, EP-127): empty, or a name in at
