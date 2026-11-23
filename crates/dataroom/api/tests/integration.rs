@@ -1371,10 +1371,8 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
         CatalogueId::from_uuid(Uuid::now_v7()),
     );
     let other = CatalogueId::from_uuid(Uuid::now_v7());
-    let token = "x".repeat(48);
-    let token = token.as_str();
-    let (binding, grant) = dataroom_api::portal_publisher_on(token, org, id, "city").unwrap();
-    let (stranger, _) = dataroom_api::portal_publisher_on(token, org, other, "city").unwrap();
+    let (own_subject, grant) = dataroom_api::portal_publisher_on(org, id, "city");
+    let (stranger, _) = dataroom_api::portal_publisher_on(org, other, "city");
     let mut strangers_grant = grant.clone();
     strangers_grant.principal = format!("{}:{other}", dataroom_api::PORTAL_PUBLISHER);
     let admin = GrantRule {
@@ -1404,11 +1402,11 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
                "extras": [{"key": "publisher_uri",
                            "value": "https://data.gov.sk/id/legal-subject/00151866"}]})
     };
-    let own = as_subject(binding.subject);
+    let own = as_subject(own_subject);
     execute_operation(&ops, &own, "dataset.propose", package("air"))
         .await
         .expect("this catalogue's Portal declares it");
-    let foreign = as_subject(stranger.subject);
+    let foreign = as_subject(stranger);
     let refused = execute_operation(&ops, &foreign, "dataset.propose", package("water")).await;
     assert!(
         matches!(refused, Err(dataroom_core::DataroomError::Forbidden(_))),
