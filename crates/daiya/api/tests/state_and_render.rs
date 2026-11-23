@@ -587,7 +587,11 @@ async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_
         ORG,
         "fx-now",
         1,
-        PanelTimeRange::default(),
+        PanelTimeRange {
+            from: None,
+            to: None,
+            ..PanelTimeRange::default()
+        },
     )
     .await
     .unwrap();

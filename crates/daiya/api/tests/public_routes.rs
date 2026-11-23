@@ -772,6 +772,16 @@ async fn the_public_interval_is_never_finer_than_the_range_allows() {
         2,
         "1 s and 19 s both run at the 20 s the range allows (one cached query); 25 s is its own"
     );
+    // The public cache holds one answer per effective interval: 20 s (read twice) and 25 s.
+    let stats = w
+        .state
+        .query_cache
+        .stats_for_org(common::ORG, daiya_model::InstanceId::from_u128(1));
+    let public = stats
+        .iter()
+        .find(|s| s.datasource_uid == "public:wide")
+        .expect("the public entries");
+    assert_eq!((public.entries, public.hits), (2, 1), "{stats:?}");
 }
 
 #[tokio::test]
