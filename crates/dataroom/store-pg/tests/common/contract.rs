@@ -2,7 +2,7 @@
 //! Postgres store on the request role must answer every method the same way (C1, C14).
 
 use super::*;
-use dataroom_core::{DataroomError, RecordState, Store};
+use dataroom_core::{DataroomError, RecordState, RequestCtx, Store};
 use odata_table::{query, QueryOptions, Scope};
 
 fn names<T>(items: &[T], f: impl Fn(&T) -> String) -> Vec<String> {
