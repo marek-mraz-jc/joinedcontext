@@ -1,0 +1,23 @@
+{# dataset page section `about` (T-7743): included once per place the resolved display lists it #}
+{% if !about_rows.is_empty() %}
+<section class="jc-about" aria-labelledby="jc-about-title">
+  <h2 id="jc-about-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.about }}{% endif %}</h2>
+  <dl class="jc-about-list">
+    {% for row in about_rows %}
+      {% if fold_sources && row.label == labels.source %}
+        <dt>{{ row.label }}</dt>
+        <dd><details class="jc-about-sources"><summary>{{ sources_all_label }}</summary>
+          <ul>
+            {% for s_row in source_rows %}
+            <li>{% if let Some(link) = s_row.link %}<a href="{{ link }}" rel="noopener">{{ s_row.text }}</a>{% else %}{{ s_row.text }}{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </details></dd>
+      {% else %}
+        <dt>{{ row.label }}</dt>
+        <dd>{% if let Some(link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
+      {% endif %}
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}

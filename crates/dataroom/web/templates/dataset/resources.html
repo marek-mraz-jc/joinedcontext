@@ -1,0 +1,56 @@
+{# dataset page section `resources` (T-7743): included once per place the resolved display lists it #}
+<section id="dataset-resources" class="resources jc-resources sdk-datagrid" data-grid-config="{{ distributions_grid_config }}" aria-labelledby="jc-resources-title">
+  <h2 id="jc-resources-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.resources }}{% endif %}</h2>
+  {% if !resource_sections.is_empty() %}
+    {% for sec in resource_sections %}
+    <div class="jc-section">
+      {% if sec.key == "schema" %}
+      <details class="jc-schema">
+        <summary>
+          <h3 id="jc-section-{{ sec.key }}">{{ sec.title }}</h3>
+          <span class="jc-chip">{{ sec.items.len() }}</span>
+          <p class="jc-section-lead">{{ sec.lead }}</p>
+        </summary>
+        <ul class="resource-list jc-resource-list" aria-labelledby="jc-section-{{ sec.key }}">
+          {% for item in sec.items %}
+          <li class="resource-item jc-resource" data-id="{{ item.id }}">
+            <div>
+              <div class="jc-resource-head">
+                <span class="jc-chip" data-format="{{ item.format_lower }}">{{ item.format }}</span>
+                <a class="heading" href="{{ item.page_url }}">{{ item.label }}</a>
+              </div>
+              {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
+            </div>
+            <div class="jc-resource-actions">
+              {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% else %}
+        <h3 id="jc-section-{{ sec.key }}">{{ sec.title }}</h3>
+        <p class="jc-section-lead">{{ sec.lead }}</p>
+        <ul class="resource-list jc-resource-list" aria-labelledby="jc-section-{{ sec.key }}">
+          {% for item in sec.items %}
+          <li class="resource-item jc-resource" data-id="{{ item.id }}">
+            <div>
+              <div class="jc-resource-head">
+                <span class="jc-chip" data-format="{{ item.format_lower }}">{{ item.format }}</span>
+                <a class="heading" href="{{ item.page_url }}">{{ item.label }}</a>
+              </div>
+              {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
+            </div>
+            <div class="jc-resource-actions">
+              {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">{{ labels.no_resources }}</p>
+  {% endif %}
+</section>

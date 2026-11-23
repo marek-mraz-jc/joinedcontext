@@ -1284,6 +1284,14 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Népszerű kulcsszavak",
     );
     add(
+        "col_description",
+        "Description",
+        "Popis",
+        "Popis",
+        "Beschreibung",
+        "Leírás",
+    );
+    add(
         "updated",
         "Updated",
         "Aktualizované",

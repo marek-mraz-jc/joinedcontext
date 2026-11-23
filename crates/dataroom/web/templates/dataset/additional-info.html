@@ -1,0 +1,12 @@
+{# dataset page section `additional-info` (T-7743): included once per place the resolved display lists it #}
+{% if !more_rows.is_empty() %}
+<section class="additional-info" aria-labelledby="jc-more-title">
+  <h2 id="jc-more-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.more }}{% endif %}</h2>
+  <dl class="jc-about-list">
+    {% for r in more_rows %}
+    <dt>{{ r.label }}</dt>
+    <dd>{% if let Some(link) = r.link %}<a href="{{ link }}" rel="noreferrer">{{ r.text }}</a>{% else %}{{ r.text }}{% endif %}</dd>
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}
