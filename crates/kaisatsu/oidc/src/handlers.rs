@@ -1790,7 +1790,21 @@ async fn mint_tokens_for_principal(
         .map_or(realm_ttl, |ttl| {
             ttl.min(realm_ttl.max(MAX_CLIENT_ACCESS_TTL))
         });
-    let access_exp = now + access_ttl;
+    // An offline family's tokens end with its session: its first token plus the realm's offline
+    // maximum (S3-22). It outlives the SSO session it began in, so its tokens name no `sid`.
+    let offline_end = existing_family
+        .as_ref()
+        .filter(|f| f.offline)
+        .and_then(|f| offline_session_end(realm, f));
+    let access_exp = offline_end.map_or(now + access_ttl, |end| {
+        (now + access_ttl).min(end.as_second())
+    });
+    let access_ttl = access_exp - now;
+    let token_sid = sso_session_id.filter(|_| !existing_family.as_ref().is_some_and(|f| f.offline));
+    let offline_since = existing_family.as_ref().and_then(|f| {
+        f.offline_since
+            .or_else(|| TimestampTz::from_second(f.auth_time))
+    });
     // The family this grant's refresh token belongs to, named in the access token's `jti` so a
     // revoked family takes its access tokens with it (introspection, userinfo, token exchange).
     let family_id = include_refresh.then(|| {
@@ -1835,7 +1849,7 @@ async fn mint_tokens_for_principal(
         granted_scope_string: granted_scope_str,
         acr,
         amr,
-        session_id: sso_session_id,
+        session_id: token_sid,
         nonce,
         jti: &access_jti,
         iat: now,
@@ -1865,7 +1879,7 @@ async fn mint_tokens_for_principal(
         "scope": granted_scope_str,
     });
 
-    if let Some(sid) = sso_session_id {
+    if let Some(sid) = token_sid {
         response["session_state"] = Value::String(sid.to_owned());
     }
 
@@ -1930,7 +1944,11 @@ async fn mint_tokens_for_principal(
                     .saturating_sub(MAX_PREVIOUS_REFRESH_HASHES);
                 fam.previous_hashes.drain(..excess);
                 fam.rotation_counter += 1;
-                fam.expires_at = TimestampTz::now() + SignedDuration::from_secs(refresh_ttl);
+                let idle_end = TimestampTz::now() + SignedDuration::from_secs(refresh_ttl);
+                fam.expires_at = offline_end.map_or(idle_end, |end| idle_end.min(end));
+                if fam.offline {
+                    fam.offline_since = offline_since;
+                }
                 if let Some(jkt) = dpop_jkt {
                     fam.dpop_jkt = Some(jkt.to_owned());
                 }
@@ -1959,6 +1977,7 @@ async fn mint_tokens_for_principal(
                         previous_hashes: Vec::new(),
                         dpop_jkt: dpop_jkt.map(str::to_owned),
                         offline: is_offline,
+                        offline_since: is_offline.then(TimestampTz::now),
                         revoked: false,
                         expires_at: TimestampTz::now() + SignedDuration::from_secs(refresh_ttl),
                         act,
@@ -1969,6 +1988,11 @@ async fn mint_tokens_for_principal(
         }
 
         if is_offline {
+            // The session row keeps the start and the end of its first token (S3-22).
+            let since = offline_since.unwrap_or_else(TimestampTz::now);
+            let max_end = since
+                + SignedDuration::from_secs(realm.offline_session_max_lifespan.max(refresh_ttl));
+            let idle_end = TimestampTz::now() + SignedDuration::from_secs(refresh_ttl);
             state
                 .store
                 .upsert_offline_session(OfflineSession {
@@ -1981,13 +2005,10 @@ async fn mint_tokens_for_principal(
                         .split_whitespace()
                         .map(str::to_owned)
                         .collect(),
-                    created_at: TimestampTz::now(),
+                    created_at: since,
                     last_access: TimestampTz::now(),
-                    idle_expires_at: TimestampTz::now() + SignedDuration::from_secs(refresh_ttl),
-                    max_expires_at: TimestampTz::now()
-                        + SignedDuration::from_secs(
-                            realm.offline_session_max_lifespan.max(refresh_ttl),
-                        ),
+                    idle_expires_at: offline_end.map_or(idle_end, |end| idle_end.min(end)),
+                    max_expires_at: offline_end.unwrap_or(max_end),
                 })
                 .await?;
         }
@@ -2584,6 +2605,11 @@ async fn handle_refresh_token_grant(
         ));
     }
 
+    if family.offline
+        && offline_session_end(realm, &family).is_some_and(|end| end <= TimestampTz::now())
+    {
+        return Err(KaisatsuError::invalid_grant("Offline session expired"));
+    }
     if !family.offline {
         // Ending a session revokes its families, so a live family finds its session.
         let Some(mut updated_sso) = state
@@ -2670,6 +2696,23 @@ async fn handle_refresh_token_grant(
         }
         other => other,
     }
+}
+
+/// When an offline family's session ends: its first token plus the realm's
+/// `offlineSessionMaxLifespan`, or never while the realm turns the maximum off (S3-22). A family
+/// stored before `offline_since` counts from its sign-in, and one without a readable start has
+/// ended.
+fn offline_session_end(realm: &RealmConfig, family: &RefreshTokenFamily) -> Option<TimestampTz> {
+    if !realm.offline_session_max_lifespan_enabled {
+        return None;
+    }
+    let Some(since) = family
+        .offline_since
+        .or_else(|| TimestampTz::from_second(family.auth_time))
+    else {
+        return Some(TimestampTz::now());
+    };
+    Some(since + SignedDuration::from_secs(realm.offline_session_max_lifespan))
 }
 
 /// The description of the `invalid_grant` a refresh grant gets when another request rotated the
