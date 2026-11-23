@@ -28,13 +28,3 @@ pub use state::{
     odata_error_response, problem_error_response, read_body_bounded, repo_to_gitea_json,
     resolve_and_authorize_repo, stream_file_in_64k_chunks, strip_dot_git,
 };
-
-use axum::Router;
-
-/// Builds the combined `shako-api` router (Smart HTTP + Gitea compat REST + Native REST + OData 4.01).
-pub fn api_router() -> Router<ShakoState> {
-    Router::new()
-        .merge(smart_http_router())
-        .merge(compat_and_native_rest_router())
-        .merge(odata_router())
-}
