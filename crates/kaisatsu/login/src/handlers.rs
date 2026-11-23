@@ -947,7 +947,11 @@ async fn sign_out_other_sessions(
             let _ = kaisatsu_oidc::dispatch_backchannel_logout(state, mount, realm, &ended).await;
         }
     }
-    Ok(())
+    // Offline tokens outlive an SSO session, not a password change (as in Keycloak).
+    state
+        .store
+        .revoke_offline_families_for_user(&realm.id, user_id)
+        .await
 }
 
 /// K1: whether this browser holds `auth_session` (one of the handles in its auth cookie,
