@@ -34,7 +34,10 @@ impl Secret {
     /// `bytes` random bytes as lower-case hex (`2 * bytes` characters).
     pub fn generate(bytes: usize) -> Result<Self, String> {
         let mut buf = Zeroizing::new(vec![0u8; bytes]);
-        getrandom::fill(&mut buf).map_err(|e| format!("no randomness: {e}"))?;
+        if let Err(e) = getrandom::fill(&mut buf) {
+            // Only an operating system without a random source fails here.
+            return Err(format!("no randomness: {e}"));
+        }
         Ok(Self::new(hex::encode(&*buf)))
     }
 
@@ -237,6 +240,8 @@ mod tests {
         assert!(!constant_time_eq(b"token", b"token2"));
         assert!(!constant_time_eq(b"token", b""));
         assert!(constant_time_eq(b"", b""));
+        // Two differences that cancel under XOR still differ: each byte's difference is kept.
+        assert!(!constant_time_eq(b"ab", b"`c"));
     }
 
     #[test]
@@ -297,5 +302,16 @@ mod tests {
                 name: "JCBIN_X".into()
             }
         );
+        assert_eq!(e.to_string(), "JCBIN_X is set and empty");
+    }
+
+    #[test]
+    fn a_source_reads_as_its_start_report_word() {
+        let words: Vec<String> = [Source::Env, Source::File, Source::Generated]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(words, ["env", "file", "generated"]);
+        assert_eq!(Source::File.as_str(), "file");
     }
 }

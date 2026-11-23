@@ -9,3 +9,7 @@ description = "The one place a sqlx pool of jc starts: an idle connection leaves
 [dependencies]
 # Not the sqlx umbrella: ekiben links the driver crates alone (crates/ekiben/Cargo.toml).
 sqlx-core = { version = "0.9", default-features = false }
+
+[dev-dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
