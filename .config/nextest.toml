@@ -3,7 +3,9 @@
 # share one module's test database, or that serialized themselves with an in-process lock
 # (daiya-query postgres.rs SETUP, jc one_binary.rs ONE_JC_AT_A_TIME), run one at a time in their
 # module's group, as they never overlapped before. Different modules' databases still run in
-# parallel. A new test reading a *_TEST_DATABASE_URL joins its module's filter here.
+# parallel. A new test reading a *_TEST_DATABASE_URL joins its module's filter here: daiya's
+# connect_test_database sets one cluster-wide daiya_app_login password per process, so two daiya
+# binaries side by side failed each other's login (list_paging, 2026-11-23).
 
 [test-groups]
 pg-kaisatsu = { max-threads = 1 }
@@ -34,7 +36,7 @@ filter = 'package(dataroom-store-pg) or (package(dataroom-server) and (binary(cl
 test-group = 'pg-dataroom'
 
 [[profile.default.overrides]]
-filter = 'package(daiya-store-pg) or (package(daiya-server) and (binary(config) or binary(binary))) or (package(daiya-query) and (binary(postgres) or binary(factory)))'
+filter = 'package(daiya-store-pg) or (package(daiya-server) and (binary(config) or binary(binary) or binary(list_paging) or binary(audit_pg))) or (package(daiya-query) and (binary(postgres) or binary(factory)))'
 test-group = 'pg-daiya'
 
 [[profile.default.overrides]]
