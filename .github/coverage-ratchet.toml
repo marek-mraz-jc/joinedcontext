@@ -11,3 +11,4 @@
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 97.70, functions = 92.30 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
+"kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
