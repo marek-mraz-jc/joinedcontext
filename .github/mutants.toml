@@ -79,6 +79,16 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # daiya-expr classic_reduce avg: with no valid value the mean is never read (all_null answers None),
+  # so dividing by a zero count or not is alike (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace > with >= in classic_reduce',
+  # daiya-expr classic_reduce median: for an odd count (len - 1) / 2 and len / 2 name the same index (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace - with / in classic_reduce',
+  # daiya-expr union_values: an empty label set is contained in every other, so the subset arms that
+  # follow pick the same labels the "either side empty" test picks (T-7633).
+  'daiya/expr/src/math\.rs:\d+:\d+: replace \|\| with && in union_values',
+  # daiya-expr reduce_slice Sum: a NaN added to the sum makes it NaN, which the guard answers too (T-7633).
+  'daiya/expr/src/reduce\.rs:\d+:\d+: replace match guard !x\.is_nan\(\) with true in reduce_slice',
   # ngsild-residual decode_base64 and base64url: `acc << 6`, `b0 << 4` and `low << 2` have their low
   # bits zero and the other operand fits in them, so `|` and `^` add the same bits (T-7693).
   'antares-residual/src/binary\.rs:\d+:\d+: replace \| with \^ in (decode_base64|base64url)',
