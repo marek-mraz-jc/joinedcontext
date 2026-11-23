@@ -144,32 +144,13 @@ impl Broker {
         // The native binary routes under NormalizePathLayer::trim_trailing_slash
         // (6.3 URLs arrive both with and without a trailing '/'); this seam is
         // the wasm equivalent — same trim, applied before the router sees it.
-        if let Some(pq) = parts.uri.path_and_query() {
-            let path = pq.path();
-            let trimmed = path.trim_end_matches('/');
-            if trimmed.len() != path.len() && !trimmed.is_empty() {
-                let new = match pq.query() {
-                    Some(q) => format!("{trimmed}?{q}"),
-                    None => trimmed.to_owned(),
-                };
-                if let Ok(uri) = new.parse() {
-                    parts.uri = uri;
-                }
-            }
+        if let Some(uri) = without_trailing_slash(&parts.uri) {
+            parts.uri = uri;
         }
         let req = http::Request::from_parts(parts, Body::from(body));
         let mut router = self.router.clone();
-        let resp = match router.call(req).await {
-            Ok(r) => r,
-            // The router is Infallible; keep the arm honest rather than
-            // unwrapping (workspace lints deny unwrap outside tests).
-            Err(_) => {
-                return http::Response::builder()
-                    .status(500)
-                    .body(Vec::new())
-                    .unwrap_or_default()
-            }
-        };
+        // The router's error type is Infallible: the pattern is irrefutable.
+        let Ok(resp) = router.call(req).await;
         let (parts, body) = resp.into_parts();
         let bytes = body
             .collect()
@@ -178,6 +159,22 @@ impl Broker {
             .unwrap_or_default();
         http::Response::from_parts(parts, bytes)
     }
+}
+
+/// `uri` with its path's trailing '/'s trimmed and its query kept; `None` when
+/// there is nothing to trim, the path is "/" alone, or the URI has no path.
+fn without_trailing_slash(uri: &http::Uri) -> Option<http::Uri> {
+    let pq = uri.path_and_query()?;
+    let trimmed = pq.path().trim_end_matches('/');
+    if trimmed.len() == pq.path().len() || trimmed.is_empty() {
+        return None;
+    }
+    match pq.query() {
+        Some(q) => format!("{trimmed}?{q}"),
+        None => trimmed.to_owned(),
+    }
+    .parse()
+    .ok()
 }
 
 #[cfg(target_arch = "wasm32")]

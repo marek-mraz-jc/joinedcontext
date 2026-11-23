@@ -2823,6 +2823,8 @@ impl Store for MemoryStore {
         &'a self,
         realm_id: &'a str,
         limit: usize,
+        lease: std::time::Duration,
+        max_attempts: u32,
     ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
         Box::pin(async move {
             let cap = limit.clamp(1, 50);
@@ -2833,11 +2835,22 @@ impl Store for MemoryStore {
                 if claimed.len() >= cap {
                     break;
                 }
-                if row.realm_id == realm_id && row.status == "pending" && row.next_attempt_at <= now
-                {
-                    row.status = "sending".into();
-                    row.attempts = row.attempts.saturating_add(1);
-                    claimed.push(row.clone());
+                if row.realm_id != realm_id || row.next_attempt_at > now {
+                    continue;
+                }
+                match row.status.as_str() {
+                    "sending" if row.attempts >= max_attempts => {
+                        row.status = "failed".into();
+                        row.last_error = Some(OUTBOX_LEASE_LAPSED.into());
+                    }
+                    "pending" | "sending" => {
+                        row.status = "sending".into();
+                        row.attempts = row.attempts.saturating_add(1);
+                        row.next_attempt_at =
+                            now + SignedDuration::try_from(lease).unwrap_or(SignedDuration::MAX);
+                        claimed.push(row.clone());
+                    }
+                    _ => {}
                 }
             }
             Ok(claimed)
@@ -2846,36 +2859,37 @@ impl Store for MemoryStore {
 
     fn complete_outbox_row<'a>(
         &'a self,
-        realm_id: &'a str,
-        id: &'a str,
+        claimed: &'a EmailOutboxRecord,
         sent: bool,
         error: Option<String>,
         next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
-    ) -> StoreFuture<'a, ()> {
+    ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            if let Some(row) = st
-                .email_outbox
-                .iter_mut()
-                .find(|r| r.realm_id == realm_id && r.id == id)
-            {
-                if sent {
-                    row.status = "sent".into();
-                    row.sent_at = Some(TimestampTz::now());
-                    row.last_error = None;
+            let Some(row) = st.email_outbox.iter_mut().find(|r| {
+                r.realm_id == claimed.realm_id
+                    && r.id == claimed.id
+                    && r.status == "sending"
+                    && r.attempts == claimed.attempts
+            }) else {
+                return Ok(false);
+            };
+            if sent {
+                row.status = "sent".into();
+                row.sent_at = Some(TimestampTz::now());
+                row.last_error = None;
+            } else {
+                row.last_error = error;
+                if row.attempts >= max_attempts {
+                    row.status = "failed".into();
                 } else {
-                    row.last_error = error;
-                    if row.attempts >= max_attempts {
-                        row.status = "failed".into();
-                    } else {
-                        row.status = "pending".into();
-                        row.next_attempt_at = next_attempt_at
-                            .unwrap_or_else(|| TimestampTz::now() + SignedDuration::from_secs(5));
-                    }
+                    row.status = "pending".into();
+                    row.next_attempt_at = next_attempt_at
+                        .unwrap_or_else(|| TimestampTz::now() + SignedDuration::from_secs(5));
                 }
             }
-            Ok(())
+            Ok(true)
         })
     }
 

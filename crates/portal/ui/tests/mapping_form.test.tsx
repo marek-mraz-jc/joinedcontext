@@ -60,6 +60,21 @@ describe("the form model and the manifest (DM-33, DM-39)", () => {
     expect(written.spec).not.toHaveProperty("artifacts");
   });
 
+  // DM-38: a native block is read into the form and written back; a block with no language is Bloblang.
+  it("reads_and_writes_a_native_block_and_defaults_its_language", () => {
+    const stored = { ...STORED, spec: { ...STORED.spec, native: [{ targetSlot: "pm10", language: "bloblang", source: "root = this.pm10_raw" }, "not a block"] } };
+    const form = fromMappingManifest(stored);
+    expect(form.native).toEqual([
+      { targetSlot: "pm10", language: "bloblang", source: "root = this.pm10_raw" },
+      { targetSlot: undefined, language: undefined, source: undefined },
+    ]);
+    const written = toMappingManifest(stored, { ...form, native: [{ targetSlot: "no2", source: "root = 2" }, {}] });
+    expect(written.spec?.native).toEqual([
+      { targetSlot: "no2", language: "bloblang", source: "root = 2" },
+      { targetSlot: "", language: "bloblang", source: "" },
+    ]);
+  });
+
   // DM-39, DM-22, DM-38: the browser refuses what admission refuses, before anything is sent.
   it.each([
     ["no golden test", { tests: [] }],

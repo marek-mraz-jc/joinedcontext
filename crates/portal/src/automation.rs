@@ -95,7 +95,7 @@ pub async fn refuse_approver(
     let Some(found) = login_of(state, identity).await? else {
         return Ok(());
     };
-    tracing::warn!(target: "audit", login = %found.login, organization = %found.organization, what, "refused: an automation login may not approve");
+    tracing::warn!(target: "audit", person = %identity.subject, organization = %found.organization, what, "refused: an automation login may not approve");
     let connector = found
         .connector
         .as_deref()

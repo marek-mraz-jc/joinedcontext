@@ -381,6 +381,49 @@ mod tests {
         );
     }
 
+    /// A file that is not YAML this reads, a document without a `spec` mapping and an App with
+    /// no `dataNeeds` are left as they are: the loader reports the first itself.
+    #[test]
+    fn what_names_no_retired_list_is_not_rewritten() {
+        assert_eq!(strip("kind: Endpoint\nspec: [unclosed\n"), None);
+        assert_eq!(strip("kind: Endpoint\nspec: csv\n"), None);
+        assert_eq!(strip("kind: Endpoint\n"), None);
+        assert_eq!(strip("kind: App\nspec:\n  kind: wasm\n"), None);
+        assert_eq!(
+            strip("kind: App\nspec:\n  dataNeeds:\n    - endpointRef: air\n"),
+            None
+        );
+        assert_eq!(
+            strip("kind: Endpoint\nspec:\n  enabledRepresentations: csv\n"),
+            None,
+            "a list that is no sequence"
+        );
+    }
+
+    /// A forge that fails a read stops the run before any commit.
+    #[tokio::test]
+    async fn a_failed_read_is_the_runs_error_and_commits_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let shako = ShakoClient::new(
+            server.uri().parse().expect("forge url"),
+            "test-owner",
+            "test-repo",
+            "token",
+        )
+        .expect("client");
+        let paths = BTreeSet::from(["a.yaml".to_owned()]);
+        assert!(migrate(&shako, "main", &paths).await.is_err());
+    }
+
     #[tokio::test]
     async fn one_commit_carries_every_changed_file_and_a_clean_one_is_left_alone() {
         let server = MockServer::start().await;
@@ -412,7 +455,12 @@ mod tests {
         )
         .expect("client");
 
-        let paths = BTreeSet::from(["a.yaml".to_owned(), "b.yaml".to_owned()]);
+        // A path the branch no longer holds (the forge's 404) is skipped.
+        let paths = BTreeSet::from([
+            "a.yaml".to_owned(),
+            "b.yaml".to_owned(),
+            "gone.yaml".to_owned(),
+        ]);
         assert_eq!(migrate(&shako, "main", &paths).await.expect("migrates"), 1);
 
         let requests = server.received_requests().await.expect("recorded");

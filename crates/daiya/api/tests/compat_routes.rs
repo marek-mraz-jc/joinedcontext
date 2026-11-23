@@ -54,6 +54,50 @@ async fn organizations_are_created_by_the_installation_admin_and_seen_by_members
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "{body}");
 
+    // The main organization's name is taken; a blank, overlong or control-character name is
+    // refused before the store is asked.
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("admin"),
+            Some(json!({ "name": "Main Org." })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    for name in ["  ".to_owned(), "x".repeat(191), "a\u{7}b".to_owned()] {
+        let (st, body) = w
+            .call(
+                "POST",
+                "/api/orgs",
+                Some("admin"),
+                Some(json!({ "name": name })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{name:?}: {body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("e.g. helsinki"),
+            "{body}"
+        );
+    }
+    // A declared organization whose number or name the store holds for another one is refused
+    // with what to do, never renumbered; the same declaration again is the same row.
+    let err = daiya_api::compat::declare_organization(&w.state, 7, "Helsinki")
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 400, "{err}");
+    assert!(
+        err.to_string().contains("declare the number it holds"),
+        "{err}"
+    );
+    let again = daiya_api::compat::declare_organization(&w.state, 2, "Helsinki")
+        .await
+        .unwrap();
+    assert_eq!(again.to_string(), created["uuid"].as_str().unwrap());
+
     // Lookup by name: the installation admin sees it; a member of the main org sees its own.
     let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
     assert_eq!(found["id"], 2);
@@ -259,6 +303,43 @@ async fn an_organization_header_naming_no_organization_is_404() {
         json!([]),
         "nothing was saved in the caller's Organization"
     );
+    // The installation routes, the dashboard page and a path daiya does not serve read the
+    // header too; a value that is no text names no Organization either.
+    let unreadable = http::HeaderValue::from_bytes(b"\xff").unwrap();
+    for (method, uri, value) in [
+        ("POST", "/api/orgs", http::HeaderValue::from_static("99")),
+        (
+            "DELETE",
+            "/api/orgs/2",
+            http::HeaderValue::from_static("99"),
+        ),
+        (
+            "GET",
+            "/api/orgs/name/Helsinki",
+            http::HeaderValue::from_static("99"),
+        ),
+        ("GET", "/d/edge", http::HeaderValue::from_static("99")),
+        (
+            "GET",
+            "/api/nothing-here",
+            http::HeaderValue::from_static("99"),
+        ),
+        ("POST", "/api/datasources", unreadable),
+    ] {
+        let req = http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", value)
+            .body(axum::body::Body::from(
+                json!({ "name": "Helsinki" }).to_string(),
+            ))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}: {answer}");
+        assert_eq!(answer["error"]["code"], "cr.not_found", "{answer}");
+    }
 }
 
 #[tokio::test]
@@ -880,11 +961,205 @@ async fn store_failures_surface_as_errors() {
         assert_eq!(answer["error"]["code"], "cr.internal_error", "{answer}");
     }
 
+    // The organization routes: create, retire, lookup by name and the caller's current one (an
+    // organization other than the main one, which the store alone knows).
+    let created = w
+        .ok("POST", "/api/orgs", Some(json!({ "name": "Helsinki" })))
+        .await;
+    let number = created["orgId"].as_i64().unwrap();
+    for (method_name, method, uri, token, body) in [
+        (
+            "create_org",
+            "POST",
+            "/api/orgs".to_owned(),
+            "admin",
+            Some(json!({ "name": "Tampere" })),
+        ),
+        (
+            "retire_org",
+            "DELETE",
+            format!("/api/orgs/{number}"),
+            "admin",
+            None,
+        ),
+        (
+            "find_org",
+            "GET",
+            "/api/orgs/name/Helsinki".to_owned(),
+            "admin",
+            None,
+        ),
+        ("find_org", "GET", "/api/org".to_owned(), "outsider", None),
+    ] {
+        w.store.fail(method_name);
+        let (st, answer) = w.call(method, &uri, Some(token), body).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method_name}: {method} {uri}: {answer}"
+        );
+        assert_eq!(answer["error"]["code"], "cr.internal_error", "{answer}");
+    }
+    let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
+    assert_eq!(found["id"], number, "a failed retire retired nothing");
+    // A declared organization the store cannot create is the store's error, not a refusal.
+    w.store.fail("create_org");
+    let err = daiya_api::compat::declare_organization(&w.state, 9, "Espoo")
+        .await
+        .unwrap_err();
+    w.store.heal();
+    assert_eq!(err.status_code(), 500, "{err}");
+    // The store answers the Organization header once and fails when the route asks again:
+    // the route answers the store's error, never acts in another Organization.
+    for (method, uri) in [
+        ("POST", "/api/orgs"),
+        ("DELETE", "/api/orgs/77"),
+        ("GET", "/api/orgs/name/Helsinki"),
+        ("GET", "/d/edge"),
+        ("GET", "/api/nothing-here"),
+    ] {
+        w.store.fail_after("find_org", 1);
+        let req = http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", number.to_string())
+            .body(axum::body::Body::from(
+                json!({ "name": "Tampere" }).to_string(),
+            ))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}: {answer}"
+        );
+    }
+
     // Search degrades to what the store could list, never to an error page.
     w.store.fail("list_folders");
     let hits = w.ok("GET", "/api/search", None).await;
     w.store.heal();
     assert_eq!(uids(&hits), ["edge"]);
+}
+
+/// The dashboard page draws every panel in dashboard order, those inside a row too, names an
+/// untitled panel by its id and escapes what the dashboard says; a page whose Organization or
+/// dashboard the store cannot read is the refusal page, never a partial one.
+#[tokio::test]
+async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let mut board = dashboard("page", "prom");
+    board["panels"] = json!([
+        { "id": 2, "type": "text", "title": "Intro", "description": "About <this>",
+          "options": { "content": "hello" } },
+        { "id": 3, "type": "text", "options": { "content": "untitled" } },
+        { "type": "row", "title": "Row", "panels": [
+            { "id": 5, "type": "text", "title": "Nested", "options": { "content": "inside" } }
+        ]}
+    ]);
+    w.add_dashboard(board, None).await;
+    let page = |token: Option<&'static str>, uri: &'static str| {
+        let mut req = http::Request::builder().uri(uri);
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        w.send(req.body(axum::body::Body::empty()).unwrap())
+    };
+    // The caller's own organization, without orgId in the link.
+    let (st, body) = page(Some("viewer"), "/d/page").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let body = body.as_str().unwrap().to_owned();
+    for part in [
+        "<h2>Intro</h2>",
+        "<p>About &lt;this&gt;</p>",
+        "<h2>Panel 3</h2>",
+        "<h2>Nested</h2>",
+    ] {
+        assert!(body.contains(part), "{part}: {body}");
+    }
+    assert!(body.find("Intro") < body.find("Nested"), "dashboard order");
+
+    // A dashboard whose stored JSON no longer reads draws no panel and no error text.
+    let mut broken = w
+        .store
+        .inner
+        .get_dashboard(ORG, "page")
+        .await
+        .unwrap()
+        .unwrap();
+    broken.data["panels"] = json!("not a list");
+    w.store
+        .inner
+        .upsert_dashboard(broken, "broken", true)
+        .await
+        .unwrap();
+    let (st, body) = page(Some("viewer"), "/d/page").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(!body.as_str().unwrap().contains("<section><h2>"), "{body}");
+
+    // The store cannot answer: the Organization the link names, the caller's own one (an
+    // organization only the store knows), the dashboard.
+    for (method, token, uri) in [
+        ("find_org", "admin", "/d/page?orgId=5"),
+        ("find_org", "outsider", "/d/page"),
+        ("get_dashboard", "viewer", "/d/page"),
+    ] {
+        w.store.fail(method);
+        let (st, body) = page(Some(token), uri).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}: {body}"
+        );
+        assert!(
+            body.as_str().unwrap().contains("Dashboard not found"),
+            "{body}"
+        );
+    }
+}
+
+/// A caller with no credential reads no data even inside a named Organization, and an
+/// `Authorization` header with an empty credential is refused as an invalid one.
+#[tokio::test]
+async fn an_unsigned_or_empty_credential_reads_no_data() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let query = json!({
+        "from": "1700000000000", "to": "1700000600000",
+        "queries": [{ "refId": "A", "datasource": { "uid": "prom" }, "expr": "up" }]
+    });
+    for auth in [None, Some("Bearer   ")] {
+        let mut req = http::Request::builder()
+            .method("POST")
+            .uri("/api/ds/query")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", "1");
+        if let Some(a) = auth {
+            req = req.header("authorization", a);
+        }
+        let (st, body) = w
+            .send(req.body(axum::body::Body::from(query.to_string())).unwrap())
+            .await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{auth:?}: {body}");
+        let want = if auth.is_some() {
+            "invalid credential"
+        } else {
+            "sign in to read data"
+        };
+        assert!(body.to_string().contains(want), "{auth:?}: {body}");
+    }
+    assert!(
+        seen.lock().iter().all(|q| !q.contains("query_range")),
+        "nothing was queried: {:?}",
+        seen.lock()
+    );
 }
 
 /// A dashboard deleted (or a store failing) between the read decision and the export
@@ -919,10 +1194,22 @@ async fn render_takes_template_variables_from_the_address() {
         .await;
     w.ok(
         "GET",
-        "/api/dashboards/vars/render?panel=1&var-job=edge%22%7D&maxDataPoints=50",
+        "/api/dashboards/vars/render?panel=1&var-job=edge%22%7D&maxDataPoints=50&intervalMs=30000&theme=dark",
         None,
     )
     .await;
+    // A panel reading a datasource the organization does not hold is 404 and names it.
+    w.add_dashboard(dashboard("orphan", "missing"), None).await;
+    let (st, body) = w
+        .call(
+            "GET",
+            "/api/dashboards/orphan/render?panel=1",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.to_string().contains("'missing' not found"), "{body}");
     let seen = seen.lock().clone();
     let queries: Vec<&String> = seen.iter().filter(|q| q.contains("query_range")).collect();
     assert_eq!(queries.len(), 2, "{seen:?}");

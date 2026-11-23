@@ -62,23 +62,12 @@ impl SecretValue {
         Self(Zeroizing::new(plaintext))
     }
 
-    /// A fresh secret of 32 random bytes as 64 hex digits, from the OS random source: a
-    /// credential a process mints for its own in-process peers (jc's run-time Organization
-    /// catalogues, T-7185). It takes no input, so no read string becomes a secret this way.
-    pub fn generate() -> Result<Self, getrandom::Error> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        getrandom::fill(bytes.as_mut())?;
-        let mut hex = Zeroizing::new(String::with_capacity(64));
-        for b in bytes.iter() {
-            hex.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
-            hex.push(char::from_digit(u32::from(b & 0xf), 16).unwrap_or('0'));
-        }
-        Ok(Self(hex))
-    }
-
-    /// A second holder of the same value, wiped on drop like this one.
-    pub fn duplicate(&self) -> Self {
-        Self(self.0.clone())
+    /// A short-lived token this process minted for its own call (S11-23): a service token it
+    /// signed or took from its identity provider's token endpoint, wiped on drop. jc's Portal
+    /// publishes into a jc catalogue with it; nothing read out of a manifest or a file comes
+    /// through here.
+    pub fn minted(token: String) -> Self {
+        Self(Zeroizing::new(token))
     }
 
     /// A secret the process environment carries: a token injected into a Job, or the
@@ -687,18 +676,13 @@ fn hex_upper(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod generate_tests {
+mod minted_tests {
     use super::SecretValue;
 
     #[test]
-    fn a_generated_secret_is_64_hex_digits_and_new_each_time() {
-        let (a, b) = (
-            SecretValue::generate().expect("random"),
-            SecretValue::generate().expect("random"),
-        );
-        assert_eq!(a.len(), 64);
-        assert!(a.expose().bytes().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(a.expose(), b.expose());
-        assert_eq!(a.duplicate().expose(), a.expose());
+    fn a_minted_token_is_held_as_given() {
+        let held = SecretValue::minted("eyJ.a.b".to_owned());
+        assert_eq!(held.expose(), "eyJ.a.b");
+        assert_eq!(format!("{held:?}"), "SecretValue(redacted)");
     }
 }

@@ -40,9 +40,12 @@ store-failure-output = true
 # pg_seal and pg_tenant_rename call seal_plaintext, which seals every tenant of
 # the shared database: a sibling test's pass sealed the rows a count asserts on
 # first (pg_seal.rs:200 >= 2 came back under 2, run 45030786975).
+# pg_temporal_last_n judges a plan by the statistics its own ANALYZE gathered: pg's ANALYZE of a
+# near-empty history between the two turned the week read into a full scan of the window
+# (4360 rows for 436, runs 45088137464 .. 45082408704).
 [test-groups]
 db-exclusive = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws) or binary(pg_retention) or binary(store_combos) or binary(secret_logs) or binary(upsert_transactions) or binary(read_statement_budget) or binary(pg_seal) or binary(pg_tenant_rename)'
+filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws) or binary(pg_retention) or binary(store_combos) or binary(secret_logs) or binary(upsert_transactions) or binary(read_statement_budget) or binary(pg_seal) or binary(pg_tenant_rename) or binary(pg_temporal_last_n)'
 test-group = 'db-exclusive'

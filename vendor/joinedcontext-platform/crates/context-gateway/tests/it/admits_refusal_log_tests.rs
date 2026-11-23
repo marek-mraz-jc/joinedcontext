@@ -99,10 +99,14 @@ async fn a_token_naming_no_admitted_project_is_refused_and_the_refusal_is_logged
     assert!(line.contains("WARN"), "{line}");
     for field in [
         format!("slug={SLUG}"),
-        "user=demo.steward".to_owned(),
+        "user=f:1:steward".to_owned(),
         "azp=\"edge\"".to_owned(),
     ] {
         assert!(line.contains(&field), "{field} missing in: {line}");
     }
     assert!(!log.contains(&token), "the token never reaches the log");
+    assert!(
+        !log.contains("demo.steward"),
+        "a username reached the log: {log}"
+    );
 }

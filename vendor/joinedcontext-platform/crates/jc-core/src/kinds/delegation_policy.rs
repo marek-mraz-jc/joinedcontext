@@ -196,6 +196,10 @@ pub struct DelegationPolicySpec {
     /// Whether a connector of theirs may have writes on.
     #[serde(default)]
     pub writes: bool,
+    /// Whether a connector of theirs may approve what it writes as its owner, without a click
+    /// (AG-150); valid only with `writes`, default false.
+    #[serde(default)]
+    pub autonomous: bool,
     /// Whether a connector of theirs may tick `personalData` on a scope item, keeping the
     /// attributes a model marks personal in its answers (AG-158); default false.
     #[serde(default)]
@@ -309,6 +313,13 @@ impl DelegationPolicySpec {
             for endpoint in endpoints {
                 label("spec.endpoints", endpoint)?;
             }
+        }
+        if self.autonomous && !self.writes {
+            return Err(refuse(
+                "spec.autonomous",
+                "true",
+                "a connector approves only what it writes; set writes as well (AG-150)",
+            ));
         }
         if let Some(raw) = &self.max_expiry {
             match parse_days(raw) {
@@ -459,6 +470,7 @@ mod tests {
             }]),
             endpoints: None,
             writes: false,
+            autonomous: false,
             personal_data: false,
             max_expiry: Some("P90D".into()),
             allowed_clients: Some(vec!["mcp-local".into()]),
@@ -505,6 +517,11 @@ mod tests {
         let mut spec = policy();
         spec.endpoints = Some(vec!["Air".into()]);
         assert_eq!(field_of(&spec), "spec.endpoints");
+        let mut spec = policy();
+        spec.autonomous = true;
+        assert_eq!(field_of(&spec), "spec.autonomous");
+        spec.writes = true;
+        assert!(spec.validate().is_ok());
         let mut spec = policy();
         spec.max_expiry = Some("P366D".into());
         assert_eq!(field_of(&spec), "spec.maxExpiry");

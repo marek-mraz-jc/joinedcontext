@@ -507,7 +507,7 @@ async fn every_read_is_recorded_once() {
     };
     assert_eq!(
         event.summary,
-        "anna read the access matrix of bikes-ops: 2 principals"
+        "sub-anna read the access matrix of bikes-ops: 2 principals"
     );
     assert_eq!(event.details["matrix"], true);
 }

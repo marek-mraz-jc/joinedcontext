@@ -1244,7 +1244,7 @@ async fn record_answer(
         source: "portal".to_owned(),
         summary: format!(
             "{} answered a question of run {run_id}",
-            user.0.identity.username
+            user.0.identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,

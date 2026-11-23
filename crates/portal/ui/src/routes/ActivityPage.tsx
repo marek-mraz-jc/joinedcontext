@@ -15,7 +15,7 @@ export function ActivityPage({
 }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-section">
+    <div className="flex flex-col gap-section" data-phone-floors>
       <PageHeader title={t("activity.title")} description={t("activity.lead")} />
       <ActivitySummary project={project} />
       <ActivityFeed project={project} initialKind={kind} />

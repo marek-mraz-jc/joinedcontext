@@ -1188,7 +1188,12 @@ async fn propose_engine(
     plan.fields.extend(grants.review.iter().cloned());
 
     // 6. Risk-classified approval lane
-    let lane = change::classify_manifest(&envelope, operation);
+    // An object the mirror holds is changed, whichever route proposes it (T-7541).
+    let judged_as = match operation {
+        Operation::Create if current.is_some() => Operation::Update,
+        operation => operation,
+    };
+    let lane = change::classify_manifest(&envelope, judged_as);
     // OPS-16: the one series no other component can produce. A rise in red proposals is a
     // change in what people are asking the platform to do.
     crate::telemetry::proposed(lane, kind_info.kind);
@@ -4460,6 +4465,38 @@ mod tests {
         assert_eq!(result.plan.summary.update, 0);
     }
 
+    /// T-7541 (S1-15): a create of a space that exists changes it, so it is reviewed.
+    #[tokio::test]
+    async fn a_create_over_an_existing_space_is_reviewed_though_it_says_sandbox() {
+        let state = AppState::new(Config::for_tests(), None);
+        let space = |sandbox: bool| {
+            json!({
+                "apiVersion": resource::API_VERSION,
+                "kind": "ContextSpace",
+                "metadata": { "name": "mobility", "namespace": "ovzdusie" },
+                "spec": { "isSandbox": sandbox }
+            })
+        };
+        state
+            .mirror
+            .upsert(serde_json::from_value(space(false)).expect("a space"));
+        let resp = propose(
+            &dummy_user(),
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            true,
+            space(true),
+        )
+        .await
+        .expect("a dry run");
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let result: DryRunResult = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.lane, Lane::Yellow);
+    }
+
     #[tokio::test]
     async fn propose_validation_rejects_wrong_apiversion_or_kind() {
         let state = AppState::new(Config::for_tests(), None);
@@ -4792,7 +4829,7 @@ mod tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let result: DryRunResult = serde_json::from_slice(&body_bytes).unwrap();
         assert!(result.valid);
-        assert_eq!(result.lane, Lane::Green);
+        assert_eq!(result.lane, Lane::Yellow);
         assert_eq!(result.plan.summary.update, 1);
         assert_eq!(result.plan.fields.len(), 1);
         assert_eq!(result.plan.fields[0].path, "spec.isSandbox");

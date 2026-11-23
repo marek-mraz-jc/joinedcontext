@@ -284,7 +284,7 @@ fn readable(
 fn refused(new: &NewConnector, ceiling: &Ceiling) -> Option<String> {
     match crate::connectors::validate(new, ceiling, TimestampTz::now()) {
         Ok(above) if above.is_empty() => None,
-        Ok(above) => Some(above.join("; ")),
+        Ok(above) => Some(above.lines.join("; ")),
         Err(refusal) => Some(refusal.to_string()),
     }
 }
@@ -353,7 +353,7 @@ pub async fn move_one(state: &AppState, identity: &Identity) -> Result<Moved, Ap
         }
         match state
             .connectors
-            .create(subject, new, Vec::new(), &base)
+            .create(subject, new, Default::default(), &base)
             .await
         {
             Ok(_) => moved.moved += 1,

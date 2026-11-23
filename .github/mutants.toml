@@ -1,0 +1,66 @@
+# cargo-mutants configuration for the coverage and mutants-diff workflows (T-7529).
+# Equivalent mutants: a mutation no test can tell from the original (same observable behaviour).
+# One regex per entry, matched against the names `cargo mutants --list` prints, each with its reason
+# on the line above it. A branch whose new mutant survives either adds the test that kills it or
+# lists it here with the reason; a reviewer reads every entry.
+exclude_re = [
+  # T-7539: the cached token differs only when Instant::now() equals its expiry to the nanosecond.
+  'crates/embedder/src/client\.rs:\d+:\d+: replace < with <= in Remote::token',
+  # T-7539: the pinned model always answers a [1, tokens, 384] tensor, so neither half of the shape check is ever true.
+  'crates/embedder/src/model\.rs:\d+:\d+: replace \|\| with && in Engine::embed',
+  # T-7539: tokenizers 0.23.2 defaults max_length to 512, which is MAX_TOKENS.
+  'crates/embedder/src/model\.rs:\d+:\d+: delete field max_length from struct TruncationParams expression in Embedder::load',
+  # antares-bus NatsBus::ensure_streams -> Ok(()): get_or_create keeps a stream that exists, and a
+  # live-NATS test cannot delete the shared streams under the other tests (nextest runs the binaries
+  # side by side), so only a fresh server tells; streams_and_bucket_carry_their_contract pins the
+  # configs it creates (T-7530).
+  'antares-bus/src/nats\.rs:.*replace NatsBus::ensure_streams -> Result<\(\), BusError> with Ok\(\(\)\)',
+  # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
+  # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
+  'ekiben-js/src/lib\.rs:.*fuzzing::run',
+  # ekiben-io-amqp read_batch: RabbitMQ refuses a message over its max_message_size (16 MiB by
+  # default) at publish, so no test broker can deliver one past MAX_MESSAGE_BYTES (64 MiB); the
+  # size guard and its reject serve brokers configured above 64 MiB (T-7580).
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace match guard d\.data\.len\(\) > MAX_MESSAGE_BYTES with false in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace > with (==|>=) in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: delete ! in <impl Input for AmqpInput>::read_batch',
+  # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
+  # way, since order() has no ordering between a Boolean and any other kind (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',
+  # ngsild-residual pow: the exact 1/b^e arm exists for platforms whose powf is not correctly
+  # rounded; on glibc powf gives the same bits for every integer case (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: delete match arm \(Val::Int\(b\), Val::Int\(e\)\) in call',
+  # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
+  # way, so the guard `if class` changes nothing observable (T-7599).
+  'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-crypto: Kek's Drop zeroizes the key bytes on drop; no safe code can read freed memory, so no
+  # test tells a zeroizing drop from an empty one (the zeroize crate's own tests hold it).
+  'crates/kaisatsu/crypto/src/keys\.rs:.*replace <impl Drop for Kek>::drop with \(\)',
+  # kaisatsu-crypto: aws-lc-rs hands every generated P-256 public key back as the 65-byte uncompressed point,
+  # so the format guard in generate_es256 never sees another shape and `||` and `&&` refuse the same keys.
+  'crates/kaisatsu/crypto/src/keys\.rs:.*replace \|\| with && in KeyManager::generate_es256',
+  # kaisatsu-crypto: compute_hotp_at joins four bytes shifted to disjoint bit ranges (24, 16, 8, 0), where `|`
+  # and `^` give the same word.
+  'crates/kaisatsu/crypto/src/totp\.rs:.*replace \| with \^ in compute_hotp_at',
+  # kaisatsu-crypto: compute_hotp_at hashes every algorithm name other than SHA1 and SHA512 with SHA-256,
+  # so a default of "", "xyzzy" or "HmacSHA256" computes the same code.
+  'crates/kaisatsu/crypto/src/totp\.rs:.*replace default_alg -> String with ',
+  # kaisatsu-crypto: AUTH_DATA_FLAG_UP is `1 << 0`, and `1 >> 0` is the same 1.
+  'crates/kaisatsu/crypto/src/webauthn\.rs:35:.*replace << with >>',
+  # kaisatsu-crypto: decode_cbor refuses an input over 64 KiB before decoding, so no byte or text string of
+  # exactly 64 KiB (head included) reaches the per-string cap, where `>` and `>=` differ only at that length.
+  'crates/kaisatsu/crypto/src/webauthn\.rs:(200|212):.*replace > with >= in CborReader',
+  # daiya-store-memory: insert_plan drops plans whose expires_at is before `now`, read inside the call; a
+  # plan expiring at that exact microsecond is the only one `>` and `>=` treat apart, and no test can pin it.
+  'crates/daiya/store-memory/src/lib\.rs:.*replace > with >= in <impl DaiyaStore for MemoryStore>::insert_plan',
+  # antares-notifier: the retry jitter is 1 + j * (2n - 1) with n uniform clock noise in [0, 1); 1 - j * (2n - 1)
+  # has the same distribution over the same range [1 - j, 1 + j], so no test can tell the two apart.
+  'crates/antares-notifier/src/lib\.rs:\d+:26: replace \+ with - in DeliveryPolicy::next_delay',
+  # antares-notifier: page_sink is cfg(target_arch = "wasm32"); the native test run does not compile it, so its mutants
+  # change nothing the native tests build (the browser build of antares-wasm registers and calls it).
+  'crates/antares-notifier/src/http\.rs:\d+:\d+: replace .*page_sink::',
+  # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
+  # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
+  # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
+  'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
+]

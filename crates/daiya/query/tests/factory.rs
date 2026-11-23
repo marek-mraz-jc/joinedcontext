@@ -870,6 +870,18 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
         Some("high")
     );
     assert_eq!(fields[1].values[4], serde_json::Value::Null);
+    // A time series needs a time column: the refusal names the query and says why.
+    let err = driver
+        .query(
+            &ctx(Subject::anonymous()),
+            &q(json!({ "rawSql": "SELECT value FROM daiya_ds_metrics", "format": "time_series" })),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, DsError::InvalidQuery { reason, .. } if reason == "no time column found"),
+        "{err:?}"
+    );
 
     // A relation outside the granted views is refused before anything runs, and the
     // database itself refuses what the reader role was never granted.

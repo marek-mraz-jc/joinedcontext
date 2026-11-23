@@ -2,6 +2,7 @@
 //! Authorizer decisions (R9), Problem Details / OData error envelopes (R10a, R12), the
 //! `FrameSet` model (§3.2), identifiers, limits and quotas.
 
+use daiya_model::rows::RowSet;
 use daiya_model::{
     Action, Authorizer, ColumnValues, CrError, Decision, FieldColumn, FieldType, Frame, FrameMeta,
     FrameSet, GrafanaRole, InputLimits, InstallationId, InstanceId, Notice, NoticeSeverity,
@@ -104,6 +105,197 @@ fn subjects_expose_principals_and_membership() {
     let a = ctx(Subject::anonymous());
     let b = ctx(Subject::anonymous());
     assert_ne!(a.request_id, b.request_id, "each request gets its own id");
+}
+
+#[test]
+fn a_subject_debug_print_redacts_the_bearer_token() {
+    let mut s = Subject::authenticated("alice", vec![ORG], vec!["/ops".into()])
+        .with_bearer_token("s3cr3t-token");
+    s.on_behalf_of = Some("public".into());
+    let printed = format!("{s:?}");
+    assert!(!printed.contains("s3cr3t-token"), "{printed}");
+    assert!(
+        printed.contains(r#"bearer_token: Some("[redacted]")"#),
+        "{printed}"
+    );
+    for shown in [
+        "alice",
+        "/ops",
+        "read_only: false",
+        r#"on_behalf_of: Some("public")"#,
+    ] {
+        assert!(printed.contains(shown), "{shown} missing from {printed}");
+    }
+    let anon = format!("{:?}", Subject::anonymous());
+    assert!(anon.contains("bearer_token: None"), "{anon}");
+}
+
+#[test]
+fn each_row_set_reads_its_target_from_the_row_and_refuses_a_row_without_uid() {
+    let row = json!({"uid": "u", "folderUid": "f", "dashboardUid": "d"});
+    let cases = [
+        (RowSet::Dashboards, Some(dash("u", Some("f")))),
+        (RowSet::DashboardVersions, Some(dash("d", Some("f")))),
+        (
+            RowSet::Folders,
+            Some(ObjectTarget::Folder {
+                org_id: ORG,
+                folder_uid: "u".into(),
+            }),
+        ),
+        (RowSet::Datasources, Some(ds("u"))),
+        (
+            RowSet::LibraryPanels,
+            Some(ObjectTarget::LibraryPanel {
+                org_id: ORG,
+                panel_uid: "u".into(),
+                folder_uid: Some("f".into()),
+            }),
+        ),
+        (
+            RowSet::PublicDashboards,
+            Some(ObjectTarget::PublicDashboard {
+                org_id: ORG,
+                dashboard_uid: "d".into(),
+            }),
+        ),
+        (
+            RowSet::ImportReports,
+            Some(ObjectTarget::Organization { org_id: ORG }),
+        ),
+    ];
+    for (set, want) in cases {
+        assert_eq!(set.target(ORG, &row), want, "{set:?}");
+    }
+    // A row missing its object member shows nothing; an import report needs none.
+    for set in RowSet::ALL {
+        let got = set.target(ORG, &json!({"folderUid": "f"}));
+        assert_eq!(
+            got.is_some(),
+            set == RowSet::ImportReports,
+            "{set:?}: {got:?}"
+        );
+    }
+}
+
+/// Set names and keys as OData spells them, and an unknown name is no set.
+#[test]
+fn row_sets_parse_their_own_names_and_know_their_key() {
+    for set in RowSet::ALL {
+        assert_eq!(RowSet::parse(set.name()), Some(set));
+    }
+    assert_eq!(RowSet::Dashboards.name(), "Dashboards");
+    assert_eq!(RowSet::ImportReports.name(), "ImportReports");
+    assert_eq!(RowSet::parse("dashboards"), None);
+    assert_eq!(RowSet::parse(""), None);
+    let keys: Vec<_> = RowSet::ALL.iter().map(|s| s.key()).collect();
+    assert_eq!(keys, ["uid", "id", "uid", "uid", "uid", "uid", "id"]);
+}
+
+/// The memory store's reference read: scope first, then filter, keyset cursor, order, skip and
+/// limit, with the count taken before the page.
+#[test]
+fn answer_rows_scopes_filters_orders_and_pages() {
+    use daiya_model::rows::{RowQuery, RowWindow, answer_rows, page_rows};
+    use daiya_model::{ReadScope, ScopeColumn};
+    use odata_table::{Cond, SortKey};
+    let rows: Vec<Value> = [
+        ("a", "f1", 3),
+        ("b", "f2", 1),
+        ("c", "f1", 2),
+        ("d", "f1", 2),
+    ]
+    .iter()
+    .map(|(uid, folder, n)| json!({"uid": uid, "folderUid": folder, "panelCount": n}))
+    .collect();
+    let uids = |page: &daiya_model::rows::RowPage| -> Vec<String> {
+        page.rows
+            .iter()
+            .map(|r| r["uid"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let every = RowQuery::every(RowSet::Dashboards, ReadScope::All);
+    assert_eq!(
+        uids(&answer_rows(rows.clone(), &every)),
+        ["a", "b", "c", "d"]
+    );
+    let nothing = RowQuery::every(RowSet::Dashboards, ReadScope::Nothing);
+    assert!(answer_rows(rows.clone(), &nothing).rows.is_empty());
+    let f1 = RowQuery::every(
+        RowSet::Dashboards,
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        },
+    );
+    assert_eq!(uids(&answer_rows(rows.clone(), &f1)), ["a", "c", "d"]);
+    // A set whose rows carry no member for the column shows none of them.
+    let ds = RowQuery::every(
+        RowSet::Datasources,
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        },
+    );
+    assert!(answer_rows(rows.clone(), &ds).rows.is_empty());
+
+    // panelCount descending, then uid: a total order.
+    let order = vec![
+        SortKey {
+            path: vec!["panelCount".into()],
+            descending: true,
+        },
+        SortKey {
+            path: vec!["uid".into()],
+            descending: false,
+        },
+    ];
+    let window = |after: Option<Vec<Value>>, skip, limit, count| RowWindow {
+        filter: Cond::Const(true),
+        order: order.clone(),
+        after,
+        skip,
+        limit,
+        count,
+    };
+    let page = page_rows(rows.clone(), &window(None, 0, None, true));
+    assert_eq!(uids(&page), ["a", "c", "d", "b"]);
+    assert_eq!(page.count, Some(4));
+    let page = page_rows(rows.clone(), &window(None, 1, Some(2), false));
+    assert_eq!(
+        (uids(&page), page.count),
+        (vec!["c".to_owned(), "d".to_owned()], None)
+    );
+    assert!(
+        page_rows(rows.clone(), &window(None, 0, Some(0), true))
+            .rows
+            .is_empty()
+    );
+    // The cursor of row "c" (2, "c") starts the page behind it; the count ignores the cursor.
+    let page = page_rows(
+        rows.clone(),
+        &window(Some(vec![json!(2), json!("c")]), 0, None, true),
+    );
+    assert_eq!(
+        (uids(&page), page.count),
+        (vec!["d".to_owned(), "b".to_owned()], Some(4))
+    );
+    let filtered = RowWindow {
+        filter: Cond::Compare {
+            path: vec!["folderUid".into()],
+            op: odata_url::CompareOp::Eq,
+            value: json!("f1"),
+        },
+        ..window(None, 0, None, true)
+    };
+    let page = page_rows(rows, &filtered);
+    assert_eq!(
+        (uids(&page), page.count),
+        (
+            vec!["a".to_owned(), "c".to_owned(), "d".to_owned()],
+            Some(3)
+        )
+    );
 }
 
 #[test]
@@ -832,6 +1024,109 @@ fn scoped_write_bindings_only_grant_writes_inside_their_scope() {
     );
     assert!(authz.check(&carol, Action::Admin, &ds("prom")).allowed);
     assert!(!authz.check(&carol, Action::Admin, &ds("loki")).allowed);
+}
+
+/// Only the subject [`Subject::public_dashboard`] mints is a public-dashboard subject: a person,
+/// an anonymous caller and an actor id that merely contains the prefix are not.
+#[test]
+fn only_the_minted_subject_is_a_public_dashboard() {
+    use daiya_model::PUBLIC_DASHBOARD_ACTOR_PREFIX;
+    let org = OrgId::from_u128(11);
+    assert!(Subject::public_dashboard(org, "pub").is_public_dashboard());
+    assert!(!Subject::authenticated("alice", vec![org], vec![]).is_public_dashboard());
+    assert!(!Subject::anonymous().is_public_dashboard());
+    let inside = format!("x{PUBLIC_DASHBOARD_ACTOR_PREFIX}pub");
+    assert!(!Subject::authenticated(&inside, vec![org], vec![]).is_public_dashboard());
+}
+
+/// A binding that names a folder lists that folder's dashboards, and gives nothing on a kind
+/// scoped by datasource: [`ReadScope::Nothing`], not an empty `In` a store would still query.
+#[test]
+fn a_binding_of_another_scope_reads_nothing() {
+    use daiya_model::{ReadKind, ReadScope, ScopeColumn};
+    let org = OrgId::from_u128(11);
+    let authz = PolicyAuthorizer::new(vec![RoleBinding {
+        org_id: org,
+        principal: "me".into(),
+        actions: vec![Action::Read],
+        folder_uid: Some("f1".into()),
+        datasource_uid: None,
+    }]);
+    let ctx = RequestCtx::new(
+        InstallationId::from_u128(1),
+        org,
+        InstanceId::from_u128(1),
+        Subject::authenticated("me", vec![org], vec![]),
+    );
+    assert_eq!(
+        authz.read_scope(&ctx, ReadKind::Dashboard),
+        ReadScope::In {
+            column: ScopeColumn::Folder,
+            values: ["f1".to_owned()].into(),
+        }
+    );
+    assert_eq!(
+        authz.read_scope(&ctx, ReadKind::Datasource),
+        ReadScope::Nothing
+    );
+}
+
+/// The plan's `baseEtag`: the same state gives the same 64-hex digest, and a change of a folder's
+/// title, a datasource's url or a dashboard's JSON gives another.
+#[test]
+fn the_state_etag_follows_every_field_it_summarises() {
+    use daiya_model::{DashboardRecord, DatasourceRecord, FolderRecord, org_state_etag};
+    let ids = json!({
+        "installationId": InstallationId::from_u128(1),
+        "orgId": OrgId::from_u128(2),
+        "instanceId": InstanceId::from_u128(3),
+        "createdBy": "a", "updatedBy": "a",
+        "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+    });
+    let with = |extra: Value| {
+        let mut v = ids.clone();
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let folder: FolderRecord =
+        serde_json::from_value(with(json!({"uid": "f", "title": "F", "version": 1}))).unwrap();
+    let ds: DatasourceRecord = serde_json::from_value(with(json!({
+        "uid": "d", "name": "D", "type": "prometheus", "access": "proxy",
+        "url": "http://prom", "isDefault": false, "readOnly": false, "jsonData": {}, "version": 1,
+    })))
+    .unwrap();
+    let dash: DashboardRecord = serde_json::from_value(with(json!({
+        "uid": "x", "title": "X", "slug": "x", "tags": [], "panelCount": 0,
+        "datasourceUids": [], "version": 1, "schemaVersion": 42, "isProvisioned": false,
+        "allowUiUpdates": false, "data": {"panels": []},
+    })))
+    .unwrap();
+    use std::slice::from_ref;
+    let etag = org_state_etag(from_ref(&folder), from_ref(&ds), from_ref(&dash));
+    assert_eq!(etag.len(), 64);
+    assert!(etag.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(
+        etag,
+        org_state_etag(from_ref(&folder), from_ref(&ds), from_ref(&dash))
+    );
+    assert_ne!(etag, org_state_etag(&[], &[], &[]));
+    let mut renamed = folder.clone();
+    renamed.title = "G".into();
+    assert_ne!(
+        etag,
+        org_state_etag(&[renamed], from_ref(&ds), from_ref(&dash))
+    );
+    let mut moved = ds.clone();
+    moved.url = "http://other".into();
+    assert_ne!(
+        etag,
+        org_state_etag(from_ref(&folder), &[moved], from_ref(&dash))
+    );
+    let mut edited = dash;
+    edited.data = json!({"panels": [1]});
+    assert_ne!(etag, org_state_etag(&[folder], &[ds], &[edited]));
 }
 
 /// A list's predicate and the per-object decision are one answer, for every binding shape.

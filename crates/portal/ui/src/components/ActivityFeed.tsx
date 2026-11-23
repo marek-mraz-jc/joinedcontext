@@ -32,6 +32,7 @@ import {
   TableSkeleton,
 } from "./ui";
 import { RecordLink } from "./RecordLink";
+import { isPersonId, personLabel, usePersonNames } from "../api/personNames";
 import type { BadgeTone } from "./ui";
 
 const COLUMNS = 4;
@@ -72,6 +73,43 @@ export function sentenceOf(event: Pick<ActivityEvent, "summary" | "details" | "k
 }
 
 /** One row of the feed: an event, and how often the same thing happened again (T-2760). */
+/**
+ * The person ids an event names: the feed keeps ids and never usernames (T-7542). Only these are
+ * written as names, so a run's or a request's id in a sentence is never called a person.
+ */
+export function peopleOf(
+  event: Pick<ActivityEvent, "summary" | "details">,
+): string[] {
+  const details = event.details as Record<string, unknown> | undefined;
+  const subject = details?.subject as { user?: unknown } | undefined;
+  const named = [
+    details?.actor,
+    details?.approvedBy,
+    details?.rejectedBy,
+    typeof subject === "string" ? subject : subject?.user,
+    // The gateway writes its caller as `user:{id}`.
+    /\buser:([0-9a-f-]{36})\b/.exec(event.summary)?.[1],
+  ];
+  return named.filter(
+    (id): id is string => typeof id === "string" && isPersonId(id),
+  );
+}
+
+/** An event's sentence with each person it names written as `personLabel` writes them. */
+export function withPeople(
+  sentence: string,
+  people: readonly string[],
+  names: Map<string, string>,
+): string {
+  return people.reduce(
+    (text, id) =>
+      text
+        .replaceAll(`user:${id}`, personLabel(id, names))
+        .replaceAll(id, personLabel(id, names)),
+    sentence,
+  );
+}
+
 export interface ActivityRow {
   event: ActivityEvent;
   /** How many identical events the row stands for, itself included. */
@@ -204,6 +242,7 @@ export function ActivityFeed({
       ),
     [page.data, live, limit],
   );
+  const names = usePersonNames(items.flatMap(peopleOf));
 
   const head = (
     <TableHead>
@@ -400,8 +439,12 @@ export function ActivityFeed({
                     </div>
                     {/* A URL or an id in the sentence breaks where it must: unbroken, it widened the whole
                         table past a phone's edge and cut every row's text (judge, 400 px). */}
-                    <span data-testid="activity-sentence" className="[overflow-wrap:anywhere]">
-                      {sentence}
+                    <span
+                      data-testid="activity-sentence"
+                      className="[overflow-wrap:anywhere]"
+                      title={peopleOf(event).join(", ") || undefined}
+                    >
+                      {withPeople(sentence, peopleOf(event), names)}
                     </span>
                     {reason ? (
                       <details className="mt-0.5 text-caption text-fg-muted">

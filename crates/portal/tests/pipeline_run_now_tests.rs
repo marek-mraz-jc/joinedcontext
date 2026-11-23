@@ -202,7 +202,7 @@ async fn a_steward_runs_a_queued_pipeline_now_and_finds_it_in_the_run_list() {
     for event in &page.items {
         assert_eq!(event.details["run"], run.as_str());
         assert_eq!(event.details["object"], "pipelines/harvest");
-        assert_eq!(event.details["actor"], "jana");
+        assert_eq!(event.details["actor"], "sub-jana");
     }
 }
 

@@ -6,7 +6,7 @@
  * states of the list (waiting, refused, nothing to offer), the category filter, a card's heading
  * level under the section's, and every string drawn from a blueprint being text.
  */
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -82,6 +82,21 @@ describe("the set-ups while there is nothing to show yet", () => {
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("The blueprint store is not answering.")).toBeInTheDocument();
     expect(within(alert).getByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
+  });
+
+  it("asks for the blueprints again on Retry and draws them once they come", async () => {
+    let asked = 0;
+    renderPage(<BlueprintCards category="ingestion" onRun={() => {}} />, {
+      answer: (url) => {
+        if (!url.pathname.endsWith("/blueprints")) return undefined;
+        asked += 1;
+        return asked === 1 ? problem(503, "The blueprint store is not answering.") : json(list([GBFS]));
+      },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByRole("heading", { level: 3, name: "gbfs-stations" })).toBeInTheDocument();
+    expect(asked).toBe(2);
   });
 
   // The page around it has its own way to add one; an empty section would only take room.

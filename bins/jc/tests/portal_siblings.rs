@@ -388,7 +388,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let mut gaps: Vec<String> = Vec::new();
 
     // Setup: secrets are never in the log; the kept ones are private files, the given service
-    // tokens are not copied into the state directory.
+    // tokens are not copied into the state directory (catalogue-token: deprecated, never read).
     for name in [
         "shako-token",
         "ekiben-token",
@@ -709,7 +709,8 @@ async fn the_portal_runs_on_its_sibling_modules() {
     );
     gaps.push("d runner: GET/PUT/POST/DELETE /streams/streams[/{id}] without Authorization -> 401 (the Portal has no runner credential setting)".into());
 
-    // e. dataroom: the Portal's CKAN token authenticates; the catalogue route needs https.
+    // e. dataroom (S11-23): the Portal publishes with a service token jc signs in process, so a
+    // static bearer (the file the deprecated --dataroom-portal-token-file names) writes nothing.
     let anon = Client::new()
         .post(jc.url("/opendata/api/3/action/organization_create"))
         .json(&json!({"name": "e2e-org", "title": "E2E"}))
@@ -717,54 +718,35 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .await
         .unwrap();
     assert!(anon.status().is_client_error(), "anonymous writes refused");
-    let org = Client::new()
-        .post(jc.url("/opendata/api/3/action/organization_create"))
-        .header("authorization", jc.secret("catalogue-token"))
-        .json(&json!({"name": "e2e-org", "title": "E2E"}))
-        .send()
-        .await
-        .unwrap();
-    let org_status = org.status();
-    let org_body = org.text().await.unwrap_or_default();
-    assert!(
-        org_status.is_success(),
-        "W2 organization_create with the Portal token: {org_status} {org_body}"
-    );
-    // W5, the dataset jcctl publishes for a public Endpoint, then the anonymous catalogue read.
-    let created = Client::new()
-        .post(jc.url("/opendata/api/3/action/package_create"))
-        .header("authorization", jc.secret("catalogue-token"))
-        .json(&json!({
-            "name": "e2e-air-quality",
-            "owner_org": "e2e-org",
-            "title": "E2E air quality",
-            "notes": "A public Endpoint of the e2e.",
-            "private": false,
-            "resources": [{"name": "NGSI-LD", "url": "https://example.org/api/endpoint/e2e", "format": "NGSI-LD"}],
-            "extras": [{"key": "generated_by", "value": "joinedcontext"}]
-        }))
-        .send()
-        .await
-        .unwrap();
-    let created_status = created.status();
-    let created_body = created.text().await.unwrap_or_default();
-    assert!(
-        created_status.is_success(),
-        "W5 package_create with the Portal token: {created_status} {created_body}"
-    );
-    let listed: Value = Client::new()
-        .get(jc.url("/opendata/api/3/action/package_show?id=e2e-air-quality"))
+    for header in [
+        jc.secret("catalogue-token"),
+        format!("Bearer {}", jc.secret("catalogue-token")),
+    ] {
+        let refused = Client::new()
+            .post(jc.url("/opendata/api/3/action/organization_create"))
+            .header("authorization", header)
+            .json(&json!({"name": "e2e-org", "title": "E2E"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            refused.status(),
+            StatusCode::UNAUTHORIZED,
+            "a static bearer at dataroom"
+        );
+    }
+    let shown = Client::new()
+        .get(jc.url("/opendata/api/3/action/organization_show?id=e2e-org"))
         .send()
         .await
         .unwrap()
-        .json()
+        .text()
         .await
-        .unwrap();
-    assert_eq!(
-        listed["result"]["title"], "E2E air quality",
-        "the public dataset is in the anonymous catalogue: {listed}"
+        .unwrap_or_default();
+    assert!(
+        !shown.contains("\"success\":true"),
+        "nothing was written: {shown}"
     );
-    gaps.push("e Portal: JC_PORTAL_CKAN_URL must be https (EP-67), so on an http install the Portal's own sync never calls dataroom; the e2e makes the Portal's W2 and W5 calls with its token".into());
 
     // f. daiya: the Portal's Grafana credential authenticates.
     let dash = Client::new()

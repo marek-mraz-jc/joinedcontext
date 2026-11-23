@@ -889,7 +889,7 @@ mod tests {
             .policies
             .into_iter()
             .next()
-            .ok_or_else(|| "no policy".to_owned())
+            .ok_or("no policy".to_owned())
     }
 
     fn base() -> serde_json::Value {
