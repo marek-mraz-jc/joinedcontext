@@ -846,6 +846,12 @@ pub async fn twin_catalogues(store: &dyn Store) {
         .unwrap()
         .unwrap();
     assert_eq!(ds.title["sk"], "twin-a");
+    let (ds, _) = store
+        .get_distribution(&b, &resource)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.title["sk"], "twin-b");
     let views = store.list_resource_views(&a, &resource).await.unwrap();
     assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-a"]);
 
