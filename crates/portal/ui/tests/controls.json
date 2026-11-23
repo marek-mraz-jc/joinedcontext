@@ -2280,8 +2280,17 @@
     "src/pages/portals/PortalsArea.tsx": {
       "controls": {
         "Button": 2,
-        "Checkbox": 3,
+        "Checkbox": 2,
         "RadioGroup": 1
+      },
+      "tests": [
+        "portals_area.test.tsx"
+      ]
+    },
+    "src/pages/portals/PortalProfiles.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 2
       },
       "tests": [
         "portals_area.test.tsx"

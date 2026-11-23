@@ -213,6 +213,7 @@ pub async fn build_with_writer(
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Dataroom, e);
     dataroom_api::check_aliases(&cfg.aliases)
         .map_err(|e| err(&format!("[dataroom.aliases] {e}")))?;
+    dataroom_api::check_profiles().map_err(|e| err(&e))?;
     let org_id = OrgId::parse_verified(&cfg.org_id).map_err(|e| err(&e))?;
     let catalogue_id = CatalogueId::parse_verified(&cfg.catalogue_id).map_err(|e| err(&e))?;
     // ODP-12: each Organization's catalogue lives under its own OrgId, so row level security and

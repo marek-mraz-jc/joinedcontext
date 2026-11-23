@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
+import { writePhoneReport } from "./phoneCheck.cts";
 
 // The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
@@ -62,6 +63,10 @@ interface Stub {
   hostsBody?: unknown;
   /** What a write of a portal host answers; the default is the hosts answer. */
   hostWrite?: (route: Route) => Promise<void>;
+  /** Takes the body of each proposed write, as its REST door reads it. */
+  written?: unknown[];
+  /** The datasets read of a portal (T-7520); 503 when false. */
+  datasets?: unknown;
 }
 
 async function stub(page: Page, options: Stub): Promise<string[]> {
@@ -85,9 +90,13 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
       if (options.hostsBody) return json(options.hostsBody);
       return options.hosts ? json({ type: "about:blank", title: "Forbidden", status: options.hosts, detail: "only an Organization's administrator" }, options.hosts) : json(HOSTS);
     }
+    if (/^\/api\/v1\/projects\/org\/portals\/[^/]+\/datasets$/.test(path) && options.datasets !== undefined) {
+      return options.datasets === false ? json({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "no catalogue" }, 503) : json(options.datasets);
+    }
     if (path.startsWith("/api/v1/projects/org/portals")) {
       if (request.method() !== "GET") {
         sent.push(`${request.method()} ${path}${url.search}`);
+        if (request.method() !== "DELETE" && !url.searchParams.get("dryRun")) options.written?.push(request.postDataJSON());
         if (options.write) return options.write(route);
         return url.searchParams.get("dryRun") ? json({ valid: true, verdict: { ok: true, findings: [] } }) : json(CHANGE, 202);
       }
@@ -123,7 +132,7 @@ for (const width of [1440, 400]) {
       await shoot(page, "empty", width, info.outputPath(`portals-list-empty-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: FILLED });
       await page.reload();
       await expect(page.getByRole("link", { name: "Mobility" })).toBeVisible();
@@ -133,7 +142,7 @@ for (const width of [1440, 400]) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: [], hosts: 403 });
       await page.reload();
       await expect(page.getByText(/made by an Organization's administrators/)).toBeVisible();
@@ -150,7 +159,7 @@ for (const width of [1440, 400]) {
       await shoot(page, "hosts-empty", width, info.outputPath(`portal-hosts-empty-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       const sent = await stub(page, {
         portals: FILLED,
         hostsBody: OWN_HOSTS,
@@ -186,7 +195,7 @@ for (const width of [1440, 400]) {
       await dialog.getByRole("button", { name: "Remove host" }).click();
       await expect.poll(() => sent).toContain("DELETE /api/v1/organization/portal-hosts/data.bbsk.sk");
 
-      await page.unrouteAll();
+      await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { portals: FILLED });
       await page.reload();
       await expect(page.getByText(/verified no domain yet/)).toBeVisible();
@@ -245,7 +254,8 @@ for (const width of [1440, 400]) {
 
 test("create, edit and delete a portal: each write a checked proposal", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const sent = await stub(page, { portals: FILLED });
+  const written: { metadata: { name: string }; spec: Record<string, unknown> }[] = [];
+  const sent = await stub(page, { portals: FILLED, written });
   await page.goto("/portals?lang=en");
   await page.getByRole("link", { name: "New portal" }).first().click();
   await page.getByLabel(/Name in the address/).fill("mobility2");
@@ -254,9 +264,9 @@ test("create, edit and delete a portal: each write a checked proposal", async ({
   await page.getByLabel(/^Domain/).selectOption("skoly.bbsk.sk");
   await page.getByLabel("Also keep the usual slug address").check();
   await expect(page.getByText("The portal will answer at https://skoly.bbsk.sk/")).toBeVisible();
-  const created = page.waitForRequest((r) => r.method() === "POST" && !r.url().includes("dryRun"));
   await page.getByRole("button", { name: "Propose the portal" }).click();
-  const body = (await created).postDataJSON() as { metadata: { name: string }; spec: Record<string, unknown> };
+  await expect.poll(() => written.length).toBe(1);
+  const body = written[0];
   expect(body.metadata.name).toBe("bbsk-mobility2");
   expect(body.spec).toMatchObject({ organizationRef: "bbsk", path: "mobility2", host: "skoly.bbsk.sk", slug: "keep", title: { sk: "Doprava 2" } });
   await expect(page.getByText(/waiting|approv/i).first()).toBeVisible();
@@ -274,3 +284,105 @@ test("create, edit and delete a portal: each write a checked proposal", async ({
   await expect.poll(() => sent.some((s) => s.startsWith("DELETE /api/v1/projects/org/portals/bbsk-skoly"))).toBe(true);
   expect(sent.filter((s) => s.startsWith("POST")).map((s) => s.includes("dryRun"))).toEqual([true, false]);
 });
+
+// T-7520 and T-7521: the profiles an administrator chooses, and what keeps a dataset out of a feed.
+const PROFILES = [
+  { id: "dcat-ap-3.0.1", title: { en: "DCAT-AP 3.0.1 (European Union)" }, always: true },
+  { id: "dcat-ap-fi-2.0", title: { en: "DCAT-AP-FI 2.0" }, country: "FI", always: false },
+  { id: "geodcat-ap-3.1.0", title: { en: "GeoDCAT-AP 3.1.0" }, always: false },
+  {
+    id: "dcat-ap-sk-2.0",
+    title: { en: "DCAT-AP-SK 2.0" },
+    country: "SK",
+    always: false,
+    publisherPrefix: "https://data.gov.sk/id/legal-subject/",
+    blocked: "dcat-ap-sk-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki, e.g. https://data.gov.sk/id/legal-subject/…",
+  },
+];
+const HELSINKI = portal("helsinki", { en: "Helsinki open data", fi: "Helsingin avoin data" });
+const profileHosts = (profiles: unknown[]) => ({ items: [{ ...HOSTS.items[0], profiles }] });
+const CATALOGUE = {
+  total: 2,
+  missingPublisher: ["dcat-ap-fi-2.0"],
+  profiles: ["dcat-ap-fi-2.0", "geodcat-ap-3.1.0"],
+  items: [
+    { name: "bike-stations", title: "City bike stations", source: "endpoints", hidden: false, missing: [] },
+    {
+      name: "tree-register",
+      title: "Register of street trees",
+      source: "endpoints",
+      hidden: false,
+      missing: [{ profile: "geodcat-ap-3.1.0", fields: ["applicable_legislation"] }],
+    },
+  ],
+};
+
+for (const width of [1440, 400]) {
+  test.describe(`profiles at ${width} px`, () => {
+    test.use({ viewport: { width, height: width === 400 ? 2300 : 900 }, hasTouch: width === 400, isMobile: width === 400 });
+
+    test("the choice with none, some, a refusal and no answer, and the datasets out of a feed", async ({ page }, info) => {
+      const state = async (name: string) => {
+        const dir = process.env.JC_EVIDENCE_DIR;
+        const shot = dir ? `${dir}/${name}-${width}.png` : info.outputPath(`${name}-${width}.png`);
+        // A phone scales a taller viewport down, so it takes the whole page instead.
+        // A resize or a full page shot drops the touch emulation: the phone is tall from the start.
+        if (width === 400) await page.screenshot({ path: shot });
+        else await shoot(page, name, width, shot);
+        if (width === 400) expect(await writePhoneReport(page, shot)).toEqual([]);
+        expect(await axeViolations(page)).toEqual([]);
+        if (width !== 400) await page.setViewportSize({ width, height: 900 });
+      };
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const field = page.getByRole("group", { name: "Catalogue profiles" });
+      const open = async (options: Partial<Stub>) => {
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+        const sent = await stub(page, { portals: [HELSINKI], hostsBody: profileHosts(PROFILES), ...options });
+        await page.goto("/portals/bbsk-helsinki?lang=en");
+        await expect(field).toBeVisible();
+        return sent;
+      };
+
+      await open({ hostsBody: profileHosts(PROFILES.slice(0, 1)), datasets: { total: 0, missingPublisher: [], profiles: [], items: [] } });
+      await expect(field.getByText(/No other profile is installed/)).toBeVisible();
+      await state("profiles-empty");
+
+      await open({ datasets: false });
+      await expect(field.getByText(/could not be read/)).toBeVisible();
+      await expect(field.getByRole("button", { name: "Read again" })).toBeVisible();
+      await state("profiles-error");
+
+      const asked: { spec: { profiles?: string[] } }[] = [];
+      const refuse = (route: Route) => {
+        asked.push(route.request().postDataJSON() as (typeof asked)[number]);
+        return route.fulfill({
+          status: 422,
+          contentType: "application/problem+json",
+          body: JSON.stringify({ type: "about:blank", title: "Unprocessable", status: 422, detail: "refused", errors: ["spec.profiles[0]: dcat-ap-fi-2.0 needs the publisher's IRI: set spec.catalog.publisher.uri on Organization helsinki"] }),
+        });
+      };
+      const sent = await open({ datasets: { total: 0, missingPublisher: [], profiles: [], items: [] }, write: refuse });
+      const fi = field.getByRole("checkbox", { name: "DCAT-AP-FI 2.0 (FI)" });
+      await expect(fi).toBeEnabled();
+      await expect(field.getByRole("checkbox", { name: "DCAT-AP-SK 2.0 (SK)" })).toBeDisabled();
+      await state("profiles-choice");
+      await fi.check();
+      await page.getByRole("button", { name: "Propose the changes" }).click();
+      await expect(field.getByRole("alert")).toContainText("was not saved");
+      expect(sent.length).toBeGreaterThan(0);
+      expect(asked[0].spec.profiles).toEqual(["dcat-ap-fi-2.0"]);
+      await state("profiles-refusal");
+
+      // Chosen while the Organization still had its publisher.
+      const lost = PROFILES.map((p) => (p.id === "dcat-ap-fi-2.0" ? { ...p, blocked: "dcat-ap-fi-2.0 needs the publisher's IRI" } : p));
+      await open({ datasets: CATALOGUE, hostsBody: profileHosts(lost) });
+      await expect(fi).toBeChecked();
+      await expect(field.getByText(/its feed is paused/)).toBeVisible();
+      await state("profiles-filled");
+      await page.getByRole("tab", { name: "Datasets" }).click();
+      await expect(page.getByText("Missing publisher")).toBeVisible();
+      await expect(page.getByText(/applicable_legislation/).filter({ visible: true }).first()).toBeVisible();
+      await state("datasets-gaps");
+    });
+  });
+}

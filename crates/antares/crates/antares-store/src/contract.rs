@@ -968,6 +968,50 @@ pub async fn run_current_state_contract(
     // copy of a public document (5.13.1) and belongs to no Tenant.
     let hosted_id = format!("{prefix}-ctx-hosted");
     let cached_id = format!("{prefix}-ctx-cached");
+    // S4-15: the count and the bytes are the Tenant's own, per kind, and a
+    // row written before the `bytes` member is charged for what it holds.
+    let capped = |n: usize, bytes: Option<u64>| {
+        let id = format!("{prefix}-ctx-capped-{n}");
+        let mut doc = json!({"localId": id, "kind": "ImplicitlyCreated", "owner": a.as_str(),
+                             "body": {"@context": {"capped": "https://example.org/capped"}}});
+        if let (Some(b), Some(o)) = (bytes, doc.as_object_mut()) {
+            o.insert("bytes".into(), json!(b));
+        }
+        (id, doc)
+    };
+    for (n, charge, count, bytes, want) in [
+        (1, None, 2, 1_000, crate::ContextPut::Stored),
+        // the first row's unstated bytes count
+        (2, Some(10), 2, 20, crate::ContextPut::PastBytes),
+        (2, Some(10), 2, 1_000, crate::ContextPut::Stored),
+        (3, Some(10), 2, 1_000, crate::ContextPut::PastCount),
+        // an id already stored takes no second place
+        (2, Some(10), 2, 1_000, crate::ContextPut::Stored),
+    ] {
+        let (id, doc) = capped(n, charge);
+        let caps = crate::ContextCaps { count, bytes };
+        let put = d
+            .context_put_capped(a, &id, doc, caps)
+            .await
+            .expect("a capped put of the tenant's own @context");
+        assert_eq!(put, want, "@context {n} inside {caps:?}");
+    }
+    let foreign = capped(4, Some(10)).1;
+    let caps = crate::ContextCaps {
+        count: 2,
+        bytes: 1_000,
+    };
+    assert!(
+        d.context_put_capped(b, "foreign", foreign, caps)
+            .await
+            .is_err(),
+        "a capped put stores no other tenant's row"
+    );
+    for n in 1..=2 {
+        d.context_delete(Some(a), &capped(n, None).0)
+            .await
+            .expect("the contract removes its capped rows");
+    }
     let hosted = json!({"localId": hosted_id, "kind": "Hosted", "owner": a.as_str(),
                         "body": {"@context": {"t": "https://example.org/t"}}});
     d.context_put(Some(a), &hosted_id, hosted.clone())

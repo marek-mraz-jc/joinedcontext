@@ -1,0 +1,88 @@
+@prefix adms: <http://www.w3.org/ns/adms#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcatap: <http://data.europa.eu/r5r/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix eli: <http://data.europa.eu/eli/ontology#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix leg: <https://data.gov.sk/def/ontology/legislation/> .
+@prefix locn: <http://www.w3.org/ns/locn#> .
+@prefix odrl: <http://www.w3.org/ns/odrl/2/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix pu: <https://data.gov.cz/slovník/podmínky-užití/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix spdx: <http://spdx.org/rdf/terms#> .
+@prefix time: <http://www.w3.org/2006/time#> .
+@prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://publications.europa.eu/resource/authority/data-theme/TRAN> a skos:Concept ;
+  skos:prefLabel "Transport"@en .
+
+<http://publications.europa.eu/resource/authority/file-type/ZIP> a dct:MediaTypeOrExtent .
+
+<http://publications.europa.eu/resource/authority/frequency/WEEKLY_3> a dct:Frequency .
+
+<http://www.iana.org/assignments/media-types/application/json> a dct:MediaType .
+
+<http://www.iana.org/assignments/media-types/application/zip> a dct:MediaType .
+
+<https://data.gov.sk/def/ontology/transport/> a dct:Standard .
+
+<https://data.gov.sk/id/nuts1/SK0> a dct:Location .
+
+<https://data.gov.sk/legal-subject/30416094> a foaf:Agent .
+
+<https://data.gov.sk/set/vld> a dcat:Dataset ;
+  dct:accrualPeriodicity <http://publications.europa.eu/resource/authority/frequency/WEEKLY_3> ;
+  dct:conformsTo <https://data.gov.sk/def/ontology/transport/> ;
+  dct:description "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."@sk, "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."@en ;
+  dct:publisher <https://data.gov.sk/legal-subject/30416094> ;
+  dct:spatial <https://data.gov.sk/id/nuts1/SK0> ;
+  dct:temporal _:b2 ;
+  dct:title "Cestovné poriadky"@sk, "Public transport timetables"@en ;
+  dcat:contactPoint _:b1 ;
+  dcat:distribution <https://data.gov.sk/set/vld/resource/csv>, <https://data.gov.sk/set/vld/resource/sparql> ;
+  dcat:keyword "autobusy"@sk, "bus"@en, "cestovné poriadky"@sk, "public transport"@en, "timetable"@en, "verejná linková doprava"@sk ;
+  dcat:landingPage <https://opendata.mindop.sk/show/vld> ;
+  dcat:spatialResolutionInMeters "12.0"^^xsd:decimal ;
+  dcat:temporalResolution "P1D"^^xsd:duration ;
+  dcat:theme <http://eurovoc.europa.eu/4512>, <http://publications.europa.eu/resource/authority/data-theme/TRAN> .
+
+<https://data.gov.sk/set/vld/resource/csv> a dcat:Distribution ;
+  dct:conformsTo <https://opendata.middop.sk/schemy/json-schema.json> ;
+  dct:format <http://publications.europa.eu/resource/authority/file-type/ZIP> ;
+  dct:title "JSON distribution in ZIP file"@en, "JSON distribúcia v ZIP súbore"@sk ;
+  dcat:accessURL <https://opendata.middop.sk/pub/draha/mestske/JDF.zip> ;
+  dcat:compressFormat <http://www.iana.org/assignments/media-types/application/zip> ;
+  dcat:downloadURL <https://opendata.middop.sk/pub/draha/mestske/JDF.zip> ;
+  dcat:mediaType <http://www.iana.org/assignments/media-types/application/json> ;
+  dcat:packageFormat <http://www.iana.org/assignments/media-types/application/zip> ;
+  pu:specifikace _:b3 .
+
+<https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
+  dcat:accessURL <> .
+
+<https://opendata.middop.sk/schemy/json-schema.json> a dct:Standard .
+
+<https://opendata.mindop.sk/show/vld> a foaf:Document .
+
+_:b1 a vcard:Kind, vcard:Organization ;
+  vcard:fn "Ministerstvo dopravy, Odbor verejnej dopravy"@sk, "Ministry of Transport"@en ;
+  vcard:hasEmail <mailto:info@mindop.sk> .
+
+_:b2 a dct:PeriodOfTime ;
+  dcat:endDate "2017-12-31"^^xsd:date ;
+  dcat:startDate "2009-01-01"^^xsd:date .
+
+_:b3 a pu:Specifikace ;
+  pu:autor "Ministerstvo dopravy, Odbor verejnej dopravy"@sk ;
+  pu:autor-databáze "Ministerstvo dopravy, Odbor verejnej dopravy"@sk ;
+  pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
+  pu:databáze-chráněná-zvláštními-právy <https://creativecommons.org/publicdomain/zero/1.0/> ;
+  pu:databáze-jako-autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ;
+  pu:osobní-údaje <https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/> .
+

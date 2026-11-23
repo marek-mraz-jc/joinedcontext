@@ -314,14 +314,16 @@ fn incomplete(what: String) -> DataroomError {
 const NKOD_QUERY: &str = "PREFIX dcat: <http://www.w3.org/ns/dcat#>
 PREFIX dct: <http://purl.org/dc/terms/>
 PREFIX l: <https://data.gov.sk/def/ontology/legislation/>
-SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword
-       ?dist ?distTitle ?url ?format ?work ?database ?special WHERE {
+SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword ?theme ?frequency
+       ?dist ?distTitle ?url ?format ?work ?database ?special ?personal WHERE {
   ?ds a dcat:Dataset ; dct:publisher <%s> ; dct:title ?title .
   OPTIONAL { ?ds dct:description ?description }
   OPTIONAL { ?ds dct:modified ?modified }
   OPTIONAL { ?ds dct:issued ?issued }
   OPTIONAL { ?ds dcat:landingPage ?landing }
   OPTIONAL { ?ds dcat:keyword ?keyword }
+  OPTIONAL { ?ds dcat:theme ?theme }
+  OPTIONAL { ?ds dct:accrualPeriodicity ?frequency }
   OPTIONAL {
     ?ds dcat:distribution ?dist .
     OPTIONAL { ?dist dct:title ?distTitle }
@@ -330,7 +332,8 @@ SELECT ?ds ?title ?description ?modified ?issued ?landing ?keyword
     OPTIONAL { ?dist l:termsOfUse ?terms .
                OPTIONAL { ?terms l:authorsWorkType ?work }
                OPTIONAL { ?terms l:originalDatabaseType ?database }
-               OPTIONAL { ?terms l:databaseProtectedBySpecialRightsType ?special } }
+               OPTIONAL { ?terms l:databaseProtectedBySpecialRightsType ?special }
+               OPTIONAL { ?terms l:personalDataContainmentType ?personal } }
   }
 }
 ";
@@ -1213,6 +1216,125 @@ impl HarvestEngine {
     }
 }
 
+impl HarvestEngine {
+    /// Takes the source's lock: writes `run` Running unless another run of the source holds
+    /// it (a conflict). The Running row with its deadline is the lease every replica reads.
+    async fn claim_run(
+        &self,
+        ctx: &RequestCtx,
+        store: &dyn Store,
+        source: &HarvestSource,
+    ) -> Result<HarvestRun> {
+        let started_at = TimestampTz::now();
+        let run_id = format!("run-{}", Uuid::now_v7());
+        let run = HarvestRun {
+            org_id: ctx.org_id,
+            catalogue_id: ctx.catalogue_id,
+            id: run_id.clone(),
+            source_id: source.id.clone(),
+            state: HarvestRunState::Running,
+            started_at,
+            finished_at: None,
+            created_count: 0,
+            updated_count: 0,
+            unchanged_count: 0,
+            withdrawn_count: 0,
+            skipped: Vec::new(),
+            error: None,
+            logs: Vec::new(),
+        };
+        let deadline = jiff::SignedDuration::try_from(self.deadline)
+            .unwrap_or_else(|_| jiff::SignedDuration::from_hours(1));
+        if !store
+            .claim_harvest_run(
+                ctx,
+                run.clone(),
+                started_at
+                    .checked_sub(deadline)
+                    .unwrap_or(TimestampTz::UNIX_EPOCH),
+            )
+            .await?
+        {
+            return Err(DataroomError::Conflict(format!(
+                "harvest source '{}' has a run in progress",
+                source.name
+            )));
+        }
+        Ok(run)
+    }
+
+    /// Runs a claimed `run` to its end: stopped and recorded failed after the deadline, a
+    /// failure always leaves a Failed row behind.
+    async fn drive_run(
+        &self,
+        ctx: &RequestCtx,
+        store: &dyn Store,
+        source: &HarvestSource,
+        mut run: HarvestRun,
+    ) -> Result<HarvestRun> {
+        let (err, fingerprint) = match tokio::time::timeout(
+            self.deadline,
+            self.execute(ctx, store, source, run.id.clone(), run.started_at),
+        )
+        .await
+        {
+            Ok(Ok(done)) => return Ok(done),
+            Ok(Err(err)) => (err, "harvest.error"),
+            Err(_) => (
+                DataroomError::OutboundRefused(format!(
+                    "the run passed its deadline of {} s",
+                    self.deadline.as_secs()
+                )),
+                "harvest.deadline",
+            ),
+        };
+        // A fetch failure wrote its own Failed row; anything else still holds the lock.
+        let still_running = store
+            .get_harvest_run(ctx, &run.id)
+            .await
+            .ok()
+            .flatten()
+            .is_none_or(|r| r.state == HarvestRunState::Running);
+        if still_running {
+            run.state = HarvestRunState::Failed;
+            run.finished_at = Some(TimestampTz::now());
+            run.error = Some(err.to_string());
+            run.logs.push(HarvestLogLine {
+                at: TimestampTz::now(),
+                level: "error".into(),
+                fingerprint: fingerprint.into(),
+                message: err.to_string(),
+            });
+            store.upsert_harvest_run(ctx, run).await?;
+        }
+        Err(err)
+    }
+
+    /// Records a claimed run failed when its task ended without a word (a panic), so its
+    /// lease is released at once instead of at the deadline.
+    async fn release_lost_run(store: &dyn Store, ctx: &RequestCtx, run_id: &str) {
+        let Ok(Some(mut run)) = store.get_harvest_run(ctx, run_id).await else {
+            return;
+        };
+        if run.state != HarvestRunState::Running {
+            return;
+        }
+        let message = "the run stopped unexpectedly".to_owned();
+        run.state = HarvestRunState::Failed;
+        run.finished_at = Some(TimestampTz::now());
+        run.error = Some(message.clone());
+        run.logs.push(HarvestLogLine {
+            at: TimestampTz::now(),
+            level: "error".into(),
+            fingerprint: "harvest.lost".into(),
+            message,
+        });
+        if let Err(e) = store.upsert_harvest_run(ctx, run).await {
+            tracing::error!(run = %run_id, error = %e, "dataroom harvest: lost run not released");
+        }
+    }
+}
+
 impl HarvestRunner for HarvestEngine {
     /// One run of `source`: refused with a conflict while another run of it holds the source's
     /// Running row, stopped and recorded failed after the deadline, a failure always leaves a
@@ -1224,77 +1346,39 @@ impl HarvestRunner for HarvestEngine {
         source: &'a HarvestSource,
     ) -> BoxFuture<'a, Result<HarvestRun>> {
         Box::pin(async move {
-            let started_at = TimestampTz::now();
-            let run_id = format!("run-{}", Uuid::now_v7());
-            let mut run = HarvestRun {
-                org_id: ctx.org_id,
-                catalogue_id: ctx.catalogue_id,
-                id: run_id.clone(),
-                source_id: source.id.clone(),
-                state: HarvestRunState::Running,
-                started_at,
-                finished_at: None,
-                created_count: 0,
-                updated_count: 0,
-                unchanged_count: 0,
-                withdrawn_count: 0,
-                skipped: Vec::new(),
-                error: None,
-                logs: Vec::new(),
-            };
-            let deadline = jiff::SignedDuration::try_from(self.deadline)
-                .unwrap_or_else(|_| jiff::SignedDuration::from_hours(1));
-            if !store
-                .claim_harvest_run(
-                    ctx,
-                    run.clone(),
-                    started_at
-                        .checked_sub(deadline)
-                        .unwrap_or(TimestampTz::UNIX_EPOCH),
-                )
-                .await?
-            {
-                return Err(DataroomError::Conflict(format!(
-                    "harvest source '{}' has a run in progress",
-                    source.name
-                )));
-            }
-            let (err, fingerprint) = match tokio::time::timeout(
-                self.deadline,
-                self.execute(ctx, store, source, run_id, started_at),
-            )
-            .await
-            {
-                Ok(Ok(done)) => return Ok(done),
-                Ok(Err(err)) => (err, "harvest.error"),
-                Err(_) => (
-                    DataroomError::OutboundRefused(format!(
-                        "the run passed its deadline of {} s",
-                        self.deadline.as_secs()
-                    )),
-                    "harvest.deadline",
-                ),
-            };
-            // A fetch failure wrote its own Failed row; anything else still holds the lock.
-            let still_running = store
-                .get_harvest_run(ctx, &run.id)
-                .await
-                .ok()
-                .flatten()
-                .is_none_or(|r| r.state == HarvestRunState::Running);
-            if still_running {
-                run.state = HarvestRunState::Failed;
-                run.finished_at = Some(TimestampTz::now());
-                run.error = Some(err.to_string());
-                run.logs.push(HarvestLogLine {
-                    at: TimestampTz::now(),
-                    level: "error".into(),
-                    fingerprint: fingerprint.into(),
-                    message: err.to_string(),
+            let run = self.claim_run(ctx, store, source).await?;
+            self.drive_run(ctx, store, source, run).await
+        })
+    }
+
+    /// Claims the run before it answers (a held source answers the conflict), then runs it in
+    /// a task of its own: the caller's request may end or drop, the run goes on (S11-14).
+    fn start_source(
+        self: Arc<Self>,
+        ctx: RequestCtx,
+        store: Arc<dyn Store>,
+        source: HarvestSource,
+    ) -> BoxFuture<'static, Result<HarvestRun>> {
+        Box::pin(async move {
+            let run = self.claim_run(&ctx, store.as_ref(), &source).await?;
+            let claimed = run.clone();
+            tokio::spawn(async move {
+                let run_id = run.id.clone();
+                let (task_ctx, task_store) = (ctx.clone(), store.clone());
+                let task = tokio::spawn(async move {
+                    // The outcome is in the run row; harvest_run.get reads it.
+                    if let Err(e) = self
+                        .drive_run(&task_ctx, task_store.as_ref(), &source, run)
+                        .await
+                    {
+                        tracing::warn!(source = %source.name, error = %e, "dataroom harvest: run failed");
+                    }
                 });
-                store.upsert_harvest_run(ctx, run).await?;
-            }
-            Err(err)
+                if task.await.is_err() {
+                    Self::release_lost_run(store.as_ref(), &ctx, &run_id).await;
+                }
+            });
+            Ok(claimed)
         })
     }
 

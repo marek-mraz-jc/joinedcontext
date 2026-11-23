@@ -57,6 +57,22 @@ pub trait DatasetValidator: Send + Sync {
     ) {
     }
 
+    /// Refuses a profile upload that takes a built-in's id or whose shapes do not parse.
+    fn check_profile(&self, _profile: &crate::model::ProfileRecord) -> Result<()> {
+        Ok(())
+    }
+
+    /// Refuses profiles a catalogue may not take up: not installed, needing a publisher it does
+    /// not declare, or, where a Portal manages the choice (`managed`), a built-in one.
+    fn check_profile_choice(
+        &self,
+        _catalogue: &Catalogue,
+        _added: &[&str],
+        _managed: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -103,13 +119,25 @@ pub trait DatasetValidator: Send + Sync {
 
 /// Hook trait so `dataroom-core` operations can start a harvest run without a circular
 /// dependency on `dataroom-harvest`.
-pub trait HarvestRunner: Send + Sync {
+pub trait HarvestRunner: Send + Sync + 'static {
+    /// Runs `source` to its end and answers the finished run.
     fn run_source<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         store: &'a dyn Store,
         source: &'a HarvestSource,
     ) -> crate::store::BoxFuture<'a, Result<crate::model::HarvestRun>>;
+
+    /// Starts a run of `source` and answers it once its lease is taken (state running);
+    /// `harvest_run.get` reads how it ends. This default runs it inline to its end.
+    fn start_source(
+        self: Arc<Self>,
+        ctx: RequestCtx,
+        store: Arc<dyn Store>,
+        source: HarvestSource,
+    ) -> crate::store::BoxFuture<'static, Result<crate::model::HarvestRun>> {
+        Box::pin(async move { self.run_source(&ctx, store.as_ref(), &source).await })
+    }
 
     /// One guarded read of `source`'s first page that writes nothing (ODP-15): the answer is
     /// one word, never what the remote said.
@@ -482,7 +510,7 @@ pub fn all_operations() -> Vec<OperationDef> {
             segment: "operate",
             permission: Action::Harvest,
             target_kind: "HarvestSource",
-            description: "Start a harvest run for a harvest source.",
+            description: "Start a harvest run for a harvest source: answers the run in state running once the source is held (a run already holding it answers a conflict); harvest_run.get reads how it ends.",
             input_schema: json!({"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}}),
             output_schema: json!({"type": "object"}),
         },
@@ -777,13 +805,14 @@ async fn own_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx) -> Result<Catal
 }
 
 /// The one way an operation stores a dataset record: a Public one conforms to the main profile,
-/// its reports are kept and the change leaves its activity row.
+/// its reports are kept and the change commits with its activity row. `expected` is the stored
+/// record's `modified` the change was built on: another write since answers a conflict.
 async fn store_dataset(
     op_ctx: &OpContext,
     req_ctx: &RequestCtx,
     cat: &Catalogue,
     publisher: Option<&Publisher>,
-    ds: Dataset,
+    (ds, expected): (Dataset, Option<TimestampTz>),
     operation: &str,
 ) -> Result<Dataset> {
     let mut reports = Vec::new();
@@ -812,20 +841,24 @@ async fn store_dataset(
             });
         }
     }
-    let saved = op_ctx.store.upsert_dataset(req_ctx, ds).await?;
-    for mut report in reports {
-        report.dataset_id.clone_from(&saved.id);
-        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
-    }
+    // The store fills in the id it saves the dataset under.
     let row = activity_row(
         req_ctx,
         operation,
         "Dataset",
-        &saved.id,
-        format!("Saved dataset {}", saved.name),
-        json!({"name": saved.name}),
+        "",
+        format!("Saved dataset {}", ds.name),
+        json!({"name": ds.name}),
     );
-    op_ctx.store.record_activity(req_ctx, row).await?;
+    let saved = op_ctx
+        .store
+        .save_dataset(req_ctx, ds, expected, row)
+        .await?;
+    // Reports are derived from the record and written again by its next save.
+    for mut report in reports {
+        report.dataset_id.clone_from(&saved.id);
+        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
+    }
     Ok(saved)
 }
 
@@ -889,9 +922,10 @@ fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue
 
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
-/// changing who may edit a publisher (its editor grants), the publisher it is merged into or the
-/// instance that declared it (but a caller's claim of an undeclared one) needs Admin on it; and
-/// changing its state needs Delete, as `publisher.withdraw` does.
+/// changing who may edit a publisher (its editor grants), the publisher it is merged into, the
+/// instance that declared it (but a caller's claim of an undeclared one) or the IRI its datasets
+/// are attributed to needs Admin on it; and changing its state needs Delete, as
+/// `publisher.withdraw` does.
 pub fn authorize_publisher_write(
     authorizer: &dyn Authorizer,
     req_ctx: &RequestCtx,
@@ -918,10 +952,54 @@ pub fn authorize_publisher_write(
     if proposed.editor_grants != base.editor_grants
         || proposed.merged_into != base.merged_into
         || (proposed.declared_by_instance != base.declared_by_instance && !claims_own)
+        || proposed.uri != base.uri
     {
         enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
     }
     Ok(())
+}
+
+/// A dataset's declarations (CMP-08, SEC-17): personal data is one of the two statements, and
+/// the IRI of the body it is attributed to is set by an Admin or by the Portal's publisher,
+/// which carries the Endpoint's manifest. Anyone else would publish as another body.
+fn check_declarations(
+    authorizer: &dyn Authorizer,
+    req_ctx: &RequestCtx,
+    target: &ObjectTarget,
+    existing: Option<&Dataset>,
+    ds: &Dataset,
+) -> Result<()> {
+    if let Some(stated) = ds.extras.get(crate::model::PERSONAL_DATA) {
+        let allowed = [
+            crate::model::PERSONAL_DATA_CONTAINS,
+            crate::model::PERSONAL_DATA_NONE,
+        ];
+        if !allowed.contains(&stated.as_str()) {
+            return Err(DataroomError::field_error(
+                crate::model::PERSONAL_DATA,
+                format!("must be one of {}", allowed.join(", ")),
+            ));
+        }
+    }
+    let iri = |d: &Dataset| d.publisher.as_ref().and_then(|a| a.uri.clone());
+    let proposed = iri(ds);
+    if proposed.is_some()
+        && proposed != existing.and_then(iri)
+        && !is_portal_publisher(req_ctx)
+        && !authorizer.check(req_ctx, Action::Admin, target).allowed
+    {
+        return Err(DataroomError::Forbidden(
+            "publisher_uri: only an administrator declares the body a dataset is attributed to"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The Portal's publisher: the bare principal, or the one bound to this context's catalogue.
+fn is_portal_publisher(req_ctx: &RequestCtx) -> bool {
+    let (actor, portal) = (req_ctx.actor_name(), crate::auth::PORTAL_PUBLISHER);
+    actor == portal || actor == format!("{portal}:{}", req_ctx.catalogue_id)
 }
 
 /// The stored publisher a proposal addresses: by its id when it carries one, else by name,
@@ -941,8 +1019,8 @@ async fn proposed_publisher_record(
     }))
 }
 
-/// What `catalogue.propose` may change: its host and name, profiles, branding, hidden datasets
-/// and outbound rules only with Admin on the catalogue (each has its own Admin route); a
+/// What `catalogue.propose` may change: its host and name, profiles, publisher and contact,
+/// branding, hidden datasets and outbound rules only with Admin on the catalogue (each has its own Admin route); a
 /// Propose-only caller's values for them are replaced by the stored ones. A new host or name is
 /// validated, so `base_url` and robots.txt only ever carry a host name.
 fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Result<()> {
@@ -951,6 +1029,9 @@ fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Res
         cat.host = stored.host;
         cat.main_profile = stored.main_profile;
         cat.active_profiles = stored.active_profiles;
+        cat.publisher_uri = stored.publisher_uri;
+        cat.publisher_name = stored.publisher_name;
+        cat.contact_point = stored.contact_point;
         cat.theme = stored.theme;
         cat.branding = stored.branding;
         cat.hidden_datasets = stored.hidden_datasets;
@@ -993,6 +1074,23 @@ fn activity_row(
         object_id: object_id.into(),
         summary,
         details,
+    }
+}
+
+/// Runs `attempt` again, three times at most, while it answers a conflict: for a change of one
+/// member (a resource, the state, the branding) that is built anew from each fresh read, so a
+/// concurrent write to another member never fails the caller (S11-25).
+async fn retry_on_conflict<F, Fut, T>(mut attempt: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut left = 3;
+    loop {
+        match attempt().await {
+            Err(DataroomError::Conflict(_)) if left > 1 => left -= 1,
+            done => return done,
+        }
     }
 }
 
@@ -1078,26 +1176,34 @@ async fn dispatch(
                 .authorizer
                 .check(req_ctx, Action::Admin, &target)
                 .allowed;
+            let held: Vec<String> = stored
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.clone())
+                .chain([stored.main_profile.clone()])
+                .collect();
+            let read = stored.modified;
             keep_admin_fields(&mut cat, stored, admin)?;
-            let saved = op_ctx.store.upsert_catalogue(cat).await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "catalogue.propose".into(),
-                        object_type: "Catalogue".into(),
-                        object_id: saved.id.to_string(),
-                        summary: format!("Updated catalogue {}", saved.name),
-                        details: json!({}),
-                    },
-                )
-                .await?;
+            let added: Vec<&str> = cat
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.as_str())
+                .chain([cat.main_profile.as_str()])
+                .filter(|id| !held.iter().any(|h| h == id))
+                .collect();
+            if let Some(validator) = op_ctx.validator.as_ref().filter(|_| !added.is_empty()) {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
+                validator.check_profile_choice(&cat, &added, op_ctx.sources_by_portal)?;
+            }
+            let row = activity_row(
+                req_ctx,
+                "catalogue.propose",
+                "Catalogue",
+                &cat.id.to_string(),
+                format!("Updated catalogue {}", cat.name),
+                json!({}),
+            );
+            let saved = op_ctx.store.save_catalogue(cat, Some(read), row).await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
         "dataset.search" => {
@@ -1274,6 +1380,10 @@ async fn dispatch(
                     "caller is not a member of the organization".into(),
                 ));
             }
+            let expected_read = input
+                .get("dataset")
+                .and(input.get("expectedModified"))
+                .cloned();
             let raw_ds = input.get("dataset").cloned().unwrap_or(input);
             let non_empty = |key: &str| {
                 raw_ds
@@ -1356,9 +1466,37 @@ async fn dispatch(
             if !decision.allowed {
                 return Err(DataroomError::Forbidden(decision.reason));
             }
+            check_declarations(
+                op_ctx.authorizer.as_ref(),
+                req_ctx,
+                &target,
+                existing.as_ref(),
+                &ds,
+            )?;
 
-            let saved =
-                store_dataset(op_ctx, req_ctx, &cat, Some(&pub_rec), ds, "dataset.propose").await?;
+            // `expectedModified` names the version a caller read before building the record (a
+            // package_patch merges into it); else the version read above.
+            let stored_version = existing.as_ref().map(|ex| ex.modified);
+            if let Some(read) = expected_read {
+                let read: TimestampTz = serde_json::from_value(read).map_err(|_| {
+                    DataroomError::field_error(
+                        "expectedModified",
+                        "an RFC 3339 time, e.g. 2026-11-22T10:00:00Z",
+                    )
+                })?;
+                if stored_version != Some(read) {
+                    return Err(crate::store::changed_since_read("dataset", &ds.name));
+                }
+            }
+            let saved = store_dataset(
+                op_ctx,
+                req_ctx,
+                &cat,
+                Some(&pub_rec),
+                (ds, stored_version),
+                "dataset.propose",
+            )
+            .await?;
             Ok(dataset_to_ckan(
                 &saved,
                 Some(&pub_rec),
@@ -1372,31 +1510,30 @@ async fn dispatch(
                 .or_else(|| input.get("id"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| DataroomError::field_error("name", "name is required"))?;
-            let ds = op_ctx
-                .store
-                .get_dataset(req_ctx, name)
-                .await?
-                .ok_or_else(not_found)?;
-            authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
-            let withdrawn = op_ctx.store.withdraw_dataset(req_ctx, &ds.id).await?;
-            op_ctx
-                .store
-                .record_activity(
+            let withdrawn = retry_on_conflict(|| async {
+                let mut ds = op_ctx
+                    .store
+                    .get_dataset(req_ctx, name)
+                    .await?
+                    .ok_or_else(not_found)?;
+                authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
+                let read = ds.modified;
+                ds.state = RecordState::Withdrawn;
+                ds.modified = TimestampTz::now();
+                let row = activity_row(
                     req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "dataset.withdraw".into(),
-                        object_type: "Dataset".into(),
-                        object_id: withdrawn.id.clone(),
-                        summary: format!("Withdrew dataset {}", withdrawn.name),
-                        details: json!({"name": withdrawn.name}),
-                    },
-                )
-                .await?;
+                    "dataset.withdraw",
+                    "Dataset",
+                    "",
+                    format!("Withdrew dataset {}", ds.name),
+                    json!({"name": ds.name}),
+                );
+                op_ctx
+                    .store
+                    .save_dataset(req_ctx, ds, Some(read), row)
+                    .await
+            })
+            .await?;
             Ok(json!({ "id": withdrawn.id, "name": withdrawn.name, "state": "deleted" }))
         }
         "dataset.purge" => dataset_purge(op_ctx, req_ctx, input).await,
@@ -1563,7 +1700,8 @@ async fn dispatch(
                 ));
             };
             let run = harvester
-                .run_source(req_ctx, op_ctx.store.as_ref(), &source)
+                .clone()
+                .start_source(req_ctx.clone(), op_ctx.store.clone(), source)
                 .await?;
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
@@ -1819,33 +1957,27 @@ async fn dispatch(
                 catalogue_id: req_ctx.catalogue_id,
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Admin, &target))?;
-            let mut cat = op_ctx
-                .store
-                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
             let br_val = input.get("branding").cloned().unwrap_or(input);
-            cat.branding = Some(br_val);
-            cat.modified = TimestampTz::now();
-            let saved = op_ctx.store.upsert_catalogue(cat).await?;
-            op_ctx
-                .store
-                .record_activity(
+            let saved = retry_on_conflict(|| async {
+                let mut cat = op_ctx
+                    .store
+                    .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                    .await?
+                    .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+                let read = cat.modified;
+                cat.branding = Some(br_val.clone());
+                cat.modified = TimestampTz::now();
+                let row = activity_row(
                     req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "branding.propose".into(),
-                        object_type: "Catalogue".into(),
-                        object_id: saved.id.to_string(),
-                        summary: format!("Updated branding on catalogue {}", saved.name),
-                        details: json!({}),
-                    },
-                )
-                .await?;
+                    "branding.propose",
+                    "Catalogue",
+                    &cat.id.to_string(),
+                    format!("Updated branding on catalogue {}", cat.name),
+                    json!({}),
+                );
+                op_ctx.store.save_catalogue(cat, Some(read), row).await
+            })
+            .await?;
             let installation = op_ctx.branding.as_ref().map(|of| of(&saved));
             let eff = saved.effective_branding(installation.as_ref());
             Ok(serde_json::to_value(eff).unwrap_or(Value::Null))
@@ -2123,6 +2255,15 @@ async fn dataset_purge(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -
 
 /// The `resource.propose` operation.
 async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
+    retry_on_conflict(|| resource_propose_once(op_ctx, req_ctx, input.clone())).await
+}
+
+/// One try of `resource.propose` on a fresh read of the dataset.
+async fn resource_propose_once(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    input: Value,
+) -> Result<Value> {
     let ResourceProposal {
         dataset,
         id,
@@ -2154,6 +2295,7 @@ async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
     let publisher = authorize_dataset(op_ctx, req_ctx, &ds, Action::Propose).await?;
     let cat = own_catalogue(op_ctx, req_ctx).await?;
     let lang = cat.default_language.as_str();
+    let read = ds.modified;
     let (pos, dist) = match stored {
         None => {
             let pos = ds.distributions.len();
@@ -2199,7 +2341,9 @@ async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
                     }
                 }
             }
-            let dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
+            let mut dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
+            // CKAN's resource dict carries no terms of use: an update keeps the declared ones.
+            dist.terms_of_use = stored.terms_of_use.clone();
             ds.distributions[pos] = dist.clone();
             (pos, dist)
         }
@@ -2210,7 +2354,7 @@ async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
         req_ctx,
         &cat,
         publisher.as_ref(),
-        ds,
+        (ds, Some(read)),
         "resource.propose",
     )
     .await?;
@@ -2220,13 +2364,19 @@ async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
 /// The `resource.delete` operation.
 async fn resource_delete(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -> Result<Value> {
     let RecordId { id } = op_input(input)?;
+    retry_on_conflict(|| resource_delete_once(op_ctx, req_ctx, &id)).await
+}
+
+/// One try of `resource.delete` on a fresh read of the dataset.
+async fn resource_delete_once(op_ctx: &OpContext, req_ctx: &RequestCtx, id: &str) -> Result<Value> {
     let (mut ds, _) = op_ctx
         .store
-        .get_distribution(req_ctx, &id)
+        .get_distribution(req_ctx, id)
         .await?
         .ok_or_else(not_found)?;
     let publisher = authorize_dataset(op_ctx, req_ctx, &ds, Action::Delete).await?;
     let cat = own_catalogue(op_ctx, req_ctx).await?;
+    let read = ds.modified;
     ds.distributions.retain(|r| r.id != id);
     ds.modified = TimestampTz::now();
     store_dataset(
@@ -2234,7 +2384,7 @@ async fn resource_delete(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
         req_ctx,
         &cat,
         publisher.as_ref(),
-        ds,
+        (ds, Some(read)),
         "resource.delete",
     )
     .await?;
@@ -2374,7 +2524,17 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
     if activate {
         enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Approve, &target))?;
     }
+    // An upload never becomes a built-in: those ship with the release (their ids are refused
+    // by the validator).
+    profile.built_in = false;
     let mut cat = own_catalogue(op_ctx, req_ctx).await?;
+    // An upload activated through a national base needs what that feed needs: the base's
+    // choice is checked as if the catalogue took it up (a Portal-managed choice aside).
+    if let (true, Some(base), Some(validator)) =
+        (activate, profile.base_profile.as_deref(), &op_ctx.validator)
+    {
+        validator.check_profile_choice(&cat, &[base], false)?;
+    }
     let stored = op_ctx.store.list_profiles(req_ctx).await?;
     if stored
         .iter()
@@ -2392,14 +2552,6 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
         (profile, dry_run) = validator.upload_profile(profile, &cat, &datasets, &publishers)?;
     }
     let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
-    if activate {
-        cat.active_profiles.retain(|p| p.profile_id != saved.id);
-        cat.active_profiles.push(crate::model::ProfilePin {
-            profile_id: saved.id.clone(),
-            version: saved.version.clone(),
-        });
-        op_ctx.store.upsert_catalogue(cat).await?;
-    }
     let row = activity_row(
         req_ctx,
         "profile.propose",
@@ -2408,7 +2560,18 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
         format!("Saved profile {} {}", saved.id, saved.version),
         json!({"id": saved.id, "version": saved.version, "activated": activate}),
     );
-    op_ctx.store.record_activity(req_ctx, row).await?;
+    if activate {
+        let read = cat.modified;
+        cat.active_profiles.retain(|p| p.profile_id != saved.id);
+        cat.active_profiles.push(crate::model::ProfilePin {
+            profile_id: saved.id.clone(),
+            version: saved.version.clone(),
+        });
+        cat.modified = TimestampTz::now();
+        op_ctx.store.save_catalogue(cat, Some(read), row).await?;
+    } else {
+        op_ctx.store.record_activity(req_ctx, row).await?;
+    }
     Ok(json!({ "profile": saved, "dryRun": dry_run }))
 }
 
@@ -2429,10 +2592,15 @@ async fn profile_activate(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
         DataroomError::NotSupported("no validator holds the profiles here".into())
     })?;
     let mut cat = own_catalogue(op_ctx, req_ctx).await?;
+    let read = cat.modified;
     validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
     let (datasets, publishers) = dry_run_records(op_ctx, req_ctx).await?;
     let (dry_run, reports) =
         validator.dry_run_profile(&id, &version, &cat, &datasets, &publishers)?;
+    let held = cat.main_profile == id || cat.active_profiles.iter().any(|p| p.profile_id == id);
+    if !held {
+        validator.check_profile_choice(&cat, &[id.as_str()], op_ctx.sources_by_portal)?;
+    }
     cat.active_profiles.retain(|p| p.profile_id != id);
     cat.active_profiles.push(crate::model::ProfilePin {
         profile_id: id.clone(),
@@ -2441,10 +2609,7 @@ async fn profile_activate(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
     if make_main {
         cat.main_profile.clone_from(&id);
     }
-    let saved = op_ctx.store.upsert_catalogue(cat).await?;
-    for report in reports {
-        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
-    }
+    cat.modified = TimestampTz::now();
     let row = activity_row(
         req_ctx,
         "profile.activate",
@@ -2453,6 +2618,9 @@ async fn profile_activate(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
         format!("Activated profile {id} {version}"),
         json!({"id": id, "version": version, "main": make_main}),
     );
-    op_ctx.store.record_activity(req_ctx, row).await?;
+    let saved = op_ctx.store.save_catalogue(cat, Some(read), row).await?;
+    for report in reports {
+        op_ctx.store.upsert_shacl_report(req_ctx, report).await?;
+    }
     Ok(json!({ "catalogue": saved, "dryRun": dry_run }))
 }

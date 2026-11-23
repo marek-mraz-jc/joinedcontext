@@ -70,7 +70,25 @@ const FIXED_JSON = {
   result: { ...VIEW_JSON.result, source: JSON.stringify({ ...JSON.parse(VIEW_JSON.result.source), controls: false, aggrMethod: "max", aggrPeriod: "P1D" }) },
 };
 
-type Mode = "normal" | "empty" | "error" | "cut" | "slow";
+type Mode = "normal" | "empty" | "error" | "cut" | "slow" | "decade" | "century" | "policy";
+// Where each long history starts (T-7526): ten years, a hundred, a Policy's last thirty days.
+const SINCE = { decade: "2016-01-01", century: "1926-01-01", policy: "2026-10-23" };
+
+// The buckets the broker answers a long aggregated read with: one for each UTC day, month or year
+// of the range that holds a value, none before `since`.
+function history(url: URL, since: string): unknown {
+  const period = url.searchParams.get("aggrPeriodDuration");
+  const cut = period === "P1Y" ? 4 : period === "P1M" ? 7 : 10;
+  const starts = new Set<string>();
+  const from = Math.max(Date.parse(since), Date.parse(url.searchParams.get("timeAt")!));
+  for (let at = from; at < NOW.getTime(); at += 86_400_000) {
+    starts.add(new Date(at).toISOString().slice(0, cut) + "-01-01".slice(0, 10 - cut));
+  }
+  const method = url.searchParams.get("aggrMethods")!;
+  const buckets = [...starts].map((day, i) => [0.6 + 0.2 * Math.sin(i / 3), `${day}T00:00:00Z`, `${day}T00:00:00Z`]);
+  const [station] = fixture("praha-humidity-hourly.json") as { id: string }[];
+  return [{ ...station, relativeHumidity: { type: "Property", [method]: buckets } }];
+}
 // The buckets a cut answer brings before the page's limit: up to 2026-11-20 00:00Z.
 const CUT = 129;
 const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
@@ -109,7 +127,8 @@ async function serve(page: Page, state: { mode: Mode; asked: URL[] }, datasetPag
       if (state.mode === "error") return route.fulfill({ status: 503, headers: opaque, contentType: "application/json", body: "{}" });
       if (state.mode === "empty") return route.fulfill({ status: 200, headers: opaque, contentType: "application/json", body: "[]" });
       if (state.mode === "slow") await new Promise((r) => setTimeout(r, 4000));
-      let body = JSON.stringify(answer(url));
+      const since = state.mode in SINCE ? SINCE[state.mode as keyof typeof SINCE] : null;
+      let body = JSON.stringify(since && url.searchParams.get("aggrMethods") ? history(url, since) : answer(url));
       if (state.mode === "cut") {
         // A 206 with the oldest CUT buckets whose next window is the same address: the host stops
         // there and says that the newer ones are missing.
@@ -209,17 +228,16 @@ for (const width of [1440, 400]) {
     expect(state.asked.at(-1)!.searchParams.get("aggrPeriodDuration")).toBe("PT1H");
     await expect(host.getByLabel("Podrobnosť")).toHaveValue("PT1H");
 
-    // Custom range over 31 days: consecutive daily windows `between`, the note names the switch.
+    // Custom range over 31 days: one daily read `between`, the note names the switch.
     await host.getByLabel("Obdobie").selectOption("custom");
     const before = state.asked.length;
     await host.getByLabel("Od", { exact: true }).fill("2026-09-01");
     await host.getByLabel("Do", { exact: true }).fill("2026-11-20");
     await expect(host.locator("#controls-note")).toContainText("po dňoch");
-    const walk = state.asked.slice(before).filter((u) => u.searchParams.get("timeAt")?.startsWith("2026-09-01") || u.searchParams.get("endTimeAt") === "2026-11-21T00:00:00Z");
-    expect(walk.length).toBeGreaterThanOrEqual(2);
-    for (const u of walk) expect(u.searchParams.get("timerel")).toBe("between");
-    // The walk's earlier windows came back empty: the chart says where the data starts.
-    await expect(host.locator("#controls-note")).toContainText("Pred 14.\u00a011.\u00a02026 v tomto období nie sú uložené údaje");
+    const long = state.asked.slice(before).filter((u) => u.searchParams.get("endTimeAt") === "2026-11-21T00:00:00Z");
+    expect(long.map((u) => [u.searchParams.get("timerel"), u.searchParams.get("timeAt")])).toEqual([["between", "2026-09-01T00:00:00Z"]]);
+    // The data starts inside the range asked: the chart says from when.
+    await expect(host.locator("#controls-note")).toContainText("Údaje sú dostupné od 14.\u00a011.\u00a02026");
     await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
     // Daily buckets are UTC days: the axis says that in place of local time.
     await expect(host.locator("#axis-note")).toContainText("Dni sú v UTC");
@@ -235,8 +253,8 @@ for (const width of [1440, 400]) {
       return getComputedStyle(l).opacity !== "0" && l.getBoundingClientRect().right > svg.right;
     }).map((l) => l.textContent))).toEqual([]);
     await expect(chart.locator("g.concat_0_group g.role-axis-label text").filter({ hasText: /\d\./ }).first()).toHaveText(/^\d+\.\d+\.$/);
-    await shot(page, "daily-walk", width);
-    // A second change inside a daily walk still says why it is daily.
+    await shot(page, "daily", width);
+    // A second change inside a daily range still says why it is daily.
     const walked = state.asked.length;
     await host.getByLabel("Výpočet").selectOption("min");
     await expect.poll(() => state.asked.length).toBeGreaterThan(walked);
@@ -282,6 +300,51 @@ for (const width of [1440, 400]) {
     expect(errors).toEqual([]);
   });
 
+  test(`a history of 10 or 100 years shows its whole span with the period stated (${width})`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+    await page.setViewportSize({ width, height: 900 });
+    const state = { mode: "decade" as Mode, asked: [] as URL[] };
+    const { host, chart } = await open(page, state);
+    await expect(chart.locator("g.mark-line path").first()).toBeAttached({ timeout: 20_000 });
+
+    // Ten years: one monthly read, finer granularities not on offer.
+    let before = state.asked.length;
+    await host.getByLabel("Obdobie").selectOption("P10Y");
+    await expect(host.locator("#controls-note")).toContainText("po mesiacoch");
+    expect(state.asked.slice(before).map((u) => u.searchParams.get("aggrPeriodDuration"))).toEqual(["P1M"]);
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1M");
+    await expect(host.locator("#c-gran option[value=P1D]")).toBeDisabled();
+    await expect(host.locator("#c-gran option[value=P1Y]")).toBeEnabled();
+    await expect(host.locator("#c-range-hint")).toContainText("10 rokov");
+    await expect(chart.locator("text", { hasText: "Mesačné priemery, 2016-2026" }).first()).toBeVisible();
+    await expect(host.locator("#axis-note")).toContainText("Mesiace sú v UTC");
+    await shot(page, "ten-years", width);
+
+    // All available over a hundred years: one yearly read.
+    state.mode = "century";
+    before = state.asked.length;
+    await host.getByLabel("Obdobie").selectOption("whole");
+    await expect(chart.locator("text", { hasText: "Ročné priemery, 1926-2026" }).first()).toBeVisible();
+    expect(state.asked.slice(before).map((u) => u.searchParams.get("aggrPeriodDuration"))).toEqual(["P1Y"]);
+    await expect(host.locator("#controls-note")).toContainText("Údaje sú dostupné od 1926");
+    await shot(page, "hundred-years", width);
+
+    // A Policy of thirty days under ten years: its thirty days, and from when.
+    state.mode = "policy";
+    await host.getByLabel("Obdobie").selectOption("P10Y");
+    await expect(host.locator("#controls-note")).toContainText("Údaje sú dostupné od 23.\u00a010.\u00a02026");
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("P1D");
+    await expect(chart.locator("g.concat_0_group g.mark-symbol.role-mark path[d]:not([d=''])")).toHaveCount(30);
+    await shot(page, "policy-thirty-days", width);
+
+    // Back to a week: the readings the view asks, not the forced period.
+    state.mode = "normal";
+    await host.getByLabel("Obdobie").selectOption("P7D");
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("raw");
+    expect(errors).toEqual([]);
+  });
+
   test(`empty, error, loading and cut answers each say so (${width})`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (m) => { if (m.type() === "error" && !/503/.test(m.text())) errors.push(m.text()); });
@@ -310,7 +373,7 @@ for (const width of [1440, 400]) {
     state.mode = "cut";
     await host.getByLabel("Obdobie").selectOption("P31D");
     await expect(host.locator("#status")).toContainText("neúplný", { timeout: 10_000 });
-    await expect(host.locator("#controls-note")).toContainText("Pred 14.\u00a011.\u00a02026 v tomto období nie sú uložené údaje");
+    await expect(host.locator("#controls-note")).toContainText("Údaje sú dostupné od 14.\u00a011.\u00a02026");
     await expect(host.locator("#status")).toContainText("novšie údaje");
     await expect(host.locator("#status")).not.toContainText("ďalšie stanice");
     await expect(host.locator("#status")).toContainText(/od 14\.\u00a011\.\u00a02026\u00a0\d\d:\d\d do 20\.\u00a011\.\u00a02026\u00a0\d\d:\d\d/);
@@ -331,6 +394,10 @@ for (const width of [1440, 400]) {
     await expect(host.locator("#status")).toBeHidden({ timeout: 10_000 });
     await expect(host.getByRole("button", { name: "Skúsiť znova" })).toBeHidden();
 
+    // The hours forced on 31 days were no pick of the reader's (T-7526): the week is readings again.
+    await expect(host.getByLabel("Podrobnosť")).toHaveValue("raw");
+    await host.getByLabel("Podrobnosť").selectOption("PT1H");
+    await expect(host.locator("#data-note.carried")).toBeVisible();
     // A change over a drawn chart keeps it, dimmed, until the new rows land.
     state.mode = "slow";
     await host.getByLabel("Obdobie").selectOption("PT24H");

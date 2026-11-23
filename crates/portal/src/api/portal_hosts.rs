@@ -68,6 +68,29 @@ pub struct PortalOrganization {
     /// The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified_domain: Option<String>,
+    /// The installed profiles its catalogues may publish in (T-7521).
+    pub profiles: Vec<PortalProfile>,
+}
+
+/// A profile a portal's catalogue may publish in (T-7521).
+#[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalProfile {
+    /// What `spec.profiles` takes, e.g. `dcat-ap-fi-2.0`.
+    pub id: String,
+    /// Its name, by language.
+    pub title: std::collections::BTreeMap<String, String>,
+    /// Its country, e.g. `FI`; absent for a profile of no one country.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// Served whatever is chosen: EU DCAT-AP.
+    pub always: bool,
+    /// How the publisher's IRI begins in its national register; absent without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_prefix: Option<String>,
+    /// Why this Organization cannot choose it yet; absent when it can.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
 }
 
 /// The Organizations the caller makes portals in, by name.
@@ -80,7 +103,7 @@ pub struct PortalHosts {
     get,
     path = "/api/v1/organization/portal-hosts",
     summary = "List Portal Hosts",
-    description = "Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals and its open data base address (ODP-08, ODP-15). A Portal naming another host is refused at propose with 422 on spec.host.",
+    description = "Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals, its open data base address (ODP-08, ODP-15) and the publication profiles its catalogues may choose. A Portal naming another host or a profile it may not choose is refused at propose with 422 on spec.host or spec.profiles.",
     tag = "system",
     responses(
         (status = 200, description = "The caller's Organizations, by name", body = PortalHosts),
@@ -130,6 +153,18 @@ async fn entries(
             sites: registry.sites(&organization),
             bases: registry.bases(&organization),
             verified_domain: registry.verified(state, &organization).await?,
+            profiles: settings
+                .profiles
+                .iter()
+                .map(|profile| PortalProfile {
+                    id: profile.id.clone(),
+                    title: profile.title.clone(),
+                    country: profile.country.clone(),
+                    publisher_prefix: profile.publisher_iri_prefixes.first().cloned(),
+                    always: profile.id == crate::portals::BASE_PROFILE,
+                    blocked: crate::portals::profile_refusal(&state.mirror, &organization, profile),
+                })
+                .collect(),
             organization,
         });
     }

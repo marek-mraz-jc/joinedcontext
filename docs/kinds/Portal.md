@@ -22,7 +22,7 @@ Desired specification of a `Portal` (ODP-08).
 | `organizationRef` | string | yes | The Organization the portal belongs to, e.g. `bratislava`. |
 | `pages` | list of [PortalPage](#portalpage) | no | The portal's pages built from blocks (T-7418): `home` replaces the built-in home, each other page answers at `/page/{slug}`; absent: the built-in home alone. |
 | `path` | string | yes | The portal's name inside the Organization, a DNS label such as `mobility`: `/{org}/opendata/-/mobility/`; `default` is the Organization's own portal. |
-| `profiles` | list of string | no | The DCAT-AP profiles its feeds serve, e.g. `[dcat-ap-3.0.1]`. |
+| `profiles` | list of string | no | The profiles its feeds serve beside EU DCAT-AP, e.g. `[dcat-ap-fi-2.0]`; `[]` for EU DCAT-AP alone. Absent, or naming only `dcat-ap-3.0.1`: the catalogue keeps what it serves. |
 | `slug` | [SlugAddress](#slugaddress) | no | With a `host`: what the slug address does. |
 | `sources` | list of [PortalSource](#portalsource) | no | Where its datasets come from (ODP-10). |
 | `title` | map of string | no | The title on every page, per language, e.g. `{sk: Doprava, en: Mobility}`. |

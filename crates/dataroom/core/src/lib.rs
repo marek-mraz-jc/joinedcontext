@@ -24,6 +24,7 @@ pub use branding::{
     BrandingLanguages, PublisherBranding, SanitisedAsset,
 };
 pub use error::{DataroomError, Result};
+pub use jc_core::kinds::is_declared_iri;
 pub use model::*;
 pub use odata_defs::{dataroom_service, scope_for_context};
 pub use ops::{all_operations, execute_operation, OpContext, OperationDef};

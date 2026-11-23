@@ -1,0 +1,29 @@
+{
+  "@context": "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld",
+  "dataset": [
+    "https://opendata.example.org/dataset/air",
+    "https://data.gov.cz/lkod/mdcr/datové-sady/vld",
+    "https://data.gov.sk/set/vld"
+  ],
+  "domovská_stránka": "https://opendata.example.org",
+  "iri": "https://opendata.example.org/catalog",
+  "kontaktný_bod": {
+    "e-mail": "mailto:data@city.example",
+    "meno": {
+      "sk": "Oddelenie dát"
+    },
+    "typ": "Organizácia"
+  },
+  "názov": {
+    "cs": "Katalog",
+    "en": "Catalogue",
+    "sk": "Katalóg"
+  },
+  "popis": {
+    "cs": "Popis katalogu",
+    "en": "Catalogue description",
+    "sk": "Popis katalógu"
+  },
+  "poskytovateľ": "https://publisher.example.org/id/city",
+  "typ": "Katalóg"
+}

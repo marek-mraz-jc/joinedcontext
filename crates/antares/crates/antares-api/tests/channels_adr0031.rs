@@ -29,6 +29,10 @@ struct NoSecret {
 }
 
 impl PolicyEngine for NoSecret {
+    fn identity(&self, _s: &Subject) -> Option<Vec<(String, String)>> {
+        Some(Vec::new())
+    }
+
     fn name(&self) -> &str {
         "no-secret"
     }
@@ -409,6 +413,121 @@ async fn the_size_and_rate_caps_drop_samples() {
     assert!(samples(&ch, "written") <= 4, "{ch}");
 }
 
+/// S4-16 (T-7547): a Tenant binds a bounded number of Channels, and the
+/// refusal names the cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tenant_past_the_channel_cap_is_refused_naming_it() {
+    let (st, _lo) = broker(false).await;
+    for i in 0..=50 {
+        let (status, body) = send(
+            &st,
+            "PUT",
+            &format!("/x/channels/c{i}"),
+            Some(channel("speed", &format!("bus/{i}/speed"), "mirror")),
+        )
+        .await;
+        if i < 50 {
+            assert_eq!(status, StatusCode::CREATED, "channel {i}: {body}");
+        } else {
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            assert!(
+                body.to_string().contains("ANTARES_CHANNELS_PER_TENANT"),
+                "{body}"
+            );
+        }
+    }
+}
+
+/// S4-16 (T-7547): one Tenant neither lists, reads nor unbinds another's
+/// Channel, and the document is in its owner's own scope alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tenant_reaches_no_other_tenants_channel() {
+    let (st, _lo) = broker(false).await;
+    let (status, body) = send(
+        &st,
+        "PUT",
+        "/x/channels/mine",
+        Some(channel("speed", "bus/mine/speed", "mirror")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let other = antares_model::TenantId::new("other").expect("tenant");
+    let seed = "urn:ngsi-ld:Bus:other";
+    st.store
+        .create(
+            &other,
+            antares_store::Kind::Entity,
+            seed,
+            json!({"id": seed, "type": "Bus"}),
+        )
+        .await
+        .expect("seed");
+    for (method, path, want) in [
+        ("GET", "/x/channels", StatusCode::OK),
+        ("GET", "/x/channels/mine", StatusCode::NOT_FOUND),
+        ("DELETE", "/x/channels/mine", StatusCode::NOT_FOUND),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("NGSILD-Tenant", "other")
+            .body(Body::empty())
+            .expect("req");
+        let resp = antares_api::router(st.clone())
+            .oneshot(req)
+            .await
+            .expect("resp");
+        assert_eq!(resp.status(), want, "{method} {path}");
+        let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("bus/mine/speed"),
+            "{method} {path} answered another Tenant's Channel"
+        );
+    }
+    let held = st.store.list(&other, antares_store::Kind::View).await;
+    assert!(held.expect("list").is_empty());
+}
+
+/// S4-16 (T-7547): the Channels door is the API's: where a subject is
+/// required, a caller without one neither lists nor binds.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_channels_door_refuses_a_caller_without_a_subject() {
+    let (mut st, _lo) = broker(false).await;
+    st.subject_required = true;
+    for (method, path, body) in [
+        ("GET", "/x/channels", None),
+        (
+            "PUT",
+            "/x/channels/nobody",
+            Some(channel("speed", "bus/nobody/speed", "mirror")),
+        ),
+    ] {
+        let (status, body) = send(&st, method, path, body).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}: {body}");
+    }
+}
+
+/// S4-16 (T-7547): no Channel document lives in a Tenant that others share.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_channel_document_is_not_in_a_shared_tenant() {
+    let (st, _lo) = broker(false).await;
+    let (status, body) = send(
+        &st,
+        "PUT",
+        "/x/channels/own",
+        Some(channel("speed", "bus/own/speed", "mirror")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let shared = antares_model::TenantId::new_internal("antares-channels").expect("tenant");
+    let held = st
+        .store
+        .list(&shared, antares_store::Kind::View)
+        .await
+        .expect("list");
+    assert!(held.is_empty(), "{held:?}");
+}
+
 /// The bind is not a licence: each sample is decided again as the binder,
 /// so a grant withdrawn after the bind stops the samples.
 #[tokio::test(flavor = "multi_thread")]
@@ -445,11 +564,10 @@ async fn a_rebind_the_store_refuses_keeps_the_old_binding_running() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let key = format!("{}:bus-speed", antares_model::TenantId::DEFAULT);
     st.store = Arc::new(crate::common::Double::refusing_create(
         st.store.clone(),
         antares_store::Kind::View,
-        &key,
+        "bus-speed",
     ));
     let (status, body) = send(
         &st,

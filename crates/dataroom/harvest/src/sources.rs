@@ -151,6 +151,7 @@ pub fn compute_harvest_hash(ds: &Dataset) -> String {
         "tags": ds.tags,
         "themes": ds.themes,
         "spatial": ds.spatial,
+        "frequency": ds.frequency,
         "landing_page": ds.landing_page,
         "distributions": ds.distributions.iter().map(|d| json!({
             "title": d.title,
@@ -158,6 +159,8 @@ pub fn compute_harvest_hash(ds: &Dataset) -> String {
             "download_url": d.download_url,
             "format": d.format,
             "media_type": d.media_type,
+            "licence": d.licence,
+            "terms_of_use": d.terms_of_use,
         })).collect::<Vec<_>>(),
     });
     hasher.update(canonical.to_string().as_bytes());
@@ -424,9 +427,7 @@ pub fn parse_arcgis_hub_items(
             spatial_resolution_in_meters: None,
             temporal: None,
             temporal_resolution: None,
-            frequency: Some(
-                "http://publications.europa.eu/resource/authority/frequency/IRREG".into(),
-            ),
+            frequency: None,
             landing_page: Some(source_url.clone()),
             documentation: Vec::new(),
             conforms_to: Vec::new(),
@@ -502,8 +503,9 @@ pub fn parse_nkod_sparql_bindings(
     struct RawDist {
         title: String,
         url: String,
-        format: String,
+        format: Option<String>,
         licences: BTreeSet<String>,
+        terms: TermsOfUse,
     }
     struct RawDs {
         iri: String,
@@ -511,6 +513,8 @@ pub fn parse_nkod_sparql_bindings(
         description: String,
         landing: String,
         keywords: BTreeSet<String>,
+        themes: BTreeSet<String>,
+        frequency: Option<String>,
         distributions: BTreeMap<String, RawDist>,
     }
 
@@ -534,8 +538,16 @@ pub fn parse_nkod_sparql_bindings(
             description: cell("description").unwrap_or_default(),
             landing: cell("landing").unwrap_or_default(),
             keywords: BTreeSet::new(),
+            themes: BTreeSet::new(),
+            frequency: None,
             distributions: BTreeMap::new(),
         });
+        if let Some(theme) = cell("theme").filter(|v| !v.is_empty()) {
+            entry.themes.insert(theme);
+        }
+        if entry.frequency.is_none() {
+            entry.frequency = cell("frequency").filter(|v| !v.is_empty());
+        }
         if let Some(kw) = cell("keyword") {
             if !kw.is_empty() {
                 entry.keywords.insert(kw);
@@ -549,10 +561,20 @@ pub fn parse_nkod_sparql_bindings(
                     title: cell("distTitle").unwrap_or_else(|| entry.title.clone()),
                     url,
                     format: cell("format")
-                        .map(|f| f.rsplit('/').next().unwrap_or(&f).to_ascii_uppercase())
-                        .unwrap_or_else(|| "JSON".into()),
+                        .map(|f| f.rsplit('/').next().unwrap_or(&f).to_ascii_uppercase()),
                     licences: BTreeSet::new(),
+                    terms: TermsOfUse::default(),
                 });
+            for (key, stated) in [
+                ("work", &mut d.terms.authors_work),
+                ("database", &mut d.terms.database_as_work),
+                ("special", &mut d.terms.sui_generis_database),
+                ("personal", &mut d.terms.personal_data),
+            ] {
+                if stated.is_none() {
+                    *stated = cell(key).filter(|v| !v.is_empty());
+                }
+            }
             for k in ["work", "database", "special"] {
                 if let Some(v) = cell(k) {
                     d.licences.insert(v);
@@ -645,14 +667,19 @@ pub fn parse_nkod_sparql_bindings(
                 description: BTreeMap::new(),
                 access_url: url_str.clone(),
                 download_url: Some(url_str),
-                format: Some(d.format.clone()),
+                format: d.format.clone(),
                 media_type: None,
                 compress_format: None,
                 package_format: None,
                 byte_size: None,
                 hash: None,
                 hash_algorithm: None,
-                licence: None,
+                licence: d
+                    .licences
+                    .iter()
+                    .filter_map(|l| map_code(l))
+                    .max_by_key(|id| strictness.iter().position(|s| s == id).unwrap_or(0))
+                    .map(str::to_owned),
                 rights: BTreeMap::new(),
                 status: None,
                 availability: None,
@@ -663,7 +690,7 @@ pub fn parse_nkod_sparql_bindings(
                 applicable_legislation: Vec::new(),
                 temporal_resolution: None,
                 spatial_resolution_in_meters: None,
-                terms_of_use: Some(TermsOfUse::default()),
+                terms_of_use: Some(d.terms.clone()),
                 access_services: Vec::new(),
                 issued: None,
                 modified: None,
@@ -690,14 +717,11 @@ pub fn parse_nkod_sparql_bindings(
             uri: Some(raw.iri.clone()),
             dataset_type: "dataset".into(),
             title: BTreeMap::from([(default_lang.to_owned(), raw.title)]),
-            description: BTreeMap::from([(
-                default_lang.to_owned(),
-                if raw.description.is_empty() {
-                    format!("Zdroj: {}", raw.iri)
-                } else {
-                    raw.description
-                },
-            )]),
+            description: if raw.description.is_empty() {
+                BTreeMap::new()
+            } else {
+                BTreeMap::from([(default_lang.to_owned(), raw.description)])
+            },
             publisher_id: source.publisher_id.clone(),
             publisher: source
                 .target_publisher_iri
@@ -713,7 +737,7 @@ pub fn parse_nkod_sparql_bindings(
             state: RecordState::Active,
             licence_id: Some(chosen_lic.to_owned()),
             licence_url: None,
-            themes: vec!["http://publications.europa.eu/resource/authority/data-theme/GOVE".into()],
+            themes: raw.themes.into_iter().collect(),
             eurovoc_themes: Vec::new(),
             keywords: BTreeMap::from([(
                 default_lang.to_owned(),
@@ -724,9 +748,7 @@ pub fn parse_nkod_sparql_bindings(
             spatial_resolution_in_meters: None,
             temporal: None,
             temporal_resolution: None,
-            frequency: Some(
-                "http://publications.europa.eu/resource/authority/frequency/IRREG".into(),
-            ),
+            frequency: raw.frequency,
             landing_page: (!raw.landing.is_empty()).then_some(raw.landing),
             documentation: Vec::new(),
             conforms_to: Vec::new(),

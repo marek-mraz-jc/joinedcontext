@@ -332,7 +332,7 @@ pub fn transition(
                         user_id,
                         first_factor_passed: true,
                     })
-                } else if ctx.has_webauthn_credential && !ctx.second_factor_required {
+                } else if ctx.has_webauthn_credential {
                     Ok(LoginState::SecondFactorWebAuthn {
                         user_id,
                         first_factor_passed: true,
@@ -420,7 +420,7 @@ pub fn transition(
             LoginState::RegisterWebAuthn {
                 user_id,
                 first_factor_passed: true,
-                second_factor_passed,
+                ..
             },
             LoginInput::CompleteRegisterWebAuthnOk,
         ) => {
@@ -428,7 +428,8 @@ pub fn transition(
             next_ctx
                 .pending_actions
                 .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
-            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
+            // The passkey just created answers the second factor, as an enrolled TOTP does.
+            advance_post_factors(user_id, true, true, &next_ctx, None)
         }
         (
             LoginState::UpdatePassword {
@@ -527,10 +528,11 @@ mod tests {
 
     #[test]
     fn unit_test_every_state_machine_edge() {
+        // The person holds no authenticator yet: the flow enrols TOTP and registers a passkey.
         let mut ctx = LoginPolicyContext {
             second_factor_required: true,
             has_totp_credential: false,
-            has_webauthn_credential: true,
+            has_webauthn_credential: false,
             pending_actions: vec![
                 "UPDATE_PASSWORD".into(),
                 "VERIFY_EMAIL".into(),
@@ -722,6 +724,51 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(code, LoginState::Code { .. }));
+    }
+
+    #[test]
+    fn a_passkey_is_the_second_factor_after_a_password_also_when_one_is_required() {
+        for required in [true, false] {
+            let ctx = LoginPolicyContext {
+                second_factor_required: required,
+                has_webauthn_credential: true,
+                ..LoginPolicyContext::default()
+            };
+            let next = transition(
+                LoginState::Password {
+                    user_id: "u1".into(),
+                },
+                LoginInput::VerifyPasswordOk,
+                &ctx,
+            );
+            assert_eq!(
+                next,
+                Ok(LoginState::SecondFactorWebAuthn {
+                    user_id: "u1".into(),
+                    first_factor_passed: true,
+                }),
+                "required = {required}"
+            );
+        }
+        // Without any authenticator a required factor is enrolled, never skipped.
+        let ctx = LoginPolicyContext {
+            second_factor_required: true,
+            ..LoginPolicyContext::default()
+        };
+        let next = transition(
+            LoginState::Password {
+                user_id: "u1".into(),
+            },
+            LoginInput::VerifyPasswordOk,
+            &ctx,
+        );
+        assert_eq!(
+            next,
+            Ok(LoginState::EnrolTotp {
+                user_id: "u1".into(),
+                first_factor_passed: true,
+            })
+        );
     }
 
     /// Property test (W7): Exhaustively explores every sequence of `LoginInput`s from `IdentityFirst`

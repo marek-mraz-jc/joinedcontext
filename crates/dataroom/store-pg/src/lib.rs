@@ -6,11 +6,12 @@ use dataroom_core::odata_defs::{
     activity_to_row, catalogue_to_row, dataroom_service, dataset_to_row, distribution_to_row,
     harvest_run_to_row, harvest_source_to_row, publisher_to_row, shacl_report_to_row,
 };
-use dataroom_core::store::BoxFuture;
+use dataroom_core::store::{changed_since_read, next_modified, BoxFuture};
 use dataroom_core::{
-    text_in_lang, ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset,
-    Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
-    RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
+    text_in_lang, ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin,
+    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord,
+    Publisher, RecordState, RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage,
+    Store,
 };
 use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
@@ -297,6 +298,97 @@ async fn refuse_deleted(conn: &mut PgConnection, ctx: &RequestCtx) -> Result<()>
         )));
     }
     Ok(())
+}
+
+/// Writes a catalogue row inside the caller's tenant transaction.
+async fn write_catalogue(conn: &mut PgConnection, catalogue: &Catalogue) -> Result<()> {
+    let title = text_in_lang(&catalogue.title, Some(&catalogue.default_language))
+        .unwrap_or(&catalogue.name)
+        .to_owned();
+    let desc =
+        text_in_lang(&catalogue.description, Some(&catalogue.default_language)).map(str::to_owned);
+    sqlx::query(
+        "INSERT INTO dataroom.cat_catalogue
+         (org_id, id, name, host, title, description, default_language, main_profile, modified, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (org_id, id) DO UPDATE SET
+            name = EXCLUDED.name,
+            host = EXCLUDED.host,
+            title = EXCLUDED.title,
+            description = EXCLUDED.description,
+            default_language = EXCLUDED.default_language,
+            main_profile = EXCLUDED.main_profile,
+            modified = EXCLUDED.modified,
+            doc = EXCLUDED.doc",
+    )
+    .bind(catalogue.org_id.as_uuid())
+    .bind(catalogue.id.as_uuid())
+    .bind(&catalogue.name)
+    .bind(&catalogue.host)
+    .bind(title)
+    .bind(desc)
+    .bind(&catalogue.default_language)
+    .bind(&catalogue.main_profile)
+    .bind(catalogue.modified)
+    .bind(Json(&catalogue))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Appends an activity row inside the caller's tenant transaction, so it commits with the
+/// change it records (AUD-02).
+async fn insert_activity(
+    conn: &mut PgConnection,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    mut row: ActivityRow,
+) -> Result<()> {
+    row.org_id = org_id;
+    row.catalogue_id = catalogue_id;
+    sqlx::query(
+        "INSERT INTO dataroom.cat_activity
+         (org_id, catalogue_id, id, at, actor, operation, object_type, object_id, summary, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(org_id.as_uuid())
+    .bind(catalogue_id.as_uuid())
+    .bind(&row.id)
+    .bind(row.at)
+    .bind(&row.actor)
+    .bind(&row.operation)
+    .bind(&row.object_type)
+    .bind(&row.object_id)
+    .bind(&row.summary)
+    .bind(Json(&row))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// The stored dataset `id_or_name` names, locked for the rest of the caller's transaction.
+async fn dataset_for_update(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    id_or_name: &str,
+) -> Result<Option<Dataset>> {
+    let row: Option<(Json<Dataset>,)> = sqlx::query_as(
+        "SELECT doc FROM dataroom.cat_dataset
+         WHERE org_id = $1 AND catalogue_id = $2
+           AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3)
+         ORDER BY (id COLLATE \"C\" = $3) DESC
+         LIMIT 1
+         FOR UPDATE",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(id_or_name)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(|(Json(d),)| d))
 }
 
 /// Writes a dataset row and replaces its distribution rows inside the caller's tenant
@@ -618,40 +710,74 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(catalogue.org_id, Some(catalogue.id))
                 .await?;
-            let title = text_in_lang(&catalogue.title, Some(&catalogue.default_language))
-                .unwrap_or(&catalogue.name)
-                .to_owned();
-            let desc = text_in_lang(&catalogue.description, Some(&catalogue.default_language))
-                .map(str::to_owned);
+            write_catalogue(&mut tx, &catalogue).await?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(catalogue)
+        })
+    }
+
+    fn save_catalogue<'a>(
+        &'a self,
+        mut catalogue: Catalogue,
+        expected: Option<TimestampTz>,
+        mut activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Catalogue>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(catalogue.org_id, Some(catalogue.id))
+                .await?;
+            if let Some(expected) = expected {
+                let stored: Option<(Json<Catalogue>,)> = sqlx::query_as(
+                    "SELECT doc FROM dataroom.cat_catalogue WHERE org_id = $1 AND id = $2
+                     FOR UPDATE",
+                )
+                .bind(catalogue.org_id.as_uuid())
+                .bind(catalogue.id.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                if stored.is_none_or(|(Json(c),)| c.modified != expected) {
+                    return Err(changed_since_read("catalogue", &catalogue.name));
+                }
+            }
+            catalogue.modified = next_modified(catalogue.modified, expected);
+            write_catalogue(&mut tx, &catalogue).await?;
+            if activity.object_id.is_empty() {
+                activity.object_id = catalogue.id.to_string();
+            }
+            insert_activity(&mut tx, catalogue.org_id, catalogue.id, activity).await?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(catalogue)
+        })
+    }
+
+    fn declare_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        id: CatalogueId,
+        declared: &'a CatalogueDeclaration,
+    ) -> BoxFuture<'a, Result<Option<Catalogue>>> {
+        Box::pin(async move {
+            // The members alone are merged into the row as it is when the write lands: another
+            // replica's or an admin's write of the other members survives it (T-7520 C12). Not
+            // `@>`: a name in two languages contains the one that dropped a language.
+            let modified = TimestampTz::now();
+            let mut tx = self.begin_tenant(org_id, Some(id)).await?;
             sqlx::query(
-                "INSERT INTO dataroom.cat_catalogue
-                 (org_id, id, name, host, title, description, default_language, main_profile, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                 ON CONFLICT (org_id, id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    host = EXCLUDED.host,
-                    title = EXCLUDED.title,
-                    description = EXCLUDED.description,
-                    default_language = EXCLUDED.default_language,
-                    main_profile = EXCLUDED.main_profile,
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
+                "UPDATE dataroom.cat_catalogue
+                 SET doc = doc || $3 || jsonb_build_object('modified', $5::jsonb), modified = $4
+                 WHERE org_id = $1 AND id = $2 AND jsonb_strip_nulls(doc || $3) <> jsonb_strip_nulls(doc)",
             )
-            .bind(catalogue.org_id.as_uuid())
-            .bind(catalogue.id.as_uuid())
-            .bind(&catalogue.name)
-            .bind(&catalogue.host)
-            .bind(title)
-            .bind(desc)
-            .bind(&catalogue.default_language)
-            .bind(&catalogue.main_profile)
-            .bind(catalogue.modified)
-            .bind(Json(&catalogue))
+            .bind(org_id.as_uuid())
+            .bind(id.as_uuid())
+            .bind(Json(declared))
+            .bind(modified)
+            .bind(Json(modified))
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
             tx.commit().await.map_err(db_err)?;
-            Ok(catalogue)
+            self.get_catalogue(org_id, id).await
         })
     }
 
@@ -871,20 +997,54 @@ impl Store for PgStore {
         })
     }
 
+    fn save_dataset<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset: Dataset,
+        expected: Option<TimestampTz>,
+        mut activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Dataset>> {
+        Box::pin(async move {
+            let mut dataset = normalise_dataset(ctx, dataset);
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            if let Some(expected) = expected {
+                let stored = dataset_for_update(&mut tx, ctx, &dataset.id).await?;
+                if stored.is_none_or(|d| d.modified != expected) {
+                    return Err(changed_since_read("dataset", &dataset.name));
+                }
+            }
+            dataset.modified = next_modified(dataset.modified, expected);
+            write_dataset(&mut tx, ctx, &dataset).await?;
+            if activity.object_id.is_empty() {
+                activity.object_id.clone_from(&dataset.id);
+            }
+            insert_activity(&mut tx, ctx.org_id, ctx.catalogue_id, activity).await?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(dataset)
+        })
+    }
+
     fn withdraw_dataset<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Dataset>> {
         Box::pin(async move {
-            let Some(mut ds) = self.get_dataset(ctx, id_or_name).await? else {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let Some(mut ds) = dataset_for_update(&mut tx, ctx, id_or_name).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "dataset '{id_or_name}' not found"
                 )));
             };
             ds.state = RecordState::Withdrawn;
-            ds.modified = TimestampTz::now();
-            self.upsert_dataset(ctx, ds).await
+            ds.modified = next_modified(TimestampTz::now(), Some(ds.modified));
+            write_dataset(&mut tx, ctx, &ds).await?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(ds)
         })
     }
 
@@ -1410,32 +1570,13 @@ impl Store for PgStore {
     fn record_activity<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut row: ActivityRow,
+        row: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            row.org_id = ctx.org_id;
-            row.catalogue_id = ctx.catalogue_id;
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_activity
-                 (org_id, catalogue_id, id, at, actor, operation, object_type, object_id, summary, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&row.id)
-            .bind(row.at)
-            .bind(&row.actor)
-            .bind(&row.operation)
-            .bind(&row.object_type)
-            .bind(&row.object_id)
-            .bind(&row.summary)
-            .bind(Json(&row))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            insert_activity(&mut tx, ctx.org_id, ctx.catalogue_id, row).await?;
             tx.commit().await.map_err(db_err)?;
             Ok(())
         })

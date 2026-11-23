@@ -38,15 +38,13 @@ import {
 import { PortalFilesTab } from "./PortalFiles";
 import { PortalLayoutTab } from "./PortalLayout";
 import { PortalHostsPanel } from "./PortalHosts";
+import { PortalProfilesField } from "./PortalProfiles";
 import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
 type PortalOrganization = components["schemas"]["PortalOrganization"];
 
 /** The languages a portal is shown in: the Portal's own locales (ODP-08). */
 export const PORTAL_LANGUAGES = ["sk", "en", "cs", "de"] as const;
-
-/** The DCAT-AP profiles the catalogue's feeds know (dataroom profile registry). */
-export const PORTAL_PROFILES = ["dcat-ap-3.0.1", "dcat-ap-sk-2.0", "dcat-ap-cz"] as const;
 
 /** The default portal of an Organization: its own catalogue, never deleted (ODP-09). */
 const DEFAULT_PATH = "default";
@@ -253,7 +251,8 @@ export interface PortalDraft {
   keepSlug: boolean;
   instanceName: string;
   primary: string;
-  profiles: string[];
+  /** The profiles chosen in the editor; `undefined` leaves `spec.profiles` as it is stored. */
+  profiles: string[] | undefined;
 }
 
 export function draftOf(spec: PortalSpec | undefined, organization: string): PortalDraft {
@@ -267,7 +266,7 @@ export function draftOf(spec: PortalSpec | undefined, organization: string): Por
     keepSlug: spec?.slug === "keep",
     instanceName: spec?.appearance?.instanceName ?? "",
     primary: spec?.appearance?.colours?.primary ?? "",
-    profiles: spec?.profiles ? [...spec.profiles] : ["dcat-ap-3.0.1"],
+    profiles: undefined,
   };
 }
 
@@ -296,12 +295,11 @@ export function specOf(draft: PortalDraft, stored: PortalSpec | undefined): Port
   if (!appearance.colours) delete appearance.colours;
   if (Object.keys(appearance).length > 0) spec.appearance = appearance;
   else delete spec.appearance;
-  if (draft.profiles.length > 0) spec.profiles = draft.profiles;
-  else delete spec.profiles;
+  if (draft.profiles) spec.profiles = draft.profiles;
   return spec;
 }
 
-type DraftField = "organization" | "path" | "title" | "languages" | "host" | "primary";
+type DraftField = "organization" | "path" | "title" | "languages" | "host" | "primary" | "profiles";
 
 /** What the editor refuses before anything is sent, by field, as locale keys. */
 export function faultsOf(draft: PortalDraft, creating: boolean, taken: string[]): Partial<Record<DraftField, string>> {
@@ -326,6 +324,7 @@ export function fieldOfRefusal(line: string): DraftField | undefined {
   if (member.startsWith("spec.title")) return "title";
   if (member.startsWith("spec.languages")) return "languages";
   if (member.startsWith("spec.appearance")) return "primary";
+  if (member.startsWith("spec.profiles")) return "profiles";
   return undefined;
 }
 
@@ -353,7 +352,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   });
   const portals = useReadableList(ORG_NAMESPACE, "portals", "Portal", creating && hosts.isSuccess);
   const title = creating ? t("portals.editor.newTitle") : t("portals.editor.editTitle", { name });
-  const header = <PageHeader title={title} description={creating ? t("portals.editor.description") : t("portals.editor.descriptionTabs")} breadcrumb={<Link to="/portals" className="focus-ring underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
+  const header = <PageHeader title={title} description={creating ? t("portals.editor.description") : t("portals.editor.descriptionTabs")} breadcrumb={<Link to="/portals" className="focus-ring touch-target underline hover:no-underline">{t("portals.nav.list")}</Link>} />;
   if (hosts.isPending || (!creating && stored.isPending)) return <>{header}<PageLoading label={t("app.loading")} /></>;
   if (hosts.isError) return <>{header}{refused(hosts.error) ? <NotAdmin /> : <PageFailed error={hosts.error} onRetry={() => void hosts.refetch()} />}</>;
   const manifest = stored.data as unknown as PortalManifest | undefined;
@@ -398,7 +397,7 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
   const { t } = useTranslation();
   const [tab, setTab] = useState<PortalTab>("settings");
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-phone-floors>
       <Tabs<PortalTab>
         id="portal"
         label={t("portals.tabs.label")}
@@ -440,7 +439,12 @@ function PortalForm({
   organizations: PortalOrganization[];
   taken: string[];
 }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // A stored portal may be in a language the editor does not offer, e.g. fi.
+  const languageName = (lang: string) =>
+    (PORTAL_LANGUAGES as readonly string[]).includes(lang)
+      ? t(`portals.language.${lang}`)
+      : (new Intl.DisplayNames([i18n.resolvedLanguage ?? i18n.language], { type: "language" }).of(lang) ?? lang);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const creating = name === undefined;
@@ -497,6 +501,7 @@ function PortalForm({
   return (
     <form
       noValidate
+      data-phone-floors
       aria-labelledby="portal-form-title"
       className="max-w-3xl space-y-4"
       onSubmit={(event) => {
@@ -527,7 +532,7 @@ function PortalForm({
             value={draft.organization}
             disabled={!creating}
             title={creating ? undefined : t("portals.editor.fixed")}
-            onChange={(event) => set({ organization: event.target.value, host: "" })}
+            onChange={(event) => set({ organization: event.target.value, host: "", profiles: undefined })}
           >
             <option value="">{t("portals.field.organizationPick")}</option>
             {organizations.map((o) => (
@@ -558,7 +563,7 @@ function PortalForm({
             {PORTAL_LANGUAGES.map((lang) => (
               <Checkbox
                 key={lang}
-                label={t(`portals.language.${lang}`)}
+                label={languageName(lang)}
                 checked={draft.languages.includes(lang)}
                 onChange={(event) =>
                   set({ languages: event.target.checked ? PORTAL_LANGUAGES.filter((l) => l === lang || draft.languages.includes(l)) : draft.languages.filter((l) => l !== lang) })
@@ -572,7 +577,7 @@ function PortalForm({
           <Field
             key={lang}
             id={index === 0 ? "portal-title" : `portal-title-${lang}`}
-            label={t("portals.field.titleIn", { language: t(`portals.language.${lang}`) })}
+            label={t("portals.field.titleIn", { language: languageName(lang) })}
             description={t("portals.hint.title")}
             required={index === 0}
             errors={index === 0 ? errorOf("title") : undefined}
@@ -650,30 +655,20 @@ function PortalForm({
         <Field id="portal-primary" label={t("portals.field.primary")} description={t("portals.hint.primary")} errors={errorOf("primary")}>
           <Input id="portal-primary" value={draft.primary} spellCheck={false} onChange={(event) => set({ primary: event.target.value })} />
         </Field>
-        <fieldset className="space-y-2" aria-describedby="portal-profiles-hint">
-          <legend className="text-body font-medium text-fg">{t("portals.field.profiles")}</legend>
-          <p id="portal-profiles-hint" className="text-caption text-fg-muted">
-            {t("portals.hint.profiles")}
-          </p>
-          <div className="flex flex-wrap gap-4">
-            {PORTAL_PROFILES.map((profile) => (
-              <Checkbox
-                key={profile}
-                label={profile}
-                checked={draft.profiles.includes(profile)}
-                onChange={(event) =>
-                  set({ profiles: event.target.checked ? [...draft.profiles, profile] : draft.profiles.filter((p) => p !== profile) })
-                }
-              />
-            ))}
-          </div>
-        </fieldset>
+        <PortalProfilesField
+          name={name}
+          profiles={org?.profiles ?? []}
+          stored={stored?.spec.profiles}
+          chosen={draft.profiles}
+          error={errorOf("profiles")?.[0]}
+          onChange={(profiles) => set({ profiles })}
+        />
       </Card>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" variant="primary" loading={mutation.isPending}>
           {creating ? t("portals.editor.create") : t("portals.editor.save")}
         </Button>
-        {!creating && address ? <ExternalLink href={address}>{t("portals.editor.open")}</ExternalLink> : null}
+        {!creating && address ? <ExternalLink href={address} className="touch-target">{t("portals.editor.open")}</ExternalLink> : null}
         {!creating && name && !isDefault ? (
           <span className="sm:ml-auto">
           <DeleteResourceAction target={{ project: ORG_NAMESPACE, kind: "Portal", plural: "portals", name, label: draft.title[draft.languages[0]] || name }} label={t("portals.editor.delete")} />
