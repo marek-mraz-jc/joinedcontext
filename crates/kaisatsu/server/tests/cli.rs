@@ -179,6 +179,14 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
     ]);
     assert_eq!(code(&out), 2);
     assert_eq!(code(&kaisatsu(&["diff", "-f", p(&realm.0)])), 2);
+    // `--prune` plans a full apply: what the files no longer name is deleted.
+    let prune_plan = dir.0.join("prune-plan.json");
+    let out = kaisatsu(&["plan", "-f", p(&realm.0), "-o", p(&prune_plan), "--prune"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&prune_plan).expect("plan written"))
+            .expect("plan json");
+    assert_eq!(saved["mode"], "full");
     let out = kaisatsu(&["export", "--realm", "cli"]);
     assert_eq!(code(&out), 1, "nothing to export from an empty store");
     // `--database-url` needs the KEK that encrypts the stored secrets.
@@ -242,6 +250,100 @@ fn serve_refuses_bad_flags_before_listening() {
     ]);
     assert_eq!(code(&out), 1);
     assert!(!stderr(&out).contains("hunter2"));
+}
+
+/// GETs `path` until it answers `want`, for at most 20 s; returns the last status.
+fn wait_for(addr: &str, path: &str, want: u16) -> u16 {
+    let mut st = 0;
+    for _ in 0..80 {
+        st = http(addr, "GET", path, None).0;
+        if st == want {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    st
+}
+
+#[test]
+fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
+    let dir = TempDir::new();
+    let kek = dir.file("kek", [5u8; 32]);
+    let smtp_pw = dir.file("smtp-password", "smtp-word-for-tests\n");
+    let import = TempDir::new();
+    import.file("realm.yaml", REALM_YAML);
+    let mut child = Command::new(BIN)
+        .args([
+            "serve",
+            "--kek-file",
+            p(&kek),
+            "--listen",
+            "127.0.0.1:0",
+            "--host",
+            "idm.cli.example.test",
+            "--import-dir",
+            p(&import.0),
+            "--import-watch",
+            "1",
+            "--trusted-proxy",
+            "10.0.0.0/8",
+            "--smtp-password-file",
+            p(&smtp_pw),
+            "--smtp-host",
+            "smtp.invalid",
+            "--outbox-interval-secs",
+            "1",
+            "--second-factor",
+            "required",
+        ])
+        .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
+        .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let addr = loop {
+        let line = lines
+            .next()
+            .expect("serve exited before listening")
+            .expect("stderr line");
+        if let Some(a) = line.strip_prefix("kaisatsu: listening on ") {
+            break a.to_owned();
+        }
+    };
+    let cli = "/realms/cli/.well-known/openid-configuration";
+    let added = "/realms/added/.well-known/openid-configuration";
+    assert_eq!(http(&addr, "GET", cli, None).0, 200);
+    assert_eq!(http(&addr, "GET", added, None).0, 404);
+
+    // A realm file written while it runs is applied at the next poll.
+    import.file("realm2.yaml", "realm: added\ndisplayName: Added realm\n");
+    assert_eq!(
+        wait_for(&addr, added, 200),
+        200,
+        "the watch applies a new file"
+    );
+
+    // A broken file fails the poll: both realms keep answering, the server stays up.
+    import.file("realm3.json", "{");
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert_eq!(http(&addr, "GET", cli, None).0, 200);
+    assert_eq!(http(&addr, "GET", added, None).0, 200);
+
+    // Ctrl-C (SIGINT) stops it as cleanly as SIGTERM.
+    let int = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT");
+    assert!(int.success());
+    let status = child.wait().expect("serve exits");
+    assert_eq!(status.code(), Some(0), "a clean stop on SIGINT");
+    let rest: Vec<String> = lines.map_while(std::result::Result::ok).collect();
+    assert!(rest.iter().any(|l| l == "kaisatsu: stopped"), "{rest:?}");
+    assert!(
+        !rest.iter().any(|l| l.contains("smtp-word-for-tests")),
+        "{rest:?}"
+    );
 }
 
 // ---------------------------------------------------------------- PostgreSQL

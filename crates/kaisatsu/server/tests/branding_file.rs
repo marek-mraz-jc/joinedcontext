@@ -79,6 +79,39 @@ async fn an_unsafe_logo_or_a_path_out_of_the_folder_is_never_read() {
 }
 
 #[tokio::test]
+async fn a_missing_file_or_an_oversized_or_non_text_logo_is_an_error_naming_the_file() {
+    let (_, store, _) = setup_dev_realm_state().await;
+    let store: Arc<dyn Store> = store;
+    let before = store.get_branding("dev", None).await.unwrap();
+    let missing = std::env::temp_dir().join(format!(
+        "kaisatsu-branding-none-{}.yaml",
+        std::process::id()
+    ));
+    let err = kaisatsu_server::apply_branding_file(&store, &missing)
+        .await
+        .expect_err("no such branding file");
+    assert!(err.to_string().contains("branding file"), "{err}");
+
+    let big = format!("<svg>{}</svg>", "x".repeat(600 * 1024));
+    let path = folder("big", SMARTCITY, &[("logo.svg", &big)]);
+    let err = kaisatsu_server::apply_branding_file(&store, &path)
+        .await
+        .expect_err("a logo over the cap");
+    assert!(
+        err.to_string().contains("logo is over 524288 bytes"),
+        "{err}"
+    );
+
+    let path = folder("binary", SMARTCITY, &[]);
+    std::fs::write(path.with_file_name("logo.svg"), [0xff_u8, 0xfe, 0x00]).unwrap();
+    let err = kaisatsu_server::apply_branding_file(&store, &path)
+        .await
+        .expect_err("a logo that is not UTF-8 text");
+    assert!(err.to_string().contains("branding.yaml"), "{err}");
+    assert_eq!(store.get_branding("dev", None).await.unwrap(), before);
+}
+
+#[tokio::test]
 async fn a_broken_file_is_an_error_and_changes_nothing() {
     let (_, store, _) = setup_dev_realm_state().await;
     let store: Arc<dyn Store> = store;

@@ -170,10 +170,9 @@ pub fn load_realm_files_from_path(
     let mut out = Vec::new();
     if path.is_file() {
         out.push(read_realm_file(path)?);
-    } else if path.is_dir() {
-        let canonical_dir = path.canonicalize().map_err(|e| {
-            kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", path.display()))
-        })?;
+    } else if let Ok(canonical_dir) = path.canonicalize()
+        && canonical_dir.is_dir()
+    {
         let entries = std::fs::read_dir(path).map_err(|e| {
             kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", path.display()))
         })?;
