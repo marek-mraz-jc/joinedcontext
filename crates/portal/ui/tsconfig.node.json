@@ -23,6 +23,7 @@
   },
   "include": [
     "vite.config.ts",
-    "vite.explorer.config.ts"
+    "vite.explorer.config.ts",
+    "vitest.stryker.config.ts"
   ]
 }

@@ -116,6 +116,17 @@ describe("a wire only sets the order (PL-56)", () => {
   });
 });
 
+describe("a wire to a node the form does not hold", () => {
+  it("leaves the lane as it was and changes nothing without a form", () => {
+    const form = toForm(pipeline(COMPUTE_KINDS.bloblang));
+    const wired = connect(form, "source", "step-9");
+    if (!("form" in wired)) throw new Error("the wire was not taken");
+    expect(laneOf(wired.form)).toEqual(laneOf(form));
+    expect(wired.form.processors).toEqual(form.processors);
+    expect(connect(undefined, "source", "compute")).toEqual({ unchanged: true });
+  });
+});
+
 describe("the list view's moves (PL-68)", () => {
   const form = toForm(pipeline(COMPUTE_KINDS.bloblang));
 
@@ -148,6 +159,7 @@ describe("a node's state before a test (PL-68)", () => {
     expect(missingOf(empty, "step-1")).toBeUndefined();
     expect(missingOf({ class: "auto", compute: { kind: "mapping" } }, "compute")).toBe("mappingRef");
     expect(missingOf({ class: "auto", compute: { kind: "wasm" } }, "compute")).toBe("module");
+    expect(missingOf({ class: "auto" }, "compute")).toBeUndefined();
 
     const full = toForm(pipeline(COMPUTE_KINDS.bloblang));
     for (const id of toFlow(full).nodes.map((node) => node.id)) expect(missingOf(full, id)).toBeUndefined();

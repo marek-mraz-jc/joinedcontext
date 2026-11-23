@@ -238,6 +238,50 @@ describe("access requests on the pages (PL-90, PL-91, PL-93)", () => {
     expect(screen.getByText(L.noTypes)).toBeInTheDocument();
   });
 
+  it("adds and removes a type row, keeps the end date and closes on cancel without sending", async () => {
+    serve([]);
+    wrap(<PipelineAccessRequests project="city-kpis" name="air-index" />);
+    await userEvent.click(await screen.findByRole("button", { name: L.request }));
+    await userEvent.click(screen.getByRole("combobox", { name: L.endpoint }));
+    await userEvent.click(await screen.findByRole("option", { name: /air-quality/ }));
+    expect(screen.queryByRole("button", { name: L.removeTypeOf.replace("{n}", "1") })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: L.addType }));
+    expect(screen.getAllByRole("combobox", { name: L.type })).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: L.removeTypeOf.replace("{n}", "2") }));
+    expect(screen.getAllByRole("combobox", { name: L.type })).toHaveLength(1);
+    const until = screen.getByLabelText(L.untilLabel);
+    await userEvent.type(until, "2027-01-31");
+    expect(until).toHaveValue("2027-01-31");
+    await userEvent.click(screen.getByRole("button", { name: L.cancel }));
+    expect(screen.queryByLabelText(L.untilLabel)).not.toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it("says a failed Endpoint list as a failure and reads it again on retry", async () => {
+    serve([]);
+    const served = globalThis.fetch;
+    let failures = 1;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const req = input as Request;
+        if (new URL(req.url).pathname.endsWith("/access-requests/endpoints") && failures-- > 0) {
+          return new Response(JSON.stringify({ title: "Bad Gateway", status: 502, detail: "the catalogue is down" }), {
+            status: 502,
+            headers: { "Content-Type": "application/problem+json" },
+          });
+        }
+        return served(input);
+      }),
+    );
+    wrap(<PipelineAccessRequests project="city-kpis" name="air-index" />);
+    await userEvent.click(await screen.findByRole("button", { name: L.request }));
+    await userEvent.click(screen.getByRole("combobox", { name: L.endpoint }));
+    expect(await screen.findByText(/the catalogue is down/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: en.form.listRetry }));
+    expect(await screen.findByRole("option", { name: /air-quality/ })).toBeInTheDocument();
+  });
+
   it("lists no Endpoint when the server offers none", async () => {
     serve([], []);
     wrap(<PipelineAccessRequests project="city-kpis" name="air-index" />);
@@ -278,6 +322,16 @@ describe("access requests on the pages (PL-90, PL-91, PL-93)", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Approve access for city-kpis/pl-air-index" }));
     await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["/api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/approve"]));
     expect(await screen.findByText("chg-00000042")).toBeInTheDocument();
+  });
+
+  it("declines a pending request with the owner's reason", async () => {
+    serve([request("pending")]);
+    wrap(<AccessRequestInbox project="helsinki" space="air" />);
+    const row = (await screen.findByText("city-kpis/pl-air-index")).closest("li") as HTMLElement;
+    await userEvent.type(within(row).getByLabelText(L.decisionReason), "use the open endpoint");
+    await userEvent.click(within(row).getByRole("button", { name: "Decline access for city-kpis/pl-air-index" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({ path: "/api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/decline", body: { reason: "use the open endpoint" } });
   });
 
   it("revokes an approved request with the owner's reason and lists nothing of another space", async () => {

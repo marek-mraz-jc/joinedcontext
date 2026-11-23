@@ -260,6 +260,32 @@ describe("a pipeline's runs and log", () => {
     expect(within(rows[1]).getAllByText("0")).toHaveLength(3);
   });
 
+  it("reads_the_runs_and_a_log_again_on_retry_and_names_a_run_by_its_own_name", async () => {
+    const down = new Set([RUNS, `${RUNS}/replay/log`]);
+    const served = answering({ items: [run("replay", 2, 0, 0)] }, { "replay": { newest: { items: [line(2, { run: "replay", recordId: undefined }), line(1, { run: "replay" })] } } });
+    await renderRoute({
+      path: PATH,
+      answer: (path, request) => (down.has(path) ? problem(503, `${path} is busy`) : served(path, request)),
+    });
+    const dialog = await openRuns();
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(`${RUNS} is busy`);
+    down.delete(RUNS);
+    await userEvent.click(within(within(dialog).getByRole("alert")).getByRole("button", { name: en.app.error.retry }));
+    const runs = await within(dialog).findByRole("table", { name: en.pipelines.runs.caption });
+    // A run that is no timestamp keeps its own name.
+    expect(within(runs).getByRole("button", { name: "Show the log of replay" })).toBeInTheDocument();
+
+    const log = await within(dialog).findByRole("region", { name: /^Log of the run replay/ });
+    expect(await within(log).findByRole("alert")).toHaveTextContent("replay/log is busy");
+    down.clear();
+    await userEvent.click(within(within(log).getByRole("alert")).getByRole("button", { name: en.app.error.retry }));
+    const lines = await within(log).findByRole("table");
+    expect(within(lines).getByText(en.pipelines.runs.noId)).toBeInTheDocument();
+    // The record column is searchable by its text: an id finds its line, the line without one is left out.
+    await userEvent.type(within(log).getByRole("searchbox"), "s-1");
+    await waitFor(() => expect(within(lines).queryByText(en.pipelines.runs.noId)).toBeNull());
+  });
+
   it("runs_that_could_not_be_read_say_why_and_escape_closes", async () => {
     vi.stubGlobal(
       "fetch",

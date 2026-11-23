@@ -100,9 +100,9 @@ fn is_safe_href(url: &str) -> bool {
         return true;
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("javascript:")
-        || lower.starts_with("data:")
-        || lower.starts_with("vbscript:")
+    if ["javascript:", "data:", "vbscript:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
     {
         return false;
     }
@@ -981,6 +981,7 @@ mod tests {
             ("/joinedcontext/a%2F..%2F..%2Fevil", "/"),
             ("/joinedcontext/%2F%2Fevil.example", "/"),
             ("/joinedcontext/..", "/"),
+            ("/joinedcontext/kiosk_%2F..", "/"),
             ("/joinedcontext/_x", "/"),
             ("/joinedcontext/a\\evil", "/"),
             ("/%2F%2Fevil/helsinki", "/"),

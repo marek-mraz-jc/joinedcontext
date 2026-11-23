@@ -14,7 +14,7 @@ use jc_router::Mount;
 use jc_time::TimestampTz;
 use jiff::SignedDuration;
 use kaisatsu_core::{EmailOutboxRecord, KaisatsuError, Result, Store};
-use kaisatsu_crypto::{Kek, sign_jwt};
+use kaisatsu_crypto::Kek;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -181,11 +181,6 @@ impl OutboxDispatcher {
         mount: &Mount,
         row: &EmailOutboxRecord,
     ) -> Result<String> {
-        let keys = self.store.list_signing_keys(&row.realm_id).await?;
-        let key = keys
-            .iter()
-            .find(|k| k.status == "ACTIVE")
-            .ok_or_else(|| KaisatsuError::Crypto("no active signing key".into()))?;
         let now = TimestampTz::now().as_second();
         let ttl = row.lifespan_secs.clamp(60, 43_200);
         let claims = SignedActionToken {
@@ -201,7 +196,9 @@ impl OutboxDispatcher {
             iat: now,
             exp: now + ttl,
         };
-        let token = sign_jwt(key, &self.kek, Some("JWT"), &claims)?;
+        let token =
+            crate::email::sign_action_token(self.store.as_ref(), &self.kek, &row.realm_id, &claims)
+                .await?;
         let realm = self
             .store
             .get_realm(&row.realm_id)
@@ -526,5 +523,7 @@ mod tests {
             "minutes"
         );
         assert_eq!(choice("perc", 5), "perc");
+        // An option with neither `#` nor `<` names no limit and is skipped.
+        assert_eq!(choice("{0,choice,minutes|1#minute}", 1), "minute");
     }
 }

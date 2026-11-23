@@ -292,6 +292,24 @@ async fn a_test_e_mail_never_reaches_a_private_address() {
             json!({ "realm_access": { "roles": ["realm-admin"] } }),
         )
         .await;
+    // Nothing saved yet: the reason says to save the settings first.
+    let mut realm = f.store.get_realm("jc").await.unwrap().unwrap();
+    realm.smtp_server = None;
+    f.store.upsert_realm(realm).await.unwrap();
+    let (status, result) = f
+        .call(
+            Method::POST,
+            "/test",
+            &admin,
+            Some(json!({ "to": "ops@example.org" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["sent"], json!(false));
+    assert!(
+        result["reason"].as_str().unwrap().contains("save the host"),
+        "{result}"
+    );
     // Stored as a realm file may write it: a name that resolves to loopback.
     let mut realm = f.store.get_realm("jc").await.unwrap().unwrap();
     realm.smtp_server = Some(SmtpServerConfig {

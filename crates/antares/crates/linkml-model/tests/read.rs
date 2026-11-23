@@ -310,6 +310,17 @@ fn the_depth_bound_is_checked_before_the_parse() {
             max: 5
         })
     );
+    // Nesting after a string still counts, and an escaped quote does not end the string.
+    let after_string = format!(r#"{{"id": "x", "a": {}{}}}"#, "[".repeat(6), "]".repeat(6));
+    assert_eq!(
+        Model::read(after_string.as_bytes(), &depth),
+        Err(Error::LimitExceeded {
+            limit: "max_depth",
+            max: 5
+        })
+    );
+    let escaped = with("/slots/size/description", json!("a\"[[[[[[[[")).to_string();
+    Model::read(escaped.as_bytes(), &depth).unwrap();
     // A depth serde_json itself would refuse never reaches it.
     let abyss = "[".repeat(100_000);
     assert!(matches!(

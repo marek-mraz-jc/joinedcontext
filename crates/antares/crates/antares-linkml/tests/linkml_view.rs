@@ -593,6 +593,51 @@ async fn linkml_a_denied_class_or_slot_is_the_404_of_an_absent_one() {
     assert_eq!(get(&app, "schema/index.json").await.0, StatusCode::OK);
 }
 
+/// Records every type and attribute IRI it is asked about, and allows.
+#[derive(Default)]
+struct Asked(std::sync::Mutex<Vec<String>>);
+
+impl PolicyEngine for Asked {
+    fn name(&self) -> &'static str {
+        "asked"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        if let Ok(mut asked) = self.0.lock() {
+            asked.extend(op.types.iter().chain(op.attrs).cloned());
+        }
+        Box::pin(std::future::ready(Decision::Allow))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// A class or slot the schema lacks is 404 before the engine hears of it: a name a caller made up
+/// never reaches a policy decision.
+#[tokio::test(flavor = "multi_thread")]
+async fn linkml_an_absent_class_or_slot_is_never_put_to_the_engine() {
+    let engine = Arc::new(Asked::default());
+    let app = broker(Some(engine.clone()), &view(&READS), Some(&schema()))
+        .await
+        .expect("a broker");
+    for path in ["classes/Nothing", "slots/nothing"] {
+        assert_eq!(get(&app, path).await.0, StatusCode::NOT_FOUND, "{path}");
+    }
+    let asked = engine.0.lock().map(|a| a.clone()).unwrap_or_default();
+    assert!(
+        !asked
+            .iter()
+            .any(|iri| iri.ends_with("/Nothing") || iri.ends_with("/nothing")),
+        "{asked:?}"
+    );
+    assert_eq!(get(&app, "classes/Car").await.0, StatusCode::OK);
+    let asked = engine.0.lock().map(|a| a.clone()).unwrap_or_default();
+    assert!(
+        asked.iter().any(|iri| iri == "https://e.org/city/Car"),
+        "{asked:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn model_answers_the_formalism_accept_names() {
     let app = broker(None, &view(&READS), Some(&schema()))

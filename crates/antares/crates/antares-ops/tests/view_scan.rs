@@ -506,6 +506,30 @@ async fn scan_without_residual_is_one_page_and_store_errors_pass_through() {
     assert_eq!(send(&rig.app, req).await.0, StatusCode::NOT_FOUND);
 }
 
+/// Both test-kit bounds hold at once: the store page is cut to `max_limit`, and a page larger
+/// than the answer bound is 413 at that limit too.
+#[tokio::test(flavor = "multi_thread")]
+async fn max_limit_and_the_answer_bound_hold_together() {
+    let roomy = TestBroker::with_max_limit_and_answer_bytes(4, 1 << 20)
+        .await
+        .expect("broker");
+    let rig = rig_on(roomy).await.expect("rig");
+    let (s, b) = rig.scan((pushdown(), None), "size=10&whole=1").await;
+    assert_eq!(
+        (s, b["pageSize"].clone()),
+        (StatusCode::OK, json!(4)),
+        "{b}"
+    );
+    assert_eq!(ids(&b), expected(|_| true)[..10]);
+    let tight = TestBroker::with_max_limit_and_answer_bytes(4, 64)
+        .await
+        .expect("broker");
+    let rig = rig_on(tight).await.expect("rig");
+    let (s, b) = rig.scan((pushdown(), None), "size=4").await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE, "{b}");
+    assert_eq!(b["detail"], antares_ops::bounds::ANSWER_TOO_LARGE);
+}
+
 /// T-3773: a store page larger than the broker buffers for one request is 413, never read whole
 /// into memory.
 #[tokio::test(flavor = "multi_thread")]

@@ -99,6 +99,26 @@ describe("the flow map layout", () => {
     expect(height).toBeGreaterThan(0);
   });
 
+  it("stacks_a_column_by_what_feeds_it_then_by_name", () => {
+    // Two sources share column 1: "a-free" has no broker upstream, "z-fed" sits behind the one
+    // in row 0, so the fed card comes first despite its name; two unfed pipelines fall back to name.
+    const map: FlowMap = {
+      project: "helsinki",
+      nodes: [
+        node("MqttBroker", "hsl"),
+        node("DataSource", "a-free"),
+        node("DataSource", "z-fed"),
+        node("Pipeline", "p-b"),
+        node("Pipeline", "p-a"),
+      ],
+      edges: [{ from: "helsinki/MqttBroker/hsl", to: "helsinki/DataSource/z-fed", relation: "connects" }],
+    };
+    const rowOf = (name: string) => layout(map).placed.find((entry) => entry.node.name === name)?.y;
+    expect(rowOf("z-fed")).toBe(rowOf("hsl"));
+    expect(rowOf("a-free")).toBeGreaterThan(rowOf("z-fed") ?? Infinity);
+    expect(rowOf("p-a")).toBeLessThan(rowOf("p-b") ?? -Infinity);
+  });
+
   it("groups_the_phone_list_and_finds_the_missing_grant_and_the_targets", () => {
     expect(groups(MAP).map((entry) => entry.group)).toEqual(["sources", "pipelines", "endpoints", "spaces"]);
     expect(missingGrants(MAP).map((edge) => edge.to)).toEqual(["helsinki/Endpoint/ep-stops"]);

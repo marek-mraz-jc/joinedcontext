@@ -54,8 +54,9 @@ fn look_of(config: &serde_json::Value) -> Option<Look> {
 static THEME: LazyLock<serde_json::Value> =
     LazyLock::new(|| serde_json::from_str(JSON).unwrap_or_default());
 
-static LIGHT: LazyLock<Look> = LazyLock::new(|| {
-    THEME.get("light").and_then(look_of).unwrap_or(Look {
+/// The light look of `theme`, or black on white where it holds none.
+fn light_of(theme: &serde_json::Value) -> Look {
+    theme.get("light").and_then(look_of).unwrap_or(Look {
         background: [255; 3],
         text: [0; 3],
         muted: [0; 3],
@@ -63,7 +64,9 @@ static LIGHT: LazyLock<Look> = LazyLock::new(|| {
         domain: [0; 3],
         category: vec![[0; 3]],
     })
-});
+}
+
+static LIGHT: LazyLock<Look> = LazyLock::new(|| light_of(&THEME));
 
 /// The light look, which the PNG is drawn in.
 pub fn light() -> &'static Look {
@@ -73,7 +76,7 @@ pub fn light() -> &'static Look {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use serde_json::{json, Value};
 
     fn theme() -> Value {
         serde_json::from_str(JSON).expect("theme.json is JSON")
@@ -187,6 +190,42 @@ mod tests {
                 assert!(gap >= 10.0, "{mode} categories {i} and next: {gap:.1} L*");
             }
         }
+    }
+
+    #[test]
+    fn a_theme_without_a_whole_light_look_draws_black_on_white() {
+        for bad in [
+            None,
+            Some("1d4ed8"),
+            Some("#1d4ed"),
+            Some("#1d4ed80"),
+            Some("#1d4eg8"),
+            Some("#1d4ëd"),
+        ] {
+            assert_eq!(rgb(bad), None, "{bad:?}");
+        }
+        assert_eq!(rgb(Some("#0aFf10")), Some([10, 255, 16]));
+        let mut broken = theme();
+        broken["light"]["range"]["category"][1] = json!("blue");
+        let fallback = light_of(&broken);
+        assert_eq!(
+            (
+                fallback.background,
+                fallback.text,
+                fallback.category.clone()
+            ),
+            ([255; 3], [0; 3], vec![[0; 3]])
+        );
+        broken["light"]["range"]["category"] = json!("#000000");
+        assert_eq!(light_of(&broken), fallback);
+        broken["light"]["axis"] = json!({});
+        assert_eq!(light_of(&broken), fallback);
+        assert_eq!(light_of(&json!(null)), fallback);
+        assert_eq!(&light_of(&theme()), light());
+        assert_eq!(
+            (lightness([0; 3]).round(), lightness([255; 3]).round()),
+            (0.0, 100.0)
+        );
     }
 
     /// A theme holds constants: no member that names an expression, a signal, a parameter, an

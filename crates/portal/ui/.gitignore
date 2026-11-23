@@ -5,3 +5,6 @@ dist-explorer
 playwright-report
 test-results
 coverage
+reports
+.stryker-tmp
+stryker-setup-*.js

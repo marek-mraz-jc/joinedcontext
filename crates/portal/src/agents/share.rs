@@ -957,8 +957,8 @@ pub fn edit_call(answer: &str) -> Option<Result<EditEndpoint, String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        edit_call, form_values, prose_of, render, slug, tool_call, Edit, EditEndpoint, FieldChange,
-        Preset, ProposeEndpoint, DEFAULT_CREATES_PER_DAY,
+        check_types, edit_call, form_values, json_kind, prose_of, render, slug, tool_call, Edit,
+        EditEndpoint, FieldChange, Preset, ProposeEndpoint, DEFAULT_CREATES_PER_DAY,
     };
     use crate::change::Lane;
     use jc_core::kinds::Representation;
@@ -1193,9 +1193,9 @@ mod tests {
             match render("helsinki", &params, &[], PREFIX) {
                 Ok(rendered) => {
                     let spec: jc_core::kinds::EndpointSpec =
-                        serde_json::from_value(rendered.endpoint["spec"].clone())
-                            .unwrap_or_else(|e| panic!("{name}: {e}"));
-                    spec.validate().unwrap_or_else(|e| panic!("{name}: {e}"));
+                        serde_json::from_value(rendered.endpoint["spec"].clone()).expect(name);
+                    let checked = spec.validate();
+                    assert!(checked.is_ok(), "{name}: {:?}", checked.err());
                     assert!(spec.served_representations().contains(&representation));
                 }
                 Err(reason) => {
@@ -1393,6 +1393,77 @@ mod tests {
         assert!(limit.contains("requestsPerMinute"), "{limit}");
     }
 
+    /// T-6530: an entity type the space's model has no class for is refused, naming the classes.
+    #[test]
+    fn an_entity_type_the_space_model_lacks_is_refused_with_the_classes_there_are() {
+        let params = request();
+        assert_eq!(check_types(&params, &[]), Ok(()));
+        assert_eq!(
+            check_types(&params, &["Road".into(), "BikeHireDockingStation".into()]),
+            Ok(())
+        );
+        assert_eq!(
+            check_types(&params, &["Road".into(), "Vehicle".into()]),
+            Err("entityTypes entry 'BikeHireDockingStation' is no class of the data model of space 'helsinki'; its classes are Road, Vehicle".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_spec_of_another_shape_is_refused_by_its_kind_before_any_write() {
+        let mut endpoints = endpoints();
+        endpoints[0]["spec"] = json!(true);
+        let refused = edit(
+            &endpoints,
+            &edit_of(json!({ "name": "helsinki-kpi", "audience": "public" })),
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("is true or false, not an object"),
+            "{refused}"
+        );
+        assert_eq!(json_kind(&json!({ "a": 1 })), "an object");
+    }
+
+    #[test]
+    fn an_edit_renames_the_title_and_records_the_one_before() {
+        let edited = edit(
+            &endpoints(),
+            &edit_of(json!({ "name": "helsinki-kpi", "title": " Helsinki KPIs " })),
+        )
+        .expect("edits");
+        assert_eq!(edited.endpoint["metadata"]["title"], json!("Helsinki KPIs"));
+        assert_eq!(
+            edited.changes,
+            vec![FieldChange {
+                field: "title".into(),
+                before: json!("Helsinki indicators"),
+                after: json!("Helsinki KPIs"),
+            }]
+        );
+        // An endpoint with no title prefills none.
+        assert!(form_values(&endpoints()[1]).get("title").is_none());
+    }
+
+    #[test]
+    fn a_call_that_is_no_json_is_skipped_and_one_that_does_not_parse_is_said() {
+        assert!(tool_call("```json\n{not json}\n```").is_none());
+        assert!(edit_call("```json\n{not json}\n```").is_none());
+        let share = tool_call("```json\n{\"tool\": \"propose_endpoint\", \"name\": 5}\n```")
+            .expect("a tool call")
+            .unwrap_err();
+        assert!(
+            share.starts_with("the propose_endpoint call does not parse"),
+            "{share}"
+        );
+        let change = edit_call("```json\n{\"tool\": \"edit_endpoint\", \"name\": 5}\n```")
+            .expect("an edit call")
+            .unwrap_err();
+        assert!(
+            change.starts_with("the edit_endpoint call does not parse"),
+            "{change}"
+        );
+    }
+
     #[test]
     fn an_edit_call_is_told_from_a_share_call() {
         let answer = "Adding CSV.\n\n```json\n{\"tool\": \"edit_endpoint\", \"name\": \"helsinki-news\", \"addRepresentations\": [\"csv\"]}\n```\n";
@@ -1526,6 +1597,34 @@ mod tests {
         }
     }
 
+    /// A public form writes the field lists it names and leaves out the empty one.
+    #[test]
+    fn a_public_form_names_only_the_field_lists_it_has() {
+        for (attributes, relationships, kept, left) in [
+            (
+                vec!["freeSlots".to_owned()],
+                vec![],
+                "propertyNames",
+                "relationshipNames",
+            ),
+            (
+                vec![],
+                vec!["refDevice".to_owned()],
+                "relationshipNames",
+                "propertyNames",
+            ),
+        ] {
+            let mut form = app_endpoint(Preset::Create);
+            form.audience = Some("public".into());
+            form.write_attributes = attributes;
+            form.write_relationships = relationships;
+            let proposal = render("helsinki", &form, &[], PREFIX).expect("renders");
+            let policies = serde_json::to_string(&proposal.policies).expect("json");
+            assert!(policies.contains(kept), "{policies}");
+            assert!(!policies.contains(left), "{policies}");
+        }
+    }
+
     fn public_form() -> ProposeEndpoint {
         let mut form = app_endpoint(Preset::Create);
         form.audience = Some("public".into());
@@ -1541,9 +1640,8 @@ mod tests {
         let form = public_form();
         let proposal = render("helsinki", &form, &[], PREFIX).expect("renders");
         assert_eq!(proposal.lane, Lane::Red);
-        let [policy] = proposal.policies.as_slice() else {
-            panic!("one policy: {:?}", proposal.policies);
-        };
+        assert_eq!(proposal.policies.len(), 1, "{:?}", proposal.policies);
+        let policy = &proposal.policies[0];
         assert_eq!(
             policy["spec"]["assignee"],
             json!({ "kind": "role", "id": "public" })

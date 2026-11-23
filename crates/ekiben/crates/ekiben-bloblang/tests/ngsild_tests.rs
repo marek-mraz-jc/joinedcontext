@@ -311,6 +311,104 @@ fn conversions_null_and_types() {
 }
 
 #[test]
+fn every_attribute_kind_converts_both_ways() {
+    // key_values: list relationships; an array holding anything but attributes stays an array.
+    assert_eq!(
+        ok(
+            "root = this.ngsild_key_values()",
+            json!({"id": "urn:a", "type": "T",
+                   "lr": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:P:1"]},
+                   "lp": {"type": "ListProperty", "valueList": [3]},
+                   "w": {"type": "Weird", "x": 1},
+                   "m": [{"type": "Property", "value": 1, "datasetId": "urn:ds:1"}, 5]})
+        ),
+        json!({"id": "urn:a", "type": "T", "lr": ["urn:ngsi-ld:P:1"], "lp": [3],
+               "w": {"type": "Weird", "x": 1},
+               "m": [{"type": "Property", "value": 1, "datasetId": "urn:ds:1"}, 5]})
+    );
+    // normalized: an attribute stays as written, json and vocab get their types, a ref list of
+    // URNs is a Relationship and anything else under a ref key a Property.
+    let urns = json!(["urn:ngsi-ld:P:1", "urn:ngsi-ld:P:2"]);
+    assert_eq!(
+        ok(
+            "root = this.ngsild_normalized()",
+            json!({"id": "urn:a", "type": "T",
+                   "a": {"type": "Property", "value": 1},
+                   "j": {"json": {"k": 1}},
+                   "v": {"vocab": "x"},
+                   "refs": urns.clone(),
+                   "refEmpty": [],
+                   "refMixed": ["urn:ngsi-ld:P:1", 5],
+                   "refNumber": 5,
+                   "m": {"dataset": {"urn:ds:1": 1, "@none": 2}}})
+        ),
+        json!({"id": "urn:a", "type": "T",
+               "a": {"type": "Property", "value": 1},
+               "j": {"type": "JsonProperty", "json": {"k": 1}},
+               "v": {"type": "VocabProperty", "vocab": "x"},
+               "refs": {"type": "Relationship", "object": urns},
+               "refEmpty": {"type": "Property", "value": []},
+               "refMixed": {"type": "Property", "value": ["urn:ngsi-ld:P:1", 5]},
+               "refNumber": {"type": "Property", "value": 5},
+               "m": [{"type": "Property", "value": 2},
+                     {"type": "Property", "value": 1, "datasetId": "urn:ds:1"}]})
+    );
+}
+
+#[test]
+fn observed_at_takes_a_timestamp_and_nothing_else() {
+    assert_eq!(
+        ok(
+            r#"root = this.t.ngsild_property(observed_at: this.s.ts_parse("2006-01-02T15:04:05Z07:00"))"#,
+            json!({"t": 1, "s": "2024-01-02T03:04:05+02:00"})
+        )["observedAt"],
+        json!("2024-01-02T01:04:05Z")
+    );
+    assert!(err(
+        "root = this.t.ngsild_property(observed_at: 5)",
+        json!({"t": 1})
+    )
+    .contains("parameter observed_at: expected timestamp value, got number"));
+}
+
+#[test]
+fn geometry_faults_are_named() {
+    for (g, want) in [
+        (
+            json!({"type": "Point", "coordinates": "x"}),
+            "GeoJSON position must be an array, got string",
+        ),
+        (
+            json!({"type": "Point", "coordinates": [1, 2, 3, 4]}),
+            "a GeoJSON position holds 2 or 3 numbers, got 4",
+        ),
+        (
+            json!({"type": "Polygon", "coordinates": []}),
+            "a GeoJSON Polygon needs at least one ring",
+        ),
+        (
+            json!({"type": "GeometryCollection"}),
+            "a GeometryCollection needs geometries",
+        ),
+        (
+            json!({"type": "GeometryCollection", "geometries": [5]}),
+            "a GeoJSON geometry is an object, got number",
+        ),
+    ] {
+        let e = err("root = this.g.ngsild_geoproperty()", json!({ "g": g }));
+        assert!(e.contains(want), "{g}: {e}");
+    }
+    // Number text kept from the message (Go's json.Number) is read as its number.
+    assert_eq!(
+        ok(
+            "root = this.g.parse_json().ngsild_geoproperty()",
+            json!({"g": r#"{"type":"Point","coordinates":[24.0,60.0]}"#})
+        )["value"]["coordinates"],
+        json!([24, 60])
+    );
+}
+
+#[test]
 fn round_trip_normalized_key_values_normalized() {
     let back = ok(
         "root = this.ngsild_key_values().ngsild_normalized()",

@@ -942,8 +942,10 @@ fn realm_with_update(stored: RealmConfig, body: Value) -> Result<RealmConfig> {
             "send the realm as a JSON object, for example {\"displayName\": \"City\"}".into(),
         ));
     };
-    let mut doc = serde_json::to_value(&stored)
-        .map_err(|e| KaisatsuError::Storage(format!("realm encode: {e}")))?;
+    let mut doc = match serde_json::to_value(&stored) {
+        Ok(doc) => doc,
+        Err(e) => return Err(KaisatsuError::Storage(format!("realm encode: {e}"))),
+    };
     if let Value::Object(fields) = &mut doc {
         fields.extend(update);
     }
@@ -1272,10 +1274,10 @@ async fn compat_partial_import(
             None => store.create_user(u).await?,
         };
         for path in &paths {
-            let group = store
-                .get_group_by_path(&realm_name, None, path)
-                .await?
-                .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
+            // Checked before anything was written; a group deleted since answers 404.
+            let Some(group) = store.get_group_by_path(&realm_name, None, path).await? else {
+                return Err(KaisatsuError::NotFound(format!("Group {path} not found")));
+            };
             store
                 .add_user_to_group(&realm_name, &written.id, &group.id)
                 .await?;
@@ -1429,16 +1431,12 @@ async fn compat_create_user(
         user.id = uuid::Uuid::now_v7().to_string();
     }
     let created = state.oidc.store.create_user(user).await?;
-    let member_add = state
-        .registry
-        .find("member_add")
-        .ok_or_else(|| KaisatsuError::NotSupported("unknown operation member_add".into()))?;
     for group_id in joins {
-        crate::operations::execute(
+        crate::operations::execute_named(
             &state,
             &mount,
             &ctx,
-            member_add,
+            "member_add",
             Some(&created.id),
             &json!({ "groupId": group_id }),
         )
@@ -4177,9 +4175,5 @@ async fn run_registry_op(
 ) -> Result<Option<Value>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let op = state
-        .registry
-        .find(name)
-        .ok_or_else(|| KaisatsuError::NotSupported(format!("unknown operation {name}")))?;
-    crate::operations::execute(state, &mount, &ctx, op, key, params).await
+    crate::operations::execute_named(state, &mount, &ctx, name, key, params).await
 }

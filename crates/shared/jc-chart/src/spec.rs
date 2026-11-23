@@ -683,10 +683,417 @@ mod tests {
         }
         let mut image = line.clone();
         image["mark"] = json!("image");
-        assert_eq!(look(image).expect_err("image").0, "/spec/mark");
+        let (path, why) = look(image).expect_err("image");
+        assert_eq!(path, "/spec/mark");
+        assert!(why.contains("loads a URL"), "{why}");
         let mut wide = line;
         wide["width"] = json!(1201);
         assert!(look(wide).expect_err("wide").1.contains("50 to 1200"));
+    }
+
+    #[test]
+    fn each_malformed_member_is_refused_at_its_pointer() {
+        let xy = json!({
+            "x": { "field": "observedAt", "type": "temporal" },
+            "y": { "field": "pm10", "type": "quantitative" } });
+        let base = json!({ "mark": "line", "encoding": xy });
+        let cases: Vec<(Value, &str, &str)> = vec![
+            (json!({ "title": 7 }), "/spec/title", "a string"),
+            (
+                json!({ "title": "x".repeat(121) }),
+                "/spec/title",
+                "at most 120",
+            ),
+            (json!({ "title": "two\nlines" }), "/spec/title", "one line"),
+            (
+                json!({ "description": false }),
+                "/spec/description",
+                "a string",
+            ),
+            (
+                json!({ "$schema": "https://vega.github.io/schema/vega-lite/v4.json" }),
+                "/spec/$schema",
+                "v5.json or none",
+            ),
+            (json!({ "$schema": 5 }), "/spec/$schema", "v5.json or none"),
+            (json!({ "mark": 3 }), "/spec/mark", "one of line, bar"),
+            (json!({ "mark": "pie" }), "/spec/mark", "one of line, bar"),
+            (
+                json!({ "mark": { "type": "sphere" } }),
+                "/spec/mark/type",
+                "one of line",
+            ),
+            (
+                json!({ "mark": { "type": "bar", "tooltip": true } }),
+                "/spec/mark/tooltip",
+                "allowed here: type",
+            ),
+            (json!({ "encoding": [] }), "/spec/encoding", "an object"),
+            (
+                json!({ "encoding": { "x": 1, "y": xy["y"] } }),
+                "/spec/encoding/x",
+                "an object",
+            ),
+            (
+                json!({ "encoding": { "x": { "type": "nominal" }, "y": xy["y"] } }),
+                "/spec/encoding/x/field",
+                "e.g. pm10",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "", "type": "nominal" }, "y": xy["y"] } }),
+                "/spec/encoding/x/field",
+                "letters, digits",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "a b", "type": "nominal" }, "y": xy["y"] } }),
+                "/spec/encoding/x/field",
+                "letters, digits",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "a".repeat(129), "type": "nominal" }, "y": xy["y"] } }),
+                "/spec/encoding/x/field",
+                "letters, digits",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "a" }, "y": xy["y"] } }),
+                "/spec/encoding/x/type",
+                "quantitative, temporal or nominal",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "a", "type": "ordinal" }, "y": xy["y"] } }),
+                "/spec/encoding/x/type",
+                "quantitative, temporal or nominal",
+            ),
+            (
+                json!({ "encoding": { "x": { "field": "a", "type": "nominal", "title": 1 }, "y": xy["y"] } }),
+                "/spec/encoding/x/title",
+                "a string",
+            ),
+            (
+                json!({ "encoding": { "x": xy["x"] } }),
+                "/spec/encoding",
+                "a line mark needs x and y",
+            ),
+            (
+                json!({ "mark": "bar", "encoding": { "y": xy["y"] } }),
+                "/spec/encoding",
+                "a bar mark needs x and y",
+            ),
+            (
+                json!({ "mark": "rule", "encoding": {} }),
+                "/spec/encoding",
+                "a rule mark needs x or y",
+            ),
+            (
+                json!({ "mark": "arc", "encoding": {} }),
+                "/spec/encoding",
+                "a arc mark needs a quantitative theta",
+            ),
+            (
+                json!({ "mark": "arc", "encoding": { "theta": { "field": "n", "type": "nominal" } } }),
+                "/spec/encoding",
+                "quantitative theta",
+            ),
+            (
+                json!({ "encoding": { "x": xy["x"], "y": xy["y"], "size": { "field": "n", "type": "nominal" } } }),
+                "/spec/encoding/size/type",
+                "quantitative",
+            ),
+            (
+                json!({ "encoding": { "x": xy["x"], "y": xy["y"], "theta": { "field": "n", "type": "temporal" } } }),
+                "/spec/encoding/theta/type",
+                "quantitative",
+            ),
+            (
+                json!({ "width": "wide" }),
+                "/spec/width",
+                "pixels, 50 to 1200",
+            ),
+            (json!({ "width": 49 }), "/spec/width", "pixels, 50 to 1200"),
+            (
+                json!({ "width": 1200, "height": 801 }),
+                "/spec/height",
+                "pixels, 50 to 800",
+            ),
+            (
+                json!({ "height": 5_000_000_000_u64 }),
+                "/spec/height",
+                "pixels, 50 to 800",
+            ),
+        ];
+        for (patch, at, words) in cases {
+            let mut spec = base.clone();
+            for (k, v) in patch.as_object().expect("a patch") {
+                spec[k] = v.clone();
+            }
+            let (path, message) = look(spec).expect_err(at);
+            assert_eq!(
+                (path.as_str(), message.contains(words)),
+                (at, true),
+                "{message}"
+            );
+        }
+        assert_eq!(
+            members(&json!(1), "", &[]).expect_err("root"),
+            invalid("/", "an object")
+        );
+        let edge = look(
+            json!({ "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "title": "x".repeat(120), "description": "d", "width": 50, "height": 800,
+            "mark": { "type": "point" }, "encoding": xy }),
+        )
+        .expect("every member at its limit");
+        assert_eq!((edge.mark, edge.width, edge.height), (Mark::Point, 50, 800));
+        assert_eq!(edge.title.chars().count(), 120);
+        assert_eq!(
+            edge.x.as_ref().map(|f| f.title.as_str()),
+            Some("observedAt")
+        );
+        let named = look(json!({ "mark": "rule", "encoding": {
+            "y": { "field": "a_b.c:d@e-f", "type": "quantitative", "title": "Limit" } } }))
+        .expect("a rule needs only y");
+        assert_eq!(
+            named
+                .y
+                .as_ref()
+                .map(|f| (f.field.as_str(), f.title.as_str())),
+            Some(("a_b.c:d@e-f", "Limit"))
+        );
+        assert_eq!(
+            (named.width, named.height, named.title.as_str()),
+            (800, 450, "")
+        );
+        for (name, mark) in [
+            ("line", Mark::Line),
+            ("bar", Mark::Bar),
+            ("area", Mark::Area),
+            ("point", Mark::Point),
+            ("arc", Mark::Arc),
+            ("rule", Mark::Rule),
+        ] {
+            assert_eq!(mark_of(Some(&json!(name)), "").expect(name), mark);
+            assert_eq!(mark_name(mark), name);
+        }
+        assert_eq!(
+            mark_of(None, "/s").expect_err("none"),
+            invalid("/s/mark", "one of line, bar, area, point, arc, rule")
+        );
+        for (name, scale) in [
+            ("quantitative", Scale::Quantitative),
+            ("temporal", Scale::Temporal),
+            ("nominal", Scale::Nominal),
+        ] {
+            assert_eq!(scale_name(scale), name);
+        }
+    }
+
+    #[test]
+    fn a_refusal_names_why_by_the_member() {
+        for (key, words) in [
+            ("values", "no inline rows"),
+            ("name", "no URL"),
+            ("sequence", "no URL"),
+            ("graticule", "no URL"),
+            ("sphere", "no URL"),
+            ("selection", "no expression"),
+            ("calculate", "no expression"),
+            ("filter", "no expression"),
+            ("expr", "no expression"),
+            ("signal", "no expression"),
+            ("condition", "no expression"),
+            ("bin", "allowed here: field, type"),
+        ] {
+            let (path, why) = refused_member("/spec/x", key, FIELD).describe(&DOOR);
+            assert_eq!(path, format!("/spec/x/{key}"));
+            assert!(
+                why.contains(words) && why.contains("render_chart"),
+                "{key}: {why}"
+            );
+        }
+        let (path, why) = invalid("/a", "b").describe(&DOOR);
+        assert_eq!((path.as_str(), why.as_str()), ("/a", "b"));
+    }
+
+    #[test]
+    fn a_history_read_flattens_to_one_row_per_value() {
+        let rows = rows_of(&[
+            json!("not an entity"),
+            json!({ "id": "urn:a", "type": "T", "@context": "c",
+                "pm10": { "type": "Property", "values": [[1.5, "2026-01-01T00:00:00Z"], [2.5, "2026-01-02T00:00:00Z"]] },
+                "no2": [{ "type": "Property", "avg": [[3, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]] }, "plain"],
+                "o3": { "type": "Property", "max": "not a series" } }),
+            json!({ "id": "urn:b", "pm10": { "type": "Property", "value": 9 }, "name": "B" }),
+        ]);
+        // Attribute order follows serde_json's map (sorted, or input order under the
+        // preserve_order feature another workspace crate may unify in), so find rows by content.
+        assert_eq!(rows.len(), 4, "{rows:?}");
+        let agg = rows
+            .iter()
+            .find(|r| r.contains_key("no2.avg"))
+            .expect("no2's aggregate row");
+        assert_eq!(agg["no2"], json!(3));
+        assert_eq!(agg["method"], json!("avg"));
+        assert_eq!(agg["observedAt"], json!("2026-01-01T00:00:00Z"));
+        assert!(!agg.contains_key("o3") && !agg.contains_key("@context"));
+        let pm10: Vec<_> = rows
+            .iter()
+            .filter(|r| r.contains_key("pm10") && r["id"] == json!("urn:a"))
+            .collect();
+        assert_eq!(pm10.len(), 2, "{pm10:?}");
+        assert_eq!(pm10[0]["type"], json!("T"));
+        assert_eq!(pm10[0]["pm10"], json!(1.5));
+        assert_eq!(pm10[1]["observedAt"], json!("2026-01-02T00:00:00Z"));
+        assert_eq!(pm10[1]["pm10"], json!(2.5));
+        // urn:b is the last entity, so its row comes last in either order.
+        assert_eq!(rows[3]["pm10"], json!(9));
+        assert_eq!(rows[3]["name"], json!("B"));
+        // An inline @context is the entity's vocabulary, never a series of it.
+        let inline =
+            rows_of(&[json!({ "id": "urn:c", "@context": { "terms": ["a", "b"] }, "pm10": 4 })]);
+        assert_eq!(inline.len(), 1, "{inline:?}");
+        assert_eq!(inline[0]["pm10"], json!(4));
+        assert!(!rows[3].contains_key("type"));
+    }
+
+    #[test]
+    fn each_scale_reads_its_cells() {
+        let mut cats = Categories::default();
+        assert_eq!(cell(None, Scale::Quantitative, &mut cats), None);
+        assert_eq!(
+            cell(Some(&json!(2.5)), Scale::Quantitative, &mut cats),
+            Some(Cell::Number(2.5))
+        );
+        assert_eq!(
+            cell(Some(&json!("2.5")), Scale::Quantitative, &mut cats),
+            None
+        );
+        assert_eq!(
+            cell(
+                Some(&json!("1970-01-01T00:00:01Z")),
+                Scale::Temporal,
+                &mut cats
+            ),
+            Some(Cell::Number(1000.0))
+        );
+        assert_eq!(
+            cell(Some(&json!("yesterday")), Scale::Temporal, &mut cats),
+            None
+        );
+        assert_eq!(
+            cell(Some(&json!(86_400_000)), Scale::Temporal, &mut cats),
+            Some(Cell::Number(86_400_000.0))
+        );
+        assert_eq!(cell(Some(&json!(null)), Scale::Temporal, &mut cats), None);
+        let nominal: Vec<Option<Cell>> = [
+            json!("a"),
+            json!(1),
+            json!(true),
+            json!("a"),
+            json!(null),
+            json!([1]),
+            json!("1"),
+        ]
+        .iter()
+        .map(|v| cell(Some(v), Scale::Nominal, &mut cats))
+        .collect();
+        assert_eq!(
+            nominal,
+            [
+                Some(Cell::Category(0)),
+                Some(Cell::Category(1)),
+                Some(Cell::Category(2)),
+                Some(Cell::Category(0)),
+                None,
+                None,
+                Some(Cell::Category(1))
+            ]
+        );
+        assert_eq!(cats.0, ["a", "1", "true"]);
+    }
+
+    #[test]
+    fn arcs_and_rules_draw_the_rows_their_channels_hold() {
+        let arc = look(json!({ "mark": "arc", "title": "Share", "encoding": {
+            "theta": { "field": "n", "type": "quantitative" },
+            "color": { "field": "kind", "type": "nominal" },
+            "size": { "field": "w", "type": "quantitative" } } }))
+        .expect("an arc");
+        let rows = rows_of(&[
+            json!({ "n": 2, "kind": "a", "w": 1, "observedAt": "2026-01-01T00:00:00Z" }),
+            json!({ "kind": "b" }),
+            json!({ "n": 3, "kind": "b", "observedAt": "no time" }),
+        ]);
+        let charted = chart_of(&arc, &rows, &DOOR);
+        assert!(!charted.truncated);
+        assert_eq!(charted.chart.points.len(), 2);
+        assert_eq!(charted.chart.colors, 2);
+        assert_eq!(
+            charted.categories,
+            json!({ "color": [
+            { "label": "#1", "value": "a" }, { "label": "#2", "value": "b" }] })
+        );
+        assert_eq!(
+            charted.view_points,
+            [
+                json!({ "color": 0, "size": 1.0, "theta": 2.0, "observedAt": "2026-01-01T00:00:00.000Z" }),
+                json!({ "color": 1, "theta": 3.0 }),
+            ]
+        );
+        let view = view_of(&arc, &charted, &DOOR);
+        assert_eq!(
+            view["joinedcontext.com/chartSpec"]["theta"],
+            json!({ "scale": "quantitative", "title": "n" })
+        );
+        assert_eq!(view["joinedcontext.com/chartSpec"]["x"], json!(null));
+        assert_eq!(view["joinedcontext.com/chartSpec"]["mark"], json!("arc"));
+        assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(false));
+        let line = look(json!({ "mark": "line", "encoding": {
+            "x": { "field": "k", "type": "nominal" }, "y": { "field": "v", "type": "quantitative" } } })).expect("a line");
+        let charted = chart_of(
+            &line,
+            &rows_of(&[
+                json!({ "k": "a", "v": 1 }),
+                json!({ "k": "b" }),
+                json!({ "v": 2 }),
+            ]),
+            &DOOR,
+        );
+        assert_eq!(charted.chart.points.len(), 1, "a line point needs x and y");
+        let rule = look(
+            json!({ "mark": "rule", "encoding": { "x": { "field": "k", "type": "nominal" } } }),
+        )
+        .expect("a rule");
+        let charted = chart_of(
+            &rule,
+            &rows_of(&[json!({ "k": "z" }), json!({ "j": 1 })]),
+            &DOOR,
+        );
+        assert_eq!(charted.chart.points.len(), 1);
+        assert_eq!(charted.view_points, [json!({ "x": 0 })]);
+        assert_eq!(charted.chart.x.as_ref().map(|c| c.categories), Some(1));
+        assert!(charted.chart.y.is_none());
+        let three = chart_of(
+            &rule,
+            &rows_of(&[
+                json!({ "k": "a" }),
+                json!({ "k": "b" }),
+                json!({ "k": "c" }),
+            ]),
+            &DOOR,
+        );
+        assert!(!three.truncated);
+        let view = view_of(&rule, &three, &DOOR);
+        assert_eq!(
+            view["joinedcontext.com/chartPoints"]
+                .as_array()
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            view["joinedcontext.com/pointsTruncated"],
+            json!(true),
+            "the third point is past the view cap"
+        );
     }
 
     #[test]

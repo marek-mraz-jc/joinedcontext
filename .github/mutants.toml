@@ -4,6 +4,32 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
+  # the same; the clamp only bounds the loop (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',
+  # jc-chart Canvas::line: on an axis the line does not move along, the step's sign is never used
+  # (dx or dy is 0 and Bresenham never steps that way), so < and <= draw alike (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace < with <= in Canvas::line',
+  # jc-chart Canvas::disc: the offsets run -r..=r, so cx - x covers the same pixels as cx + x (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace \+ with - in Canvas::disc',
+  # jc-chart check: Instant::now() equal to the deadline to the nanosecond is never observed (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in check',
+  # jc-chart canvas: with no legend (0 px) the swatch loop runs for at most one colour and draws it
+  # past the right edge, which set() drops (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in canvas',
+  # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
+  # skipping them by name or not is alike; the @context half is held by a test (T-7622).
+  'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
+  # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
+  # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
+  # T-7669 msgpack Reader::len: a length between what is left and buf.len() + pos passes the looser bound and
+  # then take() answers the same "unexpected EOF"; collect() over a Result reserves nothing up front.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
@@ -56,6 +82,16 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
+  # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
+  # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace == with != in push_email_match',
+  # kaisatsu-store-pg: list_groups' search query keeps only the matches and their ancestors (keep CTE), so the
+  # Rust prune after it finds no node to drop; kept as a second check on the search result.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace matches_or_has_matching_child -> bool with true',
+  # kaisatsu-store-pg: lock_grants orders a grant write against a cascading delete in another transaction
+  # (advisory lock); a single-connection test commits one after the other, so no test observes the lock.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace lock_grants -> Result<\(\)> with Ok\(\(\)\)',
   # kaisatsu-crypto: Kek's Drop zeroizes the key bytes on drop; no safe code can read freed memory, so no
   # test tells a zeroizing drop from an empty one (the zeroize crate's own tests hold it).
   'crates/kaisatsu/crypto/src/keys\.rs:.*replace <impl Drop for Kek>::drop with \(\)',
