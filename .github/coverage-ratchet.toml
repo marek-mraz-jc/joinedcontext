@@ -14,6 +14,7 @@
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
 "antares-notifier" = { lines = 99.05, functions = 99.14 }
 "antares-odata" = { lines = 99.47, functions = 99.12 }
+"antares-ogc" = { lines = 99.70, functions = 99.17 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sta" = { lines = 100.00, functions = 99.78 }
 "antares-views" = { lines = 99.70, functions = 99.30 }
@@ -31,7 +32,12 @@
 "dataroom-harvest" = { lines = 99.00, functions = 99.06 }
 "dataroom-mcp" = { lines = 100.00, functions = 100.00 }
 "dataroom-plugin" = { lines = 100.00, functions = 100.00 }
+"dataroom-rdf" = { lines = 99.13, functions = 99.31 }
+"dataroom-search" = { lines = 99.85, functions = 99.27 }
 "dataroom-server" = { lines = 98.70, functions = 100.00 }
+"dataroom-shacl" = { lines = 99.28, functions = 99.53 }
+"dataroom-store-memory" = { lines = 99.66, functions = 100.00 }
+"dataroom-store-pg" = { lines = 99.51, functions = 99.29 }
 "dataroom-web" = { lines = 99.62, functions = 97.16 }
 "ekiben-bloblang" = { lines = 82.15, functions = 79.46 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
@@ -82,4 +88,6 @@
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
 "shako-registry" = { lines = 98.65, functions = 97.14 }
 "shako-server" = { lines = 99.54, functions = 100.00 }
+"shako-store-memory" = { lines = 100.00, functions = 100.00 }
+"shako-store-pg" = { lines = 99.19, functions = 96.68 }
 "shako-web" = { lines = 96.69, functions = 87.83 }
