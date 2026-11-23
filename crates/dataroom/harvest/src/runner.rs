@@ -11,7 +11,7 @@ use crate::sources::{
 use dataroom_core::ops::{HarvestRunner, PreviewRecord, SourcePreview, SourceTest, PREVIEW_MAX};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    ActivityRow, DataroomError, Dataset, HarvestBudget, HarvestLogLine, HarvestRun,
+    ActivityRow, Catalogue, DataroomError, Dataset, HarvestBudget, HarvestLogLine, HarvestRun,
     HarvestRunState, HarvestSkippedItem, HarvestSource, HarvestSourceKind, RecordState, RequestCtx,
     Result, Store,
 };
@@ -1177,6 +1177,14 @@ impl HarvestEngine {
     }
 }
 
+/// The catalogue of `ctx`; not found when its organization holds none of that id.
+async fn catalogue_of(store: &dyn Store, ctx: &RequestCtx) -> Result<Catalogue> {
+    store
+        .get_catalogue(ctx.org_id, ctx.catalogue_id)
+        .await?
+        .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))
+}
+
 /// Where a guarded fetch stopped (ODP-15): the guard refused the address, the read failed, or
 /// the answer passed the byte cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1434,10 +1442,7 @@ impl HarvestRunner for HarvestEngine {
         source: &'a HarvestSource,
     ) -> BoxFuture<'a, Result<SourceTest>> {
         Box::pin(async move {
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let Ok((url, accept)) = Self::first_page(source) else {
                 return Ok(SourceTest::RefusedHost);
             };
@@ -1492,10 +1497,7 @@ impl HarvestRunner for HarvestEngine {
                     partial: false,
                 });
             }
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let budget = source
                 .budget
                 .map_or(self.max_bytes, |b| {
@@ -1559,10 +1561,7 @@ impl HarvestEngine {
         {
             let mut logs = Vec::new();
 
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
 
             // Ensure target publisher exists (`harvest-hub.py` line 213).
             if store

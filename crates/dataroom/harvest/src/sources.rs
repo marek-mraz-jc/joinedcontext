@@ -1498,8 +1498,7 @@ pub fn parse_ogc_records_page(
     };
     for f in features {
         match ogc_record(org_id, catalogue_id, source, &items, f, &absolute, lang) {
-            Ok(Some(kept)) => page.kept.push(kept),
-            Ok(None) => {}
+            Ok(kept) => page.kept.push(kept),
             Err(skip) => page.skipped.push(skip),
         }
     }
@@ -1523,8 +1522,8 @@ fn links_of(v: &Value) -> impl Iterator<Item = &Value> {
         .flatten()
 }
 
-/// One OGC API Records feature: `Ok(None)` for an item the source skips by name, `Err` with the
-/// reason for a record that cannot be listed.
+/// One OGC API Records feature, or `Err` with the reason for a record that cannot be listed or
+/// that the source skips by name.
 fn ogc_record(
     org_id: OrgId,
     catalogue_id: CatalogueId,
@@ -1533,7 +1532,7 @@ fn ogc_record(
     f: &Value,
     absolute: &dyn Fn(&str) -> Option<String>,
     lang: &str,
-) -> std::result::Result<Option<(String, Dataset)>, HarvestSkippedItem> {
+) -> std::result::Result<(String, Dataset), HarvestSkippedItem> {
     let props = f.get("properties").filter(|p| p.is_object());
     let item_id = match f.get("id") {
         Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_owned(),
@@ -1641,7 +1640,7 @@ fn ogc_record(
         links,
     };
     let ds = record_dataset(org_id, catalogue_id, source, record, lang);
-    Ok(Some((item_id, ds)))
+    Ok((item_id, ds))
 }
 
 /// A record id as one path segment.

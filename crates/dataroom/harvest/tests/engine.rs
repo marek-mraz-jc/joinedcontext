@@ -202,6 +202,51 @@ async fn a_source_url_that_does_not_parse_is_refused() {
     }
 }
 
+#[test]
+fn an_nkod_query_url_needs_a_url_and_a_publisher_iri_the_query_can_hold() {
+    let nkod = |url: &str, iri: Option<&str>| {
+        let mut s = source("nkod-sparql", "nkod", url, &["data.gov.cz"]);
+        s.target_publisher_iri = iri.map(str::to_owned);
+        dataroom_harvest::runner::nkod_query_url(&s)
+    };
+    let field = |r: Result<String>| match r {
+        Err(dataroom_core::DataroomError::Validation { fields, .. }) => {
+            fields.into_keys().next().unwrap_or_default()
+        }
+        other => panic!("expected a field error, got {other:?}"),
+    };
+    assert_eq!(field(nkod("not a url", None)), "url");
+    assert_eq!(
+        field(nkod("https://data.gov.cz/sparql", None)),
+        "targetPublisherIri"
+    );
+    for bad in [
+        "ftp://x.example/p",
+        "https://x.example/a b",
+        "https://x.example/<p>",
+        "https://x.example/\"q\"",
+    ] {
+        assert_eq!(
+            field(nkod("https://data.gov.cz/sparql", Some(bad))),
+            "targetPublisherIri",
+            "{bad}"
+        );
+    }
+    // A url that already carries its query is used as given.
+    let given = "https://data.gov.cz/sparql?query=SELECT%201";
+    assert_eq!(nkod(given, None).expect("as given"), given);
+    let built = nkod(
+        "https://data.gov.cz/sparql",
+        Some("https://data.gov.cz/zdroj/ovm/1"),
+    )
+    .expect("built");
+    assert!(
+        built.starts_with("https://data.gov.cz/sparql?query="),
+        "{built}"
+    );
+    assert!(built.contains("data.gov.cz%2Fzdroj%2Fovm%2F1"), "{built}");
+}
+
 #[tokio::test]
 async fn a_record_already_withdrawn_is_not_withdrawn_again() {
     let w = world(&[]).await;
