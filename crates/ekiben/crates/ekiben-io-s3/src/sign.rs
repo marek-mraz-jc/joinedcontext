@@ -205,5 +205,6 @@ mod tests {
     fn the_secret_stays_out_of_debug() {
         let printed = format!("{:?}", example());
         assert!(!printed.contains("EXAMPLEKEY"), "{printed}");
+        assert!(printed.starts_with("Credentials { id: \"AKIA"), "{printed}");
     }
 }

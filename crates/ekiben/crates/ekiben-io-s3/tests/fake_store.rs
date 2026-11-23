@@ -221,6 +221,7 @@ async fn the_output_sends_headers_tags_and_kept_metadata_and_names_what_fails() 
     part.meta_set_str("name", "x/y.csv");
     part.meta_set_str("keep", "yes");
     part.meta_set_str("skip_me", "no");
+    part.meta_set_str("bell", "a\u{7}b");
     out.write_batch(&ctx, vec![part]).await.expect("put");
     let head = seen.lock().expect("lock").join("\n");
     assert!(head.starts_with("put /raw/x/y.csv "), "{head}");
@@ -235,7 +236,10 @@ async fn the_output_sends_headers_tags_and_kept_metadata_and_names_what_fails() 
     ] {
         assert!(head.contains(want), "{want} missing:\n{head}");
     }
-    assert!(!head.contains("x-amz-meta-skip_me"), "{head}");
+    // excluded by prefix, a value no header carries, and unset kms_key_id stay off the PUT
+    for absent in ["x-amz-meta-skip_me", "x-amz-meta-bell", "kms-key-id"] {
+        assert!(!head.contains(absent), "{absent}:\n{head}");
+    }
 
     let mut root = Part::from_str("x");
     root.meta_set_str("name", "/");
@@ -404,4 +408,56 @@ async fn caps_error_answers_and_cut_bodies_are_refused_with_the_object_named() {
         .expect("output");
     let e = refusal(closed.write_batch(&ctx, vec![Part::from_str("x")]).await);
     assert!(e.starts_with("aws_s3: PUT k: "), "{e}");
+}
+
+/// The read caps hold at their sizes: an object of exactly the cap, a 2 MiB listing page, a
+/// 4 KiB error answer and the 256 MiB max_object_bytes ceiling; a page that says it is not
+/// truncated ends the listing even with a continuation token.
+#[tokio::test]
+async fn read_caps_hold_at_their_exact_sizes() {
+    let padding = " ".repeat(2 << 20);
+    let (endpoint, _) = store(Arc::new(move |_, path| match path {
+        p if p.contains("continuation-token") => ok(
+            "<ListBucketResult><Contents><Key>never.txt</Key></Contents></ListBucketResult>",
+        ),
+        p if p.contains("list-type=2") => ok(&format!(
+            "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>exact.txt</Key></Contents><Contents><Key>gone.txt</Key></Contents><NextContinuationToken>t9</NextContinuationToken>{padding}</ListBucketResult>"
+        )),
+        "/raw/exact.txt" => ok(&"x".repeat(16)),
+        _ => {
+            let body = format!("<Error>{}<Code>NoSuchKey</Code></Error>", " ".repeat(4096));
+            format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        }
+    }))
+    .await;
+    let ctx = ctx();
+    let mut input = ctx
+        .registry
+        .build_input(
+            &conf("", base(&endpoint, json!({"max_object_bytes": 16}))),
+            &ctx,
+        )
+        .expect("input");
+    let (parts, _) = input
+        .read_batch(&ctx)
+        .await
+        .expect("exactly the cap is read");
+    assert_eq!(parts[0].as_bytes_ref().len(), 16);
+    let e = refusal(input.read_batch(&ctx).await);
+    assert!(e.ends_with("answered 404 Not Found NoSuchKey"), "{e}");
+    assert!(matches!(
+        input.read_batch(&ctx).await,
+        Err(CoreError::EndOfInput)
+    ));
+
+    for (bytes, ok) in [(256u64 << 20, true), ((256 << 20) + 1, false)] {
+        let built = ctx.registry.build_input(
+            &conf("", base(&endpoint, json!({"max_object_bytes": bytes}))),
+            &ctx,
+        );
+        assert_eq!(built.is_ok(), ok, "{bytes}");
+    }
 }
