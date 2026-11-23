@@ -82,3 +82,140 @@ pub async fn call_mcp_tool(
         "result": result,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shako_core::{
+        Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, Principal, RoleBinding,
+        ShakoSigningKey, Subject, TokenVerifier,
+    };
+    use std::sync::Arc;
+
+    fn world(tmp: &tempfile::TempDir, segments: Option<&[&str]>) -> (ShakoState, RequestCtx) {
+        let org = OrgId::from_u128(10);
+        let mut subject = Subject::authenticated("agent", "agent", vec![org]);
+        subject.connector_segments = segments.map(|s| s.iter().map(|x| (*x).to_owned()).collect());
+        let state = ShakoState::new(
+            InstanceId::from_u128(1),
+            tmp.path().to_path_buf(),
+            Arc::new(shako_store_memory::MemoryStore::new()),
+            Arc::new(LocalAuthorizer::new(vec![RoleBinding {
+                org_id: org,
+                principal: Principal::User("agent".into()),
+                actions: vec![Action::Admin, Action::Write, Action::Read],
+                project_id: None,
+                repo: None,
+            }])),
+            TokenVerifier::new(ShakoSigningKey::generate().expect("key")),
+            OutboundGuard::default(),
+        );
+        let ctx = RequestCtx::new(InstanceId::from_u128(1), org, subject);
+        (state, ctx)
+    }
+
+    fn names(state: &ShakoState, ctx: &RequestCtx) -> Vec<String> {
+        list_mcp_tools(state, ctx)
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
+    }
+
+    #[test]
+    fn the_tool_list_follows_the_connector_segments() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (state, all) = world(&tmp, None);
+        let every = names(&state, &all);
+        assert_eq!(every.len(), state.registry.operations().len());
+        assert!(every.iter().any(|n| n == "jc_forge_publish_package"));
+        assert!(every.iter().any(|n| n == "jc_forge_create_repository"));
+        let (_, star) = world(&tmp, Some(&["*"]));
+        assert_eq!(names(&state, &star), every);
+        let (_, apps) = world(&tmp, Some(&["apps"]));
+        let tools = list_mcp_tools(&state, &apps);
+        let in_apps = state
+            .registry
+            .operations()
+            .iter()
+            .filter(|op| op.connector_segment == "apps")
+            .count();
+        assert_eq!(tools.len(), in_apps, "{tools:?}");
+        assert!(tools.len() < every.len());
+        assert!(
+            tools.iter().all(|t| t.connector_segment == "apps"),
+            "{tools:?}"
+        );
+        let publish = tools
+            .iter()
+            .find(|t| t.name == "jc_forge_publish_package")
+            .expect("publish is an apps tool");
+        assert_eq!(publish.title, "Publish Package");
+        assert_eq!(publish.description, "Publish a generic package file.");
+        assert!(publish.input_schema.is_object());
+        let (_, none) = world(&tmp, Some(&[]));
+        assert!(names(&state, &none).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_call_refuses_secrets_first_then_hides_unknown_and_filtered_tools() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (state, forge) = world(&tmp, Some(&["forge"]));
+        let mount = Mount::default();
+        let key = "-----BEGIN PRIVATE KEY-----";
+        // A secret is refused even for a tool that does not exist (before the lookup).
+        match call_mcp_tool(
+            &state,
+            &forge,
+            &mount,
+            "jc_forge_nothing",
+            json!({ "k": key }),
+        )
+        .await
+        {
+            Err(ShakoError::BadRequest(m)) => assert!(
+                m.starts_with("refused secret in MCP tool arguments: "),
+                "{m}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let unknown = call_mcp_tool(&state, &forge, &mount, "jc_forge_nothing", json!({})).await;
+        assert_eq!(
+            unknown.err(),
+            Some(ShakoError::NotFound(
+                "unknown MCP tool 'jc_forge_nothing'".into()
+            ))
+        );
+        let filtered = call_mcp_tool(
+            &state,
+            &forge,
+            &mount,
+            "jc_forge_publish_package",
+            json!({}),
+        )
+        .await;
+        assert_eq!(
+            filtered.err(),
+            Some(ShakoError::NotFound(
+                "unknown MCP tool 'jc_forge_publish_package'".into()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_call_answers_the_operation_result_marked_untrusted() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (state, ctx) = world(&tmp, None);
+        let made = call_mcp_tool(
+            &state,
+            &ctx,
+            &Mount::default(),
+            "jc_forge_create_repository",
+            json!({ "Owner": "joinedcontext", "Name": "tooled", "AutoInit": true }),
+        )
+        .await
+        .expect("create");
+        assert_eq!(made["tool"], "jc_forge_create_repository");
+        assert_eq!(made["untrustedData"], true);
+        assert!(made["result"].to_string().contains("tooled"), "{made}");
+    }
+}
