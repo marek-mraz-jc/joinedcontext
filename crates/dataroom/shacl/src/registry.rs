@@ -310,8 +310,9 @@ impl ProfileRegistry {
         version: Option<&str>,
     ) -> Result<Arc<Stack>> {
         let guard = self.profiles.read().unwrap_or_else(PoisonError::into_inner);
-        let (target, _) = resolve(&guard, scope, id, version)
+        let first = resolve(&guard, scope, id, version)
             .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
+        let (target, _) = first;
         let key = (
             (!target.built_in).then_some(scope),
             target.id.clone(),
@@ -327,8 +328,7 @@ impl ProfileRegistry {
         }
 
         // Breadth first, so the first installed profile met is the nearest; each profile once.
-        let mut chain = vec![resolve(&guard, scope, id, version)
-            .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?];
+        let mut chain = vec![first];
         let mut at = 0;
         while let Some((record, _)) = chain.get(at).copied() {
             at += 1;
@@ -1590,6 +1590,179 @@ mod tests {
         assert!(
             matches!(&e, DataroomError::Storage(m) if m.starts_with("dry run: expected value")),
             "{e:?}"
+        );
+    }
+
+    /// The `DatasetValidator` port as the API calls it: a built-in id on a managed catalogue or
+    /// an unknown id is no choice, a profile asking a publisher IRI waits for one, an id and
+    /// version are taken once, a dry run reports per dataset, a pin this build lacks blocks no
+    /// write unless it is the main profile, and stored uploads load.
+    #[test]
+    fn the_validator_port_answers_as_the_api_expects() {
+        let registry = ProfileRegistry::new();
+        let port: &dyn DatasetValidator = &registry;
+        let mut cat = small_catalogue("dcat-ap-3.0.1");
+        let none = BTreeMap::new();
+        let refused_field = |r: Result<()>| match r {
+            Err(DataroomError::Validation { fields, .. }) => fields.into_keys().collect::<Vec<_>>(),
+            other => panic!("a field refusal expected: {other:?}"),
+        };
+        assert_eq!(
+            refused_field(port.check_profile_choice(&cat, &["dcat-ap-cz"], true)),
+            ["activeProfiles"]
+        );
+        assert_eq!(
+            refused_field(port.check_profile_choice(&cat, &["nobody"], false)),
+            ["activeProfiles"]
+        );
+        assert_eq!(
+            refused_field(port.check_profile_choice(&cat, &["dcat-ap-cz"], false)),
+            ["publisherUri"]
+        );
+        port.check_profile_choice(&cat, &["dcat-ap-3.0.1"], false)
+            .expect("EU needs no publisher");
+
+        let upload = |version: &str| {
+            port.upload_profile(
+                profile("city-ext", version, Some("dcat-ap-3.0.1"), NEEDS_KEYWORD),
+                &cat,
+                &[small_dataset("ok", true)],
+                &none,
+            )
+        };
+        let (saved, report) = upload("1").expect("first upload");
+        assert!(report.is_object(), "{report}");
+        assert!(
+            matches!(upload("1"), Err(DataroomError::Conflict(_))),
+            "taken once"
+        );
+        upload("2").expect("a new version of the same id");
+        port.check_profile_choice(&cat, &["city-ext"], true)
+            .expect("an upload is chosen here even on a managed catalogue");
+        cat.publisher_uri = Some("https://e.org/publisher/city".into());
+        port.check_profile_choice(&cat, &["dcat-ap-cz"], false)
+            .expect("publisher declared");
+
+        let (value, reports) = port
+            .dry_run_profile("city-ext", "1", &cat, &[small_dataset("ok", true)], &none)
+            .expect("dry run");
+        assert!(value.is_object(), "{value}");
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].conforms, "the dataset has no keyword");
+
+        cat.active_profiles = vec![ProfilePin {
+            profile_id: "gone".into(),
+            version: "1".into(),
+        }];
+        port.validate_dataset(&cat, &small_dataset("ok", true), None)
+            .expect("an unknown pin blocks no write");
+        cat.main_profile = "gone".into();
+        assert!(
+            port.validate_dataset(&cat, &small_dataset("ok", true), None)
+                .is_err(),
+            "the main profile decides"
+        );
+
+        let restarted = ProfileRegistry::new();
+        let port: &dyn DatasetValidator = &restarted;
+        port.load_stored_profiles(&cat, std::slice::from_ref(&saved));
+        assert!(restarted.get(test_ids(), "city-ext", Some("1")).is_some());
+    }
+
+    /// A cached stack is dropped when what it was built from changes: a base uploaded again, a
+    /// newer base version loaded from the store; and each catalogue's upload is its own stack.
+    #[test]
+    fn a_stack_follows_its_bases_and_stays_per_catalogue() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("child-x");
+        let scope = test_ids();
+        let none = BTreeMap::new();
+        let open = r#"<https://e.org/open> a <http://www.w3.org/ns/shacl#NodeShape> ."#;
+        let up = |record: ProfileRecord, on: &Catalogue| {
+            registry
+                .upload_and_dry_run(record, on, &[], &none)
+                .expect("upload")
+                .0
+        };
+        let base_v1 = up(
+            profile("base-x", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD),
+            &cat,
+        );
+        let child = up(profile("child-x", "1", Some("base-x"), open), &cat);
+        let key = |r: &ProfileRegistry| r.stack(scope, "child-x", None).expect("stack").key;
+        let before = key(&registry);
+        up(profile("base-x", "1", Some("dcat-ap-3.0.1"), open), &cat);
+        assert_ne!(
+            key(&registry),
+            before,
+            "a base uploaded again reaches its children"
+        );
+
+        let restarted = ProfileRegistry::new();
+        restarted.load_stored(scope, &[base_v1.clone(), child]);
+        let loaded = key(&restarted);
+        let mut base_v2 = base_v1;
+        base_v2.version = "2".into();
+        base_v2.shapes_turtle = open.into();
+        restarted.load_stored(scope, &[base_v2]);
+        assert_ne!(
+            key(&restarted),
+            loaded,
+            "a newer base version from the store reaches them"
+        );
+
+        let mut other = small_catalogue("child-x");
+        other.id = CatalogueId::from_uuid(Uuid::from_u128(11));
+        up(
+            profile("child-x", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD),
+            &other,
+        );
+        let other_key = registry
+            .stack((other.org_id, other.id), "child-x", None)
+            .expect("stack")
+            .key;
+        assert_ne!(
+            other_key,
+            key(&registry),
+            "another catalogue's upload of the id is its own"
+        );
+    }
+
+    /// Form fields: a path stated twice keeps its lowest order, and a profile's terms predicates
+    /// name the CKAN field they fill.
+    #[test]
+    fn form_fields_keep_the_lowest_order_and_name_terms_fields() {
+        for (first, second) in [(5, 2), (2, 5)] {
+            let shapes = parse_shapes_graph(
+                &format!(
+                    r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
+                    @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                    <https://e.org/s> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+                      sh:property [ sh:path dcat:keyword ; sh:order {first} ] ;
+                      sh:property [ sh:path dcat:keyword ; sh:order {second} ] ."#
+                ),
+                &RdfLimits::default(),
+            )
+            .expect("shapes");
+            let fields = derive_form_layout(&shapes, "http://www.w3.org/ns/dcat#Dataset");
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].order, 2, "{first} then {second}");
+        }
+        let terms = DcatProfile::installed()
+            .find_map(|p| p.render.terms.clone())
+            .expect("a profile with terms of use");
+        assert_eq!(
+            predicate_to_field_name(&terms.personal_data),
+            "personal_data"
+        );
+        assert_eq!(predicate_to_field_name(&terms.link), "license_id");
+        assert_eq!(
+            predicate_to_field_name(&terms.sui_generis_database),
+            "license_id"
+        );
+        assert_eq!(
+            predicate_to_field_name("https://e.org/vocab#colour"),
+            "colour"
         );
     }
 

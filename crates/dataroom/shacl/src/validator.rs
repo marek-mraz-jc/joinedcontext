@@ -1670,6 +1670,10 @@ mod tests {
             ShaclSeverity::Info
         );
         assert_eq!(
+            bad.warning_count, 1,
+            "only the Warning shape counts as a warning"
+        );
+        assert_eq!(
             bad.findings
                 .iter()
                 .filter(|f| f.focus_node == "https://example.org/i"
