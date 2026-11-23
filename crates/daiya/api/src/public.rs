@@ -1103,3 +1103,41 @@ pub fn public_router() -> Router<DaiyaState> {
             patch(http_update_public_dashboard),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn an_access_token_is_32_to_64_hex_characters() {
+        for ok in ["a".repeat(32), "0F".repeat(32)] {
+            assert!(is_valid_access_token_format(&ok), "{ok}");
+        }
+        for bad in [
+            "a".repeat(31),
+            "a".repeat(65),
+            format!("{}g", "a".repeat(31)),
+        ] {
+            assert!(!is_valid_access_token_format(&bad), "{bad}");
+        }
+    }
+
+    /// A newcomer to a full table takes the place of the oldest window: the table never grows
+    /// past its bound.
+    #[test]
+    fn a_full_table_stays_at_its_bound() {
+        let limiter = PublicRateLimiter::new(5, 60);
+        for i in 0..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
+            let addr = Ipv4Addr::from(0x0a00_0000 + u32::try_from(i).unwrap_or(u32::MAX));
+            limiter.check_rate_limit(IpAddr::V4(addr)).unwrap();
+        }
+        limiter
+            .check_rate_limit(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+            .unwrap();
+        assert_eq!(
+            limiter.buckets.lock().len(),
+            PublicRateLimiter::MAX_TRACKED_ADDRESSES
+        );
+    }
+}

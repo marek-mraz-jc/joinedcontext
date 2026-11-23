@@ -958,6 +958,47 @@ async fn batch_runs_reads_allowed_and_import_and_refuses_the_rest() {
         )
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, answer) = w
+        .call(
+            "POST",
+            "/odata/v4/$batch",
+            Some("admin"),
+            Some(json!({ "requests": &too_many[1..] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "exactly the limit is served");
+    assert_eq!(
+        answer["responses"].as_array().map(Vec::len),
+        Some(daiya_api::odata::MAX_BATCH_REQUESTS)
+    );
+
+    // Import is the one action a batch runs: a POST to a set is not an import.
+    let (st, answer) = w
+        .call(
+            "POST",
+            "/odata/v4/$batch",
+            Some("admin"),
+            Some(json!({ "requests": [
+                { "id": "1", "method": "POST", "url": "Dashboards", "body": { "dashboard": dashboard("p", "prom") } }
+            ]})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(answer["responses"][0]["status"], 501, "{answer}");
+}
+
+/// The page makes no caller a member of the Organization its link names; only the server
+/// administrator is one of every live organization.
+#[tokio::test]
+async fn the_page_names_no_outsider_a_member() {
+    let w = world_with(Arc::new(DenySome), loopback());
+    w.add_dashboard(dashboard("open", "prom"), None).await;
+    let (st, _) = w.call("GET", "/d/open?orgId=1", Some("viewer"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, body) = w
+        .call("GET", "/d/open?orgId=1", Some("outsider"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
 }
 
 /// Denies read on dashboard `secret` and folder `hidden` (and what lives in it); allows
@@ -1362,6 +1403,41 @@ async fn a_cursor_after_a_long_title_is_read_back() {
         .await;
     assert_eq!(st, StatusCode::OK, "{next}");
     assert_eq!(next["value"][0]["uid"], "f500", "{next}");
+
+    // The same cursor grown to exactly 32 KiB is read; one character more (base64 of one more
+    // byte) is refused unread.
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let token = link.split_once("$skiptoken=").unwrap().1;
+    let decoded = b64.decode(token).unwrap();
+    let grown = |len: usize| {
+        let mut cursor: Value = serde_json::from_slice(&decoded).unwrap();
+        let title = cursor["after"][0].as_str().unwrap().to_owned();
+        cursor["after"][0] = json!(format!("{title}{}", "z".repeat(len - decoded.len())));
+        b64.encode(serde_json::to_vec(&cursor).unwrap())
+    };
+    let at_limit = grown(24_576);
+    assert_eq!(at_limit.len(), 32 * 1024);
+    let (st, body) = w
+        .call(
+            "GET",
+            &format!("/odata/v4/Folders?$orderby=title&$skiptoken={at_limit}"),
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let over = grown(24_577);
+    assert_eq!(over.len(), 32 * 1024 + 2);
+    let (st, _) = w
+        .call(
+            "GET",
+            &format!("/odata/v4/Folders?$orderby=title&$skiptoken={over}"),
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
 /// An export stops at 10 000 rows and says how to narrow it, rather than holding a set of any
@@ -1408,6 +1484,15 @@ async fn an_export_over_ten_thousand_rows_is_refused_with_how_to_narrow_it() {
         )
         .await;
     assert_eq!(narrowed.as_array().unwrap().len(), 1);
+    // Exactly the limit is still one export.
+    let at_limit = w
+        .ok(
+            "GET",
+            "/odata/v4/Folders/$export?$filter=uid%20ne%20'f00007'",
+            None,
+        )
+        .await;
+    assert_eq!(at_limit.as_array().unwrap().len(), 10_000);
 }
 
 #[tokio::test]

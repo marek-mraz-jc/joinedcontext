@@ -1156,6 +1156,37 @@ async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() 
     }
 }
 
+/// The page's `from` and `to` set the range its panels are queried for, on the slugged link
+/// Grafana writes as on the plain one.
+#[tokio::test]
+async fn the_dashboard_page_queries_the_range_its_link_names() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    w.add_dashboard(dashboard("ranged", "prom"), None).await;
+    let req = http::Request::builder()
+        .uri("/d/ranged/board-ranged?from=1600000000000&to=1600003600000")
+        .header("authorization", "Bearer viewer")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (st, body) = w.send(req).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(
+        body.as_str().unwrap().contains("<h1>Board ranged</h1>"),
+        "{body}"
+    );
+    let seen = seen.lock().clone();
+    let query = seen
+        .iter()
+        .find(|q| q.contains("query_range"))
+        .expect("the panel is queried");
+    assert!(
+        // Both ends land on the 15 s step.
+        query.contains("start=1599999990.000&end=1600003590.000&"),
+        "{query}"
+    );
+}
+
 /// A caller with no credential reads no data even inside a named Organization, and an
 /// `Authorization` header with an empty credential is refused as an invalid one.
 #[tokio::test]
