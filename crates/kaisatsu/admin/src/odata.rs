@@ -14,7 +14,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use jc_router::Mount;
 use kaisatsu_core::*;
-use odata_table::{Operation, allowed, export, key_options, query};
+use odata_table::{Operation, allowed, key_options};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -117,14 +117,17 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
     let ns = service.namespace.clone();
     let csdl = service.model();
     let mut xml = Vec::new();
-    odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml)
-        .map_err(|e| KaisatsuError::Storage(format!("CSDL metadata: {e}")))?;
-    let mut text = String::from_utf8(xml)
-        .map_err(|_| KaisatsuError::Storage("CSDL metadata is not UTF-8".into()))?;
+    if let Err(e) = odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml) {
+        return Err(KaisatsuError::Storage(format!("CSDL metadata: {e}")));
+    }
+    // The CSDL writer writes UTF-8 XML.
+    let mut text = String::from_utf8_lossy(&xml).into_owned();
 
-    let container_at = text
-        .find("<EntityContainer")
-        .ok_or_else(|| KaisatsuError::Storage("CSDL has no entity container".into()))?;
+    let Some(container_at) = text.find("<EntityContainer") else {
+        return Err(KaisatsuError::Storage(
+            "CSDL has no entity container".into(),
+        ));
+    };
     let line_start = text[..container_at].rfind('\n').map_or(0, |i| i + 1);
     let indent = text[line_start..container_at].to_owned();
     let inner = format!("{indent}  ");
@@ -189,9 +192,11 @@ pub fn metadata_xml(registry: &OperationRegistry) -> Result<String> {
         }
     }
     text.insert_str(line_start, &ops_xml);
-    let close = text
-        .find("</EntityContainer>")
-        .ok_or_else(|| KaisatsuError::Storage("CSDL entity container is empty".into()))?;
+    let Some(close) = text.find("</EntityContainer>") else {
+        return Err(KaisatsuError::Storage(
+            "CSDL entity container is empty".into(),
+        ));
+    };
     let close_line = text[..close].rfind('\n').map_or(0, |i| i + 1);
     text.insert_str(close_line, &imports);
     Ok(text)
@@ -415,11 +420,9 @@ async fn people_write(
     }
     let mount = state.oidc.mount_from(mount_ext.map(|e| &e.0));
     let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
-    let op = state
-        .registry
-        .find(op_name)
-        .ok_or_else(|| KaisatsuError::NotSupported(op_name.to_owned()))?;
-    let result = crate::operations::execute(state, &mount, &ctx, op, key.as_deref(), &body).await?;
+    let result =
+        crate::operations::execute_named(state, &mount, &ctx, op_name, key.as_deref(), &body)
+            .await?;
     let status = if op_name == "person_create" {
         StatusCode::CREATED
     } else if result.is_none() {
@@ -580,9 +583,10 @@ async fn odata_set_query(
     if let Some(key) = key_opt {
         let service = kaisatsu_odata_service();
         let csdl = std::sync::Arc::new(service.model());
-        let info = service
-            .info(csdl, &set_name)
-            .ok_or_else(|| KaisatsuError::NotFound("unknown entity set".into()))?;
+        // parse_odata_options parsed `set_name` against this model, so the set exists.
+        let Some(info) = service.info(csdl, &set_name) else {
+            return Err(KaisatsuError::NotFound("unknown entity set".into()).into());
+        };
         options =
             key_options(&info, &Value::String(key), options.select).map_err(KaisatsuError::from)?;
         let ans = state
@@ -677,7 +681,6 @@ async fn odata_set_export(
             None => break,
         }
     }
-    let _ = export::<odata_table::MemoryTable>;
     Ok(Json(all_rows))
 }
 
@@ -717,6 +720,5 @@ async fn odata_set_allowed(
         .unwrap_or_default();
     let table = odata_table::MemoryTable::new(info, ans.rows)?;
     let dec = allowed(&table, &scope, op, key_val.as_ref()).await?;
-    let _ = query::<odata_table::MemoryTable>;
     Ok(Json(dec.to_json()))
 }

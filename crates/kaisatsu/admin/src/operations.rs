@@ -224,6 +224,24 @@ async fn ensure_own_credential_client(
     ))
 }
 
+/// Runs the registry operation named `name` (see [`execute`]); a name outside the registry is
+/// not supported.
+pub(crate) async fn execute_named(
+    state: &AdminState,
+    mount: &Mount,
+    ctx: &RequestCtx,
+    name: &str,
+    key: Option<&str>,
+    params: &Value,
+) -> Result<Option<Value>> {
+    let Some(op) = state.registry.find(name) else {
+        return Err(KaisatsuError::NotSupported(format!(
+            "unknown operation {name}"
+        )));
+    };
+    execute(state, mount, ctx, op, key, params).await
+}
+
 /// Runs registry operation `op` for `ctx`. `key` is the bound entity's key (or `None`),
 /// `params` the action/function parameters (or the entity body of a set write). `Ok(None)` is
 /// an operation without a result (OData answers 204).
@@ -474,10 +492,9 @@ pub async fn execute(
             check_decision(authz.check(ctx, Action::Update, &person_target(ctx, &user)))?;
             ensure_person_ceiling(state, ctx, &user).await?;
             let actions = str_list(params, "actions")?;
-            let realm_cfg = store
-                .get_realm(realm)
-                .await?
-                .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+            let Some(realm_cfg) = store.get_realm(realm).await? else {
+                return Err(KaisatsuError::NotFound("realm not found".into()));
+            };
             // Portal `people.rs:365`: without SMTP the call fails, so the Portal falls back to a
             // temporary password (PF-92). The person is not changed in that case.
             if realm_cfg.smtp_server.is_none() {

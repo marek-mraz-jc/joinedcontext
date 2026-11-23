@@ -662,6 +662,173 @@ async fn unknown_ids_answer_404_to_a_realm_admin() {
     );
 }
 
+/// Roles named both in the token and on the stored person, and an Organization named both in
+/// `jc_org` and by a membership, count once; a client entry without roles grants nothing.
+#[tokio::test]
+async fn token_and_stored_rights_merge_without_duplicates() {
+    let f = fixture().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "dup-admin".into(),
+            realm_id: "dev".into(),
+            username: "dup-admin".into(),
+            enabled: true,
+            realm_roles: vec!["realm-admin".into()],
+            client_roles: HashMap::from([("realm-management".into(), vec!["view-users".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_membership(Membership {
+            id: "m-dup".into(),
+            realm_id: "dev".into(),
+            org_id: "helsinki".into(),
+            person_id: "dup-admin".into(),
+            org_roles: Vec::new(),
+            created_at: TimestampTz::now(),
+        })
+        .await
+        .unwrap();
+    let keys = f.store.list_signing_keys("dev").await.unwrap();
+    let t = token(
+        f.store.kek(),
+        &keys[0],
+        claims(
+            "dup-admin",
+            json!({
+                "realm_access": { "roles": ["realm-admin"] },
+                "resource_access": { "realm-management": { "roles": ["view-users"] }, "account": {} },
+                "jc_org": ["helsinki"],
+            }),
+        ),
+    );
+    let (st, _, ans) = call(&f.app, &Method::GET, &format!("{R}/users"), Some(&t), None).await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert!(
+        ans.as_array()
+            .unwrap()
+            .iter()
+            .any(|u| u["id"] == "esp-user"),
+        "{ans}"
+    );
+}
+
+/// An Organization admin adds people to its groups and maps their client roles, unless a group
+/// (or one of its ancestors) or the person carries realm-wide rights.
+#[tokio::test]
+async fn an_org_admin_stops_at_realm_wide_groups_and_people() {
+    let f = fixture().await;
+    let group =
+        |id: &str, parent: Option<&str>, client_roles: &[(&str, &str)]| GroupRepresentation {
+            id: id.into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            parent_id: parent.map(str::to_owned),
+            name: id.into(),
+            path: format!("/{id}"),
+            client_roles: client_roles
+                .iter()
+                .map(|(c, r)| ((*c).to_owned(), vec![(*r).to_owned()]))
+                .collect(),
+            ..Default::default()
+        };
+    for g in [
+        group("hel-root", None, &[]),
+        group("hel-team", Some("hel-root"), &[("portal-api", "reader")]),
+        group("hel-admins", None, &[("realm-management", "manage-users")]),
+    ] {
+        f.store.upsert_group(g).await.unwrap();
+    }
+    let hel = Some(f.hel_admin.as_str());
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/users/hel-user/groups/hel-team"),
+        hel,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/users/hel-user/groups/hel-admins"),
+        hel,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
+    assert!(ans.to_string().contains("realm-wide roles"), "{ans}");
+    // In an ordinary group the person passes the ceiling; the unknown client is the refusal.
+    let map = format!("{R}/users/hel-user/role-mappings/clients/no-client");
+    let roles = json!([{ "id": "r", "name": "r" }]);
+    let (st, _, ans) = call(&f.app, &Method::POST, &map, hel, Some(&roles)).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{ans}");
+    // A member of a realm-management group is beyond an Organization admin.
+    f.store
+        .add_user_to_group("dev", "hel-user", "hel-admins")
+        .await
+        .unwrap();
+    let (st, _, ans) = call(&f.app, &Method::POST, &map, hel, Some(&roles)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
+    assert!(ans.to_string().contains("realm-wide rights"), "{ans}");
+}
+
+/// Bodies the realm, client and import routes cannot read, and names they cannot find, are refused
+/// with the reason and write nothing.
+#[tokio::test]
+async fn malformed_bodies_and_unknown_names_are_refused() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    let cases = [
+        // An existing person, an unknown client: 404 before any mapping is written.
+        (
+            Method::POST,
+            format!("{R}/users/hel-user/role-mappings/clients/no-client"),
+            json!([{ "id": "r", "name": "r" }]),
+            StatusCode::NOT_FOUND,
+            "client not found",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!(["not", "an", "object"]),
+            StatusCode::BAD_REQUEST,
+            "JSON object",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!({ "accessTokenLifespan": "an hour" }),
+            StatusCode::BAD_REQUEST,
+            "realm body",
+        ),
+        (
+            Method::POST,
+            format!("{R}/clients"),
+            json!({ "clientId": 42 }),
+            StatusCode::BAD_REQUEST,
+            "invalid client",
+        ),
+        (
+            Method::POST,
+            format!("{R}/partialImport"),
+            json!({ "ifResourceExists": "SKIP",
+                    "users": [{ "id": "pi-nogroup", "username": "pi.nogroup", "groups": ["/no-such-group"] }] }),
+            StatusCode::BAD_REQUEST,
+            "group /no-such-group does not exist",
+        ),
+    ];
+    for (method, uri, body, status, needle) in cases {
+        let (st, _, ans) = call(&f.app, &method, &uri, a, Some(&body)).await;
+        assert_eq!(st, status, "{method} {uri}: {ans}");
+        assert!(ans.to_string().contains(needle), "{method} {uri}: {ans}");
+    }
+    let dev = f.store.get_realm("dev").await.unwrap().unwrap();
+    assert_eq!(dev.realm, "dev");
+}
+
 #[tokio::test]
 async fn another_organizations_objects_are_404_to_an_org_admin() {
     let f = fixture().await;
@@ -1825,6 +1992,67 @@ async fn realm_partial_import_and_native_routes() {
         )
         .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    // A master `admin` administers master itself as its realm administrator.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/master",
+        Some(&master),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    // A grant for a realm that does not exist: the update answers 404.
+    f.store
+        .create_user(UserRepresentation {
+            id: "ghost-op".into(),
+            realm_id: "master".into(),
+            username: "ghost-op".into(),
+            enabled: true,
+            client_roles: HashMap::from([("ghost-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut ghost_claims = claims("ghost-op", json!({ "acr": "mfa" }));
+    ghost_claims["iss"] = json!("https://idm.localhost/realms/master");
+    let ghost_op = token(f.store.kek(), &master_keys[0], ghost_claims);
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        "/admin/realms/ghost",
+        Some(&ghost_op),
+        Some(&json!({ "displayName": "Ghost" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{ans}");
+    assert!(f.store.get_realm("ghost").await.unwrap().is_none());
+    // A master token naming nobody, or a disabled holder, administers no other realm.
+    f.store
+        .create_user(UserRepresentation {
+            id: "root-off".into(),
+            realm_id: "master".into(),
+            username: "root-off".into(),
+            enabled: false,
+            client_roles: HashMap::from([("dev-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut nobody = claims("x", json!({ "acr": "mfa" }));
+    nobody.as_object_mut().unwrap().remove("sub");
+    let mut off = claims("root-off", json!({ "acr": "mfa" }));
+    for c in [&mut nobody, &mut off] {
+        c["iss"] = json!("https://idm.localhost/realms/master");
+    }
+    for (c, status) in [
+        (nobody, StatusCode::FORBIDDEN),
+        (off, StatusCode::UNAUTHORIZED),
+    ] {
+        let t = token(f.store.kek(), &master_keys[0], c);
+        let (st, _, ans) = call(&f.app, &Method::GET, &format!("{R}/users"), Some(&t), None).await;
+        assert_eq!(st, status, "{ans}");
     }
 
     let users = json!([
