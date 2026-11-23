@@ -37,6 +37,9 @@ exclude_re = [
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
   'crates/kaisatsu/store-pg/src/lib\.rs:.*replace == with != in push_email_match',
+  # kaisatsu-store-pg: list_groups' search query keeps only the matches and their ancestors (keep CTE), so the
+  # Rust prune after it finds no node to drop; kept as a second check on the search result.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace matches_or_has_matching_child -> bool with true',
   # kaisatsu-store-pg: lock_grants orders a grant write against a cascading delete in another transaction
   # (advisory lock); a single-connection test commits one after the other, so no test observes the lock.
   'crates/kaisatsu/store-pg/src/lib\.rs:.*replace lock_grants -> Result<\(\)> with Ok\(\(\)\)',
