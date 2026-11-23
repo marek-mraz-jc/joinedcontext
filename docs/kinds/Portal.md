@@ -37,6 +37,7 @@ Desired specification of a `Portal` (ODP-08).
 | `colours` | [AppearanceColours](#appearancecolours) | no | The colour tokens, each a hex colour such as `#0b5394`. |
 | `contactEmail` | string | no | The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. |
 | `datasetList` | [DatasetListLayout](#datasetlistlayout) | no | How the open data portal lists datasets: `cards` (the default) or a compact `table`. |
+| `display` | [AppearanceDisplay](#appearancedisplay) | no | Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's. |
 | `faviconSvg` | string | no | The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. |
 | `font` | [AppearanceFont](#appearancefont) | no | The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410). |
 | `footerLinks` | list of [AppearanceLink](#appearancelink) | no | Links the open data portal's footer adds after its own, under the same rules. |
@@ -119,6 +120,15 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 
 Type: one of `"cards"`, `"table"`
 
+## AppearanceDisplay
+
+`spec.appearance.display` (T-7743): data only, every name one of a fixed list.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dataset` | [DatasetDisplay](#datasetdisplay) | no | The dataset page. |
+| `datasetList` | [DatasetListDisplay](#datasetlistdisplay) | no | The dataset list. |
+
 ## AppearanceFont
 
 `spec.appearance.font`: a system font stack, never a web font (T-7410).
@@ -175,6 +185,23 @@ The most a harvest run of a source reads before it fails and changes nothing (OD
 Where a [`PortalSource`] takes its datasets from (ODP-10).
 
 Type: one of `"endpoints"`, `"dcat-ap"`, `"ckan-action"`, `"nkod-sparql"`, `"arcgis-hub"`, `"arcgis-rest"`, `"ogc-records"`
+
+## DatasetDisplay
+
+`spec.appearance.display.dataset`: each list left empty shows the level above's.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `about` | list of string | no | The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`. |
+| `sections` | list of [DisplaySection](#displaysection) | no | The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`. |
+
+## DatasetListDisplay
+
+`spec.appearance.display.datasetList`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fields` | list of string | no | What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's. |
 
 ## PortalBlock
 
@@ -267,6 +294,15 @@ Files of the portal's store to download.
 |---|---|---|---|
 | `files` | list of string | yes | One to 12 files of the portal, each `/files/{sha256}/{name}`. |
 | `title` | map of string | no | The heading per language. |
+
+## DisplaySection
+
+`spec.appearance.display.dataset.sections[]`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `heading` | map of string | no | Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`. |
+| `name` | string | yes | The section, e.g. `about`. |
 
 ## PortalNumber
 

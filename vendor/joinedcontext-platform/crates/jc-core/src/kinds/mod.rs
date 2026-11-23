@@ -63,8 +63,9 @@ pub use app::{
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
 pub use appearance::{
-    contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceFont, AppearanceHero,
-    AppearanceLink, AppearancePage, DatasetListLayout, OrganizationAppearance,
+    contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceDisplay,
+    AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, DatasetDisplay,
+    DatasetListDisplay, DatasetListLayout, DisplaySection, OrganizationAppearance,
 };
 pub use assistant::{
     AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,

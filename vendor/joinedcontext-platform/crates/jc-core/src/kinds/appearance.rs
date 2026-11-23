@@ -8,6 +8,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
 
@@ -84,6 +85,211 @@ pub struct OrganizationAppearance {
     /// Links the open data portal's footer adds after its own, under the same rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub footer_links: Vec<AppearanceLink>,
+    /// Which parts of the open data portal's dataset and dataset list pages show, in which
+    /// order and under which heading (T-7743); a page left out shows the level above's.
+    #[serde(default, skip_serializing_if = "AppearanceDisplay::is_unset")]
+    pub display: AppearanceDisplay,
+}
+
+/// The sections of the open data portal's dataset page, in their built-in order. `publisher`
+/// and `subscribe` keep their place above the page and only show or hide; the rest show in the
+/// order a display lists them.
+pub const DATASET_SECTIONS: [&str; 12] = [
+    "publisher",
+    "subscribe",
+    "explorer",
+    "map",
+    "visualizations",
+    "dashboards",
+    "about",
+    "live",
+    "mcp",
+    "resources",
+    "additional-info",
+    "shacl",
+];
+
+/// The rows of the dataset page's about table by their DCAT field name, in their built-in
+/// order; a display may also list a dataset extra as `extras.<key>`.
+pub const ABOUT_FIELDS: [&str; 14] = [
+    "publisher",
+    "license",
+    "rights",
+    "source",
+    "keyword",
+    "accrualPeriodicity",
+    "issued",
+    "modified",
+    "nextUpdate",
+    "spatial",
+    "temporal",
+    "contactPoint",
+    "identifier",
+    "conformsTo",
+];
+
+/// What the dataset list shows of each dataset after its title, in the built-in order.
+pub const DATASET_LIST_FIELDS: [&str; 4] = ["notes", "format", "publisher", "modified"];
+
+/// `spec.appearance.display` (T-7743): data only, every name one of a fixed list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppearanceDisplay {
+    /// The dataset page.
+    #[serde(default, skip_serializing_if = "DatasetDisplay::is_unset")]
+    pub dataset: DatasetDisplay,
+    /// The dataset list.
+    #[serde(default, skip_serializing_if = "DatasetListDisplay::is_unset")]
+    pub dataset_list: DatasetListDisplay,
+}
+
+/// `spec.appearance.display.dataset`: each list left empty shows the level above's.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DatasetDisplay {
+    /// The sections that show, in order, each at most once; a section left out is hidden.
+    /// One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`,
+    /// `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g.
+    /// `[{name: about}, {name: resources}]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<DisplaySection>,
+    /// The about table's rows in order, each at most once; a row left out is hidden. A DCAT
+    /// field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`,
+    /// `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`,
+    /// `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub about: Vec<String>,
+}
+
+/// `spec.appearance.display.dataset.sections[]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DisplaySection {
+    /// The section, e.g. `about`.
+    pub name: String,
+    /// Its heading per language in place of the built-in one, plain text, e.g.
+    /// `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub heading: BTreeMap<String, String>,
+}
+
+/// `spec.appearance.display.datasetList`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DatasetListDisplay {
+    /// What each dataset shows after its title, in order, as a table column or a card line:
+    /// `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the
+    /// level above's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+impl DatasetDisplay {
+    /// Whether neither list is set.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl DatasetListDisplay {
+    /// Whether no field is set.
+    pub fn is_unset(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
+impl AppearanceDisplay {
+    /// Whether nothing is set, so the level above's display shows.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `self` over `under` list by list: a list `self` leaves empty is `under`'s.
+    pub fn over(&self, under: &Self) -> Self {
+        fn list<T: Clone>(top: &[T], below: &[T]) -> Vec<T> {
+            if top.is_empty() { below } else { top }.to_vec()
+        }
+        Self {
+            dataset: DatasetDisplay {
+                sections: list(&self.dataset.sections, &under.dataset.sections),
+                about: list(&self.dataset.about, &under.dataset.about),
+            },
+            dataset_list: DatasetListDisplay {
+                fields: list(&self.dataset_list.fields, &under.dataset_list.fields),
+            },
+        }
+    }
+
+    /// Refuses a name no list knows, a name twice, or a heading that is not one line of plain
+    /// text in a two-letter language, with the member's path under `at`. `languages`, when not
+    /// empty, are the only heading languages allowed (a Portal's `spec.languages`).
+    pub fn validate(&self, at: &str, languages: &[String]) -> Result<()> {
+        let mut seen = Vec::new();
+        for (i, section) in self.dataset.sections.iter().enumerate() {
+            let field = format!("{at}.dataset.sections[{i}]");
+            if !DATASET_SECTIONS.contains(&section.name.as_str()) {
+                return Err(invalid(
+                    &format!("{field}.name"),
+                    "one of publisher, subscribe, explorer, map, visualizations, dashboards, about, live, mcp, resources, additional-info, shacl",
+                ));
+            }
+            if seen.contains(&section.name.as_str()) {
+                return Err(invalid(&format!("{field}.name"), "listed once"));
+            }
+            seen.push(section.name.as_str());
+            for (lang, text) in &section.heading {
+                let member = format!("{field}.heading.{lang}");
+                if lang.len() != 2 || !lang.bytes().all(|b| b.is_ascii_lowercase()) {
+                    return Err(invalid(
+                        &member,
+                        "keyed by a two-letter language such as sk",
+                    ));
+                }
+                if !languages.is_empty() && !languages.contains(lang) {
+                    return Err(invalid(
+                        &member,
+                        "in a language of the Portal's spec.languages",
+                    ));
+                }
+                plain_text(&member, text)?;
+            }
+        }
+        let mut seen = Vec::new();
+        for (i, name) in self.dataset.about.iter().enumerate() {
+            let field = format!("{at}.dataset.about[{i}]");
+            let extra = name.strip_prefix("extras.").is_some_and(is_extra_key);
+            if !extra && !ABOUT_FIELDS.contains(&name.as_str()) {
+                return Err(invalid(
+                    &field,
+                    "a DCAT field such as license or modified, or extras.<key> with a key of 1 to 64 a-z, 0-9, _ or -",
+                ));
+            }
+            if seen.contains(&name) {
+                return Err(invalid(&field, "listed once"));
+            }
+            seen.push(name);
+        }
+        let mut seen = Vec::new();
+        for (i, name) in self.dataset_list.fields.iter().enumerate() {
+            let field = format!("{at}.datasetList.fields[{i}]");
+            if !DATASET_LIST_FIELDS.contains(&name.as_str()) {
+                return Err(invalid(&field, "one of notes, format, publisher, modified"));
+            }
+            if seen.contains(&name) {
+                return Err(invalid(&field, "listed once"));
+            }
+            seen.push(name);
+        }
+        Ok(())
+    }
+}
+
+/// A dataset extra's key a display may name: 1 to 64 of `a-z`, `0-9`, `_` and `-`.
+pub fn is_extra_key(key: &str) -> bool {
+    (1..=64).contains(&key.len())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-".contains(&b))
 }
 
 /// The most header or footer links an appearance adds.
@@ -312,7 +518,8 @@ impl OrganizationAppearance {
             }
         }
         links("spec.appearance.navLinks", &self.nav_links)?;
-        links("spec.appearance.footerLinks", &self.footer_links)
+        links("spec.appearance.footerLinks", &self.footer_links)?;
+        self.display.validate("spec.appearance.display", &[])
     }
 
     /// Refuses text or primary colour below [`MIN_CONTRAST`] on the background when the
@@ -377,6 +584,7 @@ impl OrganizationAppearance {
             dataset_list: self.dataset_list.or(under.dataset_list),
             nav_links: list(&self.nav_links, &under.nav_links),
             footer_links: list(&self.footer_links, &under.footer_links),
+            display: self.display.over(&under.display),
         }
     }
 }
@@ -624,6 +832,87 @@ mod tests {
         serde_json::from_value::<OrganizationAppearance>(appearance)
             .expect("parses")
             .validate()
+    }
+
+    /// T-7743: a display names only known sections, about rows and list fields, each once,
+    /// with headings of plain text; each refusal names the member's path.
+    #[test]
+    fn display_refuses_unknown_names_with_their_path() {
+        let fine = json!({ "display": {
+            "dataset": {
+                "sections": [{ "name": "about", "heading": { "sk": "O dátach" } }, { "name": "resources" }],
+                "about": ["license", "publisher", "extras.x_kraj"],
+            },
+            "datasetList": { "fields": ["format", "modified"] },
+        }});
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        for (display, field) in [
+            (
+                json!({ "dataset": { "sections": [{ "name": "comments" }] } }),
+                "spec.appearance.display.dataset.sections[0].name",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map" }, { "name": "map" }] } }),
+                "spec.appearance.display.dataset.sections[1].name",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map", "heading": { "SK": "x" } }] } }),
+                "spec.appearance.display.dataset.sections[0].heading.SK",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map", "heading": { "sk": "<b>x</b>" } }] } }),
+                "spec.appearance.display.dataset.sections[0].heading.sk",
+            ),
+            (
+                json!({ "dataset": { "about": ["licence"] } }),
+                "spec.appearance.display.dataset.about[0]",
+            ),
+            (
+                json!({ "dataset": { "about": ["extras.Bad Key"] } }),
+                "spec.appearance.display.dataset.about[0]",
+            ),
+            (
+                json!({ "dataset": { "about": ["issued", "issued"] } }),
+                "spec.appearance.display.dataset.about[1]",
+            ),
+            (
+                json!({ "datasetList": { "fields": ["score"] } }),
+                "spec.appearance.display.datasetList.fields[0]",
+            ),
+        ] {
+            match checked(json!({ "display": display })) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
+                other => panic!("{display}: {other:?}"),
+            }
+        }
+        assert!(
+            serde_json::from_value::<OrganizationAppearance>(
+                json!({ "display": { "dataset": { "order": [] } } })
+            )
+            .is_err(),
+            "an unknown member is refused"
+        );
+    }
+
+    /// T-7743: a display list left empty is the level below's; a set list replaces it whole,
+    /// and removing it again (reset) shows the level below's once more.
+    #[test]
+    fn display_cascades_list_by_list_and_resets() {
+        let display =
+            |v: serde_json::Value| serde_json::from_value::<AppearanceDisplay>(v).expect("parses");
+        let org = display(
+            json!({ "dataset": { "sections": [{ "name": "about" }, { "name": "map" }], "about": ["license"] } }),
+        );
+        let portal = display(json!({ "dataset": { "sections": [{ "name": "resources" }] } }));
+        let shown = portal.over(&org);
+        assert_eq!(shown.dataset.sections, portal.dataset.sections);
+        assert_eq!(shown.dataset.about, org.dataset.about);
+        assert!(shown.dataset_list.fields.is_empty());
+        assert_eq!(
+            AppearanceDisplay::default().over(&org),
+            org,
+            "reset shows the level below"
+        );
     }
 
     /// T-7031: page texts name a page and a language once, within the size cap.
