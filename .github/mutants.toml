@@ -106,6 +106,9 @@ exclude_re = [
   # inside a byte-range test survives when the one byte per class the corpus takes lies outside the
   # changed range; the upgrade is the min and max byte of each run per class (about three times the corpus).
   'ekiben-text/src/go_syslog/rfc(3164|5424)/machine\.rs:',
+  # ekiben-text go_regex push_range (T-7676): a one-character range `a-a` is the class of `a`, so `l < h` and `l <= h`
+  # write the same class.
+  'ekiben-text/src/go_regex\.rs:\d+:\d+: replace < with <= in push_range',
   # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
   # way, since order() has no ordering between a Boolean and any other kind (T-7599).
   'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',

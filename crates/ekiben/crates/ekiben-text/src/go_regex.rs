@@ -416,7 +416,8 @@ impl<'a> Parser<'a> {
                     if let Some((min, max)) = count {
                         let m = u64::from(max.unwrap_or(min));
                         let weight = if m == 0 { 1 } else { m * frames[frame].1 };
-                        if (min >= 2 || max.unwrap_or(u32::MAX) >= 2) && weight > 1000 {
+                        // max is at least min here: a repeat of at most one copy never counts
+                        if max.unwrap_or(u32::MAX) >= 2 && weight > 1000 {
                             return Err(err("invalid repeat count", op));
                         }
                         frames[frame].1 = weight;
@@ -496,11 +497,6 @@ impl<'a> Parser<'a> {
                     let parent = frames.len() - 1;
                     frames[parent].1 = done.max(last);
                     out.push(')');
-                }
-                '}' => {
-                    self.bump();
-                    fold(&mut frames);
-                    out.push_str("\\}");
                 }
                 _ => {
                     self.bump();
@@ -885,6 +881,25 @@ mod tests {
                 "",
                 Err("error parsing regexp: invalid character class range: `[:foo:]`"),
             ),
+            ("[[a:]]", "a]", Ok(Some((0, 2)))),
+            ("[a-a]", "a", Ok(Some((0, 1)))),
+            (
+                "x[a-",
+                "",
+                Err("error parsing regexp: missing closing ]: `[a-`"),
+            ),
+            (
+                "(a{0,500}){0,3}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{0,3}`"),
+            ),
+            (
+                "(a{0,500}){3,}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{3,}`"),
+            ),
+            (r"a{100}\x41{100}", "", Ok(None)),
+            ("[[:]]", "x", Ok(None)),
             ("[[:alpha]", "[", Ok(Some((0, 1)))),
             (
                 "[abc",
