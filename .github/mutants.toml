@@ -4,6 +4,12 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # ekiben-io-amqp read_batch: RabbitMQ refuses a message over its max_message_size (16 MiB by
+  # default) at publish, so no test broker can deliver one past MAX_MESSAGE_BYTES (64 MiB); the
+  # size guard and its reject serve brokers configured above 64 MiB (T-7580).
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace match guard d\.data\.len\(\) > MAX_MESSAGE_BYTES with false in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace > with (==|>=) in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: delete ! in <impl Input for AmqpInput>::read_batch',
   # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
   # way, since order() has no ordering between a Boolean and any other kind (T-7599).
   'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',

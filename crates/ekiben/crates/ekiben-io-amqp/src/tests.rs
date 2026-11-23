@@ -605,3 +605,28 @@ async fn an_unsent_or_failed_ack_leaves_the_message_redelivered() {
     assert_eq!(q, 0, "the last ack removed the message");
     let _ = conn.close(200, "test done".into()).await;
 }
+
+/// A broker that refuses the connection is retried with a doubling wait, so a stream does not
+/// hammer a broker that is down.
+#[tokio::test]
+async fn a_refused_connection_is_retried_with_a_growing_wait() {
+    // a bound socket that never listens refuses every connection
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("addr"))
+        .expect("bind");
+    let port = socket.local_addr().expect("addr").port();
+    let mut i = AmqpInput::from_config(&conf(json!({
+        "urls": [format!("amqp://u:p@127.0.0.1:{port}/")],
+        "queue": "q",
+    })))
+    .expect("builds");
+    let read = tokio::time::timeout(Duration::from_secs(2), i.read_batch(&loopback())).await;
+    assert!(read.is_err(), "a refused broker is retried, not reported");
+    assert!(
+        i.backoff >= Duration::from_millis(400) && i.backoff <= Duration::from_secs(30),
+        "{:?}",
+        i.backoff
+    );
+    drop(socket);
+}
