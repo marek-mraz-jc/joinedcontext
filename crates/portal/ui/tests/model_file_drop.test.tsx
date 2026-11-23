@@ -3,7 +3,7 @@
  * multipart with the CSRF token, the draft is previewed as text, and "Populate the editor"
  * applies the operations through the editor's own seam.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
@@ -139,6 +139,10 @@ describe("a model from a dropped file", () => {
     expect(slots()).toEqual(["b_Temp_b", "plate", "parent", "note"]);
     await userEvent.type(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }), "string");
     expect(slots()).toEqual(["plate", "note"]);
+    // A needle none of the columns holds leaves no field.
+    await userEvent.clear(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }));
+    await userEvent.type(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }), "nothing like this");
+    expect(within(table).queryByText("plate")).toBeNull();
     await userEvent.clear(within(dialog).getByRole("searchbox", { name: en.dataGrid.searchRows }));
     await userEvent.click(within(dialog).getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.models.infer.slot}` }));
     await userEvent.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
@@ -147,6 +151,65 @@ describe("a model from a dropped file", () => {
     const panel = screen.getByRole("dialog", { name: en.entityGrid.arrangeColumns });
     await userEvent.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.infer.match}` }));
     expect(within(table).queryByText("dataModel.Environment/AirQualityObserved")).toBeNull();
+    // The class repeats one name, so it starts hidden; Arrange columns brings it back.
+    await userEvent.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.models.infer.class}` }));
+    expect(within(table).getAllByText("Sensors").length).toBeGreaterThan(0);
+  });
+
+  it("takes a file dropped on it, and nothing from a drop that carries none", async () => {
+    const { fetchMock } = renderDrop(
+      () => new Response(JSON.stringify(ANSWER), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    const zone = screen.getByRole("region", { name: en.models.infer.title });
+    fireEvent.dragOver(zone);
+    fireEvent.drop(zone, { dataTransfer: { files: [] } });
+    expect(inferCalls(fetchMock)).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.drop(zone, { dataTransfer: { files: [csv()] } });
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Draft from sensors.csv")).toBeInTheDocument();
+    // Close puts the draft away without populating anything.
+    await userEvent.click(within(dialog).getByRole("button", { name: en.models.infer.close }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("says the answer is unreadable, or that the network failed, for a file and for an address", async () => {
+    const odd = renderDrop(() => new Response(JSON.stringify({ linkml: 3 }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await userEvent.upload(screen.getByLabelText(en.models.infer.chooseFile), csv());
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.models.infer.unreadable);
+    await userEvent.type(screen.getByLabelText(en.models.infer.url), "https://api.example.org/odd{Enter}");
+    await waitFor(() => expect(odd.fetchMock.mock.calls.some((call) => urlOf(call[0]).includes("/ops/jc_model_infer"))).toBe(true));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.models.infer.unreadable);
+  });
+
+  it("says why a file or an address could not be read when the request cannot be made, and refuses an address that is no URL", async () => {
+    const failing = vi.fn((input: RequestInfo | URL) =>
+      urlOf(input).includes("/organizations")
+        ? Promise.resolve(new Response(JSON.stringify({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }))
+        : Promise.reject(new TypeError("offline")),
+    );
+    vi.stubGlobal("fetch", failing);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <ModelFileDrop project="helsinki" onPopulate={vi.fn()} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    const network = en.models.infer.failed.replace("{detail}", "network");
+    await userEvent.upload(screen.getByLabelText(en.models.infer.chooseFile), csv());
+    expect(await screen.findByRole("alert")).toHaveTextContent(network);
+    const address = screen.getByLabelText(en.models.infer.url);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.type(address, "https://api.example.org/down{Enter}");
+    // An address goes through the operation door, which turns a refused request into its reason.
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(en.models.infer.failed.replace("{detail}", "offline")));
+    await userEvent.clear(address);
+    await userEvent.type(address, "not an address");
+    // The browser's own check of a URL box stops a click; a submit that skips it is still refused.
+    fireEvent.submit(address.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(en.models.infer.urlInvalid));
   });
 
   it("populates the editor through the operations seam", async () => {

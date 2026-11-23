@@ -176,6 +176,19 @@ describe("the action inspector", () => {
     expect(await within(failed).findByRole("button", { name: en.agentRun.step.copied })).toBeInTheDocument();
   });
 
+  it("keeps the copy button as it was when the clipboard refuses", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderPanel();
+    const failed = stepsOf()[1];
+    await userEvent.click(within(failed).getByText(en.agentRun.step.label.propose_endpoint));
+    await userEvent.click(within(failed).getByRole("button", { name: en.agentRun.step.copy }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(within(failed).getByRole("button", { name: en.agentRun.step.copy })).toBeInTheDocument();
+    expect(within(failed).queryByRole("button", { name: en.agentRun.step.copied })).toBeNull();
+  });
+
   it("renders what the workspace sent as text, never as markup (AG-46)", async () => {
     renderPanel();
     const failed = stepsOf()[1];

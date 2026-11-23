@@ -187,28 +187,22 @@ export function ImportProjectDialog({
   const problem = nameProblem(name);
 
   const check = useMutation({
-    mutationFn: async () => {
-      if (!file) {
-        throw new Error(t("projectImport.noFile"));
-      }
-      return (await post(name, file, displayName, {}, true)) as Plan;
-    },
+    // The button is refused without a file, so the file arrives with the press.
+    mutationFn: async (picked: File) => (await post(name, picked, displayName, {}, true)) as Plan,
     onSuccess: (answered) => setPlan(answered),
   });
 
   const land = useMutation({
-    mutationFn: async () => {
-      if (!file || !plan) {
-        throw new Error(t("projectImport.noFile"));
-      }
-      const wrong = numberProblems(plan.parameters, typed);
+    // The Import button exists only once a file was checked, so both arrive with the press.
+    mutationFn: async ({ picked, checked }: { picked: File; checked: Plan }) => {
+      const wrong = numberProblems(checked.parameters, typed);
       if (wrong.length > 0) {
         throw new Error(t("projectImport.notNumber", { names: wrong.join(", ") }));
       }
-      const values = parameterValues(plan.parameters, typed);
+      const values = parameterValues(checked.parameters, typed);
       // The dry run is the check the import is held to, over these very values (PF-57).
-      await post(name, file, displayName, values, true);
-      return (await post(name, file, displayName, values, false)) as Change;
+      await post(name, picked, displayName, values, true);
+      return (await post(name, picked, displayName, values, false)) as Change;
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects() });
@@ -250,7 +244,7 @@ export function ImportProjectDialog({
               {t("form.cancel")}
             </Button>
             {plan ? (
-              <Button variant="primary" loading={land.isPending} onClick={() => land.mutate()}>
+              <Button variant="primary" loading={land.isPending} onClick={() => file && land.mutate({ picked: file, checked: plan })}>
                 {t("projectImport.import")}
               </Button>
             ) : (
@@ -265,7 +259,7 @@ export function ImportProjectDialog({
                       ? undefined
                       : t("projects.nameNeeded")
                 }
-                onClick={() => check.mutate()}
+                onClick={() => file && check.mutate(file)}
               >
                 {t("projectImport.check")}
               </Button>

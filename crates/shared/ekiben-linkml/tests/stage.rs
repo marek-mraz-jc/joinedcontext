@@ -47,6 +47,36 @@ fn parse_procs(
     reg.build_processor_list(&confs, ctx).unwrap()
 }
 
+#[test]
+fn linkml_validate_refuses_a_missing_or_empty_model_and_a_closed_that_is_not_a_bool() {
+    use ekiben_core::Processor;
+    use ekiben_linkml::LinkmlValidateProcessor;
+    let model = r#"{"id": "https://e.org/", "name": "air", "classes": {"Station": {}}}"#;
+    let build = |config: serde_json::Value| {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "linkml_validate": config }),
+            "noop",
+            None,
+        )
+        .unwrap();
+        LinkmlValidateProcessor::from_config(&conf)
+    };
+    for config in [serde_json::json!({}), serde_json::json!({ "model": "" })] {
+        let err = build(config).err().unwrap().to_string();
+        assert!(err.contains("a model is required"), "{err}");
+    }
+    let err = build(serde_json::json!({ "model": model, "closed": "yes" }))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("closed is true or false"), "{err}");
+    let open = build(serde_json::json!({ "model": model })).unwrap();
+    assert_eq!(open.processor_type(), "linkml_validate");
+    let extra = serde_json::json!({ "id": "urn:ngsi-ld:Station:1", "type": "Station",
+        "x": { "type": "Property", "value": 1 } });
+    assert!(open.check(&extra).is_ok(), "closed defaults to false");
+}
+
 #[tokio::test]
 async fn linkml_validate_flags_a_record_breaking_the_model_with_its_shacl_component() {
     let (reg, ctx) = make_ctx("org1");

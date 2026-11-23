@@ -12,9 +12,9 @@
  * - the drawing was `role="img"`, whose contents are presentational: the boxes were reachable
  *   by Tab and invisible to the screen reader that had just been told this was one picture.
  */
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { LinkmlGraphView } from "../src/pages/models/LinkmlGraphView";
@@ -234,5 +234,155 @@ describe("the graph in every locale", () => {
       ).toBeInTheDocument();
       unmount();
     });
+  });
+});
+
+describe("the canvas: width, wheel, drag and the keys of the add-field handle", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const frameOf = () => screen.getByRole("group", { name: en.models.graph.title }).parentElement as HTMLElement;
+  const openLabel = (name: string) => en.models.graph.openClass.replace("{name}", name);
+
+  it("lays the groups out in the columns its frame holds, and again when the frame is resized", () => {
+    let resized: (() => void) | undefined;
+    let disconnected = false;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resized = callback;
+        }
+        observe() {}
+        disconnect() {
+          disconnected = true;
+        }
+      },
+    );
+    let width = 1600;
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+    const { unmount } = renderPart(<LinkmlGraphView source={MODEL} canvas />);
+    expect(resized).toBeDefined();
+    width = 500;
+    resized?.();
+    expect(screen.getAllByRole("button", { name: /Open|Vehicle/ }).length).toBeGreaterThan(0);
+    unmount();
+    expect(disconnected).toBe(true);
+  });
+
+  it("zooms with the wheel on the canvas and with Ctrl elsewhere, and leaves a plain wheel alone on a page", () => {
+    renderPart(<LinkmlGraphView source={MODEL} canvas />);
+    const svg = screen.getByRole("group", { name: en.models.graph.title });
+    const before = svg.getAttribute("width");
+    const zoomIn = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    act(() => {
+      frameOf().dispatchEvent(zoomIn);
+    });
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(svg.getAttribute("width")).not.toBe(before);
+    const zoomOut = new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
+    frameOf().dispatchEvent(zoomOut);
+    cleanup();
+
+    renderPart(<LinkmlGraphView source={MODEL} />);
+    const plain = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
+    frameOf().dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+    const ctrl = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true });
+    frameOf().dispatchEvent(ctrl);
+    expect(ctrl.defaultPrevented).toBe(true);
+  });
+
+  it("stops zooming at the limit instead of preventing a scroll that does nothing", () => {
+    renderPart(<LinkmlGraphView source={MODEL} canvas />);
+    for (let i = 0; i < 40; i += 1) frameOf().dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true }));
+    const svg = screen.getByRole("group", { name: en.models.graph.title });
+    const floor = svg.getAttribute("width");
+    frameOf().dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true }));
+    expect(svg.getAttribute("width")).toBe(floor);
+  });
+
+  it("drags the frame by its background, and only while a button is held", () => {
+    renderPart(<LinkmlGraphView source={MODEL} />);
+    const frame = frameOf();
+    fireEvent.pointerDown(frame, { clientX: 100, clientY: 100, buttons: 1 });
+    fireEvent.pointerMove(frame, { clientX: 60, clientY: 80, buttons: 0 });
+    expect(frame.scrollLeft).toBe(0);
+    fireEvent.pointerMove(frame, { clientX: 60, clientY: 80, buttons: 1 });
+    expect(frame.scrollLeft).toBe(40);
+    expect(frame.scrollTop).toBe(20);
+  });
+
+  it("drags a box on the canvas and keeps where it was dropped, without opening it", () => {
+    vi.stubGlobal(
+      "DOMPoint",
+      class {
+        constructor(
+          public x: number,
+          public y: number,
+        ) {}
+        matrixTransform() {
+          return { x: this.x, y: this.y };
+        }
+      },
+    );
+    Object.defineProperty(SVGElement.prototype, "getScreenCTM", { configurable: true, value: () => ({ inverse: () => ({}) }) });
+    onTestFinished(() => {
+      Reflect.deleteProperty(SVGElement.prototype, "getScreenCTM");
+    });
+    const onMove = vi.fn();
+    const onOpenClass = vi.fn();
+    renderPart(<LinkmlGraphView source={MODEL} canvas onMove={onMove} onOpenClass={onOpenClass} />);
+    const svg = screen.getByRole("group", { name: en.models.graph.title });
+    const box = screen.getByRole("button", { name: openLabel("Device") });
+
+    fireEvent.pointerDown(box, { clientX: 10, clientY: 10, buttons: 1 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 300, buttons: 1 });
+    fireEvent.pointerUp(svg);
+    expect(onMove).toHaveBeenCalledTimes(1);
+    expect(onMove.mock.calls[0][0]).toBe("Device");
+    fireEvent.click(box);
+    expect(onOpenClass).not.toHaveBeenCalled();
+
+    // A press that barely moves is a click, not a move.
+    onMove.mockClear();
+    fireEvent.pointerDown(box, { clientX: 10, clientY: 10, buttons: 1 });
+    fireEvent.pointerMove(svg, { clientX: 11, clientY: 11, buttons: 1 });
+    fireEvent.pointerUp(svg);
+    expect(onMove).not.toHaveBeenCalled();
+    fireEvent.click(box);
+    expect(onOpenClass).toHaveBeenCalledWith("Device");
+  });
+
+  it("adds a field from the handle by Enter and by Space", async () => {
+    const user = userEvent.setup();
+    renderPart(<LinkmlGraphView source={MODEL} onChange={vi.fn()} />);
+    const handle = screen.getByRole("button", { name: en.models.graph.edit.addField.replace("{name}", "Device") });
+    handle.focus();
+    await user.keyboard("{Enter}");
+    const title = en.models.graph.edit.addFieldTitle.replace("{name}", "Device");
+    expect(await screen.findByRole("dialog", { name: title })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    handle.focus();
+    await user.keyboard(" ");
+    expect(await screen.findByRole("dialog", { name: title })).toBeInTheDocument();
+  });
+
+  it("finds a class by name, and ignores an empty search", async () => {
+    const user = userEvent.setup();
+    renderPart(<LinkmlGraphView source={MODEL} />);
+    const search = screen.getByRole("combobox", { name: en.models.graph.find });
+    await user.type(search, "{Enter}");
+    expect(screen.queryByText(/Showing|Vehicle and/)).toBeNull();
+    await user.type(search, "veh{Enter}");
+    expect(search).toHaveValue("veh");
+  });
+
+  it("colours a header by its area, personal data apart from the rest", () => {
+    const areas = new Map([["Thing", "model"], ["Vehicle", "personal"], ["Device", "iot"]]);
+    renderPart(<LinkmlGraphView source={MODEL} canvas areas={areas} />);
+    expect(screen.getByRole("group", { name: en.models.graph.title }).innerHTML).toContain("fill-");
   });
 });

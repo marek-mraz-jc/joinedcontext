@@ -4,6 +4,16 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
+  'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
+  # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
+  'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
+  # Every Store sets org_id and catalogue_id from the request ctx on upsert (store-memory, store-pg), so the copy's own fields
+  # never reach a row; a dataset copy still naming the source catalogue only rewrites identical content.
+  'dataroom/server/src/writer\.rs:\d+:\d+: delete field (org_id|catalogue_id) from struct (Dataset|Publisher) expression in CatalogueWriter::list_from',
   # T-7539: the cached token differs only when Instant::now() equals its expiry to the nanosecond.
   'crates/embedder/src/client\.rs:\d+:\d+: replace < with <= in Remote::token',
   # T-7539: the pinned model always answers a [1, tokens, 384] tensor, so neither half of the shape check is ever true.

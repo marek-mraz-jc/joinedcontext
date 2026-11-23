@@ -1,5 +1,5 @@
 /** T-0220: what the model compiles to, while it is being written (DM-17, DM-20, DM-21). */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import en from "../src/locales/en.json";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -56,7 +56,7 @@ const ARTIFACTS = {
   errors: [],
 };
 
-function renderPanel(artifacts: unknown = ARTIFACTS, status = 200) {
+function renderPanel(artifacts: unknown = ARTIFACTS, status = 200, source: string = SOURCE) {
   const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(() =>
     Promise.resolve(
       new Response(JSON.stringify(artifacts), {
@@ -70,7 +70,7 @@ function renderPanel(artifacts: unknown = ARTIFACTS, status = 200) {
   render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
-        <LinkmlPreviewPanel source={SOURCE} debounceMs={0} />
+        <LinkmlPreviewPanel source={source} debounceMs={0} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -149,6 +149,27 @@ describe("LinkML preview panel", () => {
 
     const field = await screen.findByLabelText("pm10");
     expect(field).toHaveValue(31.4);
+    expect(field).toBeDisabled();
+  });
+
+  it("shows an enum range as a choice of the model's own values, and submitting the preview sends nothing", async () => {
+    const withEnum = `${SOURCE}enums:\n  Band:\n    permissible_values:\n      good: {}\n`;
+    const { user, fetchMock } = renderPanel(
+      {
+        ...ARTIFACTS,
+        jsonSchema: { ...ARTIFACTS.jsonSchema, properties: { band: { type: "string", title: "band", enum: ["good"] } } },
+        example: { band: "good" },
+      },
+      200,
+      withEnum,
+    );
+    await screen.findByText(/AirQualityObserved/);
+    await user.click(screen.getByRole("tab", { name: "Form" }));
+    const field = await screen.findByLabelText("band");
+    expect(field).toBeDisabled();
+    const calls = fetchMock.mock.calls.length;
+    fireEvent.submit(field.closest("form") as HTMLFormElement);
+    expect(fetchMock.mock.calls.length).toBe(calls);
     expect(field).toBeDisabled();
   });
 
@@ -351,6 +372,11 @@ describe("the terms a context does not define", () => {
       }),
     ).toEqual([]);
     expect(unmappedTerms(example, { "@context": [{ pm10: "bb:pm10" }] })).toEqual(["station"]);
+  });
+
+  it("skips a part of the context that is neither text nor an object", () => {
+    expect(unmappedTerms(example, { "@context": [null, 3, { pm10: "bb:pm10", station: "bb:station" }] })).toEqual([]);
+    expect(unmappedTerms(example, { "@context": [null, { pm10: "bb:pm10" }] })).toEqual(["station"]);
   });
 
   it("says nothing when a vocabulary resolves every term", () => {

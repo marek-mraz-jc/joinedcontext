@@ -56,6 +56,15 @@ describe("ModelIdentity", () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
+  it("leaves the name as it was when Cancel is pressed", async () => {
+    const { onRename, user } = renderIdentity();
+    await user.click(screen.getByRole("button", { name: rename }));
+    await user.type(screen.getByRole("textbox", { name: en.models.identity.name }), "x");
+    await user.click(screen.getByRole("button", { name: en.app.cancel }));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
   // A new model is named in the New data model window (owner 2026-11-01, T-6344); the page renames
   // it behind the pencil like a saved one.
   it("renames a new model behind the pencil, before it has an id", async () => {

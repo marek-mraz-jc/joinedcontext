@@ -145,6 +145,78 @@ describe("the dashboard editor", () => {
     expect(screen.getByLabelText(words.attribute, { selector: "#col-0-attr" })).toHaveFocus();
   });
 
+  it("changes and removes each kind of row, and starts another change once one is proposed", async () => {
+    const user = userEvent.setup();
+    const config = {
+      grid: { ...FILE.grid, columns: [{ attr: "name" }, { attr: "totalSlotNumber" }] },
+      filters: [{ attr: "name", op: "==", value: "x" }],
+      colour: { attr: "availableBikeNumber", bands: [{ below: 1, tone: "danger", label: "Empty" }, { tone: "success", label: "Rest" }] },
+      chart: { agg: "sum", x: "name", y: "availableBikeNumber" },
+      kpis: [{ label: "All", agg: "count" }, { label: "Bikes", agg: "sum", attr: "availableBikeNumber" }],
+    };
+    const { sent } = renderEditor({ status: 200, body: offered({ config }) }, (body) =>
+      body.dryRun
+        ? { status: 200, body: { before: "{}\n", after: "{}\n" } }
+        : { status: 202, body: { before: "", after: "", change: { apiVersion: "v1", kind: "Change", metadata: { name: "chg-0b1b2c3d", namespace: "sharing" }, status: {} } } },
+    );
+    const remove = (what: string) => user.click(screen.getByRole("button", { name: words.remove.replace("{what}", what) }));
+    await user.selectOptions(await screen.findByLabelText(words.attribute, { selector: "#col-0-attr" }), "availableBikeNumber");
+    await remove("totalSlotNumber");
+    await user.click(screen.getByRole("button", { name: words.addColumn }));
+    await remove("name"); // the filter: an empty list is left out of the file
+    await user.selectOptions(screen.getByLabelText(words.tone, { selector: "#band-1-tone" }), "info");
+    await remove("Empty");
+    await user.selectOptions(screen.getByLabelText(words.agg, { selector: "#chart-agg" }), "max");
+    await user.selectOptions(screen.getByLabelText(words.agg, { selector: "#kpi-1-agg" }), "avg");
+    await user.selectOptions(screen.getByLabelText(words.attribute, { selector: "#kpi-1-attr" }), "totalSlotNumber");
+    await remove("All");
+    await user.click(screen.getByRole("button", { name: words.preview }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0].config).toEqual({
+      grid: { ...FILE.grid, columns: [{ attr: "availableBikeNumber" }, { attr: "" }] },
+      colour: { attr: "availableBikeNumber", bands: [{ tone: "info", label: "Rest" }] },
+      chart: { agg: "max", x: "name", y: "availableBikeNumber" },
+      kpis: [{ label: "Bikes", agg: "avg", attr: "totalSlotNumber" }],
+    });
+    await user.click(screen.getByRole("button", { name: words.propose }));
+    await user.click(await screen.findByRole("button", { name: words.again }));
+    expect(screen.getByRole("button", { name: words.preview })).toBeInTheDocument();
+    expect(screen.queryByText(/chg-0b1b2c3d/)).not.toBeInTheDocument();
+  });
+
+  it("names a refusal the form has no field for by its path, a section by its name, and a network failure as it came", async () => {
+    const user = userEvent.setup();
+    let fail: "refuse" | "network" = "refuse";
+    renderEditor({ status: 200, body: offered() }, () => {
+      if (fail === "network") throw new TypeError("Failed to fetch");
+      return {
+        status: 422,
+        body: {
+          title: "Unprocessable",
+          status: 422,
+          detail: "refused",
+          errors: [
+            { path: "config/layout", message: "is not a field" },
+            { path: "config/colour/bands", message: "needs a last band" },
+            { path: "config/chart/x", message: "is no attribute" },
+          ],
+        },
+      };
+    });
+    await user.click(await screen.findByRole("button", { name: words.preview }));
+    expect(await screen.findByText("/layout: is not a field")).toBeInTheDocument();
+    expect(screen.getByText(`${words.colour}: needs a last band`)).toBeInTheDocument();
+    expect(screen.getByText(`${words.chart}, ${words.chartX}: is no attribute`)).toBeInTheDocument();
+    fail = "network";
+    await user.click(screen.getByRole("button", { name: words.preview }));
+    expect(await screen.findByText(/Failed to fetch/)).toBeInTheDocument();
+  });
+
+  it("says why the dashboard could not be read", async () => {
+    renderEditor({ status: 503, body: { title: "Service Unavailable", status: 503, detail: "The App store is not answering." } }, () => ({ status: 500, body: {} }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not answering|Service Unavailable/);
+  });
+
   it("says why when the App cannot be edited here", async () => {
     renderEditor({ status: 200, body: offered({ config: null, edit: { allowed: false, reason: "Editing the dashboard needs propose on App in project sharing" } }) }, () => ({ status: 500, body: {} }));
     expect(await screen.findByText(words.unavailable)).toBeInTheDocument();

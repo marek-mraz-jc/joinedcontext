@@ -14,7 +14,7 @@ import en from "../src/locales/en.json";
 import { ConversationPanel, answeredSearches, line } from "../src/pages/apps/ConversationPanel";
 import { EVENT_KINDS, openQuestions, withdrawnQuestions } from "../src/pages/apps/useAgentRun";
 import type { RunEvent } from "../src/pages/apps/useAgentRun";
-import { expectNoAxeViolations } from "./page_contract";
+import { expectNoAxeViolations, renderPage } from "./page_contract";
 
 const sent = vi.fn();
 
@@ -220,6 +220,51 @@ describe("the conversation panel", () => {
       { seq: 4, kind: "message", payload: { text: "The HSL one" } },
     ]);
     expect(screen.getByTestId("run-progress")).toHaveTextContent(en.agentRun.progress.working);
+  });
+
+  it("reads a published run as done and a cancelled one as stopped", () => {
+    const { unmount } = panel([
+      { seq: 1, kind: "status", payload: { status: "building" } },
+      { seq: 2, kind: "status", payload: { status: "published" } },
+    ]);
+    expect(screen.getByTestId("run-progress")).toHaveTextContent(en.agentRun.progress.done);
+    unmount();
+    panel([{ seq: 1, kind: "status", payload: { status: "cancelled" } }]);
+    expect(screen.getByTestId("run-progress")).toHaveTextContent(en.agentRun.progress.stopped);
+  });
+
+  it("names a file or an address the person handed over, never its text", () => {
+    const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) => string;
+    const answer = (answers: unknown): RunEvent => ({ seq: 2, kind: "answer", payload: { questionId: "q-1", answers } });
+    const file = line(answer({ file: { name: "stations.csv", format: "csv", text: "id,name\n1,Kallio" } }), t);
+    expect(file).toContain("stations.csv");
+    expect(file).not.toContain("Kallio");
+    const url = line(answer({ url: "https://feeds.example/stations.json" }), t);
+    expect(url).toContain("https://feeds.example/stations.json");
+  });
+
+  it("draws Build an app only for an answer that names what to build", async () => {
+    const build = (payload: Record<string, unknown>): RunEvent => ({ seq: 1, kind: "app-build", payload });
+    const { unmount } = renderPage(
+      <ConversationPanel
+        project="helsinki"
+        events={[
+          build({ endpoints: ["alerts"], access: "update", visibility: "organization", prompt: "A desk for today's alerts" }),
+          { ...build({ endpoints: [], access: "update", visibility: "organization", prompt: "Nothing to read" }), seq: 2 },
+        ]}
+        streaming
+        answering={false}
+        sending={false}
+        live
+        onAnswer={() => {}}
+        onSend={sent}
+      />,
+      { path: "/projects/helsinki", answer: () => undefined },
+    );
+    expect(await screen.findByText("A desk for today's alerts")).toBeInTheDocument();
+    expect(screen.getAllByText(en.apps.buildCard.reads)).toHaveLength(1);
+    expect(screen.queryByText("Nothing to read")).toBeNull();
+    unmount();
   });
 
   it("keeps commits and preview addresses behind Details and token counts out of the conversation", async () => {
@@ -524,6 +569,36 @@ describe("openQuestions", () => {
 
     expect(screen.getByText("You chose: City bikes, Air quality")).toBeInTheDocument();
     expect(screen.queryByTestId("question-options")).toBeNull();
+  });
+
+  it("answers a question that also asks for data with the address typed, under the question's id", async () => {
+    const onAnswer = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ConversationPanel
+          project="helsinki"
+          events={[
+            {
+              seq: 1,
+              kind: "question",
+              payload: {
+                questionId: "q-feed",
+                schema: { type: "object", title: "Where is the data?", properties: {} },
+                input: { url: true },
+              },
+            },
+          ]}
+          streaming
+          answering={false}
+          sending={false}
+          live
+          onAnswer={onAnswer}
+          onSend={sent}
+        />
+      </I18nextProvider>,
+    );
+    await userEvent.type(screen.getByLabelText(en.agentRun.question.url.label), "https://feeds.example/stations.json{Enter}");
+    expect(onAnswer).toHaveBeenCalledWith("q-feed", { url: "https://feeds.example/stations.json" });
   });
 
   it("ignores a question with no schema to render", () => {

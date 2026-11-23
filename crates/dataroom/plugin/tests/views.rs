@@ -140,6 +140,10 @@ fn the_sanitizer_keeps_plain_markup() {
         "<img src=/files/a.png alt=\"\" loading=lazy>",
         "<table><thead><tr><th colspan=2>A</th></tr></thead></table>",
         "<A HREF=\"#top\">up</A>",
+        "<td data-sort aria-hidden>x</td>",
+        "<abbr title=\"1 > 0\">gt</abbr>",
+        "<p data-x=<>x</p>",
+        "<a href=\" https://a.example/\">a leading space is dropped as a browser drops it</a>",
     ] {
         assert_eq!(sanitize_view_html(ok), ok, "{ok}");
     }
@@ -174,6 +178,8 @@ fn the_sanitizer_escapes_every_active_or_unknown_markup() {
         "<p title=\"unclosed>x",
         "<p",
         "<p =x>",
+        // Balanced for the tag's end, yet the second value's quote never closes.
+        "<p data-x=a\"b data-y=\"c>x</p>",
     ] {
         let out = sanitize_view_html(bad);
         assert!(!out.contains('<'), "{bad} -> {out}");

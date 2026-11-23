@@ -366,10 +366,9 @@ impl CatalogueWriter {
     ) -> Result<CatalogueReport> {
         let ctx = self.live(org, id)?;
         let store = self.state.store.as_ref();
-        let cat = store
-            .get_catalogue(org, id)
-            .await?
-            .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+        let Some(cat) = store.get_catalogue(org, id).await? else {
+            return Err(DataroomError::NotFound("catalogue not found".into()));
+        };
         let mut all = self.datasets(org, id).await?;
         all.retain(|ds| ds.state == RecordState::Active);
         let total = all.len();
@@ -414,8 +413,11 @@ impl CatalogueWriter {
             let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &page, &publishers);
             page.into_iter().zip(gaps).collect()
         })
-        .await
-        .map_err(|e| DataroomError::Storage(format!("profile report: {e}")))?;
+        .await;
+        let datasets = match datasets {
+            Ok(datasets) => datasets,
+            Err(e) => return Err(DataroomError::Storage(format!("profile report: {e}"))),
+        };
         Ok(CatalogueReport {
             total,
             missing_publisher,
@@ -640,9 +642,13 @@ pub enum FileWrite {
 
 /// Runs a file store call off the async workers.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| DataroomError::Storage(format!("file store call stopped: {e}")))?
+    match tokio::task::spawn_blocking(f).await {
+        Ok(answer) => answer,
+        // Only a file store call that panicked ends here.
+        Err(e) => Err(DataroomError::Storage(format!(
+            "file store call stopped: {e}"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -651,6 +657,7 @@ mod tests {
     use dataroom_core::{ProfileRecord, Store};
     use dataroom_store_memory::MemoryStore;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     fn id<T>(parse: fn(&str) -> std::result::Result<T, DataroomError>, n: u128) -> T {
         parse(&format!("00000000-0000-7000-8000-{n:012x}")).expect("an id")
@@ -734,6 +741,50 @@ mod tests {
                 .collect();
             assert_eq!(pins, [dataroom_api::BASE_PROFILE, "dcat-ap-sk-2.0"]);
         }
+    }
+
+    /// A declaration for no catalogue or a deleted one writes nothing; a repeated profile is pinned
+    /// once and one this build does not ship stays pinned with no version.
+    #[tokio::test]
+    async fn a_declaration_skips_a_missing_or_deleted_catalogue_and_pins_each_profile_once() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let declared = CatalogueDeclaration::default();
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared, None)
+            .await
+            .unwrap());
+
+        writer.upsert(spec.clone()).await.expect("served");
+        let chosen = [
+            dataroom_api::BASE_PROFILE.to_owned(),
+            "no-such-profile".to_owned(),
+            "no-such-profile".to_owned(),
+        ];
+        assert!(writer
+            .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+            .await
+            .unwrap());
+        let got = store
+            .get_catalogue(spec.org_id, spec.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let pins: Vec<(&str, &str)> = got
+            .active_profiles
+            .iter()
+            .map(|pin| (pin.profile_id.as_str(), pin.version.as_str()))
+            .collect();
+        assert_eq!(pins.len(), 2, "{pins:?}");
+        assert_eq!(pins[0].0, dataroom_api::BASE_PROFILE);
+        assert_eq!(pins[1], ("no-such-profile", ""));
+
+        assert!(writer.delete(spec.org_id, spec.id).await.unwrap());
+        assert!(!writer
+            .declare(spec.org_id, spec.id, &declared, Some(&chosen))
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -996,6 +1047,557 @@ mod tests {
         );
     }
 
+    fn dataset(org: OrgId, cat: CatalogueId, name: &str, extra: serde_json::Value) -> Dataset {
+        let mut v = json!({
+            "orgId": org, "catalogueId": cat, "id": "", "name": name,
+            "title": {"sk": name}, "description": {}, "publisherId": "city",
+            "visibility": "public", "state": "active", "tags": [], "distributions": [],
+            "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        });
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            v[key] = value.clone();
+        }
+        serde_json::from_value(v).expect("a dataset")
+    }
+
+    /// Portal `transit` of the same Organization at its slug address.
+    fn transit() -> CatalogueSpec {
+        let mut spec = mobility(None);
+        spec.id = id(CatalogueId::parse_verified, 0xC2);
+        spec.name = "transit".into();
+        spec.host = dataroom_api::synthetic_host("city", "transit");
+        spec.base = Some("https://data.city.test/-/transit".into());
+        spec.publisher.catalogue_id = spec.id;
+        spec.portal = Some(PortalRoute {
+            organization: "city".into(),
+            path: "transit".into(),
+            host: None,
+            redirect: false,
+        });
+        spec
+    }
+
+    fn principals(state: &DataroomState) -> Vec<String> {
+        read(&state.publishers)
+            .values()
+            .filter_map(|s| s.actor_id.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn publishing_binds_one_publisher_per_catalogue_and_turning_it_off_removes_it() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store);
+        let mut a = mobility(None);
+        a.publishes = true;
+        assert!(format!("{a:?}").contains("publishes: true"));
+        writer.upsert(a.clone()).await.expect("bound");
+        writer
+            .upsert(a.clone())
+            .await
+            .expect("the same catalogue again");
+        let one = principals(&state);
+        assert_eq!(one.len(), 1, "one binding per catalogue: {one:?}");
+        assert!(one[0].ends_with(&a.id.to_string()), "{one:?}");
+
+        let mut b = transit();
+        writer
+            .upsert(b.clone())
+            .await
+            .expect("no publisher, no binding");
+        assert_eq!(principals(&state), one);
+        b.publishes = true;
+        writer.upsert(b.clone()).await.expect("a second catalogue");
+        assert_eq!(principals(&state).len(), 2);
+
+        a.publishes = false;
+        writer.upsert(a).await.expect("publishing turned off");
+        let left = principals(&state);
+        assert_eq!(left.len(), 1);
+        assert!(left[0].ends_with(&b.id.to_string()), "{left:?}");
+    }
+
+    #[tokio::test]
+    async fn withdraw_and_delete_stop_serving_and_only_delete_empties_the_store() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store.clone());
+        let mut spec = mobility(Some("mobility.city.test"));
+        spec.organization = Some("city".into());
+        spec.publishes = true;
+        writer.upsert(spec.clone()).await.expect("served");
+        let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
+        store
+            .upsert_dataset(&ctx, dataset(spec.org_id, spec.id, "air", json!({})))
+            .await
+            .expect("stored");
+        assert_eq!(
+            state.portals.host("mobility.city.test"),
+            Some((spec.org_id, spec.id))
+        );
+        assert!(read(&state.organization_catalogues).contains_key("city"));
+
+        writer.withdraw(spec.org_id, spec.id).await;
+        assert_eq!(state.portals.host("mobility.city.test"), None);
+        assert!(principals(&state).is_empty());
+        assert!(!read(&state.organization_catalogues).contains_key("city"));
+        assert!(!read(&state.catalogue_bases).contains_key(&spec.id));
+        let err = writer.datasets(spec.org_id, spec.id).await.unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::NotFound(m) if m.contains("no catalogue")),
+            "{err}"
+        );
+        assert_eq!(
+            store.list_datasets(&ctx).await.expect("kept").len(),
+            1,
+            "withdraw keeps data"
+        );
+
+        writer.upsert(spec.clone()).await.expect("served again");
+        assert_eq!(
+            writer
+                .datasets(spec.org_id, spec.id)
+                .await
+                .expect("listed")
+                .len(),
+            1
+        );
+        assert!(writer.delete(spec.org_id, spec.id).await.expect("deleted"));
+        assert!(writer.datasets(spec.org_id, spec.id).await.is_err());
+        assert_eq!(state.portals.host("mobility.city.test"), None);
+        let other = id(CatalogueId::parse_verified, 0xC9);
+        assert!(
+            !writer.delete(spec.org_id, other).await.expect("answered"),
+            "no such catalogue"
+        );
+    }
+
+    #[tokio::test]
+    async fn sources_operations_and_listings_answer_only_for_a_served_catalogue() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let (org, cat) = (spec.org_id, spec.id);
+        let source: HarvestSource = serde_json::from_value(json!({
+            "orgId": org, "catalogueId": cat, "name": "kosice", "kind": "dcat-ap",
+            "url": "https://data.kosice.test/feed.ttl", "publisherId": "kraj",
+            "allowedHosts": ["data.kosice.test"], "modified": "2026-11-14T10:00:00Z"
+        }))
+        .expect("a source");
+        let mut kraj = spec.publisher.clone();
+        kraj.name = "kraj".into();
+        let not_found =
+            |r: Result<()>| assert!(matches!(r, Err(DataroomError::NotFound(_))), "{r:?}");
+        not_found(
+            writer
+                .upsert_harvest_source(org, cat, source.clone(), None)
+                .await
+                .map(|_| ()),
+        );
+        not_found(
+            writer
+                .run_op(org, cat, "harvest_source.list", json!({}))
+                .await
+                .map(|_| ()),
+        );
+        not_found(writer.datasets(org, cat).await.map(|_| ()));
+        not_found(writer.files(org, cat).await.map(|_| ()));
+        not_found(
+            writer
+                .delete_harvest_source(org, cat, "kosice")
+                .await
+                .map(|_| ()),
+        );
+
+        writer.upsert(spec).await.expect("served");
+        let saved = writer
+            .upsert_harvest_source(org, cat, source.clone(), Some(kraj.clone()))
+            .await
+            .expect("saved");
+        assert_eq!(saved.name, "kosice");
+        let ctx = RequestCtx::new(org, cat, Subject::anonymous());
+        let made = store
+            .get_publisher(&ctx, "kraj")
+            .await
+            .expect("read")
+            .expect("made");
+        let mut renamed = kraj.clone();
+        renamed.title = BTreeMap::from([("sk".into(), "Iný".into())]);
+        writer
+            .upsert_harvest_source(org, cat, source.clone(), Some(renamed))
+            .await
+            .expect("saved again");
+        writer
+            .upsert_harvest_source(org, cat, source, None)
+            .await
+            .expect("saved without a publisher to make");
+        let kept = store
+            .get_publisher(&ctx, "kraj")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            kept.title, made.title,
+            "an existing publisher is left as it is"
+        );
+
+        let listed = writer
+            .run_op(org, cat, "harvest_source.list", json!({}))
+            .await
+            .expect("listed as the harvest principal");
+        assert!(listed.to_string().contains("kosice"), "{listed}");
+        for name in ["bus", "air"] {
+            store
+                .upsert_dataset(&ctx, dataset(org, cat, name, json!({})))
+                .await
+                .expect("stored");
+        }
+        let names: Vec<String> = writer
+            .datasets(org, cat)
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, ["air", "bus"]);
+        assert!(!writer
+            .delete_harvest_source(org, cat, "none")
+            .await
+            .expect("answered"));
+        let err = writer.files(org, cat).await.unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::NotSupported(m) if m.contains("stores no files")),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rename_and_a_replace_leave_their_own_audit_rows() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let root = std::env::temp_dir().join(format!("jc-writer-files-{}", uuid::Uuid::now_v7()));
+        let spec = mobility(None);
+        let authorizer = Arc::new(LiveAuthorizer::new(Vec::new()));
+        let state = DataroomState::new(store.clone(), authorizer.clone(), spec.org_id, spec.id)
+            .with_files(Arc::new(FileStore::new(&root)));
+        let writer = CatalogueWriter::new(state, authorizer, Arc::default());
+        writer.upsert(spec.clone()).await.expect("served");
+        let (org, cat) = (spec.org_id, spec.id);
+        let upload = FileWrite::Upload {
+            name: "a.csv".into(),
+            bytes: b"x;y\n1;2\n".to_vec(),
+        };
+        let file = writer
+            .write_file(org, cat, "ana", upload)
+            .await
+            .expect("uploaded");
+        let rename = FileWrite::Rename {
+            id: file.id.clone(),
+            name: "b.csv".into(),
+        };
+        let renamed = writer
+            .write_file(org, cat, "ana", rename)
+            .await
+            .expect("renamed");
+        assert_eq!(renamed.name, "b.csv");
+        let replace = FileWrite::Replace {
+            id: file.id.clone(),
+            bytes: b"x;y\n3;4\n".to_vec(),
+        };
+        let replaced = writer
+            .write_file(org, cat, "bo", replace)
+            .await
+            .expect("replaced");
+        assert_ne!(replaced.sha256, file.sha256);
+        let ctx = RequestCtx::new(org, cat, Subject::anonymous());
+        let rows: Vec<(String, String, String)> = store
+            .list_activity(&ctx, None, 50)
+            .await
+            .expect("activity")
+            .into_iter()
+            .filter(|r| r.object_type == "File")
+            .map(|r| (r.operation, r.actor, r.summary))
+            .collect();
+        assert!(
+            rows.contains(&(
+                "file.rename".into(),
+                "ana".into(),
+                "Renamed file a.csv to b.csv".into()
+            )),
+            "{rows:?}"
+        );
+        assert!(
+            rows.contains(&(
+                "file.replace".into(),
+                "bo".into(),
+                "Replaced the bytes of file b.csv".into()
+            )),
+            "{rows:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn list_from_copies_selected_records_keeps_foreign_names_and_withdraws_dropped_copies() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let (from, to) = (mobility(None), transit());
+        let org = from.org_id;
+        writer.upsert(from.clone()).await.expect("from served");
+        let source = RequestCtx::new(org, from.id, Subject::anonymous());
+        let target = RequestCtx::new(org, to.id, Subject::anonymous());
+        let base = "https://data.city.test/-/mobility";
+        let marker = "endpoints:air";
+        let err = writer
+            .list_from(org, (from.id, base), to.id, marker, |_| true)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, DataroomError::NotFound(_)),
+            "the target is not served: {err}"
+        );
+        writer.upsert(to.clone()).await.expect("to served");
+        let mut kraj = from.publisher.clone();
+        kraj.name = "kraj".into();
+        kraj.id = "src-kraj".into();
+        store
+            .upsert_publisher(&source, kraj)
+            .await
+            .expect("a publisher only the source holds");
+        for (name, extra) in [
+            ("air", json!({"publisherId": "kraj"})),
+            ("solo", json!({"publisherId": "nikto"})),
+            ("bus", json!({})),
+            ("taken", json!({})),
+            ("old", json!({"state": "withdrawn"})),
+        ] {
+            store
+                .upsert_dataset(&source, dataset(org, from.id, name, extra))
+                .await
+                .expect("stored");
+        }
+        store
+            .upsert_dataset(
+                &target,
+                dataset(org, to.id, "taken", json!({"publisherId": "city"})),
+            )
+            .await
+            .expect("a harvested record of the target");
+
+        let keep_air = |d: &Dataset| d.name != "bus";
+        let listed = writer
+            .list_from(org, (from.id, base), to.id, marker, keep_air)
+            .await
+            .expect("listed");
+        assert_eq!(listed, ["air", "solo"]);
+        assert!(
+            store
+                .get_publisher(&target, "nikto")
+                .await
+                .expect("read")
+                .is_none(),
+            "a publisher the source lacks is not made up"
+        );
+        let air = store
+            .get_dataset(&target, "air")
+            .await
+            .expect("read")
+            .expect("copied");
+        assert_eq!(
+            air.uri.as_deref(),
+            Some("https://data.city.test/-/mobility/dataset/air")
+        );
+        assert_eq!(air.generated_by.as_deref(), Some(marker));
+        let copied = store
+            .get_publisher(&target, "kraj")
+            .await
+            .expect("read")
+            .expect("copied");
+        assert_eq!(copied.catalogue_id, to.id);
+        assert_eq!(
+            copied.id, "pub-kraj",
+            "the target mints its own id for the copy"
+        );
+        let taken = store
+            .get_dataset(&target, "taken")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(taken.generated_by, None, "a foreign record is left alone");
+        assert_eq!(store.get_dataset(&target, "bus").await.expect("read"), None);
+        assert_eq!(store.get_dataset(&target, "old").await.expect("read"), None);
+
+        let again = writer
+            .list_from(org, (from.id, base), to.id, marker, keep_air)
+            .await
+            .expect("listed again");
+        assert_eq!(again, ["air", "solo"]);
+        let air = store
+            .get_dataset(&target, "air")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            air.state,
+            RecordState::Active,
+            "a copy still selected stays listed"
+        );
+        let none = writer
+            .list_from(org, (from.id, base), to.id, marker, |_| false)
+            .await
+            .expect("nothing selected");
+        assert!(none.is_empty());
+        let air = store
+            .get_dataset(&target, "air")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            air.state,
+            RecordState::Withdrawn,
+            "a copy no longer selected is withdrawn"
+        );
+        let taken = store
+            .get_dataset(&target, "taken")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            taken.state,
+            RecordState::Active,
+            "another marker's record stays"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_without_a_portal_route_or_base_is_unrouted_and_its_base_forgotten() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store);
+        let routed = mobility(Some("mobility.city.test"));
+        writer.upsert(routed.clone()).await.expect("routed");
+        assert_eq!(
+            state.portals.host("mobility.city.test"),
+            Some((routed.org_id, routed.id))
+        );
+        assert!(read(&state.catalogue_bases).contains_key(&routed.id));
+        // Back on its own host, then away again: each host it left keeps answering.
+        writer
+            .upsert(mobility(Some("data.city.test")))
+            .await
+            .expect("moved");
+        writer.upsert(routed.clone()).await.expect("moved back");
+        assert_eq!(
+            state.portals.host("data.city.test"),
+            Some((routed.org_id, routed.id))
+        );
+
+        let plain = CatalogueSpec {
+            base: None,
+            portal: None,
+            ..routed.clone()
+        };
+        writer.upsert(plain).await.expect("served without a route");
+        assert_eq!(state.portals.host("mobility.city.test"), None);
+        assert!(!read(&state.catalogue_bases).contains_key(&routed.id));
+    }
+
+    #[tokio::test]
+    async fn the_slug_address_redirects_only_to_a_portals_own_host() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, writer) = started(store);
+        let redirect = |host: Option<&str>, redirect: bool| {
+            let mut spec = mobility(host);
+            if let Some(route) = spec.portal.as_mut() {
+                route.redirect = redirect;
+            }
+            spec
+        };
+        let slug = || {
+            state
+                .portals
+                .slug("city", "mobility")
+                .expect("routed")
+                .redirect
+        };
+        writer
+            .upsert(redirect(None, true))
+            .await
+            .expect("slug only");
+        assert_eq!(
+            slug(),
+            None,
+            "without a host the slug address serves itself"
+        );
+        writer
+            .upsert(redirect(Some("mobility.city.test"), false))
+            .await
+            .expect("own host");
+        assert_eq!(slug(), None);
+        writer
+            .upsert(redirect(Some("mobility.city.test"), true))
+            .await
+            .expect("redirect");
+        assert_eq!(slug().as_deref(), Some("https://mobility.city.test"));
+    }
+
+    #[tokio::test]
+    async fn the_catalogue_row_is_written_only_when_its_portal_fields_change() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(None);
+        let row = || async {
+            store
+                .get_catalogue(spec.org_id, spec.id)
+                .await
+                .expect("read")
+                .expect("held")
+        };
+        writer.upsert(spec.clone()).await.expect("served");
+        let first = row().await;
+        assert!(
+            first.left_hosts.is_empty(),
+            "a slug address is no host a portal leaves"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        writer.upsert(spec.clone()).await.expect("unchanged");
+        assert_eq!(
+            row().await.modified,
+            first.modified,
+            "nothing changed, nothing written"
+        );
+
+        let mut based = spec.clone();
+        based.base = Some("https://data.city.test/-/mobility-2".into());
+        writer.upsert(based).await.expect("a new base");
+        let moved = row().await;
+        assert_eq!(
+            moved.portal_base.as_deref(),
+            Some("https://data.city.test/-/mobility-2")
+        );
+        assert_ne!(moved.modified, first.modified);
+
+        writer
+            .upsert(mobility(Some("mobility.city.test")))
+            .await
+            .expect("own host");
+        assert!(
+            row().await.left_hosts.is_empty(),
+            "the synthetic host of the slug address is not kept as a left host"
+        );
+        writer
+            .upsert(mobility(Some("data.city.test")))
+            .await
+            .expect("another host");
+        assert_eq!(row().await.left_hosts, ["mobility.city.test"]);
+
+        // A third host under the same base: only the left hosts change, and the row keeps both.
+        let mut third = mobility(Some("third.city.test"));
+        third.base = Some("https://data.city.test".into());
+        writer.upsert(third).await.expect("a third host");
+        assert_eq!(
+            row().await.left_hosts,
+            ["mobility.city.test", "data.city.test"]
+        );
+    }
+
     #[tokio::test]
     async fn iri_pins_and_left_hosts_survive_a_restart() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
@@ -1011,6 +1613,22 @@ mod tests {
         }))
         .expect("a dataset");
         store.upsert_dataset(&ctx, air).await.expect("stored");
+        let own = dataset(
+            spec.org_id,
+            spec.id,
+            "own",
+            json!({"uri": "https://elsewhere.test/own"}),
+        );
+        store.upsert_dataset(&ctx, own).await.expect("stored");
+        let blank = dataset(spec.org_id, spec.id, "blank", json!({"uri": "  "}));
+        store.upsert_dataset(&ctx, blank).await.expect("stored");
+        let extra = dataset(
+            spec.org_id,
+            spec.id,
+            "extra",
+            json!({"extras": {"uri": "https://elsewhere.test/extra"}}),
+        );
+        store.upsert_dataset(&ctx, extra).await.expect("stored");
 
         // jc restarts and the manifest now names the slug address: the first write after the
         // restart still pins the IRI to the host the portal leaves, and that host still routes.
@@ -1019,12 +1637,22 @@ mod tests {
             .upsert(mobility(None))
             .await
             .expect("to its slug address");
-        let pinned = store.list_datasets(&ctx).await.expect("listed");
+        let mut uris = BTreeMap::new();
+        for ds in store.list_datasets(&ctx).await.expect("listed") {
+            uris.insert(ds.name, ds.uri);
+        }
         assert_eq!(
-            pinned[0].uri.as_deref(),
+            uris["air"].as_deref(),
             Some("https://mobility.city.test/dataset/air"),
             "the dataset keeps its IRI"
         );
+        assert_eq!(uris["own"].as_deref(), Some("https://elsewhere.test/own"));
+        assert_eq!(
+            uris["blank"].as_deref(),
+            Some("https://mobility.city.test/dataset/blank"),
+            "a blank IRI is pinned like none"
+        );
+        assert_eq!(uris["extra"], None, "an IRI in the extras is its own");
         assert_eq!(
             state.portals.host("mobility.city.test"),
             Some((spec.org_id, spec.id))

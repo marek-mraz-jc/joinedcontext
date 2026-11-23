@@ -6,7 +6,8 @@
  * write is "read only", and a grant that names no type is not turned into a query — a read names
  * a type (GW33), and a query without one is refused by the gateway rather than answered.
  */
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -73,6 +74,40 @@ describe("the preview of an endpoint", () => {
     // A query with no type is 400 at the gateway (GW33): the panel says "no entities" instead.
     await waitFor(() => expect(screen.getByText(en.apps.generate.preview.samplesEmpty)).toBeInTheDocument());
     expect(asked.some((path) => path.includes("/entities"))).toBe(false);
+  });
+
+  // UI-36: the sample is a grid a person sorts by its id or by what the entities hold.
+  it("draws the sample entities with their first values and sorts them by id and by values", async () => {
+    const asked: string[] = [];
+    const long = "x".repeat(60);
+    show((url) => {
+      if (url.pathname.endsWith("/access")) return json(GRANT);
+      asked.push(`${url.pathname}${url.search}`);
+      return json([
+        { id: "urn:ngsi-ld:AirQualityObserved:hel:b-2", type: "AirQualityObserved", co2: 700, note: { a: 1 } },
+        { id: "urn:ngsi-ld:AirQualityObserved:hel:a-1", type: "AirQualityObserved", co2: 410, note: long },
+        { id: "urn:ngsi-ld:AirQualityObserved:hel:c-3", type: "AirQualityObserved", co2: 100 },
+      ]);
+    });
+    await userEvent.click(await screen.findByText(en.apps.generate.preview.samplesCount.replace("{count}", "3")));
+    const grid = await screen.findByRole("table", { name: en.apps.generate.preview.samples });
+    expect(asked[0]).toContain("type=AirQualityObserved");
+    expect(asked[0]).toContain("options=keyValues");
+    const ids = () => within(grid).getAllByTitle(/^urn:ngsi-ld:/).map((cell) => cell.textContent);
+    expect(within(grid).getByText(`co2=700, note={"a":1}`)).toBeInTheDocument();
+    // A value past forty characters is cut with an ellipsis, so a cell stays one line.
+    expect(within(grid).getByText(`co2=410, note=${"x".repeat(39)}…`)).toBeInTheDocument();
+
+    const sortBy = (column: string, order: string) => {
+      fireEvent.click(within(grid).getByRole("button", { name: `${en.entityGrid.columnMenu}: ${column}` }));
+      fireEvent.click(screen.getByRole("menuitemradio", { name: order }));
+    };
+    sortBy(en.apps.generate.preview.columnId, en.entityGrid.sortAsc);
+    expect(ids()).toEqual(["a-1", "b-2", "c-3"]);
+    sortBy(en.apps.generate.preview.columnId, en.entityGrid.sortDesc);
+    expect(ids()).toEqual(["c-3", "b-2", "a-1"]);
+    sortBy(en.apps.generate.preview.columnValues, en.entityGrid.sortAsc);
+    expect(ids()).toEqual(["c-3", "a-1", "b-2"]);
   });
 
   it("says the access is not stated rather than claiming none when the endpoint refuses", async () => {
