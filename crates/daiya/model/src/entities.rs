@@ -191,6 +191,29 @@ pub struct QueryCacheStatRecord {
     pub bytes_used: u64,
 }
 
+/// One audit row (`cr_audit`, S9-28): a write or decision of daiya that committed, written in
+/// the transaction of its change. Ids, the operation, its kind, the actor's subject id and the
+/// decision; never a secret, a token, a query or a person's name or e-mail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditRecord {
+    pub id: uuid::Uuid,
+    /// The Organization the actor acted in; its RLS scope.
+    pub org_id: OrgId,
+    pub instance_id: InstanceId,
+    /// e.g. `DATASOURCE_CREATE`.
+    pub kind: String,
+    /// e.g. `AddDatasource`, or the registry's `PublicDashboard/Rotate`.
+    pub operation: String,
+    /// The caller's subject id, empty for an anonymous caller.
+    pub actor_id: String,
+    /// What was written, as ids: `datasources/{uid}`, `orgs/{OrgId}`.
+    pub target: String,
+    /// The Authorizer's decision the write ran under (`allow`).
+    pub decision: String,
+    pub created_at: TimestampTz,
+}
+
 /// Import report record (`ImportReports` entity set, R2, R10).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

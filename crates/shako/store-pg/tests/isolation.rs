@@ -498,7 +498,7 @@ async fn a_tenant_transaction_runs_as_the_request_role() {
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-    tx.commit().await.unwrap();
+    jc_audit::commit(tx).await.unwrap();
     let after: String = sqlx::query_scalar("SELECT current_user::text")
         .fetch_one(store.pool())
         .await

@@ -570,6 +570,7 @@ async fn folders_list_read_and_delete_within_the_callers_folders() {
 /// in it is deleted. Emptied, it deletes (S9-36).
 #[tokio::test]
 async fn deleting_a_folder_with_content_is_refused_naming_it() {
+    use daiya_model::DaiyaStore;
     let w = world();
     let (url, _) = prometheus().await;
     w.add_prometheus("prom", &url).await;
@@ -605,8 +606,23 @@ async fn deleting_a_folder_with_content_is_refused_naming_it() {
         "the subfolder still holds it: {body}"
     );
     w.ok("DELETE", "/api/folders/ops-night", None).await;
+    let deletes_of_ops = || async {
+        w.store
+            .list_audit(ORG)
+            .await
+            .expect("audit rows")
+            .into_iter()
+            .filter(|r| r.operation == "DeleteFolder" && r.target == "folders/ops")
+            .count()
+    };
+    assert_eq!(deletes_of_ops().await, 0, "a refusal leaves no audit row");
     let del = w.ok("DELETE", "/api/folders/ops", None).await;
     assert_eq!(del["message"], "Folder deleted");
+    assert_eq!(
+        deletes_of_ops().await,
+        1,
+        "the delete stands with its audit row"
+    );
 }
 
 #[tokio::test]

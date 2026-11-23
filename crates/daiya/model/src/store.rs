@@ -2,8 +2,8 @@
 //! Async `DaiyaStore` trait implemented by `daiya-store-pg` and `daiya-store-memory` (R1, R8).
 
 use crate::entities::{
-    ApplyBundle, DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord,
-    ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
+    ApplyBundle, AuditRecord, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
+    FolderRecord, ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
 };
 use crate::error::{CrError, CrResult};
 use crate::ids::{InstallationId, InstanceId, OrgId};
@@ -157,6 +157,10 @@ pub trait DaiyaStore: Send + Sync {
         installation: InstallationId,
         report: ImportReportRecord,
     ) -> StoreFuture<'_, ()>;
+
+    // Audit (S9-28): append only, written in the transaction of the change it records.
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()>;
+    fn list_audit(&self, org_id: OrgId) -> StoreFuture<'_, Vec<AuditRecord>>;
 
     // Plans and Apply (R2, §7.3)
     /// Keeps `plan` (a repeated `(org_id, digest)` renews its creator and expiry) and drops the
