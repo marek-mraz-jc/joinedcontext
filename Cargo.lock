@@ -2799,6 +2799,9 @@ version = "0.1.0"
 dependencies = [
  "daiya-model",
  "jc-time",
+ "jiff",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
+ "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
  "serde_json",
@@ -7697,8 +7700,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "http-body-util",
  "jc-audit",
  "jc-router",
+ "jc-time",
  "kaisatsu-admin",
  "kaisatsu-core",
  "kaisatsu-crypto",
@@ -7707,6 +7712,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
