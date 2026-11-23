@@ -249,9 +249,9 @@ pub struct SubMirror {
 /// Table 5.2.12-1 bounds `timeInterval` only by "greater than 0", so a
 /// sub-second interval is legal; the tick period bounds how closely any of
 /// them can be served, signal or no signal.
-// ponytail: one `list` per tenant per backstop, cross-tenant enumeration of
-// the periodic rows would replace it — that needs the RLS service escape
-// (0040, `antares_service()`) extended to the two subscription tables.
+// ponytail: one `list` per backstop for each Tenant holding a subscription
+// (`subscription_tenants`, 0049), never every Tenant; a count of periodic
+// rows alone in that table would narrow it to the Tenants with one.
 pub(crate) const CSUB_SWEEP_BACKSTOP_MS: i64 = 60_000;
 
 #[derive(Default)]

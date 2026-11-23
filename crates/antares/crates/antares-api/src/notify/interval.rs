@@ -163,7 +163,8 @@ pub async fn interval_tick(st: &AppState) {
     let mut sending = tokio::task::JoinSet::new();
     // Only the subscription half due: the mirror names the tenants holding a
     // periodic subscription, with no store read (S5-28). The registration
-    // half is not mirrored and still walks the store's tenants.
+    // half is not mirrored and walks the Tenants the store counts a
+    // subscription for (0049).
     let tenants = match (&st.sub_mirror, sweep_csubs) {
         (Some(m), false) => m.periodic_tenants(),
         _ => read_or_warn(
