@@ -127,6 +127,7 @@ async fn a_resource_of_another_view_answers_like_an_unknown_one() -> Result<(), 
         "ngsi-ld://cars/entities/urn:ngsi-ld:Car:9",
         "ngsi-ld://carsx/entities/urn:ngsi-ld:Car:1",
         "ngsi-ld://cars/entities/urn:ngsi-ld:Car:1%zz",
+        "ngsi-ld://cars/entities/not%20an%20id",
         "ngsi-ld://cars/other/x",
         "https://cars/entities/urn:ngsi-ld:Car:1",
     ] {

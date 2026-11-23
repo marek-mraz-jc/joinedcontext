@@ -669,6 +669,11 @@ mod tests {
         json!([[[w, s], [w + d, s], [w + d, s + d], [w, s + d], [w, s]]])
     }
 
+    /// A shape or its refusal's rule, for a test's `?`.
+    fn why<T>(shaped: Result<T, Refusal>) -> Result<T, String> {
+        shaped.map_err(|e| e.why)
+    }
+
     #[test]
     fn each_limit_is_refused_with_its_slug() {
         let slug = |g: &str, c: Value, r: Option<u64>| {
@@ -681,6 +686,17 @@ mod tests {
             Err("distance-too-large")
         );
         assert_eq!(slug("Point", json!([24.94, 60.17]), Some(5000)), Ok(()));
+        assert_eq!(
+            why(shape(
+                "Point",
+                &json!([24.94, 60.17]),
+                Some(5001),
+                None,
+                1.0
+            ))
+            .err(),
+            Some("maxDistance is at most 5000 m".into())
+        );
         assert_eq!(
             slug("Point", json!([181.0, 60.0]), None),
             Err("coordinates-out-of-range")
@@ -745,7 +761,7 @@ mod tests {
             [0.0, 0.0],
         ];
         assert!(!self_intersects(&outer));
-        let whole = shape("Polygon", &json!([outer]), None, None, 100.0).map_err(|e| e.why)?;
+        let whole = why(shape("Polygon", &json!([outer]), None, None, 100.0))?;
         let hole = [
             [0.002, 0.002],
             [0.004, 0.002],
@@ -753,8 +769,7 @@ mod tests {
             [0.002, 0.004],
             [0.002, 0.002],
         ];
-        let holed =
-            shape("Polygon", &json!([outer, hole]), None, None, 100.0).map_err(|e| e.why)?;
+        let holed = why(shape("Polygon", &json!([outer, hole]), None, None, 100.0))?;
         // 0.01° is 1 112 m on the mean sphere
         assert!((whole.km2() - 1.2364).abs() < 0.001, "{}", whole.km2());
         assert!(
@@ -769,7 +784,7 @@ mod tests {
     fn a_line_keeps_what_lies_within_its_buffer_by_the_metre() -> Result<(), String> {
         let path = json!([[24.94, 60.17], [24.94, 60.17], [24.96, 60.17]]);
         let line = shape("LineString", &path, None, Some(50), 100.0);
-        let line = line.map_err(|e| e.why)?;
+        let line = why(line)?;
         // one metre of latitude, at the line's middle
         let m = (1.0 / EARTH_M).to_degrees();
         let at = |metres: f64| json!({"type": "Point", "coordinates": [24.95, 60.17 + metres * m]});
@@ -785,8 +800,13 @@ mod tests {
 
     #[test]
     fn rank_orders_by_distance_and_compacts() -> Result<(), String> {
-        let point =
-            shape("Point", &json!([24.94, 60.17]), Some(1000), None, 100.0).map_err(|e| e.why)?;
+        let point = why(shape(
+            "Point",
+            &json!([24.94, 60.17]),
+            Some(1000),
+            None,
+            100.0,
+        ))?;
         let e = |id: &str, lat: f64| {
             json!({
                 "id": id, "type": "Tree",
@@ -824,7 +844,7 @@ mod tests {
 
     #[test]
     fn the_answer_drops_empty_types_and_stays_under_its_size() -> Result<(), String> {
-        let point = shape("Point", &json!([24.94, 60.17]), None, None, 100.0).map_err(|e| e.why)?;
+        let point = why(shape("Point", &json!([24.94, 60.17]), None, None, 100.0))?;
         let big = json!({"id": "urn:ngsi-ld:T:1", "pad": "x".repeat(2000)});
         let part = |t: &str, count: u64, n: usize| TypePart {
             entity_type: t.into(),
@@ -927,7 +947,7 @@ mod tests {
         assert_eq!(other.get("name"), Some(&json!("Market")));
         let area = json!({"type": "Polygon", "coordinates": [[[24.0, 60.0], [24.0, 60.001], [24.001, 60.0], [24.0, 60.0]]]});
         let point = shape("Point", &json!([24.0, 60.0]), None, None, 100.0);
-        let point = point.map_err(|e| e.why)?;
+        let point = why(point)?;
         assert_eq!(point.distance(&area), Some(0.0));
         assert_eq!(point.distance(&json!({"type": "Point"})), None);
         Ok(())
@@ -936,7 +956,7 @@ mod tests {
     #[test]
     fn a_sample_and_a_lower_bound_say_so() -> Result<(), String> {
         let point = shape("Point", &json!([24.94, 60.17]), None, None, 100.0);
-        let point = point.map_err(|e| e.why)?;
+        let point = why(point)?;
         let part = TypePart {
             entity_type: "Tree".into(),
             count: 1001,
