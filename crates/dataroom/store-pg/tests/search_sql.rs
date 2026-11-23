@@ -96,6 +96,17 @@ fn fixture() -> (Vec<Publisher>, Vec<Dataset>) {
             "kraj",
             json!({"title": {"sk": "Dlhé slovo"}, "description": {"sk": format!("{long_word} koniec")}}),
         ),
+        // Ranks 8 (name) against 7 (title, keyword and description): the order shows the weights.
+        ds(
+            "zelen-park",
+            "mesto",
+            json!({"title": {"sk": "Park"}, "description": {"sk": "Plochy"}, "tags": []}),
+        ),
+        ds(
+            "parky",
+            "mesto",
+            json!({"title": {"sk": "Zeleň"}, "description": {"sk": "Zeleň mesta"}, "tags": ["zeleň"]}),
+        ),
         ds(
             "rozpocet",
             "mesto",
@@ -126,6 +137,7 @@ fn filters() -> Vec<DatasetFilter> {
         "nič-také",
         "aaaa",
         "koniec rozpočet",
+        "zeleň",
         "*:*",
     ]
     .iter()
@@ -241,6 +253,23 @@ async fn sql_search_answers_like_the_rust_reference() {
             .total
     };
     assert!(hits("ovzdušie") >= 2 && hits("dôchodok") == 1 && hits("nič-také") == 0);
+    let zelen = DatasetFilter {
+        q: "zeleň".into(),
+        limit: 20,
+        ..DatasetFilter::default()
+    };
+    let (ranked, _) = search_store(
+        &pg_store,
+        &member,
+        &authorizer,
+        &zelen,
+        "sk",
+        &keep_all,
+        None,
+    )
+    .await
+    .expect("ranked");
+    assert_eq!(ids(&ranked), ["zelen-park", "parky"]);
     // A Solr local parameter is refused before any read.
     let bad = DatasetFilter {
         q: "{!lucene}x".into(),
