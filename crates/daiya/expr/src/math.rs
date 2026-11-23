@@ -1263,6 +1263,20 @@ mod tests {
         }
     }
 
+    /// The nesting budget counts depth, not length: sibling groups and chains each give back
+    /// what they took, so three 40-operator chains and two 60-deep groups side by side parse.
+    #[test]
+    fn sibling_groups_give_their_depth_back() {
+        let chain = vec!["1"; 41].join("+");
+        MathExpr::parse(&format!("({chain})+({chain})+({chain})")).expect("wide chains");
+        let deep = format!("{}1{}", "(".repeat(60), ")".repeat(60));
+        MathExpr::parse(&format!("{deep}+{deep}")).expect("two deep groups");
+        assert_eq!(
+            tokenize("1 + x").unwrap().last(),
+            Some(&Token::Ident("x".into()))
+        );
+    }
+
     #[test]
     fn deeply_nested_expression_exceeding_cap_is_refused() {
         let deep = format!("{}$A{}", "(".repeat(105), ")".repeat(105));
