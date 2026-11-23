@@ -762,7 +762,12 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
 
     // 4. Merge dopravny-podnik into mesto-bb: datasets move and old publisher feed redirects (C16)
     store
-        .merge_publishers(&ctx_admin, "dopravny-podnik", "mesto-bb")
+        .merge_publishers(
+            &ctx_admin,
+            "dopravny-podnik",
+            "mesto-bb",
+            audit("publisher.merge"),
+        )
         .await
         .unwrap();
     let moved = store
@@ -3332,5 +3337,22 @@ async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
                 assert!(resp.headers().get(header::SET_COOKIE).is_none());
             }
         }
+    }
+}
+
+/// An activity row with a fresh id for a store write the test sets up; the store files it under
+/// the write's tenant and names the record it wrote.
+fn audit(operation: &str) -> dataroom_core::ActivityRow {
+    dataroom_core::ActivityRow {
+        org_id: OrgId::from_uuid(Uuid::nil()),
+        catalogue_id: CatalogueId::from_uuid(Uuid::nil()),
+        id: format!("act-{}", Uuid::now_v7()),
+        at: jc_time::TimestampTz::now(),
+        actor: "test".into(),
+        operation: operation.into(),
+        object_type: String::new(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::Value::Null,
     }
 }

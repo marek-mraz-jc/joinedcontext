@@ -609,11 +609,17 @@ async fn database_failures_surface_as_storage_errors() {
     );
     denied(
         "merge_publishers",
-        store.merge_publishers(&ctx, "a", "b").await.err(),
+        store
+            .merge_publishers(&ctx, "a", "b", audit("publisher.merge"))
+            .await
+            .err(),
     );
     denied(
         "withdraw_publisher",
-        store.withdraw_publisher(&ctx, "p").await.err(),
+        store
+            .withdraw_publisher(&ctx, "p", audit("publisher.withdraw"))
+            .await
+            .err(),
     );
     denied("list_datasets", store.list_datasets(&ctx).await.err());
     denied("get_dataset", store.get_dataset(&ctx, "d").await.err());
@@ -628,7 +634,13 @@ async fn database_failures_surface_as_storage_errors() {
         "withdraw_dataset",
         store.withdraw_dataset(&ctx, "d").await.err(),
     );
-    denied("purge_dataset", store.purge_dataset(&ctx, "d").await.err());
+    denied(
+        "purge_dataset",
+        store
+            .purge_dataset(&ctx, "d", audit("dataset.purge"))
+            .await
+            .err(),
+    );
     denied(
         "get_distribution",
         store.get_distribution(&ctx, "r").await.err(),
@@ -650,7 +662,10 @@ async fn database_failures_surface_as_storage_errors() {
     );
     denied(
         "delete_resource_view",
-        store.delete_resource_view(&ctx, "v").await.err(),
+        store
+            .delete_resource_view(&ctx, "v", audit("resource_view.delete"))
+            .await
+            .err(),
     );
     denied(
         "list_harvest_sources",
