@@ -3276,6 +3276,78 @@ mod tests {
         );
     }
 
+    /// The stylesheet answers only under its own version, cached for good and never sniffed.
+    #[tokio::test]
+    async fn the_stylesheet_answers_only_under_its_version() {
+        let stale = stylesheet_get(Path("0000000000000000".into())).await;
+        assert_eq!(stale.status(), StatusCode::NOT_FOUND);
+        let fresh = stylesheet_get(Path(format!("{:016x}", page::LOGIN_CSS_VERSION))).await;
+        assert_eq!(fresh.status(), StatusCode::OK);
+        assert_eq!(
+            fresh.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(fresh.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    }
+
+    /// Small page helpers: the app host keeps a port, the username label follows the realm's
+    /// e-mail settings and a URI too long for a QR code shows none.
+    #[test]
+    fn page_helpers_follow_the_realm_and_refuse_what_they_cannot_show() {
+        assert_eq!(
+            app_host("https://portal.example.test:8443/cb").as_deref(),
+            Some("portal.example.test:8443")
+        );
+        assert_eq!(app_host("not a uri"), None);
+
+        let bundle = Bundle::for_locale("en");
+        let mut realm = RealmConfig {
+            login_with_email_allowed: false,
+            ..RealmConfig::default()
+        };
+        assert_eq!(username_label(&bundle, &realm), bundle.get("username"));
+        realm.login_with_email_allowed = true;
+        realm.registration_email_as_username = false;
+        assert_eq!(
+            username_label(&bundle, &realm),
+            bundle.get("usernameOrEmail")
+        );
+        realm.registration_email_as_username = true;
+        assert_eq!(username_label(&bundle, &realm), bundle.get("email"));
+
+        let long_account = "a".repeat(5000);
+        assert_eq!(
+            totp_qr_svg(&realm, "Helsinki", &long_account, "JBSWY3DPEHPK3PXP", "QR"),
+            ""
+        );
+    }
+
+    /// Every password-policy refusal names its rule and its number in the page's language.
+    #[test]
+    fn every_policy_violation_has_its_own_message() {
+        let bundle = Bundle::for_locale("en");
+        let cases = [
+            (PolicyViolation::MinLength(12), "12"),
+            (PolicyViolation::UpperCase(2), "2"),
+            (PolicyViolation::LowerCase(3), "3"),
+            (PolicyViolation::Digits(4), "4"),
+            (PolicyViolation::SpecialChars(5), "5"),
+            (PolicyViolation::History(6), "6"),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for (violation, n) in cases {
+            let message = policy_message(&bundle, &violation);
+            assert!(message.contains(n), "{violation:?}: {message}");
+            assert!(seen.insert(message));
+        }
+        for violation in [PolicyViolation::NotUsername, PolicyViolation::NotEmail] {
+            assert!(
+                seen.insert(policy_message(&bundle, &violation)),
+                "{violation:?}"
+            );
+        }
+    }
+
     #[test]
     fn the_enrolment_uri_says_sha1() {
         let realm = RealmConfig::default();
