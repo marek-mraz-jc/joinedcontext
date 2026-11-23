@@ -99,6 +99,47 @@ function events(res) {
   res.end();
 }
 
+// T-7753: the live steps of "What are the oldest bridges in the region?" as src/chat/routed.rs
+// streams them, a pause after each; `hold` keeps the answer back (long wait, Stop), `fail` ends in
+// an error after a failed read.
+async function steps(res, asked) {
+  res.writeHead(200, { "Content-Type": "text/event-stream" });
+  const send = (name, data) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+  const gap = Number(/gap(\d+)/.exec(asked)?.[1] || 250);
+  send("conversation", { id: "c3", at: "2026-11-23T21:00:00Z" });
+  await pause(gap);
+  send("stage", { stage: "understanding" });
+  await pause(gap);
+  send("stage", { stage: "searching", topic: "oldest bridges region", count: 412 });
+  send("tool", { name: "search", status: "started" });
+  await pause(gap);
+  send("tool", { name: "search", status: "done" });
+  send("stage", { stage: "reading", topic: "Bridge", source: "BBSK bridge register", filter: "yearBuilt<1950" });
+  send("tool", { name: "query_entities", status: "started" });
+  await pause(gap);
+  if (asked.includes("fail")) {
+    send("tool", { name: "query_entities", status: "failed" });
+    await pause(gap);
+    send("error", { status: 502, title: "Bad Gateway", detail: "The data source did not answer." });
+    return res.end();
+  }
+  send("tool", { name: "query_entities", status: "done" });
+  send("step", { source: "BBSK bridge register", type: "Bridge", q: "yearBuilt<1950", count: 1651, ms: 800, url: BRIDGE_PAGE });
+  await pause(gap);
+  send("stage", { stage: "checking", count: 6 });
+  await pause(gap);
+  send("stage", { stage: "checking", count: 6, verdict: "answers" });
+  await pause(gap);
+  send("stage", { stage: "answering", count: 2 });
+  if (asked.includes("hold")) await pause(60000);
+  await pause(gap);
+  send("answer", { text: "The oldest bridge in the register was built in 1820 [1]." });
+  send("citations", [{ n: 1, url: BRIDGE_PAGE, tool: "query_entities", title: "BBSK bridge register" }]);
+  send("done", { totalMs: 3000, stagesMs: { route: 500, answer: 900 } });
+  res.end();
+}
+
 // The visitor tokens the stand-in has issued (T-4653).
 let TOKENS = 0;
 
@@ -220,7 +261,7 @@ test.beforeAll(async () => {
       req.on("data", (chunk) => { body += chunk; });
       // The question asked now, not the history the request carries beside it.
       const asked = () => { try { return String(JSON.parse(body).message || ""); } catch { return body; } };
-      return req.on("end", () => (asked().includes("mostov") ? bridges(res) : asked().includes("podujatia") ? events(res)
+      return req.on("end", () => (asked().includes("oldest") ? steps(res, asked()) : asked().includes("mostov") ? bridges(res) : asked().includes("podujatia") ? events(res)
         : sse(res, asked().includes("mape") ? "map" : asked().includes("ovzdušia"))));
     }
     res.writeHead(404).end();
@@ -404,6 +445,62 @@ for (const [width, height] of [[1366, 768], [768, 1024], [390, 844], [320, 640]]
     await expect(frame.locator(".jc-langs button[aria-pressed=true]")).toHaveText("EN");
   });
 }
+
+/** Asks `question` on the English full page and returns the texts the live step line announced. */
+async function askLive(page, question) {
+  await page.goto(`${base}/d/bb?lang=en`);
+  await page.locator("#jc-question").fill(question);
+  await page.evaluate(() => {
+    window.said = [];
+    new MutationObserver(() => {
+      const now = document.querySelector(".jc-now");
+      if (now && window.said[window.said.length - 1] !== now.textContent) window.said.push(now.textContent);
+    }).observe(document.querySelector(".jc-log"), { subtree: true, childList: true, characterData: true });
+  });
+  await page.locator(".jc-form .jc-submit").click();
+}
+
+test("the pending answer shows each real step as it happens, then gives way to the answer (T-7753)", async ({ page }) => {
+  await askLive(page, "What are the oldest bridges in the region?");
+  // The bubble is there before the first event, its dots moving, the line a polite live region.
+  const bubble = page.locator(".jc-bot .jc-progress");
+  await expect(bubble).toBeVisible({ timeout: 200 });
+  expect(await bubble.locator(".jc-dots i").first().evaluate((i) => getComputedStyle(i).animationName)).toBe("jc-pulse");
+  await expect(bubble.locator(".jc-now")).toHaveAttribute("role", "status");
+  await expect(bubble.locator(".jc-elapsed")).toHaveAttribute("aria-hidden", "true");
+  // Each step ends ticked under the newest, a read with its count and time.
+  await expect(bubble.locator(".jc-now")).toHaveText("Writing the answer from 2 sources…");
+  await expect(bubble.locator(".jc-done li")).toHaveText(["Reading your question", "Searching 412 sources for „oldest bridges region“",
+    "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s", "Checked 6 passages: they answer the question"]);
+  await expect(page.locator(".jc-bot .jc-answer")).toContainText("built in 1820");
+  await expect(page.locator(".jc-progress")).toHaveCount(0);
+  // One announcement per step, none twice and never a second.
+  const said = await page.evaluate(() => window.said);
+  expect(said).toEqual(["Looking it up…", "Reading your question…", "Searching 412 sources for „oldest bridges region“…",
+    "Reading BBSK bridge register: Bridges, Year built < 1950…", "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s",
+    "Checking 6 passages…", "Checked 6 passages: they answer the question", "Writing the answer from 2 sources…"]);
+});
+
+test("a long wait counts the seconds, Stop ends it, and a failed read says which step failed (T-7753)", async ({ page }) => {
+  await askLive(page, "oldest hold gap50");
+  const bubble = page.locator(".jc-bot .jc-progress");
+  await expect(bubble.locator(".jc-elapsed")).toHaveText(/^\d+ s$/, { timeout: 5000 });
+  await page.locator(".jc-form .jc-stop").click();
+  await expect(page.locator(".jc-progress")).toHaveCount(0);
+  await expect(page.locator(".jc-bot .jc-status")).toHaveText("You stopped the answer.");
+  await askLive(page, "oldest fail gap50");
+  await expect(page.locator(".jc-bot.jc-error [role=alert]")).toBeVisible();
+  expect(await page.evaluate(() => window.said)).toContain("Reading BBSK bridge register: Bridges, Year built < 1950 (failed)");
+});
+
+test("reduced motion keeps the bubble and its steps still (T-7753)", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await askLive(page, "oldest hold gap50");
+  const dot = page.locator(".jc-bot .jc-progress .jc-dots i").first();
+  await expect(dot).toBeVisible();
+  expect(await dot.evaluate((i) => getComputedStyle(i).animationName)).toBe("none");
+  await page.locator(".jc-form .jc-stop").click();
+});
 
 test("the full page that names ?lang= does not ask", async ({ page }) => {
   await page.goto(`${base}/d/bb?lang=en`);

@@ -19,8 +19,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Sender;
 
 use super::agent::{
-    fits, name_sources, quoted, send, Ask, Citation, Connected, Event, Spent, Stage, Stages, Table,
-    Turn,
+    fits, name_sources, quoted, send, Ask, Citation, Connected, Detail, Event, Spent, Stage,
+    Stages, Table, Turn,
 };
 use super::model::{Call, CallError, Completion};
 use super::publishers::{catalogue_read, is_catalogue, Publisher};
@@ -3048,7 +3048,25 @@ fn day_reached(now: time::OffsetDateTime, zone: Option<super::clock::Zone>) -> S
 }
 
 fn stage(stage: &'static str, topic: Option<String>) -> Event {
-    Event::Stage { stage, topic }
+    staged(stage, topic, Detail::default())
+}
+
+/// A stage with what it does in the catalogue's words (T-7753).
+fn staged(stage: &'static str, topic: Option<String>, detail: Detail) -> Event {
+    Event::Stage {
+        stage,
+        topic,
+        detail,
+    }
+}
+
+/// A search's stage: its terms and how many sources it searches (T-7753).
+fn searching(ask: &Ask<'_>, query: &str) -> Event {
+    staged(
+        "searching",
+        Some(query.to_owned()),
+        Detail::counted(ask.sources.len()),
+    )
 }
 
 fn millis(took: Duration) -> u64 {
@@ -3062,7 +3080,7 @@ async fn searched(ask: &Ask<'_>, events: &Sender<Event>, query: &str) -> Option<
         endpoint: None,
         status,
     };
-    send(events, stage("searching", Some(query.to_owned()))).await;
+    send(events, searching(ask, query)).await;
     send(events, tool("started")).await;
     let hits = search(ask, query)
         .await
@@ -3145,13 +3163,13 @@ where
 }
 
 /// The steps of a search that already ran, as `searched` shows them while it runs.
-async fn search_steps(events: &Sender<Event>, query: &str, found: bool) {
+async fn search_steps(ask: &Ask<'_>, events: &Sender<Event>, query: &str, found: bool) {
     let tool = |status| Event::Tool {
         name: "search".into(),
         endpoint: None,
         status,
     };
-    send(events, stage("searching", Some(query.to_owned()))).await;
+    send(events, searching(ask, query)).await;
     send(events, tool("started")).await;
     send(events, tool(if found { "done" } else { "failed" })).await;
 }
@@ -3553,7 +3571,7 @@ async fn answer_routed(
         return spent;
     };
     let (best, rounds, searches) = if routing.catalogue {
-        send(events, stage("searching", Some(routing.queries.join(", ")))).await;
+        send(events, searching(ask, &routing.queries.join(", "))).await;
         let pages = catalogue_passages(ask, &routing.queries, &live).await;
         (pages, 1, routing.queries.len())
     } else {
@@ -3666,7 +3684,7 @@ struct Opening<'a> {
     early: Option<Routing>,
     direct: bool,
     wanted: Vec<(Read, &'a Connected)>,
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
     /// The first round, when it finished first.
     first: Option<First>,
     /// The first round, still searching or judging while `first` is `None`.
@@ -3720,6 +3738,15 @@ async fn opening<'a>(
                 }
                 _ => Vec::new(),
             };
+            for (w, connector) in &wanted {
+                let detail = Detail::read(connector, w.q.as_deref());
+                send(
+                    q.events,
+                    staged("reading", Some(w.kind.to_string()), detail),
+                )
+                .await;
+                send(q.events, read_tool(&w.endpoint, "started")).await;
+            }
             let read = read_all(q.ask, &wanted).await;
             (wanted, read)
         };
@@ -3756,7 +3783,7 @@ impl Opening<'_> {
             && self
                 .read
                 .iter()
-                .any(|r| r.as_ref().is_ok_and(|t| !t.rows.is_empty()))
+                .any(|(r, _)| r.as_ref().is_ok_and(|t| !t.rows.is_empty()))
     }
 
     /// The first round, waited for and counted, its step shown unless the message is direct.
@@ -3767,7 +3794,7 @@ impl Opening<'_> {
             None => (&mut self.search).await,
         };
         if !self.direct {
-            search_steps(q.events, q.question, first.0.is_some()).await;
+            search_steps(q.ask, q.events, q.question, first.0.is_some()).await;
         }
         first_counted(q.ask.deployment, spent, first, q.question, !self.direct)
     }
@@ -4041,8 +4068,24 @@ async fn narrowed<'a>(
 
 /// The reads, run at once: two of a slow Endpoint used to take their sum of the answer's time
 /// (T-4680).
-async fn read_all(ask: &Ask<'_>, wanted: &[(Read, &Connected)]) -> Vec<Result<Table, String>> {
-    futures_util::future::join_all(wanted.iter().map(|(w, c)| read(ask, c, w))).await
+async fn read_all(ask: &Ask<'_>, wanted: &[(Read, &Connected)]) -> Vec<Timed> {
+    futures_util::future::join_all(wanted.iter().map(|(w, c)| async move {
+        let at = Instant::now();
+        (read(ask, c, w).await, millis(at.elapsed()))
+    }))
+    .await
+}
+
+/// A read's table or why there is none, and how long it took in milliseconds (T-7753).
+type Timed = (Result<Table, String>, u64);
+
+/// A router read's `tool` event with `status`.
+fn read_tool(endpoint: &str, status: &'static str) -> Event {
+    Event::Tool {
+        name: "query_entities".into(),
+        endpoint: Some(endpoint.to_owned()),
+        status,
+    }
 }
 
 /// The router's tables, sent before an answer that streams; a data answer sends them itself, and
@@ -4060,12 +4103,12 @@ async fn tables_or_none(
     q: Question<'_, '_>,
     routing: &Routing,
     wanted: &[(Read, &Connected)],
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
 ) -> Option<Vec<Table>> {
     let none = match wanted {
         [(w, _)] if is_catalogue(&w.endpoint) && !routing.rag => read
             .iter()
-            .all(|r| r.as_ref().is_ok_and(|t| t.rows.is_empty()))
+            .all(|(r, _)| r.as_ref().is_ok_and(|t| t.rows.is_empty()))
             .then(|| w.kind.clone()),
         _ => None,
     };
@@ -4081,39 +4124,33 @@ async fn tables_or_none(
     None
 }
 
-/// The reads' steps, streamed in the router's order, and their tables in that order, so the tables
-/// are numbered the same way every time; a failed or empty read adds no table. The tables are sent
-/// later, a data answer's only when it cites them (T-4741). `None` once the client is gone.
+/// The reads' ends, streamed in the router's order, and their tables in that order, so the tables
+/// are numbered the same way every time; a failed or empty read adds no table. Each read's stage
+/// went out when it started (`opening`); its end carries the count and the time (T-7753). The
+/// tables are sent later, a data answer's only when it cites them (T-4741). `None` once the
+/// client is gone.
 async fn read_tables(
     ask: &Ask<'_>,
     wanted: &[(Read, &Connected)],
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
     events: &Sender<Event>,
 ) -> Option<Vec<Table>> {
     if events.is_closed() {
         return None;
     }
-    let tool = |endpoint: &str, status| Event::Tool {
-        name: "query_entities".into(),
-        endpoint: Some(endpoint.to_owned()),
-        status,
-    };
-    for (w, _) in wanted {
-        send(events, stage("reading", Some(w.kind.to_string()))).await;
-        send(events, tool(&w.endpoint, "started")).await;
-    }
     let mut tables: Vec<Table> = Vec::new();
-    for ((w, connector), result) in wanted.iter().zip(read) {
+    for ((w, connector), (result, ms)) in wanted.iter().zip(read) {
         match result {
             Ok(table) => {
-                send(events, tool(&w.endpoint, "done")).await;
-                let step = super::agent::Step::new(
+                send(events, read_tool(&w.endpoint, "done")).await;
+                let mut step = super::agent::Step::new(
                     connector,
                     Some(w.kind.clone()),
                     w.q.as_deref(),
                     table.total,
                     table.dataset.clone(),
                 );
+                step.ms = Some(ms);
                 send(events, Event::Step(step)).await;
                 if !table.rows.is_empty() {
                     tables.push(table);
@@ -4122,7 +4159,7 @@ async fn read_tables(
             Err(why) => {
                 let endpoint = &w.endpoint;
                 tracing::warn!(deployment = %ask.deployment, %endpoint, %why, "a data read failed");
-                send(events, tool(&w.endpoint, "failed")).await;
+                send(events, read_tool(&w.endpoint, "failed")).await;
             }
         }
     }
@@ -4212,6 +4249,12 @@ async fn search_rounds(
         if !within(q.ask, spent, &messages, ROUTER_TOKENS) {
             break;
         }
+        let passages = best(&found.hits, q.ask.websites).len();
+        send(
+            q.events,
+            staged("checking", None, Detail::counted(passages)),
+        )
+        .await;
         let at = Instant::now();
         let model = judge.model.unwrap_or(q.ask.model.name());
         let call = q.ask.trace.pending("judge", model, at, &messages);
@@ -4227,7 +4270,19 @@ async fn search_rounds(
                 count(spent, &reply);
                 spent.served(Stage::Judge, &reply);
                 let seen: HashSet<String> = found.asked.iter().map(|q| q.to_lowercase()).collect();
-                match verdict(&reply.text, &seen) {
+                let judged = verdict(&reply.text, &seen);
+                let said = match &judged {
+                    Verdict::More(_) => "more",
+                    Verdict::Answers => "answers",
+                    Verdict::Stop => "stop",
+                };
+                let detail = Detail {
+                    count: u64::try_from(passages).ok(),
+                    verdict: Some(said),
+                    ..Detail::default()
+                };
+                send(q.events, staged("checking", None, detail)).await;
+                match judged {
                     Verdict::More(next) => pending = next,
                     Verdict::Answers | Verdict::Stop => break,
                 }
@@ -4421,7 +4476,11 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
         started,
         missing,
     } = answering;
-    send(events, stage("answering", None)).await;
+    send(
+        events,
+        staged("answering", None, Detail::counted(citations.len())),
+    )
+    .await;
     let call = Call {
         model: ask.answer_model,
         max_tokens: ask.output_tokens,
