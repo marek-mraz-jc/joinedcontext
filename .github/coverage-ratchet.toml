@@ -10,4 +10,10 @@
 "daiya-server" = { lines = 99.07, functions = 100.00 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 97.70, functions = 92.30 }
+"ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
+"ngsild-jsonld" = { lines = 99.05, functions = 99.33 }
+"ngsild-matcher" = { lines = 100.00, functions = 100.00 }
+"ngsild-model" = { lines = 99.87, functions = 100.00 }
+"ngsild-ql" = { lines = 99.69, functions = 99.33 }
+"ngsild-residual" = { lines = 99.92, functions = 100.00 }
