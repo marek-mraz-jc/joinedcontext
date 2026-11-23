@@ -15,6 +15,7 @@ pub mod clock;
 pub mod context;
 pub mod data;
 pub mod documents;
+pub mod map_source;
 pub mod mcp;
 pub mod model;
 pub mod publishers;
@@ -116,6 +117,8 @@ pub struct ChatState {
     pub contexts: std::sync::Mutex<context::Held>,
     /// Visitors' answers held for a resume after a page change (T-4685).
     pub turns: resume::Turns,
+    /// Visitors' map sources (T-7755).
+    pub map_sources: map_source::Sources,
 }
 
 /// The most keys [`Limits`] counts at once (T-3314).
@@ -425,6 +428,10 @@ pub fn router(state: Arc<ChatState>) -> Router {
         .route(
             "/api/v1/d/{public_id}/turns/{turn}/resume",
             get(resume).options(preflight),
+        )
+        .route(
+            "/api/v1/d/{public_id}/map/{id}",
+            get(map_page).options(preflight),
         )
         .route(
             "/api/v1/d/{public_id}/feedback",
@@ -1597,6 +1604,113 @@ async fn replay(
     response
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MapPage {
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+/// `GET /api/v1/d/{publicId}/map/{id}?cursor=` (T-7755): the next page of a visitor's map
+/// source as a GeoJSON FeatureCollection, `next` the cursor of the page after it and `capped`
+/// on the last page a source may read. Each page is read as anyone from the public Endpoint,
+/// so its Policy holds on every page.
+async fn map_page(
+    State(state): State<Arc<ChatState>>,
+    Path((public_id, id)): Path<(String, String)>,
+    query: Result<Query<MapPage>, QueryRejection>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, origin) = match placed(&state, &public_id, &headers) {
+        Ok(placed) => placed,
+        Err(refused) => return *refused,
+    };
+    let response = match query {
+        Ok(Query(MapPage { cursor })) if cursor.as_deref().is_none_or(map_source::cursor_ok) => {
+            map_features(&state, &public_id, &id, cursor.as_deref(), &headers).await
+        }
+        _ => problem(
+            400,
+            "cursor: the previous page's next, passed back as given",
+        ),
+    };
+    with_cors(response, origin)
+}
+
+async fn map_features(
+    state: &ChatState,
+    public_id: &str,
+    id: &str,
+    cursor: Option<&str>,
+    headers: &HeaderMap,
+) -> Response {
+    let token = headers
+        .get(VISITOR_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let mut limits = state.limits.lock().await;
+    if limits
+        .signer
+        .visitor(public_id, token, unix_now())
+        .is_none()
+    {
+        return problem(
+            401,
+            "Overenie prehliadača vypršalo. Obnovte stránku a skúste to znova.",
+        );
+    }
+    let visitor = limits.visitor(&client_of(headers), today());
+    let key = format!("{public_id}\u{0}{visitor}\u{0}map");
+    let admitted = limits.admit(
+        &[(&key, map_source::PAGES_PER_MINUTE, MINUTE)],
+        Instant::now(),
+    );
+    drop(limits);
+    if let Err(retry) = admitted {
+        return too_many(
+            retry,
+            "Z tejto siete prišlo veľa žiadostí o mapu za krátky čas. Počkajte chvíľu a skúste to znova.",
+        );
+    }
+    let (read, last) = match state
+        .map_sources
+        .page(public_id, &visitor, id, Instant::now())
+    {
+        map_source::Found::Page(read, last) => (read, last),
+        map_source::Found::Spent => {
+            return problem(409, "Every page of this map was read already; ask again.")
+        }
+        map_source::Found::Missing => {
+            return problem(404, "This map can no longer be loaded; ask again.")
+        }
+    };
+    let surface = mcp::Surface {
+        gateway: state.gateway.clone(),
+        slug: read.slug.clone(),
+        timeout: read.timeout,
+        token: None,
+    };
+    let answered = surface
+        .call(&state.http, "query_entities", read.arguments(cursor))
+        .await;
+    let page = answered.ok().and_then(|text| read.page(&text));
+    let Some((features, next)) = page else {
+        tracing::info!(public_id, "a map page could not be read");
+        return problem(502, "The map's data could not be read just now; try again.");
+    };
+    let mut body = json!({"type": "FeatureCollection", "features": features});
+    match next {
+        Some(_) if last => body["capped"] = json!(true),
+        Some(next) => body["next"] = json!(next),
+        None => {}
+    }
+    let mut response = Json(body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 async fn feedback(
     State(state): State<Arc<ChatState>>,
     Path(public_id): Path<String>,
@@ -2174,7 +2288,17 @@ async fn ask(
         };
         let forwarding = async {
             let mut seen = transcript::Seen::default();
-            while let Some(event) = passing.recv().await {
+            while let Some(mut event) = passing.recv().await {
+                // A visitor's map of part of a read gets its source here, bound to this
+                // deployment and address (T-7755).
+                if let (Event::Data(table), true) = (&mut event, held.is_some()) {
+                    if let Some(read) = table.map_read.take() {
+                        table.map_source = state
+                            .map_sources
+                            .hold(&deployment.spec.public_id, &client_hash, read, Instant::now())
+                            .map(|id| format!("/api/v1/d/{}/map/{id}", deployment.spec.public_id));
+                    }
+                }
                 seen.see(&event);
                 trace.visual(&event);
                 if let Some(turn) = &held {

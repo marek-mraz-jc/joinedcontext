@@ -514,6 +514,69 @@ var JCRender = (function () {
     });
   }
 
+  // A map of every matching entity (T-7755): the most pages a map source is read for, and what a
+  // map stopped at its cap says under itself.
+  var MAP_PAGES = 40;
+  var MAP_CAP = {
+    sk: "Na mape je prvých {n}; ostatné sú v datasete.",
+    cs: "Na mapě je prvních {n}; ostatní jsou v datové sadě.",
+    en: "The map draws the first {n}; the dataset has the rest.",
+    de: "Die Karte zeigt die ersten {n}; der Datensatz hat den Rest."
+  };
+
+  /** The answer's map source (T-7755) when it is one this service names, else null. */
+  function mapSource(path) {
+    return typeof path === "string" && /^\/api\/v1\/d\/[A-Za-z0-9_-]{1,64}\/map\/[0-9a-f]{32}$/.test(path) ? path : null;
+  }
+
+  /**
+   * Every located entity of a map source (T-7755): `page(cursor)` resolves a page's body, or null
+   * when it failed; pages follow `next` until none, `capped` or MAP_PAGES. The spec comes back
+   * with the loaded features in place of the drawn rows (unchanged when no more came), with how
+   * many it draws and whether the source stopped at its cap.
+   */
+  async function loadMap(spec, page) {
+    var features = [];
+    var cursor = null;
+    var capped = false;
+    var complete = false;
+    for (var n = 0; n < MAP_PAGES; n++) {
+      var body = await Promise.resolve().then(function () { return page(cursor); }).catch(function () { return null; });
+      if (!body || !Array.isArray(body.features)) break;
+      Array.prototype.push.apply(features, body.features);
+      capped = body.capped === true;
+      cursor = typeof body.next === "string" && body.next ? body.next : null;
+      if (!cursor) {
+        complete = !capped;
+        break;
+      }
+    }
+    var had = spec && spec.data && Array.isArray(spec.data.features) ? spec.data.features.length : 0;
+    if (features.length <= had) return { spec: spec, drawn: had, capped: false };
+    var out = Object.assign({}, spec, { data: { type: "FeatureCollection", features: features } });
+    if (spec.count && typeof spec.count.total === "number") {
+      var total = Math.max(spec.count.total, features.length);
+      out.count = complete ? { total: total, unlocated: total - features.length } : { total: total };
+    }
+    return { spec: out, drawn: features.length, capped: capped };
+  }
+
+  /** The caption over a loaded map (T-7755): "Bridges — 1,651 of 1,651". "" without a type. */
+  function drawnCaption(data, drawn, lang) {
+    lang = YES_NO[lang] ? lang : "en";
+    var named = data && typeof data.type === "string" && data.type ? word(TYPES, data.type, lang) : "";
+    if (!named) return "";
+    var numbers = new Intl.NumberFormat(lang);
+    var total = typeof data.total === "number" ? Math.max(data.total, drawn) : drawn;
+    return named + " — " + numbers.format(drawn) + " " + OF[lang] + " " + numbers.format(total);
+  }
+
+  /** What a map stopped at its cap says under itself (T-7755). */
+  function mapCap(drawn, lang) {
+    lang = MAP_CAP[lang] ? lang : "en";
+    return MAP_CAP[lang].replace("{n}", new Intl.NumberFormat(lang).format(drawn));
+  }
+
   /** Whether a data card opens on its map (T-4657): every row of the table has a place. */
   function mapFirst(data) {
     var features = data && data.map && data.map.data && data.map.data.features;
@@ -1477,7 +1540,8 @@ var JCRender = (function () {
     markdown: markdown, streamable: streamable, sources: sources, label: label, unlisted: unlisted, linkHost: linkHost,
     safeUrl: safeUrl, events: events, language: language, table: table, chart: chart, greeting: greeting, title: title,
     suggestions: suggestions, trouble: trouble, retryable: retryable, said: said, retry: retry,
-    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, chartNote: chartNote, mapFirst: mapFirst
+    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, chartNote: chartNote, mapFirst: mapFirst,
+    mapSource: mapSource, loadMap: loadMap, drawnCaption: drawnCaption, mapCap: mapCap
   };
 })();
 if (typeof module !== "undefined") module.exports = JCRender;
