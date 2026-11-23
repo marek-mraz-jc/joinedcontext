@@ -241,6 +241,8 @@ const RNG_COOKED: [i64; RNG_LEN] = [
 mod tests {
     use super::GoRand;
 
+    const PIN: i64 = 7_599_798_598_707_964_735;
+
     #[test]
     fn seed_one_gives_gos_sequence() {
         // `bento blobl 'root = random_int(seed: 1)'` on three messages (Bento 1.22.0).
@@ -263,10 +265,31 @@ mod tests {
         let mut neg = GoRand::new(-1);
         let mut pos = GoRand::new(2_147_483_646);
         assert_eq!(neg.int63(), pos.int63());
-        // A bound just past 2^62 rejects about a quarter of the draws.
+        // A bound just past 2^62 rejects about a quarter of the draws: Go's Int63n read from the
+        // raw stream (max = 2^63 - 1 - 2^63 % n, redraw above it, then v % n).
         let n = (1i64 << 62) + 1;
-        let mut r = GoRand::new(7);
-        assert!((0..64).all(|_| (0..n).contains(&r.int63n(n))));
-        assert!((0..64).all(|_| r.int63n(8) < 8));
+        let max = i64::MAX - (1i64 << 62) + 1;
+        let (mut r, mut raw) = (GoRand::new(1), GoRand::new(1));
+        let mut rejected = 0;
+        for _ in 0..64 {
+            let mut v = raw.int63();
+            while v > max {
+                rejected += 1;
+                v = raw.int63();
+            }
+            assert_eq!(r.int63n(n), v % n);
+        }
+        assert!(rejected > 0, "the bound rejects some draws");
+        assert!((0..64).all(|_| r.int63n(8) == raw.int63() & 7));
+    }
+
+    #[test]
+    fn the_seed_table_is_gos_rng_cooked() {
+        // A fold over Go's rngCooked (src/math/rand/rngcooked.go) as copied: a changed entry moves
+        // the draws past the first few, which the seed tests above do not reach.
+        let fold = super::RNG_COOKED
+            .iter()
+            .fold(0i64, |acc, v| acc.wrapping_mul(31).wrapping_add(*v));
+        assert_eq!(fold, PIN);
     }
 }
