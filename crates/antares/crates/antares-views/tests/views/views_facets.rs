@@ -200,6 +200,9 @@ async fn an_attr_not_listed_unknown_or_hidden_is_one_400() -> Result<(), String>
     // the other facet still answers for that caller
     let a = get(&hidden, &format!("{FACETS}?attr=address.addressLocality")).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    // a q the query refuses is the query's 400, never an empty count
+    let a = get(&app, &format!("{FACETS}?attr=category&q=%28%28")).await;
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text);
     Ok(())
 }
 
@@ -270,6 +273,41 @@ async fn an_empty_tenant_has_no_values_and_a_wide_selection_is_413() -> Result<(
     let a = get(&app, "/x/views/quiet/facets?attr=category").await;
     assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", a.text);
     assert!(a.text.contains("narrow it with q or type"), "{}", a.text);
+    Ok(())
+}
+
+/// The read asks only for Entities carrying the attribute, so Entities without it never
+/// count against the scan's ceiling.
+#[tokio::test]
+async fn entities_without_the_attribute_do_not_fill_the_scan() -> Result<(), String> {
+    let (_broker, app) = fixture(None).await?;
+    put_view(
+        &app,
+        &json!({"id": "sparse", "tenant": "sparse", "selector": ["Event"],
+            "operations": ["query_entities"],
+            "rules": [{"types": ["Event"], "attributes": ["category", "name"]}],
+            "representations": {"facets": ["category"]}}),
+    )
+    .await?;
+    let mut many: Vec<Value> = (0..=antares_ops::RESIDUAL_SCAN)
+        .map(|n| json!({"id": format!("urn:ngsi-ld:Event:n{n}"), "type": "Event", "name": prop(&json!("x"))}))
+        .collect();
+    many.push(json!({"id": "urn:ngsi-ld:Event:rare", "type": "Event", "category": prop(&json!("rare"))}));
+    for chunk in many.chunks(1000) {
+        let a = send(
+            &app,
+            Method::POST,
+            "/ngsi-ld/v1/entityOperations/create",
+            &[("NGSILD-Tenant", "sparse")],
+            Some(&Value::Array(chunk.to_vec())),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    }
+    let a = get(&app, "/x/views/sparse/facets?attr=category").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    let body: Value = serde_json::from_str(&a.text).map_err(|e| e.to_string())?;
+    assert_eq!(counts(&body), pairs(&[("rare", 1)]));
     Ok(())
 }
 
