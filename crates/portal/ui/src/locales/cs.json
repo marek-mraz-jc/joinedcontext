@@ -719,6 +719,7 @@
       "proposeAll": "Navrhnout vše",
       "open": "Otevřít",
       "noDrafts": "Zatím nejsou doplněny žádné návrhy.",
+      "unreadable": "Služba odpověděla něčím, co není doplnění prostoru. Zkuste to znovu; pokud se to opakuje, řekněte to správci.",
       "needInput": "Zadejte URL endpointu nebo přidejte soubor.",
       "filesHint": "Ukázka dat jako CSV, Excel (.xlsx), JSON nebo GeoJSON, s manifesty, README nebo .env, které popisují zdroj; dohromady do 10 MB. Příklad: stanice.xlsx.",
       "review": {

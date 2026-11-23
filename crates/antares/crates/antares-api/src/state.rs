@@ -1008,6 +1008,19 @@ impl AppState {
             .map_err(|e| e.to_string())
     }
 
+    /// The revision of the stored view documents, `None` when the store
+    /// keeps none (S5-26): an unchanged one means nothing to list.
+    ///
+    /// # Errors
+    /// The store's.
+    #[cfg(feature = "views")]
+    pub async fn view_revision(&self) -> Result<Option<u64>, String> {
+        self.store
+            .doc_revision(&view_tenant()?, antares_store::Kind::View)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     /// The stored view document `id`, if there is one.
     ///
     /// # Errors
@@ -1253,8 +1266,44 @@ impl AppState {
 
     #[cfg(feature = "views")]
     pub async fn policy_docs(&self) -> Result<Vec<serde_json::Value>, String> {
+        // one document per Tenant, stored under the Tenant's name
+        // (`put_policy_doc`): pages keyed by it, never refused for their number
+        const PAGE: usize = 1_000;
+        let tenant = policy_tenant()?;
+        let mut docs: Vec<serde_json::Value> = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page = self
+                .store
+                .list_page(&tenant, antares_store::Kind::View, after.as_deref(), PAGE)
+                .await
+                .map_err(|e| e.to_string())?;
+            let short = page.len() < PAGE;
+            let next = page
+                .last()
+                .and_then(|d| d.get("tenant"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            docs.extend(page);
+            if short {
+                return Ok(docs);
+            }
+            if next.is_none() || next <= after {
+                return Err("a stored policy document names no Tenant; the list stops".into());
+            }
+            after = next;
+        }
+    }
+
+    /// The revision of the stored policy rule documents, `None` when the
+    /// store keeps none (S5-26).
+    ///
+    /// # Errors
+    /// The store's.
+    #[cfg(feature = "views")]
+    pub async fn policy_revision(&self) -> Result<Option<u64>, String> {
         self.store
-            .list(&policy_tenant()?, antares_store::Kind::View)
+            .doc_revision(&policy_tenant()?, antares_store::Kind::View)
             .await
             .map_err(|e| e.to_string())
     }

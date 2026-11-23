@@ -47,6 +47,7 @@ A new driver method without a Tenant turns the invariant red until it is classif
 | Route | Handler | Where the Tenant comes from |
 |---|---|---|
 | `GET /q/dead-letters` | `dead_letters_list` | admin secret; `?tenant=` through `admin_tenant` (`TenantId::new`, reserved names refused) |
+| `GET /q/dead-letters/{}` | `dead_letter_get` | the same |
 | `DELETE /q/dead-letters/{}` | `dead_letter_delete` | the same |
 | `POST /q/dead-letters/{}/replay` | `dead_letter_replay` | the same |
 | `GET /q/tenants/{}` | `tenant_get` | admin secret; the path segment, `TenantId::new` |

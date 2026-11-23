@@ -509,6 +509,18 @@ fn picked_values_are_formatted_as_grafanas_prometheus_formats_them() {
     );
     let single = variable(json!({ "name": "job", "type": "custom" }));
     assert_eq!(format_picked(Some(&single), &["a.b".to_owned()]), "a.b");
+    // Multi-value alone, or All alone, already makes one picked value a regex.
+    for flags in [json!({ "multi": true }), json!({ "includeAll": true })] {
+        let mut v = json!({ "name": "job", "type": "custom" });
+        v.as_object_mut()
+            .unwrap()
+            .extend(flags.as_object().unwrap().clone());
+        assert_eq!(
+            format_picked(Some(&variable(v)), &["a.b".to_owned()]),
+            r"a\.b",
+            "{flags}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -125,13 +125,13 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
   };
 
   // Another sheet is another table: its columns are ranked again and its type chosen afresh.
-  const takeSheet = (name: string) => {
-    const sheet = read?.sheets.find((s) => s.name === name);
-    if (!read || !sheet) return;
-    const taken = sheetRead(read, sheet, undefined);
+  // The choice offers only `current`'s sheet names, so the name always finds its sheet.
+  const takeSheet = (current: Read, name: string) => {
+    const sheet = current.sheets.find((s) => s.name === name) ?? current.sheets[0];
+    const taken = sheetRead(current, sheet, undefined);
     setRead(taken);
     setChoice(taken.matches[0]?.model.id ?? "");
-    if (ownType === (typeNameOf(tableNameOf(read.name, read.sheet)) ?? "")) setOwnType(typeNameOf(tableNameOf(read.name, name)) ?? "");
+    if (ownType === (typeNameOf(tableNameOf(current.name, current.sheet)) ?? "")) setOwnType(typeNameOf(tableNameOf(current.name, name)) ?? "");
   };
 
   const match = read?.matches.find((m) => m.model.id === choice);
@@ -143,25 +143,24 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
   // beside the columns before Propose (T-6567). A draft for another input is not shown.
   const [draft, setDraft] = useState<{ key: string; source: string } | null>(null);
   const draftKey = read && ready && !proposed ? [read.fileName, read.sheet, match?.model.id ?? "", typeName, space.trim()].join("\n") : "";
-  const drawDraft = useEffectEvent(async (key: string) => {
-    if (!read) return;
+  const drawDraft = useEffectEvent(async (key: string, current: Read) => {
     const linkml = match ? await sdmLinkml(match.model.id) : undefined;
     const answer = await callOperation(project, "jc_space_complete", {
-      ...uploadInput({ space: space.trim(), fileName: read.fileName, sample: read.sample, typeName, linkml }),
+      ...uploadInput({ space: space.trim(), fileName: current.fileName, sample: current.sample, typeName, linkml }),
       propose: false,
     });
     const source = linkml ?? (answer.ok ? draftedSource(answer.output as Completed) : undefined);
     if (source !== undefined) setDraft({ key, source });
   });
   useEffect(() => {
-    if (draftKey === "") return;
+    if (draftKey === "" || read === null) return;
     // A pause in typing, not every key, asks for a draft.
-    const timer = window.setTimeout(() => void drawDraft(draftKey).catch(() => undefined), 400);
+    const timer = window.setTimeout(() => void drawDraft(draftKey, read).catch(() => undefined), 400);
     return () => window.clearTimeout(timer);
-  }, [draftKey]);
+  }, [draftKey, read]);
 
-  const propose = async () => {
-    if (!read || !ready) return;
+  // Only an enabled Propose calls it: the button is disabled until `ready`, which needs a read file.
+  const propose = async (current: Read) => {
     setBusy(true);
     setProblem(null);
     try {
@@ -169,7 +168,7 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
       const answer = await callOperation(
         project,
         "jc_space_complete",
-        uploadInput({ space: space.trim(), fileName: read.fileName, sample: read.sample, typeName, linkml }),
+        uploadInput({ space: space.trim(), fileName: current.fileName, sample: current.sample, typeName, linkml }),
       );
       if (!answer.ok) {
         setProblem(answer.reason ?? `HTTP ${answer.status}`);
@@ -225,7 +224,7 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
           </p>
         ) : null}
         {read ? <p className="text-caption text-fg-muted">{t("spaces.upload.columns", { names: read.table.columns.join(", ") })}</p> : null}
-        {read && !proposed ? <SheetChoice id="upload-sheet" sheets={read.sheets} value={read.sheet} onChange={takeSheet} /> : null}
+        {read && !proposed ? <SheetChoice id="upload-sheet" sheets={read.sheets} value={read.sheet} onChange={(name) => takeSheet(read, name)} /> : null}
         {read?.table.total !== undefined ? <Alert tone="warning">{t("spaces.import.cut", { total: read.table.total, max: MAX_ROWS })}</Alert> : null}
       </Card>
       {read && !proposed ? (
@@ -260,7 +259,7 @@ export function UploadCsv({ project, space: given = "" }: { project: string; spa
           <Field id="upload-space" label={t("spaces.upload.space")} help={t("spaces.upload.spaceHint")}>
             <ResourceNamePicker id="upload-space" label={t("spaces.upload.space")} labelled from={{ project, plural: "spaces" }} value={space} onChange={setSpace} create />
           </Field>
-          <Button className="w-fit" variant="primary" onClick={() => void propose()} disabled={!ready || busy} disabledReason={missing ?? t("spaces.upload.notReady")}>
+          <Button className="w-fit" variant="primary" onClick={read ? () => void propose(read) : undefined} disabled={!ready || busy} disabledReason={missing ?? t("spaces.upload.notReady")}>
             {busy ? t("spaces.upload.proposing") : t("spaces.upload.propose")}
           </Button>
           {/* What still keeps Propose out of reach, on screen and not only for a screen reader. */}

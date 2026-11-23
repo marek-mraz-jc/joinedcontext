@@ -719,6 +719,7 @@
       "proposeAll": "Alles vorschlagen",
       "open": "Öffnen",
       "noDrafts": "Noch keine Entwürfe vervollständigt.",
+      "unreadable": "Der Dienst hat etwas geantwortet, das keine Vervollständigung ist. Versuchen Sie es erneut; wiederholt es sich, wenden Sie sich an Ihre Administration.",
       "needInput": "Geben Sie eine Endpunkt-URL ein oder fügen Sie eine Datei hinzu.",
       "filesHint": "Eine Probe der Daten als CSV, Excel (.xlsx), JSON oder GeoJSON, mit Manifesten, README oder .env, die die Quelle beschreiben; zusammen bis 10 MB. Beispiel: stationen.xlsx.",
       "review": {

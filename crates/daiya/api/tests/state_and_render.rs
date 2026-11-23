@@ -23,10 +23,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// From, to, interval and variables of one query context.
+type SeenQuery = (i64, i64, u64, BTreeMap<String, String>);
+
 /// A driver answering every query with a time, a name and a value column (rows `b`, `a`, null).
 #[derive(Default)]
 struct Fixed {
     calls: AtomicUsize,
+    /// Range, interval and variables of each query context the driver saw.
+    seen: std::sync::Mutex<Vec<SeenQuery>>,
 }
 
 impl Datasource for Fixed {
@@ -35,10 +40,16 @@ impl Datasource for Fixed {
     }
     fn query<'a>(
         &'a self,
-        _ctx: &'a QueryCtx,
+        ctx: &'a QueryCtx,
         q: &'a [Query],
     ) -> DsFuture<'a, Result<Vec<FrameSet>, DsError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push((
+            ctx.from_ms,
+            ctx.to_ms,
+            ctx.interval_ms,
+            ctx.variables.clone(),
+        ));
         Box::pin(async move {
             Ok(q.iter()
                 .map(|q| {
@@ -57,11 +68,15 @@ impl Datasource for Fixed {
                                     "name",
                                     vec![Some("b<".into()), Some("a".into()), None],
                                 ),
-                                FieldColumn::numbers(
-                                    "value",
-                                    BTreeMap::new(),
-                                    vec![Some(2.0 * k), Some(k), None],
-                                ),
+                                FieldColumn {
+                                    // Shown as `Amount`: a sort may name either.
+                                    display_name: Some("Amount".into()),
+                                    ..FieldColumn::numbers(
+                                        "value",
+                                        BTreeMap::new(),
+                                        vec![Some(2.0 * k), Some(k), None],
+                                    )
+                                },
                             ],
                             ..Frame::default()
                         }],
@@ -322,6 +337,102 @@ async fn registered_drivers_come_first_and_built_ones_are_cached_per_revision() 
         .register_datasource_driver(ORG, "prom", fixed.clone());
     let c = w.state.driver_for_record(&record).await.unwrap();
     assert_eq!(c.kind(), "fixed");
+}
+
+/// Built drivers are bounded per process (S9-33): ten times the Organizations hold no more
+/// drivers or bytes, and a deleted datasource gives its driver back at once.
+#[tokio::test]
+async fn built_drivers_stay_bounded_across_ten_times_the_organizations() {
+    use daiya_api::state::BUILT_DRIVERS_KEPT;
+    let w = world();
+    let (url, _) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let record = w
+        .store
+        .inner
+        .get_datasource(ORG, "prom")
+        .await
+        .unwrap()
+        .unwrap();
+    w.state.driver_for_record(&record).await.unwrap();
+    assert_eq!(w.state.built_drivers.len(), 1);
+    w.ok("DELETE", "/api/datasources/uid/prom", None).await;
+    assert!(
+        w.state.built_drivers.is_empty(),
+        "the deleted source's driver goes"
+    );
+
+    let mut held = Vec::new();
+    for orgs in [BUILT_DRIVERS_KEPT, 10 * BUILT_DRIVERS_KEPT] {
+        for n in 0..orgs {
+            let mut other = record.clone();
+            other.org_id = OrgId::from_u128(10_000 + n as u128);
+            w.state.driver_for_record(&other).await.unwrap();
+        }
+        held.push((w.state.built_drivers.len(), w.state.built_drivers.bytes()));
+    }
+    assert!(held[0].0 <= BUILT_DRIVERS_KEPT, "{held:?}");
+    assert_eq!(held[0], held[1], "flat across 10x Organizations");
+}
+
+/// A dashboard page loads and authorises its dashboard once, not once per panel (S9-34).
+#[tokio::test]
+async fn a_twenty_panel_page_authorises_its_dashboard_once() {
+    struct Counting {
+        inner: daiya_model::PolicyAuthorizer,
+        dashboard_reads: AtomicUsize,
+    }
+    impl daiya_model::Authorizer for Counting {
+        fn check(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            action: daiya_model::Action,
+            object: &daiya_model::ObjectTarget,
+        ) -> daiya_model::Decision {
+            if matches!(object, daiya_model::ObjectTarget::Dashboard { .. }) {
+                self.dashboard_reads.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner.check(ctx, action, object)
+        }
+        fn read_scope(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            kind: daiya_model::ReadKind,
+        ) -> daiya_model::ReadScope {
+            self.inner.read_scope(ctx, kind)
+        }
+    }
+    let authz = Arc::new(Counting {
+        inner: daiya_model::PolicyAuthorizer::new(common::bindings()),
+        dashboard_reads: AtomicUsize::new(0),
+    });
+    let w = common::world_with(authz.clone(), common::loopback());
+    let panels: Vec<Value> = (1..=20)
+        .map(|id| {
+            json!({
+                "id": id, "type": "text", "title": format!("Note {id}"),
+                "gridPos": { "x": 0, "y": id, "w": 12, "h": 2 },
+                "options": { "mode": "markdown", "content": format!("panel {id}") }
+            })
+        })
+        .collect();
+    let mut board = dashboard("many", "prom");
+    board["panels"] = Value::Array(panels);
+    w.add_dashboard(board, None).await;
+    authz.dashboard_reads.store(0, Ordering::SeqCst);
+
+    let (st, page) = w.call("GET", "/d/many", Some("viewer"), None).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    let page = page.as_str().unwrap();
+    assert_eq!(page.matches("<section>").count(), 20);
+    let order: Vec<usize> = (1..=20)
+        .map(|id| page.find(&format!("<h2>Note {id}</h2>")).unwrap())
+        .collect();
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "panels in dashboard order"
+    );
+    assert_eq!(authz.dashboard_reads.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -631,6 +742,150 @@ async fn panel_view_runs_targets_expressions_transformations_and_sort() {
     assert_eq!(err.status_code(), 404);
 }
 
+#[tokio::test]
+async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_transformations() {
+    let (w, fixed) = fixed_world().await;
+    let admin = Subject::authenticated("admin", vec![ORG], vec![]);
+    // Saved values: `$__all` reads as its allValue, a current value as itself, an unset
+    // variable as its allValue.
+    panel_view(&w.state, &admin, ORG, "fx", 1, PanelTimeRange::default())
+        .await
+        .unwrap();
+    let vars = fixed.seen.lock().unwrap().last().unwrap().3.clone();
+    assert_eq!(
+        vars,
+        BTreeMap::from([
+            ("all".to_owned(), ".*".to_owned()),
+            ("one".to_owned(), "x".to_owned()),
+            ("unset".to_owned(), "*".to_owned()),
+        ])
+    );
+    // A wide range: never finer than 11 000 points, so 100 s over 1.1e9 ms.
+    let wide = PanelTimeRange {
+        from: Some("1700000000000".into()),
+        to: Some("1701100000000".into()),
+        ..PanelTimeRange::default()
+    };
+    panel_view(&w.state, &admin, ORG, "fx", 1, wide)
+        .await
+        .unwrap();
+    let (from, to, interval, _) = fixed.seen.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (from, to, interval),
+        (1_700_000_000_000, 1_701_100_000_000, 100_000)
+    );
+
+    // No range anywhere: the last six hours. A panel's transformations shape its frames.
+    let (w, fixed) = fixed_world().await;
+    let mut board = fixed_board();
+    board["uid"] = json!("fx-now");
+    board.as_object_mut().unwrap().remove("time");
+    board["panels"][0]["transformations"] =
+        json!([{ "id": "organize", "options": { "excludeByName": { "name": true } } }]);
+    // Panel 5 sorts by the name the field is shown as, not its own name.
+    board["panels"][4]["options"] =
+        json!({ "sortBy": [{ "displayName": "Amount", "desc": false }] });
+    w.add_dashboard(board, None).await;
+    let view = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx-now",
+        1,
+        PanelTimeRange {
+            from: None,
+            to: None,
+            ..PanelTimeRange::default()
+        },
+    )
+    .await
+    .unwrap();
+    let (from, to, _, _) = fixed.seen.lock().unwrap().last().unwrap().clone();
+    assert!((to - from - 6 * 3_600_000).abs() < 1_000, "{from}..{to}");
+    let names: Vec<&str> = view.frame_sets[0].frames[0]
+        .fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "value"]);
+    let renamed = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx-now",
+        5,
+        PanelTimeRange::default(),
+    )
+    .await
+    .unwrap();
+    let amount = &renamed.frame_sets[0].frames[0].fields[2];
+    assert_eq!(
+        (amount.name.as_str(), amount.effective_name()),
+        ("value", "Amount")
+    );
+    assert_eq!(
+        amount.values[0],
+        Value::Null,
+        "nulls sort first: {:?}",
+        amount.values
+    );
+}
+
+/// Allows members everything except reading the routing uids `-- Mixed --` and `__expr__`,
+/// which are no datasources: a panel naming them is never refused for them.
+struct DenyRoutingUids;
+
+impl daiya_model::Authorizer for DenyRoutingUids {
+    fn check(
+        &self,
+        ctx: &daiya_model::RequestCtx,
+        _action: daiya_model::Action,
+        object: &daiya_model::ObjectTarget,
+    ) -> daiya_model::Decision {
+        match object {
+            daiya_model::ObjectTarget::Datasource { datasource_uid, .. }
+                if datasource_uid == "-- Mixed --" || datasource_uid == "__expr__" =>
+            {
+                daiya_model::Decision::deny_hidden("a routing uid")
+            }
+            _ if ctx.subject.is_member_of(object.org_id()) => {
+                daiya_model::Decision::allow("member")
+            }
+            _ => daiya_model::Decision::deny_hidden("outside"),
+        }
+    }
+
+    fn read_scope(
+        &self,
+        _ctx: &daiya_model::RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        daiya_model::ReadScope::All
+    }
+}
+
+#[tokio::test]
+async fn expression_and_mixed_targets_are_not_checked_as_datasources() {
+    let w = common::world_with(Arc::new(DenyRoutingUids), common::loopback());
+    w.state
+        .register_datasource_driver(ORG, "fixed", Arc::new(Fixed::default()));
+    let mut board = fixed_board();
+    // Panel 1: a mixed panel whose target names its source; panel 2: an expression target.
+    board["panels"][0]["datasource"] = json!({ "uid": "-- Mixed --" });
+    board["panels"][0]["targets"] = json!([{ "refId": "A", "datasource": { "uid": "fixed" } },
+        { "refId": "B", "datasource": { "uid": "-- Mixed --" }, "hide": true }]);
+    w.add_dashboard(board, None).await;
+    let who = Subject::authenticated("anyone", vec![ORG], vec![]);
+    for panel in [1, 2] {
+        let view = panel_view(&w.state, &who, ORG, "fx", panel, PanelTimeRange::default()).await;
+        let denied = view
+            .as_ref()
+            .ok()
+            .and_then(|v| v.access_denied_message.clone());
+        assert_eq!(denied, None, "panel {panel}");
+    }
+}
+
 /// `merge`, `joinByField` and `seriesToRows` combine the frames of every query of the panel, as
 /// Grafana runs a panel's transformations once over all its series (S9-20).
 #[tokio::test]
@@ -799,7 +1054,9 @@ async fn query_requests_are_bounded_and_named() {
     let too_many: Vec<Value> = (0..=w.state.limits.max_targets_per_panel)
         .map(|i| json!({ "refId": format!("R{i}"), "datasource": { "uid": "fixed" } }))
         .collect();
+    let at_limit = too_many[1..].to_vec();
     for (queries, want) in [
+        (json!(at_limit), StatusCode::OK),
         (json!(too_many), StatusCode::BAD_REQUEST),
         (
             json!([{ "refId": "A", "datasource": "fixed" }, { "refId": "A", "datasource": "fixed" }]),
