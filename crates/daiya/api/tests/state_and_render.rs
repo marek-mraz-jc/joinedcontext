@@ -61,11 +61,15 @@ impl Datasource for Fixed {
                                     "name",
                                     vec![Some("b<".into()), Some("a".into()), None],
                                 ),
-                                FieldColumn::numbers(
-                                    "value",
-                                    BTreeMap::new(),
-                                    vec![Some(2.0), Some(1.0), None],
-                                ),
+                                FieldColumn {
+                                    // Shown as `Amount`: a sort may name either.
+                                    display_name: Some("Amount".into()),
+                                    ..FieldColumn::numbers(
+                                        "value",
+                                        BTreeMap::new(),
+                                        vec![Some(2.0), Some(1.0), None],
+                                    )
+                                },
                             ],
                             ..Frame::default()
                         }],
@@ -570,6 +574,9 @@ async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_
     board.as_object_mut().unwrap().remove("time");
     board["panels"][0]["transformations"] =
         json!([{ "id": "organize", "options": { "excludeByName": { "name": true } } }]);
+    // Panel 5 sorts by the name the field is shown as, not its own name.
+    board["panels"][4]["options"] =
+        json!({ "sortBy": [{ "displayName": "Amount", "desc": false }] });
     w.add_dashboard(board, None).await;
     let view = panel_view(
         &w.state,
@@ -589,6 +596,27 @@ async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_
         .map(|f| f.name.as_str())
         .collect();
     assert_eq!(names, ["time", "value"]);
+    let renamed = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx-now",
+        5,
+        PanelTimeRange::default(),
+    )
+    .await
+    .unwrap();
+    let amount = &renamed.frame_sets[0].frames[0].fields[2];
+    assert_eq!(
+        (amount.name.as_str(), amount.effective_name()),
+        ("value", "Amount")
+    );
+    assert_eq!(
+        amount.values[0],
+        Value::Null,
+        "nulls sort first: {:?}",
+        amount.values
+    );
 }
 
 /// Allows members everything except reading the routing uids `-- Mixed --` and `__expr__`,
