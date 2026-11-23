@@ -2000,7 +2000,10 @@ async fn dispatch_ui_route(
                     let checked = tokio::task::spawn_blocking({
                         let (state, cat, ds) = (state.clone(), cat.clone(), ds.clone());
                         let (publisher, stack) = (pub_rec.clone(), selected.stack.clone());
-                        move || feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack)
+                        move || {
+                            let page = state.feed_conformance.page_key(&stack, &cat);
+                            feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack, page)
+                        }
                     });
                     let missing = match checked.await {
                         Ok(missing) => missing,

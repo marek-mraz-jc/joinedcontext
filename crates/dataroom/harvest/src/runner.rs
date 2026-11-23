@@ -1437,7 +1437,9 @@ impl HarvestRunner for HarvestEngine {
                     source,
                     &cat.allowed_outbound_hosts,
                     &cat.default_language,
-                    &mut Tally::new(source.budget),
+                    // The probe caps each read at the byte budget; the records a run would
+                    // refuse are still shown.
+                    &mut Tally::new(None),
                 ),
             )
             .await;
@@ -1778,7 +1780,8 @@ impl HarvestEngine {
 
 /// What a run has read so far against its source's budget (ODP-13), checked at each page: a
 /// run past it fails at the page that crosses it, before the next is read or anything is
-/// written or withdrawn (S11-35).
+/// written or withdrawn (S11-35). The reads of this installation's own gateway that turn a
+/// kept record into a converted one ([`HarvestEngine::convert`]) are not counted.
 struct Tally {
     budget: Option<HarvestBudget>,
     records: u64,
