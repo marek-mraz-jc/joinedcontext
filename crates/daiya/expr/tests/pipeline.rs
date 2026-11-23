@@ -178,6 +178,13 @@ fn every_command_type_parses_with_grafana_defaults() {
     }));
     assert_eq!(classic.command.kind_name(), "classic_conditions");
     assert_eq!(classic.command.needs_vars(), ["A", "B"]);
+    // the first condition's operator joins nothing, so whatever it says is not checked
+    let first_any = node(json!({
+        "refId": "C", "type": "classic_conditions",
+        "conditions": [{ "operator": { "type": "xor" }, "query": { "params": ["A"] },
+            "evaluator": { "params": [1] } }]
+    }));
+    assert_eq!(first_any.command.kind_name(), "classic_conditions");
     let ExprCommand::Classic { conditions } = &classic.command else {
         panic!("classic");
     };
@@ -491,6 +498,8 @@ fn graph_errors_match_grafana() {
         err.contains("has 3 nodes, exceeding maximum depth 2"),
         "{err}"
     );
+    // exactly the maximum is admitted
+    assert!(evaluate_pipeline(&ds, &BTreeSet::new(), &too_many, 0, 0, 3).is_ok());
 }
 
 #[test]

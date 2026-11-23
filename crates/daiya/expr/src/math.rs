@@ -1263,6 +1263,39 @@ mod tests {
         }
     }
 
+    /// An empty side of a binary operation gives nothing, even against a lone NoData.
+    #[test]
+    fn an_empty_side_of_a_binary_operation_gives_nothing() {
+        let vars = HashMap::from([
+            ("E".to_owned(), Vec::new()),
+            ("N".to_owned(), vec![ExprValue::NoData]),
+        ]);
+        assert_eq!(
+            eval_math_on_vars("C", "$E + $N", &vars, 100).unwrap(),
+            vec![]
+        );
+    }
+
+    /// A union that pairs every item drops nothing and says nothing about drops.
+    #[test]
+    fn a_full_union_carries_no_dropped_notice() {
+        let one = |v: f64| ExprValue::Number {
+            name: "A".into(),
+            labels: BTreeMap::from([("host".to_owned(), "a".to_owned())]),
+            value: Some(v),
+            notices: Vec::new(),
+        };
+        let vars = HashMap::from([
+            ("A".to_owned(), vec![one(1.0)]),
+            ("B".to_owned(), vec![one(2.0)]),
+        ]);
+        let out = eval_math_on_vars("C", "$A + $B", &vars, 100).unwrap();
+        let [ExprValue::Number { value, notices, .. }] = out.as_slice() else {
+            panic!("{out:?}");
+        };
+        assert_eq!((*value, notices.len()), (Some(3.0), 0));
+    }
+
     /// The nesting budget counts depth, not length: sibling groups and chains each give back
     /// what they took, so three 40-operator chains and two 60-deep groups side by side parse.
     #[test]
