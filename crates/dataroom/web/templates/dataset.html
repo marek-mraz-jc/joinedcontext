@@ -31,7 +31,7 @@
     --jc-text: {{ chrome.branding.colours.text }};
     --jc-font-heading: {{ chrome.branding.fonts.heading }};
     --jc-font-body: {{ chrome.branding.fonts.body }};
-    {{ chrome.branding.layout.radius_css() }}
+    {{ chrome.branding.layout.tokens_css() }}
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
@@ -89,6 +89,7 @@
         </ol>
       </div>
       <div class="row wrapper no-nav">
+        {% if show_publisher %}
         <div class="col-12">
           <section class="jc-publisher module">
             <a href="{{ chrome.lang_prefix }}/organization/{{ publisher_slug }}" class="jc-publisher-image" tabindex="-1" aria-hidden="true"><img src="{{ publisher_image }}" alt=""></a>
@@ -98,6 +99,7 @@
             </div>
           </section>
         </div>
+        {% endif %}
         <div class="primary col-12" role="main">
           <article class="module">
             <header class="module-content page-header">
@@ -108,7 +110,7 @@
             <div class="module-content">
               <div class="jc-dataset-head">
                 <h1>{{ dataset_title }}</h1>
-                {% if !subscriptions.is_empty() %}
+                {% if show_subscribe && !subscriptions.is_empty() %}
                 <div class="jc-dataset-actions">
                   <details class="jc-subscribe">
                     <summary class="btn btn-default">{{ labels.subscribe }}</summary>
@@ -195,235 +197,19 @@
               </div>
               {% endif %}
 
-              {% if let Some(exp) = explorer %}
-              <section class="jc-preview jc-explorer sdk-datagrid" data-grid-config="{{ exp.grid_config }}" aria-labelledby="jc-explorer-title">
-                <div class="jc-preview-head">
-                  <h2 id="jc-explorer-title">{{ exp.title }}</h2>
-                </div>
-                <p class="jc-lead">{{ exp.lead }}</p>
-                <iframe class="jc-viz-frame jc-explorer-frame" title="{{ exp.title }}" src="{{ exp.src }}" data-jc-viz="{{ exp.origin }}"
-                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="{{ exp.sandbox }}"></iframe>
-              </section>
+              {% for sec in sections %}
+              {% if sec.name == "explorer" %}{% include "dataset/explorer.html" %}
+              {% else if sec.name == "map" %}{% include "dataset/map.html" %}
+              {% else if sec.name == "visualizations" %}{% include "dataset/visualizations.html" %}
+              {% else if sec.name == "dashboards" %}{% include "dataset/dashboards.html" %}
+              {% else if sec.name == "about" %}{% include "dataset/about.html" %}
+              {% else if sec.name == "live" %}{% include "dataset/live.html" %}
+              {% else if sec.name == "mcp" %}{% include "dataset/mcp.html" %}
+              {% else if sec.name == "resources" %}{% include "dataset/resources.html" %}
+              {% else if sec.name == "additional-info" %}{% include "dataset/additional-info.html" %}
+              {% else if sec.name == "shacl" %}{% include "dataset/shacl.html" %}
               {% endif %}
-
-              {% if let Some(map_json) = map_config_json %}
-              <details class="jc-table jc-map-card" open hidden>
-                <summary><span class="jc-table-name">{{ labels.map }}</span></summary>
-                <link rel="stylesheet" href="{{ chrome.mount_prefix }}/maplibre-gl-6.14.0/maplibre-gl.css">
-                <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/pmtiles-4.5.0.js"></script>
-                <div class="jc-map" data-jc-map='{{ map_json }}'>
-                  <div class="jc-map-area" role="application" aria-label="{{ labels.map_title }}: {{ dataset_title }}" aria-describedby="jc-map-keys"></div>
-                  <p class="jc-map-note" role="status"></p>
-                  <p id="jc-map-keys" class="visually-hidden">{{ labels.map_keys }}</p>
-                </div>
-                <div class="jc-preview-actions">
-                  <a class="btn btn-default" href="#jc-preview-title">{{ labels.map_as_table }}</a>
-                  <details class="jc-map-embed">
-                    <summary class="btn btn-default">{{ labels.map_embed }}</summary>
-                    <p class="jc-lead">{{ labels.map_embed_lead }}</p>
-                    <textarea id="jc-map-embed" class="form-control" rows="3" readonly><iframe src="{{ map_embed_url }}" width="100%" height="480" title="{{ dataset_title }}" style="border:0" loading="lazy"></iframe></textarea>
-                    <button type="button" class="btn btn-default" data-jc-copy="jc-map-embed" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button>
-                  </details>
-                </div>
-              </details>
-              {% endif %}
-
-              {% if !charts.is_empty() %}
-              <section class="jc-visualizations" aria-labelledby="jc-viz-title">
-                <h2 id="jc-viz-title">{{ labels.visualizations }}</h2>
-                {% for viz in charts %}
-                <figure class="jc-viz" aria-labelledby="jc-viz-{{ viz.id }}-title">
-                  <figcaption>
-                    <h3 id="jc-viz-{{ viz.id }}-title">{{ viz.title }}</h3>
-                    {% if !viz.description.is_empty() %}<p id="jc-viz-{{ viz.id }}-desc">{{ viz.description }}</p>{% endif %}
-                  </figcaption>
-                  <iframe class="jc-viz-frame" loading="lazy" title="{{ viz.title }}" src="{{ viz.src }}" data-jc-viz="{{ viz.origin }}"
-                          referrerpolicy="no-referrer" sandbox="{{ viz.sandbox }}"></iframe>
-                  <div class="jc-viz-actions">
-                    <a href="{{ viz.package_link }}">{{ labels.viz_table }}</a>
-                    <details class="jc-viz-embed">
-                      <summary>{{ labels.viz_embed }}</summary>
-                      <p>{{ labels.viz_embed_lead }}</p>
-                      <div class="jc-copy jc-copy-code">
-                        <pre id="jc-viz-{{ viz.id }}-code" tabindex="0"><code>{{ viz.code }}</code></pre>
-                        <button type="button" class="btn btn-default" data-jc-copy="jc-viz-{{ viz.id }}-code" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}">{{ labels.copy }}</button>
-                      </div>
-                    </details>
-                  </div>
-                </figure>
-                {% endfor %}
-              </section>
-              {% endif %}
-
-              {% if !dashboards.is_empty() %}
-              <section class="jc-dataset-dashboards" aria-labelledby="jc-dashboards-title">
-                <h2 id="jc-dashboards-title">{{ dashboards_title }}</h2>
-                <ul>
-                  {% for link in dashboards %}<li><a href="{{ link.url }}">{{ link.title }}</a></li>{% endfor %}
-                </ul>
-              </section>
-              {% endif %}
-
-              {% if !about_rows.is_empty() %}
-              <section class="jc-about" aria-labelledby="jc-about-title">
-                <h2 id="jc-about-title">{{ labels.about }}</h2>
-                <dl class="jc-about-list">
-                  {% for row in about_rows %}
-                    {% if fold_sources && row.label == labels.source %}
-                      <dt>{{ row.label }}</dt>
-                      <dd><details class="jc-about-sources"><summary>{{ sources_all_label }}</summary>
-                        <ul>
-                          {% for s_row in source_rows %}
-                          <li>{% if let Some(link) = s_row.link %}<a href="{{ link }}" rel="noopener">{{ s_row.text }}</a>{% else %}{{ s_row.text }}{% endif %}</li>
-                          {% endfor %}
-                        </ul>
-                      </details></dd>
-                    {% else %}
-                      <dt>{{ row.label }}</dt>
-                      <dd>{% if let Some(link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
-                    {% endif %}
-                  {% endfor %}
-                </dl>
-              </section>
-              {% endif %}
-
-              {% if let Some(lv) = live %}
-              <section class="jc-live" aria-labelledby="jc-live-title">
-                <h2 id="jc-live-title">{{ labels.live }}</h2>
-                <p>{{ labels.live_lead }}</p>
-                <div class="jc-copy">
-                  <label for="jc-live-url" class="visually-hidden">{{ labels.live }}</label>
-                  <pre id="jc-live-url" class="jc-live-url" tabindex="0"><code>{{ lv.url_breakable|safe }}</code></pre>
-                  <button type="button" class="btn btn-default" data-jc-copy="jc-live-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}">{{ labels.copy }}</button>
-                </div>
-                <p class="jc-example-label" id="jc-example-label">{{ labels.example }}</p>
-                <pre aria-labelledby="jc-example-label"><code>{{ lv.example_breakable|safe }}</code></pre>
-              </section>
-              {% endif %}
-
-              {% if let Some(m) = mcp %}
-              {# closed by default (owner 2026-11-11, T-6745): the setup steps are for the few who connect an assistant #}
-              <details class="jc-live jc-mcp">
-                <summary>
-                  {% include "jc/icons/chevron-right.svg" %}
-                  <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
-                  <p class="jc-mcp-lead">{{ labels.mcp_lead }}</p>
-                </summary>
-                <div class="jc-mcp-body">
-                  <div>
-                    <div class="jc-code">
-                      <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
-                      <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
-                    </div>
-                    {# T-7030: the setup steps live once, on /connector; here only the address and the way there #}
-                    <p class="jc-mcp-links">
-                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#claude">Claude</a>
-                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#chatgpt">ChatGPT</a>
-                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#grok">Grok</a>
-                      <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#other">{{ labels.any_client }}</a>
-                    </p>
-                  </div>
-                </div>
-              </details>
-              {% endif %}
-
-              <section id="dataset-resources" class="resources jc-resources sdk-datagrid" data-grid-config="{{ distributions_grid_config }}" aria-labelledby="jc-resources-title">
-                <h2 id="jc-resources-title">{{ labels.resources }}</h2>
-                {% if !resource_sections.is_empty() %}
-                  {% for sec in resource_sections %}
-                  <div class="jc-section">
-                    {% if sec.key == "schema" %}
-                    <details class="jc-schema">
-                      <summary>
-                        <h3 id="jc-section-{{ sec.key }}">{{ sec.title }}</h3>
-                        <span class="jc-chip">{{ sec.items.len() }}</span>
-                        <p class="jc-section-lead">{{ sec.lead }}</p>
-                      </summary>
-                      <ul class="resource-list jc-resource-list" aria-labelledby="jc-section-{{ sec.key }}">
-                        {% for item in sec.items %}
-                        <li class="resource-item jc-resource" data-id="{{ item.id }}">
-                          <div>
-                            <div class="jc-resource-head">
-                              <span class="jc-chip" data-format="{{ item.format_lower }}">{{ item.format }}</span>
-                              <a class="heading" href="{{ item.page_url }}">{{ item.label }}</a>
-                            </div>
-                            {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
-                          </div>
-                          <div class="jc-resource-actions">
-                            {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
-                          </div>
-                        </li>
-                        {% endfor %}
-                      </ul>
-                    </details>
-                    {% else %}
-                      <h3 id="jc-section-{{ sec.key }}">{{ sec.title }}</h3>
-                      <p class="jc-section-lead">{{ sec.lead }}</p>
-                      <ul class="resource-list jc-resource-list" aria-labelledby="jc-section-{{ sec.key }}">
-                        {% for item in sec.items %}
-                        <li class="resource-item jc-resource" data-id="{{ item.id }}">
-                          <div>
-                            <div class="jc-resource-head">
-                              <span class="jc-chip" data-format="{{ item.format_lower }}">{{ item.format }}</span>
-                              <a class="heading" href="{{ item.page_url }}">{{ item.label }}</a>
-                            </div>
-                            {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
-                          </div>
-                          <div class="jc-resource-actions">
-                            {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
-                          </div>
-                        </li>
-                        {% endfor %}
-                      </ul>
-                    {% endif %}
-                  </div>
-                  {% endfor %}
-                {% else %}
-                  <p class="empty">{{ labels.no_resources }}</p>
-                {% endif %}
-              </section>
-
-              {% if !more_rows.is_empty() %}
-              <section class="additional-info" aria-labelledby="jc-more-title">
-                <h2 id="jc-more-title">{{ labels.more }}</h2>
-                <dl class="jc-about-list">
-                  {% for r in more_rows %}
-                  <dt>{{ r.label }}</dt>
-                  <dd>{% if let Some(link) = r.link %}<a href="{{ link }}" rel="noreferrer">{{ r.text }}</a>{% else %}{{ r.text }}{% endif %}</dd>
-                  {% endfor %}
-                </dl>
-              </section>
-              {% endif %}
-
-              {% if show_editor_panel %}
-              <section class="shacl-panel" aria-labelledby="shacl-heading">
-                <h2 id="shacl-heading">{{ labels.shacl_validation }}</h2>
-                <div class="sdk-datagrid" data-grid-config="{{ shacl_grid_config }}">
-                  {% if !shacl_reports.is_empty() %}
-                  <table class="table">
-                    <thead>
-                      <tr>
-                        <th>Profile</th>
-                        <th>Version</th>
-                        <th>Violations</th>
-                        <th>Warnings</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for rep in shacl_reports %}
-                      <tr>
-                        <td>{{ rep.profile_id }}</td>
-                        <td>{{ rep.profile_version }}</td>
-                        <td>{{ rep.violation_count }}</td>
-                        <td>{{ rep.warning_count }}</td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                  {% endif %}
-                </div>
-              </section>
-              {% endif %}
+              {% endfor %}
               <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
             </div>
           </article>

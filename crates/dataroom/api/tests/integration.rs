@@ -1770,6 +1770,7 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
             footer_links: vec![("/about#api".into(), "API mesta".into())],
             pages: Vec::new(),
+            tokens: dataroom_core::branding::BrandingTokens::default(),
         },
         ..dataroom_core::branding::BrandingBlock::default()
     };

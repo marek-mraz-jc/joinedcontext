@@ -25,7 +25,7 @@
     --jc-text: {{ chrome.branding.colours.text }};
     --jc-font-heading: {{ chrome.branding.fonts.heading }};
     --jc-font-body: {{ chrome.branding.fonts.body }};
-    {{ chrome.branding.layout.radius_css() }}
+    {{ chrome.branding.layout.tokens_css() }}
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
@@ -145,14 +145,18 @@
               {% if !datasets.is_empty() && chrome.branding.layout.dataset_table %}
               <div class="jc-dataset-table">
               <table>
-                <thead><tr><th scope="col">{{ labels.nav_datasets }}</th><th scope="col">{{ labels.format }}</th><th scope="col">{{ labels.col_publisher }}</th><th scope="col">{{ labels.updated }}</th></tr></thead>
+                <thead><tr><th scope="col">{{ labels.nav_datasets }}</th>{% for f in list_fields %}{% if f.as_str() == "notes" %}<th scope="col">{{ labels.col_description }}</th>{% else if f.as_str() == "format" %}<th scope="col">{{ labels.format }}</th>{% else if f.as_str() == "publisher" %}<th scope="col">{{ labels.col_publisher }}</th>{% else if f.as_str() == "modified" %}<th scope="col">{{ labels.updated }}</th>{% endif %}{% endfor %}</tr></thead>
                 <tbody>
                 {% for ds in datasets %}
                 <tr>
                   <th scope="row"><a href="{{ chrome.lang_prefix }}/dataset/{{ ds.name }}">{{ ds.title }}</a></th>
-                  {% if ds.format_chips.is_empty() %}<td class="jc-cell-empty"><span aria-hidden="true">–</span></td>{% else %}<td data-label="{{ labels.format }}">{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>{% endif %}
-                  <td data-label="{{ labels.col_publisher }}">{{ ds.publisher_title }}</td>
-                  <td data-label="{{ labels.updated }}">{{ ds.modified_localized }}</td>
+                  {% for f in list_fields %}
+                  {% if f.as_str() == "notes" %}<td data-label="{{ labels.col_description }}">{{ ds.notes }}</td>
+                  {% else if f.as_str() == "format" %}{% if ds.format_chips.is_empty() %}<td class="jc-cell-empty"><span aria-hidden="true">–</span></td>{% else %}<td data-label="{{ labels.format }}">{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>{% endif %}
+                  {% else if f.as_str() == "publisher" %}<td data-label="{{ labels.col_publisher }}">{{ ds.publisher_title }}</td>
+                  {% else if f.as_str() == "modified" %}<td data-label="{{ labels.updated }}">{{ ds.modified_localized }}</td>
+                  {% endif %}
+                  {% endfor %}
                 </tr>
                 {% endfor %}
                 </tbody>
@@ -166,11 +170,11 @@
                     <h2 class="dataset-heading">
                       <a href="{{ chrome.lang_prefix }}/dataset/{{ ds.name }}" title="{{ ds.title }}">{{ ds.title }}</a>
                     </h2>
-                    {% if !ds.notes.is_empty() %}<div>{{ ds.notes }}</div>{% endif %}
+                    {% for f in list_fields %}{% if f.as_str() == "notes" && !ds.notes.is_empty() %}<div>{{ ds.notes }}</div>{% endif %}{% endfor %}
                   </div>
                   <div class="jc-item-meta">
-                    {% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}
-                    <span class="jc-item-facts">{{ ds.publisher_title }} · {{ labels.updated }} {{ ds.modified_localized }}</span>
+                    {% if card_chips %}{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}{% endif %}
+                    {% if !card_facts.is_empty() %}<span class="jc-item-facts">{% for f in card_facts %}{% if !loop.first %} · {% endif %}{% if f.as_str() == "publisher" %}{{ ds.publisher_title }}{% else %}{{ labels.updated }} {{ ds.modified_localized }}{% endif %}{% endfor %}</span>{% endif %}
                   </div>
                 </li>
                 {% endfor %}

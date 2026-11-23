@@ -137,6 +137,14 @@ pub struct BrandingBlock {
     /// The live parts' bases one by one; each left empty falls back to `{label}.{domain}`.
     #[serde(default, skip_serializing_if = "BrandingAddresses::is_empty")]
     pub addresses: BrandingAddresses,
+    /// Which sections of the dataset and dataset list pages show, their order and headings
+    /// (`display` in `branding.json`, the installation level under each Organization's and
+    /// Portal's `spec.appearance.display`, T-7743); unset shows the built-in pages.
+    #[serde(
+        default,
+        skip_serializing_if = "jc_core::kinds::AppearanceDisplay::is_unset"
+    )]
+    pub display: jc_core::kinds::AppearanceDisplay,
     /// Each publisher's badge and words by its name (`organizations` of prod's CKAN chart, read
     /// by `jc_org`), for a publisher with no picture or description of its own. Only the host
     /// sets it (`jc.toml [dataroom.publishers]`): serde skips it, so no catalogue override writes it.
@@ -172,6 +180,24 @@ pub struct BrandingLayout {
     /// The portal's pages built from blocks (`spec.pages` of its Portal, T-7418), each checked by
     /// jc-core; a `home` page replaces the built-in home.
     pub pages: Vec<jc_core::kinds::portal_page::PortalPage>,
+    /// The style tokens of `spec.appearance` (T-7744), each a value jc-core checked: colours as
+    /// hex, the rest numbers or fixed words, so none can carry CSS of its own.
+    pub tokens: BrandingTokens,
+}
+
+/// An appearance's style tokens beyond the five colours and the font stacks (T-7744); each
+/// `None` keeps the theme's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BrandingTokens {
+    pub link: Option<String>,
+    pub header_background: Option<String>,
+    pub header_text: Option<String>,
+    pub footer_background: Option<String>,
+    pub footer_text: Option<String>,
+    pub font_size_px: Option<u8>,
+    pub width: Option<jc_core::kinds::ContentWidth>,
+    pub button_outline: bool,
+    pub card_flat: bool,
 }
 
 impl BrandingLayout {
@@ -179,6 +205,39 @@ impl BrandingLayout {
     #[must_use]
     pub fn page(&self, slug: &str) -> Option<&jc_core::kinds::portal_page::PortalPage> {
         self.pages.iter().find(|p| p.slug == slug)
+    }
+
+    /// The custom properties of the page's `:root` this layout sets: the radius and the style
+    /// tokens (T-7744). Every value is a hex colour, a number or a fixed length; a colour that is
+    /// not hex (no checked appearance hands one over) is left out.
+    #[must_use]
+    pub fn tokens_css(&self) -> String {
+        let t = &self.tokens;
+        let mut css = self.radius_css();
+        for (name, colour) in [
+            ("--jc-link", &t.link),
+            ("--jc-header-bg", &t.header_background),
+            ("--jc-header-fg", &t.header_text),
+            ("--jc-footer-bg", &t.footer_background),
+            ("--jc-footer-fg", &t.footer_text),
+        ] {
+            if let Some(c) = colour.as_deref().filter(|c| is_valid_hex_colour(c)) {
+                css.push_str(&format!(" {name}: {c};"));
+            }
+        }
+        if let Some(px) = t.font_size_px.filter(|px| (14..=18).contains(px)) {
+            css.push_str(&format!(" --jc-font-size: {px}px;"));
+        }
+        if let Some(width) = t.width {
+            css.push_str(&format!(" --jc-content-max: {};", width.css()));
+        }
+        if t.button_outline {
+            css.push_str(" --jc-btn-bg: transparent; --jc-btn-fg: var(--jc-primary);");
+        }
+        if t.card_flat {
+            css.push_str(" --jc-shadow-1: none; --jc-shadow-2: none;");
+        }
+        css.trim_start().to_owned()
     }
 
     /// The radius custom properties for the page's `:root`, empty when unset; numbers only.
@@ -348,6 +407,7 @@ impl Default for BrandingBlock {
             samples: BTreeMap::new(),
             assistant_widget: None,
             addresses: BrandingAddresses::default(),
+            display: jc_core::kinds::AppearanceDisplay::default(),
             publishers: BTreeMap::new(),
             pages: BTreeMap::new(),
             layout: BrandingLayout::default(),
@@ -787,6 +847,16 @@ impl BrandingBlock {
                     }
                 }
             }
+        }
+        // T-7743: a display jc-core refuses keeps the level above's whole, as a broken colour does.
+        if let Some(display) = obj
+            .get("display")
+            .and_then(|v| {
+                serde_json::from_value::<jc_core::kinds::AppearanceDisplay>(v.clone()).ok()
+            })
+            .filter(|d| d.validate("display", &[]).is_ok())
+        {
+            self.display = display.over(&self.display);
         }
 
         self.recompute_derived();
@@ -1320,6 +1390,38 @@ pub fn is_mcp_server(v: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// T-7744: the token custom properties carry only hex colours, numbers in range and fixed
+    /// lengths; a colour that is not hex never reaches the page.
+    #[test]
+    fn tokens_css_carries_only_checked_values() {
+        let mut layout = BrandingLayout::default();
+        assert_eq!(layout.tokens_css(), "");
+        layout.tokens.header_background = Some("red;} body{display:none".into());
+        layout.tokens.header_text = Some("#ffffff".into());
+        layout.tokens.font_size_px = Some(30);
+        layout.tokens.width = Some(jc_core::kinds::ContentWidth::Narrow);
+        assert_eq!(
+            layout.tokens_css(),
+            "--jc-header-fg: #ffffff; --jc-content-max: 60rem;"
+        );
+    }
+
+    /// T-7743: the installation's display comes from `branding.json`; a refused one keeps the
+    /// level above's whole.
+    #[test]
+    fn installation_display_loads_and_a_refused_one_is_ignored() {
+        let b = BrandingBlock::from_json_lossy(&serde_json::json!({
+            "display": { "dataset": { "sections": [{ "name": "about" }], "about": ["license"] } }
+        }));
+        assert_eq!(b.display.dataset.sections.len(), 1);
+        assert_eq!(b.display.dataset.about, ["license"]);
+        let mut kept = b.clone();
+        kept.apply_override_json(&serde_json::json!({
+            "display": { "dataset": { "sections": [{ "name": "<script>" }] } }
+        }));
+        assert_eq!(kept.display, b.display);
+    }
 
     #[test]
     fn b1_three_level_branding_overrides_fallbacks_and_loads_dev_stage_smartcity() {

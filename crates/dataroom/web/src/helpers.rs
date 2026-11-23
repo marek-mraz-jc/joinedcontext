@@ -781,6 +781,9 @@ pub fn jc_resource_sections(
 /// One row of the "About this dataset" `<dl class="jc-about-list">` (`jc_about` in `plugin.py`, D3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AboutRow {
+    /// The row's DCAT field name a display orders it by (T-7743); empty for other rows.
+    #[serde(skip)]
+    pub key: &'static str,
     pub label: String,
     pub text: String,
     pub link: Option<String>,
@@ -812,6 +815,7 @@ pub fn jc_about(
             .or_else(|| publisher.map(|p| p.uri.clone()))
             .filter(|u| u.starts_with("http://") || u.starts_with("https://"));
         rows.push(AboutRow {
+            key: "publisher",
             label: jc_t("publisher", lang),
             text: pub_name,
             link,
@@ -834,6 +838,7 @@ pub fn jc_about(
             .or_else(|| lic_entry.map(|l| l.url))
             .filter(|u| u.starts_with("http://") || u.starts_with("https://"));
         rows.push(AboutRow {
+            key: "license",
             label: jc_t("licence", lang),
             text: lt,
             link,
@@ -842,6 +847,7 @@ pub fn jc_about(
 
     if let Some(rights) = ds.extras.get("rights").filter(|s| !s.is_empty()) {
         rows.push(AboutRow {
+            key: "rights",
             label: jc_t("attribution", lang),
             text: rights.clone(),
             link: None,
@@ -851,6 +857,7 @@ pub fn jc_about(
     if let Some(raw_src) = ds.extras.get("source") {
         for (url, title) in parse_sources_extra(raw_src) {
             rows.push(AboutRow {
+                key: "source",
                 label: jc_t("source", lang),
                 text: title,
                 link: Some(url),
@@ -860,6 +867,7 @@ pub fn jc_about(
 
     if !ds.tags.is_empty() {
         rows.push(AboutRow {
+            key: "keyword",
             label: jc_t("keywords", lang),
             text: ds.tags.join(", "),
             link: None,
@@ -869,6 +877,7 @@ pub fn jc_about(
     let freq_info = jc_frequency(ds, lang);
     if let Some((ref freq_label, _)) = freq_info {
         rows.push(AboutRow {
+            key: "accrualPeriodicity",
             label: jc_t("frequency", lang),
             text: freq_label.clone(),
             link: None,
@@ -876,11 +885,13 @@ pub fn jc_about(
     }
 
     rows.push(AboutRow {
+        key: "issued",
         label: jc_t("created", lang),
         text: format_ts_localized(ds.issued, lang),
         link: None,
     });
     rows.push(AboutRow {
+        key: "modified",
         label: jc_t("last_update", lang),
         text: format_ts_localized(ds.modified, lang),
         link: None,
@@ -893,6 +904,7 @@ pub fn jc_about(
             base_date
         };
         rows.push(AboutRow {
+            key: "nextUpdate",
             label: jc_t("next_update", lang),
             text,
             link: None,
@@ -911,6 +923,7 @@ pub fn jc_about(
             format!("http://data.europa.eu/nuts/code/{sp}")
         };
         rows.push(AboutRow {
+            key: "spatial",
             label: jc_t("coverage", lang),
             text: nuts_label(&sp_iri, lang),
             link: Some(sp_iri),
@@ -927,6 +940,7 @@ pub fn jc_about(
         .collect();
         if !parts.is_empty() {
             rows.push(AboutRow {
+                key: "temporal",
                 label: jc_t("period", lang),
                 text: parts.join(" – "),
                 link: None,
@@ -947,6 +961,7 @@ pub fn jc_about(
                 }
             });
             rows.push(AboutRow {
+                key: "contactPoint",
                 label: jc_t("contact", lang),
                 text: cname,
                 link,
@@ -961,6 +976,7 @@ pub fn jc_about(
     {
         if !ident.is_empty() {
             rows.push(AboutRow {
+                key: "identifier",
                 label: jc_t("identifier", lang),
                 text: ident.clone(),
                 link: None,
@@ -977,6 +993,7 @@ pub fn jc_about(
         let std_name = standard_display_name(&s_iri);
         let link = (s_iri.starts_with("http://") || s_iri.starts_with("https://")).then_some(s_iri);
         rows.push(AboutRow {
+            key: "conformsTo",
             label: jc_t("conforms_to", lang),
             text: std_name,
             link,
@@ -984,6 +1001,81 @@ pub fn jc_about(
     }
 
     rows
+}
+
+/// One section of the dataset page in the place the display puts it (T-7743).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionView {
+    /// One of [`jc_core::kinds::appearance::DATASET_SECTIONS`].
+    pub name: &'static str,
+    /// The display's heading in the page's language, else the built-in one shows.
+    pub heading: Option<String>,
+}
+
+/// The dataset page's sections in the display's order with their headings in `lang`; an
+/// unset list shows every section in the built-in order. A name no jc-core list knows (a
+/// display jc-core never let through) shows nothing.
+pub fn dataset_sections(display: &jc_core::kinds::DatasetDisplay, lang: &str) -> Vec<SectionView> {
+    use jc_core::kinds::appearance::DATASET_SECTIONS;
+    if display.sections.is_empty() {
+        return DATASET_SECTIONS
+            .iter()
+            .map(|name| SectionView {
+                name,
+                heading: None,
+            })
+            .collect();
+    }
+    display
+        .sections
+        .iter()
+        .filter_map(|s| {
+            let name = DATASET_SECTIONS.iter().find(|n| **n == s.name)?;
+            Some(SectionView {
+                name,
+                heading: s.heading.get(lang).cloned(),
+            })
+        })
+        .collect()
+}
+
+/// What the dataset list shows after each title, in the display's order; unset shows the
+/// built-in fields (T-7743).
+pub fn dataset_list_fields(display: &jc_core::kinds::DatasetListDisplay) -> Vec<&'static str> {
+    use jc_core::kinds::appearance::DATASET_LIST_FIELDS;
+    if display.fields.is_empty() {
+        return DATASET_LIST_FIELDS.to_vec();
+    }
+    display
+        .fields
+        .iter()
+        .filter_map(|f| DATASET_LIST_FIELDS.iter().find(|n| **n == f).copied())
+        .collect()
+}
+
+/// The about rows a display lists, in its order (T-7743): each DCAT name keeps all its rows
+/// (several sources), an `extras.<key>` shows that extra as plain text, and a row left out is
+/// hidden. An empty `order` keeps the built-in rows.
+pub fn displayed_about(rows: Vec<AboutRow>, ds: &Dataset, order: &[String]) -> Vec<AboutRow> {
+    if order.is_empty() {
+        return rows;
+    }
+    let mut out = Vec::new();
+    for name in order {
+        if let Some(key) = name.strip_prefix("extras.") {
+            if let Some(text) = ds.extras.get(key).filter(|t| !t.trim().is_empty()) {
+                out.push(AboutRow {
+                    key: "",
+                    label: key.to_owned(),
+                    text: text.clone(),
+                    link: None,
+                });
+            }
+            continue;
+        }
+        out.extend(rows.iter().filter(|r| r.key == name).cloned());
+    }
+    out
 }
 
 fn parse_sources_extra(raw: &str) -> Vec<(String, String)> {
@@ -1258,7 +1350,12 @@ pub fn jc_more_rows(ds: &Dataset, lang: &str) -> Vec<AboutRow> {
         };
         let link =
             (text.starts_with("http://") || text.starts_with("https://")).then(|| text.clone());
-        rows.push(AboutRow { label, text, link });
+        rows.push(AboutRow {
+            key: "",
+            label,
+            text,
+            link,
+        });
     }
     rows
 }

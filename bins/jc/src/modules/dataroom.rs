@@ -865,8 +865,20 @@ fn with_appearance(
         over["logoSvg"] = svg.into();
         over["logo"] = "logo.svg".into();
     }
-    if let Some(font) = look.font {
-        over["fonts"] = serde_json::json!({ "heading": font.stack(), "body": font.stack() });
+    // T-7744: a heading or body font set alone goes over `font`, which sets both.
+    let (heading, body) = (
+        look.heading_font.or(look.font),
+        look.body_font.or(look.font),
+    );
+    if heading.is_some() || body.is_some() {
+        let mut fonts = serde_json::Map::new();
+        if let Some(font) = heading {
+            fonts.insert("heading".into(), font.stack().into());
+        }
+        if let Some(font) = body {
+            fonts.insert("body".into(), font.stack().into());
+        }
+        over["fonts"] = fonts.into();
     }
     let mut shown = block.clone();
     shown.apply_override_json(&over);
@@ -907,7 +919,10 @@ fn with_appearance(
             .map(|l| (l.url.clone(), l.label.clone()))
             .collect(),
         pages: Vec::new(),
+        tokens: readable_tokens(&block, look),
     };
+    // T-7743: the look's display over the installation's, list by list.
+    block.display = look.display.over(&block.display);
     // T-7031: the Organization's own page texts, each page and language over the built-in one.
     // A text the manifest's rules refuse never reaches here (jc-core validates every load), and
     // the page renders it with jc-core's one safe renderer.
@@ -922,6 +937,64 @@ fn with_appearance(
         })
         .collect();
     block
+}
+
+/// The look's style tokens (T-7744), each colour pair kept only where it reads at WCAG AA
+/// against what the page draws it on: a token the look leaves out is the theme's (the header
+/// on the page background in the text colour, the footer in the text colour with the
+/// background's), as T-7410 does for the text and primary colours.
+#[cfg(feature = "portal")]
+fn readable_tokens(
+    block: &BrandingBlock,
+    look: &jc_core::kinds::OrganizationAppearance,
+) -> dataroom_core::branding::BrandingTokens {
+    let c = &look.colours;
+    let theme = &block.colours;
+    let readable = |fore: &str, back: &str| {
+        jc_core::kinds::contrast_ratio(fore, back)
+            .is_some_and(|r| r >= jc_core::kinds::appearance::MIN_CONTRAST)
+    };
+    let pair =
+        |fore: &Option<String>, back: &Option<String>, fore_theme: &str, back_theme: &str| {
+            let (f, b) = (
+                fore.as_deref().unwrap_or(fore_theme),
+                back.as_deref().unwrap_or(back_theme),
+            );
+            if readable(f, b) {
+                (fore.clone(), back.clone())
+            } else {
+                if fore.is_some() || back.is_some() {
+                    tracing::warn!(
+                        "dataroom: an appearance colour pair below WCAG AA; the theme's shows"
+                    );
+                }
+                (None, None)
+            }
+        };
+    let (header_text, header_background) = pair(
+        &c.header_text,
+        &c.header_background,
+        &theme.text,
+        &theme.background,
+    );
+    let (footer_text, footer_background) = pair(
+        &c.footer_text,
+        &c.footer_background,
+        &theme.background,
+        &theme.text,
+    );
+    let (link, _) = pair(&c.link, &None, &theme.primary, &theme.background);
+    dataroom_core::branding::BrandingTokens {
+        link,
+        header_background,
+        header_text,
+        footer_background,
+        footer_text,
+        font_size_px: look.font_size,
+        width: look.width,
+        button_outline: look.button_style == Some(jc_core::kinds::ButtonStyle::Outline),
+        card_flat: look.card_shadow == Some(jc_core::kinds::CardShadow::None),
+    }
 }
 
 /// The hero introduction as safe HTML through jc-core's page renderer: raw HTML shows as text,
@@ -2600,6 +2673,104 @@ mod tests {
 
     /// T-7410: the theme and layout members reach the catalogue's block; the introduction is
     /// rendered safe, and a colour below WCAG AA on jc's background gives way to jc's colours.
+    /// T-7744: a portal's tokens reach its catalogue over the Organization's; a pair that
+    /// meets the theme's other colour below WCAG AA gives way, the rest still shows.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn style_tokens_reach_the_catalogue_and_unreadable_pairs_give_way() {
+        let look = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
+            serde_json::from_value(v).expect("an appearance")
+        };
+        let org = look(
+            serde_json::json!({ "colours": { "link": "#1d4ed8" }, "width": "wide", "font": "serif" }),
+        );
+        let portal = look(serde_json::json!({
+            "colours": { "headerBackground": "#0b5394", "headerText": "#ffffff", "footerText": "#ffffff" },
+            "fontSize": 17, "buttonStyle": "outline", "cardShadow": "none", "bodyFont": "mono",
+        }));
+        let shown = with_appearance(BrandingBlock::default(), Some(&portal.over(&org)));
+        let t = &shown.layout.tokens;
+        assert_eq!(t.link.as_deref(), Some("#1d4ed8"));
+        assert_eq!(t.header_background.as_deref(), Some("#0b5394"));
+        assert_eq!(t.header_text.as_deref(), Some("#ffffff"));
+        assert_eq!(
+            t.footer_text.as_deref(),
+            Some("#ffffff"),
+            "white on the theme's dark footer"
+        );
+        assert_eq!(
+            (t.font_size_px, t.width),
+            (Some(17), Some(jc_core::kinds::ContentWidth::Wide))
+        );
+        assert!(t.button_outline && t.card_flat);
+        assert!(
+            shown.fonts.heading.starts_with("Charter"),
+            "the Organization's font for headings"
+        );
+        assert!(
+            shown.fonts.body.starts_with("ui-monospace"),
+            "the portal's body font"
+        );
+        // White header text on the theme's white page: the pair gives way, the rest shows.
+        let pale =
+            look(serde_json::json!({ "colours": { "headerText": "#ffffff" }, "fontSize": 15 }));
+        let shown = with_appearance(BrandingBlock::default(), Some(&pale));
+        assert_eq!(shown.layout.tokens.header_text, None);
+        assert_eq!(shown.layout.tokens.font_size_px, Some(15));
+        // Reset: no tokens on the portal or its Organization shows the theme's.
+        let reset = with_appearance(
+            BrandingBlock::default(),
+            Some(&jc_core::kinds::OrganizationAppearance::default()),
+        );
+        assert_eq!(
+            reset.layout.tokens,
+            dataroom_core::branding::BrandingTokens::default()
+        );
+    }
+
+    /// T-7743: a display resolves Portal > Organization > installation > built-in list by
+    /// list, and a Portal's display removed again (reset) shows the page as before.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_display_cascades_over_four_levels_and_resets() {
+        let display = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
+            serde_json::from_value(serde_json::json!({ "display": v })).expect("a display")
+        };
+        assert!(
+            with_appearance(BrandingBlock::default(), None)
+                .display
+                .is_unset(),
+            "built-in"
+        );
+        let installation = BrandingBlock::from_json_lossy(&serde_json::json!({
+            "display": { "dataset": { "about": ["license", "publisher"] }, "datasetList": { "fields": ["format"] } }
+        }));
+        let org = display(
+            serde_json::json!({ "dataset": { "sections": [{ "name": "about" }, { "name": "map" }] } }),
+        );
+        let portal = display(
+            serde_json::json!({ "dataset": { "sections": [{ "name": "resources" }] }, "datasetList": { "fields": ["modified"] } }),
+        );
+        let at_org = with_appearance(installation.clone(), Some(&org));
+        assert_eq!(
+            at_org.display.dataset.sections,
+            org.display.dataset.sections
+        );
+        assert_eq!(at_org.display.dataset.about, ["license", "publisher"]);
+        let at_portal = with_appearance(installation.clone(), Some(&portal.over(&org)));
+        assert_eq!(
+            at_portal.display.dataset.sections,
+            portal.display.dataset.sections
+        );
+        assert_eq!(at_portal.display.dataset.about, ["license", "publisher"]);
+        assert_eq!(at_portal.display.dataset_list.fields, ["modified"]);
+        let reset = jc_core::kinds::OrganizationAppearance::default();
+        assert_eq!(
+            with_appearance(installation, Some(&reset.over(&org))),
+            at_org
+        );
+    }
+
     #[cfg(feature = "portal")]
     #[test]
     fn an_organizations_theme_and_layout_reach_its_catalogue_safely() {
