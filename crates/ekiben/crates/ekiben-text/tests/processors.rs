@@ -372,6 +372,24 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
         .unwrap()
         .to_string();
     assert!(err.contains("the most one message may hold"), "{err}");
+    // the limits by their values: a 64 KiB query and a 64 MiB raw output still pass
+    let query = format!("\"{}\"", "a".repeat(64 * 1024 - 2));
+    assert!(build_yaml(&format!("jq:\n  query: '{query}'\n")).is_ok());
+    let err = build_yaml(&format!("jq:\n  query: '{query} '\n"))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        err.contains("the query is 65537 bytes, more than 65536"),
+        "{err}"
+    );
+    let out = run(
+        "jq:\n  query: '\"x\" * 67108864'\n  output_raw: true\n",
+        &["{}"],
+    )
+    .await;
+    assert_eq!(out[0][0].error_get().map(|e| e.to_string()), None);
+    assert_eq!(out[0][0].as_bytes_ref().len(), 64 << 20);
     // A cut error never splits a character, whatever the prefix before it.
     for pad in 0..3 {
         let conf = format!(
