@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { ApiError } from "../src/api/client";
-import { PublicViewPage, failureText, retryAfterSeconds, retryPublic } from "../src/pages/spaces/PublicView";
+import { PublicViewPage, failureText, inLanguage, retryAfterSeconds, retryPublic } from "../src/pages/spaces/PublicView";
 import { SharePanel, publishRequest } from "../src/pages/spaces/SharePanel";
 import { publicName } from "../src/pages/spaces/publicName";
 import { expectNoViolations } from "./checks";
@@ -87,6 +87,29 @@ describe("publishing a type", () => {
     expect(await within(panel).findByTestId("share-link")).toHaveTextContent(
       `${window.location.origin}/v/k7m2qz4tv6xh3n5jb2ryd3wcfa`,
     );
+  });
+
+  it("says why the Endpoint could not be drawn up, in the API's words or the failure's, and proposes nothing", async () => {
+    const sent: string[] = [];
+    let calls = 0;
+    renderPage(<SharePanel project="helsinki" space="bikes" type="Station" attributes={["name"]} />, {
+      path: "/projects/helsinki/spaces/bikes",
+      answer: async (url, request) => {
+        if (request.method !== "POST") return undefined;
+        sent.push(url.pathname);
+        calls += 1;
+        if (calls === 1) return json({ title: "Forbidden", status: 403, detail: "no right to publish bikes" }, 403);
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const panel = await screen.findByTestId("view-share");
+    await userEvent.click(within(panel).getByText(en.spaces.share.title));
+    await userEvent.click(within(panel).getByRole("button", { name: en.spaces.share.publish }));
+    expect(await within(panel).findByText(/no right to publish bikes/)).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: en.spaces.share.publish }));
+    expect(await within(panel).findByText(/Failed to fetch/)).toBeInTheDocument();
+    expect(sent.some((path) => path.endsWith("/import"))).toBe(false);
+    expect(within(panel).queryByTestId("share-link")).toBeNull();
   });
 
   it("keeps the proposal closed with the reason while the name is no name", async () => {
@@ -193,6 +216,67 @@ describe("the public link", () => {
     down = false;
     await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
     expect(await screen.findByText(en.spaces.share.notPublished)).toBeInTheDocument();
+  });
+});
+
+describe("the public link with several types", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("offers each type as a pressed button, reads the chosen one, and reads a failed type again on Retry", async () => {
+    const reads: string[] = [];
+    let parkingDown = true;
+    renderPage(<PublicViewPage slug="two" />, {
+      path: "/v/two",
+      answer: async (url: URL) => {
+        if (!url.pathname.startsWith("/api/endpoint/two/")) return undefined;
+        reads.push(url.pathname + url.search);
+        if (url.pathname === "/api/endpoint/two/") return json({});
+        if (url.pathname.endsWith("/types")) return json(["BikeHireDockingStation", "OffStreetParking", 7]);
+        if (url.searchParams.get("type") === "OffStreetParking") {
+          if (parkingDown) return json({ title: "Service Unavailable" }, 503);
+          return json([{ id: "urn:ngsi-ld:OffStreetParking:1", type: "OffStreetParking", name: "Kamppi P" }]);
+        }
+        return json([{ id: "urn:ngsi-ld:BikeHireDockingStation:1", type: "BikeHireDockingStation", name: "Kamppi" }]);
+      },
+    });
+    const group = await screen.findByRole("group", { name: en.spaces.share.types });
+    const buttons = within(group).getAllByRole("button");
+    // A type name that is no string is no type.
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("Kamppi")).toBeInTheDocument();
+    // No catalogue title: the chosen type names the page.
+    expect(screen.getByRole("heading", { level: 1, name: "Bike hire docking station" })).toBeInTheDocument();
+    await userEvent.click(buttons[1]);
+    expect(buttons[1]).toHaveAttribute("aria-pressed", "true");
+    // A 5xx is read twice more, then offered to the reader to ask again.
+    const retry = await screen.findByRole("button", { name: en.app.error.retry }, { timeout: 5000 });
+    parkingDown = false;
+    await userEvent.click(retry);
+    expect(await screen.findByText("Kamppi P")).toBeInTheDocument();
+    expect(reads.filter((read) => read.includes("type=OffStreetParking"))).toHaveLength(4);
+  }, 15_000);
+});
+
+describe("the catalogue title", () => {
+  const title = [
+    { "@language": "sk", "@value": "Stanice" },
+    { "@language": "en", "@value": "Stations" },
+    { "@language": "de-AT", "@value": "Stationen (AT)" },
+    { "@language": 5, "@value": 7 },
+  ];
+
+  it("is the page's language, then its base, then English, then the first", () => {
+    expect(inLanguage(title, "de-AT")).toBe("Stationen (AT)");
+    expect(inLanguage(title, "sk-SK")).toBe("Stanice");
+    expect(inLanguage(title, "fi")).toBe("Stations");
+    expect(inLanguage([{ "@language": "ca", "@value": "Estacions" }, "Plain"], "fi")).toBe("Estacions");
+    expect(inLanguage("Plain", "fi")).toBe("Plain");
+    expect(inLanguage({ "@value": "Untagged" }, "fi")).toBe("Untagged");
+    expect(inLanguage(undefined, "fi")).toBeUndefined();
+    expect(inLanguage([null, 3], "fi")).toBeUndefined();
   });
 });
 

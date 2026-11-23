@@ -226,6 +226,88 @@ describe("the Retention section (DM-82, DM-85)", () => {
     });
   });
 
+  it("says why the preview was refused, closes nothing, and Cancel drops the edit and the message", async () => {
+    renderRetention((url, request) => {
+      if (url.pathname === `${BASE}/retention/deleted`) return json(DELETED);
+      if (url.pathname === `${BASE}/retention/preview`) return json({ title: "Forbidden", status: 403, detail: "no right to preview bikes" }, 403);
+      if (request.method !== "GET") throw new Error("nothing is proposed after a refused preview");
+      return undefined;
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.spaces.retention.edit }));
+    const amount = screen.getByRole("spinbutton", { name: "Current values of Vehicle: how many" });
+    await user.clear(amount);
+    await user.type(amount, "1");
+    await user.click(screen.getByRole("button", { name: en.spaces.retention.save }));
+    expect(await screen.findByText(/no right to preview bikes/)).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: en.spaces.retention.cancel }));
+    expect(screen.queryByText(/no right to preview bikes/)).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: "Current values of Vehicle: how many" })).toBeNull();
+    expect(screen.getByRole("button", { name: en.spaces.retention.edit })).toBeInTheDocument();
+  });
+
+  it("closing the confirmation proposes nothing", async () => {
+    const puts: string[] = [];
+    renderRetention((url, request) => {
+      if (url.pathname === `${BASE}/retention/deleted`) return json(DELETED);
+      if (url.pathname === `${BASE}/retention/preview`) return json({ counts: [{ entityType: "Vehicle", kind: "entity", count: 7 }] });
+      if (request.method === "PUT") puts.push(url.pathname);
+      return undefined;
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.spaces.retention.edit }));
+    const amount = screen.getByRole("spinbutton", { name: "Current values of Vehicle: how many" });
+    await user.clear(amount);
+    await user.type(amount, "1");
+    await user.click(screen.getByRole("button", { name: en.spaces.retention.save }));
+    await screen.findByRole("alertdialog");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(puts).toEqual([]);
+    // The edit stays open with the typed amount.
+    expect(screen.getByRole("spinbutton", { name: "Current values of Vehicle: how many" })).toHaveValue(1);
+  });
+
+  it("says why the proposal was refused, in the API's words or the failure's", async () => {
+    let calls = 0;
+    renderRetention((url, request) => {
+      if (url.pathname === `${BASE}/retention/deleted`) return json(DELETED);
+      if (request.method === "PUT") {
+        calls += 1;
+        if (calls === 1) return json({ title: "Unprocessable", status: 422, detail: "history must be at most P10Y" }, 422);
+        throw new TypeError("Failed to fetch");
+      }
+      return undefined;
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.spaces.retention.edit }));
+    const amount = screen.getByRole("spinbutton", { name: "History of Vehicle: how many" });
+    await user.clear(amount);
+    await user.type(amount, "9");
+    await user.click(screen.getByRole("button", { name: en.spaces.retention.save }));
+    expect(await screen.findByText(/history must be at most P10Y/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: en.spaces.retention.save }));
+    expect(await screen.findByText(/Failed to fetch/)).toBeInTheDocument();
+    expect(screen.queryByText(en.spaces.retention.proposed)).toBeNull();
+  });
+
+  it("edits a type whose history is off from Off", async () => {
+    renderPage(
+      <SpaceRetention
+        project="helsinki"
+        space="bikes"
+        manifest={{ ...MANIFEST, spec: { retention: [{ entityType: "Stop", history: "off" }] } } as unknown as Manifest}
+        types={["Stop"]}
+      />,
+      { path: "/projects/helsinki/spaces/bikes", answer: (url) => (url.pathname.endsWith("/deleted") ? json(DELETED) : undefined) },
+    );
+    await userEvent.click(await screen.findByRole("button", { name: en.spaces.retention.edit }));
+    // Off has no amount to type.
+    expect(screen.queryByRole("spinbutton", { name: "History of Stop: how many" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: /History of Stop/ })).toHaveValue("off");
+  });
+
   it("shows a type whose history is off as Off", async () => {
     renderPage(
       <SpaceRetention
