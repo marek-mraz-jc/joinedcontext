@@ -191,6 +191,14 @@ describe("the group model", () => {
       { project: "helsinki", app: "alerts", role: "viewer" },
     ]);
     expect(appRolesNaming([], "stewards")).toEqual([]);
+    const later = { ...APP, metadata: { name: "zones", namespace: "espoo" } } as unknown as Manifest;
+    expect(
+      appRolesNaming([{ project: "helsinki", app: APP as unknown as Manifest }, { project: "espoo", app: later }], "stewards"),
+      "sorted by project, App, role",
+    ).toEqual([
+      { project: "espoo", app: "zones", role: "viewer" },
+      { project: "helsinki", app: "alerts", role: "viewer" },
+    ]);
   });
 
   it("takes the group out of a binding, and empties none", () => {

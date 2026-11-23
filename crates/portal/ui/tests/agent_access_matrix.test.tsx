@@ -57,8 +57,9 @@ interface Sent {
   body: unknown;
 }
 
-function stub(mayRevoke: boolean): Sent[] {
+function stub(mayRevoke: boolean, failFirst = false): Sent[] {
   const sent: Sent[] = [];
+  let reads = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -75,8 +76,16 @@ function stub(mayRevoke: boolean): Sent[] {
           status,
           headers: { "Content-Type": "application/json" },
         });
-      if (odataCall(url)?.name === "jc_serviceaccount_access")
+      if (odataCall(url)?.name === "jc_serviceaccount_access") {
+        reads += 1;
+        if (failFirst && reads === 1) {
+          return new Response(
+            JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "the access store did not answer" }),
+            { status: 503, headers: { "Content-Type": "application/problem+json" } },
+          );
+        }
         return odataValue(answer(mayRevoke));
+      }
       if (url.pathname.endsWith("/serviceaccounts/vendor-ci/revoke")) {
         return json(
           {
@@ -181,6 +190,30 @@ describe("AccountAccess (AG-130, AG-132)", () => {
       index: 1,
       role: "endpoint-editor",
     });
+  });
+
+  it("revokes nothing when the confirmation is cancelled", async () => {
+    const sent = stub(true);
+    show();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Revoke endpoint-editor in project:helsinki now",
+      }),
+    );
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByTestId("confirm-cancel"));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(sent.some((call) => call.path.endsWith("/revoke"))).toBe(false);
+  });
+
+  it("says why the access could not be read and reads it again on Retry", async () => {
+    stub(true, true);
+    show();
+    expect(await screen.findByText(/the access store did not answer/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("group", { name: "What vendor-ci may do, by kind" }),
+    ).toBeInTheDocument();
   });
 
   it("offers no Revoke to a person who may not revoke", async () => {
