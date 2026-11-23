@@ -31,6 +31,7 @@ fuzz_target!(|data: &[u8]| {
     }
     // A `url(` right after a name character is a dimension's unit and a parenthesis, which no
     // browser fetches; every function `url(` names a portal file.
+    let lower = outside_strings(&lower);
     for (at, _) in lower.match_indices("url(") {
         let after_name = lower[..at]
             .chars()
@@ -45,3 +46,33 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(again, out);
     }
 });
+
+/// `css` with the text of every quoted string blanked, so a `url(` inside a string is not read.
+fn outside_strings(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for c in css.chars() {
+        match quote {
+            Some(q) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == q {
+                    quote = None;
+                    out.push(c);
+                    continue;
+                }
+                out.push(' ');
+            }
+            None => {
+                if c == '"' || c == '\'' {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
+        }
+    }
+    out
+}

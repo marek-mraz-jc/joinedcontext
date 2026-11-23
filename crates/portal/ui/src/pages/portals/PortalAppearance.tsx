@@ -211,7 +211,6 @@ export function PortalAppearanceTab({ name, spec }: { name: string; spec: Portal
                   spellCheck={false}
                   className="font-mono"
                   value={css ?? ""}
-                  placeholder={CSS_EXAMPLE}
                   aria-invalid={errors.length > 0 || undefined}
                   onChange={(e) => set("css", e.currentTarget.value === "" ? undefined : e.currentTarget.value)}
                 />
