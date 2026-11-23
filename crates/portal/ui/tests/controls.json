@@ -938,6 +938,7 @@
       "tests": [
         "access_forms.test.tsx",
         "edit_keeps_stored_metadata.test.ts",
+        "organization_roles.test.tsx",
         "project_settings.test.tsx"
       ]
     },

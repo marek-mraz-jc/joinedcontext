@@ -78,7 +78,7 @@ describe("the organization's roles", () => {
     const { reads } = renderRoles({ failFirst: true });
     expect(await screen.findByText(/the role store is restarting/)).toBeInTheDocument();
     // The failure's own Retry is the last button of that name on the page.
-    await user.click(screen.getAllByRole("button", { name: en.app.retry }).at(-1) as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: en.app.error.retry }).at(-1) as HTMLElement);
     expect(await screen.findByText("Auditor", {}, { timeout: 10_000 })).toBeInTheDocument();
     expect(reads()).toBe(2);
   });

@@ -331,7 +331,7 @@ describe("a group's page", () => {
     const user = userEvent.setup();
     renderGroup({ groupFails: 1 });
     expect(await screen.findByText(/the store is restarting/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: en.app.retry }));
+    await user.click(screen.getByRole("button", { name: en.app.error.retry }));
     expect(await section(en.access.groupPage.members)).toBeInTheDocument();
   });
 
