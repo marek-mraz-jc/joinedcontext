@@ -10,7 +10,10 @@
 //! - Byte, triple, nesting-depth and literal-length caps are enforced while parsing.
 
 use crate::dcat::{dataset_publisher, terms_of_use};
-use crate::graph::{iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
+use crate::graph::{
+    base_iri_error, iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple,
+    BASE_IRI,
+};
 use crate::profile::{
     CatalogueMember, Compact, Contact, Context, DatasetMember, DcatProfile, DistributionMember,
     Profile, TermsMember,
@@ -315,8 +318,8 @@ pub fn parse_jsonld_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
     let normalized_bytes = normalized.into_bytes();
 
     let parser = JsonLdParser::new()
-        .with_base_iri("https://dataroom.local/")
-        .map_err(|e| DataroomError::Rdf(format!("base IRI error: {e}")))?;
+        .with_base_iri(BASE_IRI)
+        .map_err(base_iri_error)?;
 
     let mut graph = RdfGraph::new();
     for item in parser.for_slice(&normalized_bytes) {
