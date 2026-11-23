@@ -219,6 +219,29 @@ async fn introspection_dpop_count_and_kc_action_refusals() {
     let v = json_of(&body);
     assert_eq!(v["active"], true, "{body}");
     assert_eq!(v["username"], "demo.orgmember@hel.fi", "{body}");
+    // A token naming no person (no sub, no preferred_username) gets no username.
+    let anonymous = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "typ": "Bearer", "azp": "apisix-gateway",
+            "jti": "introspect-nosub", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", anonymous.as_str()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert!(v.get("username").is_none(), "{body}");
 
     let req = Request::builder()
         .method(Method::POST)
@@ -443,6 +466,120 @@ async fn offline_access_needs_its_role() {
     assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(err(&body), "invalid_scope", "{body}");
     assert!(body.contains("offline_access role"), "{body}");
+}
+
+/// A person with a TOTP credential needs a valid code at the password grant; a wrong one is
+/// refused and counted as a failure.
+#[tokio::test]
+async fn the_password_grant_refuses_a_wrong_totp_code() {
+    let (app, _, _) = app().await;
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("username", "demo.steward@hel.fi"),
+            ("password", "StewardPass123!Valid"),
+            ("totp", "000000"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+    assert!(body.contains("Invalid totp code"), "{body}");
+}
+
+/// A Keycloak pbkdf2 password signs in at the password grant and is stored again as argon2id
+/// (W3 import, rehash on first use).
+#[tokio::test]
+async fn the_password_grant_rehashes_a_legacy_password() {
+    let (app, store, _) = app().await;
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let mut pw = store
+        .list_credentials("dev", &member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "password")
+        .unwrap();
+    let salt = b"0123456789abcdef";
+    let mut out = [0u8; 32];
+    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(b"MemberPass123!Valid", salt, 1000, &mut out)
+        .unwrap();
+    pw.secret_data = json!({ "value": base64::engine::general_purpose::STANDARD.encode(out),
+        "salt": base64::engine::general_purpose::STANDARD.encode(salt) })
+    .to_string();
+    pw.credential_data = r#"{"hashIterations":1000,"algorithm":"pbkdf2-sha256"}"#.into();
+    store.upsert_credential(pw).await.unwrap();
+    password_grant(
+        &app,
+        "demo.orgmember@hel.fi",
+        "MemberPass123!Valid",
+        "openid",
+    )
+    .await;
+    let pw = store
+        .list_credentials("dev", &member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "password")
+        .unwrap();
+    assert!(
+        pw.secret_data.starts_with("$argon2id$"),
+        "{}",
+        pw.secret_data
+    );
+    assert!(pw.credential_data.is_empty());
+}
+
+/// An authorization code past its lifetime is refused at the exchange (RFC 6749 §4.1.2).
+#[tokio::test]
+async fn an_expired_code_is_refused() {
+    let (app, store, _) = app().await;
+    let now = jc_time::TimestampTz::now();
+    store
+        .put_auth_code(AuthorizationCodeRecord {
+            code_hash: sha256_hex("expired-code"),
+            realm_id: "dev".into(),
+            org_id: None,
+            client_id: "apisix-gateway".into(),
+            user_id: user_id(&store, "demo.orgmember@hel.fi").await,
+            sso_session_id: "no-session".into(),
+            redirect_uri: CALLBACK.into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            code_challenge: String::new(),
+            code_challenge_method: String::new(),
+            nonce: None,
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            dpop_jkt: None,
+            auth_time: now.as_second(),
+            consumed: false,
+            created_at: now - jiff::SignedDuration::from_mins(10),
+            expires_at: now - jiff::SignedDuration::from_mins(9),
+        })
+        .await
+        .unwrap();
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("code", "expired-code"),
+            ("redirect_uri", CALLBACK),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("Code is expired"), "{body}");
 }
 
 fn jwt_alg(jwt: &str) -> Value {
