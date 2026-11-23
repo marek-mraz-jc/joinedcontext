@@ -178,7 +178,12 @@ impl<'m> Reader<'_, 'm> {
             })?;
         let url = url.as_str().ok_or_else(invalid)?;
         let relative = url.strip_prefix(self.service_root).unwrap_or(url);
-        if relative.starts_with('/') || relative.contains("://") {
+        // an absolute path or a scheme anywhere: no link of this service (odata_url::parse refuses
+        // both too, so each test alone already decides; neither is left to the parser)
+        if [relative.starts_with('/'), relative.contains("://")]
+            .iter()
+            .any(|refused| *refused)
+        {
             return Err(invalid());
         }
         let model = self.model();

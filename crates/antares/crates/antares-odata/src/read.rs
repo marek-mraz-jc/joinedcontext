@@ -2545,6 +2545,16 @@ mod tests {
             !whole.contains("pick=") && !whole.contains("attrs="),
             "{whole}"
         );
+        assert!(!whole.contains("expandValues="), "{whole}");
+        let expanding = Translated {
+            expand_values: vec!["https://e.org/m".into()],
+            ..Translated::default()
+        };
+        let listed = query(&set, None, &[], &expanding);
+        assert!(
+            listed.contains("&expandValues=https%3A%2F%2Fe.org%2Fm"),
+            "{listed}"
+        );
         let q = query(&set, Some(&["geo", "createdAt"]), &[], &none);
         assert!(
             q.ends_with(
