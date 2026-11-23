@@ -35,6 +35,9 @@ exclude_re = [
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
+  # dataroom-shacl derive_form_layout: `<=` differs from `<` only when the two orders are equal, and
+  # then both keep the same order (T-7625).
+  'dataroom/shacl/src/registry\.rs:\d+:\d+: replace < with <= in derive_form_layout',
   # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
   'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
   # Every Store sets org_id and catalogue_id from the request ctx on upsert (store-memory, store-pg), so the copy's own fields

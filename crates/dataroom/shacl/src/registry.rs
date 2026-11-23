@@ -1728,7 +1728,7 @@ mod tests {
         );
     }
 
-    /// Form fields: a path stated twice keeps its lowest order, and a profile's terms predicates
+    /// Form fields: a path two node shapes state (stacked profiles) keeps its lowest order, and a profile's terms predicates
     /// name the CKAN field they fill.
     #[test]
     fn form_fields_keep_the_lowest_order_and_name_terms_fields() {
@@ -1737,8 +1737,9 @@ mod tests {
                 &format!(
                     r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
                     @prefix dcat: <http://www.w3.org/ns/dcat#> .
-                    <https://e.org/s> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
-                      sh:property [ sh:path dcat:keyword ; sh:order {first} ] ;
+                    <https://e.org/a> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+                      sh:property [ sh:path dcat:keyword ; sh:order {first} ] .
+                    <https://e.org/b> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
                       sh:property [ sh:path dcat:keyword ; sh:order {second} ] ."#
                 ),
                 &RdfLimits::default(),
