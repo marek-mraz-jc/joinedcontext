@@ -667,7 +667,7 @@ mod tests {
     }
 
     fn given(v: Value) -> Map<String, Value> {
-        v.as_object().cloned().unwrap_or_default()
+        serde_json::from_value(v).unwrap_or_default()
     }
 
     #[test]
