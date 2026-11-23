@@ -1283,6 +1283,68 @@ async fn xml_compress_and_decompress() {
 }
 
 #[tokio::test]
+async fn unarchive_refuses_too_many_members_and_a_zip_bomb() {
+    use std::io::Write;
+    let e = env();
+    let members = ekiben_processors::archive::MAX_ARCHIVE_MEMBERS + 1;
+    let mut tw = tar::Builder::new(Vec::new());
+    for i in 0..members {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(0);
+        h.set_cksum();
+        tw.append_data(&mut h, format!("m{i}"), &b""[..]).unwrap();
+    }
+    let tar_bytes = tw.into_inner().unwrap();
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for i in 0..members {
+        zw.start_file(format!("m{i}"), opts).unwrap();
+    }
+    let many_zip = zw.finish().unwrap().into_inner();
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zw.start_file(
+        "zeros",
+        zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(1))
+            .large_file(true),
+    )
+    .unwrap();
+    let chunk = vec![0u8; 1 << 20];
+    for _ in 0..=(ekiben_processors::archive::MAX_ARCHIVE_UNPACKED_BYTES >> 20) {
+        zw.write_all(&chunk).unwrap();
+    }
+    let bomb = zw.finish().unwrap().into_inner();
+    for (fmt, bytes, want) in [
+        (
+            "tar",
+            tar_bytes,
+            "tar archive member count exceeds maximum allowed (10000)",
+        ),
+        (
+            "zip",
+            many_zip,
+            "zip archive member count (10001) exceeds safety limit (10000)",
+        ),
+        (
+            "zip",
+            bomb,
+            "zip bomb detected: unpacked size exceeds safety limit (134217728 bytes)",
+        ),
+    ] {
+        let out = e
+            .run(
+                json!({"unarchive": {"format": fmt}}),
+                vec![Part::new(bytes)],
+            )
+            .await;
+        assert_eq!(out[0].len(), 1, "{want}");
+        assert_eq!(err_of(&out[0][0]), want);
+    }
+}
+
+#[tokio::test]
 async fn decompress_refuses_a_bomb() {
     let e = env();
     let zeros = Part::new(Bytes::from(vec![0u8; 129 * 1024 * 1024]));
