@@ -462,6 +462,29 @@ impl QuotaUsageRecord {
     }
 }
 
+/// One audit row (`shako.audit`, S6-20): a forge write that committed, in the transaction of
+/// its change. Ids, the operation and its kind (`OperationDef::audit_kind`), the actor's subject
+/// id and the decision; never a secret, a file body or a person's name or e-mail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditRecord {
+    pub id: uuid::Uuid,
+    pub instance_id: InstanceId,
+    pub org_id: OrgId,
+    /// `OperationDef::audit_kind` of the operation, e.g. `REPO_CREATE`.
+    pub kind: String,
+    /// `OperationDef::name`, e.g. `CreateRepository`.
+    pub operation: String,
+    /// The caller's subject id (`Subject::subject_id`), empty for an anonymous caller.
+    pub actor_id: String,
+    /// What was written, as ids: `repos/{RepoId}`, `repos/{RepoId}/pulls/{n}`.
+    pub target: String,
+    /// The Authorizer's decision the write ran under (`allow`).
+    pub decision: String,
+    pub request_id: String,
+    pub created_at: TimestampTz,
+}
+
 /// Transactional outbox event (`shako.outbox`, S14).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

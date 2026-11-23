@@ -101,6 +101,41 @@ async fn state() -> AppState {
     st
 }
 
+/// S4-22: Snapshot row writes that fail under a running fill (a store
+/// hiccup) neither drop the copy nor leave the Snapshot `preparing`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_store_hiccup_under_a_fill_keeps_the_snapshot() {
+    let mut st = AppState::new("antares-snap".into());
+    let double = std::sync::Arc::new(common::Double::passthrough(st.store.clone()));
+    st.store = double.clone();
+    antares_api::wire(&mut st).await;
+    create_vehicle(&st, "urn:ngsi-ld:Vehicle:h1", 80).await;
+    double.fail_snapshot_writes(2);
+    let snap = json!({"type": "Snapshot",
+        "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}]})
+    .to_string();
+    let (status, headers, body) =
+        send_h(&st, "POST", "/ngsi-ld/v1/snapshots", Some(snap), &[]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let loc = headers
+        .get("Location")
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header")
+        .to_owned();
+    let ready = wait_ready(&st, &loc).await;
+    assert_eq!(ready["snapshotStatus"], "success", "{ready}");
+    let id = ready["id"].as_str().expect("id").to_owned();
+    let (status, _, body) = send_h(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:h1",
+        None,
+        &[("NGSILD-Snapshot", id.as_str())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the copy is there: {body}");
+}
+
 /// 5.16.1.4 + 6.36.3.1: create → 201 + Location; status preparing → success;
 /// 5.2.41 output members (priority default 5, expiresAt, per-query details).
 #[tokio::test(flavor = "multi_thread")]

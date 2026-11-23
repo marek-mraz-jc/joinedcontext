@@ -108,7 +108,7 @@ pub async fn all_users(store: &dyn Store, realm_id: &str) -> Result<Vec<UserRepr
     }
 }
 
-/// Every member of the group, read page by page: for the realm split, never a route.
+/// Every member of the group, read page by page: for the realm split and the export, never a route.
 pub async fn all_group_members(
     store: &dyn Store,
     realm_id: &str,

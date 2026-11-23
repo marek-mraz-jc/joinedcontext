@@ -199,6 +199,9 @@ pub struct Page {
     pub info: Vec<String>,
     pub show_label: String,
     pub hide_label: String,
+    /// Told when the browser's passkey ceremony fails or the browser has none.
+    pub webauthn_failed: String,
+    pub webauthn_unsupported: String,
 }
 
 impl Page {
@@ -312,6 +315,8 @@ impl Shell<'_> {
             languages_label: self.bundle.get("languages").to_owned(),
             show_label: self.bundle.get("showPassword").to_owned(),
             hide_label: self.bundle.get("hidePassword").to_owned(),
+            webauthn_failed: self.bundle.get("webauthnFailed").to_owned(),
+            webauthn_unsupported: self.bundle.get("webauthnUnsupported").to_owned(),
             ..Page::default()
         }
     }

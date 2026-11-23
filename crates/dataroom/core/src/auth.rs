@@ -94,6 +94,9 @@ pub struct RequestCtx {
     pub request_id: String,
 }
 
+/// The actor of the Portal's CKAN publisher: it writes what an Endpoint's manifest declares.
+pub const PORTAL_PUBLISHER: &str = "portal-ckan";
+
 impl RequestCtx {
     pub fn new(org_id: OrgId, catalogue_id: CatalogueId, subject: Subject) -> Self {
         Self {

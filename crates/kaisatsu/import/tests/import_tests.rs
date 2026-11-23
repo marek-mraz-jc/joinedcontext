@@ -825,3 +825,27 @@ async fn a_refused_outbound_address_is_kept_with_a_warning_not_a_failed_import()
         "{warnings:?}"
     );
 }
+
+#[tokio::test]
+async fn file_groups_become_rows_and_the_export_reads_them_back() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let doc = json!({
+        "realm": "members",
+        "groups": [{ "name": "staff", "path": "/staff", "subGroups": [{ "name": "night", "path": "/staff/night" }] }],
+        "users": [{ "username": "ada", "groups": ["/staff/night"] }]
+    });
+    apply_realm_files(&store, &[("members.json".into(), doc)], &default_opts())
+        .await
+        .unwrap();
+    let ada = store
+        .get_user_by_username_or_email("members", None, "ada")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(ada.groups.is_empty(), "the document keeps no path");
+    let joined = store.list_user_groups("members", &ada.id).await.unwrap();
+    assert_eq!(joined.len(), 1);
+    assert_eq!(joined[0].path, "/staff/night");
+    let exported = export_realm(&store, "members", true).await.unwrap();
+    assert_eq!(exported["users"][0]["groups"], json!(["/staff/night"]));
+}

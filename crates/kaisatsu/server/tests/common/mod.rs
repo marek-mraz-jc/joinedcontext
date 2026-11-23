@@ -93,6 +93,21 @@ pub async fn setup_dev_realm_on(store: Arc<dyn Store>, kek: Kek) -> KaisatsuStat
     portal_api.optional_client_scopes.push(ep_scope.name);
     store.upsert_client(portal_api).await.unwrap();
 
+    // The realm's own clients Keycloak creates in every realm; their names carry trust only as
+    // realm clients (no Organization).
+    for client_id in ["admin-cli", "account-console"] {
+        store
+            .upsert_client(ClientRepresentation {
+                realm_id: "dev".into(),
+                client_id: client_id.into(),
+                enabled: true,
+                public_client: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+
     KaisatsuState::new(store, kek, guard, Arc::new(LocalAuthorizer))
 }
 

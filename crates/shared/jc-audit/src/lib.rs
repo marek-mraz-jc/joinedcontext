@@ -23,6 +23,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, OwnedMappedMutexGuard, OwnedMutexGuard};
@@ -53,7 +54,11 @@ struct Unit {
     dirty: Arc<AtomicBool>,
     /// The door marked the request failed ([`abort`]) although it answers with a success status.
     aborted: Arc<AtomicBool>,
+    /// Work that may run only once what the unit wrote stands ([`after_commit`]).
+    after: Arc<std::sync::Mutex<Vec<AfterCommit>>>,
 }
+
+type AfterCommit = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 tokio::task_local! {
     static UNIT: Unit;
@@ -179,6 +184,34 @@ pub fn abort() {
     let _ = UNIT.try_with(|u| u.aborted.store(true, Ordering::SeqCst));
 }
 
+/// Runs `fut` once what the request wrote stands: inside a unit after its commit (never when it
+/// rolls back), outside a unit at once. For work another party sees, such as a webhook sent
+/// about the change, or a cache marked from it. It runs outside the unit, on the task that ends
+/// it, so its own store calls open transactions of their own.
+pub async fn after_commit<F>(fut: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let mut fut = Some(fut);
+    let _ = UNIT.try_with(|u| {
+        if let Some(f) = fut.take() {
+            u.after
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Box::pin(f));
+        }
+    });
+    if let Some(f) = fut {
+        f.await;
+    }
+}
+
+async fn run_after(after: Vec<AfterCommit>) {
+    for f in after {
+        f.await;
+    }
+}
+
 /// Why a unit did not commit what its request wrote.
 #[derive(Debug)]
 pub enum UnitError {
@@ -205,10 +238,19 @@ where
 {
     let unit = Unit::default();
     let out = UNIT.scope(unit.clone(), fut).await;
+    let commit = succeeded(&out) && !unit.aborted.load(Ordering::SeqCst);
+    let after = std::mem::take(
+        &mut *unit
+            .after
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let after = if commit { after } else { Vec::new() };
     let Some(mut held) = unit.conn.lock().await.take() else {
+        // Nothing was written through the pool: the work after the commit is due now.
+        let _ = tokio::spawn(run_after(after)).await;
         return Ok(out);
     };
-    let commit = succeeded(&out) && !unit.aborted.load(Ordering::SeqCst);
     let dirty = unit.dirty;
     let ended = tokio::spawn(async move {
         let result = async {
@@ -218,6 +260,9 @@ where
         .await;
         held.open = result.is_err();
         drop(held);
+        if result.is_ok() {
+            run_after(after).await;
+        }
         result
     })
     .await;

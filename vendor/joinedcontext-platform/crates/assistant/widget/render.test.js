@@ -1213,9 +1213,14 @@ test("an aggregation names its method and says when it is part of the data (T-75
   assert.equal(aggregated({ ...count, shown: 1200 }, "en"), "Count per decade · 1,200 of 1,651");
   assert.equal(aggregated({ method: "avg", per: "day", of: "pm10", shown: 1, total: 1 }, "sk"), "Priemer za deň (UTC)");
   assert.equal(aggregated({ method: "constructor", per: "day" }, "en"), "");
+  assert.equal(aggregated({ method: "avg", per: "month", of: "pm10", shown: 1, total: 1, years: [2016, 2025] }, "en"), "Average per month · 2016-2025");
+  assert.equal(aggregated({ method: "avg", per: "year", of: "population", shown: 1, total: 1, years: [1926, 2025] }, "sk"), "Priemer za rok · 1926-2025");
   const made = { type: "AirQualityObserved", aggregation: { method: "avg", per: "day", of: "pm10", shown: 1, total: 1 }, columns: ["name", "date", "pm10"], rows: [["BB", "2026-10-01", 11.5]] };
   assert.equal(table(made, "sk").rows[0][1], "1. 10. 2026");
   assert.equal(table(made, "sk").caption, "Kvalita ovzdušia — Priemer za deň (UTC)");
   const rows = vizRows([{ label: "_other", value: 42 }, { label: "SSC", value: 422 }], "sk", { _other: { sk: "Ostatné" } });
   assert.deepEqual(rows, [{ label: "Ostatné", value: 42 }, { label: "SSC", value: 422 }]);
+  const years = { ...made, aggregation: { ...made.aggregation, per: "year" } };
+  assert.equal(table(years, "sk").rows[0][1], "2026");
+  assert.equal(table({ ...made, aggregation: { ...made.aggregation, per: "month" } }, "en").rows[0][1], "October 2026");
 });

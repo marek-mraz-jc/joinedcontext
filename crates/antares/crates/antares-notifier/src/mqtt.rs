@@ -578,9 +578,15 @@ pub async fn listen(
     use rumqttc::v5::mqttbytes::QoS;
     use rumqttc::v5::Event;
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // replicas in containers share pids; one client id twice and the server
+    // drops the first connection for the second
+    static PROCESS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+        use std::hash::{BuildHasher, Hasher};
+        std::hash::RandomState::new().build_hasher().finish()
+    });
     let id = format!(
-        "antares-in-{}-{}",
-        std::process::id(),
+        "antares-in-{:016x}-{}",
+        *PROCESS,
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let addr = checked_addr(&ep.host, ep.port, egress_policy(), timeout).await?;

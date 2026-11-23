@@ -155,6 +155,15 @@ where
     });
 }
 
+/// Sleep on both targets: tokio's timer natively, the browser's on wasm32
+/// (tokio time has no reactor there).
+pub(crate) async fn sleep_ms(ms: u32) {
+    #[cfg(not(target_arch = "wasm32"))]
+    tokio::time::sleep(std::time::Duration::from_millis(ms.into())).await;
+    #[cfg(target_arch = "wasm32")]
+    gloo_timers::future::TimeoutFuture::new(ms).await;
+}
+
 /// One [`BACKGROUND`] task, uncounted when it ends however it ends: a task
 /// that panicked or was cancelled left the count up and every later
 /// shutdown drain waiting for its whole deadline (F-ANT2-019).

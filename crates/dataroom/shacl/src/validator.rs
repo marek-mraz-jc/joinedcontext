@@ -1234,7 +1234,7 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
 }
 
 fn subclasses_of(class_iri: &str) -> Vec<&str> {
-    match class_iri {
+    let mut classes = match class_iri {
         "http://www.w3.org/2006/vcard/ns#Kind" => vec![
             "http://www.w3.org/2006/vcard/ns#Kind",
             "http://www.w3.org/2006/vcard/ns#Organization",
@@ -1263,24 +1263,37 @@ fn subclasses_of(class_iri: &str) -> Vec<&str> {
             "http://xmlns.com/foaf/0.1/Person",
             "http://xmlns.com/foaf/0.1/Group",
         ],
-        "http://purl.org/dc/terms/LicenseDocument" => vec![
-            "http://purl.org/dc/terms/LicenseDocument",
-            "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
-            "https://data.gov.sk/def/ontology/legislation/TermsOfUse",
-        ],
+        "http://purl.org/dc/terms/LicenseDocument" => {
+            vec!["http://purl.org/dc/terms/LicenseDocument"]
+        }
         "http://purl.org/dc/terms/RightsStatement" => vec![
             "http://purl.org/dc/terms/RightsStatement",
             "http://purl.org/dc/terms/LicenseDocument",
-            "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
-            "https://data.gov.sk/def/ontology/legislation/TermsOfUse",
         ],
         "http://purl.org/dc/terms/MediaTypeOrExtent" => vec![
             "http://purl.org/dc/terms/MediaTypeOrExtent",
             "http://purl.org/dc/terms/MediaType",
         ],
         other => vec![other],
+    };
+    if matches!(
+        class_iri,
+        "http://purl.org/dc/terms/LicenseDocument" | "http://purl.org/dc/terms/RightsStatement"
+    ) {
+        // A profile's terms-of-use node is the licence document of its country.
+        classes.extend(TERMS_CLASSES.iter().copied());
     }
+    classes
 }
+
+/// The terms-of-use classes of the installed profiles.
+static TERMS_CLASSES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    let classes: std::collections::BTreeSet<&str> = dataroom_rdf::DcatProfile::installed()
+        .filter_map(|profile| profile.manifest().render.terms.as_ref())
+        .map(|terms| terms.class.as_str())
+        .collect();
+    classes.into_iter().collect()
+});
 
 fn find_instances_with_subclasses(data: &RdfGraph, class_iri: &str) -> Vec<SubjectNode> {
     let mut out = Vec::new();

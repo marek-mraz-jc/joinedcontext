@@ -1,0 +1,43 @@
+{
+  "catalogue": {
+    "orgId": "00000000-0000-0000-0000-000000000001", "id": "00000000-0000-0000-0000-000000000002",
+    "name": "opendata", "host": "opendata.example.org",
+    "title": {"cs": "Katalog", "en": "Catalogue", "sk": "Katalóg"},
+    "description": {"cs": "Popis katalogu", "en": "Catalogue description", "sk": "Popis katalógu"},
+    "defaultLanguage": "sk", "languages": ["sk", "cs", "en"],
+    "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [],
+    "publisherUri": "https://publisher.example.org/id/city",
+    "publisherName": {"cs": "Město", "en": "City", "sk": "Mesto"},
+    "contactPoint": {"kind": "Organization", "name": {"sk": "Oddelenie dát"}, "email": "data@city.example"},
+    "modified": "2026-11-01T10:00:00Z"
+  },
+  "dataset": {
+    "orgId": "00000000-0000-0000-0000-000000000001", "catalogueId": "00000000-0000-0000-0000-000000000002",
+    "id": "pkg-air", "name": "air",
+    "title": {"cs": "Kvalita ovzduší", "en": "Air quality", "sk": "Kvalita ovzdušia"},
+    "description": {"cs": "Měření", "en": "Measurements", "sk": "Merania"},
+    "publisherId": "city",
+    "publisher": {"uri": "https://publisher.example.org/id/city", "name": {"cs": "Město", "en": "City", "sk": "Mesto"}},
+    "visibility": "public", "state": "active",
+    "themes": ["ENVI"], "frequency": "daily", "licenceId": "cc-by",
+    "keywords": {"cs": ["ovzduší"], "en": ["air"], "sk": ["ovzdušie", "PM10"]},
+    "spatial": ["http://data.europa.eu/nuts/code/SK032"],
+    "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+    "contactPoint": {"kind": "Organization", "name": {"sk": "Oddelenie"}, "email": "data@city.example"},
+    "distributions": [{
+      "id": "res-1", "datasetId": "pkg-air", "title": {"sk": "CSV súbor"},
+      "accessUrl": "https://files.example.org/air", "downloadUrl": "https://files.example.org/air.csv",
+      "format": "CSV", "mediaType": "text/csv",
+      "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+      "termsOfUse": {
+        "authorsWork": "https://creativecommons.org/licenses/by/4.0/",
+        "authorName": {"sk": "Mesto"},
+        "databaseAsWork": "https://creativecommons.org/licenses/by/4.0/",
+        "databaseAuthorName": {"sk": "Mesto"},
+        "suiGenerisDatabase": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "personalData": "https://example.org/personal-data/declared"
+      }
+    }],
+    "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+  }
+}

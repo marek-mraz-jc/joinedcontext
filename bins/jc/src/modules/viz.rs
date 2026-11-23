@@ -46,6 +46,10 @@ const FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../vendor/viz/site/explore.js"),
     ),
     (
+        "granularity.js",
+        include_bytes!("../../../../vendor/viz/site/granularity.js"),
+    ),
+    (
         "host.css",
         include_bytes!("../../../../vendor/viz/site/host.css"),
     ),
@@ -591,6 +595,19 @@ mod tests {
             .expect("self.jcTheme = ");
         let theme = include_str!("../../../../crates/shared/jc-chart/src/theme.json");
         assert_eq!(body, format!("{};\n", theme.trim_end()));
+    }
+
+    /// The chart host reads a range by the one table the assistant, the broker's MCP and the gateway
+    /// read (T-7526): `granularity.js` is jc-time's `granularity.json` behind `self.jcGranularity = `.
+    #[test]
+    fn the_granularity_script_is_the_granularity_file() {
+        let script = include_str!("../../../../vendor/viz/site/granularity.js");
+        let body = script
+            .split_once("self.jcGranularity = ")
+            .map(|(_, body)| body)
+            .expect("self.jcGranularity = ");
+        let table = include_str!("../../../../crates/shared/jc-time/src/granularity.json");
+        assert_eq!(body, format!("{};\n", table.trim_end()));
     }
 
     /// The releases are the deployment's byte for byte: the sums beside them hold.

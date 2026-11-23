@@ -2,10 +2,11 @@
 //! exports and restores them by column. A row and a record are the same JSON, with the keys in
 //! snake case and the few differences [`to_row`] and [`to_record`] name.
 
+use jc_audit::Tx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use shako_core::{InstanceId, OrgId, ShakoError, ShakoResult};
-use sqlx::{AssertSqlSafe, Postgres, Transaction};
+use sqlx::AssertSqlSafe;
 use std::fmt::Write as _;
 
 /// A typed table and the key, beside the tenant, the Store names one of its rows by.
@@ -181,7 +182,7 @@ pub(crate) enum Taken {
 
 /// Writes `row`; answers the record as stored.
 pub(crate) async fn put(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut Tx,
     table: &Table,
     row: Map<String, Value>,
     taken: Taken,
@@ -242,7 +243,7 @@ pub(crate) async fn put(
 
 /// The tenant's records `rest` selects: SQL after the tenant's predicate, with `binds` from $3.
 pub(crate) async fn select<T: DeserializeOwned>(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut Tx,
     tenant: (InstanceId, OrgId),
     table: &Table,
     rest: &'static str,

@@ -85,12 +85,15 @@ fn run(test: &str) -> String {
 /// `{org}.{BASE}` and one administrator scoped to it, `{org}-admin`.
 async fn organization(state: &AppState, org: &str) -> Identity {
     let pool = state.db.as_ref().expect("db");
-    state.mirror.upsert(envelope(
+    let mut manifest = envelope(
         "Organization",
         org,
         ORG_NAMESPACE,
         json!({ "domain": format!("{org}.sk") }),
-    ));
+    );
+    // The name a new portal's catalogue publishes under (T-7520).
+    manifest.metadata.title = serde_json::from_value(json!(org.to_uppercase())).expect("a title");
+    state.mirror.upsert(manifest);
     seed_organizations(
         pool,
         &[SeedOrganization {

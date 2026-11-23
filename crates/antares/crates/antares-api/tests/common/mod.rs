@@ -28,6 +28,9 @@ pub struct Double {
     refuse_registrations: bool,
     refuse_doc: Option<(Kind, String)>,
     refuse_create: Option<(Kind, String)>,
+    /// Read-modify-writes of a Snapshot document that still fail
+    /// ([`Double::fail_snapshot_writes`]).
+    snapshot_faults: AtomicUsize,
     overloaded: bool,
     unpaged_queries: AtomicUsize,
     geo_paged: AtomicUsize,
@@ -46,6 +49,12 @@ pub struct Double {
 }
 
 impl Double {
+    /// The next `n` read-modify-writes of a Snapshot document fail, a store
+    /// hiccup injected under a running fill.
+    pub fn fail_snapshot_writes(&self, n: usize) {
+        self.snapshot_faults.store(n, Ordering::SeqCst);
+    }
+
     /// `list` fails its first `n` calls and then behaves. It stands for both
     /// reachable causes at once: the transient connection failure, and the
     /// `TooManyResults` ceiling a tenant crosses and then drops back under.
@@ -59,6 +68,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: None,
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -87,6 +97,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: None,
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: true,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -115,6 +126,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: None,
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -145,6 +157,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: None,
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -187,6 +200,7 @@ impl Double {
             refuse_registrations: true,
             refuse_doc: None,
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -215,6 +229,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: Some((kind, id.to_owned())),
             refuse_create: None,
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -243,6 +258,7 @@ impl Double {
             refuse_registrations: false,
             refuse_doc: None,
             refuse_create: Some((kind, id.to_owned())),
+            snapshot_faults: AtomicUsize::new(0),
             overloaded: false,
             unpaged_queries: AtomicUsize::new(0),
             geo_paged: AtomicUsize::new(0),
@@ -566,6 +582,14 @@ impl CurrentStateDriver for Double {
         id: &str,
         f: antares_store::MutateFn<'a>,
     ) -> Result<Option<Result<(), ()>>, NgsiError> {
+        if kind == Kind::Snapshot
+            && self
+                .snapshot_faults
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+        {
+            return Err(NgsiError::InternalError("snapshot row unreachable".into()));
+        }
         self.inner.mutate_boxed(tenant, kind, id, f).await
     }
     async fn batch_mutate_boxed<'a>(
@@ -614,6 +638,15 @@ impl CurrentStateDriver for Double {
         doc: Value,
     ) -> Result<(), NgsiError> {
         self.inner.context_put(tenant, id, doc).await
+    }
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        self.inner.context_put_capped(tenant, id, doc, caps).await
     }
     async fn context_get(
         &self,

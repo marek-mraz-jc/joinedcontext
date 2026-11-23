@@ -184,7 +184,7 @@ async fn an_inline_subscription_context_is_hosted_once_and_within_the_budget() {
     assert!(!urls[0].is_empty(), "jsonldContext is set: {urls:?}");
     assert_eq!(urls[0], urls[1], "one row behind one URL");
 
-    st.implicit_context_bytes = 0;
+    st.context_bytes = 0;
     let (status, body) = call(
         &st,
         "subscriptions",
