@@ -2120,8 +2120,10 @@ mod tests {
             RdfFormat::JsonLd,
         ] {
             let text = serialize_dataset(&ds, &cat, None, format, DcatProfile::eu());
-            let g = parse(text.as_bytes(), format, RdfLimits::default())
-                .unwrap_or_else(|e| panic!("{format:?} output must parse: {e}\n{text}"));
+            let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
+                Ok(v) => v,
+                Err(e) => panic!("{format:?} output must parse: {e}\n{text}"),
+            };
             assert_eq!(
                 g.len(),
                 expected,
@@ -2141,8 +2143,10 @@ mod tests {
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
             let text = serialize_dataset(&ds, &cat, None, RdfFormat::JsonLd, profile);
-            let g = parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default())
-                .unwrap_or_else(|e| panic!("{profile:?} JSON-LD must parse: {e}\n{text}"));
+            let g = match parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default()) {
+                Ok(v) => v,
+                Err(e) => panic!("{profile:?} JSON-LD must parse: {e}\n{text}"),
+            };
             let access = format!("{}accessURL", ns::DCAT);
             assert_eq!(
                 g.triples.iter().filter(|t| t.predicate == access).count(),
@@ -2246,7 +2250,7 @@ mod tests {
                 RdfFormat::JsonLd,
             ] {
                 let text = serialize_dataset(&src, &cat, None, format, profile);
-                let back = parse_datasets_from_rdf(
+                let back = match parse_datasets_from_rdf(
                     &text,
                     format,
                     org,
@@ -2254,8 +2258,10 @@ mod tests {
                     "city",
                     "cs",
                     &RdfLimits::default(),
-                )
-                .unwrap_or_else(|e| panic!("{profile:?} {format:?}: {e}\n{text}"));
+                ) {
+                    Ok(v) => v,
+                    Err(e) => panic!("{profile:?} {format:?}: {e}\n{text}"),
+                };
                 let ctx = format!("{profile:?} {format:?}");
                 assert_eq!(back.len(), 1, "{ctx}\n{text}");
                 let ds = &back[0];
@@ -2337,6 +2343,189 @@ mod tests {
         }
     }
 
+    /// The literal and IRI objects of every triple with `predicate`, as text.
+    fn objects_named(g: &RdfGraph, predicate: &str) -> Vec<String> {
+        g.triples
+            .iter()
+            .filter(|t| t.predicate == predicate)
+            .map(|t| t.object.string_value().to_owned())
+            .collect()
+    }
+
+    /// The writer's own rules for edge values: an empty text is no triple, a series is typed as
+    /// one, a contact point keeps its IRI and a `mailto:` it already has, a bare code becomes a
+    /// NUTS IRI, a half-open period writes only its end, a fractional resolution keeps its
+    /// digits, and a named checksum algorithm becomes its SPDX IRI when the profile admits it.
+    #[test]
+    fn edge_values_follow_the_writer_rules() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let mut cat = sample_catalogue(org, cid);
+        cat.title.insert("de".into(), String::new());
+        cat.description.insert("de".into(), String::new());
+        cat.publisher_name = Some(BTreeMap::from([
+            ("cs".into(), "Ministerstvo dopravy".into()),
+            ("de".into(), String::new()),
+        ]));
+        cat.contact_point = Some(
+            serde_json::from_value(serde_json::json!({
+                "kind": "Organization", "name": {"cs": "Úřad", "de": ""}, "email": "mailto:urad@e.org"
+            }))
+            .expect("catalogue contact point"),
+        );
+        let mut ds = full_dataset();
+        ds.dataset_type = "dataset_series".into();
+        ds.title.insert("de".into(), String::new());
+        ds.description.insert("de".into(), String::new());
+        ds.contact_point = Some(
+            serde_json::from_value(serde_json::json!({
+                "uri": "https://e.org/contact/jan", "kind": "Individual",
+                "name": {"cs": "Jan", "de": ""}, "email": "mailto:jan@e.org"
+            }))
+            .expect("dataset contact point"),
+        );
+        ds.spatial = vec!["CZ01".into()];
+        ds.temporal =
+            Some(serde_json::from_value(serde_json::json!({"end": "2025-12-31"})).expect("period"));
+        ds.spatial_resolution_in_meters = Some(2.5);
+        ds.distributions[0].title.insert("de".into(), String::new());
+        ds.distributions[0]
+            .description
+            .insert("de".into(), String::new());
+        ds.distributions[0].hash_algorithm = Some(" SHA-1 ".into());
+        ds.distributions[1].access_services[0]
+            .title
+            .insert("de".into(), String::new());
+        ds.publisher
+            .as_mut()
+            .expect("fixture publisher")
+            .name
+            .insert("de".into(), String::new());
+
+        let fi = DcatProfile::from_token("dcat-ap-fi-2.0").expect("installed");
+        let g = catalogue_to_graph(&cat, std::slice::from_ref(&ds), &BTreeMap::new(), fi, None);
+        assert!(
+            !g.triples
+                .iter()
+                .any(|t| t.object.as_literal().is_some_and(|l| l.value.is_empty())),
+            "an empty text wrote a triple"
+        );
+        let series = format!("{}DatasetSeries", ns::DCAT);
+        assert!(objects_named(&g, ns::RDF_TYPE).contains(&series));
+        assert!(objects_named(&g, &format!("{}contactPoint", ns::DCAT))
+            .contains(&"https://e.org/contact/jan".to_owned()));
+        let mut emails = objects_named(&g, &format!("{}hasEmail", ns::VCARD));
+        emails.sort();
+        assert_eq!(emails, ["mailto:jan@e.org", "mailto:urad@e.org"]);
+        assert_eq!(
+            objects_named(&g, &format!("{}spatial", ns::DCT)),
+            ["http://data.europa.eu/nuts/code/CZ01"]
+        );
+        assert!(objects_named(&g, &format!("{}startDate", ns::DCAT)).is_empty());
+        assert_eq!(
+            objects_named(&g, &format!("{}endDate", ns::DCAT)),
+            ["2025-12-31"]
+        );
+        assert_eq!(
+            objects_named(&g, &format!("{}spatialResolutionInMeters", ns::DCAT)),
+            ["2.5"]
+        );
+        let sha1 = "http://spdx.org/rdf/terms#checksumAlgorithm_sha1";
+        assert_eq!(objects_named(&g, &format!("{}algorithm", ns::SPDX)), [sha1]);
+
+        // FI admits SHA-1 alone: a SHA-256 checksum leaves no node there, but does under EU; an
+        // algorithm SPDX does not name leaves none anywhere.
+        ds.temporal = Some(
+            serde_json::from_value(serde_json::json!({"start": "2020-01-01"})).expect("period"),
+        );
+        ds.distributions[0].hash_algorithm = Some("sha256".into());
+        let g = dataset_to_graph(&ds, &cat, None, fi);
+        assert!(objects_named(&g, &format!("{}checksum", ns::SPDX)).is_empty());
+        assert_eq!(
+            objects_named(&g, &format!("{}startDate", ns::DCAT)),
+            ["2020-01-01"]
+        );
+        assert!(objects_named(&g, &format!("{}endDate", ns::DCAT)).is_empty());
+        let g = dataset_to_graph(&ds, &cat, None, DcatProfile::eu());
+        assert_eq!(
+            objects_named(&g, &format!("{}algorithm", ns::SPDX)),
+            ["http://spdx.org/rdf/terms#checksumAlgorithm_sha256"]
+        );
+        ds.distributions[0].hash_algorithm = Some("crc32".into());
+        let g = dataset_to_graph(&ds, &cat, None, DcatProfile::eu());
+        assert!(objects_named(&g, &format!("{}checksum", ns::SPDX)).is_empty());
+    }
+
+    /// Harvested graphs as other catalogues write them: a node typed both Dataset and
+    /// DatasetSeries is one series, a non-literal title or a literal distribution or service is
+    /// skipped, a tag repeated after cleaning is kept once, a literal publisher has no names,
+    /// and the dataset's licence is the one every distribution states, or none.
+    #[test]
+    fn harvested_edge_shapes_are_read_by_the_reader_rules() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let ttl = r#"
+            @prefix dcat: <http://www.w3.org/ns/dcat#> .
+            @prefix dct: <http://purl.org/dc/terms/> .
+            <https://e.org/ds/a--b> a dcat:Dataset, dcat:DatasetSeries ;
+               dct:title "Both"@en, <https://e.org/not-a-text> ;
+               dcat:keyword "air"@en, "air!"@en ;
+               dct:publisher "Město" ;
+               dcat:distribution "not a node", <https://e.org/dist/1>, <https://e.org/dist/2> .
+            <https://e.org/dist/1> a dcat:Distribution ;
+               dct:license <https://creativecommons.org/licenses/by/4.0/> ;
+               dcat:accessService "not a node" .
+            <https://e.org/dist/2> a dcat:Distribution ;
+               dct:license <https://creativecommons.org/licenses/by/4.0/> .
+            <https://e.org/ds/custom> a dcat:Dataset ; dcat:distribution <https://e.org/dist/3>, <https://e.org/dist/4> .
+            <https://e.org/dist/3> dct:license <https://licence.example/own> .
+            <https://e.org/dist/4> dct:license <https://licence.example/own> .
+            <https://e.org/ds/mixed> a dcat:Dataset ; dcat:distribution <https://e.org/dist/5>, <https://e.org/dist/6> .
+            <https://e.org/dist/5> dct:license <https://licence.example/own> .
+            <https://e.org/dist/6> dct:license <https://creativecommons.org/licenses/by/4.0/> .
+        "#;
+        let mut ds = parse_datasets_from_rdf(
+            ttl,
+            RdfFormat::Turtle,
+            org,
+            cid,
+            "city",
+            "en",
+            &RdfLimits::default(),
+        )
+        .expect("harvested turtle");
+        ds.sort_by(|a, b| a.uri.cmp(&b.uri));
+        assert_eq!(ds.len(), 3, "the series node counts once");
+        let (both, custom, mixed) = (&ds[0], &ds[1], &ds[2]);
+        assert_eq!(both.name, "a-b", "a run of separators is one dash");
+        assert_eq!(both.dataset_type, "dataset_series");
+        assert_eq!(both.title.get("en").map(String::as_str), Some("Both"));
+        assert_eq!(both.title.len(), 1, "an IRI is no title");
+        assert_eq!(both.tags, ["air"], "one tag after cleaning");
+        let publisher = both
+            .publisher
+            .as_ref()
+            .expect("a literal publisher is kept");
+        assert!(publisher.uri.is_none() && publisher.name.is_empty());
+        assert_eq!(
+            both.distributions.len(),
+            2,
+            "a literal distribution is skipped"
+        );
+        assert!(both.distributions[0].access_services.is_empty());
+        assert_eq!(both.licence_id.as_deref(), Some("cc-by"));
+        assert_eq!(custom.licence_id, None, "no known licence");
+        assert_eq!(
+            custom.licence_url.as_deref(),
+            Some("https://licence.example/own")
+        );
+        assert_eq!(
+            (mixed.licence_id.as_ref(), mixed.licence_url.as_ref()),
+            (None, None),
+            "distributions disagree"
+        );
+    }
+
     #[test]
     fn catalogue_graph_carries_contact_point_publishers_and_hydra_paging() {
         let org = OrgId::from_uuid(Uuid::from_u128(1));
@@ -2377,8 +2566,10 @@ mod tests {
                     profile,
                     Some(&hydra),
                 );
-                let g = parse(text.as_bytes(), format, RdfLimits::default())
-                    .unwrap_or_else(|e| panic!("{profile:?} {format:?}: {e}\n{text}"));
+                let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
+                    Ok(v) => v,
+                    Err(e) => panic!("{profile:?} {format:?}: {e}\n{text}"),
+                };
                 let page = SubjectNode::Named(hydra.current_page_uri.clone());
                 let next = g.first_object(&page, &format!("{}next", ns::HYDRA));
                 assert_eq!(
@@ -2424,6 +2615,11 @@ mod tests {
             ("nt", RdfFormat::NTriples),
         ] {
             assert_eq!(RdfFormat::from_extension(ext), Some(f));
+            assert_eq!(
+                RdfFormat::from_extension(f.suffix()),
+                Some(f),
+                "a feed's suffix reads back"
+            );
             assert!(f.content_type().ends_with("charset=utf-8"));
         }
         assert_eq!(RdfFormat::from_extension("csv"), None);

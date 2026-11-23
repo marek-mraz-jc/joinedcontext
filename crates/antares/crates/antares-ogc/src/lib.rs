@@ -193,8 +193,13 @@ impl Surface for Ogc {
 
     fn version_info(&self) -> Value {
         // T-4465, T-4477: the files `items` and `/collections` write in this build.
-        let encodings: Vec<&str> = export::ITEMS.iter().map(|e| e.0).collect();
-        let bundles: Vec<&str> = export::BUNDLES.iter().map(|e| e.0).collect();
+        let (mut encodings, mut bundles) = (Vec::new(), Vec::new());
+        for (name, ..) in export::ITEMS {
+            encodings.push(*name);
+        }
+        for (name, ..) in export::BUNDLES {
+            bundles.push(*name);
+        }
         json!({
             "endpoint": format!("{PREFIX}/{{view}}/ogc/features"),
             "conformsTo": CONFORMANCE,
@@ -413,7 +418,10 @@ fn negotiate(rest: &[&str], headers: &HeaderMap, uri: &axum::http::Uri) -> Resul
             "a CSV or Parquet file holds one collection: ask its items, or f=zip here for several",
         ));
     }
-    let items: Vec<(&str, &str)> = export::ITEMS.iter().map(|e| (e.0, e.1)).collect();
+    let mut items = Vec::new();
+    for (name, media, ..) in export::ITEMS {
+        items.push((*name, *media));
+    }
     let asked = match rest {
         ["collections", _, "items"] => export::asked(headers, pairs, &items),
         ["collections"] => export::asked(headers, pairs, export::BUNDLES),
@@ -929,14 +937,14 @@ impl Here<'_> {
             .chain([String::from("next=")])
             .collect();
         let separator = if this.contains('?') { '&' } else { '?' };
-        let after = profile_link(c, profile)
-            .into_iter()
-            .chain(
-                export::ITEMS
-                    .iter()
-                    .map(|e| link("alternate", e.1, &format!("{this}{separator}f={}", e.0))),
-            )
-            .collect();
+        let mut after: Vec<_> = profile_link(c, profile).into_iter().collect();
+        for (name, media, ..) in export::ITEMS {
+            after.push(link(
+                "alternate",
+                media,
+                &format!("{this}{separator}f={name}"),
+            ));
+        }
         Close {
             // C17: when the answer was made, a response time and no Entity time; whole
             // seconds, so a HEAD states the length of the GET.
