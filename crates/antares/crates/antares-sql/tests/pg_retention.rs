@@ -751,10 +751,16 @@ async fn a_past_partition_the_sweeps_emptied_is_dropped_and_a_held_one_stays() {
     // A pass that loses the claim or the drop's lock leaves the week to the
     // next tick, as the broker's maintenance loop does: tick again.
     let mut done = String::new();
-    for _ in 0..50 {
-        done = temporal_maintenance(&pool, TemporalBackend::Partitioned, None)
-            .await
-            .expect("maintenance");
+    // a pass of a parallel test holds the period lease for its whole run
+    for _ in 0..600 {
+        done = temporal_maintenance(
+            &pool,
+            TemporalBackend::Partitioned,
+            None,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .expect("maintenance");
         if !exists("attr_instances_2001w02").await {
             break;
         }
@@ -875,7 +881,8 @@ async fn a_week_every_tenant_in_it_outlived_is_dropped_and_a_longer_rule_keeps_i
     ];
     // Another test's maintenance may hold the claim; the drop waits a tick.
     let mut done = Vec::new();
-    for _ in 0..50 {
+    // a pass of a parallel test holds the period lease for its whole run
+    for _ in 0..600 {
         // A drop that loses its lock, or meets a parallel test's GRANT on
         // every table ("tuple concurrently updated", XX000), waits for the
         // next tick in the broker: tick again.
@@ -920,7 +927,8 @@ async fn a_week_every_tenant_in_it_outlived_is_dropped_and_a_longer_rule_keeps_i
         ("part-a".to_owned(), "2002-04-01T00:00:00.000Z".to_owned()),
         ("part-b".to_owned(), "2002-03-18T00:00:00.000Z".to_owned()),
     ];
-    for _ in 0..50 {
+    // a pass of a parallel test holds the period lease for its whole run
+    for _ in 0..600 {
         if let Err(e) = pg::maintenance::drop_retained_partitions(&pool, &floors).await {
             eprintln!("kept until the next tick: {e}");
         }
@@ -982,10 +990,16 @@ async fn an_expired_entity_goes_with_its_history() {
     .await
     .expect("entities");
     let mut done = String::new();
-    for _ in 0..50 {
-        done = temporal_maintenance(&pool, TemporalBackend::Partitioned, None)
-            .await
-            .expect("maintenance");
+    // a pass of a parallel test holds the period lease for its whole run
+    for _ in 0..600 {
+        done = temporal_maintenance(
+            &pool,
+            TemporalBackend::Partitioned,
+            None,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .expect("maintenance");
         if !done.starts_with("skipped") {
             break;
         }

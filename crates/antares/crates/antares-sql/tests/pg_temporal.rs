@@ -48,6 +48,7 @@ async fn maintenance_winning(
             pool,
             backend,
             retention_days,
+            std::time::Duration::ZERO,
         )
         .await?;
         // a neighbour's index build on DEFAULT leaves a new week to the next pass
@@ -225,6 +226,64 @@ async fn attr_instances_decomposition_and_maintenance() {
 /// statement, so "carries on" only holds if that one statement runs under its
 /// own savepoint — without it the pass dies with 25P02 on the NEXT statement
 /// and no partition is ever created on a live database.
+/// S5-29: two brokers on one database. Of two claims in one period one wins;
+/// a held lease keeps the other out even once the period is over; a released
+/// lease leaves the job to the next period, and a dropped one (a broker that
+/// died mid-pass) frees it with its session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_broker_skips_the_period() {
+    use pg::maintenance::claim_period;
+    use std::time::Duration;
+    let url = require_db!();
+    let a = pg::connect(&url, 2).await.expect("broker a");
+    let b = pg::connect(&url, 2).await.expect("broker b");
+    let job = format!(
+        "lease-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    );
+    let hour = Duration::from_secs(3600);
+    let lease = claim_period(&a, &job, hour)
+        .await
+        .expect("claim")
+        .expect("a wins");
+    assert!(
+        claim_period(&b, &job, Duration::ZERO)
+            .await
+            .expect("claim")
+            .is_none(),
+        "a pass in progress keeps b out"
+    );
+    lease.release().await;
+    assert!(
+        claim_period(&b, &job, hour).await.expect("claim").is_none(),
+        "the job ran this period"
+    );
+    let mut lease = claim_period(&b, &job, Duration::ZERO)
+        .await
+        .expect("claim")
+        .expect("b wins the next period");
+    assert!(lease.alive().await);
+    drop(lease);
+    let mut freed = false;
+    for _ in 0..50 {
+        if let Some(lease) = claim_period(&a, &job, Duration::ZERO).await.expect("claim") {
+            lease.release().await;
+            freed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(freed, "a dropped lease frees the job with its session");
+    sqlx::query("DELETE FROM maintenance_jobs WHERE name = $1")
+        .bind(&job)
+        .execute(&a)
+        .await
+        .expect("cleanup");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn occupied_range_is_skipped_without_poisoning_the_pass() {
     let url = require_db!();

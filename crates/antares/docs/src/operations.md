@@ -175,11 +175,17 @@ endpoint never delays another subscription), a retry that succeeds sets
 `lastSuccess` and `status: "ok"` without touching `timesSent` or
 `timesFailed`, and an exhausted policy leaves a **dead letter**: the exact
 request (endpoint, headers, payload) plus the attempt history, stored under
-the subscription's tenant in every store mode.
+the subscription's tenant in every store mode. A subscription has one retry
+in flight and a tenant at most 64 (per broker process), each charged to the
+delivery lanes' memory budget; a failure that finds no room is dead-lettered
+at once with `attempts: 1`, so it stays replayable. A tenant keeps at most
+1000 dead letters: writing one past that deletes the oldest
+(`antares_dead_letters_evicted_total`).
 
 | Call | Effect |
 |---|---|
-| `GET /q/dead-letters?tenant=&subscription=&limit=` | Letters of one tenant (default tenant when `tenant` is absent), newest first, `limit` 100 by default. Endpoint userinfo and every credential the letter carries (`receiverInfo`, `notifierInfo`, the rendered `headers` of an older letter) are blanked in the listing; the stored letter keeps them for a replay. |
+| `GET /q/dead-letters?tenant=&subscription=&limit=&offset=` | Letters of one tenant (default tenant when `tenant` is absent), newest first, a page of `limit` (100 by default, at most 1000) after skipping `offset`. The listing carries `payloadBytes` instead of the payload. Endpoint userinfo and every credential the letter carries (`receiverInfo`, `notifierInfo`, the rendered `headers` of an older letter) are blanked in the listing; the stored letter keeps them for a replay. |
+| `GET /q/dead-letters/{id}?tenant=` | One letter whole, payload included, credentials blanked as in the listing; `404` when the tenant holds no such letter. |
 | `POST /q/dead-letters/{id}/replay?tenant=` | One more attempt through the same binding under the egress policy of the moment: `204` and the letter is deleted, or `502` with the failure text and the letter kept (`attempts`, `lastError`, `lastAt` extended). |
 | `DELETE /q/dead-letters/{id}?tenant=` | Drop the letter. `404` when the tenant holds no such letter. |
 
@@ -295,11 +301,12 @@ counter means the consumer side, not the store, needs attention.
 Every broker-initiated request (notification, forward, `@context` fetch)
 passes the egress policy: scheme allowlist, private-range rule
 (`ANTARES_EGRESS_ALLOW_PRIVATE`), redirect cap, DNS pinning and response
-size caps. On top of it a per-destination breaker tracks timeouts: five
-consecutive timeouts trip the destination open; while open, one probe per
-30 seconds is admitted (half-open) and a success closes it again. A
-destination that answers, even with an error status, never trips; only
-silence does. At most 4096 destinations are tracked. A refused or tripped
+size caps. On top of it a per-destination breaker tracks unreachable
+peers: five consecutive timeouts or refused connections trip the
+destination open; while open, one probe per 30 seconds is admitted
+(half-open) and a success closes it again. A destination that answers, even
+with an error status, never trips; only silence or a refused connection
+does. At most 4096 destinations are tracked. A refused or tripped
 delivery is booked on the subscription as a failure (`lastFailure`,
 `status: failed`) and, with a delivery policy configured, is not retried.
 

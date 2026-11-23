@@ -1069,7 +1069,7 @@ async fn purge_tenant_empties_every_tenant_table() {
                 .expect(stmt);
         }
     }
-    const TABLES: [&str; 23] = [
+    const TABLES: [&str; 25] = [
         "entities",
         "entity_values",
         "entity_types",
@@ -1093,6 +1093,9 @@ async fn purge_tenant_empties_every_tenant_table() {
         "iri_ids",
         "attr_rows",
         "mcp_confirmations",
+        // the counts by Tenant of 0049
+        "subscription_tenants",
+        "views_revision",
     ];
     let count = |table: &'static str, t: &TenantId| {
         let pool = pool.clone();
@@ -1357,6 +1360,17 @@ async fn an_internal_tenant_holds_a_row_and_is_left_out_of_the_inventory() {
         "{} lost the row the tenant enumeration reads",
         synth.as_str()
     );
+    // the domain is the Tenants holding a subscription (0049): give it one
+    let sub = "urn:ngsi-ld:Subscription:frozen";
+    store
+        .create(
+            &synth,
+            Kind::Subscription,
+            sub,
+            serde_json::json!({"id": sub, "type": "Subscription"}),
+        )
+        .await
+        .expect("subscription in the synthetic tenant");
     assert!(
         store
             .subscription_tenants()
