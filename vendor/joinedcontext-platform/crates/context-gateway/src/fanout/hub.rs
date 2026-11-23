@@ -1893,9 +1893,16 @@ mod tests {
         }
         assert!(kept.bytes() <= KEPT_BYTES, "{}", kept.bytes());
         assert_eq!(kept.items().len(), KEPT_BYTES / large.len());
-        assert_eq!(kept.items().back().map(|(n, _)| *n), Some(KEPT as u64), "the newest is kept");
+        assert_eq!(
+            kept.items().back().map(|(n, _)| *n),
+            Some(KEPT as u64),
+            "the newest is kept"
+        );
         kept.push(KEPT as u64 + 1, "y".repeat(KEPT_BYTES + 1));
-        assert!(kept.items().is_empty(), "a notification past the bound is not kept");
+        assert!(
+            kept.items().is_empty(),
+            "a notification past the bound is not kept"
+        );
         assert_eq!((kept.bytes(), kept.last()), (0, KEPT as u64 + 1));
         kept.mark(KEPT as u64 + 2);
         assert_eq!(kept.last(), KEPT as u64 + 2, "a gap moves the last x-seq");

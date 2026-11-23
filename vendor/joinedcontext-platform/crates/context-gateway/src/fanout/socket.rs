@@ -1386,7 +1386,11 @@ mod tests {
     fn a_resume_past_an_evicted_notification_answers_a_gap() {
         let hub = Hub::new("s", 10);
         let endpoint = crate::fanout::hub::tests_support::endpoint();
-        let (old, _) = hub.open(Arc::clone(&endpoint), "anonymous".into(), Subject::default());
+        let (old, _) = hub.open(
+            Arc::clone(&endpoint),
+            "anonymous".into(),
+            Subject::default(),
+        );
         let mut held = Kept::default();
         held.push(3, "n3".to_owned());
         held.push(4, "y".repeat(hub::KEPT_BYTES + 1));
@@ -1394,7 +1398,9 @@ mod tests {
         let (conn, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
         let (out, seq) = resumed(&hub, conn, 3);
         assert!(
-            out[1].contains("x-gap") && out[1].contains("\"x-from\":4") && out[1].contains("\"x-to\":4"),
+            out[1].contains("x-gap")
+                && out[1].contains("\"x-from\":4")
+                && out[1].contains("\"x-to\":4"),
             "{out:?}"
         );
         assert_eq!((out.len(), seq), (2, 4));
