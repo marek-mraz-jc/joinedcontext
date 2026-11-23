@@ -41,7 +41,9 @@ pub(crate) async fn mark_due(state: &ShakoState, repo: &RepoRecord) -> Option<i6
 /// After a write moved refs: due, and a drain starts. Nothing waits for a remote.
 pub(crate) async fn follow_write(state: &ShakoState, repo: &RepoRecord) {
     if mark_due(state, repo).await.is_some() {
-        drain_mirrors(state, repo.instance_id, repo.org_id);
+        // The drain reads the mark once the write's unit committed it (jc-audit).
+        let (state, instance, org) = (state.clone(), repo.instance_id, repo.org_id);
+        jc_audit::after_commit(async move { drain_mirrors(&state, instance, org) }).await;
     }
 }
 

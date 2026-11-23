@@ -208,3 +208,68 @@ async fn a_replay_mark_stands_when_its_request_fails() {
     assert!(out.is_ok());
     assert_eq!(keys(&pool, &t).await, ["mark"]);
 }
+
+#[tokio::test]
+async fn work_after_the_commit_runs_only_when_the_unit_commits() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let ran = Arc::new(AtomicUsize::new(0));
+    let mark = |ran: &Arc<AtomicUsize>| {
+        let ran = ran.clone();
+        async move {
+            ran.fetch_add(1, Ordering::SeqCst);
+        }
+    };
+    // Outside a unit it runs at once.
+    jc_audit::after_commit(mark(&ran)).await;
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
+    // In a unit that wrote nothing it waits for the unit's end, then runs on success only.
+    let waited = scope(|_: &usize| true, async {
+        jc_audit::after_commit(mark(&ran)).await;
+        ran.load(Ordering::SeqCst)
+    })
+    .await
+    .expect("unit");
+    assert_eq!((waited, ran.load(Ordering::SeqCst)), (1, 2));
+    scope(|_: &()| false, jc_audit::after_commit(mark(&ran)))
+        .await
+        .expect("unit");
+    assert_eq!(
+        ran.load(Ordering::SeqCst),
+        2,
+        "a failed unit runs nothing after it"
+    );
+
+    let Some((pool, t)) = pool("after_commit").await else {
+        return;
+    };
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let watch = |pool: &PgPool, t: &str, seen: &Arc<std::sync::Mutex<Vec<Vec<String>>>>| {
+        let (pool, t, seen) = (pool.clone(), t.to_owned(), seen.clone());
+        async move {
+            let now = keys(&pool, &t).await;
+            seen.lock().expect("lock").push(now);
+        }
+    };
+    scope(|r: &Result<(), sqlx::Error>| r.is_ok(), async {
+        insert(&pool, &t, "a").await?;
+        jc_audit::after_commit(watch(&pool, &t, &seen)).await;
+        Ok(())
+    })
+    .await
+    .expect("unit")
+    .expect("insert");
+    scope(|_: &Result<(), sqlx::Error>| false, async {
+        insert(&pool, &t, "b").await?;
+        jc_audit::after_commit(watch(&pool, &t, &seen)).await;
+        Ok(())
+    })
+    .await
+    .expect("unit")
+    .expect("insert");
+    assert_eq!(
+        *seen.lock().expect("lock"),
+        vec![vec!["a".to_owned()]],
+        "the work sees the committed row, and a rolled-back unit runs none"
+    );
+}

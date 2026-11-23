@@ -204,6 +204,8 @@ pub struct PgBackend {
     /// The table owner's pool, for the history's DDL ([`Self::with_owner`]).
     owner: Option<sqlx::postgres::PgPool>,
     hook: std::sync::RwLock<Option<ChangeHook>>,
+    /// Per-Entity commit-to-hook order (S5-16, see [`PgBackend::emit_ordered`]).
+    emit_order: EmitOrder,
     /// Server and extension versions, read once at startup
     /// (`with_version`); `/q/health` serves this copy rather than querying
     /// the database on a polled endpoint.
@@ -224,6 +226,7 @@ impl PgBackend {
             docs: PgDocStore::new(pool),
             owner: None,
             hook: std::sync::RwLock::new(None),
+            emit_order: EmitOrder::default(),
             version: Value::Object(serde_json::Map::new()),
             exhausted_since: std::sync::Mutex::new(None),
             wedged_after: POOL_WEDGED,
@@ -340,6 +343,87 @@ impl PgBackend {
         if let Some(h) = hook {
             h(tenant, before, after).await;
         }
+    }
+
+    /// Held from before an Entity commit until its hook returned (S5-16),
+    /// per (Tenant, id), so a later commit's hook cannot overtake an earlier
+    /// one and leave the consumer (history, the matcher) with the older
+    /// state last. The memory arm takes one lock for the same reason
+    /// (`emit_order`); here the row lock already serialises commits of one
+    /// Entity, so the order lock is per Entity too and writes of different
+    /// Entities never wait on each other. Keys are taken in sorted order,
+    /// the deadlock-free order a batch's row locks use as well.
+    /// ponytail: per process; across pods bus=nats orders by the outbox seq.
+    async fn emit_ordered<'k>(
+        &self,
+        tenant: &TenantId,
+        ids: impl IntoIterator<Item = &'k str>,
+    ) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+        self.emit_order.lock(tenant, ids).await
+    }
+}
+
+/// The per-Entity locks behind [`PgBackend::emit_ordered`]: a map of weak
+/// handles, so an Entity nobody writes holds no lock, and the dead entries
+/// are pruned whenever the map doubled since the last prune.
+#[cfg(feature = "postgres")]
+#[derive(Default)]
+struct EmitOrder {
+    locks: std::sync::Mutex<EmitLocks>,
+}
+
+#[cfg(feature = "postgres")]
+#[derive(Default)]
+struct EmitLocks {
+    by_key: std::collections::HashMap<(String, String), std::sync::Weak<tokio::sync::Mutex<()>>>,
+    prune_at: usize,
+}
+
+#[cfg(feature = "postgres")]
+impl EmitOrder {
+    async fn lock<'k>(
+        &self,
+        tenant: &TenantId,
+        ids: impl IntoIterator<Item = &'k str>,
+    ) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+        let mut ids: Vec<&str> = ids.into_iter().collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let handles: Vec<std::sync::Arc<tokio::sync::Mutex<()>>> = {
+            let mut l = self
+                .locks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if l.by_key.len() >= l.prune_at {
+                l.by_key.retain(|_, w| w.strong_count() > 0);
+                l.prune_at = l.by_key.len().saturating_mul(2).max(1024);
+            }
+            ids.iter()
+                .map(|id| {
+                    let key = (tenant.as_str().to_owned(), (*id).to_owned());
+                    if let Some(m) = l.by_key.get(&key).and_then(std::sync::Weak::upgrade) {
+                        return m;
+                    }
+                    let m = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+                    l.by_key.insert(key, std::sync::Arc::downgrade(&m));
+                    m
+                })
+                .collect()
+        };
+        let mut guards = Vec::with_capacity(handles.len());
+        for m in handles {
+            guards.push(m.lock_owned().await);
+        }
+        guards
+    }
+
+    #[cfg(test)]
+    fn entries(&self) -> usize {
+        self.locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_key
+            .len()
     }
 }
 
@@ -746,6 +830,10 @@ impl AnyStore {
             AnyStore::Mem(s) => Ok(s.create(tenant, kind, id, doc).await),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
+                let _order = match kind {
+                    Kind::Entity => Some(p.emit_ordered(tenant, [id]).await),
+                    _ => None,
+                };
                 let created = match kind {
                     Kind::Entity => p.entities.create(tenant, id, &doc).await.map_err(db)?,
                     Kind::Temporal => p.temporal.create(tenant, id, &doc).await.map_err(db)?,
@@ -779,6 +867,9 @@ impl AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
+                let _order = p
+                    .emit_ordered(tenant, items.iter().map(|(id, _)| id.as_str()))
+                    .await;
                 let flags = p.entities.batch_create(tenant, &items).await.map_err(db)?;
                 for ((_, doc), created) in items.into_iter().zip(&flags) {
                     if *created {
@@ -808,6 +899,7 @@ impl AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
+                let _order = p.emit_ordered(tenant, ids.iter().map(String::as_str)).await;
                 let deleted = p.entities.batch_delete(tenant, ids).await.map_err(db)?;
                 let mut prev: std::collections::HashMap<String, Value> =
                     deleted.into_iter().collect();
@@ -841,6 +933,7 @@ impl AnyStore {
                     // replace-or-create without a pre-read: the replace first
                     // (it captures the true before-image under the row lock),
                     // else the create
+                    let _order = p.emit_ordered(tenant, [id]).await;
                     let mut prev: Option<Value> = None;
                     let existed = upsert_rounds!(
                         p.entities
@@ -957,6 +1050,7 @@ impl AnyStore {
                 Kind::Entity => {
                     // the before-image comes from the DELETE's own RETURNING —
                     // same transaction, never a separate racy read
+                    let _order = p.emit_ordered(tenant, [id]).await;
                     let prev = p.entities.delete(tenant, id).await.map_err(db)?;
                     let hit = prev.is_some();
                     if hit {
@@ -991,6 +1085,7 @@ impl AnyStore {
             AnyStore::Pg(p) => {
                 // the before-image comes from the DELETE's own RETURNING —
                 // same transaction, never a separate racy read
+                let _order = p.emit_ordered(tenant, [id]).await;
                 let prev = p.entities.delete_if(tenant, id, &judge).await.map_err(db)?;
                 let hit = prev.is_some();
                 if hit {
@@ -1505,6 +1600,7 @@ impl AnyStore {
                     // prev_payload INSIDE the row lock — a before-image read
                     // in its own transaction can belong to a different version
                     // than the one the lock serialized on.
+                    let _order = p.emit_ordered(tenant, [id]).await;
                     let mut before: Option<Value> = None;
                     let mut after: Option<Value> = None;
                     let r = p
@@ -1567,6 +1663,9 @@ impl AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
+                let _order = p
+                    .emit_ordered(tenant, items.iter().map(|(id, _)| id.as_str()))
+                    .await;
                 let out = p
                     .entities
                     .batch_upsert_replace(tenant, &items)
@@ -1600,6 +1699,7 @@ impl AnyStore {
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 // hook images captured inside the lock, same as single mutate
+                let _order = p.emit_ordered(tenant, ids.iter().map(String::as_str)).await;
                 let mut images: Vec<(Value, Value)> = Vec::new();
                 let r = p
                     .entities
@@ -3233,5 +3333,57 @@ mod estimate_tests {
         assert_eq!(b.entities, 1_583_568_000);
         assert!(b.by_type.is_empty());
         assert!(estimate_entities(0.0, 2_000_000, None, 5).is_none());
+    }
+}
+
+#[cfg(all(test, feature = "postgres"))]
+mod emit_order_tests {
+    use super::EmitOrder;
+    use antares_model::TenantId;
+    use std::time::Duration;
+
+    /// S5-16: a second writer of one Entity waits until the first released
+    /// its order lock; another Entity, and the same id in another Tenant,
+    /// do not wait.
+    #[tokio::test]
+    async fn one_entity_waits_and_others_pass() {
+        let order = std::sync::Arc::new(EmitOrder::default());
+        let (a, b) = (
+            TenantId::new("emita").expect("tenant"),
+            TenantId::new("emitb").expect("tenant"),
+        );
+        let held = order.lock(&a, ["urn:x:1", "urn:x:1"]).await;
+        assert_eq!(held.len(), 1, "a repeated id is locked once");
+        let other = tokio::time::timeout(Duration::from_secs(1), order.lock(&a, ["urn:x:2"])).await;
+        assert!(other.is_ok(), "another Entity does not wait");
+        let tenant =
+            tokio::time::timeout(Duration::from_secs(1), order.lock(&b, ["urn:x:1"])).await;
+        assert!(
+            tenant.is_ok(),
+            "the same id in another Tenant does not wait"
+        );
+        let o = order.clone();
+        let a2 = a.clone();
+        let waiter = tokio::spawn(async move { o.lock(&a2, ["urn:x:0", "urn:x:1"]).await.len() });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !waiter.is_finished(),
+            "the same Entity waits for the holder"
+        );
+        drop(held);
+        assert_eq!(waiter.await.expect("waiter"), 2);
+    }
+
+    /// Entities nobody writes any more leave the map once it has grown past
+    /// the prune mark, so the map stays bounded by the Entities in flight.
+    #[tokio::test]
+    async fn released_entities_are_pruned() {
+        let order = EmitOrder::default();
+        let t = TenantId::new("emitprune").expect("tenant");
+        for i in 0..5000 {
+            let id = format!("urn:x:{i}");
+            drop(order.lock(&t, [id.as_str()]).await);
+        }
+        assert!(order.entries() <= 1024, "{} entries", order.entries());
     }
 }

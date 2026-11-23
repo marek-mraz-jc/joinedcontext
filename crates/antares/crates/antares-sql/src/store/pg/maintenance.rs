@@ -1032,7 +1032,9 @@ pub struct BareSweep {
 /// that committed rows before the lock is seen, and one still open holds the
 /// row `FOR SHARE` (`insert_rows`), so it is skipped or, once the sweep
 /// commits, clears the mark itself. An Entity whose rows retention dropped
-/// becomes bare on the next pass.
+/// becomes bare on the next pass, once its superseded versions went too: a
+/// version is history the walk must still reach (S5-22), so an Entity
+/// holding one stays in the walk.
 pub async fn mark_bare(
     pool: &PgPool,
     budget: std::time::Duration,
@@ -1085,7 +1087,9 @@ pub async fn mark_bare(
                                  WHERE ai.tenant_id = e.tenant_id AND ai.entity_id = e.id)
                          OR EXISTS (SELECT 1 FROM attr_rows r
                                     WHERE r.tenant_id = e.tenant_id
-                                      AND r.entity_no = iri_no(e.tenant_id, e.id))) AS bare
+                                      AND r.entity_no = iri_no(e.tenant_id, e.id))
+                         OR EXISTS (SELECT 1 FROM attr_versions v
+                                    WHERE v.tenant_id = e.tenant_id AND v.entity_id = e.id)) AS bare
                        FROM temporal_entities e
                        WHERE e.tenant_id = $1 AND e.id = ANY($2)) c
                  WHERE m.tenant_id = $1 AND m.id = c.id AND m.bare <> c.bare",
