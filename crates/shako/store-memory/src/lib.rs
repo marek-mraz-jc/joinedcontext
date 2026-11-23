@@ -5,10 +5,11 @@
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxClaim,
-    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
-    PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
-    ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
+    AuditRecord, BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
+    OutboxClaim, OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord,
+    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId,
+    RepoRecord, ReviewRecord, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord,
+    WebhookId, WebhookRecord,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,6 +34,7 @@ struct TenantState {
     /// Events whose delivery failed: the attempts so far and when each is due again.
     outbox_retry: BTreeMap<uuid::Uuid, (u32, std::time::Instant)>,
     mirror_sync: BTreeMap<RepoId, MirrorSync>,
+    audit: Vec<AuditRecord>,
 }
 
 #[derive(Debug, Default)]
@@ -1240,6 +1242,34 @@ impl Store for MemoryStore {
                 .tenants
                 .get(&(instance_id, org_id))
                 .map(|t| t.outbox.clone())
+                .unwrap_or_default())
+        })
+    }
+
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            guard
+                .tenants
+                .entry((row.instance_id, row.org_id))
+                .or_default()
+                .audit
+                .push(row);
+            Ok(())
+        })
+    }
+
+    fn list_audit(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Vec<AuditRecord>> {
+        Box::pin(async move {
+            let guard = self.inner.read();
+            Ok(guard
+                .tenants
+                .get(&(instance_id, org_id))
+                .map(|t| t.audit.clone())
                 .unwrap_or_default())
         })
     }

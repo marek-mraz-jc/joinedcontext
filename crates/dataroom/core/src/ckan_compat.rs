@@ -693,7 +693,12 @@ pub fn dataset_from_ckan(
                     .get(idx)
                     .cloned()
                     .unwrap_or_else(|| format!("res-{id}-{idx}"));
-                distribution_from_ckan(r, &id, &fallback_id, default_lang)
+                let mut dist = distribution_from_ckan(r, &id, &fallback_id, default_lang);
+                // CKAN has no key for a terms-of-use declaration: an update keeps the stored one.
+                dist.terms_of_use = existing
+                    .and_then(|e| e.distributions.iter().find(|d| d.id == dist.id))
+                    .and_then(|d| d.terms_of_use.clone());
+                dist
             })
             .collect()
     } else if let Some(ex) = existing {

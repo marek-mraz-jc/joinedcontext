@@ -113,6 +113,20 @@ pub struct ProjectCatalog {
     pub contact_point: Option<ContactPoint>,
 }
 
+/// Whether `value` is an IRI a publisher can be declared by: absolute http(s), without spaces, and
+/// no registry placeholder whose last segment is all zeros, such as `.../legal-subject/00000000`.
+pub fn is_declared_iri(value: &str) -> bool {
+    let value = value.trim();
+    let last = value
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    crate::kinds::http_url_host(value).is_some()
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+        && !(!last.is_empty() && last.bytes().all(|b| b == b'0'))
+}
+
 impl ProjectCatalog {
     /// Validates as an Endpoint's block does, and refuses a publisher without its IRI.
     pub fn validate(&self) -> Result<()> {
@@ -908,5 +922,32 @@ mod tests {
     fn the_pipeline_reference_names_a_pipeline() {
         assert!(parse("pipelineRef: { kind: Mapping, name: x }\n").is_err());
         assert!(parse("pipelineRef: { kind: Pipeline, name: Not_A_Name }\n").is_err());
+    }
+}
+
+#[cfg(test)]
+mod declared_iri_tests {
+    use super::is_declared_iri;
+
+    #[test]
+    fn a_placeholder_or_a_bare_word_declares_no_publisher() {
+        for iri in [
+            "https://data.gov.sk/id/legal-subject/00313271",
+            "https://www.hel.fi/",
+            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00064581",
+        ] {
+            assert!(is_declared_iri(iri), "{iri}");
+        }
+        for none in [
+            "",
+            "city",
+            "urn:example:city",
+            "https://",
+            "https://city.example/a b",
+            "https://data.gov.sk/id/legal-subject/00000000",
+            "https://data.gov.sk/id/legal-subject/00000000/",
+        ] {
+            assert!(!is_declared_iri(none), "{none}");
+        }
     }
 }

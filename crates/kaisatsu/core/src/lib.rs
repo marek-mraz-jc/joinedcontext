@@ -16,6 +16,7 @@ pub mod store;
 
 pub use authz::{
     Action, Authorizer, Decision, LocalAuthorizer, ObjectTarget, Principal, RequestCtx,
+    is_admin_client, is_reserved_client,
 };
 pub use branding::{BrandingBlock, Colours, Fonts, Languages};
 pub use claims::{

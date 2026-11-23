@@ -253,11 +253,17 @@ pub async fn record_event(
     }
 }
 
-/// [`dispatch_pending_outbox`] whose failure is logged: the outbox loop sends what it left.
+/// [`dispatch_pending_outbox`] once the event stands: inside a write request's unit after its
+/// commit (a rolled-back change sends nothing), outside one at once. A failed send is logged and
+/// the outbox loop sends what it left.
 pub async fn dispatch_logged(state: &ShakoState, org_id: shako_core::OrgId) {
-    if let Err(e) = dispatch_pending_outbox(state, org_id).await {
-        tracing::warn!(error = %e, "shako: the outbox was not sent, the outbox loop sends it");
-    }
+    let st = state.clone();
+    jc_audit::after_commit(async move {
+        if let Err(e) = dispatch_pending_outbox(&st, org_id).await {
+            tracing::warn!(error = %e, "shako: the outbox was not sent, the outbox loop sends it");
+        }
+    })
+    .await;
 }
 
 /// Dispatches the due outbox rows for `(state.default_instance_id, org_id)` once (idempotent on

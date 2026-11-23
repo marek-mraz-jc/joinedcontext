@@ -953,7 +953,18 @@ async fn oci_put_manifest(
             }
         }
     }
-    if let Err(e) = state.store().upsert_package_version(ver_rec).await {
+    let saved = match state.store().upsert_package_version(ver_rec).await {
+        Ok(saved) => saved,
+        Err(e) => return oci_store_error(&e),
+    };
+    if let Err(e) = shako_api::service::audit(
+        &state,
+        &ctx,
+        "PublishPackage",
+        format!("packages/{}/versions/{}", pkg.id, saved.id),
+    )
+    .await
+    {
         return oci_store_error(&e);
     }
 

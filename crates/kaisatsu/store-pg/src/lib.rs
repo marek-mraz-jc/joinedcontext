@@ -39,6 +39,8 @@ pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql")
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_k_items.sql");
 /// Embedded migration 0003 SQL (`device_code`, RFC 8628 device authorizations).
 pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_device_code.sql");
+/// Embedded migration 0004 SQL (orphan grants and document memberships, S3-15, S3-16).
+pub const MIGRATION_0004_SQL: &str = include_str!("../migrations/0004_grant_cleanup.sql");
 
 /// Table holding the applied migration versions (outside schema `kaisatsu`, so the request role
 /// has no grant on it and the RLS boot check does not see it).
@@ -367,6 +369,13 @@ impl PgStore {
                 MIGRATION_0003_SQL.into_sql_str(),
                 false,
             ),
+            Migration::new(
+                4,
+                "grant_cleanup".into(),
+                MigrationType::Simple,
+                MIGRATION_0004_SQL.into_sql_str(),
+                false,
+            ),
         ]);
         migrator.create_schema("kaisatsu_migrations");
         migrator.dangerous_set_table_name(MIGRATIONS_TABLE);
@@ -682,14 +691,153 @@ async fn load_user(
     realm_id: &str,
     user_id: &str,
 ) -> Result<Option<UserRepresentation>> {
-    let doc: Option<Value> =
-        sqlx::query_scalar("SELECT doc FROM kaisatsu.people WHERE realm_id = $1 AND id = $2")
-            .bind(realm_id)
-            .bind(user_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(storage)?;
+    let doc: Option<Value> = sqlx::query_scalar(
+        "SELECT doc FROM kaisatsu.people WHERE realm_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(realm_id)
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(storage)?;
     opt_from_doc(doc)
+}
+
+/// Who waits for whom on the realm's grants: a grant write takes the lock shared, a delete that
+/// cascades into grants (or a client rename) exclusive, so no grant lands between a cascade's
+/// scan and its commit. Taken before any row lock.
+async fn lock_grants(conn: &mut PgConnection, realm_id: &str, exclusive: bool) -> Result<()> {
+    let sql = if exclusive {
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+    } else {
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))"
+    };
+    sqlx::query(sql)
+        .bind(format!("kaisatsu.grants:{realm_id}"))
+        .execute(&mut *conn)
+        .await
+        .map_err(storage)?;
+    Ok(())
+}
+
+/// Runs cascade statements whose `$1` is the realm and whose further parameters are `args`.
+async fn cascade(
+    conn: &mut PgConnection,
+    realm_id: &str,
+    args: &[&str],
+    statements: &[&'static str],
+) -> Result<()> {
+    for sql in statements {
+        let mut query = sqlx::query(*sql).bind(realm_id);
+        for arg in args {
+            query = query.bind(*arg);
+        }
+        query.execute(&mut *conn).await.map_err(storage)?;
+    }
+    Ok(())
+}
+
+/// What goes with a person, after the `people` row (`$2` is the person).
+const PERSON_CASCADE: &[&str] = &[
+    "DELETE FROM kaisatsu.credentials WHERE realm_id = $1 AND user_id = $2",
+    "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND user_id = $2",
+    "DELETE FROM kaisatsu.sso_session WHERE realm_id = $1 AND user_id = $2",
+    "DELETE FROM kaisatsu.webauthn_credential WHERE realm_id = $1 AND user_id = $2",
+    "DELETE FROM kaisatsu.idp_links WHERE realm_id = $1 AND user_id = $2",
+    "DELETE FROM kaisatsu.role_mappings
+     WHERE realm_id = $1 AND principal_kind = 'user' AND principal_id = $2",
+];
+
+/// What goes with a realm role (`$2` is its name). Documents before mappings, the order grant
+/// writes take.
+const REALM_ROLE_CASCADE: &[&str] = &[
+    "UPDATE kaisatsu.people
+     SET doc = jsonb_set(doc, '{realmRoles}', (doc->'realmRoles') - $2)
+     WHERE realm_id = $1 AND doc->'realmRoles' ? $2",
+    "UPDATE kaisatsu.groups
+     SET doc = jsonb_set(doc, '{realmRoles}', (doc->'realmRoles') - $2)
+     WHERE realm_id = $1 AND doc->'realmRoles' ? $2",
+    "UPDATE kaisatsu.roles
+     SET doc = jsonb_set(doc, '{composites,realm}', (doc #> '{composites,realm}') - $2)
+     WHERE realm_id = $1 AND doc #> '{composites,realm}' ? $2",
+    "UPDATE kaisatsu.realms
+     SET doc = jsonb_set(doc, '{defaultRoles}', (doc->'defaultRoles') - $2)
+     WHERE realm_id = $1 AND doc->'defaultRoles' ? $2",
+    "DELETE FROM kaisatsu.role_mappings
+     WHERE realm_id = $1 AND client_uuid IS NULL AND role_name = $2",
+];
+
+/// What goes with a client role in documents (`$2` the client id, `$3` the role's name).
+const CLIENT_ROLE_CASCADE: &[&str] = &[
+    "UPDATE kaisatsu.people
+     SET doc = jsonb_set(doc, ARRAY['clientRoles', $2], (doc #> ARRAY['clientRoles', $2]) - $3)
+     WHERE realm_id = $1 AND doc #> ARRAY['clientRoles', $2] ? $3",
+    "UPDATE kaisatsu.groups
+     SET doc = jsonb_set(doc, ARRAY['clientRoles', $2], (doc #> ARRAY['clientRoles', $2]) - $3)
+     WHERE realm_id = $1 AND doc #> ARRAY['clientRoles', $2] ? $3",
+    "UPDATE kaisatsu.roles
+     SET doc = jsonb_set(doc, ARRAY['composites', 'client', $2],
+                         (doc #> ARRAY['composites', 'client', $2]) - $3)
+     WHERE realm_id = $1 AND doc #> ARRAY['composites', 'client', $2] ? $3",
+];
+
+/// The mappings of a client role (`$2` the client's uuid, `$3` the role's name).
+const CLIENT_ROLE_MAPPINGS: &[&str] = &["DELETE FROM kaisatsu.role_mappings
+     WHERE realm_id = $1 AND client_uuid = $2 AND role_name = $3"];
+
+/// What names a client by its id (`$2`).
+const CLIENT_ID_CASCADE: &[&str] = &[
+    "UPDATE kaisatsu.people SET doc = doc #- ARRAY['clientRoles', $2]
+     WHERE realm_id = $1 AND doc->'clientRoles' ? $2",
+    "UPDATE kaisatsu.groups SET doc = doc #- ARRAY['clientRoles', $2]
+     WHERE realm_id = $1 AND doc->'clientRoles' ? $2",
+    "UPDATE kaisatsu.roles SET doc = doc #- ARRAY['composites', 'client', $2]
+     WHERE realm_id = $1 AND doc #> '{composites,client}' ? $2",
+    "DELETE FROM kaisatsu.consent WHERE realm_id = $1 AND client_id = $2",
+];
+
+/// What names a client by its uuid (`$2`).
+const CLIENT_UUID_CASCADE: &[&str] = &[
+    "DELETE FROM kaisatsu.roles WHERE realm_id = $1 AND client_role AND container_id = $2",
+    "DELETE FROM kaisatsu.role_mappings WHERE realm_id = $1 AND client_uuid = $2",
+];
+
+/// What follows a client's new id (`$2` the old id, `$3` the new): grants keep to the client, so
+/// the old id grants nothing to whoever registers it next.
+const CLIENT_RENAME: &[&str] = &[
+    "UPDATE kaisatsu.people
+     SET doc = jsonb_set(doc #- ARRAY['clientRoles', $2], ARRAY['clientRoles', $3],
+                         doc #> ARRAY['clientRoles', $2])
+     WHERE realm_id = $1 AND doc->'clientRoles' ? $2",
+    "UPDATE kaisatsu.groups
+     SET doc = jsonb_set(doc #- ARRAY['clientRoles', $2], ARRAY['clientRoles', $3],
+                         doc #> ARRAY['clientRoles', $2])
+     WHERE realm_id = $1 AND doc->'clientRoles' ? $2",
+    "UPDATE kaisatsu.roles
+     SET doc = jsonb_set(doc #- ARRAY['composites', 'client', $2],
+                         ARRAY['composites', 'client', $3],
+                         doc #> ARRAY['composites', 'client', $2])
+     WHERE realm_id = $1 AND doc #> '{composites,client}' ? $2",
+    "UPDATE kaisatsu.people
+     SET username_lower = lower('service-account-' || $3),
+         doc = jsonb_set(jsonb_set(doc, '{username}', to_jsonb(lower('service-account-' || $3))),
+                         '{serviceAccountClientId}', to_jsonb($3::text))
+     WHERE realm_id = $1 AND doc->>'serviceAccountClientId' = $2",
+];
+
+/// The consents given to a client's old id (`$2`).
+const CLIENT_RENAME_CONSENTS: &[&str] =
+    &["DELETE FROM kaisatsu.consent WHERE realm_id = $1 AND client_id = $2"];
+
+/// Takes the stored grants into a profile write, under the person's row lock.
+async fn keep_stored_grants(conn: &mut PgConnection, user: &mut UserRepresentation) -> Result<()> {
+    let stored = load_user(conn, &user.realm_id, &user.id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+    user.realm_roles = stored.realm_roles;
+    user.client_roles = stored.client_roles;
+    // Membership is a row: the document never carries a group path.
+    user.groups.clear();
+    Ok(())
 }
 
 async fn save_user_doc(conn: &mut PgConnection, user: &UserRepresentation) -> Result<()> {
@@ -1032,6 +1180,8 @@ impl Store for PgStore {
                     "user with same username or email already exists".into(),
                 ));
             }
+            user.groups.clear();
+            lock_grants(&mut tx, &user.realm_id, false).await?;
             insert_user(&mut tx, &user).await?;
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(user)
@@ -1048,12 +1198,7 @@ impl Store for PgStore {
                 *em = em.to_ascii_lowercase();
             }
             let mut tx = self.begin(&user.realm_id, None).await?;
-            if load_user(&mut tx, &user.realm_id, &user.id)
-                .await?
-                .is_none()
-            {
-                return Err(KaisatsuError::NotFound("user not found".into()));
-            }
+            keep_stored_grants(&mut tx, &mut user).await?;
             if user_key_taken(&mut tx, &user, Some(&user.id)).await? {
                 return Err(KaisatsuError::Conflict(
                     "another user already holds that username or email".into(),
@@ -1079,6 +1224,27 @@ impl Store for PgStore {
         })
     }
 
+    fn set_user_grants<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+        realm_roles: &'a [String],
+        client_roles: &'a HashMap<String, Vec<String>>,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            lock_grants(&mut tx, realm_id, false).await?;
+            let mut user = load_user(&mut tx, realm_id, user_id)
+                .await?
+                .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+            user.realm_roles = realm_roles.to_vec();
+            user.client_roles.clone_from(client_roles);
+            save_user_doc(&mut tx, &user).await?;
+            jc_audit::commit(tx).await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
     fn delete_user<'a>(
         &'a self,
         realm_id: &'a str,
@@ -1101,20 +1267,7 @@ impl Store for PgStore {
             }
             // The person is gone; their dependent rows go in every organization.
             set_scope(&mut tx, realm_id, None).await?;
-            for sql in [
-                "DELETE FROM kaisatsu.credentials WHERE realm_id = $1 AND user_id = $2",
-                "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND user_id = $2",
-                "DELETE FROM kaisatsu.sso_session WHERE realm_id = $1 AND user_id = $2",
-                "DELETE FROM kaisatsu.webauthn_credential WHERE realm_id = $1 AND user_id = $2",
-                "DELETE FROM kaisatsu.idp_links WHERE realm_id = $1 AND user_id = $2",
-            ] {
-                sqlx::query(sql)
-                    .bind(realm_id)
-                    .bind(user_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(storage)?;
-            }
+            cascade(&mut tx, realm_id, &[user_id], PERSON_CASCADE).await?;
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
         })
@@ -1419,6 +1572,42 @@ impl Store for PgStore {
         })
     }
 
+    fn update_group<'a>(
+        &'a self,
+        mut group: GroupRepresentation,
+    ) -> StoreFuture<'a, GroupRepresentation> {
+        Box::pin(async move {
+            let mut tx = self.begin(&group.realm_id, None).await?;
+            let stored: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2 FOR UPDATE",
+            )
+            .bind(&group.realm_id)
+            .bind(&group.id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let stored: GroupRepresentation =
+                from_doc(stored.ok_or_else(|| KaisatsuError::NotFound("group not found".into()))?)?;
+            group.realm_roles = stored.realm_roles;
+            group.client_roles = stored.client_roles;
+            group.sub_groups.clear();
+            sqlx::query(
+                "UPDATE kaisatsu.groups SET org_id = $3, path = $4, doc = $5
+                 WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(&group.realm_id)
+            .bind(&group.id)
+            .bind(&group.org_id)
+            .bind(&group.path)
+            .bind(to_doc(&group)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            jc_audit::commit(tx).await.map_err(storage)?;
+            Ok(group)
+        })
+    }
+
     fn get_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -1600,30 +1789,20 @@ impl Store for PgStore {
             let mut members: HashMap<String, Vec<UserRepresentation>> = HashMap::new();
             if !groups.is_empty() {
                 let ids: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
-                let paths: Vec<&str> = groups.iter().map(|g| g.path.as_str()).collect();
                 // The page is what the caller may see; its members are listed whatever their home.
                 set_scope(&mut tx, realm_id, None).await?;
                 let pairs: Vec<(String, Value)> = sqlx::query_as(
-                    "WITH joined AS (
-                         SELECT group_id, user_id FROM kaisatsu.group_members
-                         WHERE realm_id = $1 AND group_id = ANY($2)
-                     ), named AS (
-                         SELECT g.id AS group_id, p.id AS user_id
-                         FROM kaisatsu.people p
-                         JOIN unnest($2::text[], $3::text[]) AS g(id, path)
-                             ON p.doc->'groups' ? g.path
-                         WHERE p.realm_id = $1 AND p.doc->'groups' ?| $3
-                     ), ranked AS (
+                    "WITH ranked AS (
                          SELECT m.group_id, p.doc, p.seq,
                                 row_number() OVER (PARTITION BY m.group_id ORDER BY p.seq) AS place
-                         FROM (SELECT * FROM joined UNION SELECT * FROM named) m
-                         JOIN kaisatsu.people p ON p.realm_id = $1 AND p.id = m.user_id
+                         FROM kaisatsu.group_members m
+                         JOIN kaisatsu.people p ON p.realm_id = m.realm_id AND p.id = m.user_id
+                         WHERE m.realm_id = $1 AND m.group_id = ANY($2)
                      )
-                     SELECT group_id::text, doc FROM ranked WHERE place <= $4 ORDER BY seq",
+                     SELECT group_id::text, doc FROM ranked WHERE place <= $3 ORDER BY seq",
                 )
                 .bind(realm_id)
                 .bind(&ids)
-                .bind(&paths)
                 .bind(i64::try_from(MAX_PAGE).unwrap_or(i64::MAX))
                 .fetch_all(&mut *tx)
                 .await
@@ -1654,40 +1833,61 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let removed: Option<Value> = sqlx::query_scalar(
-                "DELETE FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2 RETURNING doc",
+            lock_grants(&mut tx, realm_id, true).await?;
+            let visible: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2)",
             )
             .bind(realm_id)
             .bind(group_id)
-            .fetch_optional(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(storage)?;
-            let Some(removed) = removed else {
+            if !visible {
                 return Ok(false);
-            };
-            let removed: GroupRepresentation = from_doc(removed)?;
+            }
             set_scope(&mut tx, realm_id, None).await?;
-            sqlx::query("DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND group_id = $2")
-                .bind(realm_id)
-                .bind(group_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(storage)?;
-            let holders: Vec<Value> = sqlx::query_scalar(
-                "SELECT doc FROM kaisatsu.people
-                 WHERE realm_id = $1 AND (doc->'groups' ? $2 OR doc->'groups' ? $3)",
+            // Children by parentId, and those without one by path, as the group tree lists them.
+            let tree: Vec<(String, Option<String>)> = sqlx::query_as(
+                "WITH RECURSIVE tree AS (
+                     SELECT id, org_id, path FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2
+                     UNION
+                     SELECT g.id, g.org_id, g.path
+                     FROM kaisatsu.groups g
+                     JOIN tree t ON g.doc->>'parentId' = t.id
+                         OR (g.doc->>'parentId' IS NULL
+                             AND starts_with(g.path, t.path || '/'))
+                     WHERE g.realm_id = $1
+                 )
+                 SELECT id::text, org_id::text FROM tree",
             )
             .bind(realm_id)
-            .bind(&removed.path)
-            .bind(&removed.name)
+            .bind(group_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
-            for doc in holders {
-                let mut u: UserRepresentation = from_doc(doc)?;
-                u.groups
-                    .retain(|p| p != &removed.path && p != &removed.name);
-                save_user_doc(&mut tx, &u).await?;
+            if let Some(allowed) = allowed_orgs
+                && tree.iter().any(|(id, org)| {
+                    id != group_id && !org.as_ref().is_some_and(|o| allowed.contains(o))
+                })
+            {
+                return Err(KaisatsuError::Conflict(
+                    "a group below this one is outside your organizations: a realm admin deletes it"
+                        .into(),
+                ));
+            }
+            let ids: Vec<String> = tree.into_iter().map(|(id, _)| id).collect();
+            for sql in [
+                "DELETE FROM kaisatsu.groups WHERE realm_id = $1 AND id = ANY($2)",
+                "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND group_id = ANY($2)",
+                "DELETE FROM kaisatsu.role_mappings
+                 WHERE realm_id = $1 AND principal_kind = 'group' AND principal_id = ANY($2)",
+            ] {
+                sqlx::query(sql)
+                    .bind(realm_id)
+                    .bind(&ids)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(storage)?;
             }
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
@@ -1702,6 +1902,10 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
+            lock_grants(&mut tx, realm_id, false).await?;
+            if load_user(&mut tx, realm_id, user_id).await?.is_none() {
+                return Err(KaisatsuError::NotFound("user not found".into()));
+            }
             let doc: Option<Value> = sqlx::query_scalar(
                 "SELECT doc FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2",
             )
@@ -1735,12 +1939,6 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if let Some(mut u) = load_user(&mut tx, realm_id, user_id).await?
-                && !u.groups.contains(&group.path)
-            {
-                u.groups.push(group.path);
-                save_user_doc(&mut tx, &u).await?;
-            }
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
@@ -1754,14 +1952,6 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
-            let path: Option<String> = sqlx::query_scalar(
-                "SELECT path FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2",
-            )
-            .bind(realm_id)
-            .bind(group_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(storage)?;
             sqlx::query(
                 "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND user_id = $2 AND group_id = $3",
             )
@@ -1771,12 +1961,6 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if let Some(path) = path
-                && let Some(mut u) = load_user(&mut tx, realm_id, user_id).await?
-            {
-                u.groups.retain(|p| p != &path);
-                save_user_doc(&mut tx, &u).await?;
-            }
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(())
         })
@@ -1789,21 +1973,15 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
-            let paths = load_user(&mut tx, realm_id, user_id)
-                .await?
-                .map(|u| u.groups)
-                .unwrap_or_default();
             let docs: Vec<Value> = sqlx::query_scalar(
                 "SELECT g.doc FROM kaisatsu.groups g
-                 WHERE g.realm_id = $1 AND (
-                     g.id IN (SELECT gm.group_id FROM kaisatsu.group_members gm
-                              WHERE gm.realm_id = $1 AND gm.user_id = $2)
-                     OR g.path = ANY($3) OR (g.doc->>'name') = ANY($3))
+                 WHERE g.realm_id = $1
+                   AND g.id IN (SELECT gm.group_id FROM kaisatsu.group_members gm
+                                WHERE gm.realm_id = $1 AND gm.user_id = $2)
                  ORDER BY g.path",
             )
             .bind(realm_id)
             .bind(user_id)
-            .bind(&paths)
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
@@ -1822,32 +2000,30 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
-            let path: Option<String> = sqlx::query_scalar(
-                "SELECT path FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2",
+            let visible: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2)",
             )
             .bind(realm_id)
             .bind(group_id)
-            .fetch_optional(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(storage)?;
-            let Some(path) = path else {
+            if !visible {
                 return Err(KaisatsuError::NotFound("group not found".into()));
-            };
+            }
             // The group is visible to the caller; its members are listed whatever their home.
             set_scope(&mut tx, realm_id, None).await?;
             let limit = i64::try_from(max.clamp(1, MAX_PAGE)).unwrap_or(i64::MAX);
             let offset = i64::try_from(first).unwrap_or(i64::MAX);
             let docs: Vec<Value> = sqlx::query_scalar(
                 "SELECT p.doc FROM kaisatsu.people p
-                 WHERE p.realm_id = $1 AND (
-                     p.id IN (SELECT gm.user_id FROM kaisatsu.group_members gm
-                              WHERE gm.realm_id = $1 AND gm.group_id = $2)
-                     OR p.doc->'groups' ? $3)
-                 ORDER BY p.seq OFFSET $5 LIMIT $4",
+                 WHERE p.realm_id = $1
+                   AND p.id IN (SELECT gm.user_id FROM kaisatsu.group_members gm
+                                WHERE gm.realm_id = $1 AND gm.group_id = $2)
+                 ORDER BY p.seq OFFSET $4 LIMIT $3",
             )
             .bind(realm_id)
             .bind(group_id)
-            .bind(&path)
             .bind(limit)
             .bind(offset)
             .fetch_all(&mut *tx)
@@ -1930,6 +2106,7 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
+            lock_grants(&mut tx, realm_id, true).await?;
             let res = sqlx::query(
                 "DELETE FROM kaisatsu.roles
                  WHERE realm_id = $1 AND name = $2 AND container_id IS NOT DISTINCT FROM $3",
@@ -1940,18 +2117,31 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            sqlx::query(
-                "DELETE FROM kaisatsu.role_mappings
-                 WHERE realm_id = $1 AND role_name = $2 AND client_uuid IS NOT DISTINCT FROM $3",
-            )
-            .bind(realm_id)
-            .bind(role_name)
-            .bind(container_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(storage)?;
+            if res.rows_affected() == 0 {
+                return Ok(false);
+            }
+            match container_id {
+                None => cascade(&mut tx, realm_id, &[role_name], REALM_ROLE_CASCADE).await?,
+                Some(uuid) => {
+                    let client_id: Option<String> = sqlx::query_scalar(
+                        "SELECT client_id::text FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2",
+                    )
+                    .bind(realm_id)
+                    .bind(uuid)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+                    // Without its client row only mappings can name the role.
+                    if let Some(client_id) = client_id {
+                        let args = [client_id.as_str(), role_name];
+                        cascade(&mut tx, realm_id, &args, CLIENT_ROLE_CASCADE).await?;
+                    }
+                    cascade(&mut tx, realm_id, &[uuid, role_name], CLIENT_ROLE_MAPPINGS).await?;
+                }
+            }
+            notify(&mut tx, realm_id).await?;
             jc_audit::commit(tx).await.map_err(storage)?;
-            Ok(res.rows_affected() > 0)
+            Ok(true)
         })
     }
 
@@ -1961,6 +2151,43 @@ impl Store for PgStore {
                 mapping.id = new_id();
             }
             let mut tx = self.begin(&mapping.realm_id, None).await?;
+            lock_grants(&mut tx, &mapping.realm_id, false).await?;
+            let client_id: Option<String> = match &mapping.client_uuid {
+                Some(uuid) => sqlx::query_scalar(
+                    "SELECT client_id::text FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2",
+                )
+                .bind(&mapping.realm_id)
+                .bind(uuid)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(storage)?,
+                None => None,
+            };
+            // A client mapping for a client that does not exist is refused, never stored as
+            // a realm role of the same name.
+            if mapping.client_uuid.is_some() && client_id.is_none() {
+                return Err(KaisatsuError::NotFound("client not found".into()));
+            }
+            let person = if mapping.principal_kind == "user" {
+                Some(
+                    load_user(&mut tx, &mapping.realm_id, &mapping.principal_id)
+                        .await?
+                        .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?,
+                )
+            } else {
+                let group_exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM kaisatsu.groups WHERE realm_id = $1 AND id = $2)",
+                )
+                .bind(&mapping.realm_id)
+                .bind(&mapping.principal_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?;
+                if !group_exists {
+                    return Err(KaisatsuError::NotFound("group not found".into()));
+                }
+                None
+            };
             sqlx::query(
                 "DELETE FROM kaisatsu.role_mappings
                  WHERE realm_id = $1 AND principal_kind = $2 AND principal_id = $3
@@ -1974,26 +2201,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if mapping.principal_kind == "user"
-                && let Some(mut u) =
-                    load_user(&mut tx, &mapping.realm_id, &mapping.principal_id).await?
-            {
-                let client_id: Option<String> = match &mapping.client_uuid {
-                    Some(uuid) => sqlx::query_scalar(
-                        "SELECT client_id FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2",
-                    )
-                    .bind(&mapping.realm_id)
-                    .bind(uuid)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(storage)?,
-                    None => None,
-                };
-                // A client mapping for a client that does not exist is refused, never stored as
-                // a realm role of the same name.
-                if mapping.client_uuid.is_some() && client_id.is_none() {
-                    return Err(KaisatsuError::NotFound("client not found".into()));
-                }
+            if let Some(mut u) = person {
                 if let Some(cid) = client_id {
                     let list = u.client_roles.entry(cid).or_default();
                     if !list.contains(&mapping.role_name) {
@@ -2034,6 +2242,13 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
+            lock_grants(&mut tx, realm_id, false).await?;
+            // The person's row before the mapping's, the order the deletes take.
+            let person = if principal_kind == "user" {
+                load_user(&mut tx, realm_id, principal_id).await?
+            } else {
+                None
+            };
             sqlx::query(
                 "DELETE FROM kaisatsu.role_mappings
                  WHERE realm_id = $1 AND principal_kind = $2 AND principal_id = $3
@@ -2047,9 +2262,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            if principal_kind == "user"
-                && let Some(mut u) = load_user(&mut tx, realm_id, principal_id).await?
-            {
+            if let Some(mut u) = person {
                 let client_id: Option<String> = match client_uuid {
                     Some(uuid) => sqlx::query_scalar(
                         "SELECT client_id FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2",
@@ -2160,6 +2373,30 @@ impl Store for PgStore {
             .map_err(storage)?;
             if let Some(row) = existing {
                 let existing = self.client_from_row(&realm_id, row)?;
+                if existing.client_id != client.client_id {
+                    lock_grants(&mut tx, &realm_id, true).await?;
+                    let taken: bool = sqlx::query_scalar(
+                        "SELECT EXISTS (SELECT 1 FROM kaisatsu.applications
+                                        WHERE realm_id = $1 AND client_id = $2 AND id <> $3)
+                             OR EXISTS (SELECT 1 FROM kaisatsu.people
+                                        WHERE realm_id = $1
+                                          AND username_lower = lower('service-account-' || $2))",
+                    )
+                    .bind(&realm_id)
+                    .bind(&client.client_id)
+                    .bind(&existing.id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+                    if taken {
+                        return Err(KaisatsuError::Conflict(
+                            "another client or person already holds that client id".into(),
+                        ));
+                    }
+                    let ids = [existing.client_id.as_str(), client.client_id.as_str()];
+                    cascade(&mut tx, &realm_id, &ids, CLIENT_RENAME).await?;
+                    cascade(&mut tx, &realm_id, &ids[..1], CLIENT_RENAME_CONSENTS).await?;
+                }
                 if existing.id != client.id {
                     sqlx::query(
                         "DELETE FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2",
@@ -2291,6 +2528,7 @@ impl Store for PgStore {
     ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            lock_grants(&mut tx, realm_id, true).await?;
             let removed: Option<String> = sqlx::query_scalar(
                 "DELETE FROM kaisatsu.applications WHERE realm_id = $1 AND id = $2 RETURNING client_id",
             )
@@ -2304,16 +2542,22 @@ impl Store for PgStore {
             };
             set_scope(&mut tx, realm_id, None).await?;
             // Only the client's own service account goes with it, never a person of that name.
-            sqlx::query(
+            let account: Option<String> = sqlx::query_scalar(
                 "DELETE FROM kaisatsu.people
-                 WHERE realm_id = $1 AND username_lower = $2 AND doc->>'serviceAccountClientId' = $3",
+                 WHERE realm_id = $1 AND username_lower = $2 AND doc->>'serviceAccountClientId' = $3
+                 RETURNING id::text",
             )
             .bind(realm_id)
             .bind(format!("service-account-{client_id}").to_ascii_lowercase())
             .bind(&client_id)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
+            cascade(&mut tx, realm_id, &[&client_id], CLIENT_ID_CASCADE).await?;
+            cascade(&mut tx, realm_id, &[uuid], CLIENT_UUID_CASCADE).await?;
+            if let Some(account) = account {
+                cascade(&mut tx, realm_id, &[&account], PERSON_CASCADE).await?;
+            }
             notify(&mut tx, realm_id).await?;
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(true)
@@ -3811,12 +4055,7 @@ impl Store for PgStore {
                 outbox.id = new_id();
             }
             let mut tx = self.begin(&user.realm_id, None).await?;
-            if load_user(&mut tx, &user.realm_id, &user.id)
-                .await?
-                .is_none()
-            {
-                return Err(KaisatsuError::NotFound("user not found".into()));
-            }
+            keep_stored_grants(&mut tx, &mut user).await?;
             if user_key_taken(&mut tx, &user, Some(&user.id)).await? {
                 return Err(KaisatsuError::Conflict(
                     "another user already holds that username or email".into(),

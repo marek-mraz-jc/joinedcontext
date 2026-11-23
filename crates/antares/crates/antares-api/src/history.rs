@@ -8,8 +8,11 @@
 //! Outside a request (background jobs, tests without the router) there is
 //! no buffer, and a push drains immediately: the seam degrades to today's
 //! per-change recording rather than losing events. A driver error in the
-//! drain is logged and counted (`/q/health` temporalDrainErrors) — it never
-//! changes the response of a write that already committed.
+//! drain is retried [`DRIVER_ATTEMPTS`] times (S4-23: the Postgres append is
+//! keyed by instanceId, so a retry after a chunk that did commit adds
+//! nothing twice); one that outlasts them is logged and counted (`/q/health`
+//! temporalDrainErrors) — it never changes the response of a write that
+//! already committed.
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provenance::PROVENANCE;
@@ -22,8 +25,8 @@ use std::time::Duration;
 
 static DRAIN_ERRORS: AtomicU64 = AtomicU64::new(0);
 
-/// Drains that failed in the driver (the events of that request are lost;
-/// the write itself stood).
+/// Drains that failed in the driver on every attempt (the events of that
+/// request are lost; the write itself stood).
 pub fn drain_errors() -> u64 {
     DRAIN_ERRORS.load(Ordering::Relaxed)
 }
@@ -579,6 +582,31 @@ pub(crate) fn held_attrs(
         .collect()
 }
 
+/// Whether a type of `types` records one of `attrs` (`None`: some Attribute)
+/// `onChange`; without `types`, whether any type of the Tenant does. An Entity
+/// may carry a type not asked for: [`held_attrs`] answers for the Entity.
+pub(crate) fn may_hold(
+    st: &AppState,
+    tenant: &TenantId,
+    types: Option<&[String]>,
+    attrs: Option<&[String]>,
+) -> bool {
+    st.history_off
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .recording
+        .iter()
+        .filter(|((t, kind), _)| {
+            t == tenant.as_str() && types.is_none_or(|asked| asked.contains(kind))
+        })
+        .any(|(_, r)| match attrs {
+            Some(attrs) => attrs
+                .iter()
+                .any(|a| matches!(r.of(a), Some(RecordMode::OnChange(_)))),
+            None => r.has_on_change(),
+        })
+}
+
 /// Does some type of `tenant` record an Attribute `onChange`? Its
 /// aggregations are then computed here, never pushed into the store.
 pub(crate) fn records_on_change(st: &AppState, tenant: &TenantId) -> bool {
@@ -840,6 +868,40 @@ pub fn parse_duration_within(
     Ok(d)
 }
 
+/// Tries a history write gets after a committed change before it is given
+/// up (S4-23): a driver hiccup (a lock timeout, a failover, a pool slot
+/// freed a moment later) no longer drops the request's history. The pauses
+/// add up to 0.3 s, paid only on a failure, so a history store that is down
+/// cannot hold a write's response for long.
+/// ponytail: an outage longer than the ladder still loses the events
+/// (counted); the durable path is the same-transaction outbox of bus=nats.
+pub(crate) const DRIVER_ATTEMPTS: u32 = 3;
+
+/// Runs `op` up to [`DRIVER_ATTEMPTS`] times, 50 ms then 250 ms apart, and
+/// answers its last error. `op` must be safe to repeat after a failure that
+/// committed (every caller here is keyed by instanceId).
+pub(crate) async fn with_retry<T, F, Fut>(
+    what: &str,
+    mut op: F,
+) -> Result<T, antares_model::NgsiError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, antares_model::NgsiError>>,
+{
+    let mut attempt = 1;
+    loop {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt >= DRIVER_ATTEMPTS => return Err(e),
+            Err(e) => {
+                tracing::debug!(attempt, "{what} failed, retrying: {e}");
+                crate::sleep_ms(if attempt == 1 { 50 } else { 250 }).await;
+                attempt = attempt.saturating_add(1);
+            }
+        }
+    }
+}
+
 /// The consumer side: one `event_list` call per drained batch.
 pub(crate) async fn drain(st: &AppState, evs: Vec<TemporalEvent>) {
     let evs: Vec<TemporalEvent> = evs
@@ -849,7 +911,7 @@ pub(crate) async fn drain(st: &AppState, evs: Vec<TemporalEvent>) {
     if evs.is_empty() {
         return;
     }
-    if let Err(e) = st.temporal.event_list(&evs).await {
+    if let Err(e) = with_retry("temporal drain", || st.temporal.event_list(&evs)).await {
         DRAIN_ERRORS.fetch_add(1, Ordering::Relaxed);
         metrics::counter!("antares_temporal_drain_errors_total").increment(1);
         tracing::warn!(events = evs.len(), "temporal drain failed: {e}");
@@ -963,7 +1025,9 @@ pub(crate) async fn mirror_delete_entity(st: &AppState, tenant: &TenantId, id: &
     if !st.record_locally() {
         return;
     }
-    if let Err(e) = st.temporal.delete(tenant, id).await {
+    if let Err(e) = with_retry("temporal mirror delete", || st.temporal.delete(tenant, id)).await {
+        DRAIN_ERRORS.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("antares_temporal_drain_errors_total").increment(1);
         tracing::warn!("temporal mirror delete failed: {e}");
     }
 }
@@ -982,9 +1046,15 @@ pub(crate) async fn mirror_delete_attr(
     dataset_id: Option<&str>,
     ts: &str,
 ) {
-    let r = st
-        .temporal
-        .mutate(tenant, id, |doc| {
+    // one instanceId for every attempt: a retry after a commit finds its
+    // tombstone already there and adds nothing
+    let instance_id = format!("urn:ngsi-ld:Instance:{}", uuid::Uuid::new_v4());
+    let has_tombstone = |arr: &[Value]| {
+        arr.iter()
+            .any(|i| i.get("instanceId").and_then(Value::as_str) == Some(instance_id.as_str()))
+    };
+    let r = with_retry("temporal attr mirror", || {
+        st.temporal.mutate(tenant, id, |doc| {
             // The mirror writes nothing into a document the temporal driver
             // handed back in a shape the contract forbids.
             let Some(target) = doc.as_object_mut() else {
@@ -996,10 +1066,11 @@ pub(crate) async fn mirror_delete_attr(
                 let inst = serde_json::json!({
                     "type": "Property",
                     "value": "urn:ngsi-ld:null",
-                    "instanceId": format!("urn:ngsi-ld:Instance:{}", uuid::Uuid::new_v4()),
+                    "instanceId": instance_id,
                     "deletedAt": ts, "createdAt": ts, "modifiedAt": ts,
                 });
                 match target.get_mut("scope").and_then(Value::as_array_mut) {
+                    Some(arr) if has_tombstone(arr) => {}
                     Some(arr) if arr.first().is_some_and(|i| i.is_object()) => arr.push(inst),
                     _ => {
                         target.insert("scope".into(), Value::Array(vec![inst]));
@@ -1008,7 +1079,7 @@ pub(crate) async fn mirror_delete_attr(
                 return Ok::<(), std::convert::Infallible>(());
             }
             if let Some(arr) = target.get_mut(attr_iri).and_then(Value::as_array_mut) {
-                if arr.is_empty() {
+                if arr.is_empty() || has_tombstone(arr) {
                     return Ok(());
                 }
                 let atype = arr
@@ -1049,10 +1120,7 @@ pub(crate) async fn mirror_delete_attr(
                 if let Some(ds) = dataset_id {
                     inst.insert("datasetId".into(), Value::String(ds.to_owned()));
                 }
-                inst.insert(
-                    "instanceId".into(),
-                    Value::String(format!("urn:ngsi-ld:Instance:{}", uuid::Uuid::new_v4())),
-                );
+                inst.insert("instanceId".into(), Value::String(instance_id.clone()));
                 inst.insert("deletedAt".into(), Value::String(ts.to_owned()));
                 // the tombstone instance is written at the deletion: a
                 // timeproperty=createdAt|modifiedAt window finds it there
@@ -1063,8 +1131,11 @@ pub(crate) async fn mirror_delete_attr(
             }
             Ok(())
         })
-        .await;
+    })
+    .await;
     if let Err(e) = r {
+        DRAIN_ERRORS.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("antares_temporal_drain_errors_total").increment(1);
         tracing::warn!("temporal attr mirror failed: {e}");
     }
 }

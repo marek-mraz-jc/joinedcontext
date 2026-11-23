@@ -1,0 +1,20 @@
+{
+  "id": "dcat-ap-fi-2.0",
+  "version": "2.0.0",
+  "uri": "https://avoindata.suomi.fi/ns/avoindata_dcat-ap",
+  "source": "DCAT-AP-FI 2.0.0, shapes.ttl unchanged from https://avoindata.suomi.fi/ns/avoindata_dcat-ap_shacl.ttl (sha256 408ce3586633e378714c4a4109d8e37d18bafac3d09b014fabc5a3384467b61f), CC BY 4.0. Its Checksum shape admits SHA-1 alone: another algorithm leaves no checksum node.",
+  "title": {
+    "en": "DCAT-AP-FI 2.0 (Finland)",
+    "fi": "DCAT-AP-FI 2.0 (Suomi)"
+  },
+  "country": "FI",
+  "languages": ["fi", "sv", "en"],
+  "aliases": ["fi", "dcat-ap-fi", "https://avoindata.suomi.fi/ns/avoindata_dcat-ap#"],
+  "bases": ["dcat-ap-3.0.1"],
+  "selectable": true,
+  "shapes": ["shapes.ttl"],
+  "catalogue": { "publisher": true },
+  "render": {
+    "checksumAlgorithms": ["http://spdx.org/rdf/terms#checksumAlgorithm_sha1"]
+  }
+}

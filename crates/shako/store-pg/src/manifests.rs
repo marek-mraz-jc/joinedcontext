@@ -48,7 +48,7 @@ impl PgStore {
             .fetch_optional(&mut *tx)
             .await
             .map_err(tables::failed)?;
-            tx.commit().await.map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
             let Some((id, owner, image, digest, bytes)) = next else {
                 return Ok(copied);
             };

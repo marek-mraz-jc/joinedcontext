@@ -111,6 +111,15 @@ An Organization names the national profiles its records are served in, in `Organ
 
 Decided (worker-2, T-4499, owner may override): a profile is a query parameter, not content negotiation by `Accept-Profile`, because a harvester is configured with one URL. The other options were one URL per profile, or the profile as an `Accept-Profile` header.
 
+**The open data portal's catalogues.** A portal's catalogue chooses its profiles in `Portal.spec.profiles`, from the profiles installed with the catalogue; EU DCAT-AP is always served.
+
+- **The choice.** An absent list, and a list of `dcat-ap-3.0.1` alone, state no choice and keep what the catalogue serves. `[]` is EU DCAT-AP alone. A profile that is not installed, or that needs a publisher IRI the Organization does not declare in `spec.catalog.publisher.uri`, is refused with 422 on `spec.profiles[i]`.
+- **The feeds.** Each chosen profile's feed is at `/profiles/{profile}/{file}` and at `?_profile={profile}`. A profile the catalogue does not choose answers 404. A chosen profile that is not installed, or whose catalogue lacks its publisher, answers 503 `feed-unavailable` naming what is missing, never an empty feed.
+- **Declared values only.** A feed states only what the record and the Organization declare. A dataset without a field a profile requires is absent from that profile's feed, and the portal's Datasets tab names the field to its administrators.
+- **Two fields of two names.** `Organization.spec.dcatProfiles` is the context gateway's: the profiles its DCAT feeds above serve. `Portal.spec.profiles` is the open data portal's, and neither reads the other.
+- **The Organization declares the publisher.** A new portal of an Organization with neither a title nor a publisher name is refused with 422 on `spec.organizationRef`; a portal that exists stays editable. Each round the Organization's publisher IRI, name and contact desk replace what an administrator typed in the catalogue, and an IRI removed from the Organization is removed from the catalogue.
+- **A profile is a directory.** A national profile or an extension is a manifest with its shapes and code lists; it may name a base profile and add fields or shapes to it.
+
 ## 6. One catalogue per publisher
 
 A national catalogue registers one local catalogue per publisher: data.slovensko.sk a body by its IČO, data.gov.cz a body of the RPP register. One installation hosts the data of several publishers (a city, its region, a state network), each a Project naming its body in `spec.domain` ([Architecture/03](../Architecture/03-domain-model.md)), so the gateway serves a catalogue per Project that names its publisher (EP-127):

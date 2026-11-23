@@ -786,6 +786,11 @@ pub(crate) fn organization_vars(
         })
         .collect();
     out.insert("JC_PORTAL_PORTAL_HOSTS".to_owned(), portal_hosts.join(","));
+    #[cfg(feature = "dataroom")]
+    out.insert(
+        "JC_PORTAL_PROFILES".to_owned(),
+        serde_json::Value::Array(dataroom_api::installed_profiles()).to_string(),
+    );
     out.insert(
         "JC_PORTAL_HARVEST_HOSTS".to_owned(),
         cfg.dataroom.harvest_hosts().join(","),

@@ -354,15 +354,21 @@ pub fn probe(
 
 /// The policies of `table` whose assignee is `caller` and that are in force
 /// at `now`: what a decision starts from, and all the access surface shows.
+/// A prohibition also where the caller's membership is unknown
+/// ([`Platform::may_be`]).
 pub fn held<'t>(
     table: &'t Table,
     caller: &'t Platform,
     now: Timestamp,
 ) -> impl Iterator<Item = &'t Policy> {
-    table
-        .policies
-        .iter()
-        .filter(move |p| caller.is(&p.assignee) && p.in_force(now))
+    table.policies.iter().filter(move |p| {
+        let theirs = if p.prohibit {
+            caller.may_be(&p.assignee)
+        } else {
+            caller.is(&p.assignee)
+        };
+        theirs && p.in_force(now)
+    })
 }
 
 /// The Entity types an operation names: the request's, and the stored
@@ -999,6 +1005,43 @@ mod tests {
             with(&every_type, "5.6.11", &[], &[], Some(&smuggled), false),
             Decision::Deny(_)
         ));
+        Ok(())
+    }
+
+    /// S4-17 (T-7547): a Channel acting for a stored identity writes by that
+    /// person's own grant, is stopped by a prohibition of any role, and gets
+    /// nothing from a role's grant.
+    #[test]
+    fn a_stored_identity_writes_by_its_own_grant_under_every_role_prohibition() -> Result<(), String>
+    {
+        let ana = Caller::of(&antares_api::policy::Subject {
+            tenant: antares_model::TenantId::default(),
+            headers: vec![
+                ("x-jc-subject".to_owned(), "ana".to_owned()),
+                (antares_api::policy::IDENTITY_PAIR.to_owned(), String::new()),
+            ],
+        });
+        let info = json!([{"entities": [{"type": "Car"}]}]);
+        let own = json!({"id": "own", "assignee": {"kind": "user", "id": "ana"},
+                         "operations": ["5.6.1"], "information": info});
+        let by_role = json!({"id": "role", "assignee": {"kind": "role", "id": "writer"},
+                             "operations": ["5.6.1"], "information": info});
+        let stop = json!({"id": "stop", "assignee": {"kind": "role", "id": "interns"},
+                          "effect": "prohibit", "operations": ["5.6.1"]});
+        let types = car();
+        let body = json!({});
+        let op = Operation {
+            types: &types,
+            body: Some(&body),
+            ..Operation::new("5.6.1")
+        };
+        let said = |policies: &[&Value]| -> Result<Decision, String> {
+            let t = compile(&json!({ "policies": policies }))?;
+            Ok(decide(Some(&t), &ana, &op, Timestamp::now()))
+        };
+        assert_eq!(said(&[&own])?, Decision::Allow);
+        assert_eq!(said(&[&own, &stop])?, Decision::Deny(PROHIBITED.into()));
+        assert!(matches!(said(&[&by_role])?, Decision::Deny(_)));
         Ok(())
     }
 

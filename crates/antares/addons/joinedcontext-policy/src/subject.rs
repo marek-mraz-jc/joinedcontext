@@ -31,6 +31,17 @@ pub enum Caller {
     Platform(Platform),
 }
 
+/// What is known of a caller's roles, groups and Organization membership.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Membership {
+    /// The request says what the caller holds.
+    #[default]
+    Sent,
+    /// The broker acts for a stored identity (a Channel, Antares S4-17):
+    /// what it holds now is unknown.
+    Unknown,
+}
+
 /// A platform caller's identity.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Platform {
@@ -54,6 +65,37 @@ pub struct Platform {
     /// Organization of the Endpoint's project (ADR-N-067 2.3). Only `true` counts (deny by
     /// default), and never for an anonymous caller or a data-space participant.
     pub member: bool,
+    /// Whether the roles, groups and membership above are all it holds.
+    pub membership: Membership,
+}
+
+/// What of `subject` may be kept and acted as later: its user, client and
+/// participant names as the gateway sent them, and the read-only marker.
+/// `None` for a caller none of these names, the anonymous one included.
+#[must_use]
+pub fn identity(subject: &Subject) -> Option<Vec<(String, String)>> {
+    let Caller::Platform(p) = Caller::of(subject) else {
+        return None;
+    };
+    if p.user.is_none() && p.client.is_none() && p.did.is_none() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for name in ["x-jc-subject", "x-jc-client", "x-jc-did"] {
+        let sent = subject
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.trim())
+            .filter(|v| !v.is_empty());
+        if let Some(v) = sent {
+            out.push((name.to_owned(), v.to_owned()));
+        }
+    }
+    if p.read_only {
+        out.push(("x-jc-read-only".to_owned(), "true".to_owned()));
+    }
+    Some(out)
 }
 
 impl Caller {
@@ -108,6 +150,11 @@ impl Caller {
             did: one("x-jc-did"),
             restricted: get("x-jc-restricted").is_some_and(|v| v.eq_ignore_ascii_case("true")),
             read_only: get("x-jc-read-only").is_some(),
+            membership: if !anonymous && !participant && subject.by_identity() {
+                Membership::Unknown
+            } else {
+                Membership::Sent
+            },
             member: !anonymous
                 && !participant
                 && get("x-jc-member").is_some_and(|v| v.eq_ignore_ascii_case("true")),
@@ -145,6 +192,16 @@ impl Platform {
             Kind::Did => self.did.as_deref() == Some(id),
             Kind::Organization => self.member,
         }
+    }
+
+    /// Whether a prohibition of `assignee` may be this caller's: where the
+    /// membership is unknown, each by a role, a group or the Organization
+    /// (deny by default).
+    #[must_use]
+    pub fn may_be(&self, assignee: &Assignee) -> bool {
+        self.is(assignee)
+            || (self.membership == Membership::Unknown
+                && matches!(assignee.kind, Kind::Group | Kind::Role | Kind::Organization))
     }
 }
 
@@ -287,6 +344,73 @@ mod tests {
         assert!(p.is(&assignee(Kind::Group, "doprava/správa")));
         assert!(p.is(&assignee(Kind::Group, "city")));
         assert!(p.is(&assignee(Kind::User, "jožo")));
+        Ok(())
+    }
+
+    /// S4-17: what a Channel keeps of its binder names them and limits them,
+    /// and carries nothing they held.
+    #[test]
+    fn an_identity_is_the_names_and_the_read_only_marker() {
+        let of = |headers: &[(&str, &str)]| {
+            identity(&Subject {
+                tenant: antares_model::TenantId::default(),
+                headers: headers
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+            })
+        };
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        assert_eq!(
+            of(&[
+                ("x-jc-subject", "jo%C5%BEo"),
+                ("x-jc-roles", "steward"),
+                ("x-jc-groups", "ops"),
+                ("x-jc-member", "true"),
+                ("x-jc-read-only", ""),
+            ]),
+            Some(vec![
+                pair("x-jc-subject", "jo%C5%BEo"),
+                pair("x-jc-read-only", "true")
+            ])
+        );
+        assert_eq!(
+            of(&[("x-jc-client", "app-1")]),
+            Some(vec![pair("x-jc-client", "app-1")])
+        );
+        for nobody in [
+            &[][..],
+            &[("x-jc-roles", "steward")][..],
+            &[("x-jc-member", "true")][..],
+            &[("x-jc-subject", "jo%C5")][..],
+        ] {
+            assert_eq!(of(nobody), None, "{nobody:?}");
+        }
+    }
+
+    /// S4-17: with the membership unknown, every prohibition by one may be
+    /// the caller's and no permit by one is.
+    #[test]
+    fn an_unknown_membership_takes_prohibitions_and_no_permit() -> Result<(), String> {
+        let p = platform(caller(&[
+            ("x-jc-subject", "ana"),
+            (antares_api::policy::IDENTITY_PAIR, ""),
+        ]))?;
+        for a in [
+            assignee(Kind::Role, "steward"),
+            assignee(Kind::Group, "ops"),
+            assignee(Kind::Organization, ""),
+        ] {
+            assert!(p.may_be(&a) && !p.is(&a), "{a:?}");
+        }
+        assert!(!p.may_be(&assignee(Kind::User, "bob")));
+        let known = platform(caller(&[("x-jc-subject", "ana")]))?;
+        assert!(!known.may_be(&assignee(Kind::Role, "steward")));
+        let participant = platform(caller(&[
+            ("x-jc-did", "did%3Aweb%3Ax"),
+            (antares_api::policy::IDENTITY_PAIR, ""),
+        ]))?;
+        assert!(!participant.may_be(&assignee(Kind::Group, "ops")), "DS-02");
         Ok(())
     }
 

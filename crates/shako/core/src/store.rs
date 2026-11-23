@@ -405,4 +405,12 @@ pub trait Store: Send + Sync {
         instance_id: InstanceId,
         org_id: OrgId,
     ) -> StoreFuture<'_, Vec<OutboxEvent>>;
+
+    // Audit (S6-20): append only, written in the transaction of the change it records.
+    fn append_audit(&self, row: AuditRecord) -> StoreFuture<'_, ()>;
+    fn list_audit(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> StoreFuture<'_, Vec<AuditRecord>>;
 }

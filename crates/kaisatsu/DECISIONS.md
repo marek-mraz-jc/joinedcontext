@@ -87,3 +87,25 @@
 6. **Userinfo checks the pairwise subject.** A token's `sub` must equal the subject computed for its
    client (constant time), or userinfo answers 401; back-channel logout skips a client whose pairwise
    subject cannot be computed instead of sending the local user id.
+
+## 5. Grants, membership and second factor (security review S3, 2026-11-22, owner may override)
+
+1. **Membership is the `group_members` row alone.** A group path in a person document grants nothing:
+   stores clear `groups` on every write, token mappers and listings read rows, and partialImport and the
+   realm import turn paths into rows (an unknown path is refused before anything is written).
+2. **A delete leaves no grant behind.** Deleting a person, group (with its subtree), realm role, client
+   role or client removes the rows and the denormalised grant names that point at it, under a per-realm
+   grant lock that grant writes share. A client rename moves its grant keys. Migration 0004 cleans grants
+   left by older code into the archive table `kaisatsu.grant_cleanup_0004`; `store-pg/operator/0004_report.sql`
+   shows the counts read-only and `store-pg/operator/0004_revert.sql` restores them.
+3. **Reserved client ids belong to the realm.** `account`, `account-console`, `admin-cli`,
+   `admin-permissions`, `security-admin-console` and the `{realm}-realm` admin clients are written by a
+   realm administrator only; an Organization's client manager cannot create or rename onto them, nor create
+   `app-` or `mcp-` ids. The account console accepts only the realm's own `account-console` row.
+4. **The master realm reaches another realm through a grant.** A master token acts on realm X only when its
+   holder has a client role of the master client `X-realm` (directly or through a group); a person also
+   needs a second factor in the session. The installation operator gets that grant from the master realm
+   file (`clientRoles` of `X-realm`) or an audited role mapping. Master `admin` is realm-admin of master only.
+5. **A passkey is a second factor.** A person holding one meets it after the password also when a factor is
+   required (no TOTP enrolment), a step-up asks it, and the password grant refuses a passkey holder without
+   TOTP. A passkey created during sign-in answers the factor, as an enrolled TOTP does.

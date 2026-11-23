@@ -1,0 +1,96 @@
+{
+  "id": "geodcat-ap-3.1.0",
+  "version": "3.1.0",
+  "uri": "https://semiceu.github.io/GeoDCAT-AP/releases/3.1.0",
+  "source": "GeoDCAT-AP 3.1.0, shapes.ttl unchanged from https://github.com/SEMICeu/GeoDCAT-AP/blob/7e7d6a82f4bd4491c68f774f185193439881ab42/releases/3.1.0/shacl/geodcat-ap-SHACL.ttl (sha256 53f72ec0bd77f0dfdcbeac6718586986be3d3628791618d61db0de7444eb4bb0), CC BY 4.0. The topic category comes from the record's `topic_category` extra, one IRI or a JSON array of them, of the INSPIRE code list http://inspire.ec.europa.eu/metadata-codelist/TopicCategory; another value is left out.",
+  "title": {
+    "en": "GeoDCAT-AP 3.1.0 (geospatial data)"
+  },
+  "languages": [
+    "en"
+  ],
+  "aliases": [
+    "geodcat-ap",
+    "https://semiceu.github.io/GeoDCAT-AP/releases/3.1.0/"
+  ],
+  "bases": [
+    "dcat-ap-3.0.1"
+  ],
+  "selectable": true,
+  "shapes": [
+    "shapes.ttl"
+  ],
+  "properties": [
+    {
+      "extra": "topic_category",
+      "subject": "dataset",
+      "predicate": "http://data.europa.eu/930/topicCategory",
+      "kind": "iri",
+      "class": "http://www.w3.org/2004/02/skos/core#Concept",
+      "values": {
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/farming": {
+          "en": "Farming"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/biota": {
+          "en": "Biota"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/boundaries": {
+          "en": "Boundaries"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/climatologyMeteorologyAtmosphere": {
+          "en": "Climatology / Meteorology / Atmosphere"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/economy": {
+          "en": "Economy"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/elevation": {
+          "en": "Elevation"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/environment": {
+          "en": "Environment"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/geoscientificInformation": {
+          "en": "Geoscientific Information"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/health": {
+          "en": "Health"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/imageryBaseMapsEarthCover": {
+          "en": "Imagery / Base Maps / Earth Cover"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/intelligenceMilitary": {
+          "en": "Intelligence / Military"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/inlandWaters": {
+          "en": "Inland Waters"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/location": {
+          "en": "Location"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/oceans": {
+          "en": "Oceans"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/planningCadastre": {
+          "en": "Planning / Cadastre"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/society": {
+          "en": "Society"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/structure": {
+          "en": "Structure"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/transportation": {
+          "en": "Transportation"
+        },
+        "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/utilitiesCommunication": {
+          "en": "Utilities / Communication"
+        }
+      }
+    }
+  ],
+  "render": {
+    "valueClasses": {
+      "http://www.w3.org/2006/vcard/ns#hasEmail": "http://www.w3.org/2006/vcard/ns#Email"
+    }
+  }
+}
