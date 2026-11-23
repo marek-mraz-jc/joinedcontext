@@ -42,5 +42,6 @@ both_stores!(
     harvest_lock,
     odata,
     isolation,
-    deleted_catalogues
+    deleted_catalogues,
+    guarded_writes
 );

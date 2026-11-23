@@ -76,6 +76,7 @@ impl Store for FailingStore {
         list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
         get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
         upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        save_catalogue<'a>(catalogue: Catalogue, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Catalogue;
         delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
@@ -85,6 +86,7 @@ impl Store for FailingStore {
         list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
         get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
         upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
+        save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Dataset;
         withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
         purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> ();
         get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
