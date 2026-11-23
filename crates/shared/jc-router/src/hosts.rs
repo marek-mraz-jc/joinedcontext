@@ -713,6 +713,55 @@ mod tests {
         );
     }
 
+    /// A page at the bound Organization's own segment moves to the host's root, with or without
+    /// its slash; an API call there is served in place.
+    #[tokio::test]
+    async fn the_organization_segment_on_its_bound_host_moves_to_the_root() {
+        let jc = jc();
+        for path in ["/sk_bratislava", "/sk_bratislava/"] {
+            assert_eq!(
+                call(&jc, "data.bratislava.sk", path, PAGE).await,
+                (StatusCode::PERMANENT_REDIRECT, "/".into()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            call(&jc, "data.bratislava.sk", "/sk_bratislava", API)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    /// A module mounted at the root sits outside a host bound at `/data`: its public base on that
+    /// host is the Organization's prefixed form.
+    #[tokio::test]
+    async fn a_root_module_on_a_host_bound_below_the_root_keeps_the_organization_prefix() {
+        let table = HostTable::new()
+            .bound("opendata.example.com", "com_example", "/data")
+            .expect("rows");
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "site".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().fallback(any(echo)),
+            )
+            .build()
+            .expect("router");
+        assert_eq!(
+            call(&jc, "opendata.example.com", "/x", API).await,
+            (
+                StatusCode::OK,
+                "site org=com_example base=https://opendata.example.com/com_example path=/data/x"
+                    .into()
+            )
+        );
+    }
+
     #[tokio::test]
     async fn a_host_outside_the_registry_is_421_and_names_nothing() {
         let jc = jc();
@@ -1211,6 +1260,127 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let resp = ask(&jc, "GET", "api.bbsk.sk", "/projects/p", &[]).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn host_names_ports_and_organization_names_are_read_strictly() {
+        for (host, ok) in [
+            ("[::1]:8080", true),
+            ("[::ffff:10.0.0.1]", true),
+            ("[zz]", false),
+            ("[]", false),
+            ("city.example:443", true),
+        ] {
+            assert_eq!(well_formed(host), ok, "{host}");
+        }
+        for (host, bare) in [
+            ("city.example:443", "city.example"),
+            ("[::1]:443", "[::1]"),
+            ("[::1]", "[::1]"),
+            ("city.example:", "city.example:"),
+            ("city.example:abc", "city.example:abc"),
+        ] {
+            assert_eq!(without_port(host), bare, "{host}");
+        }
+        assert!(valid_organization(&"a".repeat(63)));
+        assert!(!valid_organization(&"a".repeat(64)));
+        let map = BTreeMap::from([("*.apps.example".to_owned(), 1)]);
+        assert_eq!(
+            lookup(&map, "a.apps.example:8443", "a.apps.example"),
+            Some(&1)
+        );
+        assert_eq!(lookup(&map, "a.b.apps.example", "a.b.apps.example"), None);
+    }
+
+    /// The same row twice is one row; an Organization's segment is its id when it has one.
+    #[test]
+    fn a_repeated_row_is_kept_and_a_segment_is_the_id() {
+        let t = HostTable::new()
+            .shared("a.example")
+            .and_then(|t| t.shared("a.example"))
+            .and_then(|t| t.organization_id("kosice", "o_kosice"))
+            .and_then(|t| t.organization("presov"))
+            .expect("one row");
+        assert_eq!(t.segment("kosice"), "o_kosice");
+        assert_eq!(t.segment("presov"), "presov");
+        // An unknown segment shaped as an id is no path of the deployment, on a shared or a
+        // bound host; a known Organization's on another's host neither.
+        let t = t.bound("b.example", "presov", "/").expect("bound");
+        for (host, path) in [
+            ("a.example", "/zz_unknown/x"),
+            ("b.example", "/zz_unknown/x"),
+            ("b.example", "/o_kosice/x"),
+        ] {
+            assert_eq!(
+                t.place(host, host, path, false),
+                Placed::NotFound,
+                "{host}{path}"
+            );
+        }
+        assert!(matches!(
+            t.place("b.example", "b.example", "/plain/x", false),
+            Placed::Route { .. }
+        ));
+    }
+
+    #[test]
+    fn every_role_reads_back_from_its_registry_name() {
+        for role in [
+            HostRole::Working,
+            HostRole::OpenData,
+            HostRole::Api,
+            HostRole::SignIn,
+            HostRole::Apps,
+        ] {
+            assert_eq!(HostRole::parse(role.as_str()), Some(role));
+        }
+        assert_eq!(HostRole::SignIn.as_str(), "signin");
+        assert_eq!(HostRole::parse("host"), None);
+    }
+
+    /// T-7136: a served row the table lacks joins bound at `/` (its Organization added with the
+    /// minted id, or kept when the table knows it) with the role it names; a role the router
+    /// refuses nothing for adds no role; a row not served takes its host out of the table.
+    #[test]
+    fn registry_rows_bind_served_hosts_and_drop_the_rest() {
+        let base = HostTable::new()
+            .organization("com_example")
+            .and_then(|t| t.bound("old.example", "com_example", "/"))
+            .and_then(|t| t.role("old.example", HostRole::Api))
+            .expect("rows");
+        let row = |host, organization, organization_id, role, served| RegistryHost {
+            host,
+            organization,
+            organization_id,
+            role,
+            served,
+        };
+        let table = base
+            .with_registry(&[
+                row("Old.Example:443", "com_example", None, "working", false),
+                row("signin.example", "kosice", Some("o_kosice"), "signin", true),
+                row("site.example", "com_example", None, "host", true),
+                row("site.example", "kosice", None, "api", true),
+            ])
+            .expect("registry");
+        assert!(!table.rows.contains_key("old.example"));
+        assert!(!table.roles.contains_key("old.example"));
+        assert_eq!(table.roles.get("signin.example"), Some(&HostRole::SignIn));
+        assert_eq!(
+            table.ids.get("o_kosice").map(String::as_str),
+            Some("kosice")
+        );
+        assert!(table.rows.contains_key("site.example"));
+        assert!(
+            !table.roles.contains_key("site.example"),
+            "the first row wins"
+        );
+        let without = table.without(&["kosice"]);
+        assert!(without.ids.is_empty() && !without.rows.contains_key("signin.example"));
+        assert!(
+            base.with_registry(&[row("x.example", "a_b", Some("a_b"), "api", true)])
+                .is_err()
+        );
     }
 
     #[test]

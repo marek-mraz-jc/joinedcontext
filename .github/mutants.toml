@@ -32,6 +32,11 @@ exclude_re = [
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-http carried_v4 (T-7623): `high << 16` has its low 16 bits zero and `low` fits in them, so `|` and `^` add the same bits.
+  'jc-http/src/lib\.rs:\d+:\d+: replace \| with \^ in carried_v4',
+  # jc-time from_system_time (T-7623): the comparison picks the clamp only when jiff refuses the instant; at exactly
+  # UNIX_EPOCH jiff never refuses, so `<` and `<=` cannot be told apart.
+  'jc-time/src/lib\.rs:\d+:\d+: replace < with <= in from_system_time',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
@@ -82,6 +87,9 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
+  # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
+  'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
   # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
