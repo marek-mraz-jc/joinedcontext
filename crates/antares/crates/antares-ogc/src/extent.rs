@@ -174,8 +174,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn extent_reads_run_at_most_extent_reads_at_once() {
-        let _turn = TURN.lock().await;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        let _turn = TURN.lock().await;
         let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let reads = (0..EXTENT_READS.saturating_mul(3)).map(|_| {
             bounded(async {
