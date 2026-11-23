@@ -11,4 +11,6 @@ exclude_re = [
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
   # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
   'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
+  # dataroom-server list_from: the source catalogue sits in the same organisation, so the copy's org_id is the target's either way.
+  'dataroom/server/src/writer\.rs:\d+:\d+: delete field org_id from struct Dataset expression in CatalogueWriter::list_from',
 ]

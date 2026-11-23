@@ -1229,6 +1229,15 @@ mod tests {
             .await
             .expect("another host");
         assert_eq!(row().await.left_hosts, ["mobility.city.test"]);
+
+        // A third host under the same base: only the left hosts change, and the row keeps both.
+        let mut third = mobility(Some("third.city.test"));
+        third.base = Some("https://data.city.test".into());
+        writer.upsert(third).await.expect("a third host");
+        assert_eq!(
+            row().await.left_hosts,
+            ["mobility.city.test", "data.city.test"]
+        );
     }
 
     #[tokio::test]
