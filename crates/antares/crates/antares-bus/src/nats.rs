@@ -329,8 +329,7 @@ impl NatsBus {
     pub async fn consume_registry_broadcast(&self) -> Result<consumer::PullConsumer, BusError> {
         let s = self.js.get_stream(REGISTRY_STREAM).await.map_err(err)?;
         s.create_consumer(consumer::pull::Config {
-            // no durable name = ephemeral = broadcast
-            durable_name: None,
+            // no durable name (the default) = ephemeral = broadcast
             deliver_policy: consumer::DeliverPolicy::New,
             // A pull consumer's default ack policy is Explicit.
             max_ack_pending: MAX_ACK_PENDING,

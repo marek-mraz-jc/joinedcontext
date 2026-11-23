@@ -528,14 +528,12 @@ fn repeated<T>(
     let mut out = Vec::new();
     loop {
         let mut item_cols: Vec<&[Cell]> = Vec::with_capacity(cols.len());
-        let mut any = false;
         for (j, col) in cols.iter().enumerate() {
             let s = starts[j];
             if s >= col.len() {
                 item_cols.push(&col[col.len()..]);
                 continue;
             }
-            any = true;
             let mut e = s + 1;
             while e < col.len() && col[e].rep > lv.rep {
                 e += 1;
@@ -543,7 +541,8 @@ fn repeated<T>(
             starts[j] = e;
             item_cols.push(&col[s..e]);
         }
-        if !any || item_cols[0].is_empty() {
+        // The first column ends the items: the others end with it in a well-formed file.
+        if item_cols[0].is_empty() {
             break;
         }
         out.push(item(lv, &item_cols)?);
@@ -574,33 +573,16 @@ fn map(t: &TypePtr, lv: Levels, cols: &[&[Cell]]) -> Result<Value, String> {
     let (Some(kf), vf) = (fields.first(), fields.get(1)) else {
         return Ok(Value::Object(BTreeMap::new().into()));
     };
-    let lv = Levels {
-        rep: lv.rep + 1,
-        def: lv.def + 1,
-    };
-    if cols
-        .first()
-        .and_then(|c| c.first())
-        .is_none_or(|c| c.def < lv.def)
-    {
-        return Ok(Value::Object(BTreeMap::new().into()));
-    }
+    // An unset or empty map gives no entries (`repeated` checks the first cell's level).
     let kn = leaves(kf);
-    let entries = repeated(
-        Levels {
-            rep: lv.rep - 1,
-            def: lv.def - 1,
-        },
-        cols,
-        |lv, item| {
-            let key = node(kf, lv, &item[..kn], Repetition::REQUIRED)?;
-            let val = match vf {
-                Some(vf) => node(vf, lv, &item[kn..], repetition(vf))?,
-                None => Value::Null,
-            };
-            Ok((key, val))
-        },
-    )?;
+    let entries = repeated(lv, cols, |lv, item| {
+        let key = node(kf, lv, &item[..kn], Repetition::REQUIRED)?;
+        let val = match vf {
+            Some(vf) => node(vf, lv, &item[kn..], repetition(vf))?,
+            None => Value::Null,
+        };
+        Ok((key, val))
+    })?;
     let mut obj = BTreeMap::new();
     for (key, val) in entries {
         let Value::String(k) = key else {
