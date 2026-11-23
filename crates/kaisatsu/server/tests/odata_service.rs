@@ -109,6 +109,62 @@ fn mcp_value(rpc: &Value) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
+fn b64url(bytes: &[u8]) -> String {
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// A WebAuthn registration response ("none" attestation, a fresh ES256 key) for `challenge`, the
+/// relying party `rp_id` and the origin of the test mount.
+fn passkey_registration(challenge: &str, rp_id: &str, cred_id: &[u8]) -> Value {
+    use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
+    use sha2::{Digest, Sha256};
+    let rng = aws_lc_rs::rand::SystemRandom::new();
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+    let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref()).unwrap();
+    let public = pair.public_key().as_ref();
+    // COSE_Key {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}
+    let mut cose = vec![0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20];
+    cose.extend_from_slice(&public[1..33]);
+    cose.extend_from_slice(&[0x22, 0x58, 0x20]);
+    cose.extend_from_slice(&public[33..65]);
+    let mut auth_data = Sha256::digest(rp_id.as_bytes()).to_vec();
+    auth_data.push(AUTH_DATA_FLAG_UP | AUTH_DATA_FLAG_UV | AUTH_DATA_FLAG_AT);
+    auth_data.extend_from_slice(&1u32.to_be_bytes());
+    auth_data.extend_from_slice(&[0u8; 16]);
+    auth_data.extend_from_slice(&u16::try_from(cred_id.len()).unwrap().to_be_bytes());
+    auth_data.extend_from_slice(cred_id);
+    auth_data.extend_from_slice(&cose);
+    // {"fmt": "none", "attStmt": {}, "authData": bytes}
+    let mut att = b"\xa3\x63fmt\x64none\x67attStmt\xa0\x68authData\x58".to_vec();
+    att.push(u8::try_from(auth_data.len()).unwrap());
+    att.extend_from_slice(&auth_data);
+    let client_data = json!({ "type": "webauthn.create", "challenge": challenge,
+                              "origin": "https://idm.dev.example.test" });
+    json!({
+        "id": b64url(cred_id), "rawId": b64url(cred_id), "type": "public-key",
+        "response": {
+            "clientDataJSON": b64url(client_data.to_string().as_bytes()),
+            "attestationObject": b64url(&att),
+            "transports": ["internal"]
+        }
+    })
+}
+
+/// Step 1 of RegisterPasskey for the analyst: the challenge, after checking the offered rp id.
+async fn passkey_challenge(api: &Api, token: &str, rp_id: &str) -> String {
+    let (_, _, opts, _) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            token,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(opts["value"]["rp"]["id"], rp_id, "{opts}");
+    opts["value"]["challenge"].as_str().unwrap().to_owned()
+}
+
 #[tokio::test]
 async fn metadata_lists_every_registry_operation() {
     let api = Api::new().await;
@@ -544,6 +600,84 @@ async fn credentials_are_enrolled_only_through_the_account_console() {
     assert_eq!(st, StatusCode::OK, "{raw}");
 }
 
+/// Credential and registry operations refuse what the caller may not do and name what is wrong.
+#[tokio::test]
+async fn credential_and_registry_operations_refuse_with_a_reason() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    let me = api
+        .token(ANALYST, json!({ "azp": "account-console" }))
+        .await;
+    let post = |uri: String, token: String, body: Value| {
+        let api = &api;
+        async move { api.call(Method::POST, &uri, &token, Some(body)).await }
+    };
+    // Another person's recovery codes and passkeys answer 404 like a missing person.
+    for op in ["GenerateRecoveryCodes", "RegisterPasskey"] {
+        let (st, _, _, raw) = post(
+            format!("{BASE}/People('{STEWARD}')/{op}"),
+            me.clone(),
+            json!({}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{op}: {raw}");
+    }
+    // A realm administrator may start a passkey registration for a person.
+    let (st, _, opts, raw) = post(
+        format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+        admin.clone(),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert!(opts["value"]["challenge"].is_string(), "{opts}");
+    // TOTP step 2 with a secret shorter than step 1's key is refused before any code check.
+    let (st, _, err, _) = post(
+        format!("{BASE}/People('{ANALYST}')/EnrolTotp"),
+        me.clone(),
+        json!({ "secret": "SHORT", "code": "123456" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(err.to_string().contains("160-bit"), "{err}");
+    // An unknown passkey and an unknown consent answer 404.
+    let (st, _, err, _) = post(
+        format!("{BASE}/WebAuthnCredentials('no-such-passkey')/DeletePasskey"),
+        admin.clone(),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{err}");
+    let (st, _, err, _) = post(
+        format!("{BASE}/Consents('no-such-consent')/Revoke"),
+        admin.clone(),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{err}");
+    // Allowed names an unknown operation and a set it does not judge.
+    for (q, needle) in [
+        ("operation='frobnicate'", "unknown operation: frobnicate"),
+        ("operation='read',object='Nonsense'", "does not judge objects of Nonsense"),
+    ] {
+        let (st, _, err, raw) = api
+            .call(Method::GET, &format!("{BASE}/Allowed({q})"), &admin, None)
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{q}: {raw}");
+        assert!(err.to_string().contains(needle), "{q}: {err}");
+    }
+    // A person without realm administration cannot export the realm: 404 like another realm.
+    let (st, _, _, raw) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/Realms('dev')/JoinedContext.Kaisatsu.Export()"),
+            &me,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{raw}");
+}
+
 /// A client named like the realm's own, but owned by an Organization, carries none of its trust.
 #[tokio::test]
 async fn an_organizations_client_named_account_console_enrols_nothing() {
@@ -929,6 +1063,110 @@ async fn self_service_actions_and_honest_not_implemented() {
             .contains("credential"),
         "{err}"
     );
+    // The refused attempt spent its challenge: the same one is refused as used.
+    let (st, _, err, _) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(json!({ "credential": {}, "challenge": issued })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(err.to_string().contains("already used"), "{err}");
+
+    // Step 2 with a signed attestation for the mount host stores the passkey, mints the person's
+    // user handle and writes the admin event; the same credential id again is a 409.
+    let register = |challenge: String, cred_id: &'static [u8]| {
+        json!({
+            "credential": passkey_registration(&challenge, "idm.dev.example.test", cred_id),
+            "challenge": challenge,
+        })
+    };
+    assert!(
+        !api.store
+            .get_user_by_id("dev", None, ANALYST)
+            .await
+            .unwrap()
+            .unwrap()
+            .attributes
+            .contains_key("webauthn.user.handle")
+    );
+    let c = passkey_challenge(&api, &me, "idm.dev.example.test").await;
+    let (st, _, row, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(register(c, b"odata-passkey-1")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    let stored = api.store.list_webauthn_credentials("dev", ANALYST).await.unwrap();
+    let pk = stored
+        .iter()
+        .find(|c| c.credential_id == b64url(b"odata-passkey-1"))
+        .expect("passkey stored");
+    assert_eq!(pk.user_label.as_deref(), Some("Passkey"));
+    assert_eq!(pk.rp_id, "idm.dev.example.test");
+    assert_eq!(pk.sign_count, 1);
+    assert!(raw.contains(&pk.id), "{row}");
+    let handle = api
+        .store
+        .get_user_by_id("dev", None, ANALYST)
+        .await
+        .unwrap()
+        .unwrap()
+        .attributes["webauthn.user.handle"][0]
+        .clone();
+    assert_eq!(pk.user_handle, handle);
+    let c = passkey_challenge(&api, &me, "idm.dev.example.test").await;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(register(c, b"odata-passkey-1")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{raw}");
+
+    // A realm with its own passkey rp id names it in the options and checks the attestation
+    // against it; the second passkey keeps the handle the first one minted and its label.
+    let mut realm = api.store.get_realm("dev").await.unwrap().unwrap();
+    realm.web_authn_policy_passwordless_rp_id = " Example.TEST ".into();
+    api.store.upsert_realm(realm).await.unwrap();
+    let c = passkey_challenge(&api, &me, "example.test").await;
+    let mut body = json!({
+        "credential": passkey_registration(&c, "example.test", b"odata-passkey-2"),
+        "challenge": c,
+        "label": "Laptop",
+    });
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    let stored = api.store.list_webauthn_credentials("dev", ANALYST).await.unwrap();
+    let pk2 = stored.iter().find(|c| c.user_label.as_deref() == Some("Laptop")).unwrap();
+    assert_eq!((pk2.rp_id.as_str(), pk2.user_handle.as_str()), ("example.test", handle.as_str()));
+    // An attestation signed for another rp id is refused.
+    let c = passkey_challenge(&api, &me, "example.test").await;
+    body["credential"] = passkey_registration(&c, "idm.dev.example.test", b"odata-passkey-3");
+    body["challenge"] = json!(c);
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(body),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{raw}");
 
     // DeletePasskey: a person deletes their own passkey; another person's answers 404 and stays
     // (red before: any caller in scope deleted any passkey).
@@ -996,11 +1234,12 @@ async fn self_service_actions_and_honest_not_implemented() {
         .await;
     assert!(st.is_success(), "{st} {raw}");
     assert!(
-        api.store
+        !api.store
             .list_webauthn_credentials("dev", ANALYST)
             .await
             .unwrap()
-            .is_empty()
+            .iter()
+            .any(|c| c.id == "pk-analyst")
     );
     // Unknown operation on a set.
     let (st, _, err, _) = api
