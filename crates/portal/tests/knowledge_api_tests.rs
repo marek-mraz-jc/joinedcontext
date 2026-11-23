@@ -960,6 +960,68 @@ async fn the_crawl_errors_reach_a_proposer_alone() {
     assert_eq!(body["items"][0]["reason"], "HTTP 404");
 }
 
+/// T-4728: the summary and the CSV export of the stored turns reach an approver with the range
+/// forwarded as given; nobody else reaches the assistant, an unknown range member is 400 and an
+/// assistant that is down is the Portal's 503.
+#[tokio::test]
+async fn the_stored_turns_are_summarized_and_exported_to_an_approver_alone() {
+    let r = rig().await;
+    let usage = "/api/v1/projects/helsinki/knowledge/conversations/usage?route=rag&from=2026-11-01T00:00:00Z";
+    let export = "/api/v1/projects/helsinki/knowledge/conversations/export?deployment=public";
+    for uri in [usage, export] {
+        let refused = common::send(&r.state, common::person("nobody"), "GET", uri, None).await;
+        assert_eq!(refused.status, 403, "{uri}: {}", refused.text);
+    }
+    let unknown = "/api/v1/projects/helsinki/knowledge/conversations/usage?limit=5";
+    let bad = common::send(&r.state, admin(), "GET", unknown, None).await;
+    assert_eq!(bad.status, 400, "{}", bad.text);
+    assert_eq!(asked(&r.assistant).await, 0);
+
+    Mock::given(method("GET"))
+        .and(path(format!("{ASSISTANT_PATH}/conversations/usage")))
+        .and(query_param("route", "rag"))
+        .and(query_param("from", "2026-11-01T00:00:00Z"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"questions": 7})))
+        .mount(&r.assistant)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{ASSISTANT_PATH}/conversations/export")))
+        .and(query_param("deployment", "public"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("at,question\n2026-11-02,why\n"))
+        .mount(&r.assistant)
+        .await;
+    let mut activity = r.state.activity_events.subscribe("helsinki").await;
+    let summary = common::send(&r.state, admin(), "GET", usage, None).await;
+    assert_eq!(summary.status, 200, "{}", summary.text);
+    assert_eq!(
+        serde_json::from_str::<Value>(&summary.text).expect("json"),
+        json!({"questions": 7})
+    );
+    let event = activity.try_recv().expect("the summary is recorded");
+    assert_eq!(event.kind, "assistant.transcript");
+    assert_eq!(event.details["of"]["route"], "rag", "{:?}", event.details);
+    let csv = common::send(&r.state, admin(), "GET", export, None).await;
+    assert_eq!(csv.status, 200, "{}", csv.text);
+    assert_eq!(csv.text, "at,question\n2026-11-02,why\n");
+    let event = activity.try_recv().expect("the export is recorded");
+    assert_eq!(event.details["action"], "exported the stored conversations");
+    assert_eq!(
+        event.details["of"]["deployment"], "public",
+        "{:?}",
+        event.details
+    );
+
+    r.assistant.reset().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&r.assistant)
+        .await;
+    for uri in [usage, export] {
+        let down = common::send(&r.state, admin(), "GET", uri, None).await;
+        assert_eq!(down.status, 503, "{uri}: {}", down.text);
+    }
+}
+
 /// T-4731: an approver's purge reaches the assistant and is recorded; nobody else's does, and an
 /// unknown deployment is refused before the assistant is asked.
 #[tokio::test]
