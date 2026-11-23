@@ -173,3 +173,45 @@ async fn the_endpoint_needs_the_same_session_as_every_other_resource_read() {
     let (status, _) = get_forms(Arc::new(mirror), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+/// `GET /api/v1/kinds/{kind}/schema`: a known kind's schema to any session, an unknown kind 404
+/// naming it, and no session 401.
+#[tokio::test]
+async fn a_kind_schema_needs_a_session_and_a_known_kind() {
+    let get = |uri: &'static str, signed_in: bool| async move {
+        let (app, session) = app_with(Arc::new(Mirror::new()));
+        let mut request = Request::builder().uri(uri);
+        if signed_in {
+            request = request.header(header::COOKIE, session.as_str());
+        }
+        let response = app
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    };
+    let (status, schema) = get("/api/v1/kinds/Policy/schema", true).await;
+    assert_eq!(status, StatusCode::OK, "{schema}");
+    assert!(schema["properties"]["spec"].is_object(), "{schema}");
+    let (status, problem) = get("/api/v1/kinds/Nope/schema", true).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("`Nope`"),
+        "{problem}"
+    );
+    let (status, _) = get("/api/v1/kinds/Policy/schema", false).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

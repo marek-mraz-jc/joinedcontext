@@ -130,6 +130,20 @@ describe("who holds the right", () => {
     expect(instancesReachedBy("everyone", [ORG_ADMIN, VIEWER, OWN], bindings, instances)).toEqual([]);
     expect(instancesReachedBy("praha-team", [ORG_ADMIN, VIEWER, OWN], bindings, instances)).toEqual([]);
   });
+
+  it("lists every instance an organization-wide binding reaches, by project and name", () => {
+    const instances = [
+      { project: "praha", name: "praha" },
+      { project: "helsinki", name: "open-data-2" },
+      { project: "helsinki", name: "hel-fi" },
+    ];
+    const admins = binding("admins-group", "org-admin", [{ group: "admins" }], { organization: "hel" });
+    expect(instancesReachedBy("admins", [ORG_ADMIN], [admins], instances).map((i) => `${i.project}/${i.name}`)).toEqual([
+      "helsinki/hel-fi",
+      "helsinki/open-data-2",
+      "praha/praha",
+    ]);
+  });
 });
 
 describe("granting and revoking", () => {

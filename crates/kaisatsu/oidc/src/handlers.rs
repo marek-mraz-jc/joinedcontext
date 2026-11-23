@@ -131,16 +131,22 @@ pub async fn active_realm(
     next.run(request).await
 }
 
+/// The realm a route names. `active_realm` already answered 404 for an unknown or disabled one; a
+/// realm deleted between that check and the handler's read answers the same 404.
+pub(crate) async fn named_realm(state: &OidcState, name: &str) -> Result<RealmConfig> {
+    state
+        .store
+        .get_realm(name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
+}
+
 async fn realm_info(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
     Ok(Json(json!({
@@ -159,11 +165,7 @@ async fn openid_configuration(
     Path(realm_name): Path<String>,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
     let oidc_base = format!("{issuer}/protocol/openid-connect");
@@ -220,23 +222,10 @@ async fn jwks_certs(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let records = state.store.list_signing_keys(&realm.id).await?;
     let jwks = KeyManager::build_jwks(&records);
-    let body = serde_json::to_string(&jwks).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::CACHE_CONTROL, "public, max-age=300"),
-        ],
-        body,
-    )
-        .into_response())
+    Ok(([(header::CACHE_CONTROL, "public, max-age=300")], Json(jwks)).into_response())
 }
 
 /// Resolves or fetches a CIMD client when `client_id` is an `https://` URL (W1).
@@ -499,11 +488,7 @@ async fn par_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(mut params): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &params).await?;
     params.remove("client_secret");
@@ -679,18 +664,20 @@ pub async fn password_work<T: Send + 'static>(
             let cores = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
             Arc::new(tokio::sync::Semaphore::new(cores))
         });
-    let slot = SLOTS
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| KaisatsuError::Crypto("password work pool closed".into()))?;
+    // The semaphore is never closed, and a hash that panics is the only failed join.
+    let Ok(slot) = SLOTS.clone().acquire_owned().await else {
+        return Err(KaisatsuError::Crypto("password work pool closed".into()));
+    };
     // The slot moves into the task: a dropped request still holds it until the hash ends.
-    tokio::task::spawn_blocking(move || {
+    let done = tokio::task::spawn_blocking(move || {
         let _slot = slot;
         work()
     })
-    .await
-    .map_err(|_| KaisatsuError::Crypto("password work failed".into()))
+    .await;
+    let Ok(out) = done else {
+        return Err(KaisatsuError::Crypto("password work failed".into()));
+    };
+    Ok(out)
 }
 
 /// [`kaisatsu_crypto::password::dummy_verify_password`] through [`password_work`].
@@ -927,11 +914,7 @@ async fn authorize_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
     let client_id = params
@@ -1574,11 +1557,10 @@ async fn verify_client_assertion(
         };
         if !names_kid(&jwks) {
             // A rotated signing key: read the set again (rate-limited in the guard).
-            jwks = state
-                .guard
-                .cluster_jwks(&jwks_url, true)
-                .await
-                .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+            let Ok(again) = state.guard.cluster_jwks(&jwks_url, true).await else {
+                return Err(KaisatsuError::invalid_client("cluster JWKS unavailable"));
+            };
+            jwks = again;
         }
         let keys = jwks
             .get("keys")
@@ -1699,8 +1681,13 @@ async fn select_signing_key(
     }
     state.store.ensure_signing_key(&realm.id, alg).await?;
     let keys = state.store.list_signing_keys(&realm.id).await?;
-    active(&keys, alg)
-        .ok_or_else(|| KaisatsuError::Crypto(format!("no active {alg} key after generating one")))
+    // ensure_signing_key just stored an active key of `alg`.
+    let Some(key) = active(&keys, alg) else {
+        return Err(KaisatsuError::Crypto(format!(
+            "no active {alg} key after generating one"
+        )));
+    };
+    Ok(key)
 }
 
 /// `user` with the roles of every group they are in, the groups' ancestors included (Keycloak
@@ -2095,11 +2082,7 @@ async fn token_endpoint(
     client_ip: ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
@@ -2602,12 +2585,14 @@ async fn handle_refresh_token_grant(
     }
 
     if !family.offline {
-        let sso = state
+        // Ending a session revokes its families, so a live family finds its session.
+        let Some(mut updated_sso) = state
             .store
             .get_sso_session(&realm.id, &family.sso_session_id)
             .await?
-            .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
-        let mut updated_sso = sso;
+        else {
+            return Err(KaisatsuError::invalid_grant("Session not active"));
+        };
         updated_sso.last_access = TimestampTz::now().as_millis();
         updated_sso.idle_expires_at = TimestampTz::now()
             + SignedDuration::from_secs(realm.sso_session_idle_timeout.max(3600));
@@ -3419,11 +3404,7 @@ async fn introspect_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
     if client.public_client {
@@ -3526,11 +3507,7 @@ async fn revoke_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<StatusCode> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
@@ -3625,11 +3602,7 @@ async fn userinfo_inner(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<(Map<String, Value>, Option<String>)> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let (dpop_scheme, raw_token) = crate::dpop_guard::parse_authz_header(&headers)?;
 
@@ -3687,11 +3660,9 @@ async fn userinfo_inner(
                 .get("sid")
                 .and_then(Value::as_str)
                 .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
-            let sso = state
-                .store
-                .get_sso_session(&realm.id, sid)
-                .await?
-                .ok_or_else(|| KaisatsuError::Unauthorized("session not active".into()))?;
+            let Some(sso) = state.store.get_sso_session(&realm.id, sid).await? else {
+                return Err(KaisatsuError::Unauthorized("session not active".into()));
+            };
             state
                 .store
                 .get_user_by_id(&realm.id, None, &sso.user_id)
@@ -3900,12 +3871,12 @@ async fn verify_and_consume_logout_csrf_token(
         post_logout_redirect_uri.unwrap_or_default(),
         state_param.unwrap_or_default()
     );
-    let nonce_bytes = state
+    let nonce = state
         .kek
         .decrypt(aad.as_bytes(), &raw)
-        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
-    let nonce = String::from_utf8(nonce_bytes)
-        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
     state
         .store
         .mark_token_revoked(RevokedTokenRecord {
@@ -4015,11 +3986,7 @@ async fn signed_out_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let bundle = logout_bundle(&params, &headers, &realm);
     let branding = state
@@ -4079,11 +4046,7 @@ async fn handle_logout_request(
     mount_ext: Option<Extension<Mount>>,
     is_post: bool,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
     let id_token_hint = params.get("id_token_hint").filter(|s| !s.is_empty());
@@ -4221,8 +4184,12 @@ async fn handle_logout_request(
     let clear_cookie = sign_in_cookie("sso", "", 0);
 
     if let Some(target_uri) = post_logout {
-        let mut url = url::Url::parse(target_uri)
-            .map_err(|_| KaisatsuError::BadRequest("invalid post_logout_redirect_uri".into()))?;
+        // validate_post_logout_redirect_uri parsed it already.
+        let Ok(mut url) = url::Url::parse(target_uri) else {
+            return Err(KaisatsuError::BadRequest(
+                "invalid post_logout_redirect_uri".into(),
+            ));
+        };
         if let Some(st) = state_param {
             url.query_pairs_mut().append_pair("state", st);
         }
@@ -4305,5 +4272,278 @@ mod auth_cookie_tests {
         let planted = jar(&format!("__Host-wk_auth=x.{}..{first}", "a".repeat(44)));
         assert_eq!(auth_cookie_handles(&planted), vec![first.clone()]);
         assert!(!auth_cookie_holds(&HeaderMap::new(), &sha256_hex(&first)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaisatsu_store_memory::MemoryStore;
+
+    fn state() -> OidcState {
+        OidcState {
+            store: Arc::new(MemoryStore::new(Kek::generate_for_tests())),
+            kek: Kek::generate_for_tests(),
+            guard: OutboundGuard::default(),
+            default_mount: Mount::new("kaisatsu", "https", "idm.example.test", "").unwrap(),
+            second_factor: crate::SecondFactor::default(),
+        }
+    }
+
+    fn scope(name: &str, attrs: &[(&str, &str)]) -> ClientScopeRepresentation {
+        ClientScopeRepresentation {
+            id: format!("id-{name}"),
+            realm_id: "dev".into(),
+            name: name.into(),
+            protocol: "openid-connect".into(),
+            attributes: attrs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Scope resolution (W1, PRF-08): a scope named twice is granted once, a mapper-only default
+    /// scope is active without a token entry, and a parameterized scope must be on the client and
+    /// match its pattern.
+    #[tokio::test]
+    async fn scopes_are_granted_once_and_parameterized_ones_are_checked() {
+        let state = state();
+        state
+            .store
+            .upsert_realm(RealmConfig {
+                realm: "dev".into(),
+                id: "dev".into(),
+                ..RealmConfig::default()
+            })
+            .await
+            .unwrap();
+        for sc in [
+            scope("hub", &[("include.in.token.scope", "false")]),
+            scope("mcp:portal", &[]),
+            scope(
+                "connector",
+                &[
+                    ("is.parameterized.scope", "true"),
+                    ("parameterized.scope.regexp", "[a-z]{4}"),
+                ],
+            ),
+            scope("device", &[("is.parameterized.scope", "true")]),
+        ] {
+            state.store.upsert_client_scope(sc).await.unwrap();
+        }
+        let realm = named_realm(&state, "dev").await.unwrap();
+        let client = ClientRepresentation {
+            client_id: "app".into(),
+            default_client_scopes: vec!["hub".into(), "profile".into()],
+            optional_client_scopes: vec![
+                "mcp:portal".into(),
+                "connector".into(),
+                "offline_access".into(),
+            ],
+            ..Default::default()
+        };
+        let (active, granted) = resolve_scopes_for_client(
+            &state.store,
+            &realm,
+            &client,
+            Some(
+                "openid profile profile mcp:portal mcp:portal connector:abcd connector:abcd \
+                 jc:read-only jc:read-only offline_access offline_access",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            granted,
+            "openid profile mcp:portal connector:abcd jc:read-only offline_access"
+        );
+        let mut names: Vec<_> = active.iter().map(|s| s.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["connector", "hub", "mcp:portal"]);
+
+        for (asked, why) in [
+            ("connector:ab12", "does not match required pattern"),
+            ("device:abc", "Invalid scopes: device:abc"),
+        ] {
+            let err = resolve_scopes_for_client(&state.store, &realm, &client, Some(asked))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(why), "{asked}: {err}");
+        }
+    }
+
+    /// Without a pinned algorithm the realm's default signs, else any active key; a realm with
+    /// no active key signs nothing.
+    #[tokio::test]
+    async fn an_unpinned_client_takes_the_realm_default_or_any_active_key() {
+        let state = state();
+        let realm = RealmConfig {
+            default_signature_algorithm: "RS256".into(),
+            ..RealmConfig::default()
+        };
+        let client = ClientRepresentation::default();
+        let es = KeyManager::generate_es256("dev", &state.kek, 100, "ACTIVE").unwrap();
+        let key = select_signing_key(&state, std::slice::from_ref(&es), &realm, &client, false)
+            .await
+            .unwrap();
+        assert_eq!(key.kid, es.kid);
+        let err = select_signing_key(&state, &[], &realm, &client, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(&err, KaisatsuError::Crypto(m) if m.contains("no active signing key")));
+    }
+
+    /// A person takes the roles their groups carry and the realm and client role mappings of
+    /// each group and its ancestors, each role once, each group read once.
+    #[tokio::test]
+    async fn group_roles_and_mappings_reach_the_person_once() {
+        let state = state();
+        let parent = GroupRepresentation {
+            id: "g-parent".into(),
+            realm_id: "dev".into(),
+            name: "parent".into(),
+            ..Default::default()
+        };
+        state.store.upsert_group(parent.clone()).await.unwrap();
+        let child = GroupRepresentation {
+            id: "g-child".into(),
+            realm_id: "dev".into(),
+            name: "child".into(),
+            parent_id: Some("g-parent".into()),
+            realm_roles: vec!["reader".into(), "own".into()],
+            client_roles: HashMap::from([("app".to_owned(), vec!["viewer".to_owned()])]),
+            ..Default::default()
+        };
+        let client = ClientRepresentation {
+            id: "uuid-app".into(),
+            realm_id: "dev".into(),
+            client_id: "app".into(),
+            ..Default::default()
+        };
+        state.store.upsert_client(client.clone()).await.unwrap();
+        for (id, role, client_uuid) in [
+            ("m-1", "auditor", None),
+            ("m-2", "editor", Some("uuid-app".to_owned())),
+        ] {
+            state
+                .store
+                .add_role_mapping(RoleMappingRecord {
+                    id: id.into(),
+                    realm_id: "dev".into(),
+                    org_id: None,
+                    principal_kind: "group".into(),
+                    principal_id: "g-parent".into(),
+                    role_id: format!("role-{role}"),
+                    role_name: role.into(),
+                    client_uuid,
+                })
+                .await
+                .unwrap();
+        }
+        let user = UserRepresentation {
+            id: "u-1".into(),
+            realm_id: "dev".into(),
+            realm_roles: vec!["own".into()],
+            ..Default::default()
+        };
+        let merged = with_group_roles(
+            state.store.as_ref(),
+            "dev",
+            &user,
+            &[child.clone(), child, parent],
+            &client,
+        )
+        .await
+        .unwrap();
+        let mut realm_roles = merged.realm_roles.clone();
+        realm_roles.sort();
+        assert_eq!(realm_roles, ["auditor", "own", "reader"]);
+        let mut app_roles = merged.client_roles["app"].clone();
+        app_roles.sort();
+        assert_eq!(app_roles, ["editor", "viewer"]);
+    }
+
+    #[test]
+    fn a_form_value_decodes_plus_and_escapes_and_refuses_broken_ones() {
+        assert_eq!(form_urldecode("a+b%20c%2B").as_deref(), Some("a b c+"));
+        for broken in ["%", "%2", "%zz", "%e9"] {
+            assert_eq!(form_urldecode(broken), None, "{broken}");
+        }
+    }
+
+    /// Membership of an organization counts by the person's own org, a group of the org, or a
+    /// group's `jc_org`; a disabled organization pins nobody.
+    #[tokio::test]
+    async fn an_organization_pin_needs_an_enabled_org_the_person_belongs_to() {
+        let state = state();
+        let mut org = Organization {
+            id: "org-1".into(),
+            realm_id: "dev".into(),
+            name: "City".into(),
+            alias: "city".into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: HashMap::new(),
+            managed_by: None,
+        };
+        state.store.upsert_organization(org.clone()).await.unwrap();
+        let mut user = UserRepresentation {
+            id: "u-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("org-1".into()),
+            ..Default::default()
+        };
+        let pin = |user: UserRepresentation, groups: Vec<GroupRepresentation>| {
+            let store = state.store.clone();
+            async move {
+                user_is_member_of_org(&store, "dev", &user, &groups, "city")
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(pin(user.clone(), vec![]).await.as_deref(), Some("city"));
+        user.org_id = None;
+        assert_eq!(pin(user.clone(), vec![]).await, None);
+        let of_org = GroupRepresentation {
+            id: "g-1".into(),
+            org_id: Some("org-1".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            pin(user.clone(), vec![of_org.clone()]).await.as_deref(),
+            Some("city")
+        );
+        let tagged = GroupRepresentation {
+            id: "g-2".into(),
+            attributes: HashMap::from([("jc_org".to_owned(), vec!["city".to_owned()])]),
+            ..Default::default()
+        };
+        assert_eq!(
+            pin(user.clone(), vec![tagged]).await.as_deref(),
+            Some("city")
+        );
+        org.enabled = false;
+        state.store.upsert_organization(org).await.unwrap();
+        assert_eq!(pin(user, vec![of_org]).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_realm_deleted_after_the_active_realm_check_answers_404() {
+        let state = state();
+        state
+            .store
+            .upsert_realm(RealmConfig {
+                realm: "dev".into(),
+                ..RealmConfig::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(named_realm(&state, "dev").await.unwrap().realm, "dev");
+        let err = named_realm(&state, "gone").await.unwrap_err();
+        assert!(matches!(&err, KaisatsuError::NotFound(m) if m == "realm not found"));
+        assert_eq!(err.status_code(), 404);
     }
 }

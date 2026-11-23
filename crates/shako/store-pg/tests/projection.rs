@@ -696,7 +696,7 @@ async fn two_dispatchers_claim_each_event_once() {
         let claimed: Vec<uuid::Uuid> = [a, b, c, d]
             .into_iter()
             .filter_map(|claim| claim.unwrap())
-            .map(|event| event.id)
+            .map(|claim| claim.event.id)
             .collect();
         assert_eq!(claimed, [*id], "one claimant, the oldest event");
         assert!(one.mark_outbox_dispatched(i, o, *id).await.unwrap());
@@ -715,7 +715,55 @@ async fn two_dispatchers_claim_each_event_once() {
     .execute(&db.admin)
     .await
     .unwrap();
-    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().id, id);
+    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().event.id, id);
+
+    // S6-11: a failed event waits for its retry and counts the pass; it holds back its own
+    // repository's later events only, and is claimed again once due.
+    assert!(two.mark_outbox_dispatched(i, o, id).await.unwrap());
+    let (waiting, behind, elsewhere) = (
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    one.append_outbox(ids.event(waiting, "wait")).await.unwrap();
+    one.append_outbox(ids.event(behind, "behind"))
+        .await
+        .unwrap();
+    let mut other_repo = ids.event(elsewhere, "elsewhere");
+    other_repo.repo_id = Some(RepoId::new());
+    one.append_outbox(other_repo).await.unwrap();
+    let claim = one.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!((claim.event.id, claim.attempts), (waiting, 0));
+    assert!(
+        one.retry_outbox(i, o, waiting, std::time::Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    let next = two.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!(
+        next.event.id, elsewhere,
+        "the waiting event's repository waits"
+    );
+    assert!(two.mark_outbox_dispatched(i, o, elsewhere).await.unwrap());
+    assert!(two.claim_outbox(i, o).await.unwrap().is_none());
+    sqlx::query("UPDATE shako.outbox SET retry_at = now() - interval '1 second' WHERE id = $1")
+        .bind(waiting)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    let again = two.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!((again.event.id, again.attempts), (waiting, 1));
+    assert!(two.mark_outbox_dispatched(i, o, waiting).await.unwrap());
+    assert!(
+        !two.retry_outbox(i, o, waiting, std::time::Duration::ZERO)
+            .await
+            .unwrap(),
+        "a dispatched event is not given back"
+    );
+    assert_eq!(
+        one.claim_outbox(i, o).await.unwrap().unwrap().event.id,
+        behind
+    );
 
     one.pool().close().await;
     two.pool().close().await;

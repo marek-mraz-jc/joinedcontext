@@ -2240,6 +2240,26 @@ slots:
           de: Fläche
         annotations: { generated: sk cs en de }
       ngsi_ld_kind: Property
+  organizer:
+    slot_uri: schema:organizer
+    description: >-
+      Who runs the event: the museum, the library, the club or the city unit, never the feed or the
+      register that announced it (that is `dataProvider` or `source`). Its name and, where the source
+      names one, its web site; never a person's e-mail or phone. The same shape in every events space
+      (praha-akce, slovensko-podujatia, bbsk-podujatia, banskabystrica-verejne), so one count per
+      organizer reads across them.
+    range: Organizer
+    inlined: true
+    annotations:
+      label:
+        tag: label
+        value:
+          sk: Organizátor
+          cs: Pořadatel
+          en: Organizer
+          de: Veranstalter
+      ngsi_ld_kind: Property
+      upstream_source: https://schema.org/organizer
 classes:
   Event:
     class_uri: sdm:Event
@@ -2266,6 +2286,7 @@ classes:
       - webSite
       - superEvent
       - subEvent
+      - organizer
       - contactPoint
       - source
       - dataProvider
@@ -2354,6 +2375,17 @@ classes:
               fi: Kuvaus
               en: Description
               de: Beschreibung
+      organizer:
+        rank: 7
+        annotations:
+          label:
+            tag: label
+            value:
+              sk: Organizátor
+              cs: Pořadatel
+              fi: Järjestäjä
+              en: Organizer
+              de: Veranstalter
       contactPoint:
         annotations:
           label:
@@ -3387,6 +3419,20 @@ classes:
       upstream_source: https://schema.org/PostalAddress
     slots: [streetAddress, postalCode, addressLocality, addressCountry]
 
+  Organizer:
+    class_uri: schema:Organization
+    description: The value of `organizer`, never an entity of its own.
+    slots: [name, url]
+    slot_usage:
+      name:
+        range: string
+        required: true
+        description: The organizer's name in Finnish, else English or Swedish (`Tekniikan museo`).
+        annotations:
+          # One plain name in every events space, never a map per language.
+          ngsi_ld_kind: Property
+      url:
+        description: The organizer's own web site, when the source names it.
 enums:
   CalculationFrequency:
     permissible_values:

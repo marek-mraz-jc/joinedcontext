@@ -512,12 +512,12 @@ async fn record(
         source: "portal".to_owned(),
         summary: format!(
             "{} read the access matrix of {endpoint}: {principals} principals",
-            identity.username
+            identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,
         details: json!({
-            "actor": identity.username,
+            "actor": identity.subject,
             "endpoint": endpoint,
             "matrix": true,
             "principals": principals,

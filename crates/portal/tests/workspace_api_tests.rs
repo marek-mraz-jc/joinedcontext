@@ -479,8 +479,8 @@ async fn bringing_back_opens_one_change_in_the_lane_of_its_files() {
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
     let change = body(&answer.text);
     assert_eq!(
-        change["status"]["lane"], "green",
-        "a sandbox space is the whole change"
+        change["status"]["lane"], "yellow",
+        "an edit of a space that exists is reviewed, though it declares itself a sandbox"
     );
     let pulls = calls(&server, "POST", "/Shako.OpenPullRequest").await;
     assert_eq!(pulls.len(), 1);

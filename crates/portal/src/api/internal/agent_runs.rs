@@ -378,7 +378,9 @@ pub async fn internal_mcp(
     }
     let profile = Profile::load(&state.mirror, &run.profile)?;
     let caller = crate::ops::Caller::for_run(identity, profile.access.clone());
-    Ok(crate::mcp::dispatch_for(state, caller, body).await)
+    // The row is the run's Organization's: this internal route has no host to say one.
+    let organization = crate::permissions::organization_of(&state.mirror, &run.project);
+    Ok(crate::mcp::dispatch_for(state, caller, body, organization).await)
 }
 
 /// Whether the person a run acts for logged out (themselves, or an administrator signing them out)

@@ -969,6 +969,48 @@ mod tests {
             Decision::Deny(NOT_GRANTED.into()),
             "another type is not prohibited, nor granted"
         );
+        // a subscription is neither a read nor a write: the prohibition covers its types whole
+        // a write by id on two types that each hold only a condition cannot require both
+        let both = compile(&json!({"policies": [
+            {"id": "c", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.6.3"],
+             "q": "speed<100", "information": [{"entities": [{"type": "Car"}]}]},
+            {"id": "b", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.6.3"],
+             "q": "seats>1", "information": [{"entities": [{"type": "Bus"}]}]}
+        ]}))?;
+        assert_eq!(
+            with(&both, "5.6.3", &[iri("Car"), iri("Bus")], &[], None, false),
+            Decision::Deny(NOT_GRANTED.into())
+        );
+        assert!(matches!(
+            with(&both, "5.6.3", &car(), &[], None, false),
+            Decision::AllowIf(_)
+        ));
+        // a probe without a table, or for a caller that is no platform caller, is the decision
+        let read = Operation::new("5.7.2");
+        let now = Timestamp::now();
+        assert_eq!(
+            probe(None, &caller(), &read, now),
+            decide(None, &caller(), &read, now)
+        );
+        let subscribing = table(&json!({"effect": "prohibit", "operations": ["5.8.1"]}))?;
+        assert_eq!(
+            with(&subscribing, "5.8.1", &car(), &[], None, false),
+            prohibited
+        );
+        assert_eq!(
+            with(&subscribing, "5.8.1", &[], &[], None, false),
+            prohibited
+        );
+        assert_eq!(
+            with(&subscribing, "5.8.1", &[iri("Bus")], &[], None, false),
+            Decision::Deny(NOT_GRANTED.into())
+        );
+        let every =
+            table(&json!({"effect": "prohibit", "information": [], "operations": ["5.8.1"]}))?;
+        assert_eq!(
+            with(&every, "5.8.1", &[iri("Bus")], &[], None, false),
+            prohibited
+        );
         Ok(())
     }
 
@@ -990,6 +1032,24 @@ mod tests {
             with(&conditional, "5.6.11", &[], &[], None, false),
             Decision::Deny(NOT_GRANTED.into())
         );
+        // a conditional grant of every type decides a typed create by its condition, per type
+        let creating = table(&json!({"information": [], "operations": ["5.6.1"],
+                                     "q": "speed<100"}))?;
+        let speed = |v: u32| {
+            let mut body = json!({"id": "urn:ngsi-ld:Car:1", "type": car()});
+            if let Some(o) = body.as_object_mut() {
+                o.insert(iri("speed"), json!([{"type": "Property", "value": v}]));
+            }
+            body
+        };
+        assert_eq!(
+            with(&creating, "5.6.1", &car(), &[], Some(&speed(5)), false),
+            Decision::Allow
+        );
+        assert!(matches!(
+            with(&creating, "5.6.1", &car(), &[], Some(&speed(500)), false),
+            Decision::Deny(_)
+        ));
         let grant = json!({"id": "all", "assignee": {"kind": "role", "id": "r"},
                            "operations": ["5.6.11"]});
         let prohibit = json!({"id": "no", "assignee": {"kind": "role", "id": "r"},
@@ -1355,13 +1415,13 @@ mod tests {
     /// T-3796: a type the subject may not read is never named, and a type
     /// shown whole leaves nothing out.
     #[test]
-    fn a_type_the_subject_may_not_read_is_never_named() -> Result<(), String> {
+    fn a_type_the_subject_may_not_read_is_never_named() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             left_out_by(&["Car", "Secret"], Some("name==\"x\""), &[])?,
             Some(format!("Car {WAS}"))
         );
         let whole = table(&json!({"operations": ["5.7.2"]}))?;
-        let q = antares_ql::parse_q("anything>1").map_err(|e| e.to_string())?;
+        let q = antares_ql::parse_q("anything>1")?;
         let op = Operation {
             types: &car(),
             q: Some(&q),
@@ -1396,10 +1456,11 @@ mod tests {
     /// T-5842: a read under a whole grant loses the withheld Attribute, and a `q` on it names
     /// the type in the warning; a `q` on another Attribute warns of nothing.
     #[test]
-    fn a_whole_read_omits_a_withheld_attribute_and_warns_of_a_q_on_it() -> Result<(), String> {
+    fn a_whole_read_omits_a_withheld_attribute_and_warns_of_a_q_on_it(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let t = colour_withheld(&["5.7.2"])?;
         for (q, warned) in [("colour==\"red\"", true), ("speed>1", false)] {
-            let q = antares_ql::parse_q(q).map_err(|e| e.to_string())?;
+            let q = antares_ql::parse_q(q)?;
             let op = Operation {
                 types: &car(),
                 q: Some(&q),

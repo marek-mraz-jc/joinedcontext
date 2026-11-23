@@ -20,6 +20,7 @@ use base64::Engine;
 use common::{envelope, person, send};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
+use joinedcontext_portal::org_backup;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::ResourceEnvelope;
 use joinedcontext_portal::state::AppState;
@@ -507,6 +508,134 @@ async fn saved_and_run(world: &World, who: &str) -> Value {
     .await;
     assert_eq!(run.status, StatusCode::OK, "{}", run.text);
     body(&run)
+}
+
+/// Two due backups: alfa's configuration target as ada saves it, and the same target copied to
+/// bravo, whose run fails, its secret being sealed for alfa's record (T-7268).
+async fn two_due(world: &World) {
+    let saved = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(target(&world.endpoint)),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    let alfa = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    let bravo = org_backup::Target {
+        organization: "bravo".into(),
+        ..alfa
+    };
+    world.state.org_backups.save(&bravo).await.expect("saved");
+}
+
+async fn last_run(world: &World, organization: &str) -> Option<String> {
+    world
+        .state
+        .org_backups
+        .target(organization, "configuration")
+        .await
+        .expect("read")
+        .expect("saved")
+        .last_run_at
+}
+
+/// Two due backups start together, each on its own slot, and only the one that ran is stamped
+/// (S1-24, CMP-09, LOP-07): one slow archive no longer holds the other Organization back.
+#[tokio::test]
+async fn two_due_backups_run_at_once_within_the_bound() {
+    let world = world("alfa", "Enabled").await;
+    two_due(&world).await;
+    let slots = Arc::new(tokio::sync::Semaphore::new(2));
+    let started = org_backup::schedule(&world.state, &slots).await;
+    assert_eq!(started.len(), 2, "both due backups start in one turn");
+    assert_eq!(slots.available_permits(), 0, "both run at the same time");
+    assert!(
+        last_run(&world, "alfa").await.is_none(),
+        "a run is stamped when it has run, not when it is claimed"
+    );
+    for run in started {
+        run.await.expect("the run ends");
+    }
+    assert_eq!(slots.available_permits(), 2);
+    assert!(
+        last_run(&world, "alfa").await.is_some(),
+        "a run that succeeded"
+    );
+    assert!(
+        last_run(&world, "bravo").await.is_none(),
+        "a run that failed"
+    );
+    assert!(
+        org_backup::schedule(&world.state, &slots).await.is_empty(),
+        "a backup that ran is not due again, one that failed waits for the backoff"
+    );
+}
+
+/// The bound holds: with one slot one backup runs and the other waits for the next turn, due
+/// and unstamped.
+#[tokio::test]
+async fn a_due_backup_beyond_the_bound_waits_for_the_next_turn() {
+    let world = world("alfa", "Enabled").await;
+    two_due(&world).await;
+    let slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let first = org_backup::schedule(&world.state, &slots).await;
+    assert_eq!(first.len(), 1, "one slot runs one backup");
+    assert!(org_backup::schedule(&world.state, &slots).await.is_empty());
+    for run in first {
+        run.await.expect("the run ends");
+    }
+    let second = org_backup::schedule(&world.state, &slots).await;
+    assert_eq!(second.len(), 1, "the other backup runs at the next turn");
+    for run in second {
+        run.await.expect("the run ends");
+    }
+    assert!(org_backup::schedule(&world.state, &slots).await.is_empty());
+}
+
+/// A run that fails is not stamped as run: the schedule leaves it for the backoff and tries it
+/// again after, and its administrator may still run it by hand at once (S1-24).
+#[tokio::test]
+async fn a_failed_backup_is_not_stamped_as_run() {
+    let world = world("alfa", "Enabled").await;
+    two_due(&world).await;
+    world.bucket.lock().expect("bucket").versioning = "Suspended".into();
+    let slots = Arc::new(tokio::sync::Semaphore::new(2));
+    for run in org_backup::schedule(&world.state, &slots).await {
+        run.await.expect("the run ends");
+    }
+    assert!(
+        last_run(&world, "alfa").await.is_none(),
+        "a failed run is not stamped"
+    );
+    assert!(
+        org_backup::schedule(&world.state, &slots).await.is_empty(),
+        "a failed backup waits for the backoff, not the whole interval"
+    );
+    let entries = world
+        .state
+        .org_backups
+        .entries("alfa", "configuration", 1)
+        .await
+        .expect("log");
+    assert!(!entries[0].ok, "the failure is logged");
+    let manual = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(manual.status, StatusCode::CONFLICT, "{}", manual.text);
+    assert!(manual.text.contains("versioning"), "{}", manual.text);
 }
 
 #[tokio::test]

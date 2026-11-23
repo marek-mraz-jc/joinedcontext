@@ -1073,7 +1073,6 @@ secret_like = "never printed"
 [[organizations]]
 name = "bbsk"
 catalogue_id = "00000000-0000-7000-8000-000000000010"
-portal_token_file = "/secrets/ckan-token"
 hosts = { portal = "smartcity.bbsk.sk", opendata = "opendata.bbsk.sk", api = "api.bbsk.sk", apps = "bbsk-apps.example" }
 
 [[organizations]]

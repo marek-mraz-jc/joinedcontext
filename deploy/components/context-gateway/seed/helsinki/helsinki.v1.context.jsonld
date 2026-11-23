@@ -696,6 +696,12 @@
         "text": "skos:notation"
       },
       "@id": "jc:trafficDirection"
+    },
+    "Organizer": {
+      "@id": "schema:Organization"
+    },
+    "organizer": {
+      "@id": "schema:organizer"
     }
   },
   "x-generator-version": "linkml-1.11.1"

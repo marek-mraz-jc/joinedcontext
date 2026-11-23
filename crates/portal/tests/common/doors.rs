@@ -226,7 +226,7 @@ pub fn offered(caller: &Caller, state: &AppState) -> Vec<String> {
 pub async fn mcp_rpc(caller: &Caller, state: &AppState, message: Value) -> Value {
     let body = axum::body::Bytes::from(message.to_string());
     let answer = answer_of(
-        joinedcontext_portal::mcp::dispatch_for(state.clone(), caller.clone(), body).await,
+        joinedcontext_portal::mcp::dispatch_for(state.clone(), caller.clone(), body, None).await,
     )
     .await;
     answer.body

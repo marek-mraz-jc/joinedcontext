@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mount } from "../src/explorer/main";
 import { catalogueColumns } from "../src/components/entities/EndpointDataView";
 import i18n from "../src/explorer/i18n";
-import { Map as NoMap } from "../src/explorer/no-map";
+import NoMapModule, { Map as NoMap, addProtocol, setWorkerUrl } from "../src/explorer/no-map";
 
 describe("the catalogue widget's mount", () => {
   it("refuses an origin that is no bare https or loopback origin and a slug that is no Endpoint's", () => {
@@ -103,6 +103,10 @@ describe("the catalogue widget's mount", () => {
     expect(i18n.getFixedT("sk")("spaces.toolbar.hide")).toBe("Skryť polia");
     expect(i18n.getFixedT("sk")("endpoints.data.full")).not.toBe(i18n.getFixedT("en")("endpoints.data.full"));
     expect(() => new NoMap()).toThrow(/no map/);
+    // The SDK's worker and tile protocol registrations are accepted and do nothing.
+    expect(setWorkerUrl()).toBeUndefined();
+    expect(addProtocol()).toBeUndefined();
+    expect(NoMapModule.Map).toBe(NoMap);
   });
 
   it("resolves every literal key the data view and its toolbar read (T-6319)", () => {

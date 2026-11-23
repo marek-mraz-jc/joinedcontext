@@ -345,6 +345,33 @@ mod tests {
         assert_eq!(names(&json!({"entities": []})), None);
         assert_eq!(names(&json!({"attributeNames": []})), Some(vec![]));
     }
+    /// A page's Entities carry a placeholder `@context`: the shared one is written in its
+    /// place, `id` and `type` first, the other members in their order, nested objects too.
+    #[test]
+    fn spec_order_with_context_writes_the_shared_context_in_place() {
+        use serde_json::json;
+        // keys inserted in sorted order: the same with and without serde_json's preserve_order
+        let doc = json!({"@context": null, "speed": {"type": "Property", "value": 1},
+                         "type": "Car", "id": "urn:ngsi-ld:Car:1"});
+        let ctx = json!(["https://example.org/ctx.jsonld"]);
+        let out = serde_json::to_string(&super::SpecOrderWithContext {
+            doc: doc.as_object().expect("object"),
+            ctx: &ctx,
+        })
+        .expect("serializes");
+        assert_eq!(
+            out,
+            r#"{"id":"urn:ngsi-ld:Car:1","type":"Car","@context":["https://example.org/ctx.jsonld"],"speed":{"type":"Property","value":1}}"#
+        );
+        let bare = json!({"name": "x"});
+        let out = serde_json::to_string(&super::SpecOrderWithContext {
+            doc: bare.as_object().expect("object"),
+            ctx: &ctx,
+        })
+        .expect("serializes");
+        assert_eq!(out, r#"{"name":"x"}"#);
+    }
+
     #[test]
     fn meta_members_are_the_non_attribute_members_of_an_entity() {
         for k in [

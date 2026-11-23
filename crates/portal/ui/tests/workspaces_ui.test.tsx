@@ -425,6 +425,37 @@ describe("bring back", () => {
     expect(link.closest("a")?.getAttribute("href")).toBe("/projects/helsinki/approvals/chg-00000009");
   });
 
+  it("shows a value that is no text as written, and says why an update was refused", async () => {
+    compare = {
+      files: CONFLICT.files,
+      conflicts: [{ path: "projects/helsinki/pipelines/a.yaml", fields: [{ path: "spec.limits", ours: { rows: 10 }, theirs: 20, base: null }] }],
+    };
+    const serve = handler;
+    handler = (req, url) => {
+      if (url.pathname.endsWith("/update")) return json({ title: "Conflict", status: 409, detail: "the project moved on; compare again" }, 409);
+      return serve(req, url);
+    };
+    show(<BringBackPage project="helsinki" name="air-v2" />);
+    const limits = await screen.findByRole("radiogroup", { name: "spec.limits" });
+    expect(within(limits).getByText('{"rows":10}')).toBeInTheDocument();
+    expect(within(limits).getByText("20")).toBeInTheDocument();
+    await userEvent.click(within(limits).getByLabelText(/Take the project's/));
+    await userEvent.click(screen.getByRole("button", { name: "Update from the project" }));
+    expect(await screen.findByText(/the project moved on; compare again/)).toBeInTheDocument();
+  });
+
+  it("says why a proposal was refused", async () => {
+    compare = { files: CONFLICT.files, conflicts: [] };
+    const serve = handler;
+    handler = (req, url) =>
+      url.pathname.endsWith("/propose") ? json({ title: "Conflict", status: 409, detail: "a change for this copy waits already" }, 409) : serve(req, url);
+    show(<BringBackPage project="helsinki" name="air-v2" />);
+    const propose = await screen.findByRole("button", { name: "Propose as one change" });
+    await waitFor(() => expect(propose).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(propose);
+    expect(await screen.findByText(/a change for this copy waits already/)).toBeInTheDocument();
+  });
+
   it("says so when the project changed nothing the copy does not already have", async () => {
     compare = { files: CONFLICT.files, conflicts: [] };
     handler = (req, url) => {

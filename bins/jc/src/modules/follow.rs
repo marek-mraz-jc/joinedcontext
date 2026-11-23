@@ -81,23 +81,3 @@ pub static ORGANIZATIONS: Published<Organizations> = Published::new();
 /// ARCH/TEN-04): the gateway keeps each Organization's host to its own projects by it (T-7411).
 #[cfg(all(feature = "portal", feature = "gateway"))]
 pub static PROJECT_TENANTS: Published<BTreeMap<String, String>> = Published::new();
-
-/// The token the Portal publishes into a run-time Organization's catalogue with (T-7185):
-/// minted here once per Organization and process, held only in memory and handed in process to
-/// dataroom's grant and the Portal's catalogue entry, so no token file exists for it. `Err` when
-/// the OS gives no randomness (nothing is minted then).
-#[cfg(feature = "portal")]
-pub fn catalogue_token(organization: &str) -> Result<Arc<jcctl::secrets::SecretValue>, String> {
-    static TOKENS: Mutex<BTreeMap<String, Arc<jcctl::secrets::SecretValue>>> =
-        Mutex::new(BTreeMap::new());
-    let mut tokens = TOKENS.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(token) = tokens.get(organization) {
-        return Ok(token.clone());
-    }
-    let token = Arc::new(
-        jcctl::secrets::SecretValue::generate()
-            .map_err(|e| format!("no randomness for its catalogue token: {e}"))?,
-    );
-    tokens.insert(organization.to_owned(), token.clone());
-    Ok(token)
-}

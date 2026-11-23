@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pageFindings } from "../tests/pageChecks";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { doorsAsRest, manifestReadsAsRest } from "./manifestReads";
+import { writePhoneReport } from "./phoneCheck.cts";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -113,7 +114,18 @@ const NAMESPACES = Object.keys(
 
 async function stubApi(
   page: Page,
-  { items = [LOADED], live = FORWARDED }: { items?: object[]; live?: { kind: string } } = {},
+  {
+    items = [LOADED],
+    live = FORWARDED,
+    people,
+    failure,
+  }: {
+    items?: object[];
+    live?: { kind: string };
+    /** What the reader resolves: none is a reader who reads no names. */
+    people?: { id: string; name: string }[];
+    failure?: object;
+  } = {},
 ): Promise<void> {
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -128,6 +140,15 @@ async function stubApi(
         headers: { "cache-control": "no-cache" },
         body: `event: ${live.kind}\ndata: ${JSON.stringify(live)}\n\n`,
       });
+    }
+    if (people && url.pathname.endsWith("/permissions/me")) {
+      return json({ project: "org", bootstrap: true, grants: [] });
+    }
+    if (people && url.pathname.endsWith("/organization/people/names")) {
+      return json({ items: people });
+    }
+    if (failure && url.pathname.endsWith("/activity")) {
+      return json(failure, 503);
     }
     if (url.pathname.endsWith("/activity")) {
       return json({
@@ -293,6 +314,64 @@ test.describe("activity", () => {
       // The live walker's own checks (tests/pageChecks.ts), raw-i18n-key among them.
       expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
       if (process.env.SHOTS_DIR) await page.screenshot({ path: `${process.env.SHOTS_DIR}/activity-kinds-${width}.png`, fullPage: true });
+    });
+  }
+
+  // T-7542: the feed keeps ids; whoever may read names reads names, everyone else words.
+  const JANA = "3f1c9a52-6b1e-4d0a-9a4e-0c8d1b7e2f10";
+  const MERGED = {
+    time: "2026-09-16T09:14:00Z",
+    project: "helsinki",
+    kind: "change.merged",
+    source: "portal",
+    summary: `Change chg-0000001e merged: create Endpoint public-air, approved by ${JANA}.`,
+    severity: "info",
+    correlationId: "chg-0000001e",
+    details: { change: "chg-0000001e", approvedBy: JANA, object: "endpoints/public-air" },
+  };
+  const CALLED = {
+    time: "2026-09-16T09:15:00Z",
+    project: "helsinki",
+    kind: "mcp.tool",
+    source: "gateway",
+    summary: `user:${JANA} called query_entities on public-air.`,
+    severity: "info",
+    details: { object: "endpoints/public-air" },
+  };
+  for (const width of [1440, 400]) {
+    test.describe(`people at ${width} px`, () => {
+      // The phone is tall enough for the whole page: a full-page shot that resizes it drops touch.
+      test.use({ viewport: { width, height: width === 400 ? 1400 : 900 }, hasTouch: width === 400, isMobile: width === 400 });
+      test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_person_names"]));
+      for (const [state, reader] of [["named", "Jana Kováčová"], ["unknown", "Unknown person"], ["empty", ""], ["error", ""]] as const) {
+        test(`people in the feed, ${state}, at ${width} px`, async ({ page }) => {
+          await stubApi(page, {
+            items: state === "empty" ? [] : [CALLED, MERGED],
+            live: { kind: "none" },
+            people: state === "named" ? [{ id: JANA, name: reader }] : undefined,
+            failure:
+              state === "error"
+                ? { title: "Service Unavailable", status: 503, detail: "the activity database did not answer; try again in a minute" }
+                : undefined,
+          });
+          await page.goto("/projects/helsinki/activity?lang=en");
+          if (reader) {
+            await expect(page.getByTestId("activity-sentence").filter({ hasText: `approved by ${reader}.` })).toBeVisible();
+            await expect(page.getByTestId("activity-sentence").filter({ hasText: `${reader} called query_entities` })).toBeVisible();
+            await expect(page.getByRole("table")).not.toContainText(JANA);
+          } else if (state === "empty") {
+            await page.waitForLoadState("networkidle");
+            await expect(page.getByTestId("activity-sentence")).toHaveCount(0);
+          } else {
+            await expect(page.getByText(/did not answer|could not|unavailable/i).first()).toBeVisible({ timeout: 15_000 });
+          }
+          if (process.env.SHOTS_DIR) {
+            const shot = `${process.env.SHOTS_DIR}/activity-people-${state}-${width}.png`;
+            await page.screenshot({ path: shot, fullPage: true });
+            if (width === 400) await writePhoneReport(page, shot);
+          }
+        });
+      }
     });
   }
 });

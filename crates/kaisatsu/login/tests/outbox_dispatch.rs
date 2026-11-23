@@ -55,6 +55,55 @@ fn mount() -> Mount {
     Mount::new("kaisatsu", "https", "idm.example.test", "").unwrap()
 }
 
+/// S3-29: a dispatcher killed between its claim and the send leaves the row `sending`; another
+/// dispatcher sharing the store delivers it once the claim's lease ran out, and a failed send
+/// goes back to pending and is sent by a later pass.
+#[tokio::test]
+async fn a_killed_claimers_row_is_sent_by_another_dispatcher_after_the_lease() {
+    let kek = Kek::generate_for_tests();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+    realm(&store, &kek, "alpha", None).await;
+    store
+        .enqueue_outbox(row("alpha", "ob-killed"))
+        .await
+        .unwrap();
+    // The killed dispatcher's claim, with a lease that has run out.
+    let claimed = store
+        .claim_outbox_batch("alpha", 1, std::time::Duration::from_millis(1), 5)
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let sink = RecordingSender::new();
+    sink.set_failures(1);
+    let other = OutboxDispatcher::new(store.clone(), kek, Arc::new(sink.clone()));
+    assert_eq!(other.dispatch_all_realms(&mount()).await.unwrap(), 0);
+    let failed = store.list_outbox_rows("alpha", None).await.unwrap();
+    assert_eq!(failed[0].status, "pending", "a failed send stays pending");
+    assert_eq!(failed[0].attempts, 2);
+    assert!(failed[0].last_error.is_some());
+    // Due again after the backoff: the next pass sends it.
+    store
+        .retry_outbox_row("alpha", None, "ob-killed")
+        .await
+        .unwrap();
+    assert_eq!(other.dispatch_all_realms(&mount()).await.unwrap(), 1);
+    let sent: Vec<_> = sink.drain().into_iter().map(|m| m.to_address).collect();
+    assert_eq!(sent, ["person@example.test"]);
+    assert_eq!(
+        store.list_outbox_rows("alpha", None).await.unwrap()[0].status,
+        "sent"
+    );
+    // The killed dispatcher's late outcome changes nothing.
+    assert!(
+        !store
+            .complete_outbox_row(&claimed[0], false, Some("late".into()), None, 5)
+            .await
+            .unwrap()
+    );
+}
+
 #[tokio::test]
 async fn one_pass_visits_every_realm() {
     let kek = Kek::generate_for_tests();

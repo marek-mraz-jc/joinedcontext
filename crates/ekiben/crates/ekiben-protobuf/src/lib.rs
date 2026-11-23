@@ -308,15 +308,13 @@ impl Walker<'_> {
         if meta.is_file() {
             return self.add_file(root, dir);
         }
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        // The entry's own type: a symlink is never followed into a directory.
+        let mut entries: Vec<(PathBuf, std::fs::FileType)> = std::fs::read_dir(dir)
             .map_err(|e| format!("open {}: {e}", dir.display()))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter_map(|e| e.ok().and_then(|e| Some((e.path(), e.file_type().ok()?))))
             .collect();
-        entries.sort();
-        for p in entries {
-            let ft = std::fs::symlink_metadata(&p)
-                .map_err(|e| e.to_string())?
-                .file_type();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (p, ft) in entries {
             if ft.is_dir() {
                 self.walk(root, &p)?;
             } else if p.extension().is_some_and(|e| e == "proto") {
@@ -487,12 +485,12 @@ fn write_field(
             out.push(b']');
         }
         PValue::Map(map) => {
-            let value_kind = match fd.kind() {
-                Kind::Message(entry) => entry.map_entry_value_field().kind(),
-                k => k,
-            };
+            let value_kind = fd
+                .kind()
+                .as_message()
+                .map_or(fd.kind(), |entry| entry.map_entry_value_field().kind());
             let mut entries: Vec<(&MapKey, &PValue)> = map.iter().collect();
-            entries.sort_by(|a, b| map_key_order(a.0, b.0));
+            entries.sort_by_key(|e| map_key_order(e.0));
             out.push(b'{');
             for (i, (k, val)) in entries.into_iter().enumerate() {
                 if i > 0 {
@@ -509,16 +507,16 @@ fn write_field(
     Ok(())
 }
 
-/// `order.GenericKeyOrder`: false before true, numbers by value, strings bytewise.
-fn map_key_order(a: &MapKey, b: &MapKey) -> std::cmp::Ordering {
-    match (a, b) {
-        (MapKey::Bool(x), MapKey::Bool(y)) => x.cmp(y),
-        (MapKey::I32(x), MapKey::I32(y)) => x.cmp(y),
-        (MapKey::I64(x), MapKey::I64(y)) => x.cmp(y),
-        (MapKey::U32(x), MapKey::U32(y)) => x.cmp(y),
-        (MapKey::U64(x), MapKey::U64(y)) => x.cmp(y),
-        (MapKey::String(x), MapKey::String(y)) => x.as_bytes().cmp(y.as_bytes()),
-        _ => std::cmp::Ordering::Equal,
+/// `order.GenericKeyOrder` as a sort key (one map holds one key type): false before true,
+/// numbers by value, strings bytewise.
+fn map_key_order(k: &MapKey) -> (i128, &[u8]) {
+    match k {
+        MapKey::Bool(b) => (i128::from(*b), &[]),
+        MapKey::I32(n) => (i128::from(*n), &[]),
+        MapKey::I64(n) => (i128::from(*n), &[]),
+        MapKey::U32(n) => (i128::from(*n), &[]),
+        MapKey::U64(n) => (i128::from(*n), &[]),
+        MapKey::String(s) => (0, s.as_bytes()),
     }
 }
 
@@ -550,16 +548,17 @@ fn write_singular(
         PValue::F64(f) => write_float(out, *f, false),
         PValue::String(s) => write_str(out, s)?,
         PValue::Bytes(b) => write_str(out, &base64_std(b))?,
-        PValue::EnumNumber(n) => match kind {
-            Kind::Enum(e) if e.full_name() == "google.protobuf.NullValue" => {
-                out.extend_from_slice(b"null")
+        PValue::EnumNumber(n) => {
+            let e = kind.as_enum();
+            if e.is_some_and(|e| e.full_name() == "google.protobuf.NullValue") {
+                out.extend_from_slice(b"null");
+            } else if let Some(ev) = e.and_then(|e| e.get_value(*n)) {
+                write_str(out, ev.name())?;
+            } else {
+                // A number the enum does not name.
+                out.extend_from_slice(n.to_string().as_bytes());
             }
-            Kind::Enum(e) => match e.get_value(*n) {
-                Some(ev) => write_str(out, ev.name())?,
-                None => out.extend_from_slice(n.to_string().as_bytes()),
-            },
-            _ => out.extend_from_slice(n.to_string().as_bytes()),
-        },
+        }
         PValue::Message(m) => write_message(out, m, o, depth + 1)?,
         PValue::List(_) | PValue::Map(_) => return Err("nested list or map value".into()),
     }
@@ -602,7 +601,7 @@ pub fn go_float(n: f64, is32: bool) -> String {
         return "\"NaN\"".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 {
+        return if n.is_sign_positive() {
             "\"Infinity\"".into()
         } else {
             "\"-Infinity\"".into()
@@ -619,13 +618,12 @@ pub fn go_float(n: f64, is32: bool) -> String {
     let (mant, e) = sci.split_once('e').unwrap_or((&sci, "0"));
     let e: i32 = e.parse().unwrap_or(0);
     if exp {
-        let sign = if e < 0 { '-' } else { '+' };
         let a = e.unsigned_abs();
         // Go writes at least two exponent digits, then encoding/json drops the leading zero of e-0X.
-        return if e < 0 && a < 10 {
-            format!("{mant}e{sign}{a}")
+        return if e.is_negative() {
+            format!("{mant}e-{a}")
         } else {
-            format!("{mant}e{sign}{a:02}")
+            format!("{mant}e+{a:02}")
         };
     }
     let neg = mant.starts_with('-');
@@ -659,7 +657,7 @@ fn base64_std(data: &[u8]) -> String {
             *chunk.get(1).unwrap_or(&0),
             *chunk.get(2).unwrap_or(&0),
         ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        let n = u32::from_be_bytes([0, b[0], b[1], b[2]]);
         s.push(char::from(T[(n >> 18) as usize & 63]));
         s.push(char::from(T[(n >> 12) as usize & 63]));
         s.push(if chunk.len() > 1 {
@@ -706,22 +704,18 @@ fn write_well_known(
         return Some(write_singular(out, &fd.kind(), &m.get_field(&fd), o, depth));
     }
     let r = match name {
-        "google.protobuf.Empty" => {
-            out.extend_from_slice(b"{}");
-            Ok(())
-        }
         "google.protobuf.Timestamp" => timestamp(m).map(|s| out.extend_from_slice(s.as_bytes())),
         "google.protobuf.Duration" => duration(m).map(|s| out.extend_from_slice(s.as_bytes())),
         "google.protobuf.FieldMask" => {
-            let paths = match field_by_name(m, "paths").as_deref() {
-                Some(PValue::List(l)) => l
-                    .iter()
-                    .filter_map(|v| v.as_str().map(lower_camel))
-                    .collect::<Vec<_>>()
-                    .join(","),
-                _ => String::new(),
-            };
-            write_str(out, &paths)
+            let field = field_by_name(m, "paths");
+            let paths: Vec<String> = field
+                .as_deref()
+                .and_then(PValue::as_list)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|v| v.as_str().map(lower_camel))
+                .collect();
+            write_str(out, &paths.join(","))
         }
         "google.protobuf.Struct" | "google.protobuf.ListValue" => {
             let fd = md.get_field(1)?;
@@ -752,14 +746,16 @@ fn write_any(
     depth: usize,
 ) -> Result<(), String> {
     let name = md.full_name();
-    let url = match field_by_name(m, "type_url").as_deref() {
-        Some(PValue::String(u)) => u.clone(),
-        _ => String::new(),
-    };
-    let value = match field_by_name(m, "value").as_deref() {
-        Some(PValue::Bytes(b)) => b.clone(),
-        _ => Default::default(),
-    };
+    let url = field_by_name(m, "type_url")
+        .as_deref()
+        .and_then(PValue::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let value = field_by_name(m, "value")
+        .as_deref()
+        .and_then(PValue::as_bytes)
+        .cloned()
+        .unwrap_or_default();
     if url.is_empty() {
         if value.is_empty() {
             out.extend_from_slice(b"{}");
@@ -824,12 +820,12 @@ fn is_well_known(name: &str) -> bool {
         )
 }
 
+/// `seconds` (int64) or `nanos` (int32) of a Timestamp or Duration.
 fn int_field(m: &DynamicMessage, name: &str) -> i64 {
-    match field_by_name(m, name).as_deref() {
-        Some(PValue::I64(n)) => *n,
-        Some(PValue::I32(n)) => i64::from(*n),
-        _ => 0,
-    }
+    field_by_name(m, name)
+        .as_deref()
+        .and_then(|v| v.as_i64().or(v.as_i32().map(i64::from)))
+        .unwrap_or(0)
 }
 
 /// RFC 3339 in UTC with 0, 3, 6 or 9 fraction digits (`marshalTimestamp`).
@@ -930,6 +926,547 @@ fn lower_camel(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    const PROTO: &str = r#"syntax = "proto2";
+package t;
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+message Inner { required string id = 1; }
+message Bare {}
+message Rec { optional Rec r = 1; }
+message Outer { message Mid { message Deep {} } }
+enum Color { RED = 0; GREEN = 1; }
+message All {
+  map<bool, int32> b = 1;
+  map<int32, string> i32 = 2;
+  map<int64, string> i64 = 3;
+  map<uint32, string> u32 = 4;
+  map<uint64, string> u64 = 5;
+  map<string, Inner> s = 6;
+  optional float f = 7;
+  optional double d = 8;
+  optional google.protobuf.Duration dur = 9;
+  optional google.protobuf.Any any = 10;
+  optional google.protobuf.Struct st = 11;
+  optional google.protobuf.FieldMask fm = 12;
+  optional google.protobuf.Int64Value w = 13;
+  optional Color color = 14;
+  repeated Inner list = 15;
+  optional Inner one = 16;
+  oneof pick { string a = 17; int32 n = 18; }
+  optional google.protobuf.Value v = 19;
+  optional google.protobuf.Empty e = 20;
+  optional google.protobuf.ListValue lv = 21;
+  optional google.protobuf.Timestamp ts = 22;
+  optional string snake_name = 23;
+  optional bytes raw = 24;
+}
+"#;
+
+    fn schema() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("t.proto"), PROTO).expect("writes");
+        dir
+    }
+
+    fn conf(config: JsonValue) -> ComponentConfig {
+        ComponentConfig {
+            label: String::new(),
+            component_type: "protobuf".into(),
+            config,
+            processors: Vec::new(),
+        }
+    }
+
+    fn processor(dir: &tempfile::TempDir, extra: JsonValue) -> ProtobufProcessor {
+        let mut c = json!({"message": "t.All", "import_paths": [dir.path().to_str().unwrap()]});
+        for (k, v) in extra.as_object().expect("object") {
+            c[k] = v.clone();
+        }
+        ProtobufProcessor::from_config(&conf(c)).expect("builds")
+    }
+
+    /// `json` through from_json to wire format, then back through to_json with `opts`.
+    fn round_trip(json: &str, opts: JsonValue) -> Result<String, String> {
+        let dir = schema();
+        let wire = processor(&dir, json!({"operator": "from_json"})).convert(json.as_bytes())?;
+        let mut o = json!({"operator": "to_json"});
+        for (k, v) in opts.as_object().expect("object") {
+            o[k] = v.clone();
+        }
+        let out = processor(&dir, o).convert(&wire)?;
+        Ok(String::from_utf8(out).expect("utf-8"))
+    }
+
+    fn pool() -> DescriptorPool {
+        let dir = schema();
+        load_descriptors(&[dir.path().to_path_buf()], None).expect("compiles")
+    }
+
+    fn msg(pool: &DescriptorPool, name: &str) -> DynamicMessage {
+        DynamicMessage::new(pool.get_message_by_name(name).expect(name))
+    }
+
+    fn to_json(m: &DynamicMessage) -> Result<String, String> {
+        let dir = schema();
+        let p = processor(&dir, json!({"operator": "to_json"}));
+        p.convert(&m.encode_to_vec())
+            .map(|b| String::from_utf8(b).expect("utf-8"))
+    }
+
+    #[test]
+    fn config_refusals_name_the_field() {
+        let dir = schema();
+        let d = dir.path().to_str().unwrap();
+        let err = |c: JsonValue| {
+            ProtobufProcessor::from_config(&conf(c))
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        assert!(err(json!([])).ends_with("protobuf config must be an object"));
+        assert!(err(json!({"operator": "to_json", "message": "t.All", "import_paths": [d], "use_proto_names": 1}))
+            .ends_with("protobuf field use_proto_names: expected bool value"));
+        assert!(err(json!({"message": "t.All", "import_paths": [d]}))
+            .ends_with("protobuf: field operator is required"));
+        assert!(err(json!({"operator": "to_json", "import_paths": [d]}))
+            .ends_with("protobuf: field message is required"));
+        assert!(
+            err(json!({"operator": "to_json", "message": "t.All", "import_paths": [1]}))
+                .ends_with("protobuf field import_paths: expected strings")
+        );
+        assert!(
+            err(json!({"operator": "to_json", "message": "t.All", "import_paths": d}))
+                .ends_with("protobuf field import_paths: expected array")
+        );
+        // from_json finds top-level messages and their children, never a grandchild.
+        assert!(err(
+            json!({"operator": "from_json", "message": "t.Outer.Mid.Deep", "import_paths": [d]})
+        )
+        .ends_with(&format!(
+            "unable to find message 't.Outer.Mid.Deep' definition within '[{d}]'"
+        )));
+        assert!(
+            err(json!({"operator": "from_json", "message": "t.Nope", "import_paths": [d]}))
+                .contains("unable to find message 't.Nope'")
+        );
+        let p = processor(
+            &dir,
+            json!({"operator": "from_json", "message": "t.Outer.Mid"}),
+        );
+        assert_eq!(p.processor_type(), "protobuf");
+        assert_eq!(p.convert(b"{}"), Ok(Vec::new()));
+        assert!(processor(
+            &dir,
+            json!({"operator": "to_json", "message": "t.Outer.Mid.Deep"})
+        )
+        .convert(b"")
+        .is_ok());
+    }
+
+    #[test]
+    fn maps_sort_their_keys_as_protojson_does() {
+        let out = round_trip(
+            r#"{"b":{"true":1,"false":2},"i32":{"2":"x","-1":"y"},"i64":{"10":"a","9":"b"},
+               "u32":{"3":"c","1":"d"},"u64":{"5":"e","4":"f"},"s":{"b":{"id":"1"},"a":{"id":"2"}},
+               "f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\\r\t","raw":"YWJj"}"#,
+            json!({}),
+        )
+        .expect("converts");
+        assert_eq!(
+            out,
+            r#"{"b":{"false":2,"true":1},"i32":{"-1":"y","2":"x"},"i64":{"9":"b","10":"a"},"u32":{"1":"d","3":"c"},"u64":{"4":"f","5":"e"},"s":{"a":{"id":"2"},"b":{"id":"1"}},"f":1.5,"d":0.25,"color":"GREEN","snakeName":"q\u0001\b\f\"\n\\\r\t","raw":"YWJj"}"#
+        );
+        let out =
+            round_trip(r#"{"snakeName":"q"}"#, json!({"use_proto_names": true})).expect("converts");
+        assert_eq!(out, r#"{"snake_name":"q"}"#);
+    }
+
+    #[test]
+    fn well_known_types_take_their_protojson_forms() {
+        let out = round_trip(
+            r#"{"dur":"-1.5s","any":{"@type":"type.googleapis.com/t.Inner","id":"z"},
+               "st":{"k":[1,"x",null,true]},"fm":"fooBar,baz","w":"7","v":2.5,"e":{},"lv":[1],
+               "ts":"2024-01-02T03:04:05.123Z"}"#,
+            json!({}),
+        )
+        .expect("converts");
+        assert_eq!(
+            out,
+            r#"{"dur":"-1.500s","any":{"@type":"type.googleapis.com/t.Inner","id":"z"},"st":{"k":[1,"x",null,true]},"fm":"fooBar,baz","w":"7","v":2.5,"e":{},"lv":[1],"ts":"2024-01-02T03:04:05.123Z"}"#
+        );
+        let out = round_trip(
+            r#"{"any":{"@type":"type.googleapis.com/google.protobuf.Duration","value":"2s"}}"#,
+            json!({}),
+        )
+        .expect("converts");
+        assert_eq!(
+            out,
+            r#"{"any":{"@type":"type.googleapis.com/google.protobuf.Duration","value":"2s"}}"#
+        );
+        let out = round_trip(
+            r#"{"any":{"@type":"type.googleapis.com/google.protobuf.Struct","value":{"a":1}}}"#,
+            json!({}),
+        )
+        .expect("converts");
+        assert_eq!(
+            out,
+            r#"{"any":{"@type":"type.googleapis.com/google.protobuf.Struct","value":{"a":1}}}"#
+        );
+        let out = round_trip(
+            r#"{"any":{"@type":"type.googleapis.com/t.Bare"}}"#,
+            json!({}),
+        )
+        .expect("converts");
+        assert_eq!(out, r#"{"any":{"@type":"type.googleapis.com/t.Bare"}}"#);
+    }
+
+    #[test]
+    fn an_any_that_cannot_be_resolved_says_why() {
+        let pool = pool();
+        let any = |url: &str, value: &[u8]| {
+            let mut a = msg(&pool, "google.protobuf.Any");
+            a.set_field_by_name("type_url", PValue::String(url.into()));
+            a.set_field_by_name("value", PValue::Bytes(value.to_vec().into()));
+            let mut m = msg(&pool, "t.All");
+            m.set_field_by_name("any", PValue::Message(a));
+            to_json(&m)
+        };
+        assert_eq!(any("", b""), Ok(r#"{"any":{}}"#.into()));
+        let e = "failed to unmarshal JSON protobuf message 't.All': google.protobuf.Any";
+        assert_eq!(any("", b"\x08"), Err(format!("{e}: type_url is not set")));
+        assert_eq!(
+            any("x/t.Nope", b""),
+            Err(format!(r#"{e}: unable to resolve "x/t.Nope": "not found""#))
+        );
+        assert_eq!(
+            any("x/t.Outer.Mid.Deep", b""),
+            Err(format!(
+                r#"{e}: unable to resolve "x/t.Outer.Mid.Deep": "not found""#
+            ))
+        );
+        assert_eq!(
+            any("x/t.Inner", b"\xff"),
+            Err(format!(
+                r#"{e}: unable to unmarshal "x/t.Inner": proto: cannot parse invalid wire-format data"#
+            ))
+        );
+    }
+
+    #[test]
+    fn timestamps_and_durations_out_of_range_are_refused() {
+        let pool = pool();
+        let wk = |name: &str, secs: i64, nanos: i32| {
+            let mut m = msg(&pool, name);
+            m.set_field_by_name("seconds", PValue::I64(secs));
+            m.set_field_by_name("nanos", PValue::I32(nanos));
+            m
+        };
+        let ts = "google.protobuf.Timestamp";
+        assert_eq!(
+            timestamp(&wk(ts, -62_135_596_800, 0)),
+            Ok("\"0001-01-01T00:00:00Z\"".into())
+        );
+        assert_eq!(
+            timestamp(&wk(ts, 253_402_300_799, 999_999_999)),
+            Ok("\"9999-12-31T23:59:59.999999999Z\"".into())
+        );
+        assert_eq!(
+            timestamp(&wk(ts, -62_135_596_801, 0)),
+            Err(format!("{ts}: seconds out of range -62135596801"))
+        );
+        assert_eq!(
+            timestamp(&wk(ts, 253_402_300_800, 0)),
+            Err(format!("{ts}: seconds out of range 253402300800"))
+        );
+        assert_eq!(
+            timestamp(&wk(ts, 0, -1)),
+            Err(format!("{ts}: nanos out of range -1"))
+        );
+        assert_eq!(
+            timestamp(&wk(ts, 0, 1_000_000_000)),
+            Err(format!("{ts}: nanos out of range 1000000000"))
+        );
+        let du = "google.protobuf.Duration";
+        assert_eq!(
+            duration(&wk(du, 315_576_000_000, 0)),
+            Ok("\"315576000000s\"".into())
+        );
+        assert_eq!(
+            duration(&wk(du, -315_576_000_000, 0)),
+            Ok("\"-315576000000s\"".into())
+        );
+        assert_eq!(duration(&wk(du, 0, -5_000)), Ok("\"-0.000005s\"".into()));
+        assert_eq!(
+            duration(&wk(du, 0, 999_999_999)),
+            Ok("\"0.999999999s\"".into())
+        );
+        assert_eq!(
+            duration(&wk(du, 315_576_000_001, 0)),
+            Err(format!("{du}: seconds out of range 315576000001"))
+        );
+        assert_eq!(
+            duration(&wk(du, -315_576_000_001, 0)),
+            Err(format!("{du}: seconds out of range -315576000001"))
+        );
+        for (secs, nanos) in [(0, 1_000_000_000), (0, -1_000_000_000), (1, -1), (-1, 1)] {
+            assert_eq!(
+                duration(&wk(du, secs, nanos)),
+                Err(format!("{du}: nanos out of range {nanos}")),
+                "{secs} {nanos}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_needs_one_finite_member() {
+        let pool = pool();
+        let o = JsonOptions {
+            use_proto_names: false,
+            emit_unpopulated: false,
+        };
+        let mut out = Vec::new();
+        let v = msg(&pool, "google.protobuf.Value");
+        assert_eq!(
+            write_message(&mut out, &v, o, 0),
+            Err("google.protobuf.Value: none of the oneof fields is set".into())
+        );
+        let mut v = msg(&pool, "google.protobuf.Value");
+        v.set_field_by_name("number_value", PValue::F64(f64::INFINITY));
+        assert_eq!(
+            write_message(&mut out, &v, o, 0),
+            Err("google.protobuf.Value: invalid inf value".into())
+        );
+    }
+
+    #[test]
+    fn required_fields_are_checked_inside_lists_and_maps() {
+        let pool = pool();
+        let mut m = msg(&pool, "t.All");
+        m.set_field_by_name(
+            "list",
+            PValue::List(vec![PValue::Message(msg(&pool, "t.Inner"))]),
+        );
+        let e = "failed to unmarshal protobuf message 't.All': proto: required field t.Inner.id not set";
+        assert_eq!(to_json(&m), Err(e.into()));
+        let mut m = msg(&pool, "t.All");
+        m.set_field_by_name(
+            "s",
+            PValue::Map(
+                [(
+                    MapKey::String("k".into()),
+                    PValue::Message(msg(&pool, "t.Inner")),
+                )]
+                .into(),
+            ),
+        );
+        assert_eq!(to_json(&m), Err(e.into()));
+        let mut m = msg(&pool, "t.All");
+        m.set_field_by_name("one", PValue::Message(msg(&pool, "t.Inner")));
+        assert_eq!(to_json(&m), Err(e.into()));
+        let dir = schema();
+        assert_eq!(
+            processor(&dir, json!({"operator": "from_json"})).convert(br#"{"one":{}}"#),
+            Err("failed to marshal protobuf message 't.All': proto: required field t.Inner.id not set".into())
+        );
+    }
+
+    #[test]
+    fn emit_unpopulated_writes_nulls_but_skips_unset_oneof_members() {
+        let out = round_trip(r#"{"n":3}"#, json!({"emit_unpopulated": true})).expect("converts");
+        assert!(out.contains(r#""one":null"#), "{out}");
+        assert!(out.contains(r#""list":[]"#), "{out}");
+        assert!(out.contains(r#""b":{}"#), "{out}");
+        assert!(out.contains(r#""f":0"#), "{out}");
+        assert!(out.contains(r#""n":3"#), "{out}");
+        assert!(!out.contains(r#""a":"#), "{out}");
+        let out = round_trip(r#"{"n":3}"#, json!({})).expect("converts");
+        assert_eq!(out, r#"{"n":3}"#);
+    }
+
+    #[test]
+    fn an_unknown_enum_number_is_written_as_a_number() {
+        let pool = pool();
+        let mut m = msg(&pool, "t.All");
+        m.set_field_by_name("color", PValue::EnumNumber(7));
+        assert_eq!(to_json(&m), Ok(r#"{"color":7}"#.into()));
+    }
+
+    #[test]
+    fn nesting_past_the_depth_limit_is_refused() {
+        // prost refuses more than 100 nested messages in one decode, but each Any's value is
+        // decoded on its own: a chain of Anys reaches the writer's own limit.
+        let pool = pool();
+        let chain = |links: usize| {
+            let mut m = msg(&pool, "t.All");
+            for _ in 0..links {
+                let mut a = msg(&pool, "google.protobuf.Any");
+                a.set_field_by_name("type_url", PValue::String("x/t.All".into()));
+                a.set_field_by_name("value", PValue::Bytes(m.encode_to_vec().into()));
+                m = msg(&pool, "t.All");
+                m.set_field_by_name("any", PValue::Message(a));
+            }
+            to_json(&m)
+        };
+        // Each link is two levels (the Any, then its message): 50 links stay at the limit of 100.
+        assert!(chain(50).is_ok());
+        assert_eq!(
+            chain(51),
+            Err("failed to unmarshal JSON protobuf message 't.All': exceeded maximum recursion depth".into())
+        );
+    }
+
+    #[test]
+    fn an_import_path_that_is_a_file_is_refused_and_subdirectories_are_read() {
+        let dir = schema();
+        let file = dir.path().join("t.proto");
+        // Named "." as Bento's filepath.Rel names it, which the compiler then cannot open.
+        let e = ProtobufProcessor::from_config(&conf(json!({
+            "operator": "to_json", "message": "t.Inner", "import_paths": [file.to_str().unwrap()]
+        })))
+        .err()
+        .map(|e| e.to_string());
+        assert_eq!(
+            e.as_deref(),
+            Some("configuration error: file '.' is not in any include path")
+        );
+        let top = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(top.path().join("sub")).expect("mkdir");
+        std::fs::write(top.path().join("sub/t.proto"), PROTO).expect("writes");
+        std::fs::write(top.path().join("notes.txt"), "not a schema").expect("writes");
+        let pool = load_descriptors(&[top.path().to_path_buf()], None).expect("compiles");
+        assert!(pool.get_file_by_name("sub/t.proto").is_some());
+        assert!(pool.get_message_by_name("t.All").is_some());
+    }
+
+    #[test]
+    fn well_known_names_are_the_google_protobuf_types() {
+        for t in [
+            "Any",
+            "Timestamp",
+            "Duration",
+            "BoolValue",
+            "Int32Value",
+            "Int64Value",
+            "UInt32Value",
+            "UInt64Value",
+            "FloatValue",
+            "DoubleValue",
+            "StringValue",
+            "BytesValue",
+            "Struct",
+            "ListValue",
+            "Value",
+            "FieldMask",
+            "Empty",
+        ] {
+            assert!(is_well_known(&format!("google.protobuf.{t}")), "{t}");
+            assert!(!is_well_known(&format!("t.{t}")), "{t}");
+        }
+        assert!(!is_well_known("google.protobuf.FileDescriptorProto"));
+    }
+
+    #[test]
+    fn schema_files_that_cannot_be_read_are_refused() {
+        // A file root that does not exist confines to itself: every real file escapes it.
+        let dir = schema();
+        let e = load_descriptors(
+            &[dir.path().to_path_buf()],
+            Some(Path::new("/nonexistent-ekiben-root")),
+        )
+        .err();
+        assert_eq!(
+            e,
+            Some(format!(
+                "import {} escapes the configured file root",
+                dir.path().join("t.proto").display()
+            ))
+        );
+
+        let missing = std::path::PathBuf::from("/nonexistent-ekiben-proto");
+        assert!(load_descriptors(&[missing], None)
+            .unwrap_err()
+            .starts_with("lstat /nonexistent-ekiben-proto: "));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).expect("mkdir");
+        std::fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+            .expect("chmod");
+        let r = load_descriptors(std::slice::from_ref(&locked), None);
+        // root reads any directory: the refusal shows only where the directory is unreadable.
+        let refused = std::fs::read_dir(&locked).is_err();
+        std::fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .expect("chmod back");
+        assert_eq!(
+            r.as_ref()
+                .err()
+                .map(|e| e.starts_with(&format!("open {}: ", locked.display()))),
+            refused.then_some(true)
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::os::unix::fs::symlink(dir.path().join("gone"), dir.path().join("a.proto"))
+            .expect("symlink");
+        assert!(
+            load_descriptors(&[dir.path().to_path_buf()], Some(dir.path()))
+                .unwrap_err()
+                .starts_with("failed to read import ")
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("a.proto"), b"\xff\xfe").expect("writes");
+        assert!(load_descriptors(&[dir.path().to_path_buf()], None)
+            .unwrap_err()
+            .starts_with("failed to read import "));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let big = std::fs::File::create(dir.path().join("a.proto")).expect("creates");
+        // 2 MiB and exactly the cap are read (and fail as a schema, not on their size).
+        for len in [2 << 20, MAX_SCHEMA_BYTES] {
+            big.set_len(len).expect("sparse file");
+            let err = load_descriptors(&[dir.path().to_path_buf()], None).unwrap_err();
+            assert!(!err.contains("exceed"), "{len}: {err}");
+        }
+        big.set_len(MAX_SCHEMA_BYTES + 1).expect("sparse file");
+        assert_eq!(
+            load_descriptors(&[dir.path().to_path_buf()], None).err(),
+            Some(format!(
+                "the .proto files under the import paths exceed {MAX_SCHEMA_BYTES} bytes"
+            ))
+        );
+    }
+
+    /// Every day from 1600 to 2400 against a day-by-day proleptic Gregorian count.
+    #[test]
+    fn civil_from_days_walks_the_calendar() {
+        let leap = |y: i64| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let (mut y, mut m, mut d) = (1600, 1, 1);
+        let mut z = -135_140; // 1600-01-01
+        while y < 2400 {
+            assert_eq!(civil_from_days(z), (y, m, d), "day {z}");
+            let last = match m {
+                2 if leap(y) => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            d += 1;
+            if d > last {
+                (d, m) = (1, m + 1);
+                if m > 12 {
+                    (m, y) = (1, y + 1);
+                }
+            }
+            z += 1;
+        }
+    }
 
     #[test]
     fn go_float_formats_like_encoding_json() {
@@ -955,6 +1492,9 @@ mod tests {
         assert_eq!(fraction(1_000), ".000001");
         assert_eq!(fraction(1), ".000000001");
         assert_eq!(base64_std(b"ab"), "YWI=");
+        assert_eq!(base64_std(b"a"), "YQ==");
+        assert_eq!(base64_std(b"abcd"), "YWJjZA==");
+        assert_eq!(go_float(f64::INFINITY, false), "\"Infinity\"");
         assert_eq!(lower_camel("foo_bar_baz"), "fooBarBaz");
     }
 }

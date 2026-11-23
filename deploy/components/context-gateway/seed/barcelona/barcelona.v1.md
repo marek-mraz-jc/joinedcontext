@@ -378,6 +378,7 @@ Specialises `Entity`.
 | `category` | Property | `string` (list) |  |  | `sdm:category` | An Event's main category first, one of the platform's fifteen event codes (music, theatre-dance, film, exhibition-museum, festival-fair, sport, outdoor-nature, education-talk, children-family, hobby-workshop, food-market, history-heritage, faith-tradition, health-wellness, community-civic), then the Smart Data Models category it falls under where one fits, read from the first words of the Catalan name and absent when no rule matches. A PointOfInterest's family in the city's facility register first (culture-leisure, sports, education, social-services, public-administration, markets-shopping, information-centres, religious-services, environment, animals-plants, cemeteries, media, utility-companies, restaurants), then the register's own kind in Catalan (Biblioteques, Poliesportius); a fountain is drinking-fountain or ornamental-fountain alone; a dog area of the city's parks carries animals-plants, dog-area, a tree of local interest environment, local-interest-tree. An OnStreetParking's kind of regulated parking, from the section type (AZL blue zone, VM green zone, VR residents, DUM loading, BUS coaches). |
 | `subCategory` | Property | `string` (list) |  |  | `sdm:subCategory` | The Smart Data Models sub-category where the name says it (music, theater). |
 | `address` | Property | [`PostalAddress`](#postaladdress) |  |  | `schema:address` | Where the station, the well, the event, the facility, the charging point or the street furniture is, as the city publishes it, field by field (Smart Data Models' common PostalAddress); a field the source leaves out is absent. |
+| `organizer` | Property | [`Organizer`](#organizer) |  |  | `schema:organizer` | Who runs the event: the museum, the library, the club or the city unit, never the feed or the register that announced it (that is `dataProvider` or `source`). Its name and, where the source names one, its web site; never a person's e-mail or phone. The same shape in every events space (praha-akce, slovensko-podujatia, bbsk-podujatia, banskabystrica-verejne), so one count per organizer reads across them. |
 | `contactPoint` | Property | [`ContactPoint`](#contactpoint) |  |  | `schema:contactPoint` | The public telephone line the agenda or the facility register lists. |
 | `source` | Property | `uri` |  |  | `sdm:source` | The open-data file or the Open Data BCN dataset the entity was read from. |
 | `id` | Property | `string` | yes |  | `ngsi-ld:hasId` | The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}. |
@@ -502,6 +503,16 @@ IRI: `schema:StructuredValue`
 | Attribute | NGSI-LD kind | Range | Required | Unit | IRI | Description |
 |---|---|---|---|---|---|---|
 | `temperature` | Property | `float` |  | Cel | `sdm:temperature` | The air temperature forecast as the day's highest or lowest. |
+
+### Organizer
+
+The value of `organizer`, never an entity of its own.
+
+IRI: `schema:Organization`
+
+| Attribute | NGSI-LD kind | Range | Required | Unit | IRI | Description |
+|---|---|---|---|---|---|---|
+| `name` | Property | `string` | yes |  | `schema:name` | The organizer's name as the agenda writes it (`Futbol Club Barcelona`). |
 
 ### Entity
 

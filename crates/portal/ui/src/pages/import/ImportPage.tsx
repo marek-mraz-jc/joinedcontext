@@ -69,10 +69,8 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
   const [problem, setProblem] = useState<string | null>(null);
   const permissions = usePermissions(project);
 
-  const post = async (dryRun: boolean) => {
-    if (!file) {
-      throw new Error(t("import.noFile"));
-    }
+  // Check and Propose are disabled until a file is chosen, so each is handed the chosen file.
+  const post = async (file: File, dryRun: boolean) => {
     // Through the typed client (UI-07). The document types a multipart body as a string; the
     // client passes the FormData through untouched so the browser writes the boundary.
     const { data, error, response } = await api.POST("/api/v1/projects/{project}/import", {
@@ -89,7 +87,7 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
   };
 
   const check = useMutation({
-    mutationFn: () => post(true),
+    mutationFn: (bundle: File) => post(bundle, true),
     onMutate: () => {
       setProblem(null);
       setChange(null);
@@ -102,21 +100,19 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
   });
 
   const propose = useMutation({
-    mutationFn: () => post(false),
+    mutationFn: (bundle: File) => post(bundle, false),
     onMutate: () => setProblem(null),
     onSuccess: (answered) => setChange(answered as unknown as Change),
     onError: (error: Error) => setProblem(error.message),
   });
 
-  const take = async (chosen: File | null) => {
+  // The drop zone hands over at least one file: an emptied choice fires nothing.
+  const take = async (chosen: File) => {
     setFile(chosen);
     setReport(null);
     setChange(null);
     setProblem(null);
     setPasted([]);
-    if (!chosen) {
-      return;
-    }
     // A zip is bytes; only a text bundle can be read for pasted credentials here, and the
     // server checks both.
     if (/\.(ya?ml|json)$/i.test(chosen.name)) {
@@ -159,7 +155,7 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
           button={t("form.dropOne")}
           hint={t("import.fileHelp")}
           accept=".zip,.yaml,.yml,.json"
-          onFiles={(files) => void take(files[0] ?? null)}
+          onFiles={(files) => void take(files[0])}
         >
           {file ? (
             <p className="text-caption text-fg">{t("form.chosenFiles", { names: file.name })}</p>
@@ -222,7 +218,7 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
-            onClick={() => check.mutate()}
+            onClick={() => file && check.mutate(file)}
             disabled={!file || pasted.length > 0}
             disabledReason={pasted.length > 0 ? t("import.clearPasted") : t("import.fileMissing")}
             loading={check.isPending}
@@ -231,7 +227,7 @@ export function ImportPage({ project }: { project: string }): JSX.Element {
           </Button>
           <Button
             variant="primary"
-            onClick={() => propose.mutate()}
+            onClick={() => file && propose.mutate(file)}
             disabled={!report || pasted.length > 0}
             disabledReason={pasted.length > 0 ? t("import.clearPasted") : t("import.checkFirst")}
             loading={propose.isPending}

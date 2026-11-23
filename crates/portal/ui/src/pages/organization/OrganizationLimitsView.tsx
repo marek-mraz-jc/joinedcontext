@@ -18,9 +18,6 @@ interface SettingRow {
 
 type ProjectLimits = NonNullable<OrganizationLimits["projects"]>[number];
 
-/** The limits are already read by the page around: the grids have no read of their own. */
-const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
-
 /** The quota dimensions a manifest count answers (PF-75), in the order a person reads them. */
 const COUNTED = ["contextSpaces", "residentPipelines", "publicEndpoints", "apps"] as const;
 /** The ones enforced at run time: only their limit is known here. */
@@ -168,7 +165,6 @@ export function OrganizationLimitsView({
               {t(`organization.limits.section.${section}`)}
             </h3>
             <AdminGrid<SettingRow>
-              query={LOADED}
               caption={t(`organization.limits.section.${section}`)}
               storageKey={`organization:limits:${section}`}
               rows={settings}
@@ -195,7 +191,6 @@ export function OrganizationLimitsView({
         <p className="text-body text-fg-muted">{t("organization.limits.perProjectLead")}</p>
         {/* A card per project below 640 px: a row of ten quota columns was cut off at 400 px. */}
         <AdminGrid<ProjectLimits>
-          query={LOADED}
           caption={t("organization.limits.perProject")}
           storageKey="organization:limits:projects"
           rows={limits.projects ?? []}

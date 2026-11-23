@@ -502,7 +502,7 @@ are zeroed on drop. A module builder gets its own entries only.
 | shako signing key | `JCBIN_SHAKO_SIGNING_KEY` | `JCBIN_SHAKO_SIGNING_KEY_FILE` | generated per boot |
 | shako service token | `JCBIN_SHAKO_TOKEN` | `JCBIN_SHAKO_TOKEN_FILE` | generated per boot, memory only |
 | ekiben API token | `JCBIN_EKIBEN_TOKEN` | `JCBIN_EKIBEN_TOKEN_FILE` | generated per boot, memory only |
-| dataroom Portal token | `JCBIN_DATAROOM_PORTAL_TOKEN` | `JCBIN_DATAROOM_PORTAL_TOKEN_FILE` | generated per boot, memory only |
+| dataroom Portal token | none (S11-23: a service token per publication; `JCBIN_DATAROOM_PORTAL_TOKEN` is ignored with a warning) | `JCBIN_DATAROOM_PORTAL_TOKEN_FILE` (deprecated, never read) | in-process issuer all in one, kaisatsu in a role split |
 | daiya Portal password | `JCBIN_DAIYA_PORTAL_PASSWORD` | `JCBIN_DAIYA_PORTAL_PASSWORD_FILE` | generated per boot, memory only |
 | Antares admin token | `JCBIN_ANTARES_ADMIN_TOKEN` | `JCBIN_ANTARES_ADMIN_TOKEN_FILE` | memory only; a 0600 file while the Portal runs beside it |
 | Portal age identity | refused (file only) | `JCBIN_PORTAL_AGE_KEY_FILE`, `portal.age_key_file` | the Portal's `JC_PORTAL_SOPS_AGE_KEY_FILE` |
