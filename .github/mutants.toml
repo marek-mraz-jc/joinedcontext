@@ -10,6 +10,9 @@ exclude_re = [
   # shako-store-pg mark_ready: a cache of the tenants this process caught up; without it each request catches up again
   # from the log and answers the same rows (T-7664).
   'shako/store-pg/src/lib\.rs:\d+:\d+: replace PgStore::mark_ready with \(\)',
+  # shako-store-pg PACKAGE_VERSION read: PackageVersionRecord has no manifest field and ignores unknown keys, so the whole
+  # row reads as the same record; the narrow read only spares loading the column's bytes (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: delete field read from struct Table expression',
   # shako-store-pg put: every row comes from to_row of a shako record, whose keys are non-empty snake_case field names,
   # so a check accepting non-empty or valid names refuses nothing more (T-7664).
   'shako/store-pg/src/tables\.rs:\d+:\d+: replace && with \|\| in put',
