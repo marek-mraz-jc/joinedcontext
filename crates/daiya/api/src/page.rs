@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! The dashboard page a person opens from the Portal: `{public}/d/{uid}?orgId={org}`
 //! (`crates/portal/src/api/grafana.rs:214`). Every panel's server-rendered table
-//! ([`panel_view`]), read with the caller's own rights; no script and no outside origin.
+//! ([`render_panel`]), read with the caller's own rights; no script and no outside origin.
 
-use crate::render::{PanelTimeRange, panel_view};
+use crate::render::{PanelTimeRange, PanelView, load_dashboard_for_read, render_panel};
 use crate::state::{DaiyaState, caller};
 use axum::Router;
 use axum::extract::{Path, Query, State};
@@ -11,11 +11,14 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use daiya_model::{
-    Action, Authorizer, CrError, DashboardDocument, Decision, ObjectTarget, OrgId, OrgKey, OrgRow,
+    Action, Authorizer, CrError, CrResult, Decision, ObjectTarget, OrgId, OrgKey, OrgRow,
     PanelSpec, ReadKind, ReadScope, RequestCtx, SERVER_ADMIN_ACTOR, Subject,
     validation::html_escape,
 };
+use futures_util::{StreamExt, stream};
 use serde::Deserialize;
+use std::time::Duration;
+use tokio::time::error::Elapsed;
 
 #[derive(Debug, Default, Deserialize)]
 struct PageParams {
@@ -164,6 +167,40 @@ fn page_reader(
     Some((subject, scoped))
 }
 
+/// How long one dashboard page may take, every panel included.
+const PAGE_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How many panels of one page are read at once.
+const PAGE_PANELS_AT_ONCE: usize = 8;
+
+/// One panel of the page; a panel past the deadline or in error names only its title.
+fn panel_section(title: &str, view: Result<CrResult<PanelView>, Elapsed>) -> String {
+    let inner = match view {
+        Ok(Ok(view)) => {
+            let mut out = format!("<h2>{}</h2>", html_escape(&view.panel_title));
+            if let Some(text) = &view.description {
+                out.push_str(&format!("<p>{}</p>", html_escape(text)));
+            }
+            match &view.access_denied_message {
+                Some(message) => out.push_str(&format!("<p>{}</p>", html_escape(message))),
+                // Escaped by `render_frames_html_table` / `sanitize_markdown_to_html`.
+                None => out.push_str(&view.html_table),
+            }
+            out
+        }
+        // The cause can name an upstream address: the page says only that it failed.
+        Ok(Err(_)) => format!(
+            "<h2>{}</h2><p>This panel could not be read.</p>",
+            html_escape(title)
+        ),
+        Err(_) => format!(
+            "<h2>{}</h2><p>This panel took too long to read. Reload the page to try again.</p>",
+            html_escape(title)
+        ),
+    };
+    format!("<section>{inner}</section>")
+}
+
 async fn dashboard_page(
     mut state: DaiyaState,
     headers: HeaderMap,
@@ -200,55 +237,37 @@ async fn dashboard_page(
             state = scoped;
         }
     }
-    let record = match state.store.get_dashboard(ctx.org_id, &uid).await {
-        Ok(Some(record)) => record,
-        Ok(None) => return refused(&CrError::NotFound("dashboard".into())),
+    let (record, doc) = match load_dashboard_for_read(&state, &ctx, &uid).await {
+        Ok(found) => found,
         Err(e) => return refused(&e),
     };
-    let target = ObjectTarget::Dashboard {
-        org_id: ctx.org_id,
-        dashboard_uid: record.uid.clone(),
-        folder_uid: record.folder_uid.clone(),
-    };
-    if let Err(e) = state
-        .authorizer
-        .check(&ctx, Action::Read, &target)
-        .into_result("Dashboard not found")
-    {
-        return refused(&e);
-    }
     let mut ids = Vec::new();
-    if let Ok(doc) = serde_json::from_value::<DashboardDocument>(record.data.clone()) {
-        panel_ids(doc.panels.as_deref().unwrap_or(&[]), &mut ids);
-    }
-    let mut body = String::new();
-    for (id, title) in ids {
-        let range = PanelTimeRange {
-            from: params.from.clone(),
-            to: params.to.clone(),
-            ..PanelTimeRange::default()
-        };
-        body.push_str("<section>");
-        match panel_view(&state, &ctx.subject, ctx.org_id, &uid, id, range).await {
-            Ok(view) => {
-                body.push_str(&format!("<h2>{}</h2>", html_escape(&view.panel_title)));
-                if let Some(text) = &view.description {
-                    body.push_str(&format!("<p>{}</p>", html_escape(text)));
-                }
-                match &view.access_denied_message {
-                    Some(message) => body.push_str(&format!("<p>{}</p>", html_escape(message))),
-                    // Escaped by `render_frames_html_table` / `sanitize_markdown_to_html`.
-                    None => body.push_str(&view.html_table),
-                }
+    panel_ids(doc.panels.as_deref().unwrap_or(&[]), &mut ids);
+    let range = PanelTimeRange {
+        from: params.from.clone(),
+        to: params.to.clone(),
+        ..PanelTimeRange::default()
+    };
+    // One deadline for the page and a few panels at a time (PRF-03, PRF-06): a slow source
+    // answers its own panel late, never the whole page past the deadline.
+    let deadline = tokio::time::Instant::now() + PAGE_DEADLINE;
+    let (state, ctx, record_ref, doc) = (&state, &ctx, &record, &doc);
+    let sections: Vec<String> = stream::iter(ids)
+        .map(|(id, title)| {
+            let range = range.clone();
+            async move {
+                let view = tokio::time::timeout_at(
+                    deadline,
+                    render_panel(state, ctx, record_ref, doc, id, range),
+                )
+                .await;
+                panel_section(&title, view)
             }
-            // The cause can name an upstream address: the page says only that it failed.
-            Err(_) => body.push_str(&format!(
-                "<h2>{}</h2><p>This panel could not be read.</p>",
-                html_escape(&title)
-            )),
-        }
-        body.push_str("</section>");
-    }
+        })
+        .buffered(PAGE_PANELS_AT_ONCE)
+        .collect()
+        .await;
+    let body = sections.concat();
     html(StatusCode::OK, &record.title, &body)
 }
 

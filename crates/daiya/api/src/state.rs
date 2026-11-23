@@ -16,16 +16,47 @@ use daiya_query::{
     Datasource, DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OutboundPolicy,
     QueryCache, SecretResolver, TokenExchanger, WasmPluginHost, Zeroizing, build_driver, guard_for,
 };
+use jc_types::{BoundedCache, OrgKeyed};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Live datasource drivers keyed by `(org_id, datasource_uid)`.
 pub type DriverMap = BTreeMap<(OrgId, String), Arc<dyn Datasource>>;
 
+/// The datasource a built driver belongs to: its organization and uid.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DriverKey(pub OrgId, pub String);
+
+impl OrgKeyed for DriverKey {
+    type Org = OrgId;
+
+    fn org_id(&self) -> OrgId {
+        self.0
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.1.capacity()
+    }
+}
+
 /// Drivers built from stored records, with the record revision (`version`, `updatedAt`) they
-/// were built from: a changed record builds a new driver.
-pub type BuiltDriverMap = BTreeMap<(OrgId, String), (String, Arc<dyn Datasource>)>;
+/// were built from: a changed record builds a new driver. Bounded (ISO-04, PRF-01): at most
+/// about [`BUILT_DRIVERS_KEPT`] per process, the Organization holding most gives one up first,
+/// and each lives [`BUILT_DRIVER_TTL`], so an idle pool closes and a rotated secret is read on
+/// the next build.
+pub type BuiltDriverMap = BoundedCache<DriverKey, (String, Arc<dyn Datasource>)>;
+
+/// What one built driver is charged in the cache: a Postgres pool or an HTTP client, not its
+/// heap size, so the byte budget counts drivers.
+const BUILT_DRIVER_BYTES: usize = 64 * 1024;
+
+/// About how many built drivers one process keeps.
+pub const BUILT_DRIVERS_KEPT: usize = 128;
+
+/// How long a built driver is reused before it is built again from its record.
+pub const BUILT_DRIVER_TTL: Duration = Duration::from_secs(600);
 
 /// Host-supplied resolver of a verified [`Subject`] (the Portal or jc binary that mounts daiya
 /// in-process and has already verified the session or bearer token). `None` means "not mine".
@@ -83,7 +114,7 @@ pub struct DaiyaState {
     /// Operator outbound settings for drivers built from stored datasource records.
     pub outbound_policy: OutboundPolicy,
     /// Drivers built from stored datasource records (see [`DaiyaState::driver_for`]).
-    pub built_drivers: Arc<RwLock<BuiltDriverMap>>,
+    pub built_drivers: Arc<BuiltDriverMap>,
     /// Checks that recognise the server administrator ([`DaiyaState::with_server_admin`],
     /// [`DaiyaState::with_server_admin_check`]); none by default.
     pub server_admin: Vec<ServerAdminCheck>,
@@ -136,7 +167,7 @@ impl DaiyaState {
             subject_resolver: None,
             page_reader: None,
             outbound_policy: OutboundPolicy::default(),
-            built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
+            built_drivers: Arc::new(BoundedCache::new(BUILT_DRIVERS_KEPT * BUILT_DRIVER_BYTES)),
             server_admin: Vec::new(),
             own_reach: Vec::new(),
             endpoint_bases: Vec::new(),
@@ -377,12 +408,12 @@ impl DaiyaState {
         if let Some(driver) = self.get_datasource_driver(record.org_id, &record.uid) {
             return Ok(driver);
         }
-        let key = (record.org_id, record.uid.clone());
+        let key = DriverKey(record.org_id, record.uid.clone());
         let revision = format!("{}@{}", record.version, record.updated_at.to_rfc3339());
-        if let Some((built_rev, driver)) = self.built_drivers.read().get(&key)
-            && *built_rev == revision
+        if let Some((built_rev, driver)) = self.built_drivers.get(&key)
+            && built_rev == revision
         {
-            return Ok(driver.clone());
+            return Ok(driver);
         }
         let deps = DriverDeps {
             secrets: self.secret_resolver.clone(),
@@ -390,10 +421,21 @@ impl DaiyaState {
             policy: self.driver_policy(),
         };
         let driver = build_driver(record, &deps).await?;
-        self.built_drivers
-            .write()
-            .insert(key, (revision, driver.clone()));
+        // ponytail: concurrent first uses each build a driver and the last one stays; a per-key
+        // once-cell if a burst of first queries shows up in the pool count.
+        self.built_drivers.insert(
+            key,
+            (revision, driver.clone()),
+            BUILT_DRIVER_BYTES,
+            BUILT_DRIVER_TTL,
+        );
         Ok(driver)
+    }
+
+    /// Drops the driver built for a datasource that is gone, so its pool closes now.
+    pub fn forget_built_driver(&self, org_id: OrgId, uid: &str) {
+        self.built_drivers
+            .remove(&DriverKey(org_id, uid.to_owned()));
     }
 
     /// Convenience constructor with a permissive policy for standalone tests.

@@ -362,10 +362,11 @@ async fn import_writes_records_reports_and_an_audit_row() {
         .await
         .unwrap();
 
-    // Dry run: a report, an audit row, nothing stored.
+    // Dry run: a report for the caller, nothing stored, no report row (OPS-04).
     let dry = import(&store, &[input(dashboard("a"))], true).await;
     assert!(dry.dry_run);
     assert!(store.get_dashboard(ORG, "a").await.unwrap().is_none());
+    assert!(store.list_import_reports(ORG).await.unwrap().is_empty());
 
     let mut no_uid = dashboard("");
     no_uid.as_object_mut().unwrap().remove("uid");
@@ -418,11 +419,10 @@ async fn import_writes_records_reports_and_an_audit_row() {
     assert_eq!(placed.folder_uid.as_deref(), Some("explicit"));
 
     let audits = store.list_import_reports(ORG).await.unwrap();
-    assert_eq!(audits.len(), 2);
+    assert_eq!(audits.len(), 1, "the dry run wrote no report");
     assert_eq!(audits[0].status, "completed_with_refusals");
     assert_eq!(audits[0].dashboard_count, 4);
-    assert_eq!(audits[1].status, "success");
-    assert!(audits[1].dry_run);
+    assert!(!audits[0].dry_run);
 }
 
 #[tokio::test]
@@ -481,6 +481,12 @@ async fn a_plan_of_the_live_state_has_no_changes_and_each_difference_is_named() 
     assert!(!plan.has_changes, "{:?}", plan.diffs);
     assert!(plan.diffs.iter().all(|d| d.action == "unchanged"));
     assert_eq!(plan.diffs.len(), 3);
+    let reports = store.list_import_reports(ORG).await.unwrap();
+    assert_eq!(
+        reports.len(),
+        1,
+        "the import wrote one, the plan none (OPS-04)"
+    );
 
     // Every field apply would write counts as a change.
     let mut ds_changes: Vec<DatasourceRecord> = Vec::new();

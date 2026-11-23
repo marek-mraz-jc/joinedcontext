@@ -402,6 +402,31 @@ async fn concurrency_is_capped_per_plugin_and_per_organization() {
     );
 }
 
+#[test]
+fn the_organization_limits_follow_the_loaded_adapters_not_every_organization() {
+    let h = host(WasmLimits::default());
+    let kept = load(&h, Guest::new(b"orgs")).0;
+    for n in 1..=1_000u128 {
+        drop(load_in(
+            &h,
+            Guest::new(b"orgs"),
+            OrgId::from_u128(1_000 + n),
+        ));
+    }
+    // The last adapter is dropped only after its own lookup: the map holds it and `kept`.
+    assert!(h.organizations_held() <= 2, "{}", h.organizations_held());
+    let again = load(&h, Guest::new(b"orgs")).0;
+    drop(load_in(&h, Guest::new(b"orgs"), OrgId::from_u128(7)));
+    assert_eq!(
+        h.organizations_held(),
+        2,
+        "ORG stays while its adapters live"
+    );
+    drop((kept, again));
+    drop(load_in(&h, Guest::new(b"orgs"), OrgId::from_u128(8)));
+    assert_eq!(h.organizations_held(), 1);
+}
+
 #[tokio::test]
 async fn health_resource_and_target_exports() {
     let c = ctx(Subject::anonymous());

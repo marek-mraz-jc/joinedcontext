@@ -6,9 +6,10 @@
 //! SQL, the public-token policy, the boot check, the pool configuration and persistence.
 
 use daiya_model::{
-    ApplyBundle, DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
-    InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord,
-    PublicDashboardRecord, ShareType, org_state_etag, sha256_hex,
+    ApplyBundle, DASHBOARD_VERSIONS_KEPT, DaiyaStore, DashboardRecord, DatasourceRecord,
+    FolderRecord, IMPORT_REPORTS_KEPT, ImportReportRecord, InstallationId, InstanceId,
+    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord, PublicDashboardRecord,
+    ShareType, org_state_etag, sha256_hex,
 };
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
@@ -914,6 +915,59 @@ async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
     assert_eq!(reports[0].summary["n"], 1);
 }
 
+/// Version history and import reports are trimmed to their retention counts (STO-12, STO-13):
+/// the newest stay, the current version among them.
+async fn contract_retention(store: &dyn DaiyaStore) {
+    let org = OrgId::generate();
+    let kept = usize::try_from(DASHBOARD_VERSIONS_KEPT).unwrap();
+    let mut saved = store
+        .upsert_dashboard(dashboard(org, "kept", None), "", false)
+        .await
+        .unwrap();
+    for _ in 0..kept + 5 {
+        saved = store.upsert_dashboard(saved, "", false).await.unwrap();
+    }
+    let versions = store.list_dashboard_versions(org, "kept").await.unwrap();
+    assert_eq!(versions.len(), kept);
+    let newest = versions.iter().map(|v| v.version).max();
+    assert_eq!(newest, Some(saved.version), "the current version stays");
+    assert_eq!(
+        versions.iter().map(|v| v.version).min(),
+        Some(saved.version - DASHBOARD_VERSIONS_KEPT as i32 + 1)
+    );
+
+    let base = TimestampTz(TimestampTz::now().0 - SignedDuration::from_hours(1));
+    let reports = IMPORT_REPORTS_KEPT + 3;
+    for i in 0..reports {
+        store
+            .insert_import_report(
+                InstallationId::SINGLE,
+                ImportReportRecord {
+                    id: format!("r{i:04}"),
+                    org_id: org,
+                    instance_id: INSTANCE,
+                    dry_run: false,
+                    status: "ok".into(),
+                    dashboard_count: 1,
+                    refused_count: 0,
+                    mapped_count: 0,
+                    summary: json!({ "n": i }),
+                    created_at: TimestampTz(base.0 + SignedDuration::from_secs(i)),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let listed = store.list_import_reports(org).await.unwrap();
+    assert_eq!(listed.len(), usize::try_from(IMPORT_REPORTS_KEPT).unwrap());
+    assert_eq!(
+        listed[0].id,
+        format!("r{:04}", reports - 1),
+        "the newest stays"
+    );
+    assert_eq!(listed.last().unwrap().id, "r0003", "the oldest three went");
+}
+
 /// Plans are kept per organization, expire, and are capped; `apply_bundle` writes a bundle whole
 /// or not at all, refuses a moved base etag, and lets one of two concurrent bundles on one base
 /// through (R2, §7.3).
@@ -1040,6 +1094,7 @@ async fn run_contract(store: &dyn DaiyaStore) {
     contract_library_panels(store).await;
     contract_public_dashboards(store).await;
     contract_stats_and_reports(store).await;
+    contract_retention(store).await;
     contract_rows(store).await;
     contract_plans_and_apply(store).await;
 }

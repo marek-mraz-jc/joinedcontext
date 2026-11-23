@@ -8,9 +8,10 @@ use daiya_expr::{
     parse_duration_ms,
 };
 use daiya_model::{
-    Action, Authorizer, CrError, CrResult, DashboardDocument, DataTransformerConfig,
-    DatasourceRecord, FieldType, Frame, FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec,
-    RequestCtx, Subject, sanitize_markdown_to_html, sha256_hex, validation::html_escape,
+    Action, Authorizer, CrError, CrResult, DashboardDocument, DashboardRecord,
+    DataTransformerConfig, DatasourceRecord, FieldType, Frame, FrameSet, GridPos, ObjectTarget,
+    OrgId, PanelSpec, RequestCtx, Subject, sanitize_markdown_to_html, sha256_hex,
+    validation::html_escape,
 };
 use daiya_query::{CacheKey, Query, QueryCtx};
 use jc_time::TimestampTz;
@@ -441,7 +442,18 @@ pub async fn panel_view(
         state.default_instance_id,
         subject.clone(),
     );
+    let (dash_record, doc) = load_dashboard_for_read(state, &req_ctx, dashboard_uid).await?;
+    render_panel(state, &req_ctx, &dash_record, &doc, panel_id, range).await
+}
 
+/// The stored dashboard `dashboard_uid` and its document, once the caller in `req_ctx` may read
+/// it; a page of panels loads and authorises it once and renders each panel with [`render_panel`].
+pub async fn load_dashboard_for_read(
+    state: &DaiyaState,
+    req_ctx: &RequestCtx,
+    dashboard_uid: &str,
+) -> CrResult<(DashboardRecord, DashboardDocument)> {
+    let org_id = req_ctx.org_id;
     let dash_record = state
         .store
         .get_dashboard(org_id, dashboard_uid)
@@ -449,7 +461,7 @@ pub async fn panel_view(
         .ok_or_else(|| CrError::NotFound(format!("Dashboard '{dashboard_uid}' not found")))?;
 
     let dash_decision = state.authorizer.check(
-        &req_ctx,
+        req_ctx,
         Action::Read,
         &ObjectTarget::Dashboard {
             org_id,
@@ -461,7 +473,21 @@ pub async fn panel_view(
 
     let doc: DashboardDocument = serde_json::from_value(dash_record.data.clone())
         .map_err(|e| CrError::Internal(format!("stored dashboard failed to deserialize: {e}")))?;
+    Ok((dash_record, doc))
+}
 
+/// Panel `panel_id` of a dashboard [`load_dashboard_for_read`] loaded for `req_ctx`: each of its
+/// sources is still checked, the dashboard is not loaded or decided again.
+pub async fn render_panel(
+    state: &DaiyaState,
+    req_ctx: &RequestCtx,
+    dash_record: &DashboardRecord,
+    doc: &DashboardDocument,
+    panel_id: u32,
+    range: PanelTimeRange,
+) -> CrResult<PanelView> {
+    let org_id = req_ctx.org_id;
+    let dashboard_uid = dash_record.uid.as_str();
     let panels = doc.panels.as_deref().unwrap_or(&[]);
     let panel = find_panel_in_slice(panels, panel_id).ok_or_else(|| {
         CrError::NotFound(format!(
@@ -494,8 +520,8 @@ pub async fn panel_view(
             .unwrap_or("");
         let safe_html = sanitize_markdown_to_html(md_content);
         return Ok(PanelView {
-            dashboard_uid: dash_record.uid,
-            dashboard_title: dash_record.title,
+            dashboard_uid: dash_record.uid.clone(),
+            dashboard_title: dash_record.title.clone(),
             panel_id,
             panel_title,
             panel_type: panel.panel_type,
@@ -531,7 +557,7 @@ pub async fn panel_view(
             .unwrap_or("");
         if !ds_uid.is_empty() && ds_uid != "-- Mixed --" && !is_expression_datasource_uid(ds_uid) {
             let dec = state.authorizer.check(
-                &req_ctx,
+                req_ctx,
                 Action::Read,
                 &ObjectTarget::Datasource {
                     org_id,
@@ -543,8 +569,8 @@ pub async fn panel_view(
                 // source exists at all, is not told to a caller who may not read it.
                 let msg = format!("You cannot read the source of this panel: {ds_uid}");
                 return Ok(PanelView {
-                    dashboard_uid: dash_record.uid,
-                    dashboard_title: dash_record.title,
+                    dashboard_uid: dash_record.uid.clone(),
+                    dashboard_title: dash_record.title.clone(),
                     panel_id,
                     panel_title: panel_title.clone(),
                     panel_type: panel.panel_type,
@@ -611,7 +637,7 @@ pub async fn panel_view(
     } else {
         execute_targets_and_expressions(
             state,
-            &req_ctx,
+            req_ctx,
             default_ds_uid,
             &raw_targets,
             from_ms,
@@ -671,8 +697,8 @@ pub async fn panel_view(
     let html_table = render_frames_html_table(&panel_title, &all_frames, 50);
 
     Ok(PanelView {
-        dashboard_uid: dash_record.uid,
-        dashboard_title: dash_record.title,
+        dashboard_uid: dash_record.uid.clone(),
+        dashboard_title: dash_record.title.clone(),
         panel_id,
         panel_title,
         panel_type: panel.panel_type,

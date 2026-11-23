@@ -333,9 +333,12 @@ pub async fn import_dashboards(
     for (rep, record) in report.dashboards.iter_mut().zip(records) {
         rep.uid = store.upsert_dashboard(record, "imported", true).await?.uid;
     }
-    store
-        .insert_import_report(installation_id, audit_record(org_id, instance_id, &report))
-        .await?;
+    // A dry run (and so every Plan) writes nothing, its report included (OPS-04).
+    if !dry_run {
+        store
+            .insert_import_report(installation_id, audit_record(org_id, instance_id, &report))
+            .await?;
+    }
     Ok(report)
 }
 

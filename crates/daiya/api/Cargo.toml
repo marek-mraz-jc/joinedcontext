@@ -10,11 +10,13 @@ axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 bytes = "1"
 jc-time = { path = "../../shared/jc-time" }
+jc-types = { path = "../../shared/jc-types" }
 jc-audit = { path = "../../shared/jc-audit" }
 daiya-expr = { path = "../expr" }
 daiya-import = { path = "../import" }
 daiya-model = { path = "../model" }
 daiya-query = { path = "../query" }
+futures-util = "0.3"
 hex = "0.4"
 http = "1"
 http-body-util = "0.1"
