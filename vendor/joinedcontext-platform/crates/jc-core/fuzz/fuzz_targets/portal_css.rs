@@ -14,10 +14,12 @@ fuzz_target!(|data: &[u8]| {
     };
     assert!(!out.contains("</"), "{out}");
     let lower = out.to_ascii_lowercase();
+    // What a browser reads as CSS, every string's text blanked: a string may say anything.
+    let bare = outside_strings(&lower);
     for refused in ["@import", "@font-face", "@namespace", "expression(", "!important", ":has("] {
-        assert!(!lower.contains(refused), "{refused} in {out}");
+        assert!(!bare.contains(refused), "{refused} in {out}");
     }
-    for line in out.lines() {
+    for line in bare.lines() {
         let line = line.trim_start();
         if line.ends_with('{') && !line.starts_with("@media") {
             for selector in line.trim_end_matches('{').split(", body.") {
@@ -31,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
     }
     // A `url(` right after a name character is a dimension's unit and a parenthesis, which no
     // browser fetches; every function `url(` names a portal file.
-    for (at, _) in outside_strings(&lower).match_indices("url(") {
+    for (at, _) in bare.match_indices("url(") {
         let after_name = lower[..at]
             .chars()
             .next_back()

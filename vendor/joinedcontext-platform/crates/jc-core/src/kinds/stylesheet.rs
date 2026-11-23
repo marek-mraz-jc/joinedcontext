@@ -180,6 +180,14 @@ impl Css {
     }
 
     fn token(&mut self, t: &Token<'_>) {
+        // Whitespace, a newline or a run of it, is one space: the walk keeps no layout.
+        if matches!(t, Token::WhiteSpace(_)) {
+            if !self.text.ends_with(' ') {
+                self.text.push(' ');
+            }
+            self.last = Token::WhiteSpace(" ").serialization_type();
+            return;
+        }
         let kind = t.serialization_type();
         if self.last.needs_separator_when_before(kind) {
             self.text.push_str("/**/");
@@ -659,6 +667,9 @@ fn value_token<'i>(
         | Token::Percentage {
             unit_value: value, ..
         } => {
+            if value.is_nan() || value.abs() > 1e6 {
+                return Err(refuse(p, at, "numbers up to 1000000"));
+            }
             if property.ends_with("-shadow") && !small_shadow(t) {
                 return Err(refuse(
                     p,
@@ -870,6 +881,7 @@ mod tests {
             ("a { display: none }", "`display: none`"),
             ("a { margin-top: -40px }", "negative margins"),
             (".x { margin-left: 3000px }", "at most 64px"),
+            (".x { line-height: 3e38 }", "numbers up to 1000000"),
             (".x { padding: 0 0 0 50% }", "at most 64px"),
             (".x { gap: 10vw }", "at most 64px"),
             (".x { font-size: 300px }", "at most 64px"),
@@ -946,6 +958,8 @@ mod tests {
                 scoped_stylesheet(&out.replace("body.jc-portal-x ", ""), "jc-portal-x").unwrap();
             assert_eq!(again, out, "{css}");
         }
+        let out = scoped_stylesheet("a\n\n  +\tb { color:  #ffffff }", "jc-portal-x").unwrap();
+        assert_eq!(out, "body.jc-portal-x a + b {\n  color: #ffffff;\n}\n");
     }
 
     /// The hostile stylesheets the open data portal's Playwright check draws over the licence and

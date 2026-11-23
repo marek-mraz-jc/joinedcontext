@@ -939,6 +939,8 @@ fn with_appearance(
             .collect(),
         pages: Vec::new(),
         tokens: readable_tokens(&block, look),
+        // T-7745: a portal's own stylesheet is set by `catalogue_looks`, for its catalogue alone.
+        stylesheet: None,
     };
     // T-7743: the look's display over the installation's, list by list.
     block.display = look.display.over(&block.display);
