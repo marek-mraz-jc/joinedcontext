@@ -967,7 +967,9 @@ fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
         )
     };
     let about = |html: &str| -> String {
-        let start = html.find("<dl class=\"jc-about-list\">").expect("the about table");
+        let start = html
+            .find("<dl class=\"jc-about-list\">")
+            .expect("the about table");
         let end = start + html[start..].find("</dl>").expect("its end");
         html[start..end]
             .split("<dt>")
@@ -979,7 +981,14 @@ fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
     let shown = page(&block);
     assert_safe_page("dataset fields", &shown, "en");
     let rows = about(&shown);
-    let fields: Vec<&str> = rows.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect();
+    let fields: Vec<&str> = rows
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     assert_eq!(
         fields,
         [
@@ -989,16 +998,28 @@ fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
         ],
         "after the built-in rows, in the definitions' order: {rows}"
     );
-    assert!(!shown.contains("alert(1)"), "a value its type refuses shows nowhere");
-    assert!(!shown.contains("javascript:alert(2)"), "an undefined extra shows nowhere");
+    assert!(
+        !shown.contains("alert(1)"),
+        "a value its type refuses shows nowhere"
+    );
+    assert!(
+        !shown.contains("javascript:alert(2)"),
+        "an undefined extra shows nowhere"
+    );
 
     // doprava: its display lists the licence only, so no field shows.
     let mut doprava = block.clone();
-    doprava.display = serde_json::from_value(json!({ "dataset": { "about": ["license"] } }))
-        .expect("display");
+    doprava.display =
+        serde_json::from_value(json!({ "dataset": { "about": ["license"] } })).expect("display");
     let hidden = about(&page(&doprava));
-    assert!(!hidden.contains("Funding") && !hidden.contains("2026-11-23"), "{hidden}");
-    assert!(!page(&doprava).contains(">x_funding<"), "nor under More details");
+    assert!(
+        !hidden.contains("Funding") && !hidden.contains("2026-11-23"),
+        "{hidden}"
+    );
+    assert!(
+        !page(&doprava).contains(">x_funding<"),
+        "nor under More details"
+    );
     // A display listing a field shows it, labelled, where it is listed.
     let mut listed = block.clone();
     listed.display =

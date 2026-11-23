@@ -123,7 +123,10 @@ pub fn validate(fields: &[DatasetField]) -> Result<()> {
     if fields.len() > MAX_DATASET_FIELDS {
         return Err(invalid(
             "spec.datasetFields",
-            format!("at most {MAX_DATASET_FIELDS} fields, found {}", fields.len()),
+            format!(
+                "at most {MAX_DATASET_FIELDS} fields, found {}",
+                fields.len()
+            ),
         ));
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -179,7 +182,10 @@ pub fn validate(fields: &[DatasetField]) -> Result<()> {
                 }
             }
             _ if !field.values.is_empty() => {
-                return Err(invalid(&format!("{at}.values"), "only an enum field takes values"));
+                return Err(invalid(
+                    &format!("{at}.values"),
+                    "only an enum field takes values",
+                ));
             }
             _ => {}
         }
@@ -200,7 +206,10 @@ pub fn validate_values(values: &BTreeMap<String, String>) -> Result<()> {
     for (name, value) in values {
         let at = format!("spec.catalog.fields.{name}");
         if names::validate_dns1123_label(name).is_err() || name.len() > 62 {
-            return Err(invalid(&at, "a field name is a DNS label such as `funding`"));
+            return Err(invalid(
+                &at,
+                "a field name is a DNS label such as `funding`",
+            ));
         }
         if value.chars().count() > MAX_FIELD_VALUE || value.chars().any(char::is_control) {
             return Err(invalid(
@@ -225,7 +234,8 @@ pub fn check_values(defs: &[DatasetField], values: &BTreeMap<String, String>) ->
                 "the Organization defines no such dataset field; pick one of its spec.datasetFields",
             ));
         };
-        def.check_value(value).map_err(|reason| invalid(&at, reason))?;
+        def.check_value(value)
+            .map_err(|reason| invalid(&at, reason))?;
     }
     for def in defs.iter().filter(|d| d.required) {
         if values.get(&def.name).is_none_or(|v| v.trim().is_empty()) {
@@ -317,7 +327,10 @@ mod tests {
                 vec![("funding", "eu"), ("other", "x")],
                 "spec.catalog.fields.other",
             ),
-            (vec![("reviewed", "2026-11-23")], "spec.catalog.fields.funding"),
+            (
+                vec![("reviewed", "2026-11-23")],
+                "spec.catalog.fields.funding",
+            ),
         ] {
             let err = check_values(&defs(), &values(&pairs)).expect_err("refused");
             assert_eq!(field_of(err), named, "{pairs:?}");
@@ -330,18 +343,36 @@ mod tests {
         let too_many: Vec<_> = (0..21)
             .map(|i| field(&format!("f{i}"), DatasetFieldType::Text, &[], false))
             .collect();
-        assert_eq!(field_of(validate(&too_many).unwrap_err()), "spec.datasetFields");
+        assert_eq!(
+            field_of(validate(&too_many).unwrap_err()),
+            "spec.datasetFields"
+        );
         let twice = vec![defs()[1].clone(), defs()[1].clone()];
-        assert_eq!(field_of(validate(&twice).unwrap_err()), "spec.datasetFields[1].name");
+        assert_eq!(
+            field_of(validate(&twice).unwrap_err()),
+            "spec.datasetFields[1].name"
+        );
         let bad_name = vec![field("Funding_1", DatasetFieldType::Text, &[], false)];
-        assert_eq!(field_of(validate(&bad_name).unwrap_err()), "spec.datasetFields[0].name");
+        assert_eq!(
+            field_of(validate(&bad_name).unwrap_err()),
+            "spec.datasetFields[0].name"
+        );
         let empty_enum = vec![field("f", DatasetFieldType::Enum, &[], false)];
-        assert_eq!(field_of(validate(&empty_enum).unwrap_err()), "spec.datasetFields[0].values");
+        assert_eq!(
+            field_of(validate(&empty_enum).unwrap_err()),
+            "spec.datasetFields[0].values"
+        );
         let text_values = vec![field("f", DatasetFieldType::Text, &["a"], false)];
-        assert_eq!(field_of(validate(&text_values).unwrap_err()), "spec.datasetFields[0].values");
+        assert_eq!(
+            field_of(validate(&text_values).unwrap_err()),
+            "spec.datasetFields[0].values"
+        );
         let mut no_label = field("f", DatasetFieldType::Text, &[], false);
         no_label.label.clear();
-        assert_eq!(field_of(validate(&[no_label]).unwrap_err()), "spec.datasetFields[0].label");
+        assert_eq!(
+            field_of(validate(&[no_label]).unwrap_err()),
+            "spec.datasetFields[0].label"
+        );
     }
 
     #[test]

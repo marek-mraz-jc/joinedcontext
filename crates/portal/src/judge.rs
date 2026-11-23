@@ -905,7 +905,9 @@ mod tests {
                           "values": ["eu", "city"], "required": true }] })),
                     project(json!({})),
                 ],
-                air(endpoint(json!({ "catalog": { "fields": { "funding": "state" } } }))),
+                air(endpoint(
+                    json!({ "catalog": { "fields": { "funding": "state" } } }),
+                )),
             ),
             "scripts" => {
                 let code = "bento.v0_msg_set_string('x')";

@@ -1080,12 +1080,19 @@ pub fn displayed_about(
     let mut out = Vec::new();
     for name in order {
         if let Some(key) = name.strip_prefix("extras.") {
-            if let Some((field, value)) = fields.filled(&ds.extras).find(|(f, _)| f.extra_key() == key) {
+            if let Some((field, value)) = fields
+                .filled(&ds.extras)
+                .find(|(f, _)| f.extra_key() == key)
+            {
                 out.push(field_row(field, value));
                 continue;
             }
             let defined = fields.fields.iter().any(|f| f.extra_key() == key);
-            if let Some(text) = ds.extras.get(key).filter(|t| !defined && !t.trim().is_empty()) {
+            if let Some(text) = ds
+                .extras
+                .get(key)
+                .filter(|t| !defined && !t.trim().is_empty())
+            {
                 out.push(AboutRow {
                     key: "",
                     label: key.to_owned(),

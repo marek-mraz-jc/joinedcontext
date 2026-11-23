@@ -21,6 +21,7 @@ import {
   columnsOf,
   fieldLabel,
   fieldProblems,
+  fieldRefusal,
   formOf,
   FREQUENCIES,
   hiddenOf,
@@ -278,7 +279,11 @@ function Flow({
         ) : null}
         {propose.error ? (
           <Alert tone="danger" role="alert">
-            {problemOf(propose.error, t("app.error.generic"))}
+            {(() => {
+              const text = problemOf(propose.error, t("app.error.generic"));
+              const refused = fieldRefusal(text, (drafted.draft.datasetFields ?? []) as DatasetField[], drafted.form.language);
+              return refused ? t("catalogue.publish.fieldRefused", { field: refused.label, reason: refused.reason }) : text;
+            })()}
           </Alert>
         ) : null}
         <div className="flex justify-between gap-2">

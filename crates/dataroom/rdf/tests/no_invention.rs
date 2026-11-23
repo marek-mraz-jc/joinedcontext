@@ -62,7 +62,14 @@ fn inventions(profile: DcatProfile) -> Vec<String> {
         RdfFormat::RdfXml,
         RdfFormat::NTriples,
     ] {
-        let one = serialize_dataset(&dataset, &catalogue, None, format, profile, &Default::default());
+        let one = serialize_dataset(
+            &dataset,
+            &catalogue,
+            None,
+            format,
+            profile,
+            &Default::default(),
+        );
         let all = serialize_catalogue(
             &catalogue,
             std::slice::from_ref(&dataset),

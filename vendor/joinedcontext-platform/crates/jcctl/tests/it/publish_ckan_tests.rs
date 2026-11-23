@@ -883,8 +883,12 @@ fn the_organization_dataset_fields_reach_the_dataset_as_x_extras() {
         .iter()
         .filter_map(|extra| {
             let key = extra["key"].as_str()?;
-            key.starts_with("x_")
-                .then(|| (key.to_owned(), extra["value"].as_str().unwrap_or_default().to_owned()))
+            key.starts_with("x_").then(|| {
+                (
+                    key.to_owned(),
+                    extra["value"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
         })
         .collect();
     assert_eq!(

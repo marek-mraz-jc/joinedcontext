@@ -13,6 +13,7 @@ import {
   catalogOf,
   columnsOf,
   fieldProblems,
+  fieldRefusal,
   formOf,
   hiddenOf,
   problems,
@@ -470,6 +471,8 @@ describe("the publish form", () => {
     });
     expect(catalogOf(draft, { ...form, fields: { funding: " eu ", reviewed: " " } }).fields).toEqual({ funding: "eu" });
     expect(catalogOf({ ...draft, fields: { funding: "eu" } }, { ...form, fields: { funding: "" } }).fields).toBeUndefined();
+    expect(fieldRefusal("invalid spec.catalog.fields.funding: one of: eu, city", FIELDS, "sk")).toEqual({ label: "Financovanie", reason: "one of: eu, city" });
+    expect(fieldRefusal("spec.audience: refused", FIELDS, "sk")).toBeNull();
   });
 
   it("a draft with nothing in it is a form with nothing in it", () => {

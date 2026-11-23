@@ -63,7 +63,6 @@ pub use app::{
     AppServiceLimits, AppSource, AppSpec, AppVisibility, ContentSecurityPolicy, DataNeed,
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
-pub use dataset_fields::{DatasetField, DatasetFieldType};
 pub use appearance::{
     contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceDisplay,
     AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, ButtonStyle, CardShadow,
@@ -99,6 +98,7 @@ pub use data_source::{
     HttpPagingOrder, HttpPreset, HttpPresetKind, MqttConnection, TlsSettings, WebSocketConnection,
     WebhookBearer, WebhookConnection, WebhookHmac,
 };
+pub use dataset_fields::{DatasetField, DatasetFieldType};
 pub use dataspace::{
     AgreementConstraints, AgreementRole, AgreementState, ConnectorEngine, DataAgreementSpec,
     DataOfferSpec, DataSpaceParticipantSpec, Did,

@@ -96,8 +96,12 @@ fn a_complete_dataset_passes_every_profiles_shapes() {
 fn the_organization_dataset_fields_keep_every_feed_valid() {
     let (catalogue, mut dataset) = complete();
     dataset.extras.insert("x_funding".into(), "eu".into());
-    dataset.extras.insert("x_reviewed".into(), "2026-11-23".into());
-    dataset.extras.insert("x_reviewed_by".into(), "not a field".into());
+    dataset
+        .extras
+        .insert("x_reviewed".into(), "2026-11-23".into());
+    dataset
+        .extras
+        .insert("x_reviewed_by".into(), "not a field".into());
     let fields = dataroom_core::branding::BrandingDatasetFields {
         organization: "bbsk".into(),
         namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
@@ -134,8 +138,9 @@ fn the_organization_dataset_fields_keep_every_feed_valid() {
         );
         assert!(!ttl.contains("not a field"), "an undefined extra stays out");
         // The JSON-LD feed declares the Organization's namespace in its context.
-        let doc: Value = serde_json::from_str(&dataroom_rdf::jsonld::serialize_graph_jsonld(&graph))
-            .expect("JSON-LD");
+        let doc: Value =
+            serde_json::from_str(&dataroom_rdf::jsonld::serialize_graph_jsonld(&graph))
+                .expect("JSON-LD");
         assert_eq!(
             doc["@context"]["fields-bbsk"],
             "https://bbsk.sk/ns/dataset-fields/bbsk/",

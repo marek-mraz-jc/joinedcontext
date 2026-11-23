@@ -1919,7 +1919,14 @@ mod tests {
             DcatProfile::from_token("dcat-ap-cz").expect("installed"),
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
-            let emitted_ttl = serialize_dataset(ds_cz, &cat, None, RdfFormat::Turtle, profile, &Default::default());
+            let emitted_ttl = serialize_dataset(
+                ds_cz,
+                &cat,
+                None,
+                RdfFormat::Turtle,
+                profile,
+                &Default::default(),
+            );
             let reparsed = parse_datasets_from_rdf(
                 &emitted_ttl,
                 RdfFormat::Turtle,
@@ -2151,7 +2158,14 @@ mod tests {
             RdfFormat::RdfXml,
             RdfFormat::JsonLd,
         ] {
-            let text = serialize_dataset(&ds, &cat, None, format, DcatProfile::eu(), &Default::default());
+            let text = serialize_dataset(
+                &ds,
+                &cat,
+                None,
+                format,
+                DcatProfile::eu(),
+                &Default::default(),
+            );
             let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
                 Ok(v) => v,
                 Err(e) => panic!("{format:?} output must parse: {e}\n{text}"),
@@ -2174,7 +2188,14 @@ mod tests {
             DcatProfile::from_token("dcat-ap-cz").expect("installed"),
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
-            let text = serialize_dataset(&ds, &cat, None, RdfFormat::JsonLd, profile, &Default::default());
+            let text = serialize_dataset(
+                &ds,
+                &cat,
+                None,
+                RdfFormat::JsonLd,
+                profile,
+                &Default::default(),
+            );
             let g = match parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default()) {
                 Ok(v) => v,
                 Err(e) => panic!("{profile:?} JSON-LD must parse: {e}\n{text}"),
@@ -2281,7 +2302,8 @@ mod tests {
                 RdfFormat::RdfXml,
                 RdfFormat::JsonLd,
             ] {
-                let text = serialize_dataset(&src, &cat, None, format, profile, &Default::default());
+                let text =
+                    serialize_dataset(&src, &cat, None, format, profile, &Default::default());
                 let back = match parse_datasets_from_rdf(
                     &text,
                     format,
@@ -2758,7 +2780,14 @@ mod tests {
         let ds: Dataset = serde_json::from_value(v).expect("dataset");
         let cid = ds.catalogue_id;
         let cat = sample_catalogue(ds.org_id, cid);
-        let ttl = serialize_dataset(&ds, &cat, None, RdfFormat::NTriples, DcatProfile::eu(), &Default::default());
+        let ttl = serialize_dataset(
+            &ds,
+            &cat,
+            None,
+            RdfFormat::NTriples,
+            DcatProfile::eu(),
+            &Default::default(),
+        );
         let lines: Vec<&str> = ttl
             .lines()
             .filter(|l| l.contains("issued") || l.contains("modified") || l.contains("Date>"))

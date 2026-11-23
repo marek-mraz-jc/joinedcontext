@@ -1732,7 +1732,10 @@ async fn dataset_fields_are_checked_against_the_endpoints_own_organization() {
     };
     for (fields, named) in [
         (json!({ "funding": "state" }), "spec.catalog.fields.funding"),
-        (json!({ "reviewed": "2026-11-23" }), "spec.catalog.fields.funding"),
+        (
+            json!({ "reviewed": "2026-11-23" }),
+            "spec.catalog.fields.funding",
+        ),
         (
             json!({ "funding": "eu", "reviewed": "23.11.2026" }),
             "spec.catalog.fields.reviewed",
@@ -1744,7 +1747,10 @@ async fn dataset_fields_are_checked_against_the_endpoints_own_organization() {
     ] {
         let (status, body) = post(fields.clone()).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{fields}: {body}");
-        assert!(body.contains(named), "{fields}: the refusal names {named}: {body}");
+        assert!(
+            body.contains(named),
+            "{fields}: the refusal names {named}: {body}"
+        );
     }
 }
 

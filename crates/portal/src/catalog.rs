@@ -46,7 +46,12 @@ pub fn check_contact(
 /// admit (T-7746): a field the Organization does not define, a value its type refuses, or a
 /// required field left empty. The definitions are always those of the Organization owning
 /// `project`, so no Organization's fields apply to another's datasets. 422 names the field.
-pub fn check_fields(mirror: &Mirror, project: &str, kind: &str, spec: &Value) -> Result<(), ApiError> {
+pub fn check_fields(
+    mirror: &Mirror,
+    project: &str,
+    kind: &str,
+    spec: &Value,
+) -> Result<(), ApiError> {
     let Some(catalog) = spec.get("catalog").filter(|_| kind == "Endpoint") else {
         return Ok(());
     };

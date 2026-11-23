@@ -3089,12 +3089,18 @@ mod tests {
             let fields = &looks[&id].dataset_fields;
             assert_eq!(fields.namespace, "https://bbsk.sk/ns/dataset-fields/bbsk/");
             assert_eq!(
-                fields.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+                fields
+                    .fields
+                    .iter()
+                    .map(|f| f.name.as_str())
+                    .collect::<Vec<_>>(),
                 ["funding", "reviewed"]
             );
         }
         assert!(
-            looks.get(&town).is_none_or(|b| b.dataset_fields.fields.is_empty()),
+            looks
+                .get(&town)
+                .is_none_or(|b| b.dataset_fields.fields.is_empty()),
             "never another Organization's"
         );
     }

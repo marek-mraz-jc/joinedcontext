@@ -9965,7 +9965,8 @@
         "date": "Datum, například: 2026-11-23",
         "url": "Adresa https://, například: https://example.org/zprava",
         "enum": "Vyberte jednu z hodnot, které určila vaše organizace."
-      }
+      },
+      "fieldRefused": "Vaše organizace odmítla pole „{field}“ ({reason}). Vraťte se, opravte ho a navrhněte znovu."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",

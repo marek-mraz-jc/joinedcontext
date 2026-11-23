@@ -471,10 +471,17 @@ fn field_term(iri: &str) -> Option<(String, String, &str)> {
     let (host, path) = rest.split_once('/')?;
     let (org, name) = path.strip_prefix("ns/dataset-fields/")?.split_once('/')?;
     let label = |s: &str| {
-        !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     };
-    (label(org) && label(name) && !host.is_empty())
-        .then(|| (format!("fields-{org}"), format!("https://{host}/ns/dataset-fields/{org}/"), name))
+    (label(org) && label(name) && !host.is_empty()).then(|| {
+        (
+            format!("fields-{org}"),
+            format!("https://{host}/ns/dataset-fields/{org}/"),
+            name,
+        )
+    })
 }
 
 fn compact_contact(keys: &Contact, kind: &str, contact: &ContactPoint) -> Value {

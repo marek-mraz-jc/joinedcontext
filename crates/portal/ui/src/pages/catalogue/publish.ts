@@ -100,6 +100,17 @@ export function formOf(catalog: CatalogBlock, fallbackLanguage: string): Publish
   };
 }
 
+/**
+ * The Organization field a refusal names (`invalid spec.catalog.fields.<name>: <reason>`, jc-core
+ * `dataset_fields::check_values`) with its label, so the form says which of its fields to correct.
+ */
+export function fieldRefusal(text: string, fields: DatasetField[], language: string): { label: string; reason: string } | null {
+  const found = /spec\.catalog\.fields\.([a-z0-9-]+):\s*(.+)$/m.exec(text);
+  if (!found) return null;
+  const field = fields.find((f) => f.name === found[1]);
+  return { label: field ? fieldLabel(field, language) : found[1], reason: found[2].trim() };
+}
+
 /** A field's label in `language`, else in any language, else its name. */
 export function fieldLabel(field: DatasetField, language: string): string {
   return field.label[language] ?? Object.values(field.label)[0] ?? field.name;

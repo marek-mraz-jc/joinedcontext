@@ -9965,7 +9965,8 @@
         "date": "Ein Datum, zum Beispiel: 2026-11-23",
         "url": "Eine https://-Adresse, zum Beispiel: https://example.org/bericht",
         "enum": "Wählen Sie einen der Werte, die Ihre Organisation festgelegt hat."
-      }
+      },
+      "fieldRefused": "Ihre Organisation hat das Feld „{field}“ abgelehnt ({reason}). Gehen Sie zurück, korrigieren Sie es und schlagen Sie es erneut vor."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
