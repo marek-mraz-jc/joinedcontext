@@ -116,6 +116,16 @@ export function CkanAccessPanel({
     onSuccess: after,
   });
 
+  // The rules refuse with a reason the person can act on; anything else is a defect and is thrown.
+  const refusing = (step: () => void) => {
+    try {
+      step();
+    } catch (error) {
+      if (!(error instanceof RefusedAccess)) throw error;
+      setRefused(t(`ckan.access.refused.${error.reason}`, { instance }));
+    }
+  };
+
   const submit = () => {
     setRefused(null);
     setChange(null);
@@ -126,31 +136,17 @@ export function CkanAccessPanel({
       setRefused(t("ckan.access.refused.badEmail"));
       return;
     }
-    try {
-      grant.mutate(grantManifests(project, instance, subject, known, roleList, bindingList));
-    } catch (error) {
-      if (error instanceof RefusedAccess) {
-        setRefused(t(`ckan.access.refused.${error.reason}`, { instance }));
-        return;
-      }
-      throw error;
-    }
+    refusing(() => grant.mutate(grantManifests(project, instance, subject, known, roleList, bindingList)));
   };
 
   const remove = (subject: Subject) => {
     setRefused(null);
     setChange(null);
     if (!ownBinding) return;
-    try {
+    refusing(() => {
       const updated = revokeManifest(ownBinding, subject);
       if (updated) revoke.mutate(updated);
-    } catch (error) {
-      if (error instanceof RefusedAccess) {
-        setRefused(t(`ckan.access.refused.${error.reason}`, { instance }));
-        return;
-      }
-      throw error;
-    }
+    });
   };
 
   const failure = grant.error ?? revoke.error;
