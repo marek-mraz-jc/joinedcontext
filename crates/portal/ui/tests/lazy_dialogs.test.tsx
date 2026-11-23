@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import type { ReactNode } from "react";
@@ -83,6 +83,37 @@ describe("the dialogs load with their first opening", () => {
     wrap(<Probe open />);
     expect(screen.getByText("loaded")).toBeInTheDocument();
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a dialog closed before its module arrives shut, and a late failure unthrown", async () => {
+    for (const settle of ["resolve", "reject"] as const) {
+      let done: (() => void) | undefined;
+      const load = () =>
+        new Promise<string>((resolve, reject) => {
+          done = () => (settle === "resolve" ? resolve("loaded") : reject(new Error("chunk gone")));
+        });
+      const cache: { current?: string } = {};
+      function Probe({ open }: { open: boolean }): ReactNode {
+        return useLoadedWhenOpen(open, cache, load) ? `${settle}:${String(cache.current)}` : `${settle}:waiting`;
+      }
+      // One tree for both renders, so the second closes the same dialog instead of mounting another.
+      const tree = (open: boolean) => (
+        <I18nextProvider i18n={i18n}>
+          <ErrorBoundary>
+            <Probe open={open} />
+          </ErrorBoundary>
+        </I18nextProvider>
+      );
+      const view = render(tree(true));
+      view.rerender(tree(false));
+      await act(async () => {
+        done?.();
+        await Promise.resolve();
+      });
+      expect(screen.getByText(`${settle}:waiting`)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      view.unmount();
+    }
   });
 
   it("says a dialog that cannot load failed, instead of leaving it shut", async () => {

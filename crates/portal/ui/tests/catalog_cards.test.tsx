@@ -264,5 +264,9 @@ describe("the catalog results", () => {
     expect(ago("2026-09-13T05:00:00Z", NOW, t)).toBe("agentRun.catalog.agoHours:3");
     expect(ago("2026-09-11T08:00:00Z", NOW, t)).toBe("agentRun.catalog.agoDays:2");
     expect(ago("not a date", NOW, t)).toBe("not a date");
+    // Each unit starts at its own boundary: 60 s is a minute, 3600 s an hour, 86400 s a day.
+    expect(ago("2026-09-13T07:59:12Z", NOW, t)).toBe("agentRun.catalog.agoMinutes:1");
+    expect(ago("2026-09-13T07:00:12Z", NOW, t)).toBe("agentRun.catalog.agoHours:1");
+    expect(ago("2026-09-12T08:00:12Z", NOW, t)).toBe("agentRun.catalog.agoDays:1");
   });
 });
