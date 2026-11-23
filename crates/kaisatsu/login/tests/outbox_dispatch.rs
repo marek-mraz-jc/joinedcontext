@@ -3,11 +3,15 @@
 //! pending with the error recorded (retry with backoff), and the production sender reads the
 //! SMTP password from its file only at send time.
 
+use futures_core::future::BoxFuture;
 use jc_router::Mount;
 use jc_time::TimestampTz;
 use kaisatsu_core::{EmailOutboxRecord, RealmConfig, SmtpServerConfig, Store};
 use kaisatsu_crypto::{Kek, KeyManager};
-use kaisatsu_login::{MailSender, OutboxDispatcher, RealmSmtpSender, RecordingSender};
+use kaisatsu_login::{
+    MailSender, OutboxDispatcher, RealmSmtpSender, RecordingSender, StoredSmtpSender,
+};
+use kaisatsu_oidc::{OutboundGuard, OutboundPolicy};
 use kaisatsu_store_memory::MemoryStore;
 use std::sync::Arc;
 
@@ -128,6 +132,75 @@ async fn one_pass_visits_every_realm() {
     );
 }
 
+/// A mail server that never answers holds no dispatcher past the send deadline: the row goes
+/// back to pending with the cause and a retry time.
+#[tokio::test(start_paused = true)]
+async fn a_send_that_never_answers_is_retried_after_the_deadline() {
+    struct Silent;
+    impl MailSender for Silent {
+        fn send_mail<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+        ) -> BoxFuture<'a, kaisatsu_core::Result<()>> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let kek = Kek::generate_for_tests();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+    realm(&store, &kek, "slow", None).await;
+    store.enqueue_outbox(row("slow", "ob-slow")).await.unwrap();
+    let d = OutboxDispatcher::new(store.clone(), kek, Arc::new(Silent));
+    assert_eq!(d.dispatch_all_realms(&mount()).await.unwrap(), 0);
+    let rows = store.list_outbox_rows("slow", None).await.unwrap();
+    assert_eq!(rows[0].status, "pending");
+    assert_eq!(rows[0].attempts, 1);
+    assert_eq!(
+        rows[0].last_error.as_deref(),
+        Some("the mail server did not answer in time")
+    );
+}
+
+/// A row another dispatcher recorded while this one was sending stays as that one recorded
+/// it; the pass still counts its own send and goes on.
+#[tokio::test]
+async fn a_row_recorded_by_another_dispatcher_mid_send_keeps_that_record() {
+    struct Racing(Arc<dyn Store>);
+    impl MailSender for Racing {
+        fn send_mail<'a>(
+            &'a self,
+            realm_id: &'a str,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+        ) -> BoxFuture<'a, kaisatsu_core::Result<()>> {
+            Box::pin(async move {
+                for r in self.0.list_outbox_rows(realm_id, None).await? {
+                    assert!(
+                        self.0
+                            .complete_outbox_row(&r, false, Some("other".into()), None, 5)
+                            .await?
+                    );
+                }
+                Ok(())
+            })
+        }
+    }
+    let kek = Kek::generate_for_tests();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+    realm(&store, &kek, "race", None).await;
+    store.enqueue_outbox(row("race", "ob-race")).await.unwrap();
+    let d = OutboxDispatcher::new(store.clone(), kek, Arc::new(Racing(store.clone())));
+    assert_eq!(d.dispatch_all_realms(&mount()).await.unwrap(), 1);
+    let rows = store.list_outbox_rows("race", None).await.unwrap();
+    assert_eq!(rows[0].last_error.as_deref(), Some("other"));
+    assert_ne!(rows[0].status, "sent");
+}
+
 /// The mails say what old prod's Keycloak e-mail theme said (shot from the old image): its
 /// subject, the realm's display name and the link's lifetime in words, per language.
 #[tokio::test]
@@ -220,6 +293,49 @@ async fn realm_smtp_sender_refuses_without_settings_and_keeps_the_row_for_retry(
         err.to_string().contains("not the deployment's SMTP host"),
         "{err}"
     );
+
+    // With its password the sender reaches the server, here a loopback port nobody serves.
+    let dir = std::env::temp_dir().join(format!("kaisatsu-pw-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pw"), "smtp-word-for-tests\n").unwrap();
+    let with_pw = RealmSmtpSender::new(store.clone(), dir.join("pw"), "127.0.0.1".into());
+    let err = with_pw
+        .send_mail("mailing", "a@example.test", "s", "b", "l")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("SMTP delivery failed"), "{err}");
+    assert!(!err.to_string().contains("smtp-word-for-tests"));
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // The stored-password sender: no settings, a host the guard refuses, and a judged address
+    // that refuses the connection each fail with their cause.
+    let refusing =
+        StoredSmtpSender::new(store.clone(), OutboundGuard::new(OutboundPolicy::default()));
+    let err = refusing
+        .send_mail("plain", "a@example.test", "s", "b", "l")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("smtpServer"), "{err}");
+    let err = refusing
+        .send_mail("mailing", "a@example.test", "s", "b", "l")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, kaisatsu_core::KaisatsuError::OutboundRefused(_)),
+        "{err}"
+    );
+    let loopback = StoredSmtpSender::new(
+        store.clone(),
+        OutboundGuard::new(OutboundPolicy {
+            test_loopback: true,
+            ..OutboundPolicy::default()
+        }),
+    );
+    let err = loopback
+        .send_mail("mailing", "a@example.test", "s", "b", "l")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("SMTP delivery failed"), "{err}");
 
     store
         .enqueue_outbox(row("plain", "ob-plain"))

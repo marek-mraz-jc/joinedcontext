@@ -523,5 +523,7 @@ mod tests {
             "minutes"
         );
         assert_eq!(choice("perc", 5), "perc");
+        // An option with neither `#` nor `<` names no limit and is skipped.
+        assert_eq!(choice("{0,choice,minutes|1#minute}", 1), "minute");
     }
 }
