@@ -329,7 +329,7 @@ fn ticks(lo: f64, hi: f64) -> Vec<f64> {
     }
     let raw = span / 5.0;
     let mag = 10f64.powf(raw.log10().floor());
-    let step = [1.0, 2.0, 5.0, 10.0]
+    let step = [1.0, 2.0, 5.0]
         .into_iter()
         .map(|m| m * mag)
         .find(|s| span / s <= 6.0)
@@ -1329,6 +1329,174 @@ mod tests {
         assert_eq!(time_ticks(0.0, 2.0 * year, 2), [0.0, year, 2.0 * year]);
     }
 
+    /// The pixels of `c` holding `rgb`, as (x, y), row by row.
+    fn lit(c: &Canvas, rgb: [u8; 3]) -> Vec<(i64, i64)> {
+        (0..c.height)
+            .flat_map(|y| (0..c.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(c, x, y) == rgb)
+            .collect()
+    }
+
+    /// Width, height and RGB rows of a PNG this module wrote, each chunk's CRC checked.
+    fn decode(png: &[u8]) -> (u32, u32, Vec<u8>) {
+        use std::io::Read as _;
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let (mut at, mut idat, mut kinds) = (8, Vec::new(), Vec::new());
+        while at < png.len() {
+            let len = u32::from_be_bytes(png[at..at + 4].try_into().expect("len")) as usize;
+            let (kind, data) = (&png[at + 4..at + 8], &png[at + 8..at + 8 + len]);
+            let mut crc = flate2::Crc::new();
+            crc.update(kind);
+            crc.update(data);
+            let stored =
+                u32::from_be_bytes(png[at + 8 + len..at + 12 + len].try_into().expect("crc"));
+            assert_eq!(crc.sum(), stored, "{kind:?} crc");
+            if kind == b"IDAT" {
+                idat.extend_from_slice(data);
+            }
+            kinds.push(kind.to_vec());
+            at += 12 + len;
+        }
+        assert_eq!(
+            kinds,
+            [b"IHDR".to_vec(), b"IDAT".to_vec(), b"IEND".to_vec()]
+        );
+        assert_eq!(&png[24..29], &[8, 2, 0, 0, 0], "8-bit RGB, no interlace");
+        let (w, h) = png_size(png);
+        let mut raw = Vec::new();
+        flate2::read::ZlibDecoder::new(&idat[..])
+            .read_to_end(&mut raw)
+            .expect("zlib");
+        let row = w as usize * 3 + 1;
+        assert_eq!(raw.len(), row * h as usize);
+        let mut pixels = Vec::new();
+        for line in raw.chunks(row) {
+            assert_eq!(line[0], 0, "filter none");
+            pixels.extend_from_slice(&line[1..]);
+        }
+        (w, h, pixels)
+    }
+
+    #[test]
+    fn the_png_holds_the_canvas_pixels_row_by_row() {
+        let mut c = Canvas::new(7, 3);
+        c.set(6, 0, ink());
+        c.set(0, 2, grid());
+        let (w, h, pixels) = decode(&c.png());
+        assert_eq!((w, h), (7, 3));
+        assert_eq!(pixels, c.pixels);
+        assert_eq!(&pixels[18..21], &ink());
+        assert_eq!(&pixels[42..45], &grid());
+    }
+
+    #[test]
+    fn lines_step_pixel_by_pixel_in_every_direction() {
+        let rgb = ink();
+        let mut c = Canvas::new(12, 12);
+        c.line((1, 5), (4, 5), 1, rgb);
+        assert_eq!(lit(&c, rgb), [(1, 5), (2, 5), (3, 5), (4, 5)]);
+        let mut back = Canvas::new(12, 12);
+        back.line((4, 5), (1, 5), 1, rgb);
+        assert_eq!(
+            lit(&back, rgb),
+            lit(&c, rgb),
+            "right to left draws the same"
+        );
+        let mut up = Canvas::new(12, 12);
+        up.line((3, 4), (3, 1), 1, rgb);
+        assert_eq!(lit(&up, rgb), [(3, 1), (3, 2), (3, 3), (3, 4)]);
+        let mut steep = Canvas::new(12, 12);
+        steep.line((1, 1), (3, 7), 1, rgb);
+        assert_eq!(
+            lit(&steep, rgb),
+            [(1, 1), (1, 2), (2, 3), (2, 4), (2, 5), (3, 6), (3, 7)]
+        );
+        let mut rising = Canvas::new(12, 12);
+        rising.line((1, 7), (7, 4), 1, rgb);
+        assert_eq!(
+            lit(&rising, rgb),
+            [(6, 4), (7, 4), (4, 5), (5, 5), (2, 6), (3, 6), (1, 7)]
+        );
+        let mut thick = Canvas::new(12, 12);
+        thick.line((3, 5), (5, 5), 3, rgb);
+        let want: Vec<(i64, i64)> = (4..=6).flat_map(|y| (2..=6).map(move |x| (x, y))).collect();
+        assert_eq!(lit(&thick, rgb), want, "3 wide: one pixel each side");
+        let mut even = Canvas::new(12, 12);
+        even.line((3, 5), (3, 5), 2, rgb);
+        assert_eq!(
+            lit(&even, rgb),
+            [(2, 4), (3, 4), (2, 5), (3, 5)],
+            "2 wide leans up and left"
+        );
+    }
+
+    #[test]
+    fn discs_rects_and_glyphs_land_where_asked() {
+        let rgb = ink();
+        let mut c = Canvas::new(12, 12);
+        c.disc(5, 6, 2, rgb);
+        let want: Vec<(i64, i64)> = (4..=8)
+            .flat_map(|y| (3..=7).map(move |x| (x, y)))
+            .filter(|&(x, y)| (x - 5) * (x - 5) + (y - 6) * (y - 6) <= 4)
+            .collect();
+        assert_eq!(want.len(), 13);
+        assert_eq!(lit(&c, rgb), want);
+        let mut r = Canvas::new(6, 6);
+        r.rect(4, 3, 2, 1, rgb);
+        assert_eq!(
+            lit(&r, rgb),
+            [
+                (2, 1),
+                (3, 1),
+                (4, 1),
+                (2, 2),
+                (3, 2),
+                (4, 2),
+                (2, 3),
+                (3, 3),
+                (4, 3)
+            ]
+        );
+        let mut all = Canvas::new(6, 6);
+        all.rect(-9, -9, 99, 99, rgb);
+        assert_eq!(count(&all, rgb), 36);
+        let mut t = Canvas::new(40, 20);
+        t.text(1, 2, "-.", rgb);
+        // '-' is row 3 of glyph 0, '.' rows 5-6, columns 1-2 of glyph 1, each bit 2x2.
+        let dash: Vec<(i64, i64)> = (8..=9)
+            .flat_map(|y| (1..=10).map(move |x| (x, y)))
+            .collect();
+        let dot: Vec<(i64, i64)> = (12..=15)
+            .flat_map(|y| (15..=18).map(move |x| (x, y)))
+            .collect();
+        assert_eq!(lit(&t, rgb), [dash, dot].concat());
+        assert_eq!(ADVANCE, 12);
+        let mut inner = Canvas::new(3, 2);
+        inner.set(2, 0, rgb);
+        inner.set(0, 1, rgb);
+        let mut out = Canvas::new(8, 8);
+        out.blit(&inner, 4, 5);
+        assert_eq!(lit(&out, rgb), [(6, 5), (4, 6)]);
+    }
+
+    #[test]
+    fn the_raster_draws_in_the_theme_light_colours() {
+        let look = crate::theme::light();
+        assert_eq!(
+            (ink(), muted(), grid(), axis(), paper()),
+            (
+                look.text,
+                look.muted,
+                look.grid,
+                look.domain,
+                look.background
+            )
+        );
+        assert_eq!(Canvas::new(2, 1).pixels, [paper(), paper()].concat());
+        assert_eq!(color_of(None), color_of(Some(0)));
+        assert_eq!(color_of(Some(palette().len() + 1)), color_of(Some(1)));
+    }
+
     #[test]
     fn ticks_are_round_and_cover_the_domain() {
         assert_eq!(ticks(0.0, 10.0), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
@@ -1341,6 +1509,39 @@ mod tests {
         assert_eq!(ticks(0.0, f64::INFINITY), [0.0]);
         assert_eq!(ticks(0.0, 700.0), [0.0, 200.0, 400.0, 600.0]);
         assert_eq!(ticks(0.0, 1e6).len(), 6);
+        assert_eq!(ticks(3.0, 17.0), [5.0, 10.0, 15.0]);
+        assert_eq!(
+            ticks(0.0, 60.0),
+            [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            "a step of 10 mag"
+        );
+        // A step under half the float spacing at 1e17 never moves: twelve ticks and no more.
+        assert_eq!(ticks(1e17, 1e17 + 16.0), [1e17; 12]);
+        assert_eq!(number(0.001), "0.001");
+        assert_eq!(date(0.0, 2.0 * 86_400_000.0), "00:00");
+        assert_eq!(date(0.0, 1.5 * 86_400_000.0), "00:00");
+        assert_eq!(date(0.0, 2.0 * 86_400_000.0 + 1.0), "1970-01-01");
+        let hour = 3_600_000.0;
+        let ch = Channel {
+            scale: Scale::Temporal,
+            title: String::new(),
+            categories: 0,
+        };
+        let marks = axis_marks(&ch, 1e12, 1e12 + hour, 2);
+        assert!(
+            marks.iter().all(|(_, l)| l.len() == 5 && l.contains(':')),
+            "{marks:?}"
+        );
+        assert_eq!(
+            time_ticks(10.0 * hour, 11.0 * hour, 6),
+            [
+                10.0 * hour,
+                10.25 * hour,
+                10.5 * hour,
+                10.75 * hour,
+                11.0 * hour
+            ]
+        );
         let hour = 3_600_000.0;
         assert_eq!(
             time_ticks(0.5 * hour, 11.5 * hour, 6),
