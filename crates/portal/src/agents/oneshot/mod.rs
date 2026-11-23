@@ -1321,6 +1321,22 @@ mod tests {
             Some("/projects/helsinki/assistant".to_owned())
         );
         assert_eq!(navigate_tool_call("plain response"), None);
+        assert_eq!(
+            navigate_tool_call("```json\n{not json}\n```\n```json\n{\"tool\":\"navigate\"}\n```"),
+            None,
+            "a broken block is skipped and a call without a route opens nothing"
+        );
+    }
+
+    #[test]
+    fn a_space_complete_call_is_found_past_broken_and_other_blocks() {
+        let text = "```json\n{broken}\n```\n```json\n{\"tool\":\"navigate\"}\n```\n\
+                    ```json\n{\"tool\":\"space_complete\",\"space\":\"air\"}\n```";
+        assert_eq!(
+            space_complete_tool_call(text),
+            Some(json!({ "tool": "space_complete", "space": "air" }))
+        );
+        assert_eq!(space_complete_tool_call("no block"), None);
     }
 
     #[test]
@@ -1368,5 +1384,173 @@ mod tests {
             ..event("x")
         };
         assert!(is_terminal(&status));
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    fn run(status: &str) -> AgentRun {
+        serde_json::from_value(json!({
+            "id": "test-run",
+            "project": "helsinki",
+            "appName": "city-bikes",
+            "title": "City bikes",
+            "endpointName": "helsinki-bikes",
+            "endpointSlug": "s",
+            "profile": "app-builder",
+            "kind": "application",
+            "unattended": false,
+            "appClass": "ui",
+            "visibility": "project",
+            "prompt": "p",
+            "promptDigest": "d",
+            "dataNeeds": [],
+            "allowsWrite": false,
+            "branch": "agent/app-city-bikes/test-run",
+            "pathPrefix": "",
+            "status": status,
+            "ticketHash": "",
+            "steps": 0,
+            "tokensUsed": 0,
+            "createdBy": "test-user@hel.fi",
+            "createdAt": "2026-09-21T06:00:00Z",
+            "expiresAt": "2099-09-21T06:00:00Z"
+        }))
+        .expect("a run")
+    }
+
+    async fn driver_with(status: &str) -> Driver {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.agents.create_run(&run(status)).await.expect("stored");
+        Driver::for_tests(state, "helsinki")
+    }
+
+    async fn statuses(driver: &Driver) -> Vec<Value> {
+        driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "status")
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    async fn stored_status(driver: &Driver) -> String {
+        driver
+            .state
+            .agents
+            .get_run(&driver.run_id)
+            .await
+            .expect("read")
+            .expect("the run")
+            .status
+    }
+
+    /// A failed run says why in its status event and in the run itself.
+    #[tokio::test]
+    async fn a_failed_run_says_why() {
+        let driver = driver_with("previewing").await;
+        driver.fail("the proxy is gone").await;
+        assert_eq!(stored_status(&driver).await, "failed");
+        let said = statuses(&driver).await;
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0]["status"], "failed");
+        assert_eq!(said[0]["error"], "the proxy is gone");
+    }
+
+    /// AP-60, T-0669: a run whose clock ran out ends without an error; one waiting on an
+    /// approval stays on its lease (T-2772).
+    #[tokio::test]
+    async fn an_expired_run_ends_without_an_error_unless_it_awaits_approval() {
+        let driver = driver_with("previewing").await;
+        driver.expire().await;
+        assert_eq!(stored_status(&driver).await, "expired");
+        let said = statuses(&driver).await;
+        assert_eq!(said[0]["status"], "expired");
+        assert!(said[0].get("error").is_none(), "{said:?}");
+
+        let driver = driver_with("previewing").await;
+        driver
+            .status(AgentRunStatus::AwaitingApproval)
+            .await
+            .expect("awaiting");
+        driver.expire().await;
+        assert_eq!(stored_status(&driver).await, "awaiting_approval");
+        let said: Vec<Value> = statuses(&driver)
+            .await
+            .into_iter()
+            .map(|status| status["status"].clone())
+            .collect();
+        assert_eq!(said, [json!("awaiting_approval")]);
+    }
+
+    /// CC-06: an event that echoes the run's ticket is stored without it.
+    #[tokio::test]
+    async fn an_event_never_stores_the_runs_ticket() {
+        let mut driver = driver_with("previewing").await;
+        driver.bearer = "jcr_test-run.ticket-0123456789".into();
+        let event = driver
+            .append(
+                "status",
+                json!({ "echo": "Bearer jcr_test-run.ticket-0123456789" }),
+            )
+            .await
+            .expect("stored");
+        assert_eq!(event.payload["echo"], "Bearer jcr_test-run.[redacted]");
+        let event = driver
+            .append("status", json!({ "plain": "nothing secret" }))
+            .await
+            .expect("stored");
+        assert_eq!(event.payload["plain"], "nothing secret");
+    }
+
+    /// The open form and page become the run's section; an empty form adds nothing.
+    #[test]
+    fn the_open_form_is_told_field_by_field() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        let mut pack = String::new();
+        driver.looking_at(&mut pack);
+        assert_eq!(pack, "");
+        driver.form = FormContext {
+            kind: Some("Endpoint".into()),
+            name: Some("bikes".into()),
+            field: Some("audience".into()),
+        };
+        *driver.page.lock().expect("unpoisoned") = Some(crate::agents::page::PageContext {
+            route: "/projects/helsinki/endpoints".into(),
+            page: "endpoints".into(),
+            ..Default::default()
+        });
+        driver.looking_at(&mut pack);
+        assert!(
+            pack.contains("They are on `/projects/helsinki/endpoints`"),
+            "{pack}"
+        );
+        assert!(pack.contains("the Endpoint form open"), "{pack}");
+        assert!(pack.contains("the draft `bikes`"), "{pack}");
+        assert!(pack.contains("last in is `audience`"), "{pack}");
+        assert!(
+            pack.contains("write that same draft with `jc_draft_put`"),
+            "{pack}"
+        );
+
+        let mut pack = String::new();
+        driver.form = FormContext {
+            kind: None,
+            name: None,
+            field: Some("audience".into()),
+        };
+        *driver.page.lock().expect("unpoisoned") = None;
+        driver.looking_at(&mut pack);
+        assert!(
+            pack.contains("`audience`") && !pack.contains("jc_draft_put"),
+            "{pack}"
+        );
     }
 }
