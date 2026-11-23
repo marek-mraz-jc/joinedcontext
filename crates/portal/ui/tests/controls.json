@@ -1298,6 +1298,7 @@
         "Button": 4
       },
       "tests": [
+        "cov2_dashboards_dashboard_json_editor.test.tsx",
         "dashboard_json_editor.test.tsx"
       ]
     },
@@ -1430,6 +1431,8 @@
         "RadioGroup": 1
       },
       "tests": [
+        "cov2_grafana_dashboard_builder.test.tsx",
+        "cov_grafana_dashboard_builder.test.tsx",
         "dashboard_builder.test.tsx"
       ]
     },
@@ -1438,6 +1441,7 @@
         "Button": 2
       },
       "tests": [
+        "cov_grafana_grafana_page.test.tsx",
         "dashboard_page.test.tsx",
         "grafana_page.test.tsx"
       ]
@@ -1447,6 +1451,7 @@
         "Button": 4
       },
       "tests": [
+        "cov_grafana_dashboard_history.test.tsx",
         "dashboard_history.test.tsx"
       ]
     },
@@ -1472,6 +1477,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov_grafana_dashboard_page.test.tsx",
         "dashboard_page.test.tsx",
         "dashboard_panels.test.tsx",
         "dashboard_time.test.tsx"
@@ -1685,7 +1691,8 @@
         "Checkbox": 6
       },
       "tests": [
-        "ai_connectors.test.tsx"
+        "ai_connectors.test.tsx",
+        "cov_mcp_ai_connectors_page.test.tsx"
       ]
     },
     "src/pages/mcp/McpServerDialog.tsx": {
@@ -1694,6 +1701,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov_mcp_mcp_server_dialog.test.tsx",
         "mcp_servers.test.tsx"
       ]
     },
@@ -1702,6 +1710,7 @@
         "Button": 1
       },
       "tests": [
+        "cov_mcp_mcp_server_panels.test.tsx",
         "mcp_servers.test.tsx"
       ]
     },
@@ -1710,6 +1719,7 @@
         "Button": 3
       },
       "tests": [
+        "cov_mcp_mcp_servers_page.test.tsx",
         "mcp_servers.test.tsx",
         "organization_agents.test.tsx"
       ]
@@ -1896,6 +1906,7 @@
         "Button": 2
       },
       "tests": [
+        "cov_operator_operator_changes.test.tsx",
         "operator_pages.test.tsx"
       ]
     },
@@ -1904,6 +1915,7 @@
         "Button": 1
       },
       "tests": [
+        "cov_operator_operator_hosts.test.tsx",
         "operator_pages.test.tsx"
       ]
     },
@@ -1913,6 +1925,7 @@
         "FilePicker": 1
       },
       "tests": [
+        "cov_operator_operator_branding.test.tsx",
         "operator_pages.test.tsx"
       ]
     },
@@ -1921,6 +1934,7 @@
         "Button": 2
       },
       "tests": [
+        "cov_operator_operator_installation.test.tsx",
         "operator_pages.test.tsx"
       ]
     },
@@ -1929,6 +1943,7 @@
         "Button": 5
       },
       "tests": [
+        "cov_operator_operator_organizations.test.tsx",
         "operator_pages.test.tsx"
       ]
     },
@@ -2284,6 +2299,10 @@
         "RadioGroup": 1
       },
       "tests": [
+        "cov2_portals_portal_sources.test.tsx",
+        "cov2_portals_portals_area.test.tsx",
+        "cov_portals_portal_sources.test.tsx",
+        "cov_portals_portals_area.test.tsx",
         "portals_area.test.tsx"
       ]
     },
@@ -2293,6 +2312,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov_portals_portal_profiles.test.tsx",
         "portals_area.test.tsx"
       ]
     },
@@ -2302,6 +2322,7 @@
         "FilePicker": 1
       },
       "tests": [
+        "cov_portals_portal_files.test.tsx",
         "portal_files.test.tsx"
       ]
     },
@@ -2311,6 +2332,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "cov_portals_portal_hosts.test.tsx",
         "portals_area.test.tsx"
       ]
     },
@@ -2320,6 +2342,8 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov2_portals_portal_sources.test.tsx",
+        "cov_portals_portal_sources.test.tsx",
         "portal_sources.test.tsx"
       ]
     },
@@ -2489,6 +2513,8 @@
         "Button": 5
       },
       "tests": [
+        "cov2_sync_sync_sources_page.test.tsx",
+        "cov_sync_sync_sources_page.test.tsx",
         "form_errors_after_touch.test.tsx",
         "page_sync_sources_page.test.tsx",
         "sync_source_round_trip.test.ts"
@@ -2499,6 +2525,7 @@
         "Button": 2
       },
       "tests": [
+        "cov_mcp_mcp_elicitation_page.test.tsx",
         "mcp_elicitation.test.tsx"
       ]
     },
@@ -2838,6 +2865,8 @@
         "RadioGroup": 2
       },
       "tests": [
+        "cov2_portals_portal_layout.test.tsx",
+        "cov_portals_portal_layout.test.tsx",
         "portal_layout.test.tsx"
       ]
     }
