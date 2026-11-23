@@ -45,6 +45,7 @@ import {
 } from "../ui";
 import { fieldWidget, hintText, specValue, withSpecValue } from "./fieldWidget";
 import type { FieldWidget } from "./fieldWidget";
+import type { GridQuery } from "./AdminGrid";
 
 export interface GridColumn<T> {
   id: string;
@@ -75,7 +76,7 @@ export interface ManifestGridProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   /** The list's read, for the skeleton, the failure panel and its retry. */
-  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
+  query?: GridQuery;
   /** The first column, the row's name: a link to the object, never hidden. */
   name: GridColumn<T>;
   columns: GridColumn<T>[];
@@ -257,7 +258,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     [t],
   );
 
-  if (query.isError) {
+  if (query?.isError) {
     // The page's own header stays above the failure, so a refused or missing project still
     // names the page it is (one h1, T-6048) and says why beneath it.
     // A list that is not there (a project out of reach answers 404, PF-59) offers the way to
@@ -304,7 +305,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
       {props.header ? props.header(toolbar) : toolbar}
 
-      {!query.isPending && rows.length === 0 && !(server && search.trim()) ? (
+      {!query?.isPending && rows.length === 0 && !(server && search.trim()) ? (
         <Card padding="md">{empty}</Card>
       ) : (
         <DataGrid
@@ -312,7 +313,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
           rows={kept}
           columns={dataColumns}
           rowKey={rowKey}
-          loading={query.isPending}
+          loading={query?.isPending ?? false}
           empty={
             <div className="flex flex-col items-center gap-2 py-6 text-center">
               <p className="text-body font-medium text-fg">{t("grid.noMatch")}</p>
@@ -335,7 +336,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
         />
       )}
 
-      {query.isPending || !server ? null : (
+      {query?.isPending || !server ? null : (
         <GridFooter
           shown={rows.length}
           kept={rows.length}

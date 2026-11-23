@@ -105,7 +105,16 @@ const OPEN = {
   summary: { key: "change.summary.update", params: { kind: "Group", name: "stewards", fields: 1 } },
 };
 
-function renderGroup({ verbs = ["read", "propose", "delete"], people = false, ckan = false, open = [] as unknown[] } = {}) {
+function renderGroup({
+  verbs = ["read", "propose", "delete"],
+  people = false,
+  ckan = false,
+  open = [] as unknown[],
+  extraBindings = [] as unknown[],
+  groupFails = 0,
+  writeStatus = 0,
+} = {}) {
+  let groupReads = 0;
   const sent: Sent[] = [];
   const reply = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), {
@@ -129,6 +138,7 @@ function renderGroup({ verbs = ["read", "propose", "delete"], people = false, ck
       if (request.method !== "GET") {
         const dryRun = url.searchParams.get("dryRun") === "All";
         sent.push({ method: request.method, path, dryRun, body: await request.json() });
+        if (writeStatus && !dryRun) return reply(writeStatus, { title: "Conflict", status: writeStatus, detail: "the group changed meanwhile; reload it" });
         return reply(dryRun ? 200 : 202, dryRun ? { valid: true, verdict: { ok: true } } : CHANGE);
       }
       if (path === "/api/v1/organization/people") {
@@ -138,8 +148,14 @@ function renderGroup({ verbs = ["read", "propose", "delete"], people = false, ck
       }
       if (path === "/api/v1/projects") return reply(200, list([{ name: "helsinki" }]));
       if (path === "/api/v1/projects/org/changes") return reply(200, list(open));
-      if (path === "/api/v1/projects/org/groups/stewards") return reply(200, GROUP);
-      if (path === "/api/v1/projects/org/rolebindings") return reply(200, list(ckan ? [...BINDINGS, CKAN_BINDING] : BINDINGS));
+      if (path === "/api/v1/projects/org/groups/stewards") {
+        groupReads += 1;
+        return groupReads <= groupFails ? reply(503, { title: "Unavailable", status: 503, detail: "the store is restarting" }) : reply(200, GROUP);
+      }
+      if (path === "/api/v1/projects/org/rolebindings") return reply(200, list([...BINDINGS, ...(ckan ? [CKAN_BINDING] : []), ...extraBindings]));
+      if (path === "/api/v1/projects/helsinki/spaces") {
+        return reply(200, list([{ apiVersion: V, kind: "ContextSpace", metadata: { name: "air", namespace: "helsinki" }, spec: {} }]));
+      }
       if (path === "/api/v1/projects/org/roles") {
         return reply(200, list([{ apiVersion: V, kind: "Role", metadata: { name: "viewer", namespace: "org" } }, ...(ckan ? [CKAN_ROLE] : [])]));
       }
@@ -303,6 +319,31 @@ describe("a group's page", () => {
     expect(await screen.findByText(i18n.t("picker.person.useId", { id: idOf("petra@hel.fi") }))).toBeInTheDocument();
   });
 
+  it("says why the group cannot be read and reads it again on Retry", async () => {
+    const user = userEvent.setup();
+    renderGroup({ groupFails: 1 });
+    expect(await screen.findByText(/the store is restarting/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: en.app.retry }));
+    expect(await section(en.access.groupPage.members)).toBeInTheDocument();
+  });
+
+  it("removes a member as the Group manifest without them", async () => {
+    const user = userEvent.setup();
+    const { proposals } = renderGroup();
+    const members = await section(en.access.groupPage.members);
+    await user.click(within(members).getByRole("button", { name: /^Remove/ }));
+    await vi.waitFor(() => expect(proposals()).toHaveLength(1));
+    expect(proposals()[0].body).toEqual({ ...GROUP, spec: { ...GROUP.spec, members: [] } });
+  });
+
+  it("names the Portal's reason when it refuses the member change", async () => {
+    const user = userEvent.setup();
+    renderGroup({ writeStatus: 409 });
+    const members = await section(en.access.groupPage.members);
+    await user.click(within(members).getByRole("button", { name: /^Remove/ }));
+    expect(await screen.findByText(/the group changed meanwhile/)).toBeInTheDocument();
+  });
+
   it("adds a member as the Group manifest with that one member more, metadata kept", async () => {
     const user = userEvent.setup();
     const { proposals } = renderGroup();
@@ -429,6 +470,26 @@ describe("a group's page", () => {
       role: "air-editor",
       scope: { project: "helsinki" },
     });
+  });
+
+  it("gives a role in one Context Space of a project and names that space in the list", async () => {
+    const user = userEvent.setup();
+    const { proposals } = renderGroup({ extraBindings: [binding("air-only", [{ group: "stewards" }], "viewer", { contextSpace: "noise" })] });
+    const platform = await section(en.access.groupPage.platformRoles);
+    expect(await within(platform).findByText(/noise/)).toBeInTheDocument();
+    await within(platform).findByRole("option", { name: "air-editor (role of project helsinki)" });
+    await user.selectOptions(within(platform).getByLabelText(en.access.groupPage.role), "helsinki/air-editor");
+    await user.selectOptions(within(platform).getByLabelText(en.access.groupPage.where), "helsinki");
+    await within(platform).findByRole("option", { name: "air" });
+    await user.selectOptions(within(platform).getByLabelText(en.access.groupPage.space), "air");
+    await user.click(within(platform).getByRole("button", { name: en.access.groupPage.addRole }));
+    await vi.waitFor(() => expect(proposals()).toHaveLength(1));
+    expect((proposals()[0].body as { spec: unknown }).spec).toEqual({
+      subjects: [{ group: "stewards" }],
+      role: "air-editor",
+      scope: { contextSpace: "air" },
+    });
+    expect(proposals()[0].path).toBe("/api/v1/projects/org/rolebindings");
   });
 
   it("gives the group an application role as the App manifest with the group added", async () => {

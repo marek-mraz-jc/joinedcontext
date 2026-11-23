@@ -220,7 +220,6 @@ function WorkspaceTable({
       searchLabel={t("grid.searchIn", { list: t("workspaces.tableCaption") })}
       rows={workspaces}
       rowKey={(ws) => ws.name}
-      query={LOADED}
       name={{
         id: "name",
         label: t("workspaces.name"),
@@ -289,5 +288,3 @@ function WorkspaceTable({
   );
 }
 
-/** The page reads the list and draws its pending and failed states itself; the grid gets the rows. */
-const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
