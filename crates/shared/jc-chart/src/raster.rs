@@ -929,11 +929,418 @@ mod tests {
         );
     }
 
+    fn chart(mark: Mark, x: Option<Scale>, y: Option<Scale>, points: Vec<Point>) -> Chart {
+        let channel = |scale: Option<Scale>, categories| {
+            scale.map(|scale| Channel {
+                scale,
+                title: "t".into(),
+                categories,
+            })
+        };
+        Chart {
+            mark,
+            width: 300,
+            height: 240,
+            title: String::new(),
+            x: channel(x, 3),
+            y: channel(y, 0),
+            colors: points
+                .iter()
+                .filter_map(|p| p.color)
+                .max()
+                .map_or(0, |c| c + 1),
+            points,
+        }
+    }
+
+    fn at(x: f64, y: f64, color: Option<usize>) -> Point {
+        Point {
+            x: Some(Cell::Number(x)),
+            y: Some(Cell::Number(y)),
+            color,
+            ..Point::default()
+        }
+    }
+
+    /// The pixels of one legend swatch.
+    const SWATCH: usize = (2 * SCALE as usize * 4 + 1) * (7 * SCALE as usize + 1);
+
+    /// How many pixels of `c` hold `rgb`.
+    fn count(c: &Canvas, rgb: [u8; 3]) -> usize {
+        c.pixels.chunks(3).filter(|px| *px == rgb).count()
+    }
+
+    fn pixel(c: &Canvas, x: i64, y: i64) -> [u8; 3] {
+        let at = usize::try_from((y * c.width + x) * 3).expect("inside");
+        [c.pixels[at], c.pixels[at + 1], c.pixels[at + 2]]
+    }
+
+    #[test]
+    fn each_mark_draws_its_points_in_their_group_colours() {
+        let (first, second) = (color_of(Some(0)), color_of(Some(1)));
+        assert_ne!(first, second);
+        let bars = chart(
+            Mark::Bar,
+            Some(Scale::Nominal),
+            Some(Scale::Quantitative),
+            vec![
+                Point {
+                    x: Some(Cell::Category(0)),
+                    y: Some(Cell::Number(5.0)),
+                    color: Some(0),
+                    ..Point::default()
+                },
+                Point {
+                    x: Some(Cell::Category(1)),
+                    y: Some(Cell::Number(-2.0)),
+                    color: Some(1),
+                    ..Point::default()
+                },
+                Point {
+                    x: None,
+                    y: Some(Cell::Number(9.0)),
+                    ..Point::default()
+                },
+            ],
+        );
+        let c = canvas(&bars, later()).expect("bars");
+        assert!(
+            count(&c, first) > 500 && count(&c, second) > 100,
+            "both bars filled"
+        );
+        let points = chart(
+            Mark::Point,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![
+                Point {
+                    size: Some(1.0),
+                    ..at(0.0, 0.0, None)
+                },
+                Point {
+                    size: Some(9.0),
+                    ..at(5.0, 5.0, Some(1))
+                },
+                Point {
+                    x: None,
+                    ..at(1.0, 1.0, None)
+                },
+            ],
+        );
+        let c = canvas(&points, later()).expect("points");
+        let (small, big) = (count(&c, first) - SWATCH, count(&c, second) - SWATCH);
+        assert!(
+            small > 0 && big > 4 * small,
+            "size scales the disc: {small} {big}"
+        );
+        let even = chart(
+            Mark::Point,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![
+                Point {
+                    size: Some(3.0),
+                    ..at(0.0, 0.0, None)
+                },
+                Point {
+                    size: Some(3.0),
+                    ..at(1.0, 1.0, None)
+                },
+            ],
+        );
+        let unsized_ = chart(
+            Mark::Point,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![at(0.0, 0.0, None), at(1.0, 1.0, None)],
+        );
+        let (even, unsized_) = (
+            canvas(&even, later()).expect("even"),
+            canvas(&unsized_, later()).expect("unsized"),
+        );
+        assert!(
+            count(&even, first) > count(&unsized_, first),
+            "one size draws r 6, none r 4"
+        );
+        let rules = chart(
+            Mark::Rule,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![
+                at(1.0, 4.0, Some(0)),
+                Point {
+                    y: None,
+                    ..at(2.0, 0.0, Some(1))
+                },
+                Point {
+                    x: None,
+                    ..at(0.0, 2.0, Some(2))
+                },
+                Point::default(),
+            ],
+        );
+        let c = canvas(&rules, later()).expect("rules");
+        for group in 0..3 {
+            assert!(count(&c, color_of(Some(group))) > 50, "rule {group} drawn");
+        }
+        let area = chart(
+            Mark::Area,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![
+                at(0.0, 1.0, None),
+                at(1.0, 3.0, None),
+                at(1.0, 2.0, None),
+                at(2.0, 2.0, Some(1)),
+                at(3.0, 2.0, Some(9)),
+            ],
+        );
+        let c = canvas(&area, later()).expect("area");
+        let back = paper();
+        let light: [u8; 3] =
+            std::array::from_fn(|i| ((u16::from(first[i]) + 2 * u16::from(back[i])) / 3) as u8);
+        assert!(count(&c, light) > 1000, "the area under the line is filled");
+        assert!(
+            count(&c, first) > 50 && count(&c, second) > 0,
+            "the line and the lone point drawn"
+        );
+        let mut line = area.clone();
+        line.mark = Mark::Line;
+        assert_eq!(
+            count(&canvas(&line, later()).expect("line"), light),
+            0,
+            "a line fills nothing"
+        );
+    }
+
+    #[test]
+    fn an_arc_fills_its_slices_clockwise_from_twelve() {
+        let slice = |theta: f64, color| Point {
+            theta: Some(theta),
+            color,
+            ..Point::default()
+        };
+        let pie = Chart {
+            mark: Mark::Arc,
+            width: 200,
+            height: 200,
+            title: "Share".into(),
+            x: None,
+            y: None,
+            colors: 2,
+            points: vec![
+                slice(1.0, Some(0)),
+                slice(3.0, Some(1)),
+                slice(-1.0, Some(0)),
+                slice(f64::INFINITY, Some(0)),
+            ],
+        };
+        let c = canvas(&pie, later()).expect("pie");
+        let top = 16 + LINE + 8 + LINE + 8;
+        let (cw, ch) = (200 - 8 * ADVANCE, 200 - top);
+        let (cx, cy, r) = (cw / 2, top + ch / 2, (cw.min(ch) / 2 - 16).max(4));
+        // A quarter (theta 1 of 4) on the right of twelve, the rest after it.
+        assert_eq!(pixel(&c, cx + r / 2, cy - r / 2), color_of(Some(0)));
+        assert_eq!(pixel(&c, cx - r / 2, cy - r / 2), color_of(Some(1)));
+        assert_eq!(pixel(&c, cx, cy + r / 2), color_of(Some(1)));
+        assert_eq!(pixel(&c, cx + r + 2, cy), paper(), "outside the disc");
+        let legend = 200 - 8 * ADVANCE + ADVANCE;
+        assert_eq!(pixel(&c, legend + 1, top + 1), color_of(Some(0)));
+        assert_eq!(pixel(&c, legend + 1, top + LINE + 1), color_of(Some(1)));
+        let uncoloured = Chart {
+            colors: 0,
+            points: vec![slice(1.0, None), slice(1.0, None)],
+            ..pie.clone()
+        };
+        let c = canvas(&uncoloured, later()).expect("by index");
+        assert!(
+            count(&c, color_of(Some(1))) > 100,
+            "a slice without colour takes its index"
+        );
+        let empty = Chart {
+            points: vec![slice(0.0, Some(1))],
+            ..pie.clone()
+        };
+        let c = canvas(&empty, later()).expect("nothing to draw");
+        assert_eq!(
+            count(&c, color_of(Some(1))),
+            SWATCH,
+            "only the legend swatch"
+        );
+        let late = render(&pie, Instant::now() - Duration::from_millis(1));
+        assert_eq!(late, Err(Limited));
+    }
+
+    #[test]
+    fn a_plot_too_small_for_its_axes_is_left_blank() {
+        let tiny = Chart {
+            width: 60,
+            height: 60,
+            ..chart(
+                Mark::Line,
+                Some(Scale::Quantitative),
+                Some(Scale::Quantitative),
+                vec![at(0.0, 0.0, None), at(1.0, 1.0, None)],
+            )
+        };
+        let c = canvas(&tiny, later()).expect("tiny");
+        assert_eq!(count(&c, axis()), 0, "no axis drawn");
+        assert_eq!(count(&c, paper()), 60 * 60);
+        let bare = chart(Mark::Point, None, None, vec![Point::default()]);
+        let c = canvas(&bare, later()).expect("no channels");
+        assert!(count(&c, axis()) > 0, "the axes still frame the plot");
+        assert_eq!(count(&c, color_of(Some(0))), 0);
+    }
+
+    #[test]
+    fn a_montage_lays_tiles_in_rows_of_two() {
+        let one = chart(
+            Mark::Line,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![at(0.0, 0.0, None)],
+        );
+        assert_eq!(
+            montage(&[Tile::Chart(one.clone())], later()),
+            render(&one, later())
+        );
+        let none = montage(&[], later()).expect("none");
+        assert_eq!(png_size(&none), (480, 64));
+        let error = Tile::Error {
+            width: 200,
+            height: 100,
+            text: "Widget 2 failed".into(),
+        };
+        let three = [
+            Tile::Chart(one.clone()),
+            error.clone(),
+            Tile::Chart(Chart {
+                width: 100,
+                height: 50,
+                ..one.clone()
+            }),
+        ];
+        let png = montage(&three, later()).expect("three");
+        assert_eq!(
+            png_size(&png),
+            (GAP as u32 * 3 + 300 + 200, GAP as u32 * 3 + 240 + 50)
+        );
+        assert_eq!(
+            montage(&three, Instant::now() - Duration::from_millis(1)),
+            Err(Limited)
+        );
+        let mut out = Canvas::new(20, 20);
+        let mut inner = Canvas::new(4, 4);
+        inner.rect(0, 0, 3, 3, ink());
+        out.frame(1, 1, 6, 6, grid());
+        out.blit(&inner, 2, 2);
+        out.blit(&inner, 18, 18);
+        assert_eq!(
+            (pixel(&out, 1, 1), pixel(&out, 6, 3), pixel(&out, 3, 6)),
+            (grid(), grid(), grid())
+        );
+        assert_eq!(
+            (pixel(&out, 2, 2), pixel(&out, 5, 5), pixel(&out, 19, 19)),
+            (ink(), ink(), ink())
+        );
+        assert_eq!(count(&out, ink()), 16 + 4, "the blit past the edge is cut");
+        out.set(-1, 0, ink());
+        out.set(0, 20, ink());
+        assert_eq!(count(&out, ink()), 20, "a pixel outside is dropped");
+    }
+
+    #[test]
+    fn every_glyph_is_its_own_and_unknown_signs_are_a_question_mark() {
+        let signs = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ .,:-/_%()#+";
+        let glyphs: std::collections::HashSet<[u8; 7]> = signs.chars().map(glyph).collect();
+        assert_eq!(
+            glyphs.len(),
+            signs.chars().count(),
+            "no two signs share a glyph"
+        );
+        assert_eq!(glyph('q'), glyph('Q'));
+        assert_eq!(glyph('é'), glyph('~'));
+        assert!(!glyphs.contains(&glyph('~')));
+        let mut c = Canvas::new(40, 20);
+        c.text(0, 0, "I", ink());
+        // I: a 3-wide top bar, the stem, a 3-wide foot; each bit a 2x2 block.
+        assert_eq!(count(&c, ink()), (3 + 5 + 3) * 4);
+    }
+
+    #[test]
+    fn domains_pad_flat_and_empty_values() {
+        assert_eq!(
+            domain(std::iter::empty(), Scale::Quantitative, false),
+            (0.0, 1.0)
+        );
+        assert_eq!(
+            domain([0.0, 2.0].into_iter(), Scale::Nominal, true),
+            (-0.5, 2.5)
+        );
+        assert_eq!(
+            domain([3.0, 5.0].into_iter(), Scale::Quantitative, true),
+            (0.0, 5.0)
+        );
+        assert_eq!(
+            domain([-3.0, -1.0].into_iter(), Scale::Quantitative, true),
+            (-3.0, 0.0)
+        );
+        assert_eq!(
+            domain([3.0, 5.0].into_iter(), Scale::Quantitative, false),
+            (3.0, 5.0)
+        );
+        assert_eq!(
+            domain([10.0].into_iter(), Scale::Quantitative, false),
+            (9.0, 11.0)
+        );
+        assert_eq!(
+            domain([0.0].into_iter(), Scale::Temporal, false),
+            (-1.0, 1.0)
+        );
+        assert_eq!(
+            domain([-10.0].into_iter(), Scale::Quantitative, false),
+            (-11.0, -9.0)
+        );
+    }
+
+    #[test]
+    fn axis_marks_number_categories_and_fit_the_room() {
+        let ch = |scale, categories| Channel {
+            scale,
+            title: String::new(),
+            categories,
+        };
+        let marks = axis_marks(&ch(Scale::Nominal, 5), -0.5, 4.5, 2);
+        assert_eq!(marks, [(0.0, "#1".to_owned()), (3.0, "#4".to_owned())]);
+        let marks = axis_marks(&ch(Scale::Nominal, 0), -0.5, 0.5, -3);
+        assert_eq!(marks, [(0.0, "#1".to_owned())]);
+        let marks = axis_marks(&ch(Scale::Quantitative, 0), 0.0, 4.0, 9);
+        assert_eq!(marks.first(), Some(&(0.0, "0".to_owned())));
+        assert_eq!(marks.last(), Some(&(4.0, "4".to_owned())));
+        let day = 86_400_000.0;
+        let marks = axis_marks(&ch(Scale::Temporal, 0), 0.0, 3.0 * day, 4);
+        assert_eq!(
+            marks.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>(),
+            ["1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04"]
+        );
+        assert_eq!(label(Scale::Nominal, 2.0, 1.0), "#3");
+        // Past the longest whole step, the span is cut in `room` parts.
+        let year = 365.0 * day;
+        assert_eq!(time_ticks(0.0, 2.0 * year, 2), [0.0, year, 2.0 * year]);
+    }
+
     #[test]
     fn ticks_are_round_and_cover_the_domain() {
         assert_eq!(ticks(0.0, 10.0), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
         assert_eq!(number(2.5), "2.5");
         assert_eq!(number(3_000_000.0), "3M");
+        assert_eq!(number(-4_500_000_000.0), "-4.5G");
+        assert_eq!(number(0.0), "0");
+        assert_eq!(number(0.0005), "0.5M");
+        assert_eq!(ticks(5.0, 5.0), [5.0]);
+        assert_eq!(ticks(0.0, f64::INFINITY), [0.0]);
+        assert_eq!(ticks(0.0, 700.0), [0.0, 200.0, 400.0, 600.0]);
+        assert_eq!(ticks(0.0, 1e6).len(), 6);
         let hour = 3_600_000.0;
         assert_eq!(
             time_ticks(0.5 * hour, 11.5 * hour, 6),
