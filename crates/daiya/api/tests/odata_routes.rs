@@ -121,6 +121,23 @@ async fn service_document_and_metadata() {
         .await;
     assert_eq!(st, StatusCode::OK);
     assert!(by_accept.is_object());
+    // JSON only when JSON is asked for and XML is not.
+    for accept in ["application/json, application/xml", "text/plain"] {
+        let (st, body) = w
+            .send(
+                Request::builder()
+                    .uri("/odata/v4/$metadata")
+                    .header("accept", accept)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(
+            body.as_str().is_some_and(|x| x.contains("<edmx:Edmx")),
+            "{accept}: {body}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -178,7 +195,17 @@ async fn entity_sets_answer_rows_with_query_options() {
             None,
         )
         .await;
-    assert!(allowed.is_object(), "{allowed}");
+    // Delete: the set is read only; read: the caller's organization rights hold it.
+    assert_eq!(allowed["allowed"], false, "{allowed}");
+    assert_eq!(allowed["reason"], "Dashboards is served read only");
+    let readable = w
+        .ok(
+            "GET",
+            "/odata/v4/Dashboards/$allowed?op=read&key=edge",
+            None,
+        )
+        .await;
+    assert_eq!(readable["allowed"], true, "{readable}");
     let (st, _) = w
         .call(
             "GET",
@@ -957,6 +984,64 @@ impl Authorizer for DenySome {
             column,
             values: [open.to_owned()].into(),
         }
+    }
+}
+
+/// Allows members everything in ORG except reading the Organization itself.
+struct NoOrganizationRead;
+
+impl Authorizer for NoOrganizationRead {
+    fn check(&self, ctx: &RequestCtx, _action: Action, object: &ObjectTarget) -> Decision {
+        if !ctx.subject.is_member_of(object.org_id()) || object.org_id() != ctx.org_id {
+            return Decision::deny_hidden("other organization");
+        }
+        if matches!(object, ObjectTarget::Organization { .. }) {
+            return Decision::deny_hidden("no read on the organization");
+        }
+        Decision::allow("member")
+    }
+
+    fn read_scope(
+        &self,
+        _ctx: &RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        daiya_model::ReadScope::All
+    }
+}
+
+/// The cache statistics list an entry only to a caller who may read the Organization, even
+/// when the caller may read the entry's dashboard.
+#[tokio::test]
+async fn cache_statistics_need_a_read_on_the_organization() {
+    let deciders: [(Arc<dyn Authorizer>, usize); 2] =
+        [(Arc::new(DenySome), 1), (Arc::new(NoOrganizationRead), 0)];
+    for (authz, want) in deciders {
+        let w = world_with(authz, loopback());
+        let key = daiya_query::cache::PublicCacheKey::new(
+            ORG,
+            daiya_model::InstanceId::from_u128(1),
+            "dash",
+            1,
+            "r",
+            1,
+            0,
+            60_000,
+            1_000,
+            100,
+        );
+        w.state.query_cache.insert_public(
+            key.clone(),
+            Vec::new(),
+            std::time::Duration::from_secs(60),
+        );
+        assert!(w.state.query_cache.get_public(&key).is_some());
+        let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
+        assert_eq!(
+            stats["value"].as_array().map(Vec::len),
+            Some(want),
+            "{stats}"
+        );
     }
 }
 
