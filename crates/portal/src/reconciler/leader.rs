@@ -90,15 +90,16 @@ impl Leadership {
     pub async fn acquire(&self) -> Result<bool, sqlx::Error> {
         let mut held = self.held.lock().await;
 
-        if let Some(mut connection) = held.take() {
-            match sqlx::query("SELECT 1").execute(&mut *connection).await {
-                Ok(_) => {
-                    *held = Some(connection);
-                    return Ok(true);
-                }
+        // The session stays in its slot while it is asked: a resign that aborts the heartbeat
+        // mid-query must still find it, unlock it and close it, never see it dropped into the pool.
+        if let Some(connection) = held.as_mut() {
+            match sqlx::query("SELECT 1").execute(&mut **connection).await {
+                Ok(_) => return Ok(true),
                 Err(err) => {
                     tracing::warn!(error = %err, "the connection holding the reconciler lock died");
-                    close(connection).await;
+                    if let Some(connection) = held.take() {
+                        close(connection).await;
+                    }
                     self.leader.store(false, Ordering::Relaxed);
                 }
             }
@@ -140,16 +141,18 @@ impl Leadership {
             loop {
                 tokio::time::sleep(period).await;
                 let mut guard = held.lock().await;
-                let Some(mut connection) = guard.take() else {
+                // in its slot while asked, so an abort here leaves it for resign (see acquire)
+                let Some(connection) = guard.as_mut() else {
                     return;
                 };
-                if let Err(err) = sqlx::query("SELECT 1").execute(&mut *connection).await {
+                if let Err(err) = sqlx::query("SELECT 1").execute(&mut **connection).await {
                     tracing::warn!(error = %err, "the reconciler lock's heartbeat failed; this replica stops leading");
-                    close(connection).await;
+                    if let Some(connection) = guard.take() {
+                        close(connection).await;
+                    }
                     leader.store(false, Ordering::Relaxed);
                     return;
                 }
-                *guard = Some(connection);
             }
         });
         if let Some(previous) = self
