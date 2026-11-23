@@ -75,6 +75,85 @@ async fn an_id_is_never_renamed_released_or_reused() {
     assert_eq!(still[&name], id);
 }
 
+/// A project deleted from the repository has its id retired by the next complete run, and the
+/// next project of its name gets a fresh id: the old one's rows, copies and grants never attach
+/// to it (S1-12, TEN-16, T-7557). A retired row stays retired. Only a project a complete run saw
+/// is retired: a name minted for a project still waiting for its merge (a copy, a proposal) keeps
+/// its id, and a run that found no project retires nothing. One test, since every call reads
+/// the whole registry.
+#[tokio::test]
+async fn a_deleted_projects_id_is_never_given_to_the_next_project_of_its_name() {
+    let pool = pool().await;
+    let name = run_name("recreated");
+    let kept = run_name("kept");
+    let waiting = run_name("waiting");
+    let ids = project_ids::ensure(&pool, &[name.clone(), kept.clone(), waiting.clone()])
+        .await
+        .expect("ensure");
+    let old = ids[&name];
+    let found = vec![name.clone(), kept.clone()];
+    let retired = project_ids::retire_deleted(&pool, &found)
+        .await
+        .expect("seen");
+    assert!(!retired.contains(&name) && !retired.contains(&kept));
+    let retired = project_ids::retire_deleted(&pool, std::slice::from_ref(&kept))
+        .await
+        .expect("retired");
+    assert!(retired.contains(&name), "{retired:?}");
+    assert!(!retired.contains(&kept) && !retired.contains(&waiting));
+    assert!(project_ids::retire_deleted(&pool, &[])
+        .await
+        .expect("nothing")
+        .is_empty());
+    let fresh = project_ids::ensure(&pool, std::slice::from_ref(&name))
+        .await
+        .expect("ensure")[&name];
+    assert_ne!(fresh, old, "a re-created name mints a fresh id");
+    assert_eq!(
+        project_ids::ensure(&pool, std::slice::from_ref(&kept))
+            .await
+            .expect("ensure")[&kept],
+        ids[&kept],
+        "a project still there keeps its id"
+    );
+    assert_eq!(
+        project_ids::ensure(&pool, std::slice::from_ref(&waiting))
+            .await
+            .expect("ensure")[&waiting],
+        ids[&waiting],
+        "a project no run saw keeps its id"
+    );
+    let names_old: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM project_ids WHERE id = $1::uuid AND deleted_at IS NOT NULL",
+    )
+    .bind(old.to_string())
+    .fetch_optional(&pool)
+    .await
+    .expect("read");
+    assert_eq!(
+        names_old.as_deref(),
+        Some(name.as_str()),
+        "the old id stays, retired"
+    );
+    for statement in [
+        "UPDATE project_ids SET deleted_at = NULL WHERE id = $1::uuid",
+        "UPDATE project_ids SET seen_at = now() - interval '1 day' WHERE id = $1::uuid",
+        "DELETE FROM project_ids WHERE id = $1::uuid",
+    ] {
+        let refused = sqlx::query(statement)
+            .bind(old.to_string())
+            .execute(&pool)
+            .await
+            .expect_err(statement);
+        assert!(
+            refused
+                .to_string()
+                .contains("never renamed, released or reused"),
+            "{statement}: {refused}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_branch_with_its_parents_name_never_answers_for_the_parent() {
     let pool = pool().await;
