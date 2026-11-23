@@ -22,6 +22,10 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
 - portal.O: its working host answers 2xx/3xx.
 - oidc.O: its realm's discovery (O on hosts.idm, else the installation realm on the sign-in host)
   answers 200 over verified TLS and names exactly that issuer.
+- login.O (T-7408): the Portal's sign-in door on its working host (/api/v1/auth/login) redirects to
+  O's own realm on O's own sign-in host (hosts.idm, /realms/O/); red when it names another
+  Organization's realm or host, or O has no sign-in host of its own (owner 2026-11-23: every
+  Organization has its own login identity).
 - prm.O: the protected-resource metadata of the Portal MCP on its working host (/api/v1/mcp, the
   Portal's door) names that host as the resource and that realm alone.
 - prm.gateway: the gateway's own host (the first [[mounts.gateway]] without a path prefix) serves
@@ -522,6 +526,7 @@ class Suite:
         self.r.check(f"oidc.{o}", o, f"GET {signin}{at}/realms/{realm}/.well-known/openid-configuration",
                      f"200, issuer {issuer}", f"{st} {got or ''}".strip(), st == 200 and got == issuer)
 
+        self.login_door(o, portal, hs.get("idm"))
         self.prm(f"prm.{o}", o, portal, "/api/v1/mcp", issuer)
 
         if hs.get("opendata"):
@@ -573,6 +578,17 @@ class Suite:
                 self.r.skip(rid, o, call, want, got)
             else:
                 self.r.check(rid, o, call, want, got, result == PASS)
+
+    def login_door(self, o: str, portal: str, idm: str | None) -> None:
+        """/api/v1/auth/login on O's working host redirects to idm/realms/O/; the row names host and realm only."""
+        st, hd, _ = self.http(portal).call("GET", "/api/v1/auth/login")
+        loc = urllib.parse.urlsplit(hd.get("location") or "")
+        host = (loc.hostname or (portal if loc.path else "")).lower()
+        m = re.search(r"/realms/([^/]+)(?:/|$)", loc.path)
+        realm = m.group(1) if m else ""
+        want = f"3xx to {idm}/realms/{o}/" if idm else f"3xx to {o}'s own sign-in host and realm {o} (none configured)"
+        self.r.check(f"login.{o}", o, f"GET {portal}/api/v1/auth/login", want, f"{st} {host}/realms/{realm}",
+                     300 <= st < 400 and bool(idm) and host == idm and realm == o)
 
     def job(self, rid: str, o: str, c: dict) -> None:
         """The source's newest finished crawl job is done; a failed one names its error class."""

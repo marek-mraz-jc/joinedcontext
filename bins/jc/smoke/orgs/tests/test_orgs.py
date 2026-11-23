@@ -255,6 +255,15 @@ def edge():
                        b'event: citations\ndata: [{"n": 1, "url": "https://www.alpha.example/about"}]\n\n'
                        b'event: done\ndata: ' + json.dumps(done).encode() + b'\n\n')
                 return self.reply(200, sse, "text/event-stream")
+            if path == "/api/v1/auth/login":
+                # alpha: its own realm on its own host; beta: another Organization's realm.
+                to = {"portal.alpha.test": "http://idm.alpha.test/realms/alpha/protocol/openid-connect/auth?state=s",
+                      "portal.beta.test": "http://idm.city.test/realms/alpha/protocol/openid-connect/auth?state=s"}
+                if host in to:
+                    self.send_response(302)
+                    self.send_header("Location", to[host])
+                    self.send_header("Content-Length", "0")
+                    return self.end_headers()
             if host.startswith("portal.") and path == "/":
                 return self.reply(302)
             if host in ("src.alpha.example", "www.alpha.example", "www.beta.example"):
@@ -297,7 +306,7 @@ def run(tmp_path, port, *extra, snap_doc=None):
 def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, public_sources):
     code, res = run(tmp_path, public_sources, "--app-host", "alpha=nosuch.apps.alpha.test")
     rows = {r["id"]: r for r in res["checks"]}
-    green = ["prm.gateway", "portal.alpha", "oidc.alpha", "prm.alpha", "catalogue.alpha", "mcp.alpha", "harvest.alpha.alpha-nkod",
+    green = ["prm.gateway", "portal.alpha", "oidc.alpha", "login.alpha", "prm.alpha", "catalogue.alpha", "mcp.alpha", "harvest.alpha.alpha-nkod",
              "crawl.alpha.alpha-web/site", "crawl.alpha.alpha-web/site.fresh", "embed.alpha", "assistant.alpha",
              "portal.beta", "oidc.beta", "catalogue.beta", "crawl.beta.beta-web/site"]
     assert {k: rows[k]["result"] for k in green} == {k: "pass" for k in green}, rows
@@ -309,7 +318,10 @@ def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, 
     assert rows["prm.alpha"]["call"] == "GET portal.alpha.test/.well-known/oauth-protected-resource/api/v1/mcp"
     # The gateway's /api/mcp metadata is asked of the gateway host only, never of an Organization host.
     assert [h for m, h, p in edge[1] if p == "/.well-known/oauth-protected-resource/api/mcp"] == ["api.city.test"]
-    assert {"prm.beta", "prm.gamma", "harvest.beta.beta-arcgis", "crawl.beta.beta-web/site.fresh", "embed.beta",
+    # login: beta's door sends its people to realm alpha; gamma answers no redirect.
+    assert rows["login.beta"]["actual"] == "302 idm.city.test/realms/alpha"
+    assert rows["login.alpha"]["actual"] == "302 idm.alpha.test/realms/alpha"
+    assert {"login.beta", "login.gamma", "prm.beta", "prm.gamma", "harvest.beta.beta-arcgis", "crawl.beta.beta-web/site.fresh", "embed.beta",
             "app.alpha.nosuch.apps.alpha.test"} <= red
     assert rows["embed.beta"]["actual"] == "7 refused, 0 waiting"
     assert rows["crawl.beta.beta-files/upload"]["result"] == "skip"
