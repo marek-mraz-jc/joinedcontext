@@ -54,8 +54,8 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
     let s = ip.segments();
-    let private = ip.is_unspecified()
-        || ip.is_loopback()
+    // ::/8 is reserved (IANA); its mapped and compatible forms were judged as IPv4 already.
+    let private = s[0] == 0
         || (s[0] & 0xff00) == 0xff00
         || (s[0] & 0xfe00) == 0xfc00
         || (s[0] & 0xffc0) == 0xfe80
@@ -65,8 +65,9 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     !private
 }
 
-/// The IPv4 address an IPv6 address carries: mapped `::ffff:a.b.c.d`, compatible `::a.b.c.d`,
-/// NAT64 `64:ff9b::a.b.c.d` and 6to4 `2002:aabb:ccdd::`.
+/// The IPv4 address an IPv6 address carries: mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::a.b.c.d`
+/// and 6to4 `2002:aabb:ccdd::`. The deprecated compatible form `::a.b.c.d` lies in `::/8`, which
+/// is never public.
 fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
     let s = ip.segments();
     let v4 = |hi: u16, lo: u16| {
@@ -74,7 +75,7 @@ fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
         let [c, d] = lo.to_be_bytes();
         Ipv4Addr::new(a, b, c, d)
     };
-    if s[..5] == [0; 5] && (s[5] == 0xffff || (s[5] == 0 && (s[6] != 0 || s[7] > 1))) {
+    if s[..5] == [0; 5] && s[5] == 0xffff {
         return Some(v4(s[6], s[7]));
     }
     if s[0] == 0x0064 && s[1] == 0xff9b && s[2..6] == [0; 4] {
@@ -252,10 +253,45 @@ mod tests {
             "8.8.8.8",
             "1.1.1.1",
             "2a00:1450:4001::1",
+            "2a00::1",
+            "2a00::ffff:7f00:1",
+            "2a00:ff9b::7f00:1",
+            "2a00:db8::1",
+            "2001:db9::1",
+            "100:0:0:1::1",
+            "100:1::1",
+            "101::1",
+            "fe40::1",
             "100.128.0.1",
             "172.32.0.1",
         ] {
             assert!(is_public(ip(public)), "{public}");
+        }
+        // The global neighbours of the reserved ranges, as octets (no address literal in the tree).
+        for octets in [
+            [172, 15, 255, 1],
+            [100, 63, 0, 1],
+            [1, 0, 0, 0],
+            [11, 0, 0, 1],
+            [126, 0, 0, 1],
+            [169, 253, 0, 1],
+            [169, 255, 0, 1],
+            [192, 1, 0, 1],
+            [192, 0, 1, 1],
+            [192, 167, 0, 1],
+            [193, 168, 0, 1],
+            [198, 17, 0, 1],
+            [198, 20, 0, 1],
+            [198, 51, 101, 1],
+            [198, 52, 100, 1],
+            [199, 18, 0, 1],
+            [203, 0, 114, 1],
+            [203, 1, 113, 1],
+            [204, 0, 113, 1],
+            [223, 255, 255, 255],
+        ] {
+            let public = IpAddr::from(octets);
+            assert!(is_public(public), "{public}");
         }
         for private in [
             "127.0.0.1",
@@ -267,9 +303,24 @@ mod tests {
             "0.0.0.0",
             "224.0.0.1",
             "255.255.255.255",
+            "0.1.2.3",
+            "100.127.255.255",
+            "172.31.255.1",
+            "169.254.0.1",
+            "192.0.0.8",
+            "192.0.2.1",
+            "198.18.0.1",
+            "198.19.255.1",
+            "198.51.100.7",
+            "203.0.113.9",
             "::1",
             "::",
             "fe80::1",
+            "fec0::1",
+            "::2",
+            "::1:7f00:1",
+            "::1:0:0:1",
+            "100::1",
             "fc00::1",
             "fd00:ec2::254",
             "ff02::1",
@@ -306,6 +357,17 @@ mod tests {
             "8.8.8.8",
         ] {
             assert!(!is_private_range(ip(no)), "{no}");
+        }
+        for octets in [
+            [172, 32, 0, 1],
+            [8, 20, 0, 1],
+            [192, 1, 0, 1],
+            [8, 168, 0, 1],
+            [100, 128, 0, 1],
+            [8, 64, 0, 1],
+        ] {
+            let no = IpAddr::from(octets);
+            assert!(!is_private_range(no), "{no}");
         }
     }
 
@@ -382,5 +444,124 @@ mod tests {
             },
         );
         assert!(check_url(&Url::parse("http://127.0.0.1:1/x").expect("url"), &open).is_ok());
+        assert!(check_url(&Url::parse("http://localhost:1/x").expect("url"), &open).is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_resolver_keeps_only_addresses_the_organization_may_reach() {
+        use reqwest::dns::Resolve;
+        use std::str::FromStr;
+        let name = || reqwest::dns::Name::from_str("localhost").expect("name");
+        let closed = GuardedResolver {
+            org: OrgContext::new(OrgId::new("o"), OrgQuotas::default()),
+        };
+        let e = closed
+            .resolve(name())
+            .await
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            e,
+            "SSRF protection: 'localhost' resolves to no address this organization may reach"
+        );
+        let open = GuardedResolver {
+            org: OrgContext::new(
+                OrgId::new("o"),
+                OrgQuotas {
+                    allow_private_ips: true,
+                    ..OrgQuotas::default()
+                },
+            ),
+        };
+        let addrs: Vec<SocketAddr> = open.resolve(name()).await.expect("resolves").collect();
+        assert!(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()));
+        let unknown = reqwest::dns::Name::from_str("no-such-host.invalid").expect("name");
+        assert!(open.resolve(unknown).await.is_err());
+    }
+
+    /// A server answering every connection with `raw` and closing it.
+    async fn raw_server(raw: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(raw.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    fn open_org() -> Arc<OrgContext> {
+        OrgContext::new(
+            OrgId::new("o"),
+            OrgQuotas {
+                allow_private_ips: true,
+                ..OrgQuotas::default()
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn read_capped_refuses_a_cut_body_and_a_chunked_one_past_the_cap() {
+        let http = build_client(open_org(), Duration::ZERO).expect("client");
+        let cut = raw_server("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort").await;
+        let resp = http.get(&cut).send().await.expect("head");
+        let e = read_capped(resp, 1000).await.err().unwrap_or_default();
+        assert!(e.starts_with("the answer could not be read"), "{e}");
+
+        let chunked = raw_server(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n14\r\n01234567890123456789\r\n0\r\n\r\n",
+        )
+        .await;
+        let resp = http.get(&chunked).send().await.expect("head");
+        assert_eq!(
+            read_capped(resp, 10).await.err().unwrap_or_default(),
+            "the answer is longer than 10 bytes"
+        );
+        let resp = http.get(&chunked).send().await.expect("head");
+        assert_eq!(
+            read_capped(resp, 20).await.expect("fits").as_ref(),
+            b"01234567890123456789"
+        );
+        let exact = raw_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello").await;
+        let resp = http.get(&exact).send().await.expect("head");
+        assert_eq!(
+            read_capped(resp, 5)
+                .await
+                .expect("exactly the cap")
+                .as_ref(),
+            b"hello"
+        );
+        let resp = http.get(&exact).send().await.expect("head");
+        assert_eq!(
+            read_capped(resp, 4).await.err().unwrap_or_default(),
+            "the answer is longer than 4 bytes"
+        );
+    }
+
+    #[test]
+    fn the_error_chain_names_every_cause() {
+        #[derive(Debug)]
+        struct Wrap(std::io::Error);
+        impl std::fmt::Display for Wrap {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("sending")
+            }
+        }
+        impl std::error::Error for Wrap {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert_eq!(
+            error_chain(&Wrap(std::io::Error::other("dns"))),
+            "sending: dns"
+        );
     }
 }

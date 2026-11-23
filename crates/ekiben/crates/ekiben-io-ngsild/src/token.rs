@@ -341,17 +341,62 @@ mod tests {
             parse_token_answer(b"access_token=footoken&token_type=Bearer"),
             Some(("footoken".into(), None))
         );
+        assert_eq!(
+            parse_token_answer(b"access_token=f&expires_in=%2060"),
+            Some(("f".into(), Some(60)))
+        );
         assert_eq!(parse_token_answer(br#"{"token":"a"}"#), None);
         assert_eq!(parse_token_answer(br#"{"access_token":""}"#), None);
         assert_eq!(parse_token_answer(b""), None);
     }
 
     #[test]
-    fn the_cache_is_bounded_and_keeps_slots_in_use() {
-        let org = OrgContext::new(
-            ekiben_core::OrgId::new("bounded"),
-            ekiben_core::OrgQuotas::default(),
+    fn the_form_carries_scopes_and_endpoint_params_sorted() {
+        let mut s = settings("k", "s");
+        s.scopes = vec!["a".into(), "b".into()];
+        s.endpoint_params
+            .insert("audience".into(), vec!["gw".into(), "gw2".into()]);
+        assert_eq!(
+            form(&s, false),
+            "audience=gw&audience=gw2&grant_type=client_credentials&scope=a+b"
         );
+    }
+
+    /// One test for everything that fills the process-wide cache, so no other test sees it full.
+    #[tokio::test]
+    async fn the_cache_is_bounded_reuses_idle_slots_and_keeps_slots_in_use() {
+        assert_eq!(MAX_TOKEN_ANSWER, 64 * 1024);
+        let ep = endpoint(vec![
+            (200, r#"{"access_token":"one"}"#.into()),
+            (200, r#"{"access_token":"two"}"#.into()),
+        ])
+        .await;
+        let org = open_org("bounded");
+        let http = reqwest::Client::new();
+        let first_use = source_at(&org, &ep.url, "reused");
+        assert_eq!(
+            first_use.token(&http, &org).await.expect("one").expose(),
+            "one"
+        );
+        drop(first_use);
+        // A new client while the cache has room evicts nothing.
+        let _other = source_at(&org, &ep.url, "other");
+        let second_use = source_at(&org, &ep.url, "reused");
+        assert_eq!(
+            second_use
+                .token(&http, &org)
+                .await
+                .expect("cached")
+                .expose(),
+            "one",
+            "a cache with room keeps an idle client's token"
+        );
+        assert_eq!(
+            ep.seen.lock().unwrap_or_else(PoisonError::into_inner).len(),
+            1
+        );
+        drop(second_use);
+
         let held = TokenSource::new(&org, settings("held", "s"));
         for i in 0..(MAX_CACHED_CLIENTS + 10) {
             let _ = TokenSource::new(&org, settings(&format!("c{i}"), "s"));
@@ -360,5 +405,210 @@ mod tests {
         assert!(len <= MAX_CACHED_CLIENTS, "{len}");
         let again = TokenSource::new(&org, settings("held", "s"));
         assert!(Arc::ptr_eq(&held.slot, &again.slot));
+        let fresh = TokenSource::new(&org, settings("fresh", "s"));
+        let fresh_again = TokenSource::new(&org, settings("fresh", "s"));
+        assert!(
+            Arc::ptr_eq(&fresh.slot, &fresh_again.slot),
+            "idle slots make room for a new client"
+        );
+
+        // Every slot held: a new client still gets a working slot, only not a cached one.
+        let full: Vec<TokenSource> = (0..MAX_CACHED_CLIENTS)
+            .map(|i| TokenSource::new(&org, settings(&format!("h{i}"), "s")))
+            .collect();
+        let len = slots().lock().unwrap_or_else(PoisonError::into_inner).len();
+        assert_eq!(len, MAX_CACHED_CLIENTS);
+        let first = TokenSource::new(&org, settings("late", "s"));
+        let second = TokenSource::new(&org, settings("late", "s"));
+        assert!(!Arc::ptr_eq(&first.slot, &second.slot));
+        drop(full);
+    }
+
+    #[tokio::test]
+    async fn a_short_lived_token_is_kept_for_half_its_life() {
+        let ep = endpoint(vec![
+            (200, r#"{"access_token":"short","expires_in":20}"#.into()),
+            (200, r#"{"access_token":"next"}"#.into()),
+        ])
+        .await;
+        let org = open_org("short-life");
+        let src = source_at(&org, &ep.url, "short-life");
+        let http = reqwest::Client::new();
+        assert_eq!(
+            src.token(&http, &org).await.expect("short").expose(),
+            "short"
+        );
+        assert_eq!(
+            src.token(&http, &org).await.expect("cached").expose(),
+            "short"
+        );
+        assert_eq!(
+            ep.seen.lock().unwrap_or_else(PoisonError::into_inner).len(),
+            1
+        );
+    }
+
+    /// A token endpoint answering `answers` in order (then 500), recording whether each request
+    /// carried a Basic header and its form body.
+    struct Endpoint {
+        url: String,
+        seen: Arc<Mutex<Vec<(bool, String)>>>,
+    }
+
+    async fn endpoint(answers: Vec<(u16, String)>) -> Endpoint {
+        use axum::http::{HeaderMap, StatusCode};
+        let queue = Arc::new(Mutex::new(std::collections::VecDeque::from(answers)));
+        let seen: Arc<Mutex<Vec<(bool, String)>>> = Arc::default();
+        let rec = seen.clone();
+        let app = axum::Router::new().route(
+            "/token",
+            axum::routing::post(move |headers: HeaderMap, body: String| {
+                let queue = queue.clone();
+                let rec = rec.clone();
+                async move {
+                    rec.lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((headers.contains_key(AUTHORIZATION), body));
+                    let (status, body) = queue
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .pop_front()
+                        .unwrap_or((500, String::new()));
+                    (
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        body,
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Endpoint {
+            url: format!("http://{addr}/token"),
+            seen,
+        }
+    }
+
+    fn open_org(name: &str) -> Arc<OrgContext> {
+        OrgContext::new(
+            ekiben_core::OrgId::new(name),
+            ekiben_core::OrgQuotas {
+                allow_private_ips: true,
+                ..ekiben_core::OrgQuotas::default()
+            },
+        )
+    }
+
+    fn source_at(org: &OrgContext, url: &str, key: &str) -> TokenSource {
+        let mut s = settings(key, "hunter2");
+        s.token_url = url.into();
+        TokenSource::new(org, s)
+    }
+
+    #[tokio::test]
+    async fn a_refused_header_style_is_asked_again_in_the_form() {
+        let ep = endpoint(vec![
+            (401, String::new()),
+            (200, r#"{"access_token":"tok","expires_in":60}"#.into()),
+        ])
+        .await;
+        let org = open_org("form-retry");
+        let src = source_at(&org, &ep.url, "form-retry");
+        let tok = src
+            .token(&reqwest::Client::new(), &org)
+            .await
+            .expect("token");
+        assert_eq!(tok.expose(), "tok");
+        let seen = ep
+            .seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].0 && !seen[0].1.contains("client_secret"));
+        assert!(!seen[1].0, "the retry carries no Basic header");
+        assert!(seen[1].1.contains("client_id=form-retry"), "{}", seen[1].1);
+    }
+
+    #[tokio::test]
+    async fn a_token_answer_without_a_token_or_too_long_is_a_failure() {
+        for (body, want) in [
+            ("{}".to_string(), "the answer carries no access_token"),
+            ("x".repeat(MAX_TOKEN_ANSWER + 1), "longer than"),
+        ] {
+            let ep = endpoint(vec![(200, body)]).await;
+            let org = open_org("bad-answer");
+            let src = source_at(&org, &ep.url, want);
+            let e = src
+                .token(&reqwest::Client::new(), &org)
+                .await
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(
+                e.contains("OAuth2 token request failed") && e.contains(want),
+                "{e}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_or_unparsable_token_url_fails_without_the_secret() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        drop(closed);
+        let org = open_org("unreachable");
+        let src = source_at(&org, &format!("http://127.0.0.1:{port}/token"), "unreach");
+        let e = src
+            .token(&reqwest::Client::new(), &org)
+            .await
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(e.starts_with("OAuth2 token request failed:"), "{e}");
+        assert!(!e.contains("hunter2"), "{e}");
+
+        let src = source_at(&org, "http://u:hunter2@[bad/token", "unparsable");
+        let e = src
+            .token(&reqwest::Client::new(), &org)
+            .await
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            e.contains("oauth2.token_url") && e.contains("is not a URL"),
+            "{e}"
+        );
+        assert!(!e.contains("hunter2"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn invalidate_drops_only_the_stale_token() {
+        let ep = endpoint(vec![
+            (200, r#"{"access_token":"one"}"#.into()),
+            (200, r#"{"access_token":"two"}"#.into()),
+        ])
+        .await;
+        let org = open_org("invalidate");
+        let src = source_at(&org, &ep.url, "invalidate");
+        let http = reqwest::Client::new();
+        let one = src.token(&http, &org).await.expect("one");
+        src.invalidate(&SecretString::new("other")).await;
+        assert_eq!(
+            src.token(&http, &org).await.expect("cached").expose(),
+            "one"
+        );
+        src.invalidate(&one).await;
+        assert_eq!(src.token(&http, &org).await.expect("fresh").expose(), "two");
+        let shown = format!("{src:?}");
+        assert!(
+            shown.contains("TokenSource") && !shown.contains("hunter2"),
+            "{shown}"
+        );
     }
 }
