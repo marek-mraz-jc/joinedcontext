@@ -327,6 +327,52 @@ mod tests {
         assert_eq!(findings[2].path, "spec.appearance.homeWidgets[1]");
     }
 
+    /// A bare member is the path of a finding whose message is the detail; a refusal that lists
+    /// no member is one finding with the detail; a refusal of the caller is no verdict (T-2234).
+    #[test]
+    fn a_bare_member_takes_the_detail_and_a_refusal_of_the_caller_stays_an_error() {
+        let manifest = serde_json::json!({ "kind": "Endpoint" });
+        let bare = ApiError::Invalid {
+            detail: "must name a Context Space".into(),
+            errors: vec!["spec.contextSpaceRef".into()],
+        };
+        let refused = refused_check(&bare, &manifest).expect("a red verdict");
+        assert!(!refused.valid);
+        assert_eq!(refused.lane, Lane::Red);
+        let findings = refused.verdict.expect("a verdict").findings;
+        assert_eq!(findings[0].path, "spec.contextSpaceRef");
+        assert_eq!(findings[0].message, "must name a Context Space");
+
+        for err in [
+            ApiError::Invalid {
+                detail: "the body is no manifest".into(),
+                errors: vec![],
+            },
+            ApiError::BadRequest("the body is no manifest".into()),
+        ] {
+            let findings = refused_check(&err, &manifest)
+                .and_then(|refused| refused.verdict)
+                .expect("a red verdict")
+                .findings;
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].path, "");
+            assert_eq!(findings[0].message, "the body is no manifest");
+        }
+        assert!(refused_check(&ApiError::Forbidden, &manifest).is_none());
+    }
+
+    /// A member path that is no `spec.`/`metadata.` member, or holds other characters, is no lead.
+    #[test]
+    fn only_a_spec_or_metadata_member_leads_a_sentence() {
+        assert_eq!(
+            led_by_its_member("metadata.name: too long"),
+            Some(("metadata.name", "too long"))
+        );
+        assert_eq!(led_by_its_member("status.phase: unknown"), None);
+        assert_eq!(led_by_its_member("spec.a b: unknown"), None);
+        assert_eq!(led_by_its_member("spec.name"), None);
+    }
+
     #[tokio::test]
     async fn execute_dry_run_plans_sandbox_space() {
         let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
@@ -351,11 +397,46 @@ mod tests {
                 "isSandbox": true
             }
         });
-        let res = execute_dry_run(&identity, &state, "ovzdusie", payload)
+        let res = execute_dry_run(&identity, &state, "ovzdusie", payload.clone())
             .await
             .expect("dry run executes");
         assert!(res.valid);
         assert_eq!(res.lane, Lane::Green);
+        assert_eq!(res.plan.summary.create, 1, "{:?}", res.plan);
+
+        // The same manifest, once the space holds it, is an update that changes nothing.
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("mobility", "ovzdusie"),
+            spec: serde_json::json!({ "isSandbox": true }),
+            status: None,
+        });
+        let res = execute_dry_run(&identity, &state, "ovzdusie", payload)
+            .await
+            .expect("dry run executes");
+        assert_eq!(res.plan, crate::plan::PlanDiff::empty(), "{:?}", res.plan);
+    }
+
+    /// A manifest without a kind is 400; a kind nobody knows is 404 naming it.
+    #[tokio::test]
+    async fn a_dry_run_needs_a_kind_it_knows() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let identity = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-123".into(),
+            username: "demo.developer".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec!["portal-approver".into()],
+            second_factor: false,
+        };
+        let none = execute_dry_run(&identity, &state, "ovzdusie", serde_json::json!({})).await;
+        assert!(matches!(none, Err(ApiError::BadRequest(m)) if m.contains("'kind'")));
+        let unknown = serde_json::json!({ "kind": "Spaceship", "metadata": { "name": "x" } });
+        let unknown = execute_dry_run(&identity, &state, "ovzdusie", unknown).await;
+        assert!(matches!(unknown, Err(ApiError::NotFound(m)) if m == "kind 'Spaceship' is unknown"));
     }
 
     /// CC-83, T-1484: every string that writes the organization's domain out is found, at any
@@ -445,15 +526,10 @@ mod tests {
                 confirm: None,
             };
             let err = is_dry_run(&q).expect_err("should reject unsupported values");
-            match err {
-                ApiError::BadRequest(msg) => {
-                    assert!(
-                        msg.contains("All"),
-                        "error message should name 'All' as accepted value, got: {msg}"
-                    );
-                }
-                other => panic!("expected ApiError::BadRequest, got {other:?}"),
-            }
+            assert!(
+                matches!(&err, ApiError::BadRequest(msg) if msg.contains("All")),
+                "a 400 naming 'All' as the accepted value, got: {err:?}"
+            );
         }
     }
 }
