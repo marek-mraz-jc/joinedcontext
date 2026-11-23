@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 use std::time::Instant;
 
 /// The body with the run's reasoning setting in the shape the endpoint reads (AG-72): OpenRouter's
-/// `reasoning.effort` on chat completions, a thinking budget on Anthropic messages, whose
-/// `max_tokens` grows by the budget so the answer keeps the room it asked for. A body that
+/// `reasoning.effort` on chat completions, a thinking budget on Anthropic messages. Either way a
+/// `max_tokens` the body names grows by the budget so the answer keeps the room it asked for:
+/// Gemini behind OpenRouter counts its thinking inside `max_tokens` too (T-7758). A body that
 /// already carries a setting, is not a JSON object, or an effort outside the three is sent as is.
 fn with_reasoning(body: &Bytes, rest: &str, effort: &str) -> Bytes {
     let Some(&(_, budget)) = BUDGETS.iter().find(|(name, _)| *name == effort) else {
@@ -26,7 +27,10 @@ fn with_reasoning(body: &Bytes, rest: &str, effort: &str) -> Bytes {
             return body.clone();
         }
         let max_tokens = map.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
-        map.insert("max_tokens".into(), json!(max_tokens + budget));
+        map.insert(
+            "max_tokens".into(),
+            json!(max_tokens.saturating_add(budget)),
+        );
         map.insert(
             "thinking".into(),
             json!({ "type": "enabled", "budget_tokens": budget }),
@@ -36,6 +40,12 @@ fn with_reasoning(body: &Bytes, rest: &str, effort: &str) -> Bytes {
             return body.clone();
         }
         map.insert("reasoning".into(), json!({ "effort": effort }));
+        if let Some(max_tokens) = map.get("max_tokens").and_then(Value::as_u64) {
+            map.insert(
+                "max_tokens".into(),
+                json!(max_tokens.saturating_add(budget)),
+            );
+        }
     }
     serde_json::to_vec(&map)
         .map(Bytes::from)
@@ -1028,22 +1038,28 @@ mod tests {
         }
     }
 
+    /// T-7758: per effort and provider, the thinking gets its budget on top of the answer's
+    /// `max_tokens`; a chat body naming no `max_tokens` keeps the provider's own.
     #[test]
     fn chat_completions_carry_the_effort_and_messages_a_thinking_budget() {
-        let chat = sent(
-            r#"{"model":"m","max_tokens":100}"#,
-            "v1/chat/completions",
-            "medium",
-        );
-        assert_eq!(chat["reasoning"], json!({ "effort": "medium" }));
-        assert_eq!(chat["max_tokens"], 100);
+        for (effort, budget) in BUDGETS {
+            let chat = sent(
+                r#"{"model":"m","max_tokens":100}"#,
+                "v1/chat/completions",
+                effort,
+            );
+            assert_eq!(chat["reasoning"], json!({ "effort": effort }));
+            assert_eq!(chat["max_tokens"], 100 + budget, "{effort}");
 
-        let messages = sent(r#"{"model":"m","max_tokens":100}"#, "v1/messages", "low");
-        assert_eq!(
-            messages["thinking"],
-            json!({ "type": "enabled", "budget_tokens": 2048 })
-        );
-        assert_eq!(messages["max_tokens"], 2148);
+            let messages = sent(r#"{"model":"m","max_tokens":100}"#, "v1/messages", effort);
+            assert_eq!(
+                messages["thinking"],
+                json!({ "type": "enabled", "budget_tokens": budget })
+            );
+            assert_eq!(messages["max_tokens"], 100 + budget, "{effort}");
+        }
+        let unsaid = sent(r#"{"model":"m"}"#, "chat/completions", "low");
+        assert_eq!(unsaid.get("max_tokens"), None, "{unsaid}");
     }
 
     #[test]
