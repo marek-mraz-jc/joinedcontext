@@ -130,6 +130,46 @@ describe("the health log", () => {
     expect(await screen.findByText("All 1 checks are ok.")).toBeInTheDocument();
   });
 
+  it("sorts_by_what_it_found_its_history_and_its_last_ok", async () => {
+    await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => jsonResponse({ items: CHECKS })) });
+    await userEvent.selectOptions(await screen.findByRole("combobox", { name: en.health.statusFilter }), "all");
+    const names = () =>
+      within(screen.getByRole("table", { name: en.health.caption }))
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("link")[0]?.textContent);
+    const sortBy = async (label: string) => {
+      const table = screen.getByRole("table", { name: en.health.caption });
+      const button = within(table).getByRole("button", { name: (name) => name.startsWith(label) });
+      await userEvent.click(button);
+      expect(button.closest("th")).toHaveAttribute("aria-sort", "ascending");
+    };
+    // The working space has no reading that needed a look, so it leads the history.
+    await sortBy(en.health.history);
+    expect(names()[0]).toBe("air");
+    // A check that was never ok sorts after every check with a time.
+    await sortBy(en.health.lastOk);
+    expect(names()).toEqual(["air-api", "air", "podujatia-zvolen"]);
+    // "3 runs in a row ..." sorts before "Nothing to fix." and "waiting for approval".
+    await sortBy(en.health.found);
+    expect(names()).toEqual(["podujatia-zvolen", "air", "air-api"]);
+  });
+
+  it("asks_for_the_checks_again_on_retry", async () => {
+    let asked = 0;
+    await renderRoute({
+      path: "/projects/bbsk/health",
+      answer: answering(() => {
+        asked += 1;
+        return asked === 1 ? problem(503, "the health store is not answering") : jsonResponse({ items: CHECKS });
+      }),
+    });
+    const alert = (await screen.findByText("the health store is not answering")).closest('[role="alert"]') as HTMLElement;
+    await userEvent.click(within(alert).getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByRole("table", { name: en.health.caption })).toBeInTheDocument();
+    expect(asked).toBe(2);
+  });
+
   it("shows_the_server_s_refusal_in_words", async () => {
     const said = "project 'bbsk' not found";
     await renderRoute({ path: "/projects/bbsk/health", answer: answering(() => problem(404, said)) });

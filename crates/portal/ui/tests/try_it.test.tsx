@@ -9,6 +9,8 @@ import { I18nextProvider } from "react-i18next";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
+import en from "../src/locales/en.json";
+import { renderPage } from "./page_contract";
 import { TryItPage } from "../src/pages/workspaces/TryItPage";
 import { copyIntoPreview, PER_TYPE } from "../src/pages/workspaces/copyIntoPreview";
 
@@ -113,6 +115,44 @@ describe("try it", () => {
     expect(await screen.findByText(/2 previews run on the node already/)).toBeInTheDocument();
   });
 
+  it("says how many entities the copy wrote, and the browser's reason when the copy cannot reach the server", async () => {
+    serving(() => RUNNING);
+    const preview = handler;
+    let reachable = true;
+    handler = (request, url) => {
+      if (url.pathname.startsWith("/api/endpoint/") && !reachable) throw new TypeError("Failed to fetch");
+      if (url.pathname === "/api/endpoint/origin/ngsi-ld/v1/types") return json({ typeList: ["Station"] });
+      if (url.pathname === "/api/endpoint/origin/ngsi-ld/v1/entities")
+        return json(url.searchParams.get("offset") === "0" ? [{ id: "urn:ngsi-ld:Station:hel.fi:helsinki-air:1", type: "Station" }, { id: "urn:ngsi-ld:Station:hel.fi:helsinki-air:2", type: "Station" }] : []);
+      if (url.pathname === "/api/endpoint/minted/ngsi-ld/v1/entityOperations/upsert") return new Response(null, { status: 204 });
+      return preview(request, url);
+    };
+    show(<TryItPage project="helsinki" name="air-v2" />);
+    const row = (await screen.findByText("public-air")).closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: "Copy data in" }));
+    expect((await within(row).findByRole("status")).textContent).toBe("2 entities copied.");
+    reachable = false;
+    await userEvent.click(within(row).getByRole("button", { name: "Copy data in" }));
+    expect(await screen.findByText("Failed to fetch")).toBeInTheDocument();
+  });
+
+  it("says the preview did not load and reads it again on Retry", async () => {
+    let asked = 0;
+    serving(() => RUNNING);
+    const preview = handler;
+    handler = (request, url) => {
+      if (url.pathname.endsWith("/preview") && request.method === "GET" && ++asked === 1) {
+        return json({ title: "Unavailable", status: 503, detail: "the preview store is not answering" }, 503);
+      }
+      return preview(request, url);
+    };
+    // The failure offers the way back to the copies, so it needs the router around the page.
+    renderPage(<TryItPage project="helsinki" name="air-v2" />, { answer: (url, request) => handler(request, url) });
+    await userEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByText("public-air")).toBeInTheDocument();
+    expect(asked).toBe(2);
+  });
+
   it("offers someone else's copy no start, stop or data copy", async () => {
     me = { email: "petra@hel.fi", username: "petra" };
     serving(() => RUNNING);
@@ -194,6 +234,37 @@ describe("the copy into a preview", () => {
     });
     expect(result).toEqual({ copied: {}, stopped: "no policy grants retrieveOps" });
     expect(calls).toHaveLength(1);
+  });
+
+  it("counts what a partly refused write took and stops with the first refusal's reason", async () => {
+    const page = (status: number, body: string) => async (input: string) => {
+      if (input.endsWith("/types")) return json({ typeList: ["Station"] });
+      if (input.includes("/entities?")) return json([{ id: "urn:ngsi-ld:Station:a" }, { id: "urn:ngsi-ld:Station:b" }]);
+      return new Response(body, { status });
+    };
+    expect(await copyIntoPreview("origin", "minted", page(207, JSON.stringify({ errors: [{ error: { detail: "pm10 is not a number" } }] })))).toEqual({
+      copied: { Station: 1 },
+      stopped: "pm10 is not a number",
+    });
+    expect(await copyIntoPreview("origin", "minted", page(207, JSON.stringify({ errors: [{}] })))).toEqual({
+      copied: { Station: 1 },
+      stopped: "some entities were refused",
+    });
+    // A multi-status with no readable report took every entity it was sent.
+    expect(await copyIntoPreview("origin", "minted", page(207, "not json"))).toEqual({ copied: { Station: 2 } });
+  });
+
+  it("stops with the server's words when its refusal is no problem document, else with the status", async () => {
+    const answer = (response: () => Response) => async (input: string) => (input.endsWith("/types") ? response() : json([]));
+    expect(await copyIntoPreview("origin", "minted", answer(() => new Response("gateway timeout", { status: 504 })))).toEqual({
+      copied: {},
+      stopped: "gateway timeout",
+    });
+    expect(await copyIntoPreview("origin", "minted", answer(() => new Response("", { status: 502 })))).toEqual({ copied: {}, stopped: "HTTP 502" });
+    expect(await copyIntoPreview("origin", "minted", answer(() => json({}, 500)))).toEqual({ copied: {}, stopped: "HTTP 500" });
+    const unreadable = new Response("x", { status: 503 });
+    vi.spyOn(unreadable, "text").mockRejectedValue(new TypeError("body stream already read"));
+    expect(await copyIntoPreview("origin", "minted", answer(() => unreadable))).toEqual({ copied: {}, stopped: "HTTP 503" });
   });
 
   it("copies nothing from an origin that holds nothing", async () => {

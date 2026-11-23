@@ -41,7 +41,8 @@ interface Seen {
   writes: { path: string; body: unknown }[];
 }
 
-function show(seen: Seen, unavailable?: string) {
+function show(seen: Seen, unavailable?: string, detailFails = 0) {
+  let detailAsked = 0;
   window.history.pushState({}, "", "/projects/helsinki/inbox");
   vi.stubGlobal(
     "fetch",
@@ -74,6 +75,13 @@ function show(seen: Seen, unavailable?: string) {
       if (url.pathname === "/api/v1/projects/ovzdusie/changes") return json({ items: [change("ovzdusie", "chg-policy", "Policy", "red")] });
       if (url.pathname.includes("/changes/")) {
         const [, , , , project, , id] = url.pathname.split("/");
+        detailAsked += 1;
+        if (detailAsked <= detailFails) {
+          return new Response(JSON.stringify({ type: "about:blank", title: "Service Unavailable", status: 503, detail: FORGE_DOWN }), {
+            status: 503,
+            headers: { "Content-Type": "application/problem+json" },
+          });
+        }
         return json(change(project, id, "Endpoint"));
       }
       if (url.pathname === "/api/v1/notifications") {
@@ -133,6 +141,15 @@ describe("the inbox (T-3273)", () => {
     const section = (await screen.findByRole("heading", { name: en.pipelines.access.inbox })).closest("section") as HTMLElement;
     expect(within(section).getByText(en.inbox.accessLead.replace("{project}", "helsinki"))).toBeInTheDocument();
     expect(await within(section).findByText(en.pipelines.access.inboxEmptyProject)).toBeInTheDocument();
+  });
+
+  it("says the diff did not load and reads it again on Retry", async () => {
+    show({ writes: [] }, undefined, 1);
+    const endpoint = await item(/Endpoint "endpoint-x"/);
+    await userEvent.click(within(endpoint).getByRole("button", { name: en.inbox.showDiff }));
+    expect(await within(endpoint).findByText(FORGE_DOWN, { exact: false })).toBeInTheDocument();
+    await userEvent.click(within(endpoint).getByRole("button", { name: en.app.error.retry }));
+    expect(await within(endpoint).findByText("organization")).toBeInTheDocument();
   });
 
   it("approves a change with its diff open, without leaving the page", async () => {

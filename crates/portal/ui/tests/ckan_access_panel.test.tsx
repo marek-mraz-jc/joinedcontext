@@ -177,6 +177,35 @@ describe("a CKAN instance's Access panel", () => {
     expect((sent.body as { spec: { subjects: unknown[] } }).spec.subjects).toEqual([{ user: "zoe@hel.fi" }]);
   });
 
+  it("proposes the missing Role, then adds the subject to the binding that already names the instance", async () => {
+    const own = binding("ckan-admin-helsinki-hel-fi", "ckan-admin-helsinki-hel-fi", [{ user: "zoe@hel.fi" }], { project: "helsinki" });
+    const { proposals } = renderPanel({ bindings: [ADMINS, own] });
+    const section = await panel();
+    const which = await within(section).findByLabelText(en.ckan.access.whichGroup);
+    await within(which).findByRole("option", { name: "ckan-editors" });
+    await userEvent.selectOptions(which, "ckan-editors");
+    await userEvent.click(await addButton(section));
+    expect(await within(section).findByText("chg-0000003a")).toBeInTheDocument();
+    expect(proposals().map((sent) => `${sent.method} ${sent.path}`)).toEqual([
+      "POST /api/v1/projects/org/roles",
+      "PUT /api/v1/projects/org/rolebindings/ckan-admin-helsinki-hel-fi",
+    ]);
+    expect((proposals()[1].body as { spec: { subjects: unknown[] } }).spec.subjects).toEqual([{ user: "zoe@hel.fi" }, { group: "ckan-editors" }]);
+  });
+
+  it("lists nobody for an instance whose name makes no role name, and says why when asked to add", async () => {
+    const instance = `hel-${"x".repeat(60)}`;
+    const { proposals } = renderPanel({ instance });
+    const section = await panel(instance);
+    const which = await within(section).findByLabelText(en.ckan.access.whichGroup);
+    await within(which).findByRole("option", { name: "ckan-editors" });
+    await userEvent.selectOptions(which, "ckan-editors");
+    await userEvent.click(await addButton(section));
+    expect(await within(section).findByText(en.ckan.access.refused.nameTooLong)).toBeInTheDocument();
+    expect(within(section).queryByRole("list", { name: `Who manages ${instance}` })).toBeNull();
+    expect(proposals()).toEqual([]);
+  });
+
   it("keeps every control in place, disabled with the reason, for someone who may not approve a binding", async () => {
     const { proposals } = renderPanel({ approve: false });
     const section = await panel();

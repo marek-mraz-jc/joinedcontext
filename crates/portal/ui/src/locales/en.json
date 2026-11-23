@@ -7676,7 +7676,6 @@
     "file": "Archive or manifests",
     "fileHelp": "A ZIP an export produced, or a YAML stream or JSON manifest.",
     "fileMissing": "Choose a file first.",
-    "noFile": "Choose a file first.",
     "noUrl": "Upload the bundle as a file; the Portal does not fetch one from an address.",
     "pastedSecret": "This bundle writes a credential in the open ({keys}). Replace it with a secretRef and choose the file again; the import refuses it either way.",
     "namespace": "Project to import into",

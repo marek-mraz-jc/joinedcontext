@@ -278,8 +278,6 @@ function Instances({
           searchLabel={t("grid.searchIn", { list: t("ckan.instances.title") })}
           rows={instances}
           rowKey={(instance) => instance.name}
-          // The section draws its own loading line and failure; the grid gets the rows read.
-          query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
           name={{
             id: "name",
             label: t("ckan.instances.name"),

@@ -18,9 +18,6 @@ import { when } from "./CommitsView";
 type Rule = RepositorySettings["protection"][number];
 type Package = RepositorySettings["packages"][number];
 
-/** The settings are already read: nothing is loading or failing inside the grids. */
-const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
-
 /**
  * What the repository's administrators read: branch protection, webhooks (their address only,
  * the secret is never read back), who has access, and the packages and images published from it.
@@ -101,7 +98,6 @@ export function SettingsView({ project, repository }: { project: string; reposit
         ) : (
           <div className="mt-3">
             <AdminGrid<Rule>
-              query={LOADED}
               caption={t("repositories.settings.protection")}
               rows={data.protection}
               columns={ruleColumns}
@@ -152,7 +148,6 @@ export function SettingsView({ project, repository }: { project: string; reposit
         ) : (
           <div className="mt-3">
             <AdminGrid<Package>
-              query={LOADED}
               caption={t("repositories.settings.packages")}
               rows={data.packages}
               columns={packageColumns}
