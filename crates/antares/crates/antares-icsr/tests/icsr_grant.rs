@@ -544,6 +544,16 @@ async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_a
         register(&app, c, "r1", Some(a), json!({})).await.status,
         403
     );
+    // only a self URL may name another Organization's Tenant: a socket forward has no grant check
+    let foreign = register(
+        &app,
+        b,
+        "r2",
+        Some(a),
+        json!({"endpoint": "http://broker.example.org"}),
+    )
+    .await;
+    assert_eq!(foreign.status, 400, "{}", foreign.body);
     assert_eq!(
         ids(&cars(&app, c, Some("carol")).await.body),
         Vec::<String>::new()
