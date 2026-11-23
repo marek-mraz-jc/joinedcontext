@@ -182,7 +182,7 @@ fn status_organizer_and_last_modified_follow_their_value_types() {
     assert!(has(&l, "LAST-MODIFIED:20260930T080000Z"), "{l:?}");
     // schema-org's eventStatus mapping says CONFIRMED for a value it does not map
     let preset = json!({"preset": "schema-org"});
-    let other = entity(&json!({"eventStatus": {"type": "Property", "value": "EventMovedOnline"}}));
+    let other = entity(&json!({"eventStatus": {"type": "Property", "value": "EventUnheardOf"}}));
     let unmapped = render(&preset, &other);
     assert!(has(&unmapped, "STATUS:CONFIRMED"), "{unmapped:?}");
     // a value that is no calendar status or address is left out; DTSTAMP stays modifiedAt

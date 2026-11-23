@@ -418,7 +418,7 @@ async fn attrs_select_what_the_feed_reads_and_a_bad_bound_or_view_segment_is_ref
     assert!(uids(&ics).is_empty(), "no SUMMARY without name: {ics}");
     let (status, _) = send(&app, "GET", &format!("{FEED}?to=later"), "", false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, body) = send(&app, "GET", &format!("{FEED}?limit=5"), "", false).await;
+    let (status, body) = send(&app, "GET", &format!("{FEED}?count=true"), "", false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "a parameter the feed does not read: {body}");
     let (status, _) = send(&app, "GET", "/x/views/%FF/ical/v1/events.ics", "", false).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

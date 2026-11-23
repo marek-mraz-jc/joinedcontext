@@ -66,6 +66,9 @@ async fn ws_a_socket_subscription_is_leased_and_renewed() -> Result<(), String> 
         "{r}"
     );
 
+    // before a third of the lease the heartbeat leaves it as it is
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(at(&stored(&b, &sub).await?, "/expiresAt")?, first);
     // a third of the lease later the heartbeat has moved it on
     tokio::time::sleep(Duration::from_millis(1200)).await;
     let renewed = at(&stored(&b, &sub).await?, "/expiresAt")?;
