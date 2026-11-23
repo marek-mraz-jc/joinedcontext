@@ -194,6 +194,112 @@ async fn call(
     (status, String::from_utf8_lossy(&body).into_owned())
 }
 
+/// A pin names the version a feed answers in; an empty one takes the newest upload. An upload's
+/// URI goes into Content-Profile only when a header can carry it as a value.
+#[tokio::test]
+async fn a_feed_answers_in_the_pinned_version_and_names_it_only_when_a_header_can() {
+    let state = state().await;
+    let org = OrgId::from_uuid(Uuid::from_u128(ORG));
+    let own = CatalogueId::from_uuid(Uuid::from_u128(DEFAULT));
+    let ctx = RequestCtx::new(
+        org,
+        own,
+        dataroom_core::Subject::authenticated("seed", vec![org], Vec::new()),
+    );
+    let mut cat = state.store.get_catalogue(org, own).await.unwrap().unwrap();
+    // Version 2 asks every Dataset for a property none has; version 1 asks nothing.
+    let never = "@prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix dcat: <http://www.w3.org/ns/dcat#> .
+    <urn:own:Shape> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+      sh:property [ sh:path <urn:own:never> ; sh:minCount 1 ] .";
+    let nothing = "@prefix sh: <http://www.w3.org/ns/shacl#> .
+    <urn:own:Shape> a sh:NodeShape .";
+    for (id, version, uri, shapes) in [
+        (
+            "own-draft",
+            "1.0.0",
+            "https://profiles.example.org/own-draft/1",
+            nothing,
+        ),
+        (
+            "own-draft",
+            "2.0.0",
+            "https://profiles.example.org/own-draft/2",
+            never,
+        ),
+        (
+            "angled",
+            "1.0.0",
+            "https://profiles.example.org/<angled>",
+            nothing,
+        ),
+    ] {
+        let record: dataroom_core::ProfileRecord = serde_json::from_value(serde_json::json!({
+            "id": id, "version": version, "uri": uri,
+            "title": {"en": id}, "builtIn": false, "shapesTurtle": shapes,
+        }))
+        .expect("profile");
+        let (saved, _) = state
+            .profiles
+            .upload_and_dry_run(record, &cat, &[], &Default::default())
+            .expect("upload");
+        state.store.upsert_profile(&ctx, saved).await.unwrap();
+    }
+    let profile_of = |path: &'static str, state: DataroomState| async move {
+        let req = Request::get(path)
+            .header(header::HOST, "data.city.test")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        resp.headers()
+            .get("content-profile")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    for (pinned, want) in [("1.0.0", "own-draft/1"), ("", "own-draft/2")] {
+        cat.active_profiles = vec![
+            serde_json::from_value(
+                serde_json::json!({"profileId": "own-draft", "version": pinned}),
+            )
+            .unwrap(),
+            serde_json::from_value(serde_json::json!({"profileId": "angled", "version": ""}))
+                .unwrap(),
+        ];
+        state.store.upsert_catalogue(cat.clone()).await.unwrap();
+        let named = profile_of("/profiles/own-draft/catalog.ttl", state.clone()).await;
+        assert!(named.ends_with(want), "pin {pinned:?}: {named}");
+    }
+    let angled = profile_of("/profiles/angled/catalog.ttl", state.clone()).await;
+    assert!(
+        !angled.contains("angled") && angled.starts_with("http"),
+        "an upload's URI with angle brackets gives way to its renderer's: {angled}"
+    );
+    // The admin report judges each pin in its version: own-draft 1.0.0 asks nothing, and the
+    // unversioned pin of angled is its newest upload, installed.
+    cat.active_profiles[0].version = "1.0.0".into();
+    let dataset: dataroom_core::Dataset = serde_json::from_value(serde_json::json!({
+        "orgId": org, "catalogueId": own, "id": "id-air", "name": "air",
+        "title": {"en": "Air"}, "description": {}, "publisherId": "nobody",
+        "visibility": "public", "state": "active",
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dataset");
+    let gaps = dataroom_api::feeds::profile_gaps(
+        &state,
+        &cat,
+        &[dataset],
+        &std::collections::BTreeMap::new(),
+    );
+    let named: Vec<&str> = gaps[0].iter().map(|(id, _)| id.as_str()).collect();
+    assert!(
+        !named.contains(&"own-draft") && !named.contains(&"angled"),
+        "{:?}",
+        gaps[0]
+    );
+}
+
 /// Two Organizations, `com_alpha` on the default catalogue and `com_beta` on the other, each
 /// with its canonical base: the default one https under a prefix, the other http on its host.
 async fn two_organizations() -> DataroomState {
