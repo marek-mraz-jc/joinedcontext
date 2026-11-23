@@ -575,6 +575,7 @@ impl AppState {
         if let Some(client) = shako {
             let client = Arc::new(client);
             let mut syncer = Syncer::new(Arc::clone(&client), Arc::clone(&state.mirror))
+                .with_project_registry(state.db.clone())
                 .with_webhook_secrets(Arc::clone(&state.webhook_secrets))
                 .with_personal_keys(
                     Arc::clone(&state.personal_keys),
