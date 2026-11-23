@@ -6,6 +6,9 @@ use serde_json::json;
 
 use super::*;
 
+pub(crate) mod client;
+pub(crate) mod fake;
+
 fn refusal(v: JsonValue) -> String {
     match parse(&v) {
         Ok(_) => panic!("accepted {v}"),
@@ -14,6 +17,11 @@ fn refusal(v: JsonValue) -> String {
 }
 
 pub(crate) fn ctx(quotas: OrgQuotas) -> StreamContext {
+    // every log line the input writes is formatted once, so its arguments are exercised too
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_test_writer()
+        .try_init();
     let resources = ResourceManager::new();
     let org = resources.set_org_quotas(&OrgId::new("org-kafka"), quotas);
     StreamContext {
@@ -175,6 +183,71 @@ fn unsafe_and_unsupported_settings_are_refused_with_a_fix() {
             "read_committed",
         ),
         (with("unknown", json!(1)), "field unknown not recognised"),
+        (
+            with("regexp_topics", json!("yes")),
+            "regexp_topics must be true or false",
+        ),
+        (
+            with("fetch_max_bytes", json!(-1)),
+            "between 1 byte and 128 MiB",
+        ),
+        (
+            with("fetch_max_bytes", json!(true)),
+            "fetch_max_bytes is not a size",
+        ),
+        (
+            with("fetch_max_bytes", json!("99999999999999999999GiB")),
+            "fetch_max_bytes is not a size",
+        ),
+        (with("topics", json!([1])), "topics[0] must be a string"),
+        (with("topics", json!(["a".repeat(250)])), "at most 249"),
+        (
+            with("preferring_lag", json!(100)),
+            "reorder partitions by lag",
+        ),
+        (
+            with("new_root_span_with_link", json!(true)),
+            "tracing spans",
+        ),
+        (
+            with("extract_tracing_map", json!(["root.trace"])),
+            "tracing spans",
+        ),
+        (
+            with("tls", json!({"bogus": 1})),
+            "tls.bogus is not a field of tls",
+        ),
+        (
+            with("tls", json!({"enable_renegotiation": true})),
+            "renegotiation is not supported",
+        ),
+        (with("tls", json!(true)), "tls must be an object"),
+        (with("sasl", json!({})), "sasl must be a list of mechanisms"),
+        (with("sasl", json!(["PLAIN"])), "sasl[0] must be an object"),
+        (
+            with("sasl", json!([{"mechanism": "PLAIN", "bogus": 1}])),
+            "sasl[0].bogus is not a field of sasl",
+        ),
+        (
+            with("sasl", json!([{"mechanism": "GSSAPI"}])),
+            "GSSAPI is not a SASL mechanism",
+        ),
+        (
+            with("consumer_group", json!("g\n")),
+            "consumer_group must be a name",
+        ),
+        (
+            with("client_id", json!("a".repeat(201))),
+            "client_id must be a name",
+        ),
+        (
+            {
+                let mut c = with("topics", json!(["("]));
+                c["regexp_topics"] = json!(true);
+                c
+            },
+            "topics: ( is not a regular expression",
+        ),
     ] {
         let e = refusal(c.clone());
         assert!(e.contains(needle), "{c}: {e}");
@@ -182,6 +255,82 @@ fn unsafe_and_unsupported_settings_are_refused_with_a_fix() {
     }
     let e = refusal(json!({"topics": ["a"]}));
     assert!(e.contains("seed_brokers is required"), "{e}");
+    let e = refusal(json!(["k:9092"]));
+    assert!(e.contains("expected object value"), "{e}");
+}
+
+#[test]
+fn every_accepted_form_parses_to_its_setting() {
+    let s = parse(&json!({
+        "seed_brokers": ["[::1]", "kafka.example.org:9093"],
+        "topics": ["a"],
+        "checkpoint_limit": 10,
+        "auto_offset_reset": "earliest",
+        "start_from_oldest": false,
+        "client_id": "ingest",
+        "fetch_max_bytes": 1_048_576,
+        "sasl": [{"mechanism": "none"}],
+        "tls": {"enabled": true},
+        "multi_header": true,
+    }))
+    .expect("parses");
+    assert_eq!(
+        s.seeds,
+        vec![("[::1]".into(), 9092), ("kafka.example.org".into(), 9093)]
+    );
+    assert_eq!(
+        (s.checkpoint_limit, s.oldest, s.client_id.as_str()),
+        (10, true, "ingest")
+    );
+    assert_eq!(s.fetch_max_bytes, 1 << 20);
+    assert!(s.sasl.is_none() && s.multi_header);
+    assert_eq!(s.tls, Some(Vec::new()), "the system roots alone");
+
+    let pem = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+        .expect("cert")
+        .cert
+        .pem();
+    let s = parse(&json!({
+        "seed_brokers": ["kafka.example.org"],
+        "topics": ["a"],
+        "tls": {"enabled": true, "root_cas": pem},
+        "sasl": [{"mechanism": "PLAIN", "username": "u", "password": "p"}],
+    }))
+    .expect("PLAIN over TLS");
+    assert_eq!(s.tls.map(|t| t.len()), Some(1));
+    assert_eq!(
+        s.sasl.map(|x| x.mechanism),
+        Some(crate::client::Mechanism::Plain)
+    );
+}
+
+#[test]
+fn sizes_take_decimal_and_binary_units() {
+    for (text, n) in [
+        ("10", 10),
+        ("10b", 10),
+        ("2kb", 2000),
+        ("2KiB", 2048),
+        ("3MB", 3_000_000),
+        ("3mib", 3 << 20),
+        ("1gb", 1_000_000_000),
+        ("1GiB", 1 << 30),
+    ] {
+        let obj = json!({"k": text});
+        let obj = obj.as_object().expect("object");
+        assert_eq!(byte_size(obj, "k", 1, 1 << 40), Ok(n), "{text}");
+    }
+    let obj = json!({"k": "1 parsec"});
+    assert!(byte_size(obj.as_object().expect("object"), "k", 1, 1 << 40).is_err());
+}
+
+#[test]
+fn broker_addresses_take_a_host_an_ipv6_address_or_a_port() {
+    assert_eq!(broker_address("[::1]"), Some(("[::1]".into(), 9092)));
+    assert_eq!(broker_address("[::1]:9093"), Some(("[::1]".into(), 9093)));
+    for bad in ["[::1]x", "[::1]:x", "a:b:9092", "", "k:0", ":9092", "k:x"] {
+        assert_eq!(broker_address(bad), None, "{bad}");
+    }
 }
 
 #[test]

@@ -62,6 +62,8 @@ mod memory;
 #[cfg(feature = "postgres")]
 mod pg;
 mod plan;
+#[cfg(test)]
+mod tests;
 mod write;
 
 use std::future::Future;
