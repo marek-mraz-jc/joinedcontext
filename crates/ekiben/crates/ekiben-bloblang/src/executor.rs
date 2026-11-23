@@ -400,20 +400,17 @@ impl<'a, 'm> EvalContext<'a, 'm> {
     }
 
     pub fn exec_named_map(&mut self, map_name: &str, input_val: Value) -> Result<Value, String> {
-        self.stack_count += 1;
-        if self.stack_count > self.max_stacks {
+        if self.stack_count >= self.max_stacks {
             let err = BloblangError::MaxStacksExceeded {
                 annotation: format!("map {map_name}"),
                 max_stacks: self.max_stacks,
             };
-            self.stack_count -= 1;
             return Err(err.to_string());
         }
-
         let Some(map_def) = self.maps.get(map_name).cloned() else {
-            self.stack_count -= 1;
             return Err(format!("map {map_name} was not found"));
         };
+        self.stack_count += 1;
 
         let res = stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
             let mut map_root = Value::Nothing;
@@ -957,9 +954,6 @@ fn eval_binary_op(
 /// coercion, so `true == 7` holds (7 reads as a bool) while `1 == true` does not.
 fn compare_eq_or_bytes(lv: &Value, rv: &Value) -> bool {
     match lv {
-        Value::String(_) | Value::Bytes(_) | Value::Timestamp(_) | Value::Bool(_) => {
-            icompare(lv, rv)
-        }
         Value::Int(_) | Value::Uint(_) | Value::Float(_) => match rv {
             Value::Int(_) | Value::Uint(_) | Value::Float(_) => lv.compare_eq(rv),
             _ => false,
@@ -1369,6 +1363,55 @@ mod tests {
     }
 
     #[test]
+    fn a_batch_of_two_parts_has_length_two_and_reads_each() {
+        let b = [part("1"), part("2")];
+        assert_eq!(MessageBatch::len(&b), 2);
+        assert_eq!(&*b.part_bytes(1), b"2");
+    }
+
+    #[test]
+    fn targets_follow_named_maps_and_list_every_assignment() {
+        let e = exec(
+            "map m {\n root = this.inner\n}\nroot.a = this.apply(\"m\")\nmeta k = 1\nlet v = 2",
+        );
+        let queries: Vec<String> = e.query_targets().iter().map(|t| t.path.join(".")).collect();
+        assert!(queries.contains(&"inner".to_string()), "{queries:?}");
+        let assigned: Vec<String> = e
+            .assignment_targets()
+            .iter()
+            .map(|t| t.path.join("."))
+            .collect();
+        assert_eq!(assigned.len(), 3, "{assigned:?}");
+        assert!(assigned.contains(&"a".to_string()), "{assigned:?}");
+    }
+
+    #[test]
+    fn a_caught_missing_map_gives_its_stack_level_back() -> R {
+        // Two levels allowed: a missing map at level 1 must leave room for m and its leaf.
+        let e = Environment::new()
+            .with_max_map_recursion(2)
+            .compile_mapping(
+                "map leaf {\n root = 1\n}\nmap m {\n root = this.apply(\"leaf\")\n}\n\
+             root.a = this.apply(\"nope\").catch(0)\nroot.b = this.apply(\"m\")",
+            )?;
+        let out = e.execute_bytes(b"{}")?;
+        assert_eq!(
+            out.map(|v| v.to_json_value()),
+            Some(json!({"a": 0, "b": 1}))
+        );
+        // One level allowed: each finished map gives its level back for the next.
+        let twice = Environment::new().with_max_map_recursion(1).compile_mapping(
+            "map leaf {\n root = 1\n}\nroot.a = this.apply(\"leaf\")\nroot.b = this.apply(\"leaf\")",
+        )?;
+        let out = twice.execute_bytes(b"{}")?;
+        assert_eq!(
+            out.map(|v| v.to_json_value()),
+            Some(json!({"a": 1, "b": 1}))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn query_part_answers_the_bool_and_refuses_a_deletion_or_another_type() {
         let mut p = part(r#"{"n":3}"#);
         p.meta.insert("m".into(), Value::String("x".into()));
@@ -1483,6 +1526,13 @@ root = metadata("m")"#,
             run("root = [1,2].map_each(_ -> 5)", "{}"),
             Ok(json!([5, 5]))
         );
+        assert_eq!(
+            run(
+                "root = [1].map_each(x -> [5].map_each(_ -> 0).append(x))",
+                "{}"
+            ),
+            Ok(json!([[0, 1]]))
+        );
     }
 
     #[test]
@@ -1491,6 +1541,9 @@ root = metadata("m")"#,
         assert_eq!(run(r#"root = "abc"[-1]"#, "{}"), Ok(json!("c")));
         assert_eq!(run(r#"root = "abc".bytes()[-3]"#, "{}"), Ok(json!(97)));
         assert_eq!(run("root = [1,2,3][-1]", "{}"), Ok(json!(3)));
+        assert_eq!(run(r#"root = "abc"[0]"#, "{}"), Ok(json!("a")));
+        assert_eq!(run(r#"root = "abc".bytes()[0]"#, "{}"), Ok(json!(97)));
+        assert_eq!(run("root = [7][0]", "{}"), Ok(json!(7)));
         for m in [
             r#"root = "abc"[3]"#,
             r#"root = "abc"[-4]"#,
@@ -1525,6 +1578,7 @@ root = metadata("m")"#,
             ("root = [1,2,3,4][-1:0:-1]", json!([4, 3, 2])),
             ("root = [1,2,3,4][-1:-3]", json!([])),
             ("root = [1,2,3,4][5:9]", json!([])),
+            ("root = [1,2,3,4][1:1]", json!([])),
         ];
         for (m, want) in cases {
             assert_eq!(run(m, "{}"), Ok(want), "{m}");
@@ -1606,6 +1660,9 @@ root = metadata("m")"#,
             ("root = 2 >= 3", json!(false)),
             ("root = 2 < 1.5", json!(false)),
             ("root = 2 <= 2", json!(true)),
+            ("root = 2 < 2", json!(false)),
+            (r#"root = "b" < "b""#, json!(false)),
+            ("root = 9007199254740993 == 9007199254740992", json!(false)),
             ("root = true && false", json!(false)),
             ("root = false && this.nope.uppercase()", json!(false)),
             ("root = true && true", json!(true)),
@@ -1634,6 +1691,7 @@ root = metadata("m")"#,
             (r#"root = 1 / "a""#, "cannot divide types"),
             (r#"root = "a" % 1"#, "cannot modulo types"),
             (r#"root = 1 % "a""#, "cannot modulo types"),
+            (r#"root = "nan".number() % 3"#, "cannot modulo types"),
             (r#"root = "a" > 1"#, "cannot compare types"),
             (r#"root = 1 > "a""#, "cannot compare types"),
             (r#"root = "x" && true"#, "expected bool value"),
@@ -1659,6 +1717,12 @@ root = metadata("m")"#,
             .map(|e| e.to_string())
             .unwrap_or_default()
             .contains("entering map m exceeded maximum allowed stacks of 0"));
+        // Inside a map the error comes wrapped by its statement, and the pipe falls back.
+        let wrapped = Environment::new()
+            .with_max_map_recursion(1)
+            .compile_mapping("map m2 {\n root = 1\n}\nmap m {\n root = this.apply(\"m2\")\n}\nroot = this.apply(\"m\") | 5")?
+            .execute_bytes(b"{}")?;
+        assert_eq!(wrapped.map(|v| v.to_json_value()), Some(json!(5)));
         Ok(())
     }
 
@@ -1802,6 +1866,8 @@ root = metadata("m")"#,
         assert_eq!(f.resolve_string(0, &b)?, "id-x-meta");
         assert_eq!(f.resolve_bytes(0, &b)?, b"id-x-meta");
         assert!(format!("{f:?}").starts_with("FieldExpression { resolvers: ["));
+        let two = env.compile_field("${! this.a }-${! @m }")?;
+        assert_eq!(two.resolve_bytes(0, &b)?, b"x-meta");
         let one = env.compile_field("${! this.a }")?;
         assert_eq!(one.resolve_bytes(0, &b)?, b"x");
         let fixed = env.compile_field("plain")?;

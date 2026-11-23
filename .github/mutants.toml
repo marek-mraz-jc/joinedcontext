@@ -24,6 +24,15 @@ exclude_re = [
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
+  # T-7748 executor: the parser builds every Executor with an empty annotation.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace Executor::annotation -> &str with ""',
+  # T-7748 executor: stacker::maybe_grow's red zone and segment sizes only decide when a new stack
+  # segment is allocated, never a value.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace \* with (\+|/) in (EvalContext<.*>::(exec_named_map|eval_expr)|exec_statement)',
+  # T-7748 executor slice_items: a zero step is refused before the walk, so > 0 and >= 0 pick alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace > with >= in slice_items',
   # T-7668 gorand seedrand: 48271 * x mod (2^31 - 1) is never 0 for a seed in range, so x < 0 and
   # x <= 0 add int32max to the same values.
   'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace < with <= in seedrand',
