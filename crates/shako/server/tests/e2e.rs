@@ -1830,6 +1830,31 @@ async fn a_manifest_writes_instance_mirrors_and_webhooks_once_and_maintenance_vi
     }))
     .expect("manifest");
     assert_eq!(manifest.repositories[0].default_branch, "main");
+    // An instance without limits gets the defaults.
+    let bare: ShakoManifestBundle = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ForgeManifest",
+        "instance": {"host": "git.city.example"}
+    }))
+    .expect("bare manifest");
+    apply_manifest_bundle(&world.state, world.org_a, &bare)
+        .await
+        .expect("apply bare");
+    let defaults = shako_core::InstanceRecord::default_for(
+        world.state.default_instance_id,
+        world.org_a,
+        "git.city.example",
+    );
+    let held = world
+        .state
+        .store()
+        .get_instance(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .expect("instance");
+    assert_eq!(
+        (held.max_repos, held.max_storage_bytes),
+        (defaults.max_repos, defaults.max_storage_bytes)
+    );
     for _ in 0..2 {
         let res = apply_manifest_bundle(&world.state, world.org_a, &manifest)
             .await
@@ -1898,6 +1923,31 @@ async fn a_manifest_writes_instance_mirrors_and_webhooks_once_and_maintenance_vi
             .unwrap(),
         repos
     );
+}
+
+/// Every answer carries the security headers; a public base that is no valid header value (a
+/// host holding a control character) is left out rather than failing the answer.
+#[tokio::test]
+async fn a_host_no_header_can_carry_drops_only_the_public_base_header() {
+    let world = setup_world().await;
+    let mount = Mount::new("shako", "https", "city\u{7f}.example", "").expect("mount");
+    let app = router(world.state.clone(), mount);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(
+        resp.headers()["x-shako-cookie-name"],
+        "__Host-wk_shako_session"
+    );
+    assert!(resp.headers().get("x-shako-public-base").is_none());
 }
 
 /// The MCP doors over HTTP: both refuse a request without a token, a tool answers its result,
