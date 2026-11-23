@@ -666,6 +666,16 @@ fn value_token<'i>(
                     "a shadow of at most 8px or 0.5em, which never covers its neighbours",
                 ));
             }
+            if is_spacing(property) && !small_spacing(property, t) {
+                return Err(refuse(
+                    p,
+                    at,
+                    format!(
+                        "a `{property}` of at most 64px, 4em or 4rem (or a small percentage), \
+                         which never pushes a line out of reach"
+                    ),
+                ));
+            }
             if property.starts_with("margin") && *value < 0.0 {
                 return Err(refuse(
                     p,
@@ -690,6 +700,50 @@ fn value_token<'i>(
         }
     }
     Ok(())
+}
+
+/// The properties whose lengths are capped: spacing, borders and text size, any of which pushes
+/// a line out of reach or out of the page when large.
+fn is_spacing(property: &str) -> bool {
+    property.starts_with("margin")
+        || property.starts_with("padding")
+        || property.ends_with("gap")
+        || matches!(
+            property,
+            "border-spacing"
+                | "font"
+                | "font-size"
+                | "line-height"
+                | "letter-spacing"
+                | "word-spacing"
+        )
+        || (property.starts_with("border")
+            && !property.contains("radius")
+            && !property.ends_with("-color")
+            && !property.ends_with("-style")
+            && property != "border-collapse")
+}
+
+/// Whether one number of a spacing property stays within 64px, 4em or 4rem, 10 % (400 % for
+/// the text size), or is unitless (a line height, a weight, a zero).
+fn small_spacing(property: &str, t: &Token<'_>) -> bool {
+    match t {
+        Token::Number { .. } => true,
+        Token::Percentage { unit_value, .. } => {
+            let limit = if property.starts_with("font") || property == "line-height" {
+                4.0
+            } else {
+                0.1
+            };
+            unit_value.abs() <= limit
+        }
+        Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
+            "px" => value.abs() <= 64.0,
+            "em" | "rem" => value.abs() <= 4.0,
+            _ => false,
+        },
+        _ => true,
+    }
 }
 
 /// Whether a shadow's length stays within 8px or 0.5em (a unitless 0 included).
@@ -815,6 +869,11 @@ mod tests {
             ("a { color: red !important }", "`!important`"),
             ("a { display: none }", "`display: none`"),
             ("a { margin-top: -40px }", "negative margins"),
+            (".x { margin-left: 3000px }", "at most 64px"),
+            (".x { padding: 0 0 0 50% }", "at most 64px"),
+            (".x { gap: 10vw }", "at most 64px"),
+            (".x { font-size: 300px }", "at most 64px"),
+            (".x { border-left: 900px solid #000000 }", "at most 64px"),
             ("a { --jc-text: red }", "custom properties"),
             ("a { opacity: 0 }", "free of `opacity`"),
             ("a { visibility: hidden }", "free of `visibility`"),
@@ -886,6 +945,41 @@ mod tests {
             let again =
                 scoped_stylesheet(&out.replace("body.jc-portal-x ", ""), "jc-portal-x").unwrap();
             assert_eq!(again, out, "{css}");
+        }
+    }
+
+    /// The hostile stylesheets the open data portal's Playwright check draws over the licence and
+    /// publisher lines (crates/portal/ui/e2e/portal_css_keep.spec.ts): each one is accepted, and
+    /// the file holds what this module writes of it. `JC_WRITE_KEEP_CORPUS=1` writes it again.
+    #[test]
+    fn the_keep_corpus_is_accepted_and_current() {
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct Entry {
+            css: String,
+            scoped: String,
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/kinds/stylesheet_keep.json"
+        );
+        let mut corpus: Vec<Entry> =
+            serde_json::from_str(include_str!("stylesheet_keep.json")).expect("the corpus parses");
+        let mut stale = Vec::new();
+        for entry in &mut corpus {
+            let scoped = scoped_stylesheet(&entry.css, "jc-portal-test").expect(&entry.css);
+            if scoped != entry.scoped {
+                stale.push(entry.css.clone());
+                entry.scoped = scoped;
+            }
+        }
+        if std::env::var_os("JC_WRITE_KEEP_CORPUS").is_some() {
+            let text = serde_json::to_string_pretty(&corpus).expect("writes") + "\n";
+            std::fs::write(path, text).expect("writes the corpus");
+        } else {
+            assert!(
+                stale.is_empty(),
+                "stale scoped text, rerun with JC_WRITE_KEEP_CORPUS=1: {stale:?}"
+            );
         }
     }
 

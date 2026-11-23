@@ -992,9 +992,9 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   line-height: 1.5 !important;
   letter-spacing: normal !important;
   word-spacing: normal !important;
-  color: var(--jc-ink) !important;
-  background-color: var(--jc-paper) !important;
+  color: var(--jc-ink, #0f172a) !important;
+  background-color: var(--jc-paper, #ffffff) !important;
   background-image: none !important;
   text-shadow: none !important;
 }
-.jc-portal-css [data-jc-keep] a { color: var(--jc-link, var(--jc-primary)) !important; }
+.jc-portal-css [data-jc-keep] a { color: var(--jc-link, var(--jc-primary, #0b5394)) !important; }
