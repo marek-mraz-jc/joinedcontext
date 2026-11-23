@@ -223,6 +223,15 @@ fn loose_but_valid_members_pass_the_check_with_their_warnings() {
     dangling["users"][0]["groups"] = json!(["nobody"]);
     let e = check_realm_value(&dangling, &opts()).unwrap_err();
     assert!(e.to_string().contains("$.users[0].groups[0]"), "{e}");
+
+    // A subgroup without a path sits under its parent's path, as the stores write it.
+    let mut nested = doc.clone();
+    nested["groups"] = json!([{"name": "city", "subGroups": [{"name": "roads"}]}]);
+    nested["users"][0]["groups"] = json!(["/city/roads", "city"]);
+    check_realm_value(&nested, &opts()).expect("the parent's path and the name");
+    nested["users"][0]["groups"] = json!(["/roads"]);
+    let e = check_realm_value(&nested, &opts()).unwrap_err();
+    assert!(e.to_string().contains("unknown group '/roads'"), "{e}");
 }
 
 #[test]

@@ -729,20 +729,25 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
 
     // 3. Collect known groups (recursively)
     let mut known_group_paths: BTreeSet<String> = BTreeSet::new();
-    fn collect_groups(arr: &[Value], out: &mut BTreeSet<String>) {
+    // A group without a `path` gets its parent's path and its name, as the stores write it.
+    fn collect_groups(arr: &[Value], parent: &str, out: &mut BTreeSet<String>) {
         for g in arr {
-            if let Some(p) = g.get("path").and_then(Value::as_str) {
-                out.insert(p.to_owned());
-            } else if let Some(n) = g.get("name").and_then(Value::as_str) {
-                out.insert(format!("/{n}"));
-            }
+            let path = g.get("path").and_then(Value::as_str).map_or_else(
+                || {
+                    g.get("name")
+                        .and_then(Value::as_str)
+                        .map(|n| format!("{}/{n}", parent.trim_end_matches('/')))
+                },
+                |p| Some(p.to_owned()),
+            );
             if let Some(subs) = g.get("subGroups").and_then(Value::as_array) {
-                collect_groups(subs, out);
+                collect_groups(subs, path.as_deref().unwrap_or(parent), out);
             }
+            out.extend(path);
         }
     }
     if let Some(groups) = obj.get("groups").and_then(Value::as_array) {
-        collect_groups(groups, &mut known_group_paths);
+        collect_groups(groups, "", &mut known_group_paths);
     }
     if let Some(def_groups) = obj.get("defaultGroups").and_then(Value::as_array) {
         for (i, dg) in def_groups.iter().enumerate() {
@@ -1238,13 +1243,13 @@ fn merged_user(
                 | "realmRoles"
                 | "clientRoles"
                 | "username" => {}
+                // Both are maps: the stored person always carries `attributes`, and the file's
+                // parsed as a map before this merge.
                 "attributes" => {
                     if let (Some(Value::Object(held)), Value::Object(given)) =
                         (stored.get_mut("attributes"), v)
                     {
                         held.extend(given.clone());
-                    } else {
-                        stored.insert(k.clone(), v.clone());
                     }
                 }
                 _ => {
@@ -1999,15 +2004,14 @@ pub async fn apply_realm_files(
                 };
                 // Link groups
                 for gpath in &file_groups {
-                    let grp = store
-                        .get_group_by_path(&realm_id, None, gpath)
-                        .await?
-                        .ok_or_else(|| {
-                            KaisatsuError::NotFound(format!(
-                                "user '{}': group '{gpath}' does not exist",
-                                saved.username
-                            ))
-                        })?;
+                    // The check refused every path the file's groups do not hold, and they
+                    // were written above.
+                    let Some(grp) = store.get_group_by_path(&realm_id, None, gpath).await? else {
+                        return Err(KaisatsuError::NotFound(format!(
+                            "user '{}': group '{gpath}' does not exist",
+                            saved.username
+                        )));
+                    };
                     store
                         .add_user_to_group(&realm_id, &saved.id, &grp.id)
                         .await?;

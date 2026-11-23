@@ -681,6 +681,39 @@ async fn prune_deletes_scopes_roles_clients_and_client_roles_the_file_dropped() 
         mode: ApplyMode::Full,
         ..ApplyOptions::default()
     };
+    // A dry run plans the same deletes and keeps everything.
+    let dry_full = ApplyOptions {
+        dry_run: true,
+        ..full.clone()
+    };
+    let planned = apply_realm_files(&store, &[("realm.json".into(), second.clone())], &dry_full)
+        .await
+        .expect("prune dry run");
+    assert_eq!(
+        planned
+            .changes
+            .iter()
+            .filter(|c| c.action == ChangeAction::Delete)
+            .count(),
+        4,
+        "{:?}",
+        planned.changes
+    );
+    assert!(
+        store
+            .get_client_by_client_id("prune", "gone")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        store
+            .list_roles("prune", Some(&keep.id))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     let report = apply_realm_files(&store, &[("realm.json".into(), second)], &full)
         .await
         .expect("prune apply");
@@ -879,9 +912,9 @@ async fn a_migrated_password_hash_is_stored_and_empty_credentials_store_nothing(
     let algo = r#"{"hashIterations":27500,"algorithm":"pbkdf2-sha256"}"#;
     let doc = json!({
         "realm": "creds",
-        "groups": [{"name": "team", "path": "/team"}],
+        "groups": [{"name": "team", "path": "/team", "subGroups": [{"name": "night"}]}],
         "users": [
-            {"username": "migrated", "groups": ["team"],
+            {"username": "migrated", "groups": ["team", "/team/night"],
              "credentials": [{"type": "password", "secretData": hash, "credentialData": algo, "userLabel": "old"}]},
             {"username": "empty", "credentials": [{"type": "password"}, {"type": "webauthn"}]}
         ]
@@ -907,10 +940,9 @@ async fn a_migrated_password_hash_is_stored_and_empty_credentials_store_nothing(
     assert_eq!(creds[0].credential_data, algo);
     assert_eq!(creds[0].user_label.as_deref(), Some("old"));
     let groups = store.list_user_groups("creds", &migrated.id).await.unwrap();
-    assert_eq!(
-        groups.iter().map(|g| g.path.as_str()).collect::<Vec<_>>(),
-        ["/team"]
-    );
+    let mut paths: Vec<&str> = groups.iter().map(|g| g.path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["/team", "/team/night"]);
     let empty = user("empty").await;
     assert!(
         store
@@ -948,6 +980,22 @@ async fn a_reapply_keeps_admin_client_roles_and_recreates_a_deleted_group() {
         .await
         .unwrap()
         .expect("ann");
+    // A client the person names without a role_mappings row yields no administrator grant.
+    let unmapped = kaisatsu_core::UserRepresentation {
+        client_roles: std::collections::HashMap::from([(
+            "app".to_owned(),
+            vec!["viewer".to_owned()],
+        )]),
+        ..ann.clone()
+    };
+    assert!(
+        admin_grants(&store, "keep", &unmapped)
+            .await
+            .unwrap()
+            .1
+            .is_empty()
+    );
+
     // An administrator maps the client role `editor` (a role_mappings row and the user's grants).
     let app = store
         .get_client_by_client_id("keep", "app")
