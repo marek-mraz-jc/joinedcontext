@@ -415,12 +415,11 @@ function duration(ms: number, decimals: number | undefined, locale: string): str
     [60_000, " min"],
     [1000, " s"],
     [1, " ms"],
-    [0.001, " µs"],
   ];
   for (const [size, label] of steps) {
-    if (abs >= size || size === 0.001) return `${digits(ms / size, decimals, locale)}${label}`;
+    if (abs >= size) return `${digits(ms / size, decimals, locale)}${label}`;
   }
-  return `${digits(ms, decimals, locale)} ms`;
+  return `${digits(ms * 1000, decimals, locale)} µs`;
 }
 
 /**
