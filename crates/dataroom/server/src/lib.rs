@@ -14,8 +14,8 @@ use dataroom_api::{router, DataroomState};
 use dataroom_core::ckan_compat::dataset_from_ckan;
 use dataroom_core::ops::{execute_operation, DatasetValidator, HarvestRunner};
 use dataroom_core::{
-    Catalogue, CatalogueId, DataroomError, OrgId, PolicyAuthorizer, ProfilePin, Publisher,
-    RecordState, RequestCtx, Result, Store, Subject, ThemeTokens,
+    Catalogue, CatalogueId, DataroomError, HarvestRunState, OrgId, PolicyAuthorizer, ProfilePin,
+    Publisher, RecordState, RequestCtx, Result, Store, Subject, ThemeTokens,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_shacl::ProfileRegistry;
@@ -490,8 +490,27 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
                 actions: vec![dataroom_core::Action::Admin],
                 publisher_id: None,
             }]));
-            let state = DataroomState::new(store, authz, org_id, catalogue_id);
-            execute_operation(&state.op_context(), &ctx, &name, input_val).await
+            let state = DataroomState::new(store.clone(), authz, org_id, catalogue_id);
+            let out = execute_operation(&state.op_context(), &ctx, &name, input_val).await?;
+            if name != "harvest_run.start" {
+                return Ok(out);
+            }
+            // The run goes on in a task of this process: the command waits for its end and
+            // prints the finished run, as it did when the operation ran it inline.
+            let run_id = out["id"].as_str().unwrap_or_default().to_owned();
+            loop {
+                match store.get_harvest_run(&ctx, &run_id).await? {
+                    Some(run) if run.state == HarvestRunState::Running => {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    Some(run) => return Ok(serde_json::to_value(run).unwrap_or(Value::Null)),
+                    None => {
+                        return Err(DataroomError::NotFound(format!(
+                            "harvest run '{run_id}' not found"
+                        )))
+                    }
+                }
+            }
         }
     }
 }

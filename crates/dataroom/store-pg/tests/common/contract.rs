@@ -1027,3 +1027,161 @@ pub async fn deleted_catalogues(store: &dyn Store) {
         Err(DataroomError::Conflict(_))
     ));
 }
+
+/// An activity row naming another tenant: the store files it under the write's own.
+fn audit_row(id: &str, operation: &str) -> dataroom_core::ActivityRow {
+    let (org_id, catalogue_id) = tenant();
+    dataroom_core::ActivityRow {
+        org_id,
+        catalogue_id,
+        id: id.into(),
+        at: jc_time::TimestampTz::now(),
+        actor: "editor".into(),
+        operation: operation.into(),
+        object_type: "Dataset".into(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::json!({}),
+    }
+}
+
+/// `save_dataset` / `save_catalogue`: a write based on a version another write replaced is
+/// refused and leaves nothing, the accepted one commits with its activity row (S11-25, S11-13).
+pub async fn guarded_writes(store: &dyn Store) {
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "gw", &unique_host("gw")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    let read = store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+
+    // Two edits built on the same read: the first wins, the second is a conflict.
+    let mut first = read.clone();
+    first.tags = vec!["first".into()];
+    let saved = store
+        .save_dataset(
+            &ctx,
+            first,
+            Some(read.modified),
+            audit_row("act-1", "resource.propose"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        saved.modified > read.modified,
+        "every guarded write moves the version"
+    );
+    let mut second = read.clone();
+    second.tags = vec!["second".into()];
+    let lost = store
+        .save_dataset(
+            &ctx,
+            second,
+            Some(read.modified),
+            audit_row("act-2", "resource.propose"),
+        )
+        .await;
+    assert!(matches!(lost, Err(DataroomError::Conflict(_))), "{lost:?}");
+    let stored = store.get_dataset(&ctx, "air").await.unwrap().unwrap();
+    assert_eq!(stored.tags, ["first"]);
+    assert_eq!(
+        stored.modified, saved.modified,
+        "the read version round-trips exactly"
+    );
+    let rows = store
+        .list_activity(&ctx, Some("pkg-air"), 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        names(&rows, |r| r.id.clone()),
+        ["act-1"],
+        "the refused write left no row"
+    );
+    assert_eq!((rows[0].org_id, rows[0].catalogue_id), (org, cat));
+
+    // A retry on a fresh read goes through; no expected version writes whatever is stored.
+    let mut retry = stored.clone();
+    retry.tags = vec!["second".into()];
+    store
+        .save_dataset(
+            &ctx,
+            retry,
+            Some(stored.modified),
+            audit_row("act-3", "resource.propose"),
+        )
+        .await
+        .unwrap();
+    let mut blind = stored.clone();
+    blind.name = "fresh".into();
+    blind.id = String::new();
+    blind.distributions.clear();
+    let fresh = store
+        .save_dataset(&ctx, blind, None, audit_row("act-4", "dataset.propose"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_activity(&ctx, Some(&fresh.id), 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    // An expected version of a record that is not stored is a conflict too.
+    let mut gone = stored.clone();
+    gone.id = "pkg-nothing".into();
+    gone.name = "nothing".into();
+    assert!(matches!(
+        store
+            .save_dataset(
+                &ctx,
+                gone,
+                Some(stored.modified),
+                audit_row("act-5", "resource.propose")
+            )
+            .await,
+        Err(DataroomError::Conflict(_))
+    ));
+
+    // The catalogue row: a branding write and a profile write built on one read.
+    let c0 = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    let mut branded = c0.clone();
+    branded.branding = Some(serde_json::json!({"primary": "#123456"}));
+    let c1 = store
+        .save_catalogue(
+            branded,
+            Some(c0.modified),
+            audit_row("act-c1", "branding.propose"),
+        )
+        .await
+        .unwrap();
+    assert!(c1.modified > c0.modified);
+    let mut profiled = c0.clone();
+    profiled.main_profile = "other".into();
+    assert!(matches!(
+        store
+            .save_catalogue(
+                profiled,
+                Some(c0.modified),
+                audit_row("act-c2", "profile.activate")
+            )
+            .await,
+        Err(DataroomError::Conflict(_))
+    ));
+    let stored = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    assert_eq!(stored.branding, c1.branding);
+    assert_eq!(stored.main_profile, c0.main_profile);
+    let rows = store
+        .list_activity(&ctx, Some(&cat.to_string()), 10)
+        .await
+        .unwrap();
+    assert_eq!(names(&rows, |r| r.id.clone()), ["act-c1"]);
+}
