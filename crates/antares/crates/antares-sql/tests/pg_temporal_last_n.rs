@@ -571,18 +571,24 @@ async fn a_one_attribute_week_reads_only_its_rows_in_the_window() {
     // the window per arm whenever it ran first in the same database
     // waiting for the locks of a neighbour's partition DDL rather than the pool's lock timeout
     // (55P03 in ci 42795501780)
-    let mut tx = pool.begin().await.expect("tx");
+    // VACUUM, not only ANALYZE: on a fresh database the history's visibility map is empty, so the
+    // planner priced an index-only scan of the bound as heap reads and took a bitmap heap scan
+    // per InitPlan (4360 rows read for 436, every cold ci run); dev's autovacuum keeps it set.
+    // VACUUM runs outside a transaction, so the session settings are reset on the connection.
+    let mut conn = pool.acquire().await.expect("conn");
     for statement in [
-        "SET LOCAL lock_timeout = 0",
-        "SET LOCAL statement_timeout = 0",
-        "ANALYZE attr_instances",
+        "SET lock_timeout = 0",
+        "SET statement_timeout = 0",
+        "VACUUM (ANALYZE) attr_instances",
+        "RESET lock_timeout",
+        "RESET statement_timeout",
     ] {
         sqlx::query(statement)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await
             .expect(statement);
     }
-    tx.commit().await.expect("analyze");
+    drop(conn);
 
     let asked = [names[0].clone()];
     let (from, to) = ("2026-02-15T00:00:00Z", "2026-02-22T00:00:00Z");
