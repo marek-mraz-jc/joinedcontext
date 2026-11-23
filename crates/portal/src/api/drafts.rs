@@ -369,7 +369,12 @@ mod tests {
 
     #[test]
     fn each_draft_route_finds_its_operation_and_an_unknown_one_is_404() {
-        for name in ["jc_draft_list", "jc_draft_get", "jc_draft_put", "jc_draft_drop"] {
+        for name in [
+            "jc_draft_list",
+            "jc_draft_get",
+            "jc_draft_put",
+            "jc_draft_drop",
+        ] {
             assert_eq!(draft_op(name).expect(name).name, name);
         }
         assert!(matches!(

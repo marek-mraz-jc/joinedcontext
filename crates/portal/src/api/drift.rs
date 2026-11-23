@@ -220,14 +220,14 @@ pub async fn adopt_drift(
     // (T-5698).
     let live = crate::api::entity_comments::read_as_person(&state, &headers, &space, &id).await?;
     let seed_dir = format!("projects/{project}/spaces/{space}/entities/seed/");
-    if crate::api::changes::seed_envelope(&entity.source, "{}").is_none()
-        || !entity.source.starts_with(&seed_dir)
-    {
+    let Some(mut envelope) = crate::api::changes::seed_envelope(&entity.source, "{}")
+        .filter(|_| entity.source.starts_with(&seed_dir))
+    else {
         return Err(ApiError::Conflict(format!(
             "'{}' is no seed file of space '{space}', so adopting cannot rewrite it",
             entity.source
         )));
-    }
+    };
     let shako = state
         .forge_for(&project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
@@ -242,12 +242,10 @@ pub async fn adopt_drift(
                 entity.source
             ))
         })?;
-    let content = adopted(&file.content, &id, &live).map_err(ApiError::Conflict)?;
-    let Some(envelope) = crate::api::changes::seed_envelope(&entity.source, &content) else {
-        return Err(ApiError::Internal(
-            "the adopted seed file is no JSON".to_owned(),
-        ));
-    };
+    let document = adopted(&file.content, &id, &live).map_err(ApiError::Conflict)?;
+    // `{:#}` is serde_json's pretty printer, which cannot fail on a `Value`.
+    let content = format!("{document:#}\n");
+    envelope.spec = document;
 
     // Held until the merge request is open, so a second adoption finds it (F-POR2-011).
     let held = crate::api::mutate::turn(shako, &adopt_branch(&project, &space, &id)).await;
@@ -310,7 +308,7 @@ const BROKER_OWNED: [&str; 4] = ["createdAt", "modifiedAt", "deletedAt", "instan
 /// the file declares takes the live value, one the space no longer holds leaves the file, and
 /// what the space holds beside them (a device's own attribute) stays out. Every other entity of
 /// the file and the file's layout (one entity or an array) stay as they are.
-fn adopted(text: &str, id: &str, live: &Value) -> Result<String, String> {
+fn adopted(text: &str, id: &str, live: &Value) -> Result<Value, String> {
     let mut document: Value =
         serde_json::from_str(text).map_err(|e| format!("the seed file is no JSON: {e}"))?;
     let entities = match &mut document {
@@ -342,8 +340,7 @@ fn adopted(text: &str, id: &str, live: &Value) -> Result<String, String> {
             }
         }
     }
-    // `{:#}` is serde_json's pretty printer, which cannot fail on a `Value`.
-    Ok(format!("{document:#}\n"))
+    Ok(document)
 }
 
 pub fn router() -> Router<AppState> {
@@ -372,8 +369,7 @@ mod tests {
         let live = json!({ "id": "urn:a", "type": "T",
             "kept": { "type": "Property", "value": 5, "createdAt": "x", "observedAt": "y" },
             "device": { "type": "Property", "value": 9 } });
-        let out: Value =
-            serde_json::from_str(&adopted(&file, "urn:a", &live).expect("adopted")).expect("json");
+        let out = adopted(&file, "urn:a", &live).expect("adopted");
         assert_eq!(
             out,
             json!({ "id": "urn:a", "type": "T",
@@ -382,17 +378,23 @@ mod tests {
         assert!(adopted(&file, "urn:b", &live).is_err(), "not in the file");
         assert!(adopted("not json", "urn:a", &live).is_err());
         assert!(adopted("[1, 2]", "urn:a", &live).is_err());
-        assert!(adopted("\"urn:a\"", "urn:a", &live).is_err(), "no entity at all");
+        assert!(
+            adopted("\"urn:a\"", "urn:a", &live).is_err(),
+            "no entity at all"
+        );
     }
 
     /// A live value that is no object (a concise attribute) is written as it is.
     #[test]
     fn a_concise_live_value_is_adopted_as_it_is() {
-        let file = json!([{ "id": "urn:a", "type": "T", "kept": 1 }, { "id": "urn:b" }]).to_string();
+        let file =
+            json!([{ "id": "urn:a", "type": "T", "kept": 1 }, { "id": "urn:b" }]).to_string();
         let live = json!({ "id": "urn:a", "kept": 5 });
-        let out: Value =
-            serde_json::from_str(&adopted(&file, "urn:a", &live).expect("adopted")).expect("json");
-        assert_eq!(out, json!([{ "id": "urn:a", "type": "T", "kept": 5 }, { "id": "urn:b" }]));
+        let out = adopted(&file, "urn:a", &live).expect("adopted");
+        assert_eq!(
+            out,
+            json!([{ "id": "urn:a", "type": "T", "kept": 5 }, { "id": "urn:b" }])
+        );
     }
 
     #[test]

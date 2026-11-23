@@ -112,8 +112,7 @@ fn reading(
         records: None,
         sheet: None,
     };
-    let mut config =
-        harness(&probe, &sample, capture).map_err(ApiError::internal)?;
+    let mut config = harness(&probe, &sample, capture).map_err(ApiError::internal)?;
     config["input"] = input;
     config["pipeline"] = json!({ "processors": processors });
     Ok(config)
@@ -135,8 +134,7 @@ pub(crate) fn source_read(
         ));
     }
     let context = InputContext::new(name, project, reader);
-    let input = serde_json::to_value(input_of(source, &context))
-        .map_err(ApiError::internal)?;
+    let input = serde_json::to_value(input_of(source, &context)).map_err(ApiError::internal)?;
     // The allow-list a pipeline step is held to (PL-07), over every address the input names.
     if let Some(reason) = refused_target(&input.to_string()) {
         return Err(ApiError::BadRequest(format!(
@@ -157,8 +155,7 @@ pub(crate) fn source_read(
         (_, input) => (input, Vec::new()),
     };
     for processor in prepended_processors(source, &context) {
-        processors
-            .push(serde_json::to_value(processor).map_err(ApiError::internal)?);
+        processors.push(serde_json::to_value(processor).map_err(ApiError::internal)?);
     }
     Ok((input, processors))
 }
@@ -234,8 +231,7 @@ pub(crate) fn saved_source(
         .mirror
         .get(project, "DataSource", name)
         .ok_or_else(unknown)?;
-    let manifest =
-        serde_json::to_value(&envelope).map_err(ApiError::internal)?;
+    let manifest = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     // Running a source on the runner is what proposing one is for: a reader sees it, an author tests it.
     effective.check("DataSource", Verb::Propose, Some(&manifest))?;
     serde_json::from_value(envelope.spec.clone())
@@ -552,7 +548,10 @@ mod tests {
             isolated(json!({})),
             Err("the saved source has no input to read".to_owned())
         );
-        assert_eq!(isolated(json!({ "mqtt": null })), Ok(json!({ "mqtt": null })));
+        assert_eq!(
+            isolated(json!({ "mqtt": null })),
+            Ok(json!({ "mqtt": null }))
+        );
     }
 
     /// T-4841: the workbench's sample reads the stream beside the live pipelines under a client of
@@ -566,14 +565,19 @@ mod tests {
             .expect("config");
         assert_eq!(config["input"]["mqtt"]["topics"], json!(["hfp/#"]));
         assert!(
-            config["input"].to_string().contains("workbench_sample_run-7"),
+            config["input"]
+                .to_string()
+                .contains("workbench_sample_run-7"),
             "{}",
             config["input"]
         );
         let text = config["pipeline"].to_string();
         assert!(text.contains(&format!("$size <= {RECORD_BYTES}")), "{text}");
         assert!(text.contains("parse_json()"), "{text}");
-        assert_eq!(config["output"]["http_client"]["url"], "http://portal/internal/run-7");
+        assert_eq!(
+            config["output"]["http_client"]["url"],
+            "http://portal/internal/run-7"
+        );
     }
 
     /// A webhook waits for its sender: there is no feed a test or a sample could read.
@@ -677,7 +681,12 @@ mod tests {
             saved_source(&state, &who("dev@hel.fi"), "Oulu!", "aq"),
             Err(ApiError::NotFound(_))
         ));
-        state.mirror.upsert(envelope("DataSource", "broken", "oulu", json!({ "type": 7 })));
+        state.mirror.upsert(envelope(
+            "DataSource",
+            "broken",
+            "oulu",
+            json!({ "type": 7 }),
+        ));
         assert!(matches!(
             saved_source(&state, &who("dev@hel.fi"), "oulu", "broken"),
             Err(ApiError::BadRequest(why)) if why.starts_with("the saved source does not parse")
@@ -803,7 +812,12 @@ mod tests {
             CurrentUser(session("dev@hel.fi")),
             State(state.clone()),
             Path("Oulu!".to_owned()),
-            Json(serde_json::from_value::<PagingRequest>(json!({ "url": "https://feeds.example/items" })).expect("request")),
+            Json(
+                serde_json::from_value::<PagingRequest>(
+                    json!({ "url": "https://feeds.example/items" }),
+                )
+                .expect("request"),
+            ),
         )
         .await;
         assert!(matches!(elsewhere, Err(ApiError::NotFound(_))));

@@ -175,10 +175,12 @@ async fn the_ops_door_check_names_the_change_a_reference_waits_on() {
     assert_eq!(verdict["ok"], true, "{verdict}");
     assert_eq!(verdict["waitsOn"], json!(["chg-00000007"]), "{verdict}");
     assert!(
-        verdict["findings"].as_array().is_some_and(|findings| findings.iter().any(|f| {
-            f["path"] == "spec.contextSpaceRef"
-                && f["message"] == "ContextSpace 'air' resolves once chg-00000007 is approved"
-        })),
+        verdict["findings"]
+            .as_array()
+            .is_some_and(|findings| findings.iter().any(|f| {
+                f["path"] == "spec.contextSpaceRef"
+                    && f["message"] == "ContextSpace 'air' resolves once chg-00000007 is approved"
+            })),
         "{verdict}"
     );
 }

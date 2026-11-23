@@ -165,7 +165,14 @@ async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
 
     // The dry run names every binding and App the removal edits or removes, and writes nothing
     // (T-3247, T-7657).
-    let checked = send(&state, person("ada"), "DELETE", &format!("{GROUP}?dryRun=All"), None).await;
+    let checked = send(
+        &state,
+        person("ada"),
+        "DELETE",
+        &format!("{GROUP}?dryRun=All"),
+        None,
+    )
+    .await;
     assert_eq!(checked.status, StatusCode::OK, "{}", checked.text);
     let plan: serde_json::Value = serde_json::from_str(&checked.text).expect("a dry run");
     let bindings = &plan["goesWith"][0];
@@ -175,7 +182,11 @@ async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
         .map(|names| names.iter().filter_map(serde_json::Value::as_str).collect())
         .unwrap_or_default();
     assert_eq!(bindings["count"], names.len(), "{plan}");
-    for name in ["RoleBinding/mixed", "RoleBinding/stewards-only", "App/alerts"] {
+    for name in [
+        "RoleBinding/mixed",
+        "RoleBinding/stewards-only",
+        "App/alerts",
+    ] {
         assert!(names.contains(&name), "{name}: {plan}");
     }
     let writes = shako.received_requests().await.unwrap_or_default();

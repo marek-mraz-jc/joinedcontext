@@ -425,7 +425,9 @@ mod tests {
         assert!(matches!(none, Err(ApiError::BadRequest(m)) if m.contains("'kind'")));
         let unknown = serde_json::json!({ "kind": "Spaceship", "metadata": { "name": "x" } });
         let unknown = execute_dry_run(&identity, &state, "ovzdusie", unknown).await;
-        assert!(matches!(unknown, Err(ApiError::NotFound(m)) if m == "kind 'Spaceship' is unknown"));
+        assert!(
+            matches!(unknown, Err(ApiError::NotFound(m)) if m == "kind 'Spaceship' is unknown")
+        );
     }
 
     /// CC-83, T-1484: every string that writes the organization's domain out is found, at any

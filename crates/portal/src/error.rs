@@ -588,7 +588,9 @@ mod tests {
 
     #[tokio::test]
     async fn internal_error_hides_message() {
-        assert!(matches!(ApiError::internal("disk full"), ApiError::Internal(m) if m == "disk full"));
+        assert!(
+            matches!(ApiError::internal("disk full"), ApiError::Internal(m) if m == "disk full")
+        );
         let secret_msg = "database password leaked";
         let res = ApiError::Internal(secret_msg.to_string()).into_response();
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);

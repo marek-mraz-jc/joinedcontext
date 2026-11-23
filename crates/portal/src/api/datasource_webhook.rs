@@ -134,8 +134,7 @@ pub async fn webhook_info(
         .mirror
         .get(&project, "DataSource", &name)
         .ok_or_else(unknown)?;
-    let manifest =
-        serde_json::to_value(&envelope).map_err(ApiError::internal)?;
+    let manifest = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     effective.check("DataSource", Verb::Read, Some(&manifest))?;
     let source: DataSourceSpec = serde_json::from_value(envelope.spec.clone())
         .map_err(|e| ApiError::BadRequest(format!("the saved source does not parse: {e}")))?;
@@ -249,7 +248,9 @@ pub async fn test_event(
     // A source written into the repository by hand may name no credential, or both.
     let Some(reference) = webhook.credential() else {
         return Err(ApiError::Unprocessable {
-            detail: "spec.webhook.auth: name exactly one of hmac or bearer, so the event can be signed".into(),
+            detail:
+                "spec.webhook.auth: name exactly one of hmac or bearer, so the event can be signed"
+                    .into(),
             errors: vec!["spec.webhook.auth".into()],
         });
     };

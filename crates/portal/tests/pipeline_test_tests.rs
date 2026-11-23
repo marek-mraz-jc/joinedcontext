@@ -1416,20 +1416,27 @@ async fn a_webhook_source_answers_only_a_session_with_the_grant_each_route_names
 /// the read are `datasource_test`'s own tests).
 #[tokio::test]
 async fn a_discovery_and_a_paging_guess_read_once_on_the_runner_and_say_why_they_found_nothing() {
-    let failed = [json!({ "input": "", "error": "fetch: dial tcp 1.1.1.1:443: connect: connection refused" })];
+    let failed = [
+        json!({ "input": "", "error": "fetch: dial tcp 1.1.1.1:443: connect: connection refused" }),
+    ];
     for (project, route, body) in [
         (
             "loviisa",
             "datasource-discovery",
             json!({ "kind": "ckan", "url": "https://1.1.1.1/api/3/action/package_search" }),
         ),
-        ("kotka", "datasource-paging", json!({ "url": "https://1.1.1.1/api/items" })),
+        (
+            "kotka",
+            "datasource-paging",
+            json!({ "url": "https://1.1.1.1/api/items" }),
+        ),
     ] {
         let runner = common::runner().await;
         let (create, delete) = runner_mocks(ResponseTemplate::new(200));
         create.mount(&runner).await;
         delete.mount(&runner).await;
-        let state = AppState::new(config(Some(&runner)), None).with_mirror(with_saved_source(project));
+        let state =
+            AppState::new(config(Some(&runner)), None).with_mirror(with_saved_source(project));
         let uri = format!("/api/v1/projects/{project}/{route}");
         let (answer, _) = tokio::join!(
             send(&state, "dev@hel.fi", &uri, &body),
@@ -1437,7 +1444,9 @@ async fn a_discovery_and_a_paging_guess_read_once_on_the_runner_and_say_why_they
         );
         assert_eq!(answer.0, StatusCode::OK, "{route}: {}", answer.1);
         assert!(
-            answer.1["skipped"].as_str().is_some_and(|why| why.contains("connection refused")),
+            answer.1["skipped"]
+                .as_str()
+                .is_some_and(|why| why.contains("connection refused")),
             "{route}: {}",
             answer.1
         );
@@ -1448,7 +1457,11 @@ async fn a_discovery_and_a_paging_guess_read_once_on_the_runner_and_say_why_they
 struct OneCredential(String, String);
 
 impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for OneCredential {
-    fn replace(&self, _values: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>) {}
+    fn replace(
+        &self,
+        _values: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    ) {
+    }
 
     fn credential(&self, project: &str, name: &str) -> Option<zeroize::Zeroizing<String>> {
         (project == "porvoo" && name == self.0).then(|| zeroize::Zeroizing::new(self.1.clone()))
@@ -1478,7 +1491,10 @@ async fn get(state: &AppState, who: &str, uri: &str) -> (StatusCode, Value) {
         .expect("response");
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// PL-122 (T-7657): the addresses name each reading pipeline under the published listener and the
@@ -1536,7 +1552,11 @@ async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() 
         ("reader@hel.fi", "nope", StatusCode::NOT_FOUND),
         ("stranger@hel.fi", "ttn", StatusCode::NOT_FOUND),
         ("reader@hel.fi", "broken", StatusCode::BAD_REQUEST),
-        ("reader@hel.fi", "demo-counters", StatusCode::UNPROCESSABLE_ENTITY),
+        (
+            "reader@hel.fi",
+            "demo-counters",
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
     ] {
         let (status, body) = get(&state, who, &format!("{base}/{name}/webhook")).await;
         assert_eq!(status, expected, "{who} {name}: {body}");
@@ -1583,7 +1603,13 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     }
 
     let unconfigured = AppState::new(config(None), None).with_mirror(mirror.clone());
-    let (status, answer) = send(&unconfigured, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
+    let (status, answer) = send(
+        &unconfigured,
+        "dev@hel.fi",
+        uri,
+        &event("uplinks", "{}".into()),
+    )
+    .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
 
     let reference: jc_core::envelope::SecretRef =
@@ -1595,7 +1621,13 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     )));
     let (status, answer) = send(&state, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
-    assert!(answer["detail"].as_str().unwrap_or_default().contains("secret 'ttn'"), "{answer}");
+    assert!(
+        answer["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("secret 'ttn'"),
+        "{answer}"
+    );
 
     joinedcontext_portal::pipeline_secrets::hand_runner_secrets_to(Arc::new(OneCredential(
         variable,
@@ -1615,7 +1647,9 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     assert_eq!(answer["errors"][0]["path"], "spec.webhook.auth", "{answer}");
 
     Mock::given(method("POST"))
-        .and(wiremock::matchers::path("/porvoo/ingest/default/porvoo.uplinks/ttn"))
+        .and(wiremock::matchers::path(
+            "/porvoo/ingest/default/porvoo.uplinks/ttn",
+        ))
         .and(wiremock::matchers::header("authorization", "Bearer tok-1"))
         .and(wiremock::matchers::body_string(r#"{"temperature": 21.5}"#))
         .respond_with(ResponseTemplate::new(202).set_body_string("é".repeat(3000)))
@@ -1641,7 +1675,13 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     let down = AppState::new(down, None).with_mirror(mirror);
     let (status, answer) = send(&down, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
-    assert!(answer["detail"].as_str().unwrap_or_default().contains("did not answer"), "{answer}");
+    assert!(
+        answer["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not answer"),
+        "{answer}"
+    );
     runner.verify().await;
 }
 

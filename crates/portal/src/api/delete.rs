@@ -551,8 +551,7 @@ pub async fn delete_with_identity(
             )
         {
             let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
-            let manifest =
-                serde_json::to_value(envelope).map_err(ApiError::internal)?;
+            let manifest = serde_json::to_value(envelope).map_err(ApiError::internal)?;
             crate::permissions::for_request(state, identity, namespace).check(
                 &envelope.kind,
                 verb,
@@ -617,8 +616,7 @@ pub async fn delete_with_identity(
     // Inside a workspace, its branch is both where the file is read and where it goes (CC-76).
     let workspace_branch = match workspace {
         Some(workspace) => {
-            let open =
-                crate::ops::workspaces::visible(state, identity, project, workspace).await?;
+            let open = crate::ops::workspaces::visible(state, identity, project, workspace).await?;
             crate::api::mutate::within_workspace(&open, project, kind_info.kind, &envelope)?;
             if !crate::ops::workspaces::owns(&open, identity) {
                 return Err(ApiError::Denied(format!(
@@ -832,7 +830,11 @@ mod tests {
         assert!(!names_file(&spec, "water.linkml.yaml"));
     }
 
-    fn org_envelope(kind: &str, name: &str, spec: serde_json::Value) -> crate::resource::ResourceEnvelope {
+    fn org_envelope(
+        kind: &str,
+        name: &str,
+        spec: serde_json::Value,
+    ) -> crate::resource::ResourceEnvelope {
         crate::resource::ResourceEnvelope {
             api_version: crate::resource::API_VERSION.into(),
             kind: kind.into(),
@@ -847,7 +849,11 @@ mod tests {
     #[test]
     fn a_group_cleanup_skips_what_names_no_group_and_drops_an_entry_left_empty() {
         let mirror = crate::store::Mirror::new();
-        mirror.upsert(org_envelope("RoleBinding", "no-subjects", json!({ "role": "reader" })));
+        mirror.upsert(org_envelope(
+            "RoleBinding",
+            "no-subjects",
+            json!({ "role": "reader" }),
+        ));
         mirror.upsert(org_envelope("App", "no-access", json!({})));
         mirror.upsert(org_envelope(
             "App",
@@ -859,7 +865,11 @@ mod tests {
         ));
         let cleanup = group_cleanup(&mirror, "stewards").expect("a cleanup");
         assert!(cleanup.removed.is_empty());
-        let names: Vec<&str> = cleanup.edited.iter().map(|e| e.metadata.name.as_str()).collect();
+        let names: Vec<&str> = cleanup
+            .edited
+            .iter()
+            .map(|e| e.metadata.name.as_str())
+            .collect();
         assert_eq!(names, ["alerts"]);
         assert_eq!(
             cleanup.edited[0].spec["access"],

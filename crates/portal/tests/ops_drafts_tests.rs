@@ -297,7 +297,14 @@ async fn a_draft_inside_a_workspace_is_reached_only_with_the_workspace_named() {
     .await;
     assert_eq!(StatusCode::OK, put.status, "{}", put.text());
     assert_eq!("ws-air", put.body["workspace"], "{}", put.text());
-    let listed = doors::http(&state, steward(), "GET", &format!("{base}?workspace=ws-air"), None).await;
+    let listed = doors::http(
+        &state,
+        steward(),
+        "GET",
+        &format!("{base}?workspace=ws-air"),
+        None,
+    )
+    .await;
     let mut listed = names(&listed);
     listed.sort();
     assert_eq!(vec!["Pipeline/aq-copy", "Pipeline/aq-rest"], listed);

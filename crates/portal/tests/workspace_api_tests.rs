@@ -718,7 +718,9 @@ async fn a_removal_inside_a_workspace_is_a_commit_on_its_branch_and_only_the_own
     let refused = send(&state, other, "DELETE", uri, None).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
     assert!(refused.text.contains("only its owner"), "{}", refused.text);
-    assert!(calls(&server, "POST", "/Shako.CommitFiles").await.is_empty());
+    assert!(calls(&server, "POST", "/Shako.CommitFiles")
+        .await
+        .is_empty());
 
     let removed = send(&state, steward(), "DELETE", uri, None).await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.text);

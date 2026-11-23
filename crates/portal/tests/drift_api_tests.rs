@@ -276,11 +276,17 @@ async fn a_resolution_without_a_space_surface_refuses_instead_of_writing_nowhere
 }
 
 /// A person granted `verbs` on Entity in the project, or only in `space` when one is named.
-fn granted(state: &AppState, verbs: Value, space: Option<&str>) -> joinedcontext_portal::auth::session::Identity {
+fn granted(
+    state: &AppState,
+    verbs: Value,
+    space: Option<&str>,
+) -> joinedcontext_portal::auth::session::Identity {
     // A binding scoped to a space names it; the space's project is the one holding it.
     let scope = match space {
         Some(space) => {
-            state.mirror.upsert(common::envelope("ContextSpace", space, PROJECT, json!({})));
+            state
+                .mirror
+                .upsert(common::envelope("ContextSpace", space, PROJECT, json!({})));
             json!({ "contextSpace": space })
         }
         None => json!({ "project": PROJECT }),
@@ -348,18 +354,31 @@ async fn revert_writes_the_declared_entity_back_and_a_refusing_space_is_503() {
     let uri = format!("/api/v1/projects/{PROJECT}/drift/{SPACE}/{ENTITY}/revert");
 
     let refusal = Mock::given(method("POST"))
-        .and(path(format!("/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert")))
+        .and(path(format!(
+            "/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert"
+        )))
         .respond_with(ResponseTemplate::new(500))
         .expect(1)
         .mount_as_scoped(&space)
         .await;
     let answer = common::send(&state, who.clone(), "POST", &uri, None).await;
-    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE, "{}", answer.text);
-    assert!(answer.text.contains("helsinki refused the write"), "{}", answer.text);
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("helsinki refused the write"),
+        "{}",
+        answer.text
+    );
     drop(refusal);
 
     Mock::given(method("POST"))
-        .and(path(format!("/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert")))
+        .and(path(format!(
+            "/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert"
+        )))
         .and(bearer_token("t"))
         .and(body_string_contains(ENTITY))
         .respond_with(ResponseTemplate::new(204))
@@ -396,7 +415,11 @@ fn drifted_in(source: &str) -> Arc<Store> {
 
 /// An adoption by a person granted propose on Entity, with their own token, against `gateway`
 /// (which serves the live entity) and, when `forge` is set, the repository on that mock.
-async fn adopt(gateway: &wiremock::MockServer, forge: bool, store: Arc<Store>) -> (StatusCode, String) {
+async fn adopt(
+    gateway: &wiremock::MockServer,
+    forge: bool,
+    store: Arc<Store>,
+) -> (StatusCode, String) {
     let gateway_url = gateway.uri();
     let config = Config::from_vars(|key| {
         match key {
@@ -442,7 +465,9 @@ async fn adopt(gateway: &wiremock::MockServer, forge: bool, store: Arc<Store>) -
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/projects/{PROJECT}/drift/{SPACE}/{ENTITY}/adopt"))
+                .uri(format!(
+                    "/api/v1/projects/{PROJECT}/drift/{SPACE}/{ENTITY}/adopt"
+                ))
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .expect("a request"),
@@ -450,7 +475,12 @@ async fn adopt(gateway: &wiremock::MockServer, forge: bool, store: Arc<Store>) -
         .await
         .expect("an answer");
     let status = response.status();
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -515,7 +545,9 @@ async fn adopting_refuses_a_file_that_is_no_seed_gone_or_without_the_entity() {
     assert!(
         !sent.iter().any(|r| r.method.as_str() == "POST"),
         "nothing written: {:?}",
-        sent.iter().map(|r| r.url.path().to_owned()).collect::<Vec<_>>()
+        sent.iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
     );
 }
 
