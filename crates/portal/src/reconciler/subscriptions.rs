@@ -828,6 +828,37 @@ mod tests {
         );
     }
 
+    /// A subscription the space no longer holds is removed already; any other refusal is said.
+    #[tokio::test]
+    async fn a_delete_of_what_the_space_lacks_is_done_and_a_refusal_is_not() {
+        use wiremock::matchers::{bearer_token, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let at = |name: &str| {
+            format!("/cs/mesto-air/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:hel.fi:mesto-air:{name}")
+        };
+        for (name, status) in [("held", 204), ("lost", 404), ("kept", 409)] {
+            Mock::given(method("DELETE"))
+                .and(path(at(name)))
+                .and(bearer_token("t"))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+        }
+        let sync = sync_on(&server);
+        let id = |name: &str| sync.urn("mesto-air", name);
+        assert_eq!(sync.delete("t", "mesto-air", &id("held")).await, Ok(()));
+        assert_eq!(sync.delete("t", "mesto-air", &id("lost")).await, Ok(()));
+        let refused = sync
+            .delete("t", "mesto-air", &id("kept"))
+            .await
+            .expect_err("a conflict");
+        assert!(
+            refused.starts_with("the space refused the delete"),
+            "{refused}"
+        );
+    }
+
     /// Without a token nothing is written: every manifest says why, once, and nothing is deleted.
     #[tokio::test]
     async fn a_refused_token_writes_nothing_and_every_manifest_says_so() {
