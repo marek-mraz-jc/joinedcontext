@@ -152,12 +152,7 @@ impl Schema {
         if pointer.is_empty() {
             return Some(&self.root);
         }
-        let decoded = pointer
-            .split('/')
-            .map(|seg| percent_decode(seg).replace("~1", "/").replace("~0", "~"))
-            .collect::<Vec<_>>()
-            .join("/");
-        self.root.pointer(&decoded)
+        self.root.pointer(&json_pointer(pointer))
     }
 
     fn walk(
@@ -567,15 +562,8 @@ fn check(
     }
     if let Some(r) = obj.get("$ref") {
         let r = r.as_str().ok_or("json_schema: $ref must be a string")?;
-        let resolvable = r == "#"
-            || (r.starts_with("#/") && {
-                let decoded = r[1..]
-                    .split('/')
-                    .map(|seg| percent_decode(seg).replace("~1", "/").replace("~0", "~"))
-                    .collect::<Vec<_>>()
-                    .join("/");
-                root.pointer(&decoded).is_some()
-            });
+        let resolvable =
+            r == "#" || (r.starts_with("#/") && { root.pointer(&json_pointer(&r[1..])).is_some() });
         if !resolvable {
             return Err(format!(
                 "json_schema: $ref {r} is not a local reference that resolves"
@@ -626,6 +614,17 @@ fn compile_pattern(p: &str, patterns: &mut HashMap<String, Regex>) -> Result<(),
         patterns.insert(p.to_string(), re);
     }
     Ok(())
+}
+
+/// A `$ref` fragment as the JSON Pointer `Value::pointer` reads: each segment percent-decoded
+/// (RFC 6901 section 6), a `/` that decoding produced escaped as `~1`; `~0` and `~1` are left for
+/// `pointer` to unescape, so `#/definitions/a~1b` names the key `a/b`.
+fn json_pointer(fragment: &str) -> String {
+    fragment
+        .split('/')
+        .map(|seg| percent_decode(seg).replace('/', "~1"))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn percent_decode(s: &str) -> String {
@@ -958,6 +957,107 @@ mod tests {
             .starts_with("failed to parse message as JSON"));
     }
 
+    fn proc_ctx(file_root: Option<std::path::PathBuf>) -> ProcContext {
+        ProcContext {
+            stream_id: "s".into(),
+            org: ekiben_core::OrgContext::new(
+                ekiben_core::OrgId::default(),
+                ekiben_core::OrgQuotas::default(),
+            ),
+            resources: ekiben_core::ResourceManager::new(),
+            registry: Arc::new(Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: ekiben_core::StreamMetrics::new("s", "o"),
+            label: "check".into(),
+            component_type: "json_schema".into(),
+            path: "pipeline.processors.0".into(),
+            file_root,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    fn build(config: Value, file_root: Option<std::path::PathBuf>) -> Result<(), String> {
+        let registry = Registry::new();
+        register(&registry);
+        let conf =
+            ComponentConfig::from_json_value(&json!({ "json_schema": config }), "noop", None)
+                .unwrap();
+        registry
+            .build_processor_list(&[conf], &proc_ctx(file_root))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn the_config_names_exactly_one_readable_json_schema() {
+        assert_eq!(build(json!({"schema": "{}"}), None), Ok(()));
+        let dir = std::env::temp_dir().join(format!("json-schema-conf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("s.json"), r#"{"type":"object"}"#).unwrap();
+        assert_eq!(
+            build(json!({"schema_path": "s.json"}), Some(dir.clone())),
+            Ok(())
+        );
+        for (config, want) in [
+            (json!({"schema": "{}", "schema_path": "s.json"}), "not both"),
+            (json!({}), "a schema or schema_path is required"),
+            (json!({"schema": ""}), "a schema or schema_path is required"),
+            (
+                json!({"schema_path": ""}),
+                "a schema or schema_path is required",
+            ),
+            (json!({"schema": "{nope"}), "the schema is not JSON"),
+            (json!({"schema": r#"{"pattern":"("}"#}), "does not compile"),
+            (
+                json!({"schema_path": "missing.json"}),
+                "cannot read schema_path",
+            ),
+        ] {
+            let err = build(config.clone(), Some(dir.clone())).expect_err(&config.to_string());
+            assert!(err.contains(want), "{config}: {err}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn each_message_fails_alone_with_its_violations() {
+        let p = JsonSchemaProcessor {
+            schema: Schema::compile(json!({"type": "object", "required": ["a", "b"]})).unwrap(),
+        };
+        assert_eq!(p.processor_type(), "json_schema");
+        let ctx = proc_ctx(None);
+        let out = p
+            .process_batch(
+                &ctx,
+                vec![
+                    Part::from_str(r#"{"a":1,"b":2}"#),
+                    Part::from_str(r#"{}"#),
+                    Part::from_str("not json"),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        let errs: Vec<Option<String>> = out[0]
+            .iter()
+            .map(|p| p.error_get().map(|e| e.message.clone()))
+            .collect();
+        assert_eq!(errs[0], None);
+        assert_eq!(
+            errs[1].as_deref(),
+            Some("(root) a is required\n(root) b is required")
+        );
+        assert!(errs[2]
+            .as_deref()
+            .unwrap()
+            .starts_with("failed to parse message as JSON"));
+        let e = out[0][1].error_get().unwrap();
+        assert_eq!(
+            (e.label.as_str(), e.component_type.as_str()),
+            ("check", "json_schema")
+        );
+    }
+
     #[test]
     fn schema_path_stays_inside_the_file_root() {
         let root = std::env::temp_dir().join(format!("json-schema-root-{}", std::process::id()));
@@ -1050,6 +1150,272 @@ mod tests {
         assert!(Schema::compile(json!({"$ref": "#/definitions/missing"})).is_err());
         assert!(Schema::compile(json!({"pattern": "("})).is_err());
         assert!(Schema::compile(json!({"unevaluatedProperties": false})).is_err());
+        for (schema, want) in [
+            (json!({"$ref": 1}), "$ref must be a string"),
+            (json!({"patternProperties": {"(": {}}}), "does not compile"),
+            (json!({"items": [{"pattern": "["}]}), "does not compile"),
+            (json!({"items": {"pattern": "["}}), "does not compile"),
+            (json!({"not": {"$dynamicRef": "#a"}}), "keyword $dynamicRef"),
+            (json!({"definitions": {"a": {"$ref": "#/nope"}}}), "#/nope"),
+        ] {
+            let err = Schema::compile(schema.clone()).err().unwrap_or_default();
+            assert!(err.contains(want), "{schema}: {err}");
+        }
+        let mut deep = json!({});
+        for _ in 0..=MAX_DEPTH + 1 {
+            deep = json!({ "not": deep });
+        }
+        assert_eq!(
+            Schema::compile(deep).err().as_deref(),
+            Some("json_schema: the schema nests too deeply")
+        );
+        // A pointer segment escaped as JSON Pointer (~0, ~1) or percent-encoding resolves.
+        let schema = json!({"definitions": {"a/b": {"type": "string"}, "c~d": {"type": "integer"},
+            "e f": {"const": 1}}, "properties": {
+            "x": {"$ref": "#/definitions/a~1b"}, "y": {"$ref": "#/definitions/c~0d"},
+            "z": {"$ref": "#/definitions/e%20f"}, "r": {"$ref": "#"},
+            "w": {"$ref": "#/definitions/a%2Fb"}}});
+        assert_eq!(
+            errors(
+                schema,
+                json!({"x": 1, "y": "s", "z": 2, "r": {"x": "ok"}, "w": 2})
+            ),
+            vec![
+                "x invalid type. expected: string, given: integer",
+                "y invalid type. expected: integer, given: string",
+                "z z does not match: 1",
+                "w invalid type. expected: string, given: integer",
+            ]
+        );
+    }
+
+    #[test]
+    fn boolean_schemas_and_combinators_report_as_gojsonschema() {
+        assert!(errors(json!(true), json!(1)).is_empty());
+        assert_eq!(
+            errors(json!(false), json!(1)),
+            vec!["(root) false always fails validation"]
+        );
+        assert!(
+            errors(json!(3), json!(1)).is_empty(),
+            "a non-object schema is no constraint"
+        );
+        let all = json!({"allOf": [{"type": "integer"}, {"minimum": 5}]});
+        assert!(errors(all.clone(), json!(7)).is_empty());
+        assert_eq!(
+            errors(all, json!(3)),
+            vec![
+                "(root) must be greater than or equal to 5",
+                "(root) must validate all the schemas (allof)"
+            ]
+        );
+        let one = json!({"oneOf": [{"type": "integer"}, {"minimum": 5}]});
+        assert!(errors(one.clone(), json!(3)).is_empty());
+        assert_eq!(
+            errors(one.clone(), json!(7)),
+            vec!["(root) must validate one and only one schema (oneof)"]
+        );
+        assert_eq!(
+            errors(
+                json!({"oneOf": [{"type": "integer"}, {"type": "boolean"}]}),
+                json!("s")
+            ),
+            vec!["(root) must validate one and only one schema (oneof)"]
+        );
+        assert!(errors(
+            json!({"anyOf": [{"type": "null"}, {"type": "integer"}]}),
+            json!(1)
+        )
+        .is_empty());
+        let not = json!({"not": {"type": "string"}});
+        assert!(errors(not.clone(), json!(1)).is_empty());
+        assert_eq!(
+            errors(not, json!("s")),
+            vec!["(root) must not validate the schema (not)"]
+        );
+        let cond =
+            json!({"if": {"type": "integer"}, "then": {"minimum": 0}, "else": {"type": "string"}});
+        assert!(errors(cond.clone(), json!(1)).is_empty());
+        assert!(errors(cond.clone(), json!("s")).is_empty());
+        assert_eq!(
+            errors(cond.clone(), json!(-1)),
+            vec![
+                "(root) must be greater than or equal to 0",
+                "(root) must validate \"then\" as \"if\" was valid"
+            ]
+        );
+        assert_eq!(
+            errors(cond, json!(true)),
+            vec![
+                "(root) invalid type. expected: string, given: boolean",
+                "(root) must validate \"else\" as \"if\" was not valid"
+            ]
+        );
+        assert!(errors(json!({"if": {"type": "integer"}}), json!("s")).is_empty());
+        assert!(
+            errors(json!({"type": 5}), json!("s")).is_empty(),
+            "a non-name type is ignored"
+        );
+        assert!(errors(json!({"type": "unknown"}), json!("s")).is_empty());
+        assert!(errors(json!({"const": [1, {"a": 1.0}]}), json!([1.0, {"a": 1}])).is_empty());
+        assert!(errors(json!({"enum": [null, 2]}), json!(2.0)).is_empty());
+    }
+
+    #[test]
+    fn object_keywords_report_each_violation() {
+        let schema = json!({
+            "minProperties": 2, "maxProperties": 3,
+            "properties": {"a": {"type": "integer"}},
+            "patternProperties": {"^x_": {"type": "string"}},
+            "additionalProperties": {"type": "boolean"},
+            "propertyNames": {"maxLength": 3},
+            "dependencies": {"a": ["b"], "x_1": {"required": ["c"]}}
+        });
+        assert!(errors(schema.clone(), json!({"a": 1, "b": true})).is_empty());
+        assert_eq!(
+            errors(schema.clone(), json!({"a": "s"})),
+            vec![
+                "(root) must have at least 2 properties",
+                "a invalid type. expected: integer, given: string",
+                "(root) has a dependency on b",
+            ]
+        );
+        assert_eq!(
+            errors(schema, json!({"x_1": 1, "long": 2, "b": true, "d": false})),
+            vec![
+                "(root) must have at most 3 properties",
+                "x_1 invalid type. expected: string, given: integer",
+                "long invalid type. expected: boolean, given: integer",
+                "(root) property name \"long\" does not match",
+                "(root) c is required",
+            ]
+        );
+        assert_eq!(
+            errors(
+                json!({"additionalProperties": false, "properties": {"a": true}}),
+                json!({"a": 1, "z": 2})
+            ),
+            vec!["(root) additional property z is not allowed"]
+        );
+        assert!(errors(json!({"additionalProperties": true}), json!({"z": 1})).is_empty());
+    }
+
+    #[test]
+    fn array_keywords_report_each_violation() {
+        let list = json!({"minItems": 2, "maxItems": 3, "uniqueItems": true,
+            "items": {"type": "integer"}, "contains": {"minimum": 10}});
+        assert!(errors(list.clone(), json!([1, 10])).is_empty());
+        assert_eq!(
+            errors(list.clone(), json!([1])),
+            vec![
+                "(root) array must have at least 2 items",
+                "(root) at least one of the items must match"
+            ]
+        );
+        assert_eq!(
+            errors(list, json!([10, "s", 10.0, 1])),
+            vec![
+                "(root) array must have at most 3 items",
+                "(root) array items[0,2] must be unique",
+                "1 invalid type. expected: integer, given: string",
+            ]
+        );
+        assert!(errors(json!({"uniqueItems": false}), json!([1, 1])).is_empty());
+        let tuple = json!({"items": [{"type": "string"}, {"type": "integer"}],
+            "additionalItems": {"type": "boolean"}});
+        assert!(errors(tuple.clone(), json!(["a", 1, true, false])).is_empty());
+        assert_eq!(
+            errors(tuple, json!([1, 1, 2])),
+            vec![
+                "0 invalid type. expected: string, given: integer",
+                "2 invalid type. expected: boolean, given: integer",
+            ]
+        );
+        let closed = json!({"items": [{"type": "string"}], "additionalItems": false});
+        assert_eq!(
+            errors(closed, json!(["a", 1, 2])),
+            vec!["(root) no additional items allowed on array"]
+        );
+        assert!(errors(json!({"items": [true]}), json!([1, 2])).is_empty());
+    }
+
+    #[test]
+    fn string_and_number_keywords_report_each_violation() {
+        let s = json!({"minLength": 2, "maxLength": 3, "pattern": "^a", "format": "date"});
+        assert_eq!(
+            errors(s.clone(), json!("ab")),
+            vec!["(root) does not match format 'date'"]
+        );
+        assert!(errors(json!({"minLength": 2, "pattern": "^a"}), json!("ab")).is_empty());
+        assert_eq!(
+            errors(s.clone(), json!("é")),
+            vec![
+                "(root) string length must be greater than or equal to 2",
+                "(root) does not match pattern '^a'",
+                "(root) does not match format 'date'",
+            ]
+        );
+        assert_eq!(
+            errors(s, json!("abcd")),
+            vec![
+                "(root) string length must be less than or equal to 3",
+                "(root) does not match format 'date'",
+            ]
+        );
+        assert!(errors(json!({"format": "hostname"}), json!("any thing")).is_empty());
+        let n = json!({"multipleOf": 0.5, "minimum": 1, "maximum": 3,
+            "exclusiveMinimum": 1, "exclusiveMaximum": 3});
+        assert!(errors(n.clone(), json!(2.5)).is_empty());
+        assert_eq!(
+            errors(n.clone(), json!(1)),
+            vec!["(root) must be greater than 1"]
+        );
+        assert_eq!(
+            errors(n.clone(), json!(3)),
+            vec!["(root) must be less than 3"]
+        );
+        assert_eq!(
+            errors(n, json!(0.25)),
+            vec![
+                "(root) must be a multiple of 0.5",
+                "(root) must be greater than or equal to 1",
+                "(root) must be greater than 1",
+            ]
+        );
+        assert_eq!(
+            errors(json!({"maximum": 3}), json!(4)),
+            vec!["(root) must be less than or equal to 3"]
+        );
+        assert!(errors(json!({"multipleOf": 0}), json!(3)).is_empty());
+        assert!(errors(json!({"minimum": 5}), json!("s")).is_empty());
+    }
+
+    #[test]
+    fn helpers_name_types_and_decode_as_gojsonschema() {
+        for (v, t) in [
+            (json!(null), "null"),
+            (json!(true), "boolean"),
+            (json!(1), "integer"),
+            (json!(1.5), "number"),
+            (json!("s"), "string"),
+            (json!([]), "array"),
+            (json!({}), "object"),
+        ] {
+            assert_eq!(type_of(&v), t);
+            assert!(is_type(&v, t));
+        }
+        assert!(is_type(&json!(1), "number"));
+        assert!(!is_type(&json!(1.5), "integer"));
+        assert!(is_integer(&json!(u64::MAX)));
+        assert!(is_integer(&json!(-3)));
+        assert_eq!(percent_decode("a%2Fb%zz%4"), "a/b%zz%4");
+        assert_eq!(field_name("(root)"), "(root)");
+        assert_eq!(field_name("(root).a.b"), "a.b");
+        assert!(json_eq(&json!(1), &json!(1.0)));
+        assert!(!json_eq(&json!([1]), &json!([1, 2])));
+        assert!(!json_eq(&json!({"a": 1}), &json!({"b": 1})));
+        assert!(!json_eq(&json!({"a": 1}), &json!({"a": 1, "b": 2})));
+        assert!(!json_eq(&json!("1"), &json!(1)));
     }
 
     #[test]
@@ -1143,6 +1509,31 @@ mod tests {
             ("email", "a.@b", false),
             ("email", "\"a b\"@c", true),
             ("email", "", false),
+        ] {
+            assert_eq!(format_ok(format, text), ok, "{format} {text:?}");
+        }
+    }
+
+    #[test]
+    fn uri_authority_and_mail_address_branches() {
+        // The branches of the net/url and net/mail ports the Bento table above does not reach.
+        for (format, text, ok) in [
+            ("uri", "http://user:pw@a/", true),
+            ("uri", "http://us%zz@a/", false),
+            ("uri", "http://[::1/", false),
+            ("uri", "http://[::1]x/", false),
+            ("uri", "http://a/%zz", false),
+            ("email", "a@b>", false),
+            ("email", "\"a\\\"@b", false),
+            ("email", "\"a\"b\"@c", false),
+            ("email", "\"a\u{1}\"@c", false),
+            ("email", "\"a\\\"\"@c", true),
+            ("email", "a@[ipv6:1]", true),
+            ("email", "a@[x[y]", false),
+            ("email", "\"A B\" <a@b>", true),
+            ("email", "\"A <a@b>", false),
+            ("email", "A,B <a@b>", false),
+            ("email", "A.B C <a@b>", true),
         ] {
             assert_eq!(format_ok(format, text), ok, "{format} {text:?}");
         }
