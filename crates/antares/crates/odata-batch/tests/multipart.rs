@@ -190,6 +190,8 @@ mod o10 {
                 format!("--b\r\n{HTTP}\r\nPOST x\r\n\r\nab\r\n--b\r\ncd\r\n--b--"),
                 framing(58),
             ),
+            // A part with no header block at all: not even its Content-Type.
+            ("--b\r\n\r\nGET x\r\n--b--".to_owned(), framing(5)),
             // No header block end, folding, a name that is not a token, a non-UTF-8 header.
             (
                 "--b\r\nContent-Type: application/http\r\n--b--".to_owned(),

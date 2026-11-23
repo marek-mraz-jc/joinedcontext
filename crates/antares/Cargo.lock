@@ -2789,6 +2789,7 @@ name = "odata-url"
 version = "0.3.0"
 dependencies = [
  "odata-csdl",
+ "odata-url",
  "proptest",
  "serde_json",
 ]

@@ -336,6 +336,9 @@ mod w1_to_w20 {
         for url in [
             json!("/odata/People('p1')"),
             json!("https://other.example/odata/People('p1')"),
+            // an absolute path, and a scheme anywhere in the link
+            json!("/People('p1')"),
+            json!("People('a://b')"),
             json!("Buildings('b1')"),
             json!("People"),
             json!("People('p1')/id"),
