@@ -115,6 +115,11 @@ fn check_reads_json_and_yaml_and_refuses_bad_files() {
     let preview = dir.0.join("literal-plan.json");
     let out = kaisatsu(&["plan", "-f", p(&literal), "-o", p(&preview)]);
     assert_eq!(code(&out), 2, "{}", stderr(&out));
+    assert_eq!(
+        code(&kaisatsu(&["diff", "-f", p(&literal)])),
+        2,
+        "diff previews it too"
+    );
     // A `$(file:...)` secret reads only under `--secrets-dir`.
     let secrets = dir.0.join("secrets");
     std::fs::create_dir(&secrets).expect("secrets dir");
@@ -625,8 +630,21 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
         "the plan's base state is gone: {}",
         stderr(&out)
     );
-    // `--prune` deletes what the file stopped naming; a plain apply brings it back.
     let bare = dir.file("bare.yaml", "realm: cli\ndisplayName: CLI realm 2\n");
+    // `diff` only compares: run twice on a changed file, it reports the change both times.
+    let renamed = dir.file("renamed.yaml", "realm: cli\ndisplayName: CLI realm 3\n");
+    let diff_changed = [
+        &["diff", "-f", p(&renamed), "--kek-file", p(&kek)][..],
+        &db[..],
+    ]
+    .concat();
+    assert_eq!(code(&kaisatsu(&diff_changed)), 2);
+    assert_eq!(
+        code(&kaisatsu(&diff_changed)),
+        2,
+        "the first diff wrote nothing"
+    );
+    // `--prune` deletes what the file stopped naming; a plain apply brings it back.
     let out = kaisatsu(
         &[
             &["apply", "-f", p(&bare), "--prune", "--kek-file", p(&kek)][..],
