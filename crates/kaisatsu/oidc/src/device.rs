@@ -139,8 +139,9 @@ pub async fn device_authorization(
             Err(e) => return Err(e),
         }
     }
-    let (device_code, user_code) =
-        issued.ok_or_else(|| KaisatsuError::Storage("no free user code".into()))?;
+    let Some((device_code, user_code)) = issued else {
+        return Err(KaisatsuError::Storage("no free user code".into()));
+    };
     let verification = format!("{}/device", mount.realm_issuer(&realm.realm));
     let body = json!({
         "device_code": device_code,

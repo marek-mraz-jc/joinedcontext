@@ -225,16 +225,7 @@ async fn jwks_certs(
     let realm = named_realm(&state, &realm_name).await?;
     let records = state.store.list_signing_keys(&realm.id).await?;
     let jwks = KeyManager::build_jwks(&records);
-    let body = serde_json::to_string(&jwks).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::CACHE_CONTROL, "public, max-age=300"),
-        ],
-        body,
-    )
-        .into_response())
+    Ok(([(header::CACHE_CONTROL, "public, max-age=300")], Json(jwks)).into_response())
 }
 
 /// Resolves or fetches a CIMD client when `client_id` is an `https://` URL (W1).
@@ -673,18 +664,20 @@ pub async fn password_work<T: Send + 'static>(
             let cores = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
             Arc::new(tokio::sync::Semaphore::new(cores))
         });
-    let slot = SLOTS
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| KaisatsuError::Crypto("password work pool closed".into()))?;
+    // The semaphore is never closed, and a hash that panics is the only failed join.
+    let Ok(slot) = SLOTS.clone().acquire_owned().await else {
+        return Err(KaisatsuError::Crypto("password work pool closed".into()));
+    };
     // The slot moves into the task: a dropped request still holds it until the hash ends.
-    tokio::task::spawn_blocking(move || {
+    let done = tokio::task::spawn_blocking(move || {
         let _slot = slot;
         work()
     })
-    .await
-    .map_err(|_| KaisatsuError::Crypto("password work failed".into()))
+    .await;
+    let Ok(out) = done else {
+        return Err(KaisatsuError::Crypto("password work failed".into()));
+    };
+    Ok(out)
 }
 
 /// [`kaisatsu_crypto::password::dummy_verify_password`] through [`password_work`].
@@ -1689,8 +1682,13 @@ async fn select_signing_key(
     }
     state.store.ensure_signing_key(&realm.id, alg).await?;
     let keys = state.store.list_signing_keys(&realm.id).await?;
-    active(&keys, alg)
-        .ok_or_else(|| KaisatsuError::Crypto(format!("no active {alg} key after generating one")))
+    // ensure_signing_key just stored an active key of `alg`.
+    let Some(key) = active(&keys, alg) else {
+        return Err(KaisatsuError::Crypto(format!(
+            "no active {alg} key after generating one"
+        )));
+    };
+    Ok(key)
 }
 
 /// `user` with the roles of every group they are in, the groups' ancestors included (Keycloak
@@ -3874,12 +3872,12 @@ async fn verify_and_consume_logout_csrf_token(
         post_logout_redirect_uri.unwrap_or_default(),
         state_param.unwrap_or_default()
     );
-    let nonce_bytes = state
+    let nonce = state
         .kek
         .decrypt(aad.as_bytes(), &raw)
-        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
-    let nonce = String::from_utf8(nonce_bytes)
-        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
     state
         .store
         .mark_token_revoked(RevokedTokenRecord {
@@ -4187,8 +4185,12 @@ async fn handle_logout_request(
     let clear_cookie = sign_in_cookie("sso", "", 0);
 
     if let Some(target_uri) = post_logout {
-        let mut url = url::Url::parse(target_uri)
-            .map_err(|_| KaisatsuError::BadRequest("invalid post_logout_redirect_uri".into()))?;
+        // validate_post_logout_redirect_uri parsed it already.
+        let Ok(mut url) = url::Url::parse(target_uri) else {
+            return Err(KaisatsuError::BadRequest(
+                "invalid post_logout_redirect_uri".into(),
+            ));
+        };
         if let Some(st) = state_param {
             url.query_pairs_mut().append_pair("state", st);
         }

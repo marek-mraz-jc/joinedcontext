@@ -178,6 +178,81 @@ async fn an_unknown_realm_is_404_at_token_introspection_and_revocation() {
     }
 }
 
+/// Introspection is for confidential clients (W1) and names the person of a token that carries
+/// only `sub`; the token endpoint takes one DPoP proof at most (RFC 9449 §4.3); `kc_action`
+/// needs an interactive login.
+#[tokio::test]
+async fn introspection_dpop_count_and_kc_action_refusals() {
+    let (app, store, kek) = app().await;
+    let introspect = "/realms/dev/protocol/openid-connect/token/introspect";
+    let (st, _, body) =
+        post_form(&app, introspect, &[("client_id", "admin-cli"), ("token", "x")], None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "unauthorized_client", "{body}");
+
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let now = jc_time::TimestampTz::now().as_second();
+    let token = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "azp": "apisix-gateway",
+            "jti": "introspect-sub", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", token.as_str()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert_eq!(v["username"], "demo.orgmember@hel.fi", "{body}");
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(TOKEN)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("dpop", "a.b.c")
+        .header("dpop", "d.e.f")
+        .body(Body::from(format!(
+            "grant_type=client_credentials&client_id=apisix-gateway&client_secret={APISIX_CLIENT_WORD}"
+        )))
+        .unwrap();
+    let (st, _, body) = send(&app, req).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_dpop_proof", "{body}");
+    assert!(body.contains("multiple DPoP headers"), "{body}");
+
+    client(&store, "kc-app", |c| {
+        c.public_client = true;
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    let (st, _, body) = get(
+        &app,
+        &format!(
+            "/realms/dev/protocol/openid-connect/auth?client_id=kc-app&response_type=code\
+             &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256\
+             &redirect_uri={}&kc_action=UPDATE_PASSWORD&prompt=none",
+            url::form_urlencoded::byte_serialize(CALLBACK.as_bytes()).collect::<String>()
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.contains("kc_action needs an interactive login"),
+        "{body}"
+    );
+}
+
 /// Behind a host that injects its own `Mount` (jc-router), revocation still authenticates the
 /// client and answers 200 for an unknown token (RFC 7009 §2.2).
 #[tokio::test]
@@ -827,6 +902,7 @@ async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_ba
             let req = Request::builder()
                 .uri(format!("{auth}?{query}"))
                 .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .header(header::ACCEPT_LANGUAGE, "en-GB, sk;q=0.5")
                 .body(Body::empty())
                 .unwrap();
             send(&app, req).await

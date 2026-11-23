@@ -275,6 +275,71 @@ async fn a_signed_in_person_allows_a_device_once() {
     );
 }
 
+/// An allowed device gets no tokens when, before its poll, the person was disabled, came under
+/// the second factor, or ended the session the device was allowed in; an unknown code is no grant.
+#[tokio::test]
+async fn an_allowed_device_gets_no_tokens_once_the_person_or_session_changed() {
+    let (app, store) = app().await;
+    let (st, body) = poll(&app, "jcctl", "no-such-device-code").await;
+    assert_eq!(
+        (st, error(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "invalid_grant")
+    );
+    let (first, user_code) = authorize(&app, "jcctl").await;
+    let sso = sign_in_at_page(&app, &user_code).await;
+    let allow = |user_code: String| {
+        let (app, sso) = (app.clone(), sso.clone());
+        async move {
+            let csrf = page_form(&app, &sso, &user_code).await;
+            let (st, html) = answer(&app, &sso, &csrf, &user_code, Some("allow")).await;
+            assert_eq!(st, StatusCode::OK, "{html}");
+        }
+    };
+    allow(user_code).await;
+    let person = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    let (second, user_code) = authorize(&app, "jcctl").await;
+    allow(user_code).await;
+    let (third, user_code) = authorize(&app, "jcctl").await;
+    allow(user_code).await;
+    let refused = |device_code: String, why: &'static str| {
+        let app = app.clone();
+        async move {
+            let (st, body) = poll(&app, "jcctl", &device_code).await;
+            assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(error(&body), "invalid_grant", "{body}");
+            assert!(body.contains(why), "{body}");
+        }
+    };
+
+    let mut roles = person.realm_roles.clone();
+    roles.push("mfa-required".into());
+    store
+        .set_user_grants("dev", &person.id, &roles, &person.client_roles)
+        .await
+        .unwrap();
+    refused(first, "A second factor is now required").await;
+    store
+        .set_user_grants("dev", &person.id, &person.realm_roles, &person.client_roles)
+        .await
+        .unwrap();
+
+    let mut changed = person.clone();
+    changed.enabled = false;
+    store.update_user(changed).await.unwrap();
+    refused(second, "User disabled or not found").await;
+
+    store.update_user(person.clone()).await.unwrap();
+    store
+        .delete_user_sso_sessions("dev", &person.id)
+        .await
+        .unwrap();
+    refused(third, "Session not active").await;
+}
+
 #[tokio::test]
 async fn a_denied_device_gets_access_denied() {
     let (app, _) = app().await;
