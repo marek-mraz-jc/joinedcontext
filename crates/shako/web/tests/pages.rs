@@ -312,6 +312,8 @@ async fn the_file_page_shows_a_file_and_says_when_it_shows_only_the_first_mib() 
             "{missing}"
         );
     }
+    let (status, _, _) = get(&s.app, "/joinedcontext/helsinki/blob/main/notes.txt", "bad").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -420,6 +422,14 @@ async fn a_commit_page_lists_the_files_it_changed() {
     )
     .await;
     assert!(first.contains("notes.txt"), "{first}");
+    // The first commit of a repository has no parent to compare with: it lists no file.
+    let root = page(
+        &s.app,
+        &format!("/joinedcontext/helsinki/commit/{}", s.root),
+    )
+    .await;
+    assert!(root.contains(&s.root), "{root}");
+    assert!(!root.contains("README.md"), "{root}");
     for path in [
         "/joinedcontext/helsinki/commit/0000000000000000000000000000000000000000".to_string(),
         format!("/joinedcontext/missing/commit/{}", s.first),
