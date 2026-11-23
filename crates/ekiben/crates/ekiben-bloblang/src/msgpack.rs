@@ -387,6 +387,14 @@ mod tests {
             decode(&nested(MAX_DEPTH + 1)),
             Err("msgpack: exceeded max depth".to_string())
         );
+        // A map's key sits one level below the map, as its value does.
+        let mut key_deep = vec![0x81];
+        key_deep.extend(nested(MAX_DEPTH));
+        key_deep.push(0xc0);
+        assert_eq!(
+            decode(&key_deep),
+            Err("msgpack: exceeded max depth".to_string())
+        );
         let mut map = vec![0x81, 0xa1, b'k'];
         map.extend(nested(MAX_DEPTH));
         assert_eq!(decode(&map), Err("msgpack: exceeded max depth".to_string()));
