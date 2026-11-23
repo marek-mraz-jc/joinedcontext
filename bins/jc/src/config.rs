@@ -1628,18 +1628,18 @@ fn remote_modules(
 #[allow(clippy::disallowed_methods)] // The one reader.
 pub fn process_env() -> BTreeMap<String, String> {
     std::env::vars()
-        .filter(|(k, _)| {
-            k.starts_with("JCBIN_")
+        .filter_map(|(k, v)| {
+            if k == REFUSED_MODEL_KEY {
+                // The proxy's own name for the model key is read only to refuse it: its value is
+                // dropped.
+                Some((k, String::new()))
+            } else if k.starts_with("JCBIN_")
                 || k.starts_with(EKIBEN_VAR_PREFIX)
                 || k.starts_with("DAIYA_VAR_")
-                || k == REFUSED_MODEL_KEY
-        })
-        // The proxy's own name for the model key is read only to refuse it: its value is dropped.
-        .map(|(k, v)| {
-            if k == REFUSED_MODEL_KEY {
-                (k, String::new())
+            {
+                Some((k, v))
             } else {
-                (k, v)
+                None
             }
         })
         .collect()
@@ -1663,7 +1663,10 @@ pub fn assistant_env(key: &str) -> Option<String> {
     if !allowed {
         return None;
     }
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+    match std::env::var(key) {
+        Ok(v) if !v.trim().is_empty() => Some(v),
+        _ => None,
+    }
 }
 
 /// One key of the Portal's or the gateway's own configuration (`JC_*`), as the standalone
@@ -2150,11 +2153,8 @@ mod tests {
         for arg in cmd.get_arguments() {
             if let Some(env) = arg.get_env() {
                 let env = env.to_string_lossy();
+                // JCBIN_ never collides with the Portal's JC_* keys.
                 assert!(env.starts_with("JCBIN_"), "{env} must start with JCBIN_");
-                assert!(
-                    !env.starts_with("JC_"),
-                    "{env} collides with the Portal's JC_* keys"
-                );
                 seen += 1;
             }
         }
@@ -2583,14 +2583,18 @@ path_prefix = "/api/endpoint"
                 }
             };
             let from_file = Secrets::load_from(&with_file, &BTreeMap::new()).unwrap();
-            let g = given(&from_file).unwrap_or_else(|| panic!("{name}"));
+            let Some(g) = given(&from_file) else {
+                panic!("{name}")
+            };
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-file", jc_secret::Source::File)
             );
             let env_only = Config::merge(cli(&["--role", "all"]), FileConfig::default()).unwrap();
             let from_env = Secrets::load_from(&env_only, &value).unwrap();
-            let g = given(&from_env).unwrap_or_else(|| panic!("{name}"));
+            let Some(g) = given(&from_env) else {
+                panic!("{name}")
+            };
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-env", jc_secret::Source::Env)
@@ -2640,6 +2644,28 @@ path_prefix = "/api/endpoint"
         assert_eq!(assistant_env("JC_MODEL_KEY"), None);
         assert_eq!(assistant_env("JC_MODEL_KEY_FILE"), None);
         assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
+        assert_eq!(assistant_env("JC_ASSISTANT_UNSET_IN_TESTS"), None);
+        assert_eq!(antares_env("ANTARES_UNSET_IN_TESTS"), None);
+        assert_eq!(secrets.report(), [("model-key", jc_secret::Source::File)]);
+    }
+
+    /// The process environment hands over only jc's own, ekiben's and daiya's names, and a
+    /// Dataroom alone needs no secret from it.
+    #[test]
+    fn the_process_environment_gives_only_jcs_own_names() {
+        for (k, v) in process_env() {
+            let ours = k.starts_with("JCBIN_")
+                || k.starts_with(EKIBEN_VAR_PREFIX)
+                || k.starts_with("DAIYA_VAR_");
+            assert!(ours || (k == REFUSED_MODEL_KEY && v.is_empty()), "{k}");
+        }
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
+        assert!(
+            Secrets::load(&cfg)
+                .expect("no secret needed")
+                .report()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2679,6 +2705,15 @@ path_prefix = "/api/endpoint"
             !format!("{secrets:?}").contains("s-zilina"),
             "Debug hides it"
         );
+        assert_eq!(
+            secrets.report(),
+            [("ekiben-pipeline-client-secrets", jc_secret::Source::File)]
+        );
+        let gone = dir.path().join("gone");
+        let err = load(&["--ekiben-client-secrets-dir", gone.to_str().unwrap()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gone") && err.contains("not found"), "{err}");
         // The default is kaisatsu's import secrets directory, the file a realm file names.
         let shared = load(&["--kaisatsu-import-secrets-dir", dir_arg]).unwrap();
         assert_eq!(shared.pipeline_client_secrets.len(), 2);
@@ -2802,14 +2837,26 @@ path_prefix = "/api/endpoint"
                 "cannot run in another",
             ),
             ("portal", "shako = \"file:///etc\"", "not an http(s) URL"),
+            ("portal", "nosuch = \"https://g\"", "'nosuch' is no module"),
         ] {
             let err = merge(role, modules).unwrap_err().to_string();
             assert!(err.contains(said), "{role} {modules}: {err}");
         }
+        let token_url =
+            parse(&format!("{remote}shako = \"https://g\"").replace("http://id/token", "id/token"));
+        let err = Config::merge(cli(&["--role", "portal"]), token_url).unwrap_err();
+        assert!(
+            err.to_string().contains("token_url must be an http(s) URL"),
+            "{err}"
+        );
         let err = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap_err();
         assert!(err.to_string().contains("no client secret"), "{err}");
         let env = BTreeMap::from([("JCBIN_REMOTE_CLIENT_SECRET".to_owned(), "s3cret".to_owned())]);
         let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(
+            secrets.report(),
+            [("remote-client-secret", jc_secret::Source::Env)]
+        );
         assert_eq!(
             secrets.remote_client_secret.unwrap().source,
             jc_secret::Source::Env
@@ -3411,7 +3458,7 @@ path_prefix = "/api/endpoint"
         let path = dir.path().join("jc.toml");
         std::fs::write(
             &path,
-            "profile = \"development\"\nrole = \"dataroom\"\nbase_host = \"from.file\"\n",
+            "profile = \"development\"\nrole = \"dataroom\"\nbase_host = \"from.file\"\n[dataroom]\n",
         )
         .unwrap();
         let cfg = Config::resolve(Cli {
@@ -3420,6 +3467,8 @@ path_prefix = "/api/endpoint"
         })
         .unwrap();
         assert_eq!(cfg.base_host, "from.file");
+        // The Dataroom's files are read beside jc.toml.
+        assert_eq!(cfg.dataroom.config_dir.as_deref(), Some(dir.path()));
         let err = Config::resolve(Cli {
             config: Some(dir.path().join("missing.toml")),
             ..Cli::default()
