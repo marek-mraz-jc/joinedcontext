@@ -179,9 +179,9 @@ impl Processor for ArchiveProcessor {
                         header.set_mode(0o666);
                         header.set_cksum();
                         tw.append_data(&mut header, name, &data[..])
-                            .map_err(|e| CoreError::other(e.to_string()))?;
+                            .map_err(core_other)?;
                     }
-                    tw.finish().map_err(|e| CoreError::other(e.to_string()))?;
+                    tw.finish().map_err(core_other)?;
                 }
                 first_part.set_bytes(Bytes::from(buf));
             }
@@ -206,10 +206,9 @@ impl Processor for ArchiveProcessor {
                                 zip_error_text(&e)
                             ))
                         })?;
-                        zw.write_all(&part.as_bytes_ref())
-                            .map_err(|e| CoreError::other(e.to_string()))?;
+                        zw.write_all(&part.as_bytes_ref()).map_err(core_other)?;
                     }
-                    zw.finish().map_err(|e| CoreError::other(e.to_string()))?;
+                    zw.finish().map_err(core_other)?;
                 }
                 first_part.set_bytes(Bytes::from(buf.into_inner()));
             }
@@ -219,6 +218,11 @@ impl Processor for ArchiveProcessor {
         first_part.add_collapsed_count(total_collapsed);
         Ok(vec![vec![first_part]])
     }
+}
+
+/// An archive writer's error as a processor error (writes go to memory; reads and names can fail).
+fn core_other(e: impl std::fmt::Display) -> CoreError {
+    CoreError::other(e.to_string())
 }
 
 /// The zip crate prints a duplicate name through `EscapeAscii`'s Debug (`EscapeAscii { .. }`).
@@ -378,7 +382,7 @@ impl UnarchiveProcessor {
                     serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
                 let mut out = Vec::new();
                 for item_res in stream {
-                    let jv = item_res.map_err(|e| e.to_string())?;
+                    let jv = item_res.map_err(crate::err_text)?;
                     if out.len() >= self.max_members {
                         return Err("json_documents member count exceeds safety limit".to_string());
                     }
@@ -403,7 +407,7 @@ impl UnarchiveProcessor {
             }
             "binary" => {
                 let bytes = part.as_bytes();
-                let parts = deserialize_bytes(&bytes).map_err(|e| e.to_string())?;
+                let parts = deserialize_bytes(&bytes).map_err(crate::err_text)?;
                 let mut out = Vec::with_capacity(parts.len());
                 for p in parts {
                     let mut np = part.shallow_copy();
@@ -415,7 +419,7 @@ impl UnarchiveProcessor {
             "tar" => {
                 let bytes = part.as_bytes();
                 let mut archive = tar::Archive::new(Cursor::new(bytes.as_ref()));
-                let entries = archive.entries().map_err(|e| e.to_string())?;
+                let entries = archive.entries().map_err(crate::err_text)?;
                 let mut out = Vec::new();
                 let mut total_unpacked = 0u64;
 
@@ -425,7 +429,7 @@ impl UnarchiveProcessor {
                             "tar archive member count exceeds maximum allowed ({MAX_ARCHIVE_MEMBERS})"
                         ));
                     }
-                    let entry = entry_res.map_err(|e| e.to_string())?;
+                    let entry = entry_res.map_err(crate::err_text)?;
                     let filename = entry
                         .path()
                         .map(|p| p.to_string_lossy().into_owned())
@@ -436,7 +440,7 @@ impl UnarchiveProcessor {
                     entry
                         .take(remaining_budget + 1)
                         .read_to_end(&mut buf)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::err_text)?;
                     total_unpacked += buf.len() as u64;
                     if total_unpacked > MAX_ARCHIVE_UNPACKED_BYTES {
                         return Err(format!(
@@ -453,7 +457,7 @@ impl UnarchiveProcessor {
             "zip" => {
                 let bytes = part.as_bytes();
                 let mut archive =
-                    zip::ZipArchive::new(Cursor::new(bytes.as_ref())).map_err(|e| e.to_string())?;
+                    zip::ZipArchive::new(Cursor::new(bytes.as_ref())).map_err(crate::err_text)?;
                 if archive.len() > MAX_ARCHIVE_MEMBERS {
                     return Err(format!(
                         "zip archive member count ({}) exceeds safety limit ({MAX_ARCHIVE_MEMBERS})",
@@ -464,14 +468,14 @@ impl UnarchiveProcessor {
                 let mut total_unpacked = 0u64;
 
                 for i in 0..archive.len() {
-                    let file = archive.by_index(i).map_err(|e| e.to_string())?;
-                    let filename = file.name().map_err(|e| e.to_string())?.into_owned();
+                    let file = archive.by_index(i).map_err(crate::err_text)?;
+                    let filename = file.name().map_err(crate::err_text)?.into_owned();
                     let remaining_budget =
                         MAX_ARCHIVE_UNPACKED_BYTES.saturating_sub(total_unpacked);
                     let mut buf = Vec::new();
                     file.take(remaining_budget + 1)
                         .read_to_end(&mut buf)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::err_text)?;
                     total_unpacked += buf.len() as u64;
                     if total_unpacked > MAX_ARCHIVE_UNPACKED_BYTES {
                         return Err(format!(
@@ -487,8 +491,10 @@ impl UnarchiveProcessor {
             }
             "csv" => {
                 let bytes = part.as_bytes();
+                // flexible: a short or long row reaches csv_row_fits and gets Bento's text
                 let mut rdr = csv::ReaderBuilder::new()
                     .has_headers(false)
+                    .flexible(true)
                     .delimiter(self.csv_delim)
                     .from_reader(bytes.as_ref());
                 let mut headers: Option<Vec<String>> = None;
@@ -616,6 +622,7 @@ fn csv_row_fits(hdrs: &[String], rec: &csv::StringRecord) -> Result<(), String> 
 fn csv_reader(bytes: Bytes, delim: u8) -> csv::Reader<Cursor<Bytes>> {
     csv::ReaderBuilder::new()
         .has_headers(false)
+        .flexible(true)
         .delimiter(delim)
         .from_reader(Cursor::new(bytes))
 }
@@ -958,19 +965,19 @@ impl Processor for CompressProcessor {
                     let mut enc = GzEncoder::new(Vec::new(), Compression::default());
                     enc.write_all(&bytes)
                         .and_then(|_| enc.finish())
-                        .map_err(|e| e.to_string())
+                        .map_err(crate::err_text)
                 }
                 "zlib" => {
                     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
                     enc.write_all(&bytes)
                         .and_then(|_| enc.finish())
-                        .map_err(|e| e.to_string())
+                        .map_err(crate::err_text)
                 }
                 "flate" => {
                     let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
                     enc.write_all(&bytes)
                         .and_then(|_| enc.finish())
-                        .map_err(|e| e.to_string())
+                        .map_err(crate::err_text)
                 }
                 other => Err(format!("unsupported compression algorithm: {other}")),
             };
@@ -1008,17 +1015,17 @@ impl Processor for DecompressProcessor {
                     .take(MAX_ARCHIVE_UNPACKED_BYTES + 1)
                     .read_to_end(&mut out)
                     .map(|_| ())
-                    .map_err(|e| e.to_string()),
+                    .map_err(crate::err_text),
                 "zlib" => ZlibDecoder::new(bytes.as_ref())
                     .take(MAX_ARCHIVE_UNPACKED_BYTES + 1)
                     .read_to_end(&mut out)
                     .map(|_| ())
-                    .map_err(|e| e.to_string()),
+                    .map_err(crate::err_text),
                 "flate" => DeflateDecoder::new(bytes.as_ref())
                     .take(MAX_ARCHIVE_UNPACKED_BYTES + 1)
                     .read_to_end(&mut out)
                     .map(|_| ())
-                    .map_err(|e| e.to_string()),
+                    .map_err(crate::err_text),
                 other => Err(format!("unsupported decompression algorithm: {other}")),
             };
             match res {

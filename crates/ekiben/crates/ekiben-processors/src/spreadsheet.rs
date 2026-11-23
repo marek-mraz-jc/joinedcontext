@@ -365,4 +365,36 @@ NaN delta 1899-12-30T00:00:00Z
         assert!(rows(b"not a workbook", None, 10).is_err());
         assert!(rows(b"PK\x03\x04broken", None, 10).is_err());
     }
+
+    #[test]
+    fn a_zip_over_the_unpack_cap_or_with_a_damaged_member_is_refused() {
+        use std::io::Write;
+        let zipped = |level: Option<i64>, chunks: u64| {
+            let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            zw.start_file(
+                "xl/sheet.xml",
+                zip::write::SimpleFileOptions::default()
+                    .compression_level(level)
+                    .large_file(true),
+            )
+            .unwrap();
+            let chunk = vec![0u8; 1 << 20];
+            for _ in 0..chunks {
+                zw.write_all(&chunk).unwrap();
+            }
+            zw.finish().unwrap().into_inner()
+        };
+        assert_eq!(check_unpacked(&zipped(None, 1)), Ok(()));
+        let big = zipped(Some(1), (MAX_ARCHIVE_UNPACKED_BYTES >> 20) + 1);
+        assert_eq!(
+            check_unpacked(&big),
+            Err(format!(
+                "spreadsheet unpacks to more than {MAX_ARCHIVE_UNPACKED_BYTES} bytes"
+            ))
+        );
+        let mut damaged = zipped(None, 1);
+        damaged[2..4].copy_from_slice(b"\0\0");
+        let err = check_unpacked(&damaged).unwrap_err();
+        assert!(err.starts_with("failed to read spreadsheet: "), "{err}");
+    }
 }
