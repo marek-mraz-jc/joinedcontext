@@ -2492,10 +2492,10 @@ mod tests {
                 .await;
         }
         let list = loader.usage_list().await;
-        assert!(
-            list.len() <= 4096,
-            "usage registry must stay bounded, got {} entries",
-            list.len()
+        assert_eq!(
+            list.len(),
+            4096,
+            "usage registry must fill to its bound and stay there"
         );
         // eviction must sacrifice old entries, never the one just added
         assert!(
@@ -2635,6 +2635,94 @@ mod tests {
             .await
             .expect("resolve");
         assert_eq!(loader.cache_stats()["merged"].as_u64().expect("count"), 1);
+        // and one of a few KiB, inside the key bound, is cached too
+        let mid: serde_json::Map<String, Value> = (0..100)
+            .map(|i| {
+                (
+                    format!("term{i:06}"),
+                    Value::String(format!("https://ex.example/{i:06}")),
+                )
+            })
+            .collect();
+        let mid = Value::Object(mid);
+        assert!((2048..MAX_MERGED_KEY_BYTES).contains(&mid.to_string().len()));
+        loader.resolve(&mid).await.expect("resolve");
+        assert_eq!(loader.cache_stats()["merged"].as_u64().expect("count"), 2);
+    }
+
+    /// The quiet resolutions (notification building, federation) resolve the
+    /// same @context as a counted one.
+    #[tokio::test]
+    async fn quiet_resolutions_resolve_the_context() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let user = serde_json::json!({"a": "https://ex.example/a"});
+        let quiet = loader.resolve_quiet(&user).await.expect("resolve");
+        assert_eq!(quiet.expand_key("a"), "https://ex.example/a");
+        let tenant = TenantId::new("quiet").expect("tenant");
+        let quiet = loader
+            .resolve_quiet_for(&tenant, &user)
+            .await
+            .expect("resolve");
+        assert_eq!(quiet.expand_key("a"), "https://ex.example/a");
+    }
+
+    /// The fetched-document cache charges each entry at least its share of
+    /// the budget, so a flood of tiny documents holds 256 entries at most.
+    #[test]
+    fn the_fetched_cache_holds_at_most_its_entry_share_of_tiny_documents() {
+        let cache = fetched_cache();
+        for i in 0..300 {
+            cache.insert(
+                format!("https://ctx.example/{i}"),
+                FetchedDoc {
+                    value: Arc::new(serde_json::json!({})),
+                    stale_at: None,
+                    owner: None,
+                },
+            );
+        }
+        cache.run_pending_tasks();
+        assert!(
+            cache.entry_count() <= MAX_FETCHED_ENTRIES,
+            "{}",
+            cache.entry_count()
+        );
+    }
+
+    /// A client built with timeouts keeps the rest of its builder, and the
+    /// wrapper sends with that very client: its default header arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_wrapped_client_with_timeouts_keeps_its_builder() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.expect("read");
+            let _ = sock
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
+        });
+        install_crypto_provider();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-kept", reqwest::header::HeaderValue::from_static("yes"));
+        let builder = with_timeouts(
+            reqwest::Client::builder().default_headers(headers),
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(10),
+        );
+        let client = wrap_client(builder.build().expect("client"));
+        let _ = client.get(format!("http://{addr}/")).send().await;
+        let request = server.await.expect("server");
+        assert!(request.contains("x-kept: yes"), "{request}");
     }
 
     /// The doc comment on `ip_is_metadata` promises the metadata range is
@@ -2750,10 +2838,26 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn set_shares_reach_the_next_loader_and_lookups_are_counted() {
+        // the shares of the broker's 200 MiB default memory budget (T-5895)
+        assert_eq!(
+            (DEFAULT_MERGED_CACHE_BYTES, DEFAULT_FETCHED_CACHE_BYTES),
+            (44 << 20, 8 << 20)
+        );
+        set_cache_bytes(
+            DEFAULT_MERGED_CACHE_BYTES + 1,
+            DEFAULT_FETCHED_CACHE_BYTES + 1,
+        );
+        let set = (
+            MERGED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+            FETCHED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+        );
         set_cache_bytes(DEFAULT_MERGED_CACHE_BYTES, DEFAULT_FETCHED_CACHE_BYTES);
         assert_eq!(
-            MERGED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
-            DEFAULT_MERGED_CACHE_BYTES
+            set,
+            (
+                DEFAULT_MERGED_CACHE_BYTES + 1,
+                DEFAULT_FETCHED_CACHE_BYTES + 1
+            )
         );
         let stats = CacheStats::default();
         stats.merged.count(true);
