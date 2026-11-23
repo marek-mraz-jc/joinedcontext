@@ -198,7 +198,7 @@ describe("AddFieldDialog branches", () => {
 
   it("shows the Portal's refusal of the formula's model Change, and proposes no pipeline", async () => {
     const { onProposed } = mount(
-      (path, method) =>
+      (_path, method) =>
         method === "PUT" ? respond({ title: "Conflict", detail: "the model changed since it was read" }, 409) : respond({ metadata: { name: "pipelines" } }),
       { space: "bikes", endpoints: ENDPOINTS },
     );
@@ -211,7 +211,7 @@ describe("AddFieldDialog branches", () => {
 
   it("falls back to the status line when the refusal names no detail", async () => {
     mount(
-      (path, method) => (method === "PUT" ? respond({}, 403) : respond({ metadata: { name: "pipelines" } })),
+      (_path, method) => (method === "PUT" ? respond({}, 403) : respond({ metadata: { name: "pipelines" } })),
       { space: "bikes", endpoints: ENDPOINTS },
     );
     await screen.findByText(en.spaces.fields.sdmUnavailable);

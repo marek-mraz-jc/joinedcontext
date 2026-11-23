@@ -11,8 +11,9 @@ import i18n from "../src/i18n";
 import type { Manifest } from "../src/api/manifest";
 import { fieldWidget } from "../src/components/grid/fieldWidget";
 import { ManifestYamlDialog } from "../src/components/grid/ManifestYamlDialog";
-// The extension keeps vite.config.ts from mapping this module to Shell itself.
-import { Shell } from "../src/components/layout/LazyShell.tsx";
+// vite.config.ts maps the literal LazyShell path to Shell itself; a computed path reaches the lazy module.
+const lazyShellPath = "../src/components/layout/" + "LazyShell.tsx";
+const { Shell } = (await import(/* @vite-ignore */ lazyShellPath)) as typeof import("../src/components/layout/LazyShell");
 import { PublicFrame } from "../src/components/layout/PublicFrame";
 import { WorkspaceProvider, setActiveWorkspace, useWorkspace, workspaceMiddleware } from "../src/components/layout/WorkspaceContext";
 
@@ -43,7 +44,9 @@ describe("LazyShell", () => {
   it("loads the shell with the first signed-in page", async () => {
     render(
       <Suspense fallback={<p>loading</p>}>
-        <Shell />
+        <Shell project="helsinki">
+          <p>page</p>
+        </Shell>
       </Suspense>,
     );
     expect(await screen.findByText("the signed-in shell")).toBeInTheDocument();

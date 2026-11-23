@@ -164,7 +164,7 @@ describe("DeckGlOverlay", () => {
 
     rerender(<DeckGlOverlay layers={[]} dense={[...first, dense({ name: "two" })]} label="Map" />);
     expect(built.overlays[0].setProps).toHaveBeenCalledTimes(1);
-    const sent = built.overlays[0].setProps.mock.calls[0][0] as { layers: unknown[] };
+    const sent = vi.mocked(built.overlays[0].setProps).mock.calls[0][0] as { layers: unknown[] };
     expect(sent.layers).toHaveLength(2);
 
     if (typeof detach === "function") detach();

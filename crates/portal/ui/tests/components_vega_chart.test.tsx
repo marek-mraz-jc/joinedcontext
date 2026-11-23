@@ -250,7 +250,7 @@ describe("panel view per type", () => {
     ["state-timeline", frames.runState],
     ["timeseries", frames.requestRate],
   ])("draws a %s panel under its title", async (type, data) => {
-    render(<PanelView panel={{ type, title: `A ${type}` }} data={{ frames: data }} {...view} />);
+    render(<PanelView panel={{ id: 1, type, title: `A ${type}` }} data={{ frames: data }} {...view} />);
     expect(screen.getByRole("heading", { name: new RegExp(`A ${type}`) })).toBeInTheDocument();
     if (type !== "stat" && type !== "bargauge") expect(screen.getAllByRole("img").length).toBeGreaterThan(0);
   });

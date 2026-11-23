@@ -127,7 +127,7 @@ describe("a failure's reference", () => {
   it("keeps the copy button as it was when the clipboard refuses", async () => {
     const writeText = vi.fn(() => Promise.reject(new Error("denied")));
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText }, onLine: true });
-    show(<PageFailed error={new ApiError(500, "Server", { title: "Server", status: 500 }, "9d8c7b6a")} />);
+    show(<PageFailed error={new ApiError(500, "Server", { type: "about:blank", title: "Server", status: 500 }, "9d8c7b6a")} />);
     const copy = screen.getByRole("button", { name: "Copy the reference 9d8c7b6a" });
     await userEvent.click(copy);
     expect(writeText).toHaveBeenCalledWith("9d8c7b6a");

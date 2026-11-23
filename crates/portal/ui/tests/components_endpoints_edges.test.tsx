@@ -4,6 +4,7 @@
  * export the server refused, an unknown sharing audience, and the copy button and the
  * representation summary on pointer and clipboard failures.
  */
+import type { Binding } from "../src/components/endpoints/policyBinding";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -66,7 +67,7 @@ describe("AccessMatrix", () => {
 });
 
 describe("PolicyGrants", () => {
-  const binding = { kind: "bound", policies: [] } as const;
+  const binding: Binding = { kind: "bound", policies: [] };
 
   it("says it is loading while the policies are read", async () => {
     route = () => jsonResponse({ items: [] });
@@ -77,7 +78,7 @@ describe("PolicyGrants", () => {
   it("says the list failed, never that nothing is granted, and retries on request", async () => {
     route = () => jsonResponse({ items: [] });
     const retry = vi.fn();
-    mount(<PolicyGrants project="helsinki" binding={binding} pending={false} failure={{ error: new ApiError(500, "Server", { title: "Server", status: 500, detail: "policies unreadable" }), retry }} />);
+    mount(<PolicyGrants project="helsinki" binding={binding} pending={false} failure={{ error: new ApiError(500, "Server", { type: "about:blank", title: "Server", status: 500, detail: "policies unreadable" }), retry }} />);
     expect(await screen.findByText(/policies unreadable/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
     expect(retry).toHaveBeenCalledTimes(1);

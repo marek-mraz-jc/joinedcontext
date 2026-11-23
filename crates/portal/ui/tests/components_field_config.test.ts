@@ -1,6 +1,7 @@
 // The Grafana field settings the dashboard panels read: overrides of every property kind, the
 // matchers, the date units relative to today, the value mappings and the custom and duration units.
 import { describe, expect, it } from "vitest";
+import type { ValueMapping } from "../src/components/panels/fieldConfig";
 import { displayValue, formatDate, formatUnit, mapValue, settingsFor } from "../src/components/panels/fieldConfig";
 import type { FrameField } from "../src/components/panels/frames";
 
@@ -70,12 +71,12 @@ describe("formatDate", () => {
 
 describe("mapValue", () => {
   it("maps a range, a regex with its groups and every special match", () => {
-    const range = [{ type: "range", options: { from: 10, to: 20, result: { text: "mid" } } }];
+    const range: ValueMapping[] = [{ type: "range", options: { from: 10, to: 20, result: { text: "mid" } } }];
     expect(mapValue(range, 15)).toEqual({ text: "mid" });
     expect(mapValue(range, "12")).toEqual({ text: "mid" });
     expect(mapValue(range, 25)).toBeUndefined();
     expect(mapValue([{ type: "range", options: { result: { text: "any" } } }], 1e9)).toEqual({ text: "any" });
-    const regex = [{ type: "regex", options: { pattern: "^pod-(\\w+)$", result: { text: "pod $1$2", color: "blue" } } }];
+    const regex: ValueMapping[] = [{ type: "regex", options: { pattern: "^pod-(\\w+)$", result: { text: "pod $1$2", color: "blue" } } }];
     expect(mapValue(regex, "pod-broker")).toEqual({ text: "pod broker", color: "blue" });
     expect(mapValue(regex, null)).toBeUndefined();
     expect(mapValue([{ type: "regex", options: { pattern: "^x" } }], "xy")).toEqual({ text: undefined });

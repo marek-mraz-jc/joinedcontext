@@ -20,7 +20,7 @@ describe("the space usage panel", () => {
     ["resize", () => fireEvent(window, new Event("resize"))],
     ["scroll", () => fireEvent(window, new Event("scroll"))],
   ])("closes on a window %s", async (_name, move) => {
-    renderPage(<SpaceUsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, {});
+    renderPage(<SpaceUsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, { answer: () => undefined });
     await userEvent.click(await screen.findByTitle("When the size of air was measured"));
     expect(screen.getByTestId("space-measured")).toBeInTheDocument();
     move();
@@ -30,7 +30,7 @@ describe("the space usage panel", () => {
 
 describe("the space usage panel, by keyboard", () => {
   it("closes on Escape and gives the focus back to the (i)", async () => {
-    renderPage(<SpaceUsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, {});
+    renderPage(<SpaceUsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, { answer: () => undefined });
     const open = await screen.findByTitle("When the size of air was measured");
     await userEvent.click(open);
     await userEvent.keyboard("{Escape}");
@@ -39,10 +39,10 @@ describe("the space usage panel, by keyboard", () => {
   });
 
   it("is shown only once the usage has come", async () => {
-    const first = renderPage(<UsageInfo project="helsinki" space="air" usage={undefined} locale="en" />, {});
+    const first = renderPage(<UsageInfo project="helsinki" space="air" usage={undefined} locale="en" />, { answer: () => undefined });
     expect(screen.queryByTitle("When the size of air was measured")).not.toBeInTheDocument();
     first.unmount();
-    renderPage(<UsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, {});
+    renderPage(<UsageInfo project="helsinki" space="air" usage={KEPT} locale="en" />, { answer: () => undefined });
     expect(await screen.findByTitle("When the size of air was measured")).toBeInTheDocument();
   });
 });
