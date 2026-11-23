@@ -18,7 +18,7 @@ pub use archive::{ArchiveFormat, create_archive};
 pub use bundle::{create_full_backup_bundle, create_single_ref_bundle, restore_from_bundle};
 pub use compact::{
     AUTO_COMPACT_PACK_THRESHOLD, CompactOutcome, DEFAULT_PRUNE_GRACE, FsckOutcome,
-    compact_repository, fsck_repository, has_active_quarantine,
+    compact_repository, compaction_due, fsck_repository, has_active_quarantine,
 };
 pub use merge::{
     DiffFileEntry, MergeOptions, MergeStyle, MergeabilityOutcome, check_mergeability,

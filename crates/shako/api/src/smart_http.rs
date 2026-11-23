@@ -301,7 +301,7 @@ async fn receive_push(
         .await?;
 
     if !outcome.updated_refs.is_empty() {
-        crate::service::record_repo_size(state, &mut repo, &disk_path).await;
+        crate::service::settle_after_write(state, &mut repo, &disk_path).await;
 
         let mut unrecorded = None;
         for cmd in &outcome.updated_refs {

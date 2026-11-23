@@ -200,6 +200,14 @@ impl<K: OrgKeyed, V> BoundedCache<K, V> {
         drop(inner);
     }
 
+    /// Drops `key`'s entry, if any.
+    pub fn remove(&self, key: &K) {
+        let mut inner = self.lock();
+        let gone = inner.remove(key);
+        drop(inner);
+        drop(gone);
+    }
+
     /// Drops what has expired. The owner runs it on a timer, so an idle process gives it back.
     pub fn sweep(&self) {
         let mut gone = Vec::new();
@@ -277,6 +285,19 @@ mod tests {
         assert!(cache.bytes() <= 10_000);
         cache.insert(Key(org, 0), 9, 9_000, TTL);
         assert_eq!(cache.get(&Key(org, 0)), None, "over the entry cap");
+    }
+
+    #[test]
+    fn a_removed_entry_gives_its_bytes_and_organization_back() {
+        let cache = BoundedCache::new(10_000);
+        let (org, other) = (OrgId::mint(), OrgId::mint());
+        cache.insert(Key(org, 1), 1, 100, TTL);
+        cache.insert(Key(other, 1), 2, 100, TTL);
+        cache.remove(&Key(org, 1));
+        cache.remove(&Key(org, 7));
+        assert_eq!(cache.get(&Key(org, 1)), None);
+        assert!(!cache.holds(org));
+        assert_eq!((cache.len(), cache.get(&Key(other, 1))), (1, Some(2)));
     }
 
     #[test]

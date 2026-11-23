@@ -161,6 +161,12 @@ impl WasmPluginHost {
         digest
     }
 
+    /// How many Organizations hold a concurrency limit, one per Organization with a loaded adapter.
+    #[must_use]
+    pub fn organizations_held(&self) -> usize {
+        self.org_semaphores.lock().len()
+    }
+
     /// Loads a [`WasmPluginAdapter`] for a datasource whose manifest pins `pinned_digest` (R5).
     /// An unknown or mismatched digest is refused immediately!
     pub fn instantiate(
@@ -217,12 +223,15 @@ impl WasmPluginHost {
             .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_plugin_concurrency)))
             .clone();
 
-        let org_sem = self
-            .org_semaphores
-            .lock()
-            .entry(org_id)
-            .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_org_concurrency)))
-            .clone();
+        let org_sem = {
+            let mut held = self.org_semaphores.lock();
+            // An Organization no adapter holds has no permit out: its entry goes (PRF-01), so the
+            // map follows the loaded adapters, not every Organization ever seen.
+            held.retain(|_, sem| Arc::strong_count(sem) > 1);
+            held.entry(org_id)
+                .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_org_concurrency)))
+                .clone()
+        };
 
         Ok(WasmPluginAdapter {
             kind: plugin_kind,
