@@ -31,8 +31,7 @@ fuzz_target!(|data: &[u8]| {
     }
     // A `url(` right after a name character is a dimension's unit and a parenthesis, which no
     // browser fetches; every function `url(` names a portal file.
-    let lower = outside_strings(&lower);
-    for (at, _) in lower.match_indices("url(") {
+    for (at, _) in outside_strings(&lower).match_indices("url(") {
         let after_name = lower[..at]
             .chars()
             .next_back()
@@ -64,7 +63,8 @@ fn outside_strings(css: &str) -> String {
                     out.push(c);
                     continue;
                 }
-                out.push(' ');
+                // Byte for byte, so an index into the result is one into `css`.
+                out.extend(std::iter::repeat_n(' ', c.len_utf8()));
             }
             None => {
                 if c == '"' || c == '\'' {
