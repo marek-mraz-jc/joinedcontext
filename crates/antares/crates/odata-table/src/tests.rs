@@ -181,6 +181,14 @@ async fn a_source_by_default_has_no_etag_and_refuses_writes() {
     let source = ReadOnly(info());
     assert_eq!(source.etag(), None);
     assert!(!source.writable());
+    let fetched = source
+        .fetch(
+            &planned(&QueryOptions::default()).expect("a plan"),
+            &Scope::all(),
+        )
+        .await
+        .expect("a read");
+    assert_eq!(fetched.rows, [json!({"id": "t1", "org": "a"})]);
     let batch = crate::Batch {
         change: Change::Delete,
         keys: vec![json!("t1")],
@@ -694,6 +702,17 @@ async fn an_update_names_known_properties_with_values_of_their_type() {
     .await
     .expect("every value fits its type");
     assert_eq!(written.keys, [json!("t1"), json!("t2")]);
+}
+
+#[tokio::test]
+async fn an_update_of_a_set_whose_type_left_the_model_is_refused() {
+    let mut lost = info();
+    lost.entity_type = "Demo.Gone".into();
+    let t = MemoryTable::new(lost, things()).expect("the rows are keyed");
+    assert_eq!(
+        refusal(update(&t, &Scope::all(), json!({"size": 0})).await),
+        TableError::Source("Things has no entity type".into())
+    );
 }
 
 #[tokio::test]

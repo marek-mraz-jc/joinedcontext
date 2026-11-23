@@ -242,10 +242,11 @@ impl GitTable {
                     limits.max_files
                 )));
             }
+            // a size git cannot state reads as too large: the file is refused, never read unbounded
             let size: usize = String::from_utf8_lossy(&git(&repo, &["cat-file", "-s", object])?)
                 .trim()
                 .parse()
-                .map_err(|_| TableError::Source("git cat-file wrote no size".into()))?;
+                .unwrap_or(usize::MAX);
             total = total.saturating_add(size);
             if size > limits.max_file_bytes || total > limits.max_total_bytes {
                 return Err(TableError::BadRequest(format!(
@@ -424,15 +425,13 @@ impl GitTable {
 
 /// `row` as the bytes of its file: JSON for `.json`, YAML otherwise (comments are not kept).
 fn written(path: &str, row: &Value) -> Result<Vec<u8>, TableError> {
-    let failed = |e: String| TableError::Source(format!("{path} could not be written: {e}"));
     if path.to_ascii_lowercase().ends_with(".json") {
-        let mut bytes = serde_json::to_vec_pretty(row).map_err(|e| failed(e.to_string()))?;
-        bytes.push(b'\n');
-        Ok(bytes)
+        // a Value's alternate Display is serde_json's pretty printer, which cannot fail
+        Ok(format!("{row:#}\n").into_bytes())
     } else {
         serde_norway::to_string(row)
             .map(String::into_bytes)
-            .map_err(|e| failed(e.to_string()))
+            .map_err(|e| TableError::Source(format!("{path} could not be written: {e}")))
     }
 }
 

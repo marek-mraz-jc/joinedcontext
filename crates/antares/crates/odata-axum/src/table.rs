@@ -204,8 +204,10 @@ async fn read(
             decided(table.as_ref(), scope, Operation::Read, Some(&key))
                 .await
                 .map_err(fail)?;
-            let by_key = key_options(table.info(), &key, options.select.clone())
-                .map_err(|e| fail(refused(e)))?;
+            let by_key = match key_options(table.info(), &key, options.select.clone()) {
+                Ok(by_key) => by_key,
+                Err(e) => return Err(fail(refused(e))),
+            };
             let answer = run(table.as_ref(), &by_key, scope, served.max_page)
                 .await
                 .map_err(fail)?;
@@ -502,9 +504,11 @@ fn dry_run_taken(uri: &mut axum::http::Uri) -> Result<bool, ODataErrorResponse> 
     } else {
         format!("{}?{}", uri.path(), kept.join("&"))
     };
-    *uri = path_and_query
-        .parse()
-        .map_err(|_| bad("the address is not valid"))?;
+    // the path and a subset of the query's own pairs: always an address, refused if not
+    let Ok(parsed) = path_and_query.parse() else {
+        return Err(bad("the address is not valid"));
+    };
+    *uri = parsed;
     Ok(dry_run)
 }
 
@@ -523,9 +527,10 @@ fn target(
                     "a write to one entity takes no query option but dryRun",
                 ));
             }
-            let filter = key_options(table.info(), &key, None)
-                .map_err(refused)?
-                .filter;
+            let filter = match key_options(table.info(), &key, None) {
+                Ok(by_key) => by_key.filter,
+                Err(e) => return Err(refused(e)),
+            };
             Ok((
                 QueryOptions {
                     filter,
@@ -648,13 +653,13 @@ fn write(
             &mut out,
         ),
     };
-    written.map_err(|_| {
-        ODataErrorResponse::new(
+    if written.is_err() {
+        return Err(ODataErrorResponse::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "InternalServerError",
             "the answer could not be written",
         )
-        .with_version(version)
-    })?;
+        .with_version(version));
+    }
     Ok(json_response(version, level, out))
 }
