@@ -1432,8 +1432,6 @@ async fn a_secret_ref_never_reaches_another_repositorys_secret() {
     }
 }
 
-/// A commit status names a known state and a full commit id; an unknown state never reads as
-/// green.
 /// Each API commit adds a pack; the write that reaches the threshold compacts them (S6-42), and
 /// every commit stays readable.
 #[tokio::test]
@@ -1501,6 +1499,8 @@ async fn api_commits_are_compacted_once_the_packs_reach_the_threshold() {
     }
 }
 
+/// A commit status names a known state and a full commit id; an unknown state never reads as
+/// green.
 #[tokio::test]
 async fn commit_statuses_take_known_states_only() {
     let world = setup_world().await;

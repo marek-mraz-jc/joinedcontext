@@ -65,13 +65,17 @@ pub(crate) async fn projected(
 const TRIM_BATCH: i64 = 1000;
 
 /// Deletes the oldest `TRIM_BATCH` log entries of the tenant that the `trim_projected` policy
-/// lets go; answers how many it picked and how many went.
+/// lets go; the query repeats the policy's conditions, so a role past RLS trims no more. Answers
+/// how many it picked and how many went.
 pub(crate) async fn trim(tx: &mut Tx, tenant: (InstanceId, OrgId)) -> ShakoResult<(u64, u64)> {
     let (picked, gone): (i64, i64) = sqlx::query_as(
         "WITH batch AS (
-             SELECT seq FROM shako.store_log
-             WHERE instance_id = $1 AND org_id = $2 AND op ->> 'op' <> 'create_repo'
-             ORDER BY seq LIMIT $3),
+             SELECT l.seq FROM shako.store_log l
+             JOIN shako.projection p USING (instance_id, org_id)
+             WHERE l.instance_id = $1 AND l.org_id = $2 AND l.op ->> 'op' <> 'create_repo'
+               AND l.seq <= p.seq AND l.created_at < now() - interval '30 days'
+               AND p.since < now() - interval '30 days'
+             ORDER BY l.seq LIMIT $3),
          gone AS (
              DELETE FROM shako.store_log l USING batch WHERE l.seq = batch.seq RETURNING 1)
          SELECT (SELECT count(*) FROM batch), (SELECT count(*) FROM gone)",

@@ -440,6 +440,7 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
   before serving (T-7508; no mirror, replace rather than roll that update); its repositories live under `<state_dir>/shako`, no longer a temp dir.
   The log keeps what a rollback can need: an entry the tables hold goes once the tenant has been projected for
   30 days and the entry is 30 days old (T-7564, trimmed beside each start; create_repo entries stay).
+  After those 30 days only a release that reads `shako.projection` (T-7508 or later) is a safe rollback target.
 - ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
   stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
   save refuses the create; a refused delete keeps the stream.

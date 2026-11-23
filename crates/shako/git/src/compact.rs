@@ -16,6 +16,7 @@ use crate::bundle::{collect_all_objects_from_tips, collect_all_tree_objects};
 use crate::pack::{Admit, write_pack};
 use crate::repo::open_isolated;
 use crate::upload_pack::collect_advertised_refs;
+use std::fmt::Display;
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -219,6 +220,25 @@ fn write_seen(pack: &Path, seen: &BTreeMap<ObjectId, SystemTime>) -> ShakoResult
     })
 }
 
+/// Every object a ref names directly, in any namespace, plus a detached `HEAD`: the roots of the
+/// keep set. Unlike the advertisement, which skips a ref it cannot load, any ref that fails to
+/// load aborts, since a skipped ref would let compaction drop its history.
+fn ref_targets_strict(repo: &gix::Repository) -> ShakoResult<Vec<ObjectId>> {
+    let unreadable = |e: &dyn Display| ShakoError::Git(format!("compact refs: {e}"));
+    let mut targets = Vec::new();
+    if let Some(id) = repo.head().map_err(|e| unreadable(&e))?.id() {
+        targets.push(id.detach());
+    }
+    let platform = repo.references().map_err(|e| unreadable(&e))?;
+    for r in platform.all().map_err(|e| unreadable(&e))? {
+        let r = r.map_err(|e| unreadable(&e))?;
+        if let Some(id) = r.target().try_id() {
+            targets.push(id.to_owned());
+        }
+    }
+    Ok(targets)
+}
+
 /// Compacts all packfiles in `repo_path` into a single packfile, keeping unreachable objects
 /// from packs modified within `prune_grace` (default 14 days, Contract S6, Threat T15).
 /// Caller MUST hold the repository's write lock (`RepoLocks::lock`).
@@ -250,14 +270,14 @@ pub fn compact_repository(
     }
 
     let repo = open_isolated(repo_path)?;
-    let (_, refs) = collect_advertised_refs(&repo, true)?;
+    let refs = ref_targets_strict(&repo)?;
     let mut tips = Vec::new();
     let mut objects_to_keep: BTreeSet<ObjectId> = BTreeSet::new();
 
     // Every ref peeled to its end: each tag of a chain, and a tree or blob a tag names.
-    let unreadable = |e: &dyn std::fmt::Display| ShakoError::Git(format!("compact walk: {e}"));
-    for r in &refs {
-        let mut at = r.oid;
+    let unreadable = |e: &dyn Display| ShakoError::Git(format!("compact walk: {e}"));
+    for &target in &refs {
+        let mut at = target;
         loop {
             let object = repo.find_object(at).map_err(|e| unreadable(&e))?;
             match object.kind {
@@ -514,6 +534,32 @@ mod tests {
         for id in ids {
             assert!(held(&repo, id), "{id} lost");
         }
+    }
+
+    #[test]
+    fn a_ref_that_does_not_load_stops_compaction_before_it_deletes_anything() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(10),
+            "main",
+            true,
+            "broken-ref",
+        )
+        .expect("init");
+        // The broken ref stands for history only it names: a zero grace would prune the blob.
+        let blob = object(gix_object::Kind::Blob, b"named by the broken ref\n".to_vec());
+        let id = blob.0;
+        write_objects_as_pack(&repo, &[blob]).expect("pack");
+        std::fs::write(repo.join("refs/heads/broken"), "not an object id\n").expect("bad ref");
+        let packs = list_pack_files(&repo.join("objects/pack"));
+
+        let err = compact_repository(&repo, Duration::ZERO, &mut |_| Ok(()))
+            .expect_err("an unreadable ref must stop compaction");
+        assert!(err.to_string().contains("compact refs"), "{err}");
+        assert_eq!(list_pack_files(&repo.join("objects/pack")), packs);
+        assert!(held(&repo, id));
     }
 
     #[test]
