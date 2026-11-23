@@ -73,6 +73,24 @@ async fn ws_resume_replays_after_the_last_seq() -> Result<(), String> {
     Ok(())
 }
 
+/// A resume from another socket while the first is still open takes the
+/// connection over: the first socket is ended, not left open beside it.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_resume_elsewhere_ends_the_open_socket() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let mut old = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(status(&old.subscribe(cars()).await?), 201);
+    let mut c = connect(b.addr, ROOT, &[]).await?;
+    let r = c.resume(&old.connection, &old.token, 0).await?;
+    assert_eq!(status(&r), 200, "{r}");
+    let ended = old.closed().await;
+    assert!(
+        !matches!(&ended, Err(e) if e.contains("not closed")),
+        "{ended:?}"
+    );
+    Ok(())
+}
+
 /// The ring keeps the last `queue` notifications: resuming after 0 when 6
 /// were sent with a ring of 4 starts with `x-gap` 1..2, then 3..6.
 #[tokio::test(flavor = "multi_thread")]

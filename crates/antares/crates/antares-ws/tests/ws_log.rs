@@ -90,6 +90,33 @@ async fn ws_open_and_close_are_logged_without_the_subject() -> Result<(), String
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    // a peer that drops its TCP connection without a close frame is gone, no protocol error
+    let mut req = format!("ws://{addr}/x/ws/ngsi-ld/v1")
+        .into_client_request()
+        .map_err(|e| e.to_string())?;
+    req.headers_mut()
+        .insert("NGSILD-Tenant", HeaderValue::from_static("city"));
+    let (mut dropped, _) = tokio_tungstenite::connect_async(req)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _welcome = dropped.next().await;
+    drop(dropped);
+    for _ in 0..500 {
+        if lines.text().matches("websocket closed").count() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let closes: Vec<String> = lines
+        .text()
+        .lines()
+        .filter(|l| l.contains("websocket closed"))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        closes.get(1).is_some_and(|l| l.contains("reason=\"gone\"") || l.contains("reason=gone")),
+        "{closes:?}"
+    );
     let text = lines.text();
     for what in ["websocket opened", "websocket closed"] {
         let line = text
