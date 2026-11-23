@@ -1001,7 +1001,7 @@ mod tests {
                 Json::Null
             ])
         );
-        let mut wrong = shp(1, &[point.clone()]);
+        let mut wrong = shp(1, std::slice::from_ref(&point));
         wrong[3] = 0;
         assert_eq!(
             shapes(&wrong, 10),
