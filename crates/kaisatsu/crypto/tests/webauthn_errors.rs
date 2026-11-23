@@ -131,6 +131,11 @@ fn cbor_refuses_every_malformed_head_and_length() {
         bad(&nested(&[0xa1, 0x00], 9)).contains("depth"),
         "map values nest too"
     );
+    // Keys nest too: a map whose key is a map, nine levels down, then the eight values.
+    let mut deep_key = vec![0xa1; 9];
+    deep_key.extend_from_slice(&[0x00; 10]);
+    assert!(bad(&deep_key).contains("depth"), "map keys nest too");
+    assert!(decode_cbor(&deep_key[1..deep_key.len() - 1]).is_ok());
     assert!(bad(&[0x5f]).contains("indefinite"));
     // A map whose value is missing, and a truncated nested key.
     decode_cbor(&[0xa1, 0x01]).expect_err("value missing");
@@ -359,6 +364,10 @@ fn authenticator_data_refuses_every_layout_violation() {
     assert!(err(auth_data(AT, 0, &tail)).contains("trailing"));
     let ok = ParsedAuthData::parse(&auth_data(AT, 0, &attested(b"id", &ec2_key()))).unwrap();
     assert_eq!(ok.attested.unwrap().credential_id, b"id");
+    // The longest credential id the spec allows is accepted.
+    let longest = [7u8; 1023];
+    let ok = ParsedAuthData::parse(&auth_data(AT, 0, &attested(&longest, &ec2_key()))).unwrap();
+    assert_eq!(ok.attested.unwrap().credential_id.len(), 1023);
 }
 
 fn client_data(value: serde_json::Value) -> String {
