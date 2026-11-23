@@ -4,6 +4,24 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # dataroom-store-memory odata_table: only Catalogues rows lack catalogue_id (every other entity set declares it
+  # required in odata_defs), so `set_name == "Catalogues" || no catalogue_id` and its `&&` admit the same rows (T-7624).
+  'dataroom/store-memory/src/lib\.rs:\d+:\d+: replace \|\| with && in <impl Store for MemoryStore>::odata_table',
+  # shako-store-pg trim_log: under the tenant's lock a batch deletes every entry it picked (gone == picked), so `>` only
+  # runs one more, empty batch and answers the same count (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace < with > in PgStore::trim_log',
+  # shako-store-pg mark_ready: a cache of the tenants this process caught up; without it each request catches up again
+  # from the log and answers the same rows (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace PgStore::mark_ready with \(\)',
+  # shako-store-pg PACKAGE_VERSION read: PackageVersionRecord has no manifest field and ignores unknown keys, so the whole
+  # row reads as the same record; the narrow read only spares loading the column's bytes (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: delete field read from struct Table expression',
+  # shako-store-pg put: every row comes from to_row of a shako record, whose keys are non-empty snake_case field names,
+  # so a check accepting non-empty or valid names refuses nothing more (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: replace && with \|\| in put',
+  # shako-store-memory claim_outbox: a retry due at exactly the Instant the claim reads; two reads of the monotonic
+  # clock in one test never tie, so `>` and `>=` cannot be told apart (T-7664).
+  'shako/store-memory/src/lib\.rs:\d+:\d+: replace > with >= in <impl Store for MemoryStore>::claim_outbox',
   # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
   # the same; the clamp only bounds the loop (T-7622).
   'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',
@@ -24,6 +42,24 @@ exclude_re = [
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
+  # T-7748 executor: the parser builds every Executor with an empty annotation.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace Executor::annotation -> &str with ""',
+  # T-7748 executor: stacker::maybe_grow's red zone and segment sizes only decide when a new stack
+  # segment is allocated, never a value.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace \* with (\+|/) in (EvalContext<.*>::(exec_named_map|eval_expr)|exec_statement)',
+  # T-7748 executor slice_items: a zero step is refused before the walk, so > 0 and >= 0 pick alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace > with >= in slice_items',
+  # T-7668 gorand seedrand: 48271 * x mod (2^31 - 1) is never 0 for a seed in range, so x < 0 and
+  # x <= 0 add int32max to the same values.
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace < with <= in seedrand',
+  # T-7668 gorand int63n: for a power of two n the slow path (max = 2^63 - 1, no redraw, v % n) gives
+  # int63() & (n - 1), so a power-of-two test that never fires (|, ^, n / 1) answers the same; a draw
+  # exactly equal to max (one in 2^63) is the only one > and >= tell apart.
+  'ekiben-bloblang/src/gorand\.rs:\d+:14: replace & with (\||\^) in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:19: replace - with / in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace > with >= in GoRand::int63n',
   # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
   # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
@@ -32,9 +68,17 @@ exclude_re = [
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-http carried_v4 (T-7623): `high << 16` has its low 16 bits zero and `low` fits in them, so `|` and `^` add the same bits.
+  'jc-http/src/lib\.rs:\d+:\d+: replace \| with \^ in carried_v4',
+  # jc-time from_system_time (T-7623): the comparison picks the clamp only when jiff refuses the instant; at exactly
+  # UNIX_EPOCH jiff never refuses, so `<` and `<=` cannot be told apart.
+  'jc-time/src/lib\.rs:\d+:\d+: replace < with <= in from_system_time',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
+  # dataroom-shacl derive_form_layout: `<=` differs from `<` only when the two orders are equal, and
+  # then both keep the same order (T-7625).
+  'dataroom/shacl/src/registry\.rs:\d+:\d+: replace < with <= in derive_form_layout',
   # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
   'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
   # Every Store sets org_id and catalogue_id from the request ctx on upsert (store-memory, store-pg), so the copy's own fields
@@ -58,6 +102,9 @@ exclude_re = [
   # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
   # carries; without it the count is the same, the page is built and dropped (T-7627).
   'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
+  # dataroom-api handle_odata `/{set}/$export?`: odata_url parses `Datasets?` as `Datasets`, so
+  # an empty query string adds nothing either way (routes.rs pins the answer, T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: replace match guard !q\.is_empty\(\) with true in handle_odata',
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
@@ -83,6 +130,9 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
+  # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
+  'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
   # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
@@ -170,4 +220,9 @@ exclude_re = [
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
   # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
   'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
+  # T-7740 odata-json visit_unit: serde_json's Value::default() is Value::Null, the value it answers.
+  'crates/odata-json/src/json\.rs:\d+:\d+: replace <impl Visitor<.de> for Node<._, ._>>::visit_unit -> Result<Value, E> with Ok\(Default::default\(\)\)',
+  # T-7740 odata-url strength: only `not` and `-` bind at 7; a parent offers its operands at most 7 (an arithmetic right
+  # operand) and `not` offers its own strength, so 7 and 8 parenthesise every expression the same.
+  'crates/odata-url/src/display\.rs:\d+:\d+: delete match arm Expr::Not\(_\) \| Expr::Neg\(_\) in strength',
 ]

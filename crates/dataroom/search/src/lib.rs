@@ -139,10 +139,8 @@ pub fn word_stem_candidates(word: &str) -> Vec<String> {
                 let end_chars = ending.chars().count();
                 if char_count - end_chars >= 4 {
                     let stem: String = word.chars().take(char_count - end_chars).collect();
-                    let f = fold_unaccent(&stem);
-                    if !f.is_empty() && !out.contains(&f) {
-                        out.push(f);
-                    }
+                    // At least four letters, shorter than the word: never empty, never a repeat.
+                    out.push(fold_unaccent(&stem));
                     break;
                 }
             }
@@ -151,11 +149,9 @@ pub fn word_stem_candidates(word: &str) -> Vec<String> {
             if lower.ends_with(ending) && char_count > 5 {
                 let end_chars = ending.chars().count();
                 let base: String = word.chars().take(char_count - end_chars).collect();
-                let alt = format!("{base}{rest}");
-                let f = fold_unaccent(&alt);
-                if !f.is_empty() && !out.contains(&f) {
-                    out.push(f);
-                }
+                // A fleeting ending is no Slavic ending (k, c, n against vowels, h, m, j, v), so
+                // the stem above was not taken: this one is new.
+                out.push(fold_unaccent(&format!("{base}{rest}")));
                 break;
             }
         }
@@ -172,9 +168,7 @@ pub fn parse_search_terms(q: &str) -> Result<Vec<String>> {
             "Solr local parameters and magic fields are not allowed",
         ));
     }
-    if trimmed.is_empty() || trimmed == "*:*" || trimmed == "*" {
-        return Ok(Vec::new());
-    }
+    // "", "*" and "*:*" (match everything) hold no word, so they come out as no term.
     let folded = fold_unaccent(trimmed);
     let terms = folded
         .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
@@ -345,7 +339,6 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
             .collect()
     };
 
-    let name_words = words_of(&folded_name);
     let title_words = words_of(&folded_title);
     let desc_words = words_of(&folded_desc);
     let kw_words = words_of(&folded_kw);
@@ -358,8 +351,8 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
                 .iter()
                 .any(|w| candidates.iter().any(|cand| w.starts_with(cand)))
         };
-        let in_name =
-            matches_any(&name_words) || candidates.iter().any(|cand| folded_name.contains(cand));
+        // A word of the name starting with a candidate contains it: one substring test covers both.
+        let in_name = candidates.iter().any(|cand| folded_name.contains(cand));
         let in_title = matches_any(&title_words);
         let in_kw = matches_any(&kw_words);
         let in_desc = matches_any(&desc_words);
@@ -1283,6 +1276,166 @@ mod tests {
         assert!(word_stem_candidates("").is_empty());
     }
 
+    /// The bounds of each rule: a stem keeps four letters, a fleeting vowel drops only past five,
+    /// a quote or a field name alone keeps the query as typed, `_` joins a hyphenated word, a
+    /// local parameter alone is refused, and a name matches inside a word.
+    #[test]
+    fn stemming_and_query_rules_hold_at_their_bounds() {
+        assert_eq!(
+            jc_stem("kava"),
+            "(kava OR kava*)",
+            "a three-letter stem is no stem"
+        );
+        assert_eq!(word_stem_candidates("kava"), ["kava"]);
+        assert_eq!(
+            jc_stem("zámok"),
+            "(zámok OR zámok*)",
+            "five letters keep their vowel"
+        );
+        assert_eq!(word_stem_candidates("zámok"), ["zamok"]);
+        assert_eq!(
+            word_stem_candidates("a1ovzdušie"),
+            ["a1ovzdusie"],
+            "a digit stops stemming"
+        );
+        assert_eq!(jc_search_words("\"exact\" ovzdušie"), "\"exact\" ovzdušie");
+        assert_eq!(jc_search_words("tags:x ovzdušie"), "tags:x ovzdušie");
+        assert_eq!(jc_search_words("bike_a-sharing"), "\"bike_a-sharing\"");
+        assert!(parse_search_terms("{!lucene}x").is_err());
+
+        let ds = make_dataset("airquality", "p", "Státie", &[], &[], Visibility::Public);
+        let terms = parse_search_terms("quality").expect("terms");
+        assert!(
+            matches_full_text(&ds, &terms).0,
+            "a name matches inside a word"
+        );
+    }
+
+    /// With a query, "name desc" and "metadata_modified desc" are their own orders, not the rank's;
+    /// a dataset of another catalogue of the same organization is never searched.
+    #[test]
+    fn named_sorts_override_the_rank_and_other_catalogues_stay_out() {
+        let (org_id, catalogue_id) = test_ids();
+        let ctx = RequestCtx::anonymous(org_id, catalogue_id);
+        let authz = PolicyAuthorizer::default();
+        let mut ranked = make_dataset("aa-ovzdusie", "p", "Ovzdušie", &[], &[], Visibility::Public);
+        ranked.modified = TimestampTz::from_second(TimestampTz::now().as_second() - 3 * 86_400)
+            .expect("in range");
+        let newer = make_dataset("zz", "p", "Ovzdušie", &[], &[], Visibility::Public);
+        let mut elsewhere =
+            make_dataset("elsewhere", "p", "Ovzdušie", &[], &[], Visibility::Public);
+        elsewhere.catalogue_id = CatalogueId::from_uuid(Uuid::from_u128(77));
+        let all = [ranked, newer, elsewhere];
+        let sorted = |sort: Option<&str>| {
+            let filter = DatasetFilter {
+                q: "ovzdusie".into(),
+                sort: sort.map(str::to_owned),
+                limit: 20,
+                ..DatasetFilter::default()
+            };
+            search_datasets(&ctx, &authz, &all, &[], &filter, "sk")
+                .expect("search")
+                .datasets
+                .into_iter()
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sorted(None),
+            ["aa-ovzdusie", "zz"],
+            "the name match ranks first"
+        );
+        assert_eq!(sorted(Some("name desc")), ["zz", "aa-ovzdusie"]);
+        assert_eq!(
+            sorted(Some("metadata_modified desc")),
+            ["zz", "aa-ovzdusie"]
+        );
+        assert_eq!(sorted(Some("modified desc")), ["zz", "aa-ovzdusie"]);
+    }
+
+    /// The search keeps another catalogue's dataset out, and a withdrawn publisher's one and a
+    /// non-public one from an anonymous caller behind include_private, by itself, whatever the
+    /// Authorizer (the Portal's live one) allows.
+    #[test]
+    fn an_editor_search_keeps_its_catalogue_and_withdrawn_publishers_behind_the_flag() {
+        struct AllowAll;
+        impl Authorizer for AllowAll {
+            fn check(
+                &self,
+                _: &RequestCtx,
+                _: Action,
+                _: &dataroom_core::ObjectTarget,
+            ) -> dataroom_core::Decision {
+                dataroom_core::Decision::allow("test")
+            }
+        }
+        let (org_id, catalogue_id) = test_ids();
+        let editor = Subject::authenticated("ed", vec![org_id], Vec::new());
+        let ctx = RequestCtx::new(org_id, catalogue_id, editor);
+        let authz = AllowAll;
+        let mut elsewhere =
+            make_dataset("elsewhere", "pub-a", "Inde", &[], &[], Visibility::Public);
+        elsewhere.catalogue_id = CatalogueId::from_uuid(Uuid::from_u128(77));
+        let all = [
+            make_dataset("mine", "pub-a", "Moje", &[], &[], Visibility::Public),
+            make_dataset("orphan", "pub-w", "Sirota", &[], &[], Visibility::Public),
+            elsewhere,
+        ];
+        let pubs = [
+            publisher("pub-a", "a-slug", "A", RecordState::Active),
+            publisher("pub-w", "w-slug", "W", RecordState::Withdrawn),
+        ];
+        let names = |include_private: bool| {
+            let filter = DatasetFilter {
+                include_private,
+                sort: Some("name".into()),
+                limit: 20,
+                ..DatasetFilter::default()
+            };
+            search_datasets(&ctx, &authz, &all, &pubs, &filter, "sk")
+                .expect("search")
+                .datasets
+                .into_iter()
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(false), ["mine"]);
+        assert_eq!(names(true), ["mine", "orphan"]);
+
+        // Without include_private an anonymous caller gets no non-public dataset; with it the
+        // Authorizer decides.
+        let anonymous = RequestCtx::anonymous(org_id, catalogue_id);
+        let internal = [make_dataset(
+            "inner",
+            "pub-a",
+            "Vnútorný",
+            &[],
+            &[],
+            Visibility::Internal,
+        )];
+        let public_only = DatasetFilter {
+            limit: 20,
+            ..DatasetFilter::default()
+        };
+        let found = search_datasets(&anonymous, &authz, &internal, &pubs, &public_only, "sk");
+        assert_eq!(found.expect("search").total, 0);
+    }
+
+    /// A licence id left empty is no licence facet, and an open period spans at most 100 years.
+    #[test]
+    fn facets_skip_an_empty_licence_and_bound_an_open_period() {
+        let mut ds = make_dataset("old", "p", "Starý", &[], &[], Visibility::Public);
+        ds.licence_id = Some(String::new());
+        ds.temporal = Some(TemporalPeriod {
+            start: Date::new(1900, 1, 1),
+            end: None,
+        });
+        let filed = FiledDataset::from_dataset(ds, 0, &BTreeMap::new(), "sk", 2026);
+        assert!(filed.licences.is_empty());
+        assert_eq!(filed.years.len(), 100);
+        assert_eq!(filed.years.last().map(|y| y.0.as_str()), Some("1999"));
+    }
+
     #[test]
     fn full_text_ranks_name_title_keywords_and_description() {
         let mut ds = make_dataset("parking-zones", "p", "Státie", &[], &[], Visibility::Public);
@@ -1412,6 +1565,11 @@ mod tests {
             ),
         ] {
             assert_eq!(run_member(flags.clone()).total, widened, "{flags:?}");
+            assert!(
+                !names(&run_member(flags.clone())).contains(&"orphan".to_owned())
+                    || flags.include_private,
+                "a withdrawn publisher's dataset needs include_private: {flags:?}"
+            );
             assert_eq!(run(flags.clone()).total, 4, "anonymous {flags:?}");
         }
 

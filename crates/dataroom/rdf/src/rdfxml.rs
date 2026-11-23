@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 //! RDF/XML (`.rdf`, `.xml`) parser (backed by `oxrdfxml`) and serializer for DCAT-AP graphs (A1, C7).
 
-use crate::graph::{iri_text, ns, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
+use crate::graph::{
+    base_iri_error, iri_text, ns, RdfGraph, RdfLimits, SubjectNode, Term, Triple, BASE_IRI,
+};
 use crate::turtle::from_ox_triple;
 use dataroom_core::{DataroomError, Result};
 use oxrdfxml::RdfXmlParser;
@@ -182,8 +184,8 @@ pub fn parse_rdfxml_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
     check_xml_nesting_depth(bytes, limits.max_depth)?;
 
     let parser = RdfXmlParser::new()
-        .with_base_iri("https://dataroom.local/")
-        .map_err(|e| DataroomError::Rdf(format!("base IRI error: {e}")))?;
+        .with_base_iri(BASE_IRI)
+        .map_err(base_iri_error)?;
 
     let mut graph = RdfGraph::new();
     for item in parser.for_slice(bytes) {
@@ -699,8 +701,10 @@ mod tests {
             );
         }
         let xml = serialize_rdfxml(&g);
-        let back =
-            parse_rdfxml(&xml, &RdfLimits::default()).unwrap_or_else(|e| panic!("{e}\n{xml}"));
+        let back = match parse_rdfxml(&xml, &RdfLimits::default()) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}\n{xml}"),
+        };
         let mut got: Vec<&str> = back.triples.iter().map(|t| t.predicate.as_str()).collect();
         let mut want: Vec<&str> = predicates.iter().map(String::as_str).collect();
         got.sort();

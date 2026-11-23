@@ -11,7 +11,7 @@ use crate::sources::{
 use dataroom_core::ops::{HarvestRunner, PreviewRecord, SourcePreview, SourceTest, PREVIEW_MAX};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    ActivityRow, DataroomError, Dataset, HarvestBudget, HarvestLogLine, HarvestRun,
+    ActivityRow, Catalogue, DataroomError, Dataset, HarvestBudget, HarvestLogLine, HarvestRun,
     HarvestRunState, HarvestSkippedItem, HarvestSource, HarvestSourceKind, RecordState, RequestCtx,
     Result, Store,
 };
@@ -186,7 +186,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Ok {
@@ -204,7 +204,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Redirect {
@@ -219,7 +219,7 @@ impl MapFetcher {
     pub fn insert_status(&self, url: impl Into<String>, status: u16) {
         self.statuses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(url.into())
             .or_default()
             .push(status);
@@ -228,7 +228,7 @@ impl MapFetcher {
     pub fn pinned_seen(&self) -> Vec<(String, Vec<SocketAddr>)> {
         self.pinned_seen
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }
@@ -243,11 +243,14 @@ impl OutboundFetcher for MapFetcher {
     ) -> BoxFuture<'a, Result<FetchResponse>> {
         self.pinned_seen
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((target.host.clone(), target.pinned_addrs.clone()));
 
         let url = target.url.as_str();
-        let mut statuses = self.statuses.write().unwrap_or_else(|e| e.into_inner());
+        let mut statuses = self
+            .statuses
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(status) = statuses.get_mut(url).filter(|q| !q.is_empty()) {
             let status = status.remove(0);
             return Box::pin(std::future::ready(Err(DataroomError::OutboundRefused(
@@ -258,7 +261,7 @@ impl OutboundFetcher for MapFetcher {
         let found = self
             .responses
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(url)
             .cloned()
             .ok_or_else(|| DataroomError::OutboundRefused(format!("no response for {url}")));
@@ -1174,6 +1177,14 @@ impl HarvestEngine {
     }
 }
 
+/// The catalogue of `ctx`; not found when its organization holds none of that id.
+async fn catalogue_of(store: &dyn Store, ctx: &RequestCtx) -> Result<Catalogue> {
+    store
+        .get_catalogue(ctx.org_id, ctx.catalogue_id)
+        .await?
+        .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))
+}
+
 /// Where a guarded fetch stopped (ODP-15): the guard refused the address, the read failed, or
 /// the answer passed the byte cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1431,10 +1442,7 @@ impl HarvestRunner for HarvestEngine {
         source: &'a HarvestSource,
     ) -> BoxFuture<'a, Result<SourceTest>> {
         Box::pin(async move {
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let Ok((url, accept)) = Self::first_page(source) else {
                 return Ok(SourceTest::RefusedHost);
             };
@@ -1489,10 +1497,7 @@ impl HarvestRunner for HarvestEngine {
                     partial: false,
                 });
             }
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let budget = source
                 .budget
                 .map_or(self.max_bytes, |b| {
@@ -1556,10 +1561,7 @@ impl HarvestEngine {
         {
             let mut logs = Vec::new();
 
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
 
             // Ensure target publisher exists (`harvest-hub.py` line 213).
             if store
@@ -2697,6 +2699,30 @@ mod tests {
             ds.landing_page = Some(fine.to_owned());
             assert_eq!(non_http_link(&ds), None, "{fine:?}");
         }
+        // Each field names itself, in the order a page reads them.
+        ds.landing_page = None;
+        let js = "javascript:x".to_owned();
+        ds.documentation = vec!["https://a.sk/doc".into(), js.clone()];
+        assert_eq!(non_http_link(&ds), Some("documentation"));
+        ds.documentation.clear();
+        let dist = |patch: Value| -> dataroom_core::Distribution {
+            let mut base =
+                json!({"id": "d", "datasetId": "x", "title": {}, "accessUrl": "https://a.sk/f"});
+            base.as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            serde_json::from_value(base).unwrap()
+        };
+        for (patch, field) in [
+            (json!({"downloadUrl": js}), "download link"),
+            (json!({"accessUrl": js}), "access link"),
+            (json!({"uri": js}), "distribution IRI"),
+        ] {
+            ds.distributions = vec![dist(json!({})), dist(patch)];
+            assert_eq!(non_http_link(&ds), Some(field));
+        }
+        ds.distributions = vec![dist(json!({"uri": "https://a.sk/d"}))];
+        assert_eq!(non_http_link(&ds), None);
     }
 
     #[tokio::test]

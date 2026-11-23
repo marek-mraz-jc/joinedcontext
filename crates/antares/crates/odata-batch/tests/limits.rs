@@ -96,6 +96,9 @@ mod limits {
         }
         let text = multipart(&[("", "POST x\r\nContent-Type: text/plain\r\n\r\n[[[")]);
         assert!(parse(&text).is_ok());
+        // a backslash outside a string escapes nothing: all three brackets nest
+        let escaped = multipart(&[("", "POST x\r\n\r\n\\[[[")]);
+        assert_eq!(parse(&escaped), exceeded(BatchLimit::JsonDepth, 2));
         // Transport padding after the first delimiter fills the body to the bound.
         let size = |n: usize| {
             multipart(&[("", "GET x")]).replacen("--b", &format!("--b{}", " ".repeat(n)), 1)
