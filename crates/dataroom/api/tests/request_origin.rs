@@ -228,8 +228,20 @@ async fn a_feed_answers_in_the_pinned_version_and_names_it_only_when_a_header_ca
             never,
         ),
         (
-            "angled",
+            "third",
             "1.0.0",
+            "https://profiles.example.org/third/1",
+            nothing,
+        ),
+        (
+            "third",
+            "2.0.0",
+            "https://profiles.example.org/third/2",
+            nothing,
+        ),
+        (
+            "angled",
+            "3.0.0",
             "https://profiles.example.org/<angled>",
             nothing,
         ),
@@ -266,10 +278,15 @@ async fn a_feed_answers_in_the_pinned_version_and_names_it_only_when_a_header_ca
             .unwrap(),
             serde_json::from_value(serde_json::json!({"profileId": "angled", "version": ""}))
                 .unwrap(),
+            serde_json::from_value(serde_json::json!({"profileId": "third", "version": ""}))
+                .unwrap(),
         ];
         state.store.upsert_catalogue(cat.clone()).await.unwrap();
         let named = profile_of("/profiles/own-draft/catalog.ttl", state.clone()).await;
         assert!(named.ends_with(want), "pin {pinned:?}: {named}");
+        // Another profile's pinned version is never this one's.
+        let third = profile_of("/profiles/third/catalog.ttl", state.clone()).await;
+        assert!(third.ends_with("third/2"), "pin {pinned:?}: {third}");
     }
     let angled = profile_of("/profiles/angled/catalog.ttl", state.clone()).await;
     assert!(
