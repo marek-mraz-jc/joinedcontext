@@ -712,7 +712,11 @@ mod tests {
             ..unknown_only.clone()
         };
         assert_eq!(
-            transition(consent.clone(), LoginInput::GrantConsent, &enrolled_meanwhile),
+            transition(
+                consent.clone(),
+                LoginInput::GrantConsent,
+                &enrolled_meanwhile
+            ),
             Err(TransitionError::SecondFactorMissing)
         );
         assert_eq!(
