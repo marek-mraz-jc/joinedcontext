@@ -174,6 +174,15 @@ async fn speed(b: &Broker, id: &str, speed: i64) -> Result<(), String> {
     b.http.speed(Some("city"), id, speed).await
 }
 
+/// Script the `name` the Thing of Car 1 answers in view m1.
+fn named(name: &str) {
+    sta(
+        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
+        200,
+        &json!({ "name": name }),
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<(), String> {
     let b = broker(Limits::default()).await?;
@@ -183,11 +192,7 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
     let obs = "v1.1/Datastreams('urn:ngsi-ld:Car:1%2Fspeed')/Observations";
     let page = "m1/Datastreams('urn:ngsi-ld:Car:1/speed')/Observations?$orderby=phenomenonTime%20desc&$top=10";
     let link = |set: &str, id: &str| format!("http://h/x/views/m1/sta/v1.1/{set}('{id}')");
-    sta(
-        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
-        200,
-        &json!({"name": "a"}),
-    );
+    named("a");
     sta(page, 200, &json!({"value": []}));
     sta("m1/Things?$top=1", 200, &json!({"value": []}));
     sta("m1/Datastreams?$top=1", 200, &json!({"value": []}));
@@ -212,11 +217,7 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
 
     // the write changes the Thing, adds an Observation, and the Thing and its Datastream of
     // the whole-set topics are read for the first time
-    sta(
-        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
-        200,
-        &json!({"name": "b"}),
-    );
+    named("b");
     sta(
         page,
         200,
@@ -277,11 +278,7 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
     );
     sta("m1/Observations('o2')", 200, &json!({"result": 4}));
     // the topics left still publish
-    sta(
-        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
-        200,
-        &json!({"name": "c"}),
-    );
+    named("c");
     speed(&b, "urn:ngsi-ld:Car:1", 4).await?;
     let p = next(&mut ws, WAIT).await?.ok_or("closed")?;
     assert_eq!(published(&p), (thing.to_owned(), json!({"name": "c"})));
