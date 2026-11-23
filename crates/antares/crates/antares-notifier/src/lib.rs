@@ -753,7 +753,7 @@ mod policy_tests {
     /// copy of this test binary with the variables set there only.
     #[test]
     fn from_env_reads_the_documented_variables() {
-        if std::env::var_os("ANTARES_NOTIFY_TEST_CHILD").is_some() {
+        if std::env::var_os("ANTARES_TEST_NOTIFY_CHILD").is_some() {
             let p = DeliveryPolicy::from_env().expect("valid values");
             assert_eq!(p.attempts, 3);
             assert_eq!(p.backoff, Duration::from_millis(250));
@@ -766,7 +766,7 @@ mod policy_tests {
                     "--exact",
                     "policy_tests::from_env_reads_the_documented_variables",
                 ])
-                .env("ANTARES_NOTIFY_TEST_CHILD", "1")
+                .env("ANTARES_TEST_NOTIFY_CHILD", "1")
                 .env("ANTARES_NOTIFY_ATTEMPTS", attempts)
                 .env("ANTARES_NOTIFY_BACKOFF_MS", "250")
                 .env("ANTARES_NOTIFY_MAX_AGE_SECS", "30")
