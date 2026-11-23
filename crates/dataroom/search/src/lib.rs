@@ -1353,8 +1353,9 @@ mod tests {
         assert_eq!(sorted(Some("modified desc")), ["zz", "aa-ovzdusie"]);
     }
 
-    /// The search keeps another catalogue's dataset out and a withdrawn publisher's one behind
-    /// include_private by itself, whatever the Authorizer (the Portal's live one) allows.
+    /// The search keeps another catalogue's dataset out, and a withdrawn publisher's one and a
+    /// non-public one from an anonymous caller behind include_private, by itself, whatever the
+    /// Authorizer (the Portal's live one) allows.
     #[test]
     fn an_editor_search_keeps_its_catalogue_and_withdrawn_publishers_behind_the_flag() {
         struct AllowAll;
@@ -1400,6 +1401,24 @@ mod tests {
         };
         assert_eq!(names(false), ["mine"]);
         assert_eq!(names(true), ["mine", "orphan"]);
+
+        // Without include_private an anonymous caller gets no non-public dataset; with it the
+        // Authorizer decides.
+        let anonymous = RequestCtx::anonymous(org_id, catalogue_id);
+        let internal = [make_dataset(
+            "inner",
+            "pub-a",
+            "Vnútorný",
+            &[],
+            &[],
+            Visibility::Internal,
+        )];
+        let public_only = DatasetFilter {
+            limit: 20,
+            ..DatasetFilter::default()
+        };
+        let found = search_datasets(&anonymous, &authz, &internal, &pubs, &public_only, "sk");
+        assert_eq!(found.expect("search").total, 0);
     }
 
     /// A licence id left empty is no licence facet, and an open period spans at most 100 years.
