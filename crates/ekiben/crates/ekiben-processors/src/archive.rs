@@ -487,8 +487,10 @@ impl UnarchiveProcessor {
             }
             "csv" => {
                 let bytes = part.as_bytes();
+                // flexible: a short or long row reaches csv_row_fits and gets Bento's text
                 let mut rdr = csv::ReaderBuilder::new()
                     .has_headers(false)
+                    .flexible(true)
                     .delimiter(self.csv_delim)
                     .from_reader(bytes.as_ref());
                 let mut headers: Option<Vec<String>> = None;
@@ -616,6 +618,7 @@ fn csv_row_fits(hdrs: &[String], rec: &csv::StringRecord) -> Result<(), String> 
 fn csv_reader(bytes: Bytes, delim: u8) -> csv::Reader<Cursor<Bytes>> {
     csv::ReaderBuilder::new()
         .has_headers(false)
+        .flexible(true)
         .delimiter(delim)
         .from_reader(Cursor::new(bytes))
 }

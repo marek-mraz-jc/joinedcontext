@@ -1083,6 +1083,40 @@ async fn archive_and_unarchive_every_format() {
         .await
         .is_empty());
 
+    // A csv row with too few or too many values, an empty csv and broken JSON documents.
+    for (text, want) in [
+        (
+            "a,b\n1\n",
+            "failed to parse message as csv: row has too few values",
+        ),
+        (
+            "a,b\n1,2,3\n",
+            "failed to parse message as csv: row has too many values",
+        ),
+    ] {
+        let out = e
+            .run(json!({"unarchive": {"format": "csv"}}), parts(&[text]))
+            .await;
+        assert_eq!(err_of(&out[0][0]), want, "{text:?}");
+    }
+    assert!(e
+        .run(json!({"unarchive": {"format": "csv"}}), parts(&[""]))
+        .await
+        .iter()
+        .all(|b| b.is_empty()));
+    let out = e
+        .run(
+            json!({"unarchive": {"format": "json_documents"}}),
+            parts(&["1 {nope"]),
+        )
+        .await;
+    assert_eq!(flat(&out), vec!["1 {nope"]);
+    assert!(
+        err_of(&out[0][0]).starts_with("key must be a string"),
+        "{}",
+        err_of(&out[0][0])
+    );
+
     // A part that is not JSON stops a json_array archive and is flagged.
     let out = e
         .run(
