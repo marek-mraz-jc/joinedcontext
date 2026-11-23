@@ -446,6 +446,9 @@ fn an_output_is_refused_with_its_reason() {
         .collect();
     assert!(output(&json!({"name": "vsetky", "limit": 10_000, "sources": [{}]})).is_ok());
     assert!(output(&json!({"name": "vsetky", "sources": ten})).is_ok());
+    let longest = json!({"name": "vsetky",
+        "sources": [{"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "truncate": 10_000}}}]});
+    assert_eq!(output(&longest).err(), None);
     for (bad, why) in [
         (json!({"version": 2}), "version"),
         (json!({"name": "Všetky"}), "1 to 40"),
@@ -457,6 +460,10 @@ fn an_output_is_refused_with_its_reason() {
         (json!({"lang": "slovensky"}), "language tag"),
         (json!({"limit": 0}), "limit"),
         (json!({"limit": 10_001}), "limit"),
+        (
+            json!({"sources": [{"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "truncate": 10_001}}}]}),
+            "`truncate` is 1 to 10000",
+        ),
         (json!({"sort": "name"}), "start or -start"),
         (json!({"filter": {"q": "a==1\n"}}), "filter"),
         (json!({"sources": []}), "1 to 10"),
