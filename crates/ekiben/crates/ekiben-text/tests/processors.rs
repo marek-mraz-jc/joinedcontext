@@ -702,6 +702,24 @@ async fn grok_names_each_refusal_and_types_its_captures() {
             "{pattern}"
         );
     }
+    // References nest at most MAX_DEPTH deep: A00 names A01, which names A02, ...
+    let chain = |last: usize| {
+        let mut defs: Vec<String> = (0..last)
+            .map(|i| format!("A{i:02}: '%{{A{:02}}}'", i + 1))
+            .collect();
+        defs.push(format!("A{last:02}: x"));
+        format!(
+            "grok:\n  expressions: ['%{{A00:v}}']\n  pattern_definitions: {{{}}}\n",
+            defs.join(", ")
+        )
+    };
+    let deepest = ekiben_text::processor_grok::MAX_DEPTH;
+    assert_eq!(
+        bytes(&run(&chain(deepest), &["x"]).await[0][0]),
+        r#"{"v":"x"}"#
+    );
+    let err = refused(&chain(deepest + 1));
+    assert!(err.contains("nests more than 64 references deep"), "{err}");
     // A pattern whose cast fails is passed over for the next one.
     let out = run(
         "grok:\n  expressions: ['%{WORD:a:int}', '%{WORD:b}']\n",
