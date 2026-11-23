@@ -574,5 +574,11 @@ async fn manifests_left_in_the_column_are_copied_once_and_a_damaged_one_stays() 
         .await
         .expect("blob");
     assert_eq!(blob.map(|b| b.size_bytes), Some(kept.len() as u64));
+    // The versions read without the bytes the column still keeps (a manifest is a blob).
+    let versions = store
+        .list_package_versions(inst, org, None, Some("container"), Some("image"))
+        .await
+        .expect("versions");
+    assert_eq!(versions.len(), 4);
     db.drop_it().await;
 }

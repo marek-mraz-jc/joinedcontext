@@ -4,6 +4,15 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # shako-store-pg trim_log: under the tenant's lock a batch deletes every entry it picked (gone == picked), so `>` only
+  # runs one more, empty batch and answers the same count (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace < with > in PgStore::trim_log',
+  # shako-store-pg mark_ready: a cache of the tenants this process caught up; without it each request catches up again
+  # from the log and answers the same rows (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace PgStore::mark_ready with \(\)',
+  # shako-store-pg put: every row comes from to_row of a shako record, whose keys are non-empty snake_case field names,
+  # so a check accepting non-empty or valid names refuses nothing more (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: replace && with \|\| in put',
   # shako-store-memory claim_outbox: a retry due at exactly the Instant the claim reads; two reads of the monotonic
   # clock in one test never tie, so `>` and `>=` cannot be told apart (T-7664).
   'shako/store-memory/src/lib\.rs:\d+:\d+: replace > with >= in <impl Store for MemoryStore>::claim_outbox',
