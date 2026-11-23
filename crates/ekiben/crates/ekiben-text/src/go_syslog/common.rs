@@ -303,6 +303,9 @@ mod tests {
             format_rfc3339_nano(&utc_zoned(before)),
             "-0001-03-04T05:06:07Z"
         );
+        // an offset of a day or more is taken off the wall time and the time kept in UTC
+        let far = parse_rfc3339(b"2026-01-02T00:00:00+24:00").unwrap();
+        assert_eq!(format_rfc3339_nano(&far), "2026-01-01T00:00:00Z");
         // an offset that moves the wall time past jiff's last year is out of range
         assert_eq!(
             parse_rfc3339(b"9999-12-31T23:59:59-01:00").unwrap_err(),

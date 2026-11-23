@@ -1008,6 +1008,8 @@ mod tests {
             (r#"[^\x{D800}]"#, "a", Ok(Some((0, 1)))),
             (r#"[\x{D7FF}-\x{E000}]"#, "\u{e000}", Ok(Some((0, 3)))),
             (r#"[\x{D800}-\x{DFFF}]"#, "-", Ok(None)),
+            (r#"[\x{D800}-\x{DFFF}]"#, "\u{e000}", Ok(None)),
+            (r#"[\x{D800}-\x{DFFF}]"#, "\u{d7ff}", Ok(None)),
             (
                 r#"[\x{D800}-a]"#,
                 "",

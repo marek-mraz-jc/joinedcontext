@@ -106,8 +106,8 @@ mod tests {
     use super::Fields;
     use serde_json::json;
 
-    fn err(r: Result<impl std::fmt::Debug, ekiben_core::CoreError>) -> String {
-        r.map_or_else(|e| e.to_string(), |v| format!("ok {v:?}"))
+    fn err<T>(r: Result<T, ekiben_core::CoreError>) -> String {
+        r.err().map(|e| e.to_string()).unwrap_or_default()
     }
 
     #[test]

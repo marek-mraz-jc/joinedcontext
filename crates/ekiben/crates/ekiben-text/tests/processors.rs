@@ -329,7 +329,7 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     );
     let ts = ekiben_bloblang::time_format::utc("2026-01-02T03:04:05Z".parse().unwrap());
     for (v, want) in [
-        (Value::Bytes(b"x".to_vec().into()), "invalid type: []uint8"),
+        (Value::Bytes(b"x".to_vec()), "invalid type: []uint8"),
         (
             Value::Timestamp(ts),
             "invalid type: time.Time (2026-01-02T03:04:05",

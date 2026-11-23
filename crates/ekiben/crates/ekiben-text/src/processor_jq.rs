@@ -182,7 +182,8 @@ impl Processor for JqProcessor {
             .map_err(|e| CoreError::other(format!("jq: cannot start its thread: {e}")))?;
         let results = rx
             .await
-            .map_err(|_| CoreError::other("jq: its thread ended without a result"))?;
+            .ok()
+            .ok_or(CoreError::other("jq: its thread ended without a result"))?;
         let mut out = Batch::new();
         for (mut part, r) in results {
             match r {
