@@ -1497,6 +1497,11 @@ mod tests {
             ),
         ] {
             assert_eq!(run_member(flags.clone()).total, widened, "{flags:?}");
+            assert!(
+                !names(&run_member(flags.clone())).contains(&"orphan".to_owned())
+                    || flags.include_private,
+                "a withdrawn publisher's dataset needs include_private: {flags:?}"
+            );
             assert_eq!(run(flags.clone()).total, 4, "anonymous {flags:?}");
         }
 
