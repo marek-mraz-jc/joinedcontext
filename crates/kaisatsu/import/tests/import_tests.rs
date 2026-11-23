@@ -682,8 +682,8 @@ fn the_markdown_report_counts_each_action_and_lists_warnings_only_when_there_are
 }
 
 /// Only `$(...)` references enter the fast path's checksum: a plain value with parentheses
-/// reads the same whether or not literal secrets are allowed, so the second apply is the fast
-/// path's single unchanged realm.
+/// reads the same whether or not literal secrets are allowed, so the checksum holds and the
+/// second apply is the fast path's single unchanged realm.
 #[tokio::test]
 async fn plain_text_with_parentheses_is_no_secret_reference_in_the_checksum() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
@@ -691,7 +691,7 @@ async fn plain_text_with_parentheses_is_no_secret_reference_in_the_checksum() {
         "r.json".to_owned(),
         json!({"realm": "ck", "displayName": "Roads (north)", "displayNameHtml": "$(not closed"}),
     )];
-    apply_realm_files(&store, &files, &ApplyOptions::default())
+    let first = apply_realm_files(&store, &files, &ApplyOptions::default())
         .await
         .expect("first apply");
     let literal = ApplyOptions {
@@ -704,6 +704,7 @@ async fn plain_text_with_parentheses_is_no_secret_reference_in_the_checksum() {
     assert_eq!(again.changes.len(), 1, "{:?}", again.changes);
     assert_eq!(again.changes[0].kind, "Realm");
     assert_eq!(again.changes[0].action, ChangeAction::Unchanged);
+    assert_eq!(again.checksum, first.checksum);
 }
 
 /// `--prune` also deletes the client scopes, realm roles, clients and client roles a file
