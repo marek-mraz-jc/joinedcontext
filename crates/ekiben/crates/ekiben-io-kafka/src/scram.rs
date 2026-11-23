@@ -236,7 +236,7 @@ mod tests {
             (b"v=!!!", "signature is not base64"),
             (b"v=AAAA", "the broker does not know the password"),
         ] {
-            let e = check.verify(last).err().expect("refused");
+            let e = check.verify(last).expect_err("refused");
             assert!(e.contains(want), "{e}");
         }
     }

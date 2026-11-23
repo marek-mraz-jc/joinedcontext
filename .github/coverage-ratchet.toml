@@ -25,6 +25,7 @@
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
+"ekiben-io-kafka" = { lines = 99.32, functions = 99.69 }
 "ekiben-io-remote" = { lines = 92.20, functions = 80.00 }
 "ekiben-io-s3" = { lines = 99.02, functions = 100.00 }
 "ekiben-js" = { lines = 99.62, functions = 100.00 }

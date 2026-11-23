@@ -130,7 +130,8 @@ async fn patterns_match_the_cluster_s_topics_but_never_internal_ones() {
 
 #[tokio::test]
 async fn finding_the_coordinator_fails_with_the_reason() {
-    let cases: Vec<(Box<dyn Fn(&Fake)>, &str, bool)> = vec![
+    type Setup = Box<dyn Fn(&Fake)>;
+    let cases: Vec<(Setup, &str, bool)> = vec![
         (
             Box::new(|f| f.lock().brokers.clear()),
             "the cluster advertises no broker",
@@ -388,7 +389,7 @@ async fn a_stale_generation_on_commit_rejoins_and_other_codes_are_reported() {
         crate::client::OFFSET_COMMIT,
         fake::partition_code(crate::client::OFFSET_COMMIT, "t", 0, 22),
     );
-    let e = i.commit().await.err().expect("refused").to_string();
+    let e = i.commit().await.expect_err("refused").to_string();
     assert!(
         e.contains("committing offsets: ILLEGAL_GENERATION; rejoining the group"),
         "{e}"
@@ -412,7 +413,7 @@ async fn a_stale_generation_on_commit_rejoins_and_other_codes_are_reported() {
         crate::client::OFFSET_COMMIT,
         fake::partition_code(crate::client::OFFSET_COMMIT, "t", 0, 28),
     );
-    let e = i.commit().await.err().expect("refused").to_string();
+    let e = i.commit().await.expect_err("refused").to_string();
     assert!(e.contains("committing offsets: an error"), "{e}");
     assert!(!i.needs_rejoin());
 }
