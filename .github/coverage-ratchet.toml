@@ -3,7 +3,7 @@
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
 "antares-feed" = { lines = 99.80, functions = 99.36 }
-"antares-notifier" = { lines = 99.01, functions = 99.12 }
+"antares-notifier" = { lines = 99.05, functions = 99.14 }
 "antares-ws" = { lines = 99.03, functions = 99.18 }
 "daiya-api" = { lines = 97.10, functions = 96.50 }
 "daiya-expr" = { lines = 99.20, functions = 100.00 }
