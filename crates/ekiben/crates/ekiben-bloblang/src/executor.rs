@@ -368,16 +368,13 @@ impl<'a, 'm> EvalContext<'a, 'm> {
     /// The context `this` reads, borrowed: a path read clones only what it reaches, not the
     /// whole document (a fold over a large tally read it once per field reference).
     pub fn current_value_ref(&mut self, path: &[String]) -> Result<&Value, String> {
-        if self.value_stack.is_empty() && self.cached_root_value.is_none() {
-            self.cached_root_value = Some(self.batch.part_structured(self.index));
-        }
         if let Some(top) = self.value_stack.last() {
             return Ok(top);
         }
+        let (batch, index) = (self.batch, self.index);
         match self
             .cached_root_value
-            .as_ref()
-            .ok_or_else(|| "message is empty".to_string())?
+            .get_or_insert_with(|| batch.part_structured(index))
         {
             Ok(v) => Ok(v),
             Err(parse_err) => {
@@ -403,20 +400,17 @@ impl<'a, 'm> EvalContext<'a, 'm> {
     }
 
     pub fn exec_named_map(&mut self, map_name: &str, input_val: Value) -> Result<Value, String> {
-        self.stack_count += 1;
-        if self.stack_count > self.max_stacks {
+        if self.stack_count >= self.max_stacks {
             let err = BloblangError::MaxStacksExceeded {
                 annotation: format!("map {map_name}"),
                 max_stacks: self.max_stacks,
             };
-            self.stack_count -= 1;
             return Err(err.to_string());
         }
-
         let Some(map_def) = self.maps.get(map_name).cloned() else {
-            self.stack_count -= 1;
             return Err(format!("map {map_name} was not found"));
         };
+        self.stack_count += 1;
 
         let res = stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
             let mut map_root = Value::Nothing;
@@ -497,12 +491,11 @@ impl<'a, 'm> EvalContext<'a, 'm> {
                 let target: &Value = if *from_root {
                     self.new_value
                 } else if let Some(nc) = named_context {
-                    self.named_values
-                        .iter()
-                        .rev()
-                        .find(|(k, _)| k == nc)
-                        .map(|(_, v)| v)
-                        .ok_or_else(|| format!("named context {nc} was not found"))?
+                    // The parser binds a name only inside its lambda, so the lookup finds it.
+                    let Some((_, v)) = self.named_values.iter().rev().find(|(k, _)| k == nc) else {
+                        return Err(format!("named context {nc} was not found"));
+                    };
+                    v
                 } else {
                     self.current_value_ref(path)?
                 };
@@ -738,9 +731,12 @@ impl<'a, 'm> EvalContext<'a, 'm> {
                 result
             }
             Expr::Lambda { name, body } => {
-                let captured = self.value_stack.pop().ok_or_else(|| {
-                    format!("failed to capture context {name}: context was undefined")
-                })?;
+                // Every caller pushes the context the lambda captures before evaluating it.
+                let Some(captured) = self.value_stack.pop() else {
+                    return Err(format!(
+                        "failed to capture context {name}: context was undefined"
+                    ));
+                };
                 if name != "_" {
                     self.named_values.push((name.clone(), captured.clone()));
                 }
@@ -798,32 +794,24 @@ fn slice_items<T: Clone>(
         }
     };
 
-    if step_val == 1 {
-        if start_idx >= end_idx || start_idx < 0 {
-            return Vec::new();
-        }
-        return data[start_idx as usize..end_idx as usize].to_vec();
-    }
-
-    let mut out = Vec::new();
+    // Both walks stay inside `data`: a forward start is in 0..=len and its end at most len; a
+    // backward start is at most len - 1 and its end at least -1, so the walk ends at index 0.
     if step_val > 0 {
-        let mut i = start_idx;
-        while i < end_idx {
-            if i >= 0 && i < len {
-                out.push(data[i as usize].clone());
-            }
-            i += step_val;
-        }
+        data[start_idx as usize..end_idx.max(start_idx) as usize]
+            .iter()
+            .step_by(step_val as usize)
+            .cloned()
+            .collect()
+    } else if start_idx <= end_idx {
+        Vec::new()
     } else {
-        let mut i = start_idx;
-        while i > end_idx {
-            if i >= 0 && i < len {
-                out.push(data[i as usize].clone());
-            }
-            i += step_val;
-        }
+        data[(end_idx + 1) as usize..=start_idx as usize]
+            .iter()
+            .rev()
+            .step_by(step_val.unsigned_abs() as usize)
+            .cloned()
+            .collect()
     }
-    out
 }
 
 fn eval_binary_op(
@@ -937,33 +925,26 @@ fn eval_binary_op(
                 }
                 BinaryOp::Eq => Ok(Value::Bool(compare_eq_or_bytes(&lv, &rv))),
                 BinaryOp::Neq => Ok(Value::Bool(!compare_eq_or_bytes(&lv, &rv))),
-                BinaryOp::Gt | BinaryOp::Gte | BinaryOp::Lt | BinaryOp::Lte => match (&lv, &rv) {
-                    (Value::String(_) | Value::Bytes(_), Value::String(_) | Value::Bytes(_)) => {
-                        let s1 = lv.get_string().map_err(|_| mismatch())?;
-                        let s2 = rv.get_string().map_err(|_| mismatch())?;
-                        let b = match op {
-                            BinaryOp::Gt => s1 > s2,
-                            BinaryOp::Gte => s1 >= s2,
-                            BinaryOp::Lt => s1 < s2,
-                            BinaryOp::Lte => s1 <= s2,
-                            _ => unreachable!(),
-                        };
-                        Ok(Value::Bool(b))
-                    }
-                    _ => {
-                        let a = lv.as_f64().ok_or_else(mismatch)?;
-                        let b = rv.as_f64().ok_or_else(mismatch)?;
-                        let res = match op {
-                            BinaryOp::Gt => a > b,
-                            BinaryOp::Gte => a >= b,
-                            BinaryOp::Lt => a < b,
-                            BinaryOp::Lte => a <= b,
-                            _ => unreachable!(),
-                        };
-                        Ok(Value::Bool(res))
-                    }
-                },
-                _ => unreachable!(),
+                // Gt, Gte, Lt, Lte: Go compares two strings byte by byte, anything else as float64.
+                _ => {
+                    let ord = match (&lv, &rv) {
+                        (
+                            Value::String(_) | Value::Bytes(_),
+                            Value::String(_) | Value::Bytes(_),
+                        ) => Some(byte_text(&lv).cmp(byte_text(&rv))),
+                        _ => {
+                            let a = lv.as_f64().ok_or_else(mismatch)?;
+                            let b = rv.as_f64().ok_or_else(mismatch)?;
+                            a.partial_cmp(&b)
+                        }
+                    };
+                    Ok(Value::Bool(ord.is_some_and(|o| match op {
+                        BinaryOp::Gt => o.is_gt(),
+                        BinaryOp::Gte => o.is_ge(),
+                        BinaryOp::Lt => o.is_lt(),
+                        _ => o.is_le(),
+                    })))
+                }
             }
         }
     }
@@ -973,9 +954,6 @@ fn eval_binary_op(
 /// coercion, so `true == 7` holds (7 reads as a bool) while `1 == true` does not.
 fn compare_eq_or_bytes(lv: &Value, rv: &Value) -> bool {
     match lv {
-        Value::String(_) | Value::Bytes(_) | Value::Timestamp(_) | Value::Bool(_) => {
-            icompare(lv, rv)
-        }
         Value::Int(_) | Value::Uint(_) | Value::Float(_) => match rv {
             Value::Int(_) | Value::Uint(_) | Value::Float(_) => lv.compare_eq(rv),
             _ => false,
@@ -1284,5 +1262,671 @@ fn byte_text(v: &Value) -> &[u8] {
         Value::String(s) => s.as_bytes(),
         Value::Bytes(b) => b,
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    fn exec(mapping: &str) -> Executor {
+        Environment::new()
+            .compile_mapping(mapping)
+            .expect("the mapping compiles")
+    }
+
+    /// The mapping's result on `input` (JSON text) as JSON, or its error text.
+    fn run(mapping: &str, input: &str) -> Result<serde_json::Value, String> {
+        match exec(mapping).execute_bytes(input.as_bytes()) {
+            Ok(Some(v)) => Ok(v.to_json_value()),
+            Ok(None) => Ok(json!("<deleted>")),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn err(mapping: &str, input: &str) -> String {
+        run(mapping, input).expect_err(mapping)
+    }
+
+    fn part(raw: &str) -> SimplePartView {
+        SimplePartView::from_bytes(raw)
+    }
+
+    #[test]
+    fn an_empty_batch_has_no_part_to_read() {
+        let b = EmptyBatch;
+        assert_eq!(b.len(), 0);
+        assert!(b.is_empty());
+        assert!(b.part_bytes(0).is_empty());
+        assert_eq!(
+            b.part_structured(0).err().as_deref(),
+            Some("message is empty")
+        );
+        assert!(b.part_meta_get(0, "k").is_none());
+        assert!(b.part_meta_all(0).is_empty());
+        assert!(b.part_error(0).is_none());
+    }
+
+    #[test]
+    fn a_part_array_reads_its_parts_and_answers_empty_past_the_end() {
+        let mut p = part(r#"{"a":1}"#);
+        p.meta.insert("k".into(), Value::String("v".into()));
+        p.error = Some(DetailedErrorInfo {
+            message: "boom".into(),
+            ..Default::default()
+        });
+        let b = [p];
+        assert_eq!(MessageBatch::len(&b), 1);
+        assert!(!MessageBatch::is_empty(&b));
+        assert_eq!(&*b.part_bytes(0), br#"{"a":1}"#);
+        assert!(b.part_bytes(1).is_empty());
+        assert_eq!(
+            b.part_structured(1).err().as_deref(),
+            Some("message is empty")
+        );
+        assert_eq!(b.part_meta_get(0, "k"), Some(Value::String("v".into())));
+        assert!(b.part_meta_get(1, "k").is_none());
+        assert_eq!(b.part_meta_all(0).len(), 1);
+        assert!(b.part_meta_all(1).is_empty());
+        assert_eq!(b.part_error(0).map(|e| e.message).as_deref(), Some("boom"));
+        assert!(b.part_error(1).is_none());
+        assert_eq!(
+            [part("")].part_structured(0).err().as_deref(),
+            Some("message is empty")
+        );
+        let bad = [part("{nope")].part_structured(0).err().unwrap_or_default();
+        assert!(bad.starts_with("parse as json: "), "{bad}");
+    }
+
+    #[test]
+    fn btree_metadata_sets_reads_deletes_and_clears() {
+        let mut m: BTreeMap<String, Value> = BTreeMap::new();
+        m.meta_set("a".into(), Value::Int(1));
+        m.meta_set("b".into(), Value::Int(2));
+        assert_eq!(PartMetaMut::meta_get(&m, "a"), Some(Value::Int(1)));
+        m.meta_delete("a");
+        assert_eq!(PartMetaMut::meta_get(&m, "a"), None);
+        assert_eq!(m.meta_all().len(), 1);
+        m.meta_clear();
+        assert!(m.meta_all().is_empty());
+    }
+
+    #[test]
+    fn executor_reports_whether_it_reads_other_parts_and_its_annotation() {
+        assert!(exec("root = this.from(0)").reads_other_parts());
+        assert!(exec("root = this.from_all()").reads_other_parts());
+        assert!(!exec("root = this.from_x").reads_other_parts());
+        assert_eq!(exec("root = 1").annotation(), "");
+    }
+
+    #[test]
+    fn a_batch_of_two_parts_has_length_two_and_reads_each() {
+        let b = [part("1"), part("2")];
+        assert_eq!(MessageBatch::len(&b), 2);
+        assert_eq!(&*b.part_bytes(1), b"2");
+    }
+
+    #[test]
+    fn targets_follow_named_maps_and_list_every_assignment() {
+        let e = exec(
+            "map m {\n root = this.inner\n}\nroot.a = this.apply(\"m\")\nmeta k = 1\nlet v = 2",
+        );
+        let queries: Vec<String> = e.query_targets().iter().map(|t| t.path.join(".")).collect();
+        assert!(queries.contains(&"inner".to_string()), "{queries:?}");
+        let assigned: Vec<String> = e
+            .assignment_targets()
+            .iter()
+            .map(|t| t.path.join("."))
+            .collect();
+        assert_eq!(assigned.len(), 3, "{assigned:?}");
+        assert!(assigned.contains(&"a".to_string()), "{assigned:?}");
+    }
+
+    #[test]
+    fn a_caught_missing_map_gives_its_stack_level_back() -> R {
+        // Two levels allowed: a missing map at level 1 must leave room for m and its leaf.
+        let e = Environment::new()
+            .with_max_map_recursion(2)
+            .compile_mapping(
+                "map leaf {\n root = 1\n}\nmap m {\n root = this.apply(\"leaf\")\n}\n\
+             root.a = this.apply(\"nope\").catch(0)\nroot.b = this.apply(\"m\")",
+            )?;
+        let out = e.execute_bytes(b"{}")?;
+        assert_eq!(
+            out.map(|v| v.to_json_value()),
+            Some(json!({"a": 0, "b": 1}))
+        );
+        // One level allowed: each finished map gives its level back for the next.
+        let twice = Environment::new().with_max_map_recursion(1).compile_mapping(
+            "map leaf {\n root = 1\n}\nroot.a = this.apply(\"leaf\")\nroot.b = this.apply(\"leaf\")",
+        )?;
+        let out = twice.execute_bytes(b"{}")?;
+        assert_eq!(
+            out.map(|v| v.to_json_value()),
+            Some(json!({"a": 1, "b": 1}))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn query_part_answers_the_bool_and_refuses_a_deletion_or_another_type() {
+        let mut p = part(r#"{"n":3}"#);
+        p.meta.insert("m".into(), Value::String("x".into()));
+        let b = [p];
+        assert!(exec("root = this.n > 2").query_part(0, &b).unwrap_or(false));
+        assert!(exec(r#"root = @m == "x""#)
+            .query_part(0, &b)
+            .unwrap_or(false));
+        assert!(!exec("root = this.n > 5").query_part(0, &b).unwrap_or(true));
+        let del = exec("root = deleted()")
+            .query_part(0, &b)
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            del.as_deref(),
+            Some("query mapping resulted in deleted message, expected a boolean value")
+        );
+        let other = exec("root = this.n")
+            .query_part(0, &b)
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            other.as_deref(),
+            Some("mapping: expected bool value, got number (3)")
+        );
+    }
+
+    #[test]
+    fn mutate_part_reads_metadata_as_written_so_far_and_map_part_reads_the_input() -> R {
+        let mut p = part("{}");
+        p.meta.insert("m".into(), Value::String("in".into()));
+        let b = [p];
+        let e = exec(
+            r#"meta m = "out"
+root.v = metadata("m")"#,
+        );
+        let mut meta = b.part_meta_all(0);
+        let mutated = e.mutate_part(0, &b, &mut meta, None)?;
+        assert_eq!(
+            mutated.map(|v| v.to_json_value()),
+            Some(json!({"v": "out"}))
+        );
+        let mut meta = b.part_meta_all(0);
+        let mapped = e.map_part(0, &b, &mut meta, None)?;
+        assert_eq!(mapped.map(|v| v.to_json_value()), Some(json!({"v": "in"})));
+        let in_place = exec(
+            r#"meta m = "w"
+root = metadata("m")"#,
+        )
+        .execute_bytes_in_place(b"{}")?;
+        assert_eq!(in_place.map(|v| v.to_json_value()), Some(json!("w")));
+        Ok(())
+    }
+
+    #[test]
+    fn this_on_unstructured_input_names_the_reference_in_the_error() {
+        let whole = err("root = this", "not json");
+        assert!(
+            whole.contains("unable to reference message as structured (with 'this'): "),
+            "{whole}"
+        );
+        let field = err("root = this.a.b", "not json");
+        assert!(
+            field.contains("unable to reference message as structured (with 'this.a.b'): "),
+            "{field}"
+        );
+    }
+
+    #[test]
+    fn object_literal_keys_are_strings_or_bytes_and_errors_name_the_key() {
+        assert_eq!(
+            run(
+                r#"root = {this.k.bytes(): 1, "b": deleted(), "c": this.nothing_here}"#,
+                r#"{"k":"a"}"#
+            ),
+            Ok(json!({"a": 1, "c": null}))
+        );
+        assert_eq!(
+            err("root = {this.n: 1}", r#"{"n":5}"#),
+            "failed assignment (line 1): mapping returned invalid key type: number"
+        );
+        let key = err(r#"root = {this.a.uppercase(): 1}"#, r#"{"a":1}"#);
+        assert!(key.contains("failed to resolve key: "), "{key}");
+        let val = err(r#"root = {"k": this.a.uppercase()}"#, r#"{"a":1}"#);
+        assert!(val.contains("failed to resolve 'k' value: "), "{val}");
+    }
+
+    #[test]
+    fn array_literals_drop_deleted_and_nothing_items() {
+        assert_eq!(run("root = [1, deleted(), 2]", "{}"), Ok(json!([1, 2])));
+    }
+
+    #[test]
+    fn variables_and_named_contexts_resolve_or_name_what_is_missing() {
+        assert_eq!(
+            err("root = $nope", "{}"),
+            "failed assignment (line 1): variable 'nope' undefined"
+        );
+        assert_eq!(
+            run("let v = 1\nlet v = deleted()\nroot = $v | 7", "{}"),
+            Ok(json!(7))
+        );
+        assert_eq!(
+            run("root = this.a.(x -> x + 1)", r#"{"a":1}"#),
+            Ok(json!(2))
+        );
+        assert_eq!(
+            run("root = [1,2].map_each(x -> x + 1)", "{}"),
+            Ok(json!([2, 3]))
+        );
+        assert_eq!(
+            run("root = [1,2].map_each(_ -> 5)", "{}"),
+            Ok(json!([5, 5]))
+        );
+        assert_eq!(
+            run(
+                "root = [1].map_each(x -> [5].map_each(_ -> 0).append(x))",
+                "{}"
+            ),
+            Ok(json!([[0, 1]]))
+        );
+    }
+
+    #[test]
+    fn index_reads_strings_bytes_and_arrays_from_either_end_and_refuses_out_of_bounds() {
+        assert_eq!(run(r#"root = "héllo"[1]"#, "{}"), Ok(json!("é")));
+        assert_eq!(run(r#"root = "abc"[-1]"#, "{}"), Ok(json!("c")));
+        assert_eq!(run(r#"root = "abc".bytes()[-3]"#, "{}"), Ok(json!(97)));
+        assert_eq!(run("root = [1,2,3][-1]", "{}"), Ok(json!(3)));
+        assert_eq!(run(r#"root = "abc"[0]"#, "{}"), Ok(json!("a")));
+        assert_eq!(run(r#"root = "abc".bytes()[0]"#, "{}"), Ok(json!(97)));
+        assert_eq!(run("root = [7][0]", "{}"), Ok(json!(7)));
+        for m in [
+            r#"root = "abc"[3]"#,
+            r#"root = "abc"[-4]"#,
+            r#"root = "abc".bytes()[3]"#,
+            r#"root = "abc".bytes()[-4]"#,
+            "root = [1][1]",
+            "root = [1][-2]",
+        ] {
+            let e = err(m, "{}");
+            assert!(e.contains("out of bounds for length"), "{m}: {e}");
+        }
+        let num = err("root = this.n[0]", r#"{"n":5}"#);
+        assert!(
+            num.contains("expected array or string value, got number"),
+            "{num}"
+        );
+        assert!(err(r#"root = [1]["x"]"#, "{}").contains("index: "));
+    }
+
+    #[test]
+    fn slices_take_bounds_from_either_end_and_steps_both_ways() {
+        let cases = [
+            (r#"root = "héllo"[1:3]"#, json!("él")),
+            (r#"root = "abc".bytes()[1:]"#, json!("YmM=")),
+            ("root = [1,2,3,4][:2]", json!([1, 2])),
+            ("root = [1,2,3,4][-2:]", json!([3, 4])),
+            ("root = [1,2,3,4][:-1]", json!([1, 2, 3])),
+            ("root = [1,2,3,4][::2]", json!([1, 3])),
+            ("root = [1,2,3,4][1:10:2]", json!([2, 4])),
+            ("root = [1,2,3,4][::-1]", json!([4, 3, 2, 1])),
+            ("root = [1,2,3,4][10::-2]", json!([4, 2])),
+            ("root = [1,2,3,4][-1:0:-1]", json!([4, 3, 2])),
+            ("root = [1,2,3,4][-1:-3]", json!([])),
+            ("root = [1,2,3,4][5:9]", json!([])),
+            ("root = [1,2,3,4][1:1]", json!([])),
+        ];
+        for (m, want) in cases {
+            assert_eq!(run(m, "{}"), Ok(want), "{m}");
+        }
+        assert!(err("root = [1,2][::0]", "{}").contains("slice step cannot be zero"));
+        assert!(err("root = [1,2][2:1]", "{}")
+            .contains("lower slice bound (2) must be lower than upper (1)"));
+        assert!(err(r#"root = [1,2]["a":]"#, "{}").contains("slice start bound: "));
+        assert!(err(r#"root = [1,2][:"a"]"#, "{}").contains("slice end bound: "));
+        assert!(err(r#"root = [1,2][::"a"]"#, "{}").contains("slice step: "));
+        let num = err("root = this.n[0:1]", r#"{"n":5}"#);
+        assert!(
+            num.contains("expected array or string value, got number"),
+            "{num}"
+        );
+    }
+
+    #[test]
+    fn slice_items_clamps_and_walks_each_direction() {
+        let d = [1, 2, 3, 4, 5];
+        assert_eq!(slice_items(&d, None, None, None), d.to_vec());
+        assert_eq!(slice_items(&d, Some(-2), None, None), vec![4, 5]);
+        assert_eq!(slice_items(&d, Some(9), None, None), Vec::<i32>::new());
+        assert_eq!(slice_items(&d, None, Some(9), None), d.to_vec());
+        assert_eq!(slice_items(&d, Some(4), Some(1), Some(-1)), vec![5, 4, 3]);
+        assert_eq!(slice_items(&d, Some(9), Some(-9), Some(-2)), vec![5, 3, 1]);
+        assert_eq!(slice_items(&d, None, None, Some(-1)), vec![5, 4, 3, 2, 1]);
+        assert_eq!(slice_items(&d, Some(-9), Some(9), Some(3)), vec![1, 4]);
+        assert_eq!(slice_items(&d, Some(1), Some(4), Some(2)), vec![2, 4]);
+        assert_eq!(
+            slice_items::<i32>(&[], None, None, Some(-1)),
+            Vec::<i32>::new()
+        );
+    }
+
+    #[test]
+    fn not_negates_a_bool_and_refuses_another_type() {
+        assert_eq!(run("root = !this.b", r#"{"b":false}"#), Ok(json!(true)));
+        let e = err("root = !this.n", r#"{"n":1}"#);
+        assert!(e.contains("expected bool value, got number"), "{e}");
+    }
+
+    #[test]
+    fn binary_operators_follow_bento() {
+        let cases = [
+            (r#"root = "a" + "b""#, json!("ab")),
+            (r#"root = "a".bytes() + "b""#, json!("ab")),
+            ("root = 1 + 2", json!(3)),
+            ("root = 1 + 2.5", json!(3.5)),
+            ("root = 5 - 2", json!(3)),
+            ("root = 5.5 - 2", json!(3.5)),
+            ("root = 3 * 4", json!(12)),
+            ("root = 1.5 * 2", json!(3)),
+            ("root = 7 / 2", json!(3.5)),
+            ("root = 7 % 3", json!(1)),
+            ("root = 7.9 % 3", json!(1)),
+            ("root = 1 == 1.0", json!(true)),
+            ("root = 1 != 2", json!(true)),
+            ("root = true == 7", json!(true)),
+            ("root = false == 0", json!(true)),
+            ("root = 1 == true", json!(false)),
+            ("root = 1 == \"1\"", json!(false)),
+            (r#"root = "a" == "a".bytes()"#, json!(true)),
+            ("root = null == null", json!(true)),
+            ("root = null == 1", json!(false)),
+            ("root = true == \"x\"", json!(false)),
+            ("root = 1 == null", json!(false)),
+            ("root = [1, 2] == [1, 2]", json!(true)),
+            ("root = [1, 2] == [1]", json!(false)),
+            ("root = [1] == 1", json!(false)),
+            (r#"root = {"a": 1} == {"a": 1}"#, json!(true)),
+            (r#"root = {"a": 1} == {"b": 1}"#, json!(false)),
+            (r#"root = {"a": 1} == 1"#, json!(false)),
+            (r#"root = "b" > "a""#, json!(true)),
+            (r#"root = "b" >= "b""#, json!(true)),
+            (r#"root = "a" < "b""#, json!(true)),
+            (r#"root = "b" <= "a""#, json!(false)),
+            ("root = 2 > 1", json!(true)),
+            ("root = 2 >= 3", json!(false)),
+            ("root = 2 < 1.5", json!(false)),
+            ("root = 2 <= 2", json!(true)),
+            ("root = 2 < 2", json!(false)),
+            (r#"root = "b" < "b""#, json!(false)),
+            ("root = 9007199254740993 == 9007199254740992", json!(false)),
+            ("root = true && false", json!(false)),
+            ("root = false && this.nope.uppercase()", json!(false)),
+            ("root = true && true", json!(true)),
+            ("root = true || this.nope.uppercase()", json!(true)),
+            ("root = false || false", json!(false)),
+            ("root = null | 3", json!(3)),
+            ("root = this.x.uppercase() | 4", json!(4)),
+            ("root = 2 | 4", json!(2)),
+        ];
+        for (m, want) in cases {
+            assert_eq!(run(m, r#"{"x":1}"#), Ok(want), "{m}");
+        }
+        assert_eq!(
+            run("root = this.a == this.b", r#"{"a":[1.0],"b":[1]}"#),
+            Ok(json!(true))
+        );
+        assert!(run("root = this.a == this.b", r#"{"a":1e400,"b":1}"#).is_ok());
+        let errors = [
+            ("root = 1 / 0", "attempted to divide by zero"),
+            ("root = 1 % 0", "attempted to divide by zero"),
+            (r#"root = "a" - 1"#, "cannot subtract types string (from string literal) and number (from number literal)"),
+            (r#"root = 1.5 - "a""#, "cannot subtract types"),
+            (r#"root = "a" * 1.5"#, "cannot multiply types"),
+            (r#"root = "a" + 1"#, "cannot add types"),
+            (r#"root = "a" / 1"#, "cannot divide types"),
+            (r#"root = 1 / "a""#, "cannot divide types"),
+            (r#"root = "a" % 1"#, "cannot modulo types"),
+            (r#"root = 1 % "a""#, "cannot modulo types"),
+            (r#"root = "nan".number() % 3"#, "cannot modulo types"),
+            (r#"root = "a" > 1"#, "cannot compare types"),
+            (r#"root = 1 > "a""#, "cannot compare types"),
+            (r#"root = "x" && true"#, "expected bool value"),
+            (r#"root = true && "x""#, "expected bool value"),
+            (r#"root = "x" || true"#, "expected bool value"),
+            (r#"root = false || "x""#, "expected bool value"),
+            ("root = this.nope.uppercase() && true", "expected"),
+        ];
+        for (m, want) in errors {
+            let e = err(m, "{}");
+            assert!(e.contains(want), "{m}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_pipe_keeps_the_max_stacks_error_of_its_left_side() -> R {
+        let e = Environment::new()
+            .with_max_map_recursion(0)
+            .compile_mapping("map m {\n root = 1\n}\nroot = this.apply(\"m\") | 1")?
+            .execute_bytes(b"{}");
+        assert!(e
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("entering map m exceeded maximum allowed stacks of 0"));
+        // Inside a map the error comes wrapped by its statement, and the pipe falls back.
+        let wrapped = Environment::new()
+            .with_max_map_recursion(1)
+            .compile_mapping("map m2 {\n root = 1\n}\nmap m {\n root = this.apply(\"m2\")\n}\nroot = this.apply(\"m\") | 5")?
+            .execute_bytes(b"{}")?;
+        assert_eq!(wrapped.map(|v| v.to_json_value()), Some(json!(5)));
+        Ok(())
+    }
+
+    #[test]
+    fn named_maps_refuse_an_unknown_name_and_a_lowered_stack_limit() -> R {
+        assert!(err(r#"root = this.apply("missing")"#, "{}").contains("map missing was not found"));
+        let env = Environment::new().with_max_map_recursion(1);
+        let e = env.compile_mapping("map a {\n root = this.apply(\"b\")\n}\nmap b {\n root = 1\n}\nroot = this.apply(\"a\")")?;
+        let msg = e
+            .execute_bytes(b"{}")
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            msg.contains("entering map b exceeded maximum allowed stacks of 1"),
+            "{msg}"
+        );
+        let bad = exec("map a {\n root = 1 / 0\n}\nroot = this.apply(\"a\")").execute_bytes(b"{}");
+        assert!(bad
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("divide by zero"));
+        Ok(())
+    }
+
+    #[test]
+    fn if_expressions_pick_a_branch_and_refuse_a_non_bool_condition() {
+        let m = "root = if this.n == 1 { \"one\" } else if this.n == 2 { \"two\" } else if this.n == null { \"null\" } else { \"many\" }";
+        assert_eq!(run(m, r#"{"n":1}"#), Ok(json!("one")));
+        assert_eq!(run(m, r#"{"n":2}"#), Ok(json!("two")));
+        assert_eq!(run(m, r#"{"n":3}"#), Ok(json!("many")));
+        assert_eq!(
+            run("root.a = if null { 1 } else if null { 2 }", "{}"),
+            Ok(json!(null))
+        );
+        assert_eq!(
+            run("root = if this.n == 1 { 1 }", r#"{"n":2}"#),
+            Ok(json!(null))
+        );
+        let e = err("root = if 5 { 1 }", "{}");
+        assert!(
+            e.contains("resolved to a non-boolean value 5 (number)"),
+            "{e}"
+        );
+        let e = err("root = if false { 1 } else if \"x\" { 2 }", "{}");
+        assert!(
+            e.contains("resolved to a non-boolean value \"x\" (string)"),
+            "{e}"
+        );
+        let e = err("root = if this.a.uppercase() { 1 }", r#"{"a":1}"#);
+        assert!(e.contains("failed to check if condition: "), "{e}");
+        let e = err(
+            "root = if false { 1 } else if this.a.uppercase() { 2 }",
+            r#"{"a":1}"#,
+        );
+        assert!(e.contains("failed to check if condition 1: "), "{e}");
+    }
+
+    #[test]
+    fn match_tries_literals_conditions_and_wildcards_in_order() {
+        let m = "root = match this.v { 1 => \"one\", this > 5 => \"big\", _ => \"other\" }";
+        assert_eq!(run(m, r#"{"v":1}"#), Ok(json!("one")));
+        assert_eq!(run(m, r#"{"v":9}"#), Ok(json!("big")));
+        assert_eq!(run(m, r#"{"v":3}"#), Ok(json!("other")));
+        assert_eq!(
+            run("root = match { this.v == 1 => \"one\" }", r#"{"v":1}"#),
+            Ok(json!("one"))
+        );
+        assert_eq!(
+            run("root = match \"x\" { \"y\" => 1 }", r#"{"a":1}"#),
+            Ok(json!(null))
+        );
+        assert_eq!(run("root = match { _ => 2 }", "not json"), Ok(json!(2)));
+        let e = err("root = match 1 { this.uppercase() => 1 }", "{}");
+        assert!(e.contains("failed to check match case 0: "), "{e}");
+    }
+
+    #[test]
+    fn statements_wrap_errors_with_the_outer_line_and_refuse_non_bool_conditions() {
+        let m = "root = {}\nif this.n > 0 {\n  root.a = 1\n  root.b = 1 / 0\n}";
+        let e = err(m, r#"{"n":1}"#);
+        assert!(e.starts_with("failed assignment (line 2): "), "{e}");
+        assert_eq!(
+            run(
+                "if this.n > 5 {\n root = 1\n} else if null {\n root = 2\n} else {\n root = 3\n}",
+                r#"{"n":1}"#
+            ),
+            Ok(json!(3))
+        );
+        assert_eq!(
+            run("root = 0\nif false {\n root = 1\n}", "{}"),
+            Ok(json!(0))
+        );
+        let e = err("if 3 {\n root = 1\n}", "{}");
+        assert!(
+            e.contains("(line 1): ") && e.contains("resolved to a non-boolean value 3 (number)"),
+            "{e}"
+        );
+        let e = err("if this.a.uppercase() {\n root = 1\n}", r#"{"a":1}"#);
+        assert!(e.contains("failed to check if condition 1: "), "{e}");
+        let e = err(
+            "map m {\n root = 1\n}\nif true {\n root = this.apply(\"m\").apply(\"nope\")\n}",
+            "{}",
+        );
+        assert!(e.contains("map nope was not found"), "{e}");
+    }
+
+    #[test]
+    fn assignments_write_variables_metadata_and_root_paths() -> R {
+        let b = [part("{}")];
+        let e = exec("meta a = 1\nmeta b = 2\nmeta a = deleted()\nroot.m = @\nmeta = {\"c\": 3}\nroot.n = @\nmeta = deleted()\nroot.o = @\nroot.p = @c");
+        let mut meta = BTreeMap::new();
+        let out = e.map_part(0, &b, &mut meta, None)?;
+        assert_eq!(
+            out.map(|v| v.to_json_value()),
+            Some(json!({"m": {"b": 2}, "n": {"c": 3}, "o": {}, "p": null}))
+        );
+        assert!(err("meta = 5", "{}")
+            .contains("setting root meta object requires object value, received: number"));
+        assert_eq!(run("root.a = deleted()", "{}"), Ok(json!({})));
+        assert_eq!(
+            run("root.a = 1\nroot.b = root.a + 1", "{}"),
+            Ok(json!({"a": 1, "b": 2}))
+        );
+        assert_eq!(run("root = deleted()", "{}"), Ok(json!("<deleted>")));
+        assert!(run("root = 1\nroot.a = 2", "{}").is_err());
+        let e = exec("root = @").map_part(0, &b, &mut BTreeMap::new(), Some(Value::Int(1)))?;
+        assert_eq!(e.map(|v| v.to_json_value()), Some(json!({})));
+        Ok(())
+    }
+
+    #[test]
+    fn field_expressions_interpolate_queries_and_report_static_ones() -> R {
+        let env = Environment::new();
+        let mut p = part(r#"{"a":"x"}"#);
+        p.meta.insert("m".into(), Value::String("meta".into()));
+        let b = [p];
+        let f = env.compile_field("id-${! this.a }-${! @m }")?;
+        assert!(!f.is_static());
+        assert_eq!(f.resolve_string(0, &b)?, "id-x-meta");
+        assert_eq!(f.resolve_bytes(0, &b)?, b"id-x-meta");
+        assert!(format!("{f:?}").starts_with("FieldExpression { resolvers: ["));
+        let two = env.compile_field("${! this.a }-${! @m }")?;
+        assert_eq!(two.resolve_bytes(0, &b)?, b"x-meta");
+        let one = env.compile_field("${! this.a }")?;
+        assert_eq!(one.resolve_bytes(0, &b)?, b"x");
+        let fixed = env.compile_field("plain")?;
+        assert!(fixed.is_static());
+        assert_eq!(fixed.resolve_bytes(0, &b)?, b"plain");
+        let bad = env.compile_field("${! this.a.number() }")?;
+        assert!(bad.resolve_bytes(0, &b).is_err());
+        assert!(bad.resolve_string(0, &b).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_named_map_reads_the_input_part_metadata() {
+        let mut p = part("{}");
+        p.meta.insert("k".into(), Value::String("v".into()));
+        let b = [p];
+        let e = exec("map m {\n root.one = @k\n root.all = @\n}\nroot = this.apply(\"m\")");
+        let out = e.map_part(0, &b, &mut BTreeMap::new(), None);
+        assert_eq!(
+            out.ok().flatten().map(|v| v.to_json_value()),
+            Some(json!({"one": "v", "all": {"k": "v"}}))
+        );
+    }
+
+    #[test]
+    fn icompare_reads_the_right_side_as_the_left_sides_type() {
+        assert!(icompare(&Value::Bool(true), &Value::Bool(true)));
+        assert!(!icompare(&Value::Bool(true), &Value::Bool(false)));
+        assert!(!icompare(&Value::Delete, &Value::Delete));
+        assert!(!icompare(&Value::Nothing, &Value::Null));
+        assert!(compare_eq_or_bytes(&Value::Null, &Value::Null));
+        assert_eq!(run("root = [true] == [true]", "{}"), Ok(json!(true)));
+        assert_eq!(
+            run("root = this.a == this.b", r#"{"a":1.10,"b":1.1}"#),
+            Ok(json!(true))
+        );
+        assert_eq!(run("root = this.a > 1", r#"{"a":1.10}"#), Ok(json!(true)));
+    }
+
+    #[test]
+    fn comparisons_with_nan_are_false_and_strings_compare_bytewise() {
+        let nan = r#"root = "nan".number()"#;
+        assert!(run(nan, "{}").is_ok());
+        for m in [
+            "root = (\"nan\".number()) > 1",
+            "root = (\"nan\".number()) >= 1",
+            "root = (\"nan\".number()) < 1",
+            "root = (\"nan\".number()) <= 1",
+        ] {
+            assert_eq!(run(m, "{}"), Ok(json!(false)), "{m}");
+        }
+        assert_eq!(run(r#"root = "é" > "z""#, "{}"), Ok(json!(true)));
+        assert_eq!(run(r#"root = "a".bytes() < "b""#, "{}"), Ok(json!(true)));
+    }
+
+    #[test]
+    fn byte_text_reads_strings_and_bytes_only() {
+        assert_eq!(byte_text(&Value::String("a".into())), b"a");
+        assert_eq!(byte_text(&Value::Bytes(b"b".to_vec())), b"b");
+        assert!(byte_text(&Value::Int(1)).is_empty());
     }
 }
