@@ -4,6 +4,9 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # dataroom-store-memory odata_table: only Catalogues rows lack catalogue_id (every other entity set declares it
+  # required in odata_defs), so `set_name == "Catalogues" || no catalogue_id` and its `&&` admit the same rows (T-7624).
+  'dataroom/store-memory/src/lib\.rs:\d+:\d+: replace \|\| with && in <impl Store for MemoryStore>::odata_table',
   # shako-store-pg trim_log: under the tenant's lock a batch deletes every entry it picked (gone == picked), so `>` only
   # runs one more, empty batch and answers the same count (T-7664).
   'shako/store-pg/src/lib\.rs:\d+:\d+: replace < with > in PgStore::trim_log',

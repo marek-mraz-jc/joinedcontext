@@ -829,6 +829,12 @@ pub async fn twin_catalogues(store: &dyn Store) {
             .upsert_shacl_report(&ctx, shacl_report(&twin.id, "eu", true))
             .await
             .unwrap();
+        store
+            .upsert_profile(&ctx, profile("local", "1.0"))
+            .await
+            .unwrap();
+        store.upsert_page(&ctx, page("about", "sk")).await.unwrap();
+        store.upsert_plugin(&ctx, plugin("map")).await.unwrap();
         ctxs.push((ctx, resource));
     }
     let [(a, resource), (b, _)] = <[_; 2]>::try_from(ctxs).unwrap();
@@ -842,6 +848,34 @@ pub async fn twin_catalogues(store: &dyn Store) {
     assert_eq!(ds.title["sk"], "twin-a");
     let views = store.list_resource_views(&a, &resource).await.unwrap();
     assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-a"]);
+
+    let local = store.list_profiles(&a).await.unwrap();
+    assert_eq!(local.iter().filter(|p| p.id == "local").count(), 1);
+    assert_eq!(store.list_pages(&a).await.unwrap().len(), 1);
+    assert_eq!(store.list_plugins(&a).await.unwrap().len(), 1);
+
+    // Another catalogue's running harvest of the same source holds nothing here; a run started
+    // at the deadline itself is not stale yet.
+    let running = |id: &str, started: &str| {
+        let mut r = harvest_run(id, "hs-x", started);
+        r.state = dataroom_core::HarvestRunState::Running;
+        r.finished_at = None;
+        r
+    };
+    let (started, earlier) = ("2026-11-09T03:00:00Z", ts("2026-11-09T02:00:00Z"));
+    for (ctx, id) in [(&b, "run-b"), (&a, "run-a")] {
+        let claimed = store
+            .claim_harvest_run(ctx, running(id, started), earlier)
+            .await;
+        assert!(claimed.unwrap(), "{id}");
+    }
+    let at_deadline = store
+        .claim_harvest_run(&a, running("run-a2", "2026-11-09T04:00:00Z"), ts(started))
+        .await;
+    assert!(
+        !at_deadline.unwrap(),
+        "run-a started at the deadline still holds"
+    );
 
     store.purge_dataset(&a, "twin").await.unwrap();
     assert!(store
