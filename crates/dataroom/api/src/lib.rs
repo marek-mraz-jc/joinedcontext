@@ -36,7 +36,46 @@ use dataroom_core::{
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_mcp::handle_mcp_jsonrpc;
-use dataroom_rdf::{negotiate_profile, negotiate_rdf_format};
+use dataroom_rdf::negotiate_rdf_format;
+pub use dataroom_rdf::profile::{check as check_profiles, BASE_PROFILE};
+
+/// The profiles an Organization may choose for a catalogue, as the Portal is told of them
+/// (`JC_PORTAL_PROFILES`): the Portal does not link this crate.
+pub fn installed_profiles() -> Vec<serde_json::Value> {
+    dataroom_rdf::DcatProfile::installed()
+        .filter(|profile| profile.selectable)
+        .map(|profile| {
+            let rules = profile.catalogue.as_ref();
+            serde_json::json!({
+                "id": profile.id,
+                "title": profile.title,
+                "country": profile.country,
+                "publisher": rules.is_some_and(|rules| rules.publisher),
+                "publisherIriPrefixes": rules
+                    .map(|rules| rules.publisher_iri_prefixes.clone())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// The installed profile `id` pinned at the release this build ships.
+pub fn installed_pin(id: &str) -> Option<dataroom_core::ProfilePin> {
+    dataroom_rdf::DcatProfile::by_id(id).map(|profile| dataroom_core::ProfilePin {
+        profile_id: profile.id.clone(),
+        version: profile.version.clone(),
+    })
+}
+
+/// The id of the installed profile a manifest names by id, URI or alias.
+pub fn installed_id(name: &str) -> Option<String> {
+    dataroom_rdf::DcatProfile::from_token(name).map(|profile| profile.id.clone())
+}
+
+/// Whether the feed of installed profile `id` needs the catalogue's publisher IRI.
+pub fn requires_publisher(id: &str) -> bool {
+    dataroom_rdf::DcatProfile::by_id(id).is_some_and(dataroom_rdf::DcatProfile::requires_publisher)
+}
 use dataroom_search::search_datasets;
 use dataroom_shacl::ProfileRegistry;
 use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};
@@ -72,7 +111,7 @@ impl std::fmt::Debug for TokenBinding {
 }
 
 /// The principal the Portal's CKAN publisher acts as (PORTAL-CALLS.md).
-pub const PORTAL_PUBLISHER: &str = "portal-ckan";
+pub use dataroom_core::auth::PORTAL_PUBLISHER;
 
 /// The shortest Portal publisher token accepted: a guessable token would let anyone publish.
 pub const MIN_PORTAL_TOKEN_LEN: usize = 32;
@@ -638,12 +677,8 @@ pub fn router(state: DataroomState) -> Router {
         .route("/catalog.xml", get(feeds::handle_catalog_rdf))
         .route("/catalog.nt", get(feeds::handle_catalog_nt))
         .route(
-            "/profiles/{profile}/catalog.ttl",
-            get(feeds::handle_profile_catalog_ttl),
-        )
-        .route(
-            "/profiles/{profile}/catalog.jsonld",
-            get(feeds::handle_profile_catalog_jsonld),
+            "/profiles/{profile}/{file}",
+            get(feeds::handle_profile_catalog),
         )
         .route(
             "/publisher/{publisher}/catalog.ttl",
@@ -1956,14 +1991,40 @@ async fn dispatch_ui_route(
             if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {
                 let accept_profile = headers.get("Accept-Profile").and_then(|v| v.to_str().ok());
                 let q_prof = q_params.get("_profile").map(String::as_str);
-                let (prof_kind, prof_uri) =
-                    negotiate_profile(q_prof, accept_profile, &cat.main_profile);
+                let selected =
+                    match feeds::select_profile(&state, &ctx, &cat, q_prof, accept_profile).await {
+                        Ok(selected) => selected,
+                        Err(e) => return problem_response(e),
+                    };
+                if q_prof.is_some() && !selected.stack.renderer.is_base() {
+                    let checked = tokio::task::spawn_blocking({
+                        let (state, cat, ds) = (state.clone(), cat.clone(), ds.clone());
+                        let (publisher, stack) = (pub_rec.clone(), selected.stack.clone());
+                        move || feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack)
+                    });
+                    let missing = match checked.await {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            return problem_response(DataroomError::Storage(format!(
+                                "feed conformance: {e}"
+                            )))
+                        }
+                    };
+                    if !missing.is_empty() {
+                        return problem_response(DataroomError::NotFound(format!(
+                            "dataset '{ds_name}' is not in the {} feed; missing or not valid: {}",
+                            selected.stack.record.id,
+                            missing.join(", ")
+                        )));
+                    }
+                }
+                let prof_uri = selected.uri();
                 let body = dataroom_rdf::serialize_dataset(
                     &ds,
                     &cat,
                     pub_rec.as_ref(),
                     rdf_fmt,
-                    prof_kind,
+                    selected.stack.renderer,
                 );
                 return (
                     StatusCode::OK,

@@ -56,8 +56,34 @@ pub trait SourceDesk: Send + Sync {
     fn start<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, ()>;
     /// The last runs of `source`, newest first, at most 50.
     fn runs<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, Vec<Value>>;
-    /// Every dataset of the portal's catalogue, by name.
-    fn datasets<'a>(&'a self, portal: &'a PortalSpec) -> DeskFuture<'a, Vec<DeskDataset>>;
+    /// `limit` datasets of the portal's catalogue from `offset`, by name, with what keeps each
+    /// out of which feed.
+    fn datasets<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        offset: usize,
+        limit: usize,
+    ) -> DeskFuture<'a, DeskCatalogue>;
+}
+
+/// A page of a portal's catalogue, as the desk reads it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeskCatalogue {
+    pub total: usize,
+    /// The profiles with no feed until the Organization declares a publisher (T-7520).
+    pub missing_publisher: Vec<String>,
+    /// The profiles served beside EU DCAT-AP.
+    pub profiles: Vec<String>,
+    pub datasets: Vec<DeskDataset>,
+}
+
+/// A profile whose feed a dataset is absent from, and the fields that keep it out.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+pub struct FeedGap {
+    /// The profile, e.g. `dcat-ap-sk-2.0`.
+    pub profile: String,
+    /// What is missing or not valid, e.g. `personal_data`.
+    pub fields: Vec<String>,
 }
 
 /// One dataset of a portal's catalogue, as the desk reads it.
@@ -67,6 +93,7 @@ pub struct DeskDataset {
     pub title: String,
     /// The harvest source that wrote it; `None` for an Endpoint listed in it.
     pub source: Option<String>,
+    pub missing: Vec<FeedGap>,
 }
 
 static DESK: RwLock<Option<Arc<dyn SourceDesk>>> = RwLock::new(None);
@@ -377,12 +404,20 @@ pub struct PortalDataset {
     pub source: String,
     /// Whether `spec.hidden` of the portal names it.
     pub hidden: bool,
+    /// The feeds it is absent from, with the fields that keep it out (T-7520).
+    pub missing: Vec<FeedGap>,
 }
 
 /// A page of a portal's datasets, by name.
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PortalDatasets {
     pub total: usize,
+    /// The chosen profiles with no feed until the Organization declares a publisher IRI.
+    pub missing_publisher: Vec<String>,
+    /// The profiles the catalogue serves beside EU DCAT-AP: what a Portal that states no choice
+    /// keeps (T-7521).
+    pub profiles: Vec<String>,
     pub items: Vec<PortalDataset>,
 }
 
@@ -419,23 +454,27 @@ pub async fn list_portal_datasets(
             "limit must be 1 to 200, e.g. 50; got {limit}"
         )));
     }
-    let all = desk()?
-        .datasets(&spec)
+    let page = desk()?
+        .datasets(&spec, page.offset, limit)
         .await
         .map_err(|e| desk_error(e, "datasets"))?;
-    let total = all.len();
-    let items = all
+    let items = page
+        .datasets
         .into_iter()
-        .skip(page.offset)
-        .take(limit)
         .map(|d| PortalDataset {
             hidden: spec.hidden.contains(&d.name),
             source: d.source.unwrap_or_else(|| "endpoints".into()),
             name: d.name,
             title: d.title,
+            missing: d.missing,
         })
         .collect();
-    Ok(Json(PortalDatasets { total, items }))
+    Ok(Json(PortalDatasets {
+        total: page.total,
+        missing_publisher: page.missing_publisher,
+        profiles: page.profiles,
+        items,
+    }))
 }
 
 pub fn router() -> Router<AppState> {

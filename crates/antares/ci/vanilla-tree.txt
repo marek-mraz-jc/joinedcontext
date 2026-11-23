@@ -940,37 +940,35 @@ antares-broker v0.3.0
 │   │   │       │       ├── jiff feature "tzdb-bundle-always" (*)
 │   │   │       │       ├── serde feature "default" (*)
 │   │   │       │       └── sqlx feature "postgres"
-│   │   │       │           ├── sqlx v0.9.0
+│   │   │       │           ├── sqlx v0.9.1
 │   │   │       │           │   ├── sqlx-core feature "default"
-│   │   │       │           │   │   └── sqlx-core v0.9.0
+│   │   │       │           │   │   └── sqlx-core v0.9.1
 │   │   │       │           │   │       ├── futures-core v0.3.34
 │   │   │       │           │   │       ├── log v0.4.33
 │   │   │       │           │   │       ├── memchr v2.8.3
-│   │   │       │           │   │       ├── sha2 v0.10.9
+│   │   │       │           │   │       ├── sha2 v0.11.0
 │   │   │       │           │   │       │   ├── cfg-if feature "default" (*)
 │   │   │       │           │   │       │   ├── cpufeatures feature "default"
-│   │   │       │           │   │       │   │   └── cpufeatures v0.2.17
+│   │   │       │           │   │       │   │   └── cpufeatures v0.3.0
 │   │   │       │           │   │       │   └── digest feature "default"
-│   │   │       │           │   │       │       ├── digest v0.10.7
+│   │   │       │           │   │       │       ├── digest v0.11.3
 │   │   │       │           │   │       │       │   ├── block-buffer feature "default"
-│   │   │       │           │   │       │       │   │   └── block-buffer v0.10.4
-│   │   │       │           │   │       │       │   │       └── generic-array feature "default"
-│   │   │       │           │   │       │       │   │           └── generic-array v0.14.9
+│   │   │       │           │   │       │       │   │   └── block-buffer v0.12.1
+│   │   │       │           │   │       │       │   │       └── hybrid-array feature "default"
+│   │   │       │           │   │       │       │   │           └── hybrid-array v0.4.14
+│   │   │       │           │   │       │       │   │               ├── typenum feature "const-generics"
+│   │   │       │           │   │       │       │   │               │   └── typenum v1.20.1
 │   │   │       │           │   │       │       │   │               └── typenum feature "default"
 │   │   │       │           │   │       │       │   │                   └── typenum v1.20.1
-│   │   │       │           │   │       │       │   │               [build-dependencies]
-│   │   │       │           │   │       │       │   │               └── version_check feature "default"
-│   │   │       │           │   │       │       │   │                   └── version_check v0.9.5
-│   │   │       │           │   │       │       │   └── crypto-common feature "default"
-│   │   │       │           │   │       │       │       └── crypto-common v0.1.6
-│   │   │       │           │   │       │       │           ├── generic-array feature "default" (*)
-│   │   │       │           │   │       │       │           ├── generic-array feature "more_lengths"
-│   │   │       │           │   │       │       │           │   └── generic-array v0.14.9 (*)
-│   │   │       │           │   │       │       │           └── typenum feature "default" (*)
-│   │   │       │           │   │       │       └── digest feature "core-api"
-│   │   │       │           │   │       │           ├── digest v0.10.7 (*)
-│   │   │       │           │   │       │           └── digest feature "block-buffer"
-│   │   │       │           │   │       │               └── digest v0.10.7 (*)
+│   │   │       │           │   │       │       │   ├── crypto-common feature "default"
+│   │   │       │           │   │       │       │   │   └── crypto-common v0.2.2
+│   │   │       │           │   │       │       │   │       └── hybrid-array feature "default" (*)
+│   │   │       │           │   │       │       │   └── ctutils feature "default"
+│   │   │       │           │   │       │       │       └── ctutils v0.4.5
+│   │   │       │           │   │       │       │           └── cmov feature "default"
+│   │   │       │           │   │       │       │               └── cmov v0.5.4
+│   │   │       │           │   │       │       └── digest feature "block-api"
+│   │   │       │           │   │       │           └── digest v0.11.3 (*)
 │   │   │       │           │   │       ├── cfg-if feature "default" (*)
 │   │   │       │           │   │       ├── smallvec feature "default" (*)
 │   │   │       │           │   │       ├── serde feature "default" (*)
@@ -1079,47 +1077,46 @@ antares-broker v0.3.0
 │   │   │       │           │   │           └── webpki-roots v1.0.10
 │   │   │       │           │   │               └── rustls-pki-types v1.15.1 (*)
 │   │   │       │           │   ├── sqlx-core feature "migrate"
-│   │   │       │           │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │   ├── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │   ├── sqlx-core feature "crc"
-│   │   │       │           │   │   │   └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │   │   └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │   └── sqlx-core feature "sha2"
-│   │   │       │           │   │       └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │       └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   ├── sqlx-macros feature "default"
-│   │   │       │           │   │   └── sqlx-macros v0.9.0 (proc-macro)
+│   │   │       │           │   │   └── sqlx-macros v0.9.1 (proc-macro)
 │   │   │       │           │   │       ├── proc-macro2 v1.0.107 (*)
 │   │   │       │           │   │       ├── quote v1.0.47 (*)
 │   │   │       │           │   │       ├── syn feature "parsing" (*)
 │   │   │       │           │   │       ├── syn feature "proc-macro" (*)
 │   │   │       │           │   │       ├── sqlx-core feature "any"
-│   │   │       │           │   │       │   └── sqlx-core v0.9.0
+│   │   │       │           │   │       │   └── sqlx-core v0.9.1
 │   │   │       │           │   │       │       ├── futures-core v0.3.34
 │   │   │       │           │   │       │       ├── log v0.4.33
 │   │   │       │           │   │       │       ├── memchr v2.8.3
-│   │   │       │           │   │       │       ├── sha2 v0.10.9
+│   │   │       │           │   │       │       ├── sha2 v0.11.0
 │   │   │       │           │   │       │       │   ├── cfg-if feature "default"
 │   │   │       │           │   │       │       │   │   └── cfg-if v1.0.4
 │   │   │       │           │   │       │       │   ├── cpufeatures feature "default"
-│   │   │       │           │   │       │       │   │   └── cpufeatures v0.2.17
+│   │   │       │           │   │       │       │   │   └── cpufeatures v0.3.0
 │   │   │       │           │   │       │       │   └── digest feature "default"
-│   │   │       │           │   │       │       │       ├── digest v0.10.7
+│   │   │       │           │   │       │       │       ├── digest v0.11.3
 │   │   │       │           │   │       │       │       │   ├── block-buffer feature "default"
-│   │   │       │           │   │       │       │       │   │   └── block-buffer v0.10.4
-│   │   │       │           │   │       │       │       │   │       └── generic-array feature "default"
-│   │   │       │           │   │       │       │       │   │           └── generic-array v0.14.9
+│   │   │       │           │   │       │       │       │   │   └── block-buffer v0.12.1
+│   │   │       │           │   │       │       │       │   │       └── hybrid-array feature "default"
+│   │   │       │           │   │       │       │       │   │           └── hybrid-array v0.4.14
+│   │   │       │           │   │       │       │       │   │               ├── typenum feature "const-generics"
+│   │   │       │           │   │       │       │       │   │               │   └── typenum v1.20.1
 │   │   │       │           │   │       │       │       │   │               └── typenum feature "default"
 │   │   │       │           │   │       │       │       │   │                   └── typenum v1.20.1
-│   │   │       │           │   │       │       │       │   │               [build-dependencies]
-│   │   │       │           │   │       │       │       │   │               └── version_check feature "default" (*)
-│   │   │       │           │   │       │       │       │   └── crypto-common feature "default"
-│   │   │       │           │   │       │       │       │       └── crypto-common v0.1.6
-│   │   │       │           │   │       │       │       │           ├── generic-array feature "default" (*)
-│   │   │       │           │   │       │       │       │           ├── generic-array feature "more_lengths"
-│   │   │       │           │   │       │       │       │           │   └── generic-array v0.14.9 (*)
-│   │   │       │           │   │       │       │       │           └── typenum feature "default" (*)
-│   │   │       │           │   │       │       │       └── digest feature "core-api"
-│   │   │       │           │   │       │       │           ├── digest v0.10.7 (*)
-│   │   │       │           │   │       │       │           └── digest feature "block-buffer"
-│   │   │       │           │   │       │       │               └── digest v0.10.7 (*)
+│   │   │       │           │   │       │       │       │   ├── crypto-common feature "default"
+│   │   │       │           │   │       │       │       │   │   └── crypto-common v0.2.2
+│   │   │       │           │   │       │       │       │   │       └── hybrid-array feature "default" (*)
+│   │   │       │           │   │       │       │       │   └── ctutils feature "default"
+│   │   │       │           │   │       │       │       │       └── ctutils v0.4.5
+│   │   │       │           │   │       │       │       │           └── cmov feature "default"
+│   │   │       │           │   │       │       │       │               └── cmov v0.5.4
+│   │   │       │           │   │       │       │       └── digest feature "block-api"
+│   │   │       │           │   │       │       │           └── digest v0.11.3 (*)
 │   │   │       │           │   │       │       ├── base64 feature "alloc"
 │   │   │       │           │   │       │       │   └── base64 v0.22.1
 │   │   │       │           │   │       │       ├── bytes feature "default"
@@ -1527,12 +1524,13 @@ antares-broker v0.3.0
 │   │   │       │           │   │       │           └── webpki-roots v1.0.10
 │   │   │       │           │   │       │               └── rustls-pki-types v1.15.1 (*)
 │   │   │       │           │   │       ├── sqlx-core feature "default"
-│   │   │       │           │   │       │   └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │       │   └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │       └── sqlx-macros-core feature "default"
-│   │   │       │           │   │           └── sqlx-macros-core v0.9.0
+│   │   │       │           │   │           └── sqlx-macros-core v0.9.1
 │   │   │       │           │   │               ├── dotenvy v0.15.7
 │   │   │       │           │   │               ├── proc-macro2 v1.0.107 (*)
 │   │   │       │           │   │               ├── quote v1.0.47 (*)
+│   │   │       │           │   │               ├── sha2 v0.11.0 (*)
 │   │   │       │           │   │               ├── syn feature "clone-impls" (*)
 │   │   │       │           │   │               ├── syn feature "derive" (*)
 │   │   │       │           │   │               ├── syn feature "full" (*)
@@ -1540,9 +1538,9 @@ antares-broker v0.3.0
 │   │   │       │           │   │               ├── syn feature "printing" (*)
 │   │   │       │           │   │               ├── sqlx-core feature "default" (*)
 │   │   │       │           │   │               ├── sqlx-core feature "offline"
-│   │   │       │           │   │               │   ├── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │               │   ├── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │               │   ├── sqlx-core feature "serde"
-│   │   │       │           │   │               │   │   └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │               │   │   └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │               │   └── either feature "serde"
 │   │   │       │           │   │               │       └── either v1.17.0 (*)
 │   │   │       │           │   │               ├── cfg-if feature "default" (*)
@@ -1550,16 +1548,6 @@ antares-broker v0.3.0
 │   │   │       │           │   │               ├── serde feature "default" (*)
 │   │   │       │           │   │               ├── serde feature "derive" (*)
 │   │   │       │           │   │               ├── serde_json feature "default" (*)
-│   │   │       │           │   │               ├── sha2 feature "default"
-│   │   │       │           │   │               │   ├── sha2 v0.10.9 (*)
-│   │   │       │           │   │               │   └── sha2 feature "std"
-│   │   │       │           │   │               │       ├── sha2 v0.10.9 (*)
-│   │   │       │           │   │               │       └── digest feature "std"
-│   │   │       │           │   │               │           ├── digest v0.10.7 (*)
-│   │   │       │           │   │               │           ├── digest feature "alloc"
-│   │   │       │           │   │               │           │   └── digest v0.10.7 (*)
-│   │   │       │           │   │               │           └── crypto-common feature "std"
-│   │   │       │           │   │               │               └── crypto-common v0.1.6 (*)
 │   │   │       │           │   │               ├── thiserror feature "std" (*)
 │   │   │       │           │   │               ├── tokio feature "fs" (*)
 │   │   │       │           │   │               ├── tokio feature "io-util" (*)
@@ -1577,41 +1565,19 @@ antares-broker v0.3.0
 │   │   │       │           │   │               │       └── hex feature "alloc"
 │   │   │       │           │   │               │           └── hex v0.4.3
 │   │   │       │           │   │               ├── sqlx-postgres feature "default"
-│   │   │       │           │   │               │   └── sqlx-postgres v0.9.0
+│   │   │       │           │   │               │   └── sqlx-postgres v0.9.1
 │   │   │       │           │   │               │       ├── bitflags v2.13.1
 │   │   │       │           │   │               │       ├── dotenvy v0.15.7
 │   │   │       │           │   │               │       ├── futures-core v0.3.34
 │   │   │       │           │   │               │       ├── hmac v0.13.0
-│   │   │       │           │   │               │       │   ├── digest feature "default"
-│   │   │       │           │   │               │       │   │   ├── digest v0.11.3
-│   │   │       │           │   │               │       │   │   │   ├── block-buffer feature "default"
-│   │   │       │           │   │               │       │   │   │   │   └── block-buffer v0.12.1
-│   │   │       │           │   │               │       │   │   │   │       └── hybrid-array feature "default"
-│   │   │       │           │   │               │       │   │   │   │           └── hybrid-array v0.4.14
-│   │   │       │           │   │               │       │   │   │   │               ├── typenum feature "const-generics"
-│   │   │       │           │   │               │       │   │   │   │               │   └── typenum v1.20.1
-│   │   │       │           │   │               │       │   │   │   │               └── typenum feature "default" (*)
-│   │   │       │           │   │               │       │   │   │   ├── crypto-common feature "default"
-│   │   │       │           │   │               │       │   │   │   │   └── crypto-common v0.2.2
-│   │   │       │           │   │               │       │   │   │   │       └── hybrid-array feature "default" (*)
-│   │   │       │           │   │               │       │   │   │   └── ctutils feature "default"
-│   │   │       │           │   │               │       │   │   │       └── ctutils v0.4.5
-│   │   │       │           │   │               │       │   │   │           └── cmov feature "default"
-│   │   │       │           │   │               │       │   │   │               └── cmov v0.5.4
-│   │   │       │           │   │               │       │   │   └── digest feature "block-api"
-│   │   │       │           │   │               │       │   │       └── digest v0.11.3 (*)
+│   │   │       │           │   │               │       │   ├── digest feature "default" (*)
 │   │   │       │           │   │               │       │   └── digest feature "mac"
 │   │   │       │           │   │               │       │       └── digest v0.11.3 (*)
 │   │   │       │           │   │               │       ├── md-5 v0.11.0
 │   │   │       │           │   │               │       │   ├── cfg-if feature "default" (*)
 │   │   │       │           │   │               │       │   └── digest feature "default" (*)
 │   │   │       │           │   │               │       ├── memchr v2.8.3
-│   │   │       │           │   │               │       ├── sha2 v0.11.0
-│   │   │       │           │   │               │       │   ├── cfg-if feature "default" (*)
-│   │   │       │           │   │               │       │   ├── digest feature "default" (*)
-│   │   │       │           │   │               │       │   └── cpufeatures feature "default"
-│   │   │       │           │   │               │       │       └── cpufeatures v0.3.0
-│   │   │       │           │   │               │       ├── whoami v2.1.2
+│   │   │       │           │   │               │       ├── sha2 v0.11.0 (*)
 │   │   │       │           │   │               │       ├── sqlx-core feature "default" (*)
 │   │   │       │           │   │               │       ├── base64 feature "alloc" (*)
 │   │   │       │           │   │               │       ├── crc feature "default" (*)
@@ -1687,88 +1653,70 @@ antares-broker v0.3.0
 │   │   │       │           │   │               │       │       │   └── rand v0.10.2 (*)
 │   │   │       │           │   │               │       │       └── getrandom feature "sys_rng"
 │   │   │       │           │   │               │       │           └── getrandom v0.4.3 (*)
-│   │   │       │           │   │               │       └── stringprep feature "default"
-│   │   │       │           │   │               │           └── stringprep v0.1.5
-│   │   │       │           │   │               │               ├── unicode-bidi feature "default"
-│   │   │       │           │   │               │               │   ├── unicode-bidi v0.3.18
-│   │   │       │           │   │               │               │   ├── unicode-bidi feature "hardcoded-data"
-│   │   │       │           │   │               │               │   │   └── unicode-bidi v0.3.18
-│   │   │       │           │   │               │               │   └── unicode-bidi feature "std"
-│   │   │       │           │   │               │               │       └── unicode-bidi v0.3.18
-│   │   │       │           │   │               │               ├── unicode-normalization feature "default"
-│   │   │       │           │   │               │               │   ├── unicode-normalization v0.1.25
-│   │   │       │           │   │               │               │   │   ├── tinyvec feature "alloc"
-│   │   │       │           │   │               │               │   │   │   ├── tinyvec v1.12.0
-│   │   │       │           │   │               │               │   │   │   │   └── tinyvec_macros feature "default"
-│   │   │       │           │   │               │               │   │   │   │       └── tinyvec_macros v0.1.1
-│   │   │       │           │   │               │               │   │   │   └── tinyvec feature "tinyvec_macros"
-│   │   │       │           │   │               │               │   │   │       └── tinyvec v1.12.0 (*)
-│   │   │       │           │   │               │               │   │   └── tinyvec feature "default"
-│   │   │       │           │   │               │               │   │       └── tinyvec v1.12.0 (*)
-│   │   │       │           │   │               │               │   └── unicode-normalization feature "std"
-│   │   │       │           │   │               │               │       └── unicode-normalization v0.1.25 (*)
-│   │   │       │           │   │               │               └── unicode-properties feature "default"
-│   │   │       │           │   │               │                   ├── unicode-properties v0.1.4
-│   │   │       │           │   │               │                   ├── unicode-properties feature "emoji"
-│   │   │       │           │   │               │                   │   └── unicode-properties v0.1.4
-│   │   │       │           │   │               │                   └── unicode-properties feature "general-category"
-│   │   │       │           │   │               │                       └── unicode-properties v0.1.4
+│   │   │       │           │   │               │       ├── stringprep feature "default"
+│   │   │       │           │   │               │       │   └── stringprep v0.1.5
+│   │   │       │           │   │               │       │       ├── unicode-bidi feature "default"
+│   │   │       │           │   │               │       │       │   ├── unicode-bidi v0.3.18
+│   │   │       │           │   │               │       │       │   ├── unicode-bidi feature "hardcoded-data"
+│   │   │       │           │   │               │       │       │   │   └── unicode-bidi v0.3.18
+│   │   │       │           │   │               │       │       │   └── unicode-bidi feature "std"
+│   │   │       │           │   │               │       │       │       └── unicode-bidi v0.3.18
+│   │   │       │           │   │               │       │       ├── unicode-normalization feature "default"
+│   │   │       │           │   │               │       │       │   ├── unicode-normalization v0.1.25
+│   │   │       │           │   │               │       │       │   │   ├── tinyvec feature "alloc"
+│   │   │       │           │   │               │       │       │   │   │   ├── tinyvec v1.12.0
+│   │   │       │           │   │               │       │       │   │   │   │   └── tinyvec_macros feature "default"
+│   │   │       │           │   │               │       │       │   │   │   │       └── tinyvec_macros v0.1.1
+│   │   │       │           │   │               │       │       │   │   │   └── tinyvec feature "tinyvec_macros"
+│   │   │       │           │   │               │       │       │   │   │       └── tinyvec v1.12.0 (*)
+│   │   │       │           │   │               │       │       │   │   └── tinyvec feature "default"
+│   │   │       │           │   │               │       │       │   │       └── tinyvec v1.12.0 (*)
+│   │   │       │           │   │               │       │       │   └── unicode-normalization feature "std"
+│   │   │       │           │   │               │       │       │       └── unicode-normalization v0.1.25 (*)
+│   │   │       │           │   │               │       │       └── unicode-properties feature "default"
+│   │   │       │           │   │               │       │           ├── unicode-properties v0.1.4
+│   │   │       │           │   │               │       │           ├── unicode-properties feature "emoji"
+│   │   │       │           │   │               │       │           │   └── unicode-properties v0.1.4
+│   │   │       │           │   │               │       │           └── unicode-properties feature "general-category"
+│   │   │       │           │   │               │       │               └── unicode-properties v0.1.4
+│   │   │       │           │   │               │       └── whoami feature "std"
+│   │   │       │           │   │               │           ├── whoami v2.1.2
+│   │   │       │           │   │               │           │   └── libc v0.2.189
+│   │   │       │           │   │               │           └── libc feature "std" (*)
 │   │   │       │           │   │               ├── sqlx-postgres feature "migrate"
-│   │   │       │           │   │               │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │       │           │   │               │   ├── sqlx-postgres v0.9.1 (*)
 │   │   │       │           │   │               │   └── sqlx-core feature "migrate"
-│   │   │       │           │   │               │       ├── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │               │       ├── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │               │       ├── sqlx-core feature "crc"
-│   │   │       │           │   │               │       │   └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │               │       │   └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │               │       └── sqlx-core feature "sha2"
-│   │   │       │           │   │               │           └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │               │           └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │               └── sqlx-postgres feature "offline"
-│   │   │       │           │   │                   ├── sqlx-postgres v0.9.0 (*)
+│   │   │       │           │   │                   ├── sqlx-postgres v0.9.1 (*)
 │   │   │       │           │   │                   ├── sqlx-core feature "offline" (*)
 │   │   │       │           │   │                   ├── smallvec feature "serde"
 │   │   │       │           │   │                   │   └── smallvec v1.15.2 (*)
 │   │   │       │           │   │                   └── sqlx-postgres feature "json"
-│   │   │       │           │   │                       ├── sqlx-postgres v0.9.0 (*)
+│   │   │       │           │   │                       ├── sqlx-postgres v0.9.1 (*)
 │   │   │       │           │   │                       └── sqlx-core feature "json"
-│   │   │       │           │   │                           ├── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │                           ├── sqlx-core v0.9.1 (*)
 │   │   │       │           │   │                           ├── sqlx-core feature "serde" (*)
 │   │   │       │           │   │                           └── sqlx-core feature "serde_json"
-│   │   │       │           │   │                               └── sqlx-core v0.9.0 (*)
+│   │   │       │           │   │                               └── sqlx-core v0.9.1 (*)
 │   │   │       │           │   └── sqlx-postgres feature "default"
-│   │   │       │           │       └── sqlx-postgres v0.9.0
+│   │   │       │           │       └── sqlx-postgres v0.9.1
 │   │   │       │           │           ├── bitflags v2.13.1
 │   │   │       │           │           ├── dotenvy v0.15.7
 │   │   │       │           │           ├── futures-core v0.3.34
 │   │   │       │           │           ├── hmac v0.13.0
-│   │   │       │           │           │   ├── digest feature "default"
-│   │   │       │           │           │   │   ├── digest v0.11.3
-│   │   │       │           │           │   │   │   ├── block-buffer feature "default"
-│   │   │       │           │           │   │   │   │   └── block-buffer v0.12.1
-│   │   │       │           │           │   │   │   │       └── hybrid-array feature "default"
-│   │   │       │           │           │   │   │   │           └── hybrid-array v0.4.14
-│   │   │       │           │           │   │   │   │               ├── typenum feature "const-generics"
-│   │   │       │           │           │   │   │   │               │   └── typenum v1.20.1
-│   │   │       │           │           │   │   │   │               └── typenum feature "default" (*)
-│   │   │       │           │           │   │   │   ├── crypto-common feature "default"
-│   │   │       │           │           │   │   │   │   └── crypto-common v0.2.2
-│   │   │       │           │           │   │   │   │       └── hybrid-array feature "default" (*)
-│   │   │       │           │           │   │   │   └── ctutils feature "default"
-│   │   │       │           │           │   │   │       └── ctutils v0.4.5
-│   │   │       │           │           │   │   │           └── cmov feature "default"
-│   │   │       │           │           │   │   │               └── cmov v0.5.4
-│   │   │       │           │           │   │   └── digest feature "block-api"
-│   │   │       │           │           │   │       └── digest v0.11.3 (*)
+│   │   │       │           │           │   ├── digest feature "default" (*)
 │   │   │       │           │           │   └── digest feature "mac"
 │   │   │       │           │           │       └── digest v0.11.3 (*)
 │   │   │       │           │           ├── md-5 v0.11.0
 │   │   │       │           │           │   ├── cfg-if feature "default" (*)
 │   │   │       │           │           │   └── digest feature "default" (*)
 │   │   │       │           │           ├── memchr v2.8.3
-│   │   │       │           │           ├── sha2 v0.11.0
-│   │   │       │           │           │   ├── cfg-if feature "default" (*)
-│   │   │       │           │           │   ├── digest feature "default" (*)
-│   │   │       │           │           │   └── cpufeatures feature "default"
-│   │   │       │           │           │       └── cpufeatures v0.3.0
-│   │   │       │           │           ├── whoami v2.1.2
+│   │   │       │           │           ├── sha2 v0.11.0 (*)
 │   │   │       │           │           ├── smallvec feature "default" (*)
 │   │   │       │           │           ├── serde feature "default" (*)
 │   │   │       │           │           ├── serde feature "derive" (*)
@@ -1840,41 +1788,45 @@ antares-broker v0.3.0
 │   │   │       │           │           │       │   └── getrandom v0.4.3 (*)
 │   │   │       │           │           │       └── rand feature "getrandom"
 │   │   │       │           │           │           └── rand v0.10.2 (*)
-│   │   │       │           │           └── stringprep feature "default"
-│   │   │       │           │               └── stringprep v0.1.5
-│   │   │       │           │                   ├── unicode-bidi feature "default"
-│   │   │       │           │                   │   ├── unicode-bidi v0.3.18
-│   │   │       │           │                   │   ├── unicode-bidi feature "hardcoded-data"
-│   │   │       │           │                   │   │   └── unicode-bidi v0.3.18
-│   │   │       │           │                   │   └── unicode-bidi feature "std"
-│   │   │       │           │                   │       └── unicode-bidi v0.3.18
-│   │   │       │           │                   ├── unicode-normalization feature "default"
-│   │   │       │           │                   │   ├── unicode-normalization v0.1.25
-│   │   │       │           │                   │   │   ├── tinyvec feature "alloc"
-│   │   │       │           │                   │   │   │   ├── tinyvec v1.12.0
-│   │   │       │           │                   │   │   │   │   ├── serde_core v1.0.229
-│   │   │       │           │                   │   │   │   │   └── tinyvec_macros feature "default"
-│   │   │       │           │                   │   │   │   │       └── tinyvec_macros v0.1.1
-│   │   │       │           │                   │   │   │   └── tinyvec feature "tinyvec_macros"
-│   │   │       │           │                   │   │   │       └── tinyvec v1.12.0 (*)
-│   │   │       │           │                   │   │   └── tinyvec feature "default"
-│   │   │       │           │                   │   │       └── tinyvec v1.12.0 (*)
-│   │   │       │           │                   │   └── unicode-normalization feature "std"
-│   │   │       │           │                   │       └── unicode-normalization v0.1.25 (*)
-│   │   │       │           │                   └── unicode-properties feature "default"
-│   │   │       │           │                       ├── unicode-properties v0.1.4
-│   │   │       │           │                       ├── unicode-properties feature "emoji"
-│   │   │       │           │                       │   └── unicode-properties v0.1.4
-│   │   │       │           │                       └── unicode-properties feature "general-category"
-│   │   │       │           │                           └── unicode-properties v0.1.4
+│   │   │       │           │           ├── stringprep feature "default"
+│   │   │       │           │           │   └── stringprep v0.1.5
+│   │   │       │           │           │       ├── unicode-bidi feature "default"
+│   │   │       │           │           │       │   ├── unicode-bidi v0.3.18
+│   │   │       │           │           │       │   ├── unicode-bidi feature "hardcoded-data"
+│   │   │       │           │           │       │   │   └── unicode-bidi v0.3.18
+│   │   │       │           │           │       │   └── unicode-bidi feature "std"
+│   │   │       │           │           │       │       └── unicode-bidi v0.3.18
+│   │   │       │           │           │       ├── unicode-normalization feature "default"
+│   │   │       │           │           │       │   ├── unicode-normalization v0.1.25
+│   │   │       │           │           │       │   │   ├── tinyvec feature "alloc"
+│   │   │       │           │           │       │   │   │   ├── tinyvec v1.12.0
+│   │   │       │           │           │       │   │   │   │   ├── serde_core v1.0.229
+│   │   │       │           │           │       │   │   │   │   └── tinyvec_macros feature "default"
+│   │   │       │           │           │       │   │   │   │       └── tinyvec_macros v0.1.1
+│   │   │       │           │           │       │   │   │   └── tinyvec feature "tinyvec_macros"
+│   │   │       │           │           │       │   │   │       └── tinyvec v1.12.0 (*)
+│   │   │       │           │           │       │   │   └── tinyvec feature "default"
+│   │   │       │           │           │       │   │       └── tinyvec v1.12.0 (*)
+│   │   │       │           │           │       │   └── unicode-normalization feature "std"
+│   │   │       │           │           │       │       └── unicode-normalization v0.1.25 (*)
+│   │   │       │           │           │       └── unicode-properties feature "default"
+│   │   │       │           │           │           ├── unicode-properties v0.1.4
+│   │   │       │           │           │           ├── unicode-properties feature "emoji"
+│   │   │       │           │           │           │   └── unicode-properties v0.1.4
+│   │   │       │           │           │           └── unicode-properties feature "general-category"
+│   │   │       │           │           │               └── unicode-properties v0.1.4
+│   │   │       │           │           └── whoami feature "std"
+│   │   │       │           │               ├── whoami v2.1.2
+│   │   │       │           │               │   └── libc v0.2.189
+│   │   │       │           │               └── libc feature "std" (*)
 │   │   │       │           ├── sqlx feature "sqlx-postgres"
-│   │   │       │           │   └── sqlx v0.9.0 (*)
+│   │   │       │           │   └── sqlx v0.9.1 (*)
 │   │   │       │           └── sqlx-macros feature "postgres"
-│   │   │       │               ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │       │               ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │       │               └── sqlx-macros-core feature "postgres"
-│   │   │       │                   ├── sqlx-macros-core v0.9.0 (*)
+│   │   │       │                   ├── sqlx-macros-core v0.9.1 (*)
 │   │   │       │                   └── sqlx-macros-core feature "sqlx-postgres"
-│   │   │       │                       └── sqlx-macros-core v0.9.0 (*)
+│   │   │       │                       └── sqlx-macros-core v0.9.1 (*)
 │   │   │       ├── ngsild-ql feature "default"
 │   │   │       │   └── ngsild-ql v0.3.0
 │   │   │       │       ├── geo v0.33.1
@@ -2121,139 +2073,138 @@ antares-broker v0.3.0
 │   │   ├── jc-time feature "sqlx"
 │   │   │   └── jc-time v0.1.0 (*)
 │   │   ├── sqlx feature "json"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx-core feature "json"
-│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.1 (*)
 │   │   │   │   ├── sqlx-core feature "serde"
-│   │   │   │   │   └── sqlx-core v0.9.0 (*)
+│   │   │   │   │   └── sqlx-core v0.9.1 (*)
 │   │   │   │   └── sqlx-core feature "serde_json"
-│   │   │   │       └── sqlx-core v0.9.0 (*)
+│   │   │   │       └── sqlx-core v0.9.1 (*)
 │   │   │   ├── sqlx-macros feature "json"
-│   │   │   │   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │   │   ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │   │   └── sqlx-macros-core feature "json"
-│   │   │   │       ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   │       ├── sqlx-macros-core v0.9.1 (*)
 │   │   │   │       ├── sqlx-core feature "json" (*)
 │   │   │   │       └── sqlx-postgres feature "json" (*)
 │   │   │   └── sqlx-postgres feature "json"
-│   │   │       ├── sqlx-postgres v0.9.0 (*)
+│   │   │       ├── sqlx-postgres v0.9.1 (*)
 │   │   │       └── sqlx-core feature "json" (*)
 │   │   ├── sqlx feature "macros"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx feature "derive"
-│   │   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   │   ├── sqlx feature "sqlx-macros"
-│   │   │   │   │   └── sqlx v0.9.0 (*)
+│   │   │   │   │   └── sqlx v0.9.1 (*)
 │   │   │   │   └── sqlx-macros feature "derive"
-│   │   │   │       ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │   │       ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │   │       └── sqlx-macros-core feature "derive"
-│   │   │   │           └── sqlx-macros-core v0.9.0 (*)
+│   │   │   │           └── sqlx-macros-core v0.9.1 (*)
 │   │   │   ├── sqlx feature "sqlx-macros" (*)
 │   │   │   ├── sqlx-core feature "offline"
-│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.1 (*)
 │   │   │   │   ├── sqlx-core feature "serde" (*)
 │   │   │   │   └── either feature "serde"
 │   │   │   │       └── either v1.17.0 (*)
 │   │   │   ├── sqlx-macros feature "macros"
-│   │   │   │   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │   │   ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │   │   └── sqlx-macros-core feature "macros"
-│   │   │   │       ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   │       ├── sqlx-macros-core v0.9.1 (*)
 │   │   │   │       └── sqlx-macros-core feature "thiserror"
-│   │   │   │           └── sqlx-macros-core v0.9.0 (*)
+│   │   │   │           └── sqlx-macros-core v0.9.1 (*)
 │   │   │   └── sqlx-postgres feature "offline"
-│   │   │       ├── sqlx-postgres v0.9.0 (*)
+│   │   │       ├── sqlx-postgres v0.9.1 (*)
 │   │   │       ├── smallvec feature "serde"
 │   │   │       │   └── smallvec v1.15.2 (*)
 │   │   │       ├── sqlx-core feature "offline" (*)
 │   │   │       └── sqlx-postgres feature "json" (*)
 │   │   ├── sqlx feature "migrate"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx-core feature "migrate" (*)
 │   │   │   ├── sqlx-macros feature "migrate"
-│   │   │   │   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │   │   ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │   │   └── sqlx-macros-core feature "migrate"
-│   │   │   │       ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   │       ├── sqlx-macros-core v0.9.1 (*)
 │   │   │   │       └── sqlx-core feature "migrate" (*)
 │   │   │   └── sqlx-postgres feature "migrate"
-│   │   │       ├── sqlx-postgres v0.9.0 (*)
+│   │   │       ├── sqlx-postgres v0.9.1 (*)
 │   │   │       └── sqlx-core feature "migrate" (*)
 │   │   ├── sqlx feature "postgres" (*)
 │   │   ├── sqlx feature "runtime-tokio"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx feature "_rt-tokio"
-│   │   │   │   └── sqlx v0.9.0 (*)
+│   │   │   │   └── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx-core feature "_rt-tokio"
-│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.1 (*)
 │   │   │   │   ├── sqlx-core feature "tokio"
-│   │   │   │   │   └── sqlx-core v0.9.0 (*)
+│   │   │   │   │   └── sqlx-core v0.9.1 (*)
 │   │   │   │   └── sqlx-core feature "tokio-stream"
-│   │   │   │       └── sqlx-core v0.9.0 (*)
+│   │   │   │       └── sqlx-core v0.9.1 (*)
 │   │   │   └── sqlx-macros feature "_rt-tokio"
-│   │   │       ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │       ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │       └── sqlx-macros-core feature "_rt-tokio"
-│   │   │           ├── sqlx-macros-core v0.9.0 (*)
+│   │   │           ├── sqlx-macros-core v0.9.1 (*)
 │   │   │           ├── sqlx-core feature "_rt-tokio"
-│   │   │           │   ├── sqlx-core v0.9.0 (*)
+│   │   │           │   ├── sqlx-core v0.9.1 (*)
 │   │   │           │   ├── sqlx-core feature "tokio"
-│   │   │           │   │   └── sqlx-core v0.9.0 (*)
+│   │   │           │   │   └── sqlx-core v0.9.1 (*)
 │   │   │           │   └── sqlx-core feature "tokio-stream"
-│   │   │           │       └── sqlx-core v0.9.0 (*)
+│   │   │           │       └── sqlx-core v0.9.1 (*)
 │   │   │           └── sqlx-macros-core feature "tokio"
-│   │   │               └── sqlx-macros-core v0.9.0 (*)
+│   │   │               └── sqlx-macros-core v0.9.1 (*)
 │   │   ├── sqlx feature "tls-rustls"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   └── sqlx feature "tls-rustls-ring"
-│   │   │       ├── sqlx v0.9.0 (*)
+│   │   │       ├── sqlx v0.9.1 (*)
 │   │   │       └── sqlx feature "tls-rustls-ring-webpki"
-│   │   │           ├── sqlx v0.9.0 (*)
+│   │   │           ├── sqlx v0.9.1 (*)
 │   │   │           ├── sqlx-core feature "_tls-rustls-ring-webpki"
-│   │   │           │   ├── sqlx-core v0.9.0 (*)
+│   │   │           │   ├── sqlx-core v0.9.1 (*)
 │   │   │           │   ├── rustls feature "ring" (*)
 │   │   │           │   ├── sqlx-core feature "_tls-rustls"
-│   │   │           │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │           │   │   ├── sqlx-core v0.9.1 (*)
 │   │   │           │   │   └── sqlx-core feature "rustls"
-│   │   │           │   │       └── sqlx-core v0.9.0 (*)
+│   │   │           │   │       └── sqlx-core v0.9.1 (*)
 │   │   │           │   ├── sqlx-core feature "rustls" (*)
 │   │   │           │   └── sqlx-core feature "webpki-roots"
-│   │   │           │       └── sqlx-core v0.9.0 (*)
+│   │   │           │       └── sqlx-core v0.9.1 (*)
 │   │   │           └── sqlx-macros feature "_tls-rustls-ring-webpki"
-│   │   │               ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │               ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │               └── sqlx-macros-core feature "_tls-rustls-ring-webpki"
-│   │   │                   ├── sqlx-macros-core v0.9.0 (*)
+│   │   │                   ├── sqlx-macros-core v0.9.1 (*)
 │   │   │                   └── sqlx-core feature "_tls-rustls-ring-webpki"
-│   │   │                       ├── sqlx-core v0.9.0 (*)
+│   │   │                       ├── sqlx-core v0.9.1 (*)
 │   │   │                       ├── sqlx-core feature "_tls-rustls"
-│   │   │                       │   ├── sqlx-core v0.9.0 (*)
+│   │   │                       │   ├── sqlx-core v0.9.1 (*)
 │   │   │                       │   └── sqlx-core feature "rustls"
-│   │   │                       │       └── sqlx-core v0.9.0 (*)
+│   │   │                       │       └── sqlx-core v0.9.1 (*)
 │   │   │                       ├── sqlx-core feature "rustls" (*)
 │   │   │                       ├── sqlx-core feature "webpki-roots"
-│   │   │                       │   └── sqlx-core v0.9.0 (*)
+│   │   │                       │   └── sqlx-core v0.9.1 (*)
 │   │   │                       └── rustls feature "ring"
 │   │   │                           ├── rustls v0.23.46 (*)
 │   │   │                           └── rustls-webpki feature "ring"
 │   │   │                               └── rustls-webpki v0.103.16 (*)
 │   │   ├── sqlx feature "uuid"
-│   │   │   ├── sqlx v0.9.0 (*)
+│   │   │   ├── sqlx v0.9.1 (*)
 │   │   │   ├── sqlx-core feature "uuid"
-│   │   │   │   └── sqlx-core v0.9.0 (*)
+│   │   │   │   └── sqlx-core v0.9.1 (*)
 │   │   │   ├── sqlx-macros feature "uuid"
-│   │   │   │   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   │   │   ├── sqlx-macros v0.9.1 (proc-macro) (*)
 │   │   │   │   └── sqlx-macros-core feature "uuid"
-│   │   │   │       ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   │       ├── sqlx-macros-core v0.9.1 (*)
 │   │   │   │       ├── sqlx-core feature "uuid"
-│   │   │   │       │   └── sqlx-core v0.9.0 (*)
+│   │   │   │       │   └── sqlx-core v0.9.1 (*)
 │   │   │   │       └── sqlx-postgres feature "uuid"
-│   │   │   │           ├── sqlx-postgres v0.9.0 (*)
+│   │   │   │           ├── sqlx-postgres v0.9.1 (*)
 │   │   │   │           └── sqlx-core feature "uuid" (*)
 │   │   │   └── sqlx-postgres feature "uuid"
-│   │   │       ├── sqlx-postgres v0.9.0 (*)
+│   │   │       ├── sqlx-postgres v0.9.1 (*)
 │   │   │       └── sqlx-core feature "uuid" (*)
 │   │   ├── ngsild-ql feature "default" (*)
 │   │   ├── regex feature "default" (*)
 │   │   ├── jc-pool feature "default"
 │   │   │   └── jc-pool v0.1.0
-│   │   │       ├── sqlx-core v0.9.0 (*)
-│   │   │       └── tracing feature "default" (*)
+│   │   │       └── sqlx-core v0.9.1 (*)
 │   │   ├── metrics feature "default"
 │   │   │   └── metrics v0.24.6
 │   │   │       └── rapidhash v4.5.1
@@ -2264,7 +2215,30 @@ antares-broker v0.3.0
 │   │       │   └── libc feature "default" (*)
 │   │       └── redb feature "std"
 │   │           └── redb v4.3.0 (*)
-│   ├── sha2 v0.10.9 (*)
+│   ├── sha2 v0.10.9
+│   │   ├── cfg-if feature "default" (*)
+│   │   ├── cpufeatures feature "default"
+│   │   │   └── cpufeatures v0.2.17
+│   │   └── digest feature "default"
+│   │       ├── digest v0.10.7
+│   │       │   ├── block-buffer feature "default"
+│   │       │   │   └── block-buffer v0.10.4
+│   │       │   │       └── generic-array feature "default"
+│   │       │   │           └── generic-array v0.14.9
+│   │       │   │               └── typenum feature "default" (*)
+│   │       │   │               [build-dependencies]
+│   │       │   │               └── version_check feature "default"
+│   │       │   │                   └── version_check v0.9.5
+│   │       │   └── crypto-common feature "default"
+│   │       │       └── crypto-common v0.1.6
+│   │       │           ├── typenum feature "default" (*)
+│   │       │           ├── generic-array feature "default" (*)
+│   │       │           └── generic-array feature "more_lengths"
+│   │       │               └── generic-array v0.14.9 (*)
+│   │       └── digest feature "core-api"
+│   │           ├── digest v0.10.7 (*)
+│   │           └── digest feature "block-buffer"
+│   │               └── digest v0.10.7 (*)
 │   ├── ngsild-jsonld feature "default" (*)
 │   ├── ngsild-jsonld feature "fetch" (*)
 │   ├── jiff feature "std" (*)

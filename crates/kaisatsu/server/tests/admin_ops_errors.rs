@@ -13,6 +13,7 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_server::router;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use tower::ServiceExt;
 
 mod common;
@@ -460,11 +461,23 @@ async fn compat_context_and_lookups() {
         1
     );
 
-    // The master realm admin acts across realms; a realm that does not exist is 404.
+    // A master service account granted `nowhere-realm` acts on that realm; while it does not
+    // exist the answer is 404.
     api.store
         .upsert_realm(RealmConfig {
             id: "master".into(),
             realm: "master".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    api.store
+        .create_user(UserRepresentation {
+            id: "root".into(),
+            realm_id: "master".into(),
+            username: "service-account-ops".into(),
+            service_account_client_id: Some("ops".into()),
+            client_roles: HashMap::from([("nowhere-realm".into(), vec!["realm-admin".into()])]),
             ..Default::default()
         })
         .await

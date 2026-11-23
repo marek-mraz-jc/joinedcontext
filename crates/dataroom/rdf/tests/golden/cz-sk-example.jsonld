@@ -1,0 +1,68 @@
+{
+  "@context": "https://ofn.gov.cz/dcat-ap-cz/2026-09-23/datová-sada/kontext.jsonld",
+  "distribuce": [
+    {
+      "formát": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "iri": "https://data.gov.sk/set/vld/resource/csv",
+      "název": {
+        "en": "JSON distribution in ZIP file",
+        "sk": "JSON distribúcia v ZIP súbore"
+      },
+      "podmínky_užití": {
+        "autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
+        "databáze_chráněná_zvláštními_právy": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "databáze_jako_autorské_dílo": "https://creativecommons.org/licenses/by/4.0/",
+        "osobní_údaje": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/",
+        "typ": "Podmínky užití"
+      },
+      "přístupové_url": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip",
+      "soubor_ke_stažení": "https://opendata.middop.sk/pub/draha/mestske/JDF.zip",
+      "typ": "Distribuce",
+      "typ_média": "http://www.iana.org/assignments/media-types/application/json"
+    },
+    {
+      "iri": "https://data.gov.sk/set/vld/resource/sparql",
+      "přístupové_url": "",
+      "typ": "Distribuce"
+    }
+  ],
+  "geografické_území": [
+    "https://data.gov.sk/id/nuts1/SK0"
+  ],
+  "iri": "https://data.gov.sk/set/vld",
+  "klíčové_slovo": {
+    "en": [
+      "bus",
+      "public transport",
+      "timetable"
+    ],
+    "sk": [
+      "autobusy",
+      "cestovné poriadky",
+      "verejná linková doprava"
+    ]
+  },
+  "kontaktní_bod": {
+    "e-mail": "mailto:info@mindop.sk",
+    "jméno": {
+      "en": "Ministry of Transport",
+      "sk": "Ministerstvo dopravy, Odbor verejnej dopravy"
+    },
+    "typ": "Organizace"
+  },
+  "název": {
+    "en": "Public transport timetables",
+    "sk": "Cestovné poriadky"
+  },
+  "periodicita_aktualizace": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+  "popis": {
+    "en": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system.",
+    "sk": "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."
+  },
+  "poskytovatel": "https://data.gov.sk/legal-subject/30416094",
+  "typ": "Datová sada",
+  "téma": [
+    "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+  ],
+  "vstupní_stránka": "https://opendata.mindop.sk/show/vld"
+}

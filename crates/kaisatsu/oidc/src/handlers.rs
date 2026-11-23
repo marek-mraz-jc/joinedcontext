@@ -1172,7 +1172,7 @@ async fn authorize_get(
 
     // A session signed in without a second factor, for a person who has an authenticator or
     // needs one: an action asks the second factor first (a full sign-in), a step-up asks the code.
-    let (sso_has_otp, sso_needs_second) = match existing_sso.as_ref() {
+    let (sso_has_otp, sso_has_passkey, sso_needs_second) = match existing_sso.as_ref() {
         Some(sso) if sso.acr != "mfa" => {
             let has_otp = state
                 .store
@@ -1180,6 +1180,11 @@ async fn authorize_get(
                 .await?
                 .iter()
                 .any(|c| c.credential_type == "otp");
+            let has_passkey = !state
+                .store
+                .list_webauthn_credentials(&realm.id, &sso.user_id)
+                .await?
+                .is_empty();
             let required = match state
                 .store
                 .get_user_by_id(&realm.id, None, &sso.user_id)
@@ -1188,9 +1193,9 @@ async fn authorize_get(
                 Some(user) => crate::second_factor_required(&state, &realm, &user).await?,
                 None => false,
             };
-            (has_otp, has_otp || required)
+            (has_otp, has_passkey, has_otp || has_passkey || required)
         }
-        _ => (false, false),
+        _ => (false, false, false),
     };
     let recent_sso = existing_sso.clone().filter(|sso| {
         !force_reauth
@@ -1233,6 +1238,13 @@ async fn authorize_get(
         },
         Some(sso) if sso_has_otp => (
             json!({ "step": "SecondFactorOtp", "user_id": sso.user_id, "first_factor_passed": true })
+                .to_string(),
+            Some(sso.user_id),
+            sso.amr,
+            sso.acr,
+        ),
+        Some(sso) if sso_has_passkey => (
+            json!({ "step": "SecondFactorWebAuthn", "user_id": sso.user_id, "first_factor_passed": true })
                 .to_string(),
             Some(sso.user_id),
             sso.amr,
@@ -3285,6 +3297,20 @@ async fn handle_password_grant(
     // Check if second factor is required or configured (RI `custom direct grant`)
     let mfa_required = crate::second_factor_required(state, realm, &user).await?;
     let has_otp = creds.iter().any(|c| c.credential_type == "otp");
+    // A passkey is a second factor this grant cannot check: its holder signs in through the
+    // browser, where the passkey is asked after the password.
+    let has_passkey = !state
+        .store
+        .list_webauthn_credentials(&realm.id, &user.id)
+        .await?
+        .is_empty();
+    if has_passkey && !has_otp {
+        return Err(KaisatsuError::oauth(
+            400,
+            "invalid_grant",
+            "This account signs in with a passkey as its second factor: sign in through the browser",
+        ));
+    }
 
     let mut amr = vec!["pwd".to_owned()];
     let mut acr = "pwd".to_owned();

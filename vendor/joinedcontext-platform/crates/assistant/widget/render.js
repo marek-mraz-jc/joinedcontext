@@ -481,6 +481,10 @@ var JCRender = (function () {
     } else if (typeof days[0] === "number" && typeof days[1] === "number") {
       said += part(days[0], days[1]) + " " + DAYS[lang];
     }
+    var years = Array.isArray(made.years) ? made.years : [];
+    if (typeof years[0] === "number" && typeof years[1] === "number") {
+      said += " · " + years[0] + (years[1] === years[0] ? "" : "-" + years[1]);
+    }
     return made.partial === true ? said + " · " + PART[lang] : said;
   }
 
@@ -605,8 +609,11 @@ var JCRender = (function () {
       if (typeof v === "object") return JSON.stringify(v);
       if (safeUrl(v)) return { text: LINK[lang], href: v };
       if (made && column === "date" && TIME.test(v) && isFinite(Date.parse(v))) {
-        // The day before the month, as on the chart's axis: 10/1 is January to a European.
-        return new Intl.DateTimeFormat(lang === "en" ? "en-GB" : lang, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(Date.parse(v));
+        // The day before the month, as on the chart's axis: 10/1 is January to a European. A
+        // history per month or per year names no day (T-7526).
+        var parts = made.per === "year" ? { year: "numeric" } : made.per === "month" ? { month: "long", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" };
+        parts.timeZone = "UTC";
+        return new Intl.DateTimeFormat(lang === "en" ? "en-GB" : lang, parts).format(Date.parse(v));
       }
       if (column === "observedAt" || (TIME.test(v) && v.length > 10)) return when(v, lang, now);
       return String(v);

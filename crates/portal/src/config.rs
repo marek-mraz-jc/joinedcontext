@@ -2197,6 +2197,12 @@ impl Config {
             reason,
         })?;
         portal_settings.own_host = public_base_url.host_str().map(str::to_ascii_lowercase);
+        portal_settings.profiles =
+            crate::portals::parse_profiles(&lookup("JC_PORTAL_PROFILES").unwrap_or_default())
+                .map_err(|reason| ConfigError::Invalid {
+                    var: "JC_PORTAL_PROFILES",
+                    reason,
+                })?;
 
         let branches = crate::api::branches::parse(
             lookup("JC_PORTAL_BRANCHES_PER_PROJECT").as_deref(),

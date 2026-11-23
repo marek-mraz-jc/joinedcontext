@@ -60,6 +60,11 @@ pub enum DataroomError {
     #[error("RDF limit exceeded ({kind}): {message}")]
     RdfLimitExceeded { kind: String, message: String },
 
+    /// A national feed that cannot be stated from what is declared. An error on purpose: a
+    /// harvester reads an empty or absent catalogue as "every dataset was dropped" (C9, C17).
+    #[error("feed unavailable: {0}")]
+    FeedUnavailable(String),
+
     /// Underlying storage or tenant setting error.
     #[error("storage error: {0}")]
     Storage(String),
@@ -103,6 +108,7 @@ impl DataroomError {
             Self::OutboundRefused(_) => "outbound-refused",
             Self::Rdf(_) => "rdf-error",
             Self::RdfLimitExceeded { .. } => "rdf-limit-exceeded",
+            Self::FeedUnavailable(_) => "feed-unavailable",
             Self::Storage(_) => "storage-error",
         }
     }
@@ -126,6 +132,7 @@ impl DataroomError {
             Self::Conflict(_) => 409,
             Self::NotSupported(_) => 501,
             Self::OutboundRefused(_) => 400,
+            Self::FeedUnavailable(_) => 503,
             Self::Storage(_) => 500,
         }
     }
@@ -142,6 +149,7 @@ impl DataroomError {
             Self::OutboundRefused(_) | Self::Rdf(_) | Self::RdfLimitExceeded { .. } => {
                 "Validation Error"
             }
+            Self::FeedUnavailable(_) => "Service Unavailable Error",
             Self::Storage(_) => "Internal Server Error",
         }
     }

@@ -881,6 +881,95 @@ async fn org_admin_bodies_cannot_write_claims_verification_or_transient() {
     assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
 }
 
+fn passkey(id: &str, user_id: &str, org_id: Option<&str>) -> WebAuthnCredentialRecord {
+    WebAuthnCredentialRecord {
+        id: id.into(),
+        realm_id: "dev".into(),
+        org_id: org_id.map(str::to_owned),
+        user_id: user_id.into(),
+        user_handle: format!("handle-{id}"),
+        credential_id: format!("cred-{id}"),
+        public_key_cose_json: "{}".into(),
+        cose_alg: -7,
+        sign_count: 0,
+        uv_initialized: true,
+        backup_eligible: false,
+        backup_state: false,
+        transports: Vec::new(),
+        attestation_type: "none".into(),
+        rp_id: "idm.localhost".into(),
+        user_label: Some("Laptop".into()),
+        created_at: TimestampTz::now(),
+        last_used_at: None,
+    }
+}
+
+/// S3-26: a passkey is a second factor, so the credential list shows it and an administrator
+/// resets a lost one there; another person's passkey id under this person is not found.
+#[tokio::test]
+async fn an_administrator_lists_and_resets_a_persons_passkey() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    for (id, user, org) in [
+        ("pk-hel", "hel-user", Some("helsinki")),
+        ("pk-other", "esp-user", Some("espoo")),
+    ] {
+        f.store
+            .insert_webauthn_credential(passkey(id, user, org))
+            .await
+            .unwrap();
+    }
+    let u = format!("{R}/users/hel-user");
+    let (st, _, creds) = call(&f.app, &Method::GET, &format!("{u}/credentials"), a, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let listed: Vec<(&str, &str)> = creds
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| Some((c["id"].as_str()?, c["type"].as_str()?)))
+        .collect();
+    assert!(
+        listed.contains(&("pk-hel", "webauthn-passwordless")),
+        "{creds}"
+    );
+    assert!(!listed.iter().any(|(id, _)| *id == "pk-other"), "{creds}");
+
+    let (st, _, _) = call(
+        &f.app,
+        &Method::DELETE,
+        &format!("{u}/credentials/pk-other"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(
+        f.store
+            .list_webauthn_credentials("dev", "esp-user")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let (st, _, _) = call(
+        &f.app,
+        &Method::DELETE,
+        &format!("{u}/credentials/pk-hel"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(
+        f.store
+            .list_webauthn_credentials("dev", "hel-user")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn people_lifecycle_through_the_compat_routes() {
     let f = fixture().await;
@@ -1680,8 +1769,23 @@ async fn realm_partial_import_and_native_routes() {
         })
         .await
         .unwrap();
+    // The operator holds the new realm's `stage2-realm` grant in master and signed in with a
+    // second factor.
+    f.store
+        .create_user(UserRepresentation {
+            id: "root".into(),
+            realm_id: "master".into(),
+            username: "root".into(),
+            client_roles: HashMap::from([("stage2-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let master_keys = f.store.list_signing_keys("master").await.unwrap();
-    let mut master_claims = claims("root", json!({"realm_access": {"roles": ["admin"]}}));
+    let mut master_claims = claims(
+        "root",
+        json!({"realm_access": {"roles": ["admin"]}, "acr": "mfa"}),
+    );
     master_claims["iss"] = json!("https://idm.localhost/realms/master");
     let master = token(f.store.kek(), &master_keys[0], master_claims);
     let (st, _, ans) = call(

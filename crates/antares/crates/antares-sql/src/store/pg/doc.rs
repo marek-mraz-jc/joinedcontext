@@ -1362,6 +1362,60 @@ impl PgDocStore {
         Ok(())
     }
 
+    /// `context_put` of a Tenant's new row inside `caps`. The Tenant's claim
+    /// comes before the count's lock, as a purge takes them.
+    /// ponytail: one count of at most `caps.count` rows per new @context;
+    /// a counter row when a deployment raises that cap by a lot.
+    pub async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: &Value,
+        kind: &str,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        set_context_tenant(&mut tx, Some(tenant)).await?;
+        super::claim_tenant(&mut tx, tenant).await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('jsonld_contexts:' || $1, 0))")
+            .bind(tenant.as_str())
+            .execute(&mut *tx)
+            .await?;
+        // the row itself is left out: storing it again takes no second place
+        let (held, bytes, stored): (i64, i64, bool) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE id <> $3),
+                    coalesce(sum(coalesce((body->>'bytes')::bigint,
+                        octet_length((body #> '{body,@context}')::text), 0))
+                      FILTER (WHERE id <> $3), 0)::bigint,
+                    coalesce(bool_or(id = $3), false)
+               FROM jsonld_contexts
+              WHERE tenant_id = $1 AND kind = $2",
+        )
+        .bind(tenant.as_str())
+        .bind(kind)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if stored {
+            return Ok(antares_store::ContextPut::Stored);
+        }
+        let put = caps.admit(
+            usize::try_from(held).unwrap_or(usize::MAX),
+            u64::try_from(bytes).unwrap_or(u64::MAX),
+            antares_store::context_row_bytes(doc),
+        );
+        if put == antares_store::ContextPut::Stored {
+            sqlx::query("INSERT INTO jsonld_contexts (id, body, kind) VALUES ($1, $2, $3)")
+                .bind(id)
+                .bind(doc)
+                .bind(kind)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+        }
+        Ok(put)
+    }
+
     pub async fn context_get(
         &self,
         tenant: Option<&TenantId>,

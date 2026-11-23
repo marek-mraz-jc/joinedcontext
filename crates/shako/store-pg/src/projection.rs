@@ -3,11 +3,9 @@
 
 use crate::tables::{self, Table, Taken, failed, put, to_row};
 use crate::{Op, hidden};
+use jc_audit::Tx;
 use serde_json::{Value, json};
 use shako_core::{InstanceId, OrgId, RepoId, ShakoError, ShakoResult};
-use sqlx::{Postgres, Transaction};
-
-type Tx<'t> = Transaction<'t, Postgres>;
 
 /// Where an operation stands in the log: the time and the order its rows carry.
 #[derive(Debug, Clone)]
@@ -19,7 +17,7 @@ pub(crate) struct At {
 /// Holds the tenant's writers back until `tx` ends.
 // ponytail: one writer per tenant, as the process-wide write lock was; a lock per repository when
 // writes of one Organization queue.
-pub(crate) async fn lock(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> ShakoResult<()> {
+pub(crate) async fn lock(tx: &mut Tx, tenant: (InstanceId, OrgId)) -> ShakoResult<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("shako.store:{}:{}", tenant.0, tenant.1))
         .execute(&mut **tx)
@@ -29,11 +27,7 @@ pub(crate) async fn lock(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> ShakoR
 }
 
 /// Appends `op` to the tenant's log.
-pub(crate) async fn append(
-    tx: &mut Tx<'_>,
-    tenant: (InstanceId, OrgId),
-    op: &Op,
-) -> ShakoResult<At> {
+pub(crate) async fn append(tx: &mut Tx, tenant: (InstanceId, OrgId), op: &Op) -> ShakoResult<At> {
     let doc = serde_json::to_value(op).map_err(|e| ShakoError::Storage(e.to_string()))?;
     let (seq, time): (i64, String) = sqlx::query_as(
         "INSERT INTO shako.store_log (instance_id, org_id, op) VALUES ($1, $2, $3)
@@ -50,7 +44,7 @@ pub(crate) async fn append(
 
 /// Records that the tables hold the log up to `at`.
 pub(crate) async fn projected(
-    tx: &mut Tx<'_>,
+    tx: &mut Tx,
     tenant: (InstanceId, OrgId),
     seq: i64,
 ) -> ShakoResult<()> {
@@ -75,7 +69,7 @@ impl At {
 
 /// Applies what the log holds past the tables: the whole log on a database an earlier release
 /// left, what that release wrote during a rollback, else nothing. Answers how many it read.
-pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> ShakoResult<usize> {
+pub(crate) async fn catch_up(tx: &mut Tx, tenant: (InstanceId, OrgId)) -> ShakoResult<usize> {
     let held: Option<i64> = sqlx::query_scalar(
         "SELECT seq FROM shako.projection WHERE instance_id = $1 AND org_id = $2",
     )
@@ -144,7 +138,7 @@ pub(crate) async fn catch_up(tx: &mut Tx<'_>, tenant: (InstanceId, OrgId)) -> Sh
 /// The first log entry past `seq`. One at a time: an entry of an earlier release holds up to
 /// 4 MiB of manifest, five times that as JSON.
 async fn entry_after(
-    tx: &mut Tx<'_>,
+    tx: &mut Tx,
     tenant: (InstanceId, OrgId),
     seq: i64,
 ) -> ShakoResult<Option<(i64, String, Value)>> {
@@ -168,7 +162,7 @@ fn hidden_record(result: Result<Value, serde_json::Error>) -> ShakoResult<Value>
     result.map_err(|e| ShakoError::Storage(e.to_string()))
 }
 
-async fn replace(tx: &mut Tx<'_>, table: &Table, record: Value) -> ShakoResult<Value> {
+async fn replace(tx: &mut Tx, table: &Table, record: Value) -> ShakoResult<Value> {
     put(tx, table, to_row(table, record)?, Taken::Replace)
         .await?
         .ok_or_else(|| ShakoError::Storage("a write stored no row".into()))
@@ -176,7 +170,7 @@ async fn replace(tx: &mut Tx<'_>, table: &Table, record: Value) -> ShakoResult<V
 
 /// Applies `op` to the typed tables and answers what the Store's method answers.
 pub(crate) async fn apply(
-    tx: &mut Tx<'_>,
+    tx: &mut Tx,
     tenant: (InstanceId, OrgId),
     op: Op,
     at: &At,
@@ -407,7 +401,7 @@ pub(crate) async fn apply(
 }
 
 async fn delete_repo(
-    tx: &mut Tx<'_>,
+    tx: &mut Tx,
     tenant: (InstanceId, OrgId),
     repo_id: RepoId,
 ) -> ShakoResult<Value> {

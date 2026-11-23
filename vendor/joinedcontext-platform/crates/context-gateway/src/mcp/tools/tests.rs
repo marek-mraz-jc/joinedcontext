@@ -96,6 +96,86 @@ fn an_anonymous_window_over_31_days_is_refused() {
     assert!(refused.contains("at most 31 days"), "{refused}");
 }
 
+/// A hundred years of two Attributes, yearly: what an anonymous caller may ask past 31 days.
+fn century(change: Value) -> Result<Map<String, Value>, String> {
+    let mut asked = json!({
+        "timeAt": "1926-01-01T00:00:00Z",
+        "endTimeAt": "2026-01-01T00:00:00Z",
+        "attrs": ["pm10", "pm2p5"],
+        "aggrMethods": "avg,max",
+        "aggrPeriodDuration": "P1Y",
+    });
+    for (key, value) in change.as_object().expect("an object") {
+        asked[key] = value.clone();
+    }
+    bounded("query_temporal", asked)
+}
+
+/// T-7526: a range of 10 or 100 years is read aggregated, its Entities bounded and no `lastN`
+/// added, which would take the aggregation away from the store.
+#[test]
+fn an_anonymous_aggregate_reads_a_hundred_years() {
+    let read = century(json!({})).expect("a hundred years by year");
+    assert_eq!(read["limit"], 20);
+    assert!(!read.contains_key("lastN"), "{read:?}");
+    for change in [
+        json!({ "timeAt": "2016-01-01T00:00:00Z", "aggrPeriodDuration": "P1M" }),
+        json!({ "timeAt": "2025-01-01T00:00:00Z", "aggrPeriodDuration": "P1D" }),
+        json!({ "timeAt": "1800-01-01T00:00:00Z" }),
+        json!({ "endpoint": "kpi", "count": true, "format": "aggregatedValues", "limit": 5 }),
+    ] {
+        assert!(century(change.clone()).is_ok(), "{change}");
+    }
+}
+
+/// T-7526: past 31 days nothing else is let through: no raw read, no period of too many points,
+/// no filter the broker answers from the instances, no wider list.
+#[test]
+fn an_anonymous_long_read_is_refused_unless_it_is_bounded() {
+    let many: Vec<String> = (0..21).map(|n| format!("urn:ngsi-ld:T:{n}")).collect();
+    for change in [
+        json!({ "aggrMethods": null }),
+        json!({ "aggrMethods": "avg,min,max,sum" }),
+        json!({ "aggrMethods": "" }),
+        json!({ "attrs": null }),
+        json!({ "attrs": "a,b,c,d,e,f" }),
+        json!({ "attrs": ["a,b,c", "d,e,f"] }),
+        json!({ "attrs": [1] }),
+        json!({ "type": null, "id": "urn:ngsi-ld:T:1" }),
+        json!({ "id": many }),
+        json!({ "limit": 21 }),
+        json!({ "aggrPeriodDuration": null }),
+        json!({ "aggrPeriodDuration": "P1M" }),
+        json!({ "aggrPeriodDuration": "PT0S" }),
+        json!({ "aggrPeriodDuration": "P10000000000000000000Y" }),
+        json!({ "timeproperty": "modifiedAt" }),
+        json!({ "format": "temporalValues" }),
+        json!({ "lastN": 5 }),
+        json!({ "q": "pm10>40" }),
+        json!({ "idPattern": ".*" }),
+        json!({ "omit": "pm10" }),
+        json!({ "scopeQ": "/city/#" }),
+        json!({ "georel": "near;maxDistance==500" }),
+        json!({ "sysAttrs": true }),
+    ] {
+        let refused = century(change.clone()).expect_err("no long read");
+        assert!(refused.contains("at most 31 days"), "{change}: {refused}");
+        assert!(refused.contains("P1Y or longer"), "{change}: {refused}");
+    }
+    let refused = bounded(
+        "retrieve_temporal",
+        json!({
+            "id": "urn:ngsi-ld:T:1",
+            "timeAt": "1926-01-01T00:00:00Z",
+            "aggrMethods": "avg",
+            "attrs": "pm10",
+            "aggrPeriodDuration": "P1Y",
+        }),
+    )
+    .expect_err("one Entity's history keeps the days");
+    assert!(refused.contains("at most 31 days"), "{refused}");
+}
+
 /// T-4261: `before`, `after`, a missing end, an end before the start and an unparsable
 /// instant are no window.
 #[test]

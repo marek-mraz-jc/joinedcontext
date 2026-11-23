@@ -1,102 +1,26 @@
 #![forbid(unsafe_code)]
 //! JSON-LD parser (backed by `oxjsonld`) and serializer supporting:
-//! - Standard DCAT-AP 3.0.1 JSON-LD
-//! - Czech OFN LKOD JSON-LD (`https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld`)
-//! - Slovak DCAT-AP-SK 2.0 JSON-LD (`https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld`)
+//! - Standard DCAT-AP JSON-LD, the graph as it is
+//! - Compact JSON-LD under the key dictionary of a profile's manifest (the Czech LKOD and the
+//!   Slovak catalogue interface are two), read back with the profile's own context file
 //!
 //! Security (A1):
 //! - Remote `@context` URLs not in the built-in offline context map are refused without any network fetch.
 //! - Billion-laughs / recursive `@context` term expansion or excessive context size is refused.
 //! - Byte, triple, nesting-depth and literal-length caps are enforced while parsing.
 
-use crate::dcat::{distribution_licence, terms_of_use, DcatProfileKind};
+use crate::dcat::{dataset_publisher, terms_of_use};
 use crate::graph::{iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
-use dataroom_core::vocab::find_licence;
-use dataroom_core::{Catalogue, ContactKind, DataroomError, Dataset, Publisher, Result};
+use crate::profile::{
+    CatalogueMember, Compact, Contact, Context, DatasetMember, DcatProfile, DistributionMember,
+    Profile, TermsMember,
+};
+use dataroom_core::{
+    Catalogue, ContactKind, ContactPoint, DataroomError, Dataset, Distribution, Publisher, Result,
+};
 use oxjsonld::JsonLdParser;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-
-pub const CZ_CATALOG_CONTEXT_IRI: &str =
-    "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld";
-pub const CZ_DATASET_CONTEXT_IRI: &str =
-    "https://ofn.gov.cz/dcat-ap-cz/2026-09-23/datová-sada/kontext.jsonld";
-pub const SK_CATALOG_CONTEXT_IRI: &str =
-    "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld";
-
-const SK_BUILTIN_CONTEXT_JSON: &str =
-    include_str!("../../specs/dcat-ap-sk/kontexty/rozhranie-katalógu-otvorených-dát.jsonld");
-
-/// Built-in CZ OFN LKOD context so CZ JSON-LD documents parse offline via `oxjsonld` with zero
-/// network fetches.
-const CZ_BUILTIN_CONTEXT_JSON: &str = r#"{
-  "@context": {
-    "@language": "cs",
-    "dcat": "http://www.w3.org/ns/dcat#",
-    "dcatap": "http://data.europa.eu/r5r/",
-    "dct": "http://purl.org/dc/terms/",
-    "foaf": "http://xmlns.com/foaf/0.1/",
-    "vcard": "http://www.w3.org/2006/vcard/ns#",
-    "skos": "http://www.w3.org/2004/02/skos/core#",
-    "xsd": "http://www.w3.org/2001/XMLSchema#",
-    "pu": "https://data.gov.cz/slovník/podmínky-užití/",
-    "iri": "@id",
-    "typ": "@type",
-    "Katalog": "dcat:Catalog",
-    "Datová sada": "dcat:Dataset",
-    "Série datových sad": "dcat:DatasetSeries",
-    "Distribuce": "dcat:Distribution",
-    "Datová služba": "dcat:DataService",
-    "Organizace": "vcard:Organization",
-    "Jednotlivec": "vcard:Individual",
-    "Časový interval": "dct:PeriodOfTime",
-    "Podmínky užití": "pu:Specifikace",
-    "název": { "@id": "dct:title", "@container": "@language" },
-    "popis": { "@id": "dct:description", "@container": "@language" },
-    "poskytovatel": { "@id": "dct:publisher", "@type": "@id" },
-    "domovská_stránka": { "@id": "foaf:homepage", "@type": "@id" },
-    "datová_sada": { "@id": "dcat:dataset", "@type": "@id" },
-    "přístupový_bod": { "@id": "dcat:endpointURL", "@type": "@id" },
-    "popis_přístupového_bodu": { "@id": "dcat:endpointDescription", "@type": "@id" },
-    "poskytuje_datovou_sadu": { "@id": "dcat:servesDataset", "@type": "@id" },
-    "kontaktní_bod": { "@id": "dcat:contactPoint", "@type": "@id" },
-    "jméno": { "@id": "vcard:fn", "@container": "@language" },
-    "e-mail": { "@id": "vcard:hasEmail", "@type": "@id" },
-    "téma": { "@id": "dcat:theme", "@type": "@id" },
-    "periodicita_aktualizace": { "@id": "dct:accrualPeriodicity", "@type": "@id" },
-    "klíčové_slovo": { "@id": "dcat:keyword", "@container": "@language" },
-    "prvek_rúian": { "@id": "dct:spatial", "@type": "@id" },
-    "geografické_území": { "@id": "dct:spatial", "@type": "@id" },
-    "související_geografické_území": { "@id": "dct:spatial", "@type": "@id" },
-    "časové_pokrytí": { "@id": "dct:temporal", "@type": "@id" },
-    "začátek": { "@id": "dcat:startDate", "@type": "xsd:date" },
-    "konec": { "@id": "dcat:endDate", "@type": "xsd:date" },
-    "vstupní_stránka": { "@id": "dcat:landingPage", "@type": "@id" },
-    "dokumentace": { "@id": "foaf:page", "@type": "@id" },
-    "specifikace": { "@id": "dct:conformsTo", "@type": "@id" },
-    "příslušný_právní_předpis": { "@id": "dcatap:applicableLegislation", "@type": "@id" },
-    "koncept_euroVoc": { "@id": "dcat:theme", "@type": "@id" },
-    "prostorové_rozlišení_v_metrech": { "@id": "dcat:spatialResolutionInMeters", "@type": "xsd:decimal" },
-    "časové_rozlišení": { "@id": "dcat:temporalResolution", "@type": "xsd:duration" },
-    "je_součástí": { "@id": "dcat:inSeries", "@type": "@id" },
-    "distribuce": { "@id": "dcat:distribution", "@type": "@id" },
-    "podmínky_užití": { "@id": "pu:specifikace", "@type": "@id" },
-    "autorské_dílo": { "@id": "pu:autorské-dílo", "@type": "@id" },
-    "autor": { "@id": "pu:autor", "@container": "@language" },
-    "databáze_jako_autorské_dílo": { "@id": "pu:databáze-jako-autorské-dílo", "@type": "@id" },
-    "autor_databáze": { "@id": "pu:autor-databáze", "@container": "@language" },
-    "databáze_chráněná_zvláštními_právy": { "@id": "pu:databáze-chráněná-zvláštními-právy", "@type": "@id" },
-    "osobní_údaje": { "@id": "pu:osobní-údaje", "@type": "@id" },
-    "přístupové_url": { "@id": "dcat:accessURL", "@type": "@id" },
-    "soubor_ke_stažení": { "@id": "dcat:downloadURL", "@type": "@id" },
-    "formát": { "@id": "dct:format", "@type": "@id" },
-    "typ_média": { "@id": "dcat:mediaType", "@type": "@id" },
-    "schéma": { "@id": "dct:conformsTo", "@type": "@id" },
-    "typ_média_komprese": { "@id": "dcat:compressFormat", "@type": "@id" },
-    "typ_média_balíčku": { "@id": "dcat:packageFormat", "@type": "@id" },
-    "přístupová_služba": { "@id": "dcat:accessService", "@type": "@id" }
-  }
-}"#;
 
 /// Maximum number of terms allowed in a JSON-LD `@context` to prevent billion-laughs context bombs (A1).
 const MAX_CONTEXT_TERMS: usize = 256;
@@ -152,6 +76,18 @@ fn inline_and_check_jsonld(val: &mut Value, limits: &RdfLimits, depth: usize) ->
     }
 }
 
+/// The installed profile that carries the context at `iri`, so it is read and never fetched.
+fn offline_context(iri: &str) -> Option<(&'static Profile, &'static Context)> {
+    DcatProfile::installed().find_map(|installed| {
+        let profile = installed.manifest();
+        let context = profile.contexts.iter().find(|c| {
+            c.prefixes.iter().any(|p| iri.starts_with(p.as_str()))
+                || c.suffixes.iter().any(|s| iri.ends_with(s.as_str()))
+        })?;
+        Some((profile, context))
+    })
+}
+
 fn resolve_and_validate_context(ctx_val: &mut Value, depth: usize) -> Result<()> {
     if depth > 8 {
         return Err(DataroomError::RdfLimitExceeded {
@@ -163,47 +99,17 @@ fn resolve_and_validate_context(ctx_val: &mut Value, depth: usize) -> Result<()>
     match ctx_val {
         Value::String(url) => {
             let trimmed = url.trim();
-            if trimmed == SK_CATALOG_CONTEXT_IRI
-                || trimmed.ends_with("rozhranie-katalógu-otvorených-dát.jsonld")
-            {
-                let mut parsed: Value = serde_json::from_str(SK_BUILTIN_CONTEXT_JSON)
-                    .map_err(|e| DataroomError::Rdf(format!("built-in SK context: {e}")))?;
+            if let Some((profile, context)) = offline_context(trimmed) {
+                let mut parsed: Value =
+                    serde_json::from_str(profile.file(&context.file)).map_err(|e| {
+                        DataroomError::Rdf(format!("built-in {} context: {e}", profile.id))
+                    })?;
                 if let Some(inner) = parsed.get_mut("@context") {
                     if let Some(map) = inner.as_object_mut() {
-                        // Add missing prefix `dct:` used in SK context `dct:issued`, `dct:modified`, `dct:relation`
-                        map.insert("dct".into(), json!("http://purl.org/dc/terms/"));
-                        // Add aliases used in `specs/dcat-ap-sk/schémy/dataset.json` and `dataset.jsonld`
-                        map.insert(
-                            "jméno".into(),
-                            json!({ "@id": "vcard:fn", "@container": "@language" }),
-                        );
-                        map.insert(
-                            "začátek".into(),
-                            json!({ "@id": "dcat:startDate", "@type": "xsd:date" }),
-                        );
-                        map.insert(
-                            "autor_databáze".into(),
-                            json!({ "@id": "leg:originalDatabaseAuthorName", "@container": "@language" }),
-                        );
-                        map.insert(
-                            "dokumentácia".into(),
-                            json!({ "@id": "foaf:page", "@type": "@id" }),
-                        );
-                        map.insert(
-                            "prvek_rúian".into(),
-                            json!({ "@id": "dcterms:spatial", "@type": "@id" }),
-                        );
+                        for (term, meaning) in &context.add {
+                            map.insert(term.clone(), meaning.clone());
+                        }
                     }
-                    *ctx_val = inner.take();
-                }
-                Ok(())
-            } else if trimmed == CZ_CATALOG_CONTEXT_IRI
-                || trimmed == CZ_DATASET_CONTEXT_IRI
-                || trimmed.starts_with("https://ofn.gov.cz/dcat-ap-cz")
-            {
-                let mut parsed: Value = serde_json::from_str(CZ_BUILTIN_CONTEXT_JSON)
-                    .map_err(|e| DataroomError::Rdf(format!("built-in CZ context: {e}")))?;
-                if let Some(inner) = parsed.get_mut("@context") {
                     *ctx_val = inner.take();
                 }
                 Ok(())
@@ -542,351 +448,187 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
     format!("{:#}", doc)
 }
 
-/// Serializes a [`Catalogue`] and its dataset IRIs in the Czech OFN LKOD JSON-LD format
-/// (`specs/dcat-ap-cz/spec-dcat-ap-cz-rozhrani-katalogu.txt` & `priklady-katalog/katalog.jsonld`).
-pub fn serialize_cz_catalogue_jsonld(
-    catalogue: &Catalogue,
-    datasets: &[Dataset],
-    publishers: &BTreeMap<String, Publisher>,
-) -> String {
-    let base = catalogue.base_url();
-    let cat_iri = format!("{base}/catalog");
-    let publisher_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| {
-            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
-        });
-
-    let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
-
-    let mut doc = Map::new();
-    doc.insert("@context".into(), json!(CZ_CATALOG_CONTEXT_IRI));
-    doc.insert("iri".into(), json!(cat_iri));
-    doc.insert("typ".into(), json!("Katalog"));
-    doc.insert("název".into(), json!(catalogue.title));
-    doc.insert("popis".into(), json!(catalogue.description));
-    if let Some(cp) = &catalogue.contact_point {
-        let email = if cp.email.starts_with("mailto:") {
-            cp.email.clone()
-        } else {
-            format!("mailto:{}", cp.email)
-        };
-        doc.insert(
-            "kontaktní_bod".into(),
-            json!({
-                "typ": match cp.kind {
-                    ContactKind::Organization => "Organizace",
-                    ContactKind::Individual => "Jednotlivec",
-                },
-                "jméno": cp.name,
-                "e-mail": email,
-            }),
-        );
-    }
-    doc.insert(
-        "domovská_stránka".into(),
-        json!(catalogue.homepage.as_deref().unwrap_or(&base)),
-    );
-    doc.insert("poskytovatel".into(), json!(publisher_iri));
-    doc.insert("přístupový_bod".into(), json!(cat_iri));
-    doc.insert("datová_sada".into(), json!(ds_iris));
-
-    format!("{:#}", Value::Object(doc))
-}
-
-/// Serializes a [`Catalogue`] and its dataset IRIs in the Slovak DCAT-AP-SK 2.0 JSON-LD format
-/// (`specs/dcat-ap-sk/schémy/katalóg.json` & `príklady/katalóg.jsonld`).
-pub fn serialize_sk_catalogue_jsonld(
-    catalogue: &Catalogue,
-    datasets: &[Dataset],
-    publishers: &BTreeMap<String, Publisher>,
-) -> String {
-    let base = catalogue.base_url();
-    let cat_iri = format!("{base}/catalog");
-    let publisher_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| "https://data.gov.sk/id/legal-subject/00000000".into());
-
-    let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
-
-    let mut doc = Map::new();
-    doc.insert("@context".into(), json!(SK_CATALOG_CONTEXT_IRI));
-    doc.insert("iri".into(), json!(cat_iri));
-    doc.insert("typ".into(), json!("Katalóg"));
-    doc.insert("názov".into(), json!(catalogue.title));
-    doc.insert("popis".into(), json!(catalogue.description));
-    if let Some(cp) = &catalogue.contact_point {
-        let email = if cp.email.starts_with("mailto:") {
-            cp.email.clone()
-        } else {
-            format!("mailto:{}", cp.email)
-        };
-        doc.insert(
-            "kontaktný_bod".into(),
-            json!({
-                "typ": "Organizácia",
-                "meno": cp.name,
-                "e-mail": email,
-            }),
-        );
-    }
-    doc.insert(
-        "domovská_stránka".into(),
-        json!(catalogue.homepage.as_deref().unwrap_or(&base)),
-    );
-    doc.insert("poskytovateľ".into(), json!(publisher_iri));
-    doc.insert("dataset".into(), json!(ds_iris));
-
-    format!("{:#}", Value::Object(doc))
-}
-
-/// Serializes a [`Dataset`] in the Slovak DCAT-AP-SK 2.0 JSON-LD format
-/// (`specs/dcat-ap-sk/schémy/dataset.json` & `príklady/dataset.jsonld`).
-pub fn serialize_sk_dataset_jsonld(
-    dataset: &Dataset,
-    catalogue: &Catalogue,
-    publisher: Option<&Publisher>,
-) -> String {
-    let base = catalogue.base_url();
-    let ds_iri = dataset.canonical_uri(&base);
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/{}", dataset.publisher_id));
-
-    let themes: Vec<String> = if dataset.themes.is_empty() {
-        vec!["http://publications.europa.eu/resource/authority/data-theme/GOVE".into()]
+fn compact_contact(keys: &Contact, kind: &str, contact: &ContactPoint) -> Value {
+    let email = if contact.email.starts_with("mailto:") {
+        contact.email.clone()
     } else {
-        dataset
-            .themes
-            .iter()
-            .map(|t| dataroom_core::vocab::theme_to_iri(t))
-            .collect()
+        format!("mailto:{}", contact.email)
     };
-
-    let freq = dataset
-        .frequency
-        .as_deref()
-        .map(dataroom_core::vocab::frequency_to_eu_iri)
-        .unwrap_or_else(|| {
-            "http://publications.europa.eu/resource/authority/frequency/IRREG".into()
-        });
-
-    let mut kw = dataset.keywords.clone();
-    if kw.is_empty() && !dataset.tags.is_empty() {
-        kw.insert(catalogue.default_language.clone(), dataset.tags.clone());
+    let mut node = Map::new();
+    let class = match contact.kind {
+        ContactKind::Organization => &keys.organization,
+        ContactKind::Individual => &keys.individual,
+    };
+    node.insert(kind.to_owned(), json!(class));
+    for key in &keys.name {
+        node.insert(key.clone(), json!(contact.name));
     }
+    node.insert(keys.email.clone(), json!(iri_text(&email)));
+    Value::Object(node)
+}
 
-    let dists: Vec<Value> = dataset
-        .distributions
-        .iter()
-        .map(|d| {
-            let dist_iri = d
-                .uri
-                .clone()
-                .unwrap_or_else(|| format!("{ds_iri}/resource/{}", d.id));
-            let licence = distribution_licence(dataset, d).and_then(find_licence);
-            let tou = terms_of_use(d, licence.as_ref(), DcatProfileKind::Sk20);
-            let mut dist_obj = Map::new();
-            dist_obj.insert("iri".into(), json!(iri_text(&dist_iri)));
-            dist_obj.insert("typ".into(), json!("Distribúcia"));
-            dist_obj.insert(
-                "podmienky_použitia".into(),
-                json!({
-                    "typ": "Špecifikácia podmienok použitia",
-                    "autorské_dielo": tou.authors_work.as_deref().map(iri_text),
-                    "databáza_ako_autorské_dielo": tou.database_as_work.as_deref().map(iri_text),
-                    "databáza_chránená_zvláštnými_právami": tou.sui_generis_database.as_deref().map(iri_text),
-                    "osobné_údaje": tou.personal_data.as_deref().map(iri_text),
-                }),
-            );
-            dist_obj.insert("prístupové_url".into(), json!(iri_text(&d.access_url)));
-            if let Some(dl) = &d.download_url {
-                dist_obj.insert("súbor_na_stiahnutie".into(), json!(iri_text(dl)));
-            }
-            if let Some(fmt) = &d.format {
-                dist_obj.insert(
-                    "formát".into(),
-                    json!(dataroom_core::vocab::format_to_eu_iri(fmt)),
-                );
-            }
-            if let Some(mt) = &d.media_type {
-                dist_obj.insert(
-                    "typ_média".into(),
-                    json!(dataroom_core::vocab::media_type_to_iana_iri(mt)),
-                );
-            }
-            if !d.title.is_empty() {
-                dist_obj.insert("názov".into(), json!(d.title));
-            }
-            Value::Object(dist_obj)
-        })
-        .collect();
+/// A catalogue and its datasets' IRIs in a profile's compact JSON-LD: the LKOD and the Slovak
+/// catalogue interface are two key dictionaries of this one writer.
+pub fn serialize_compact_catalogue(
+    catalogue: &Catalogue,
+    datasets: &[Dataset],
+    keys: &Compact,
+) -> String {
+    let base = catalogue.base_url();
+    let cat_iri = format!("{base}/catalog");
+    let node = &keys.catalogue;
 
     let mut doc = Map::new();
-    doc.insert("@context".into(), json!(SK_CATALOG_CONTEXT_IRI));
-    doc.insert("iri".into(), json!(ds_iri));
-    doc.insert("typ".into(), json!("Dataset"));
-    doc.insert("názov".into(), json!(dataset.title));
-    doc.insert("popis".into(), json!(dataset.description));
-    doc.insert("poskytovateľ".into(), json!(iri_text(&pub_iri)));
-    doc.insert("téma".into(), json!(themes));
-    doc.insert("periodicita_aktualizácie".into(), json!(freq));
-    doc.insert("kľúčové_slovo".into(), json!(kw));
-    if !dataset.spatial.is_empty() {
-        doc.insert(
-            "geografické_územie".into(),
-            json!(dataset
-                .spatial
+    doc.insert("@context".into(), json!(node.context));
+    doc.insert(keys.iri.clone(), json!(cat_iri));
+    doc.insert(keys.kind.clone(), json!(node.class));
+    for (member, key) in &node.members {
+        let value = match member {
+            CatalogueMember::Title => Some(json!(catalogue.title)),
+            CatalogueMember::Description => Some(json!(catalogue.description)),
+            CatalogueMember::Contact => catalogue
+                .contact_point
+                .as_ref()
+                .map(|cp| compact_contact(&node.contact, &keys.kind, cp)),
+            CatalogueMember::Homepage => {
+                Some(json!(catalogue.homepage.as_deref().unwrap_or(&base)))
+            }
+            CatalogueMember::Publisher => catalogue.declared_publisher_uri().map(|iri| json!(iri)),
+            CatalogueMember::AccessPoint => Some(json!(cat_iri)),
+            CatalogueMember::Datasets => Some(json!(datasets
                 .iter()
-                .map(|s| iri_text(s))
-                .collect::<Vec<_>>()),
-        );
-    }
-    if let Some(cp) = &dataset.contact_point {
-        let email = if cp.email.starts_with("mailto:") {
-            cp.email.clone()
-        } else {
-            format!("mailto:{}", cp.email)
+                .map(|d| d.canonical_uri(&base))
+                .collect::<Vec<_>>())),
         };
-        doc.insert(
-            "kontaktný_bod".into(),
-            json!({
-                "typ": "Organizácia",
-                "jméno": cp.name,
-                "meno": cp.name,
-                "e-mail": email,
-            }),
-        );
+        if let Some(value) = value {
+            doc.insert(key.clone(), value);
+        }
     }
-    doc.insert("distribúcia".into(), Value::Array(dists));
-
     format!("{:#}", Value::Object(doc))
 }
 
-/// Serializes a [`Dataset`] in the Czech DCAT-AP-CZ JSON-LD format.
-pub fn serialize_cz_dataset_jsonld(
+/// A dataset in a profile's compact JSON-LD.
+pub fn serialize_compact_dataset(
     dataset: &Dataset,
     catalogue: &Catalogue,
     publisher: Option<&Publisher>,
+    profile: DcatProfile,
+    keys: &Compact,
 ) -> String {
     let base = catalogue.base_url();
     let ds_iri = dataset.canonical_uri(&base);
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| {
-            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
-        });
+    let node = &keys.dataset;
 
     let mut doc = Map::new();
-    doc.insert("@context".into(), json!(CZ_DATASET_CONTEXT_IRI));
-    doc.insert("iri".into(), json!(ds_iri));
-    doc.insert("typ".into(), json!("Datová sada"));
-    doc.insert("název".into(), json!(dataset.title));
-    doc.insert("popis".into(), json!(dataset.description));
-    doc.insert("poskytovatel".into(), json!(iri_text(&pub_iri)));
-    if !dataset.themes.is_empty() {
-        let themes: Vec<String> = dataset
-            .themes
-            .iter()
-            .map(|t| dataroom_core::vocab::theme_to_iri(t))
-            .collect();
-        doc.insert("téma".into(), json!(themes));
-    }
-    if !dataset.keywords.is_empty() {
-        doc.insert("klíčové_slovo".into(), json!(dataset.keywords));
-    }
-    let freq = dataset
-        .frequency
-        .as_deref()
-        .map(dataroom_core::vocab::frequency_to_eu_iri)
-        .unwrap_or_else(|| {
-            "http://publications.europa.eu/resource/authority/frequency/IRREG".into()
-        });
-    doc.insert("periodicita_aktualizace".into(), json!(freq));
-    if !dataset.spatial.is_empty() {
-        doc.insert(
-            "geografické_území".into(),
-            json!(dataset
-                .spatial
-                .iter()
-                .map(|s| iri_text(s))
-                .collect::<Vec<_>>()),
-        );
-    }
-    if let Some(lp) = &dataset.landing_page {
-        doc.insert("vstupní_stránka".into(), json!(iri_text(lp)));
-    }
-    if let Some(cp) = &dataset.contact_point {
-        let email = if cp.email.starts_with("mailto:") {
-            cp.email.clone()
-        } else {
-            format!("mailto:{}", cp.email)
-        };
-        doc.insert(
-            "kontaktní_bod".into(),
-            json!({
-                "typ": match cp.kind {
-                    ContactKind::Organization => "Organizace",
-                    ContactKind::Individual => "Jednotlivec",
-                },
-                "jméno": cp.name,
-                "e-mail": iri_text(&email),
+    doc.insert("@context".into(), json!(node.context));
+    doc.insert(keys.iri.clone(), json!(ds_iri));
+    doc.insert(keys.kind.clone(), json!(node.class));
+    for (member, key) in &node.members {
+        let value = match member {
+            DatasetMember::Title => Some(json!(dataset.title)),
+            DatasetMember::Description => Some(json!(dataset.description)),
+            DatasetMember::Publisher => dataset_publisher(dataset, catalogue, publisher)
+                .and_then(|(iri, _)| iri)
+                .map(|iri| json!(iri_text(&iri))),
+            DatasetMember::Themes => (!dataset.themes.is_empty()).then(|| {
+                json!(dataset
+                    .themes
+                    .iter()
+                    .map(|t| dataroom_core::vocab::theme_to_iri(t))
+                    .collect::<Vec<_>>())
             }),
-        );
+            DatasetMember::Keywords => {
+                (!dataset.keywords.is_empty()).then(|| json!(dataset.keywords))
+            }
+            DatasetMember::KeywordsOrTags => {
+                let mut words = dataset.keywords.clone();
+                if words.is_empty() && !dataset.tags.is_empty() {
+                    words.insert(catalogue.default_language.clone(), dataset.tags.clone());
+                }
+                Some(json!(words))
+            }
+            DatasetMember::Frequency => dataset
+                .frequency
+                .as_ref()
+                .map(|f| json!(dataroom_core::vocab::frequency_to_eu_iri(f))),
+            DatasetMember::Spatial => (!dataset.spatial.is_empty()).then(|| {
+                json!(dataset
+                    .spatial
+                    .iter()
+                    .map(|s| iri_text(s))
+                    .collect::<Vec<_>>())
+            }),
+            DatasetMember::LandingPage => dataset.landing_page.as_ref().map(|p| json!(iri_text(p))),
+            DatasetMember::Contact => dataset
+                .contact_point
+                .as_ref()
+                .map(|cp| compact_contact(&node.contact, &keys.kind, cp)),
+            DatasetMember::Distributions => Some(Value::Array(
+                dataset
+                    .distributions
+                    .iter()
+                    .map(|d| compact_distribution(dataset, d, &ds_iri, profile, keys))
+                    .collect(),
+            )),
+        };
+        if let Some(value) = value {
+            doc.insert(key.clone(), value);
+        }
     }
-    let dists: Vec<Value> = dataset
-        .distributions
-        .iter()
-        .map(|d| {
-            let licence = distribution_licence(dataset, d).and_then(find_licence);
-            let tou = terms_of_use(d, licence.as_ref(), DcatProfileKind::Cz);
-            let mut dist = Map::new();
-            let iri = d
-                .uri
-                .clone()
-                .unwrap_or_else(|| format!("{ds_iri}/resource/{}", d.id));
-            dist.insert("iri".into(), json!(iri_text(&iri)));
-            dist.insert("typ".into(), json!("Distribuce"));
-            dist.insert(
-                "podmínky_užití".into(),
-                json!({
-                    "typ": "Podmínky užití",
-                    "autorské_dílo": tou.authors_work.as_deref().map(iri_text),
-                    "databáze_jako_autorské_dílo": tou.database_as_work.as_deref().map(iri_text),
-                    "databáze_chráněná_zvláštními_právy": tou.sui_generis_database.as_deref().map(iri_text),
-                    "osobní_údaje": tou.personal_data.as_deref().map(iri_text),
-                }),
-            );
-            dist.insert("přístupové_url".into(), json!(iri_text(&d.access_url)));
-            if let Some(dl) = &d.download_url {
-                dist.insert("soubor_ke_stažení".into(), json!(iri_text(dl)));
-            }
-            if let Some(fmt) = &d.format {
-                dist.insert(
-                    "formát".into(),
-                    json!(dataroom_core::vocab::format_to_eu_iri(fmt)),
-                );
-            }
-            if let Some(mt) = &d.media_type {
-                dist.insert(
-                    "typ_média".into(),
-                    json!(dataroom_core::vocab::media_type_to_iana_iri(mt)),
-                );
-            }
-            if !d.title.is_empty() {
-                dist.insert("název".into(), json!(d.title));
-            }
-            Value::Object(dist)
-        })
-        .collect();
-    doc.insert("distribuce".into(), Value::Array(dists));
     format!("{:#}", Value::Object(doc))
+}
+
+fn compact_distribution(
+    dataset: &Dataset,
+    dist: &Distribution,
+    ds_iri: &str,
+    profile: DcatProfile,
+    keys: &Compact,
+) -> Value {
+    let iri = dist
+        .uri
+        .clone()
+        .unwrap_or_else(|| format!("{ds_iri}/resource/{}", dist.id));
+    let mut out = Map::new();
+    out.insert(keys.iri.clone(), json!(iri_text(&iri)));
+    out.insert(keys.kind.clone(), json!(keys.distribution.class));
+    for (member, key) in &keys.distribution.members {
+        let value = match member {
+            DistributionMember::Terms => terms_of_use(dataset, dist, profile).map(|stated| {
+                let mut node = Map::new();
+                node.insert(keys.kind.clone(), json!(keys.terms.class));
+                for (member, key) in &keys.terms.members {
+                    let held = match member {
+                        TermsMember::AuthorsWork => &stated.authors_work,
+                        TermsMember::DatabaseAsWork => &stated.database_as_work,
+                        TermsMember::SuiGenerisDatabase => &stated.sui_generis_database,
+                        TermsMember::PersonalData => &stated.personal_data,
+                    };
+                    if let Some(held) = held {
+                        node.insert(key.clone(), json!(iri_text(held)));
+                    }
+                }
+                Value::Object(node)
+            }),
+            DistributionMember::AccessUrl => Some(json!(iri_text(&dist.access_url))),
+            DistributionMember::DownloadUrl => {
+                dist.download_url.as_ref().map(|u| json!(iri_text(u)))
+            }
+            DistributionMember::Format => dist
+                .format
+                .as_ref()
+                .map(|f| json!(dataroom_core::vocab::format_to_eu_iri(f))),
+            DistributionMember::MediaType => dist
+                .media_type
+                .as_ref()
+                .map(|m| json!(dataroom_core::vocab::media_type_to_iana_iri(m))),
+            DistributionMember::Title => (!dist.title.is_empty()).then(|| json!(dist.title)),
+        };
+        if let Some(value) = value {
+            out.insert(key.clone(), value);
+        }
+    }
+    Value::Object(out)
 }
 
 #[cfg(test)]
@@ -921,6 +663,33 @@ mod tests {
             c["contactPoint"] = cp;
         }
         serde_json::from_value(c).expect("catalogue fixture")
+    }
+
+    const CZ_CATALOG_CONTEXT_IRI: &str =
+        "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld";
+
+    fn compact(id: &str) -> (DcatProfile, &'static Compact) {
+        let profile = DcatProfile::by_id(id).expect("installed");
+        let keys = profile.manifest().render.json_ld.as_ref();
+        (profile, keys.expect("a compact serialisation"))
+    }
+
+    fn serialize_cz_catalogue_jsonld(cat: &Catalogue, datasets: &[Dataset]) -> String {
+        serialize_compact_catalogue(cat, datasets, compact("dcat-ap-cz").1)
+    }
+
+    fn serialize_sk_catalogue_jsonld(cat: &Catalogue, datasets: &[Dataset]) -> String {
+        serialize_compact_catalogue(cat, datasets, compact("dcat-ap-sk-2.0").1)
+    }
+
+    fn serialize_cz_dataset_jsonld(ds: &Dataset, cat: &Catalogue, p: Option<&Publisher>) -> String {
+        let (profile, keys) = compact("dcat-ap-cz");
+        serialize_compact_dataset(ds, cat, p, profile, keys)
+    }
+
+    fn serialize_sk_dataset_jsonld(ds: &Dataset, cat: &Catalogue, p: Option<&Publisher>) -> String {
+        let (profile, keys) = compact("dcat-ap-sk-2.0");
+        serialize_compact_dataset(ds, cat, p, profile, keys)
     }
 
     fn publisher_map() -> BTreeMap<String, Publisher> {
@@ -1089,7 +858,7 @@ mod tests {
         ));
         let mut ds = dataset();
         ds.uri = Some("https://data.example.org/ds/air".into());
-        let text = serialize_cz_catalogue_jsonld(&cat, &[ds], &publisher_map());
+        let text = serialize_cz_catalogue_jsonld(&cat, &[ds]);
         let doc: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(doc["@context"], CZ_CATALOG_CONTEXT_IRI);
         assert_eq!(doc["kontaktní_bod"]["typ"], "Jednotlivec");
@@ -1108,10 +877,9 @@ mod tests {
             objects(&g, cat_iri, &format!("{DCAT}dataset")),
             ["https://data.example.org/ds/air"]
         );
-        assert_eq!(
-            objects(&g, cat_iri, &format!("{DCT}publisher")),
-            ["https://data.gov.sk/id/legal-subject/00313271"],
-            "without a catalogue publisher IRI the first publisher's is used"
+        assert!(
+            objects(&g, cat_iri, &format!("{DCT}publisher")).is_empty(),
+            "a dataset's publisher is not the catalogue's"
         );
         assert_eq!(
             objects(&g, cat_iri, &format!("{DCT}title")),
@@ -1135,14 +903,11 @@ mod tests {
             3
         );
 
-        // Without contact point, publishers or homepage the defaults apply.
-        let bare = serialize_cz_catalogue_jsonld(&catalogue(None), &[], &BTreeMap::new());
+        // Without contact point or publisher neither is stated; the homepage is the catalogue's own.
+        let bare = serialize_cz_catalogue_jsonld(&catalogue(None), &[]);
         let doc: Value = serde_json::from_str(&bare).unwrap();
         assert!(doc.get("kontaktní_bod").is_none());
-        assert!(doc["poskytovatel"]
-            .as_str()
-            .unwrap()
-            .contains("orgán-veřejné-moci"));
+        assert!(doc.get("poskytovatel").is_none());
         assert_eq!(doc["domovská_stránka"], "https://opendata.example.org");
     }
 
@@ -1153,7 +918,7 @@ mod tests {
         ));
         cat.publisher_uri = Some("https://data.gov.sk/id/legal-subject/1".into());
         cat.homepage = Some("https://city.example".into());
-        let text = serialize_sk_catalogue_jsonld(&cat, &[dataset()], &publisher_map());
+        let text = serialize_sk_catalogue_jsonld(&cat, &[dataset()]);
         let g = parse_jsonld(&text, &RdfLimits::default()).expect("SK catalogue parses offline");
         let cat_iri = "https://opendata.example.org/catalog";
         assert_eq!(
@@ -1177,12 +942,9 @@ mod tests {
             .iter()
             .any(|t| t.object == Term::Iri("mailto:data@city.example".into())));
 
-        let bare = serialize_sk_catalogue_jsonld(&catalogue(None), &[], &BTreeMap::new());
+        let bare = serialize_sk_catalogue_jsonld(&catalogue(None), &[]);
         let doc: Value = serde_json::from_str(&bare).unwrap();
-        assert_eq!(
-            doc["poskytovateľ"],
-            "https://data.gov.sk/id/legal-subject/00000000"
-        );
+        assert!(doc.get("poskytovateľ").is_none());
         assert!(doc.get("kontaktný_bod").is_none());
     }
 
@@ -1227,8 +989,8 @@ mod tests {
             Some("data@city.example")
         );
 
-        // A dataset without themes, frequency or keywords gets SK's required defaults, its tags
-        // become keywords in the catalogue language, and the publisher IRI falls back.
+        // A dataset without themes, frequency or publisher states none of them; its tags become
+        // keywords in the catalogue language.
         let mut bare = dataset();
         bare.themes.clear();
         bare.frequency = None;
@@ -1238,19 +1000,10 @@ mod tests {
         bare.spatial.clear();
         let doc: Value =
             serde_json::from_str(&serialize_sk_dataset_jsonld(&bare, &cat, None)).unwrap();
-        assert_eq!(
-            doc["téma"][0],
-            "http://publications.europa.eu/resource/authority/data-theme/GOVE"
-        );
-        assert_eq!(
-            doc["periodicita_aktualizácie"],
-            "http://publications.europa.eu/resource/authority/frequency/IRREG"
-        );
+        assert!(doc.get("téma").is_none());
+        assert!(doc.get("periodicita_aktualizácie").is_none());
         assert_eq!(doc["kľúčové_slovo"]["sk"][0], "ovzdusie");
-        assert_eq!(
-            doc["poskytovateľ"],
-            "https://opendata.example.org/publisher/city"
-        );
+        assert!(doc.get("poskytovateľ").is_none());
         assert!(doc.get("geografické_územie").is_none());
         assert_eq!(
             doc["distribúcia"][1]["iri"],
@@ -1293,9 +1046,8 @@ mod tests {
             "the distribution's own field is kept"
         );
         assert_eq!(
-            tou.personal_data.as_deref(),
-            Some("https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/"),
-            "a missing field gets the CZ default"
+            tou.personal_data, None,
+            "never asserted without a declaration"
         );
         assert_eq!(ds.spatial, ["http://data.europa.eu/nuts/code/SK032"]);
         assert!(
@@ -1315,10 +1067,31 @@ mod tests {
             serde_json::from_str(&serialize_cz_dataset_jsonld(&bare, &catalogue(None), None))
                 .unwrap();
         assert!(doc.get("téma").is_none() && doc.get("klíčové_slovo").is_none());
-        assert!(doc["poskytovatel"]
-            .as_str()
-            .unwrap()
-            .contains("orgán-veřejné-moci"));
+        assert!(doc.get("poskytovatel").is_none());
+
+        // A declaration is stated in the profile's own code list, whichever list it came in.
+        let mut declared = dataset();
+        declared
+            .extras
+            .insert("personal_data".into(), "contains".into());
+        declared.distributions[1].terms_of_use = Some(dataroom_core::TermsOfUse {
+            personal_data: Some("https://data.gov.sk/def/personal-data-occurence-type/2".into()),
+            ..Default::default()
+        });
+        let doc: Value = serde_json::from_str(&serialize_cz_dataset_jsonld(
+            &declared,
+            &catalogue(None),
+            None,
+        ))
+        .unwrap();
+        let stated = |i: usize| doc["distribuce"][i]["podmínky_užití"]["osobní_údaje"].clone();
+        assert_eq!(
+            [stated(0), stated(1)],
+            [
+                "https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/",
+                "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/"
+            ]
+        );
     }
 
     #[test]

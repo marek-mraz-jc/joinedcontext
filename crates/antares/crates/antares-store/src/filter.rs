@@ -189,6 +189,11 @@ pub struct TemporalFilter<'a> {
     /// value class outside the numeric one) ignores this and the API
     /// aggregates over the reconstructed instances as before.
     pub aggregate: Option<Aggregate<'a>>,
+    /// Every statement of this read ends by this instant, never later than
+    /// the session's own statement_timeout allows (DAT-11): an aggregated read
+    /// through a view's rules, pushed into the store or not, and each read the
+    /// store or the caller runs again for it share one deadline.
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// 4.5.19.1: the bucket matrix a backend computes for the numeric value class.
@@ -196,10 +201,23 @@ pub struct TemporalFilter<'a> {
 pub struct Aggregate<'a> {
     /// aggregation methods, each one of [`AGGREGATE_METHODS`]
     pub methods: &'a [String],
-    /// bucket width in seconds; `None` = one bucket over the whole range (PT0S)
-    pub period_secs: Option<i64>,
+    /// the width of a bucket
+    pub period: Period,
     /// bucket origin (the request's timeAt); `None` = each attribute's first instant
     pub anchor: Option<&'a str>,
+    /// only these Attribute IRIs are read: those asked for, of those a narrowing shows
+    pub attrs: Option<&'a [String]>,
+}
+
+/// The width of a clause 4.5.19.1 bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Period {
+    /// one bucket over the whole range (PT0S)
+    Whole,
+    /// this many seconds
+    Seconds(i64),
+    /// whole calendar months in UTC from a UTC anchor, the day clamped to the month's last
+    Months(u32),
 }
 
 /// Table 4.5.19.1-1: the methods every numeric Property is eligible for —
@@ -232,6 +250,7 @@ impl Default for TemporalFilter<'_> {
             expand: &|t: &str| t.to_owned(),
             geo: &[],
             aggregate: None,
+            deadline: None,
         }
     }
 }

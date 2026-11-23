@@ -7220,7 +7220,7 @@
           "system"
         ],
         "summary": "List Portal Hosts",
-        "description": "Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals and its open data base address (ODP-08, ODP-15). A Portal naming another host is refused at propose with 422 on spec.host.",
+        "description": "Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals, its open data base address (ODP-08, ODP-15) and the publication profiles its catalogues may choose. A Portal naming another host or a profile it may not choose is refused at propose with 422 on spec.host or spec.profiles.",
         "operationId": "list_portal_hosts",
         "responses": {
           "200": {
@@ -57897,6 +57897,27 @@
           }
         }
       },
+      "FeedGap": {
+        "type": "object",
+        "description": "A profile whose feed a dataset is absent from, and the fields that keep it out.",
+        "required": [
+          "profile",
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What is missing or not valid, e.g. `personal_data`."
+          },
+          "profile": {
+            "type": "string",
+            "description": "The profile, e.g. `dcat-ap-sk-2.0`."
+          }
+        }
+      },
       "Feedback": {
         "type": "object",
         "description": "One feedback as the administrators' list shows it.",
@@ -63953,12 +63974,20 @@
           "name",
           "title",
           "source",
-          "hidden"
+          "hidden",
+          "missing"
         ],
         "properties": {
           "hidden": {
             "type": "boolean",
             "description": "Whether `spec.hidden` of the portal names it."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedGap"
+            },
+            "description": "The feeds it is absent from, with the fields that keep it out (T-7520)."
           },
           "name": {
             "type": "string",
@@ -63979,6 +64008,8 @@
         "description": "A page of a portal's datasets, by name.",
         "required": [
           "total",
+          "missingPublisher",
+          "profiles",
           "items"
         ],
         "properties": {
@@ -63987,6 +64018,20 @@
             "items": {
               "$ref": "#/components/schemas/PortalDataset"
             }
+          },
+          "missingPublisher": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The chosen profiles with no feed until the Organization declares a publisher IRI."
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The profiles the catalogue serves beside EU DCAT-AP: what a Portal that states no choice\nkeeps (T-7521)."
           },
           "total": {
             "type": "integer",
@@ -64089,7 +64134,8 @@
           "organization",
           "hosts",
           "sites",
-          "bases"
+          "bases",
+          "profiles"
         ],
         "properties": {
           "bases": {
@@ -64117,6 +64163,13 @@
             "type": "string",
             "description": "The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`."
           },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalProfile"
+            },
+            "description": "The installed profiles its catalogues may publish in (T-7521)."
+          },
           "sites": {
             "type": "array",
             "items": {
@@ -64130,6 +64183,56 @@
               "null"
             ],
             "description": "The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`."
+          }
+        }
+      },
+      "PortalProfile": {
+        "type": "object",
+        "description": "A profile a portal's catalogue may publish in (T-7521).",
+        "required": [
+          "id",
+          "title",
+          "always"
+        ],
+        "properties": {
+          "always": {
+            "type": "boolean",
+            "description": "Served whatever is chosen: EU DCAT-AP."
+          },
+          "blocked": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why this Organization cannot choose it yet; absent when it can."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its country, e.g. `FI`; absent for a profile of no one country."
+          },
+          "id": {
+            "type": "string",
+            "description": "What `spec.profiles` takes, e.g. `dcat-ap-fi-2.0`."
+          },
+          "publisherPrefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the publisher's IRI begins in its national register; absent without one."
+          },
+          "title": {
+            "type": "object",
+            "description": "Its name, by language.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
