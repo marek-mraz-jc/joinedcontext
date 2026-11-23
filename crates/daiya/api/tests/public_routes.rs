@@ -693,6 +693,17 @@ async fn a_repeated_query_is_served_from_the_public_cache() {
         1,
         "the second answer came from the cache"
     );
+    // The organization's cache statistics list the public entries under their dashboard, for a
+    // caller who may read that public dashboard.
+    let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
+    assert!(
+        stats["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["datasourceUid"] == "public:cached"),
+        "{stats}"
+    );
 
     // What the sanitisation depends on and the datasource's settings are in the key.
     let uid = created["uid"].as_str().unwrap();

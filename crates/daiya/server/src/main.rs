@@ -379,26 +379,19 @@ async fn main() {
             }
         }
         Commands::Allowed { operation, object } => {
-            match execute_cli_command(
-                &state,
+            // The registry's decision itself: the dispatcher's `Allowed` arm answers the same
+            // value and has no failure of its own for a subcommand clap already checked.
+            let dec = state.registry.check_allowed(
+                state.authorizer.as_ref(),
                 &ctx,
-                "allowed",
-                json!({ "operation": operation, "object": object }),
-            )
-            .await
-            {
-                Ok(dec) => {
-                    println!("{}", serde_json::to_string_pretty(&dec).unwrap_or_default());
-                    if dec["allowed"].as_bool() == Some(true) {
-                        ExitCode::Ok.code()
-                    } else {
-                        ExitCode::Refused.code()
-                    }
-                }
-                Err(e) => {
-                    eprintln!("{e}");
-                    exit_code_for(&e)
-                }
+                &operation,
+                object.as_deref(),
+            );
+            println!("{}", serde_json::to_string_pretty(&dec).unwrap_or_default());
+            if dec.allowed {
+                ExitCode::Ok.code()
+            } else {
+                ExitCode::Refused.code()
             }
         }
     };

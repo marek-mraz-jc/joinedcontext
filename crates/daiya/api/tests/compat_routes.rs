@@ -1003,6 +1003,41 @@ async fn store_failures_surface_as_errors() {
     }
     let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
     assert_eq!(found["id"], number, "a failed retire retired nothing");
+    // A declared organization the store cannot create is the store's error, not a refusal.
+    w.store.fail("create_org");
+    let err = daiya_api::compat::declare_organization(&w.state, 9, "Espoo")
+        .await
+        .unwrap_err();
+    w.store.heal();
+    assert_eq!(err.status_code(), 500, "{err}");
+    // The store answers the Organization header once and fails when the route asks again:
+    // the route answers the store's error, never acts in another Organization.
+    for (method, uri) in [
+        ("POST", "/api/orgs"),
+        ("DELETE", "/api/orgs/77"),
+        ("GET", "/api/orgs/name/Helsinki"),
+        ("GET", "/d/edge"),
+        ("GET", "/api/nothing-here"),
+    ] {
+        w.store.fail_after("find_org", 1);
+        let req = http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", number.to_string())
+            .body(axum::body::Body::from(
+                json!({ "name": "Tampere" }).to_string(),
+            ))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}: {answer}"
+        );
+    }
 
     // Search degrades to what the store could list, never to an error page.
     w.store.fail("list_folders");
@@ -1163,6 +1198,18 @@ async fn render_takes_template_variables_from_the_address() {
         None,
     )
     .await;
+    // A panel reading a datasource the organization does not hold is 404 and names it.
+    w.add_dashboard(dashboard("orphan", "missing"), None).await;
+    let (st, body) = w
+        .call(
+            "GET",
+            "/api/dashboards/orphan/render?panel=1",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.to_string().contains("'missing' not found"), "{body}");
     let seen = seen.lock().clone();
     let queries: Vec<&String> = seen.iter().filter(|q| q.contains("query_range")).collect();
     assert_eq!(queries.len(), 2, "{seen:?}");
