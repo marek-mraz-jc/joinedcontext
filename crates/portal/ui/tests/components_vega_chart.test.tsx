@@ -48,6 +48,8 @@ vi.mock("vega-interpreter", () => ({ expressionInterpreter: {} }));
 const { VegaChart, chartTheme } = await import("../src/components/panels/VegaChart");
 const { BarChartPanel, HeatmapPanel, HistogramPanel, PieChartPanel, StateTimelinePanel } = await import("../src/components/panels/ChartPanels");
 const { TimeSeriesPanel } = await import("../src/components/panels/TimeSeriesPanel");
+const { PanelView } = await import("../src/components/panels/PanelView");
+const { BarGaugePanel, GaugePanel } = await import("../src/components/panels/ValuePanels");
 
 afterEach(() => {
   vega.views = [];
@@ -232,5 +234,74 @@ describe("time series panel", () => {
     unmount();
     render(<TimeSeriesPanel {...common} frames={frames.requestRate} options={{ legend: { displayMode: "table" } }} />);
     expect(screen.getByRole("list")).toBeInTheDocument();
+  });
+});
+
+describe("panel view per type", () => {
+  const view = { from: frames.FROM, to: frames.TO, locale: "en", height: 240 };
+  it.each([
+    ["stat", frames.up],
+    ["gauge", frames.up],
+    ["bargauge", frames.memory],
+    ["barchart", frames.routes],
+    ["piechart", frames.routes],
+    ["heatmap", frames.durationBuckets],
+    ["histogram", frames.memory],
+    ["state-timeline", frames.runState],
+    ["timeseries", frames.requestRate],
+  ])("draws a %s panel under its title", async (type, data) => {
+    render(<PanelView panel={{ type, title: `A ${type}` }} data={{ frames: data }} {...view} />);
+    expect(screen.getByRole("heading", { name: new RegExp(`A ${type}`) })).toBeInTheDocument();
+    if (type !== "stat" && type !== "bargauge") expect(screen.getAllByRole("img").length).toBeGreaterThan(0);
+  });
+});
+
+describe("gauge panel", () => {
+  it("one arc per value with names, tooltips naming the value, and no markers when asked", async () => {
+    render(<GaugePanel title="Up" frames={frames.memory} options={{ showThresholdMarkers: false }} height={200} locale="en" />);
+    const arcs = await screen.findAllByRole("img");
+    expect(arcs.length).toBe(2);
+    expect(screen.getByRole("list", { name: "Up" }).children).toHaveLength(2);
+  });
+
+  it("one value named only when textMode asks for the name", () => {
+    render(<GaugePanel title="Up" frames={frames.up} options={{ textMode: "value_and_name" }} height={200} locale="en" />);
+    expect(screen.getAllByRole("img").length).toBeGreaterThan(0);
+  });
+});
+
+describe("bar gauge panel", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("stands the bars up once the measured width passes the height, keys its thresholds and stops measuring when gone", () => {
+    const observers: { disconnected: boolean }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        record = { disconnected: false };
+        constructor(private readonly callback: () => void) {
+          observers.push(this.record);
+        }
+        observe() {
+          this.callback();
+        }
+        disconnect() {
+          this.record.disconnected = true;
+        }
+      },
+    );
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+    const thresholds = (mode: string) => ({ defaults: { thresholds: { mode, steps: [{ value: null, color: "green" }, { value: 80, color: "red" }] } }, overrides: [] });
+    const { unmount } = render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={thresholds("percentage")} height={200} locale="en" />);
+    expect(screen.getAllByRole("list")).toHaveLength(2);
+    expect(screen.getAllByRole("meter")).toHaveLength(2);
+    expect(document.body).toHaveTextContent("80%");
+    unmount();
+    expect(observers.every((one) => one.disconnected)).toBe(true);
+    render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={thresholds("absolute")} options={{ orientation: "vertical", displayMode: "basic" }} height={200} locale="en" />);
+    expect(screen.getAllByRole("meter")).toHaveLength(2);
+    width.mockRestore();
   });
 });
