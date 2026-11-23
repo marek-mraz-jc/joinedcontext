@@ -1,0 +1,14 @@
+{# dataset page section `live` (T-7743): included once per place the resolved display lists it #}
+{% if let Some(lv) = live %}
+<section class="jc-live" aria-labelledby="jc-live-title">
+  <h2 id="jc-live-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.live }}{% endif %}</h2>
+  <p>{{ labels.live_lead }}</p>
+  <div class="jc-copy">
+    <label for="jc-live-url" class="visually-hidden">{{ labels.live }}</label>
+    <pre id="jc-live-url" class="jc-live-url" tabindex="0"><code>{{ lv.url_breakable|safe }}</code></pre>
+    <button type="button" class="btn btn-default" data-jc-copy="jc-live-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}">{{ labels.copy }}</button>
+  </div>
+  <p class="jc-example-label" id="jc-example-label">{{ labels.example }}</p>
+  <pre aria-labelledby="jc-example-label"><code>{{ lv.example_breakable|safe }}</code></pre>
+</section>
+{% endif %}

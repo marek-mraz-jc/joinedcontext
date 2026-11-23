@@ -1,0 +1,30 @@
+{# dataset page section `shacl` (T-7743): included once per place the resolved display lists it #}
+{% if show_editor_panel %}
+<section class="shacl-panel" aria-labelledby="shacl-heading">
+  <h2 id="shacl-heading">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.shacl_validation }}{% endif %}</h2>
+  <div class="sdk-datagrid" data-grid-config="{{ shacl_grid_config }}">
+    {% if !shacl_reports.is_empty() %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Profile</th>
+          <th>Version</th>
+          <th>Violations</th>
+          <th>Warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rep in shacl_reports %}
+        <tr>
+          <td>{{ rep.profile_id }}</td>
+          <td>{{ rep.profile_version }}</td>
+          <td>{{ rep.violation_count }}</td>
+          <td>{{ rep.warning_count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</section>
+{% endif %}

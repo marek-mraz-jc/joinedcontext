@@ -13365,10 +13365,12 @@
     "tabs": {
       "label": "Ansichten des Portals",
       "settings": "Einstellungen",
+      "appearance": "Erscheinungsbild",
       "sources": "Quellen",
       "datasets": "Datensätze",
       "files": "Dateien",
-      "layout": "Layout"
+      "layout": "Layout",
+      "display": "Anzeige"
     },
     "sources": {
       "empty": "Noch keine Quelle",
@@ -13746,6 +13748,195 @@
       "refused": "{profile} wurde nicht gespeichert. {reason}",
       "unknownTitle": "Die angebotenen Profile konnten nicht gelesen werden",
       "retry": "Erneut lesen"
+    },
+    "display": {
+      "heading": "Was das Open-Data-Portal zeigt",
+      "lead": "Wählen Sie, welche Abschnitte der Datensatzseite in welcher Reihenfolge erscheinen, die Zeilen der Tabelle Über den Datensatz und was die Datensatzliste zeigt. Jede Liste kommt von der Organisation oder der eingebauten Seite, bis dieses Portal eine eigene setzt. Veröffentlichen schlägt eine Änderung zur Freigabe vor.",
+      "refused": "Die Anzeige wurde abgelehnt",
+      "refusedHint": "Korrigieren Sie das genannte Feld und veröffentlichen Sie erneut. Eine abgelehnte Überschrift öffnet sich unten.",
+      "reset": "Auf geerbt zurücksetzen",
+      "list": {
+        "sections": "Abschnitte der Datensatzseite",
+        "about": "Zeilen der Tabelle Über den Datensatz",
+        "fields": "Felder der Datensatzliste"
+      },
+      "from": {
+        "portal": "Auf diesem Portal gesetzt",
+        "organization": "Von der Organisation geerbt",
+        "builtIn": "Von der Installationsvorgabe geerbt"
+      },
+      "hint": {
+        "sections": "Haken Sie die sichtbaren Abschnitte an und verschieben Sie sie mit den Pfeilen, z. B. Über vor Ressourcen. Herausgeber und Abonnieren bleiben oben und lassen sich nur ausblenden.",
+        "about": "Haken Sie die Zeilen der Tabelle in ihrer Reihenfolge an, z. B. zuerst Lizenz. Ein Zusatzfeld des Datensatzes fügen Sie über seinen Schlüssel hinzu.",
+        "fields": "Haken Sie an, was jeder Datensatz in der Liste nach dem Titel zeigt, z. B. Format und Aktualisiert.",
+        "heading": "Leer lässt die eingebaute Überschrift, z. B. Über die Daten. Reiner Text, höchstens 120 Zeichen.",
+        "extra": "Der Schlüssel eines Zusatzfelds, Kleinbuchstaben, Ziffern, _ oder -, z. B. x_kraj."
+      },
+      "why": {
+        "inherited": "Diese Liste ist bereits geerbt.",
+        "first": "Bereits zuerst.",
+        "last": "Bereits zuletzt.",
+        "extra": "Geben Sie zuerst einen neuen Schlüssel ein, z. B. x_kraj.",
+        "nothing": "Noch nichts geändert."
+      },
+      "up": "{name} nach oben",
+      "down": "{name} nach unten",
+      "headingIn": "Überschrift ({lang})",
+      "headingToggle": "Überschrift ändern",
+      "extra": "Schlüssel des Zusatzfelds",
+      "addExtra": "Zeile hinzufügen",
+      "extraRow": "Zusatzfeld: {key}",
+      "fault": {
+        "empty": "Zeigen Sie mindestens einen Eintrag oder setzen Sie die Liste auf geerbt zurück.",
+        "extra": "Ein Schlüssel hat 1 bis 64 Kleinbuchstaben, Ziffern, _ oder -, z. B. x_kraj.",
+        "heading": "Eine Überschrift ist reiner Text mit höchstens 120 Zeichen ohne < oder >."
+      },
+      "unpublished": "Unveröffentlichte Änderungen: Veröffentlichen schlägt sie zur Freigabe vor.",
+      "published": "Die Anzeige ist veröffentlicht.",
+      "discard": "Verwerfen",
+      "publish": "Veröffentlichen",
+      "sections": {
+        "publisher": "Herausgeber",
+        "subscribe": "Abonnieren",
+        "explorer": "Daten-Explorer",
+        "map": "Karte",
+        "visualizations": "Visualisierungen",
+        "dashboards": "Dashboards",
+        "about": "Über",
+        "live": "Live-Daten-API",
+        "mcp": "Assistenten-Connector (MCP)",
+        "resources": "Ressourcen",
+        "additional-info": "Weitere Informationen",
+        "shacl": "SHACL-Prüfung (nur Redakteure)"
+      },
+      "about": {
+        "publisher": "Herausgeber",
+        "license": "Lizenz",
+        "rights": "Namensnennung",
+        "source": "Quelle",
+        "keyword": "Schlagwörter",
+        "accrualPeriodicity": "Aktualisierungsrhythmus",
+        "issued": "Erstellt",
+        "modified": "Letzte Aktualisierung",
+        "nextUpdate": "Nächste Aktualisierung",
+        "spatial": "Abdeckung",
+        "temporal": "Zeitraum",
+        "contactPoint": "Kontakt",
+        "identifier": "Kennung",
+        "conformsTo": "Entspricht"
+      },
+      "fields": {
+        "notes": "Beschreibung",
+        "format": "Format",
+        "publisher": "Herausgeber",
+        "modified": "Aktualisiert"
+      }
+    },
+    "appearance": {
+      "heading": "Wie das Open-Data-Portal aussieht",
+      "lead": "Namen, Farben, Schriften und Layout dieses Portals. Ein leeres Feld zeigt den Wert der Organisation, dann die Vorgabe der Installation; Zurücksetzen bringt ein Feld dorthin zurück. Veröffentlichen schlägt eine Änderung zur Freigabe vor.",
+      "refused": "Das Erscheinungsbild wurde abgelehnt",
+      "refusedHint": "Korrigieren Sie das genannte Feld und veröffentlichen Sie erneut.",
+      "fix": "Einige Felder müssen korrigiert werden",
+      "fixHint": "Korrigieren Sie die markierten Felder ({count}) und veröffentlichen Sie erneut.",
+      "reset": "Zurücksetzen",
+      "resetField": "{field} auf geerbt zurücksetzen",
+      "pick": "Farbe für {field} wählen",
+      "inheritOption": "Geerbt ({value})",
+      "default": "Vorgabe",
+      "why": "Noch nichts geändert.",
+      "unpublished": "Unveröffentlichte Änderungen: Veröffentlichen schlägt sie zur Freigabe vor.",
+      "published": "Das Erscheinungsbild ist veröffentlicht.",
+      "discard": "Verwerfen",
+      "publish": "Veröffentlichen",
+      "group": {
+        "names": "Namen und Kontakt",
+        "colours": "Farben",
+        "type": "Schrift und Layout"
+      },
+      "from": {
+        "portal": "Auf diesem Portal gesetzt",
+        "organization": "Von der Organisation",
+        "builtIn": "Installationsvorgabe"
+      },
+      "field": {
+        "instanceName": "Vollständiger Name",
+        "shortName": "Kurzname",
+        "city": "Stadt oder Region",
+        "publisher": "Herausgeber",
+        "contactEmail": "Kontakt-E-Mail",
+        "licenseDefault": "Standardlizenz",
+        "colours": {
+          "primary": "Primärfarbe",
+          "secondary": "Sekundärfarbe",
+          "accent": "Akzentfarbe",
+          "background": "Hintergrund",
+          "text": "Textfarbe",
+          "link": "Linkfarbe",
+          "headerBackground": "Kopfzeilenhintergrund",
+          "headerText": "Kopfzeilentext",
+          "footerBackground": "Fußzeilenhintergrund",
+          "footerText": "Fußzeilentext"
+        },
+        "headingFont": "Schrift der Überschriften",
+        "bodyFont": "Schrift des Textes",
+        "fontSize": "Textgröße (px)",
+        "width": "Inhaltsbreite",
+        "radius": "Eckenradius (px)",
+        "buttonStyle": "Schaltflächen",
+        "cardShadow": "Kartenschatten",
+        "datasetList": "Datensatzliste"
+      },
+      "hint": {
+        "instanceName": "Erscheint in Seitentiteln, z. B. Stadt Wien.",
+        "shortName": "Erscheint in Browser-Tabs, z. B. W.",
+        "city": "Das Gebiet des Portals, z. B. Wien.",
+        "publisher": "Der rechtliche Herausgeber in der Fußzeile, z. B. Stadt Wien.",
+        "contactEmail": "Wohin Leser schreiben, z. B. opendata@wien.at.",
+        "licenseDefault": "Eine SPDX-Kennung, z. B. CC-BY-4.0.",
+        "colours_primary": "Schaltflächen und aktive Tabs, z. B. #0b5394.",
+        "colours_secondary": "Sekundäre Akzente, z. B. #0f766e.",
+        "colours_accent": "Hervorhebungen, z. B. #f59e0b.",
+        "colours_background": "Der Seitenhintergrund, z. B. #ffffff.",
+        "colours_text": "Fließtext, mindestens 4,5:1 zum Hintergrund, z. B. #0f172a.",
+        "colours_link": "Links, mindestens 4,5:1 zum Hintergrund, z. B. #1d4ed8.",
+        "colours_headerBackground": "Die obere Leiste, z. B. #0b5394.",
+        "colours_headerText": "Text in der oberen Leiste, mindestens 4,5:1 zu ihrem Hintergrund, z. B. #ffffff.",
+        "colours_footerBackground": "Die Fußzeile, z. B. #0f172a.",
+        "colours_footerText": "Text in der Fußzeile, mindestens 4,5:1 zu ihrem Hintergrund, z. B. #ffffff.",
+        "headingFont": "Überschriften, eine Systemschrift, nichts lädt von anderswo, z. B. Serifen.",
+        "bodyFont": "Fließtext, z. B. Systemschrift.",
+        "fontSize": "14 bis 18, z. B. 16.",
+        "width": "Wie breit der Inhalt läuft, z. B. Mittel.",
+        "radius": "0 bis 24, z. B. 8.",
+        "buttonStyle": "Gefüllt oder umrandet, z. B. Gefüllt.",
+        "cardShadow": "Karten mit oder ohne Schatten, z. B. Weich.",
+        "datasetList": "Karten mit Beschreibung oder kompakte Tabelle, z. B. Tabelle."
+      },
+      "choice": {
+        "system": "Systemschrift",
+        "humanist": "Humanistisch",
+        "serif": "Serifen",
+        "mono": "Festbreite",
+        "narrow": "Schmal",
+        "normal": "Mittel",
+        "wide": "Breit",
+        "filled": "Gefüllt",
+        "outline": "Umrandet",
+        "none": "Keiner",
+        "soft": "Weich",
+        "cards": "Karten",
+        "table": "Tabelle"
+      },
+      "fault": {
+        "text": "Reiner Text mit 1 bis 120 Zeichen ohne < oder >.",
+        "email": "Eine E-Mail-Adresse wie opendata@stadt.de.",
+        "licence": "Eine SPDX-Kennung wie CC-BY-4.0.",
+        "colour": "Eine Hex-Farbe wie #0b5394.",
+        "choice": "Wählen Sie einen der angebotenen Werte.",
+        "number": "Eine ganze Zahl im genannten Bereich.",
+        "contrast": "Zu wenig Kontrast: wählen Sie eine Farbe mit mindestens 4,5:1 zum Hintergrund (WCAG AA)."
+      }
     }
   },
   "assistantGuides": {

@@ -1,0 +1,9 @@
+{# dataset page section `dashboards` (T-7743): included once per place the resolved display lists it #}
+{% if !dashboards.is_empty() %}
+<section class="jc-dataset-dashboards" aria-labelledby="jc-dashboards-title">
+  <h2 id="jc-dashboards-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ dashboards_title }}{% endif %}</h2>
+  <ul>
+    {% for link in dashboards %}<li><a href="{{ link.url }}">{{ link.title }}</a></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}

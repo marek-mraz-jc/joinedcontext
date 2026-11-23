@@ -271,6 +271,9 @@ impl PortalSpec {
         }
         if let Some(appearance) = &self.appearance {
             appearance.validate()?;
+            appearance
+                .display
+                .validate("spec.appearance.display", &self.languages)?;
         }
         for name in &self.hidden {
             if name.is_empty() || name.len() > 100 {
@@ -446,6 +449,28 @@ mod tests {
              - name: transport\n      type: endpoints\n      projects: [transport]\n"
         );
         parse(&yaml).expect("valid");
+    }
+
+    /// T-7743: a Portal's section headings keep to the languages it offers.
+    #[test]
+    fn a_display_heading_keeps_to_the_portal_languages() {
+        let yaml = |lang: &str| {
+            format!(
+                "{HEAD}spec:\n  organizationRef: ba\n  path: x\n  languages: [sk, en]\n  \
+                 appearance:\n    display:\n      dataset:\n        sections:\n          \
+                 - name: about\n            heading: {{{lang}: O dátach}}\n"
+            )
+        };
+        parse(&yaml("sk")).expect("a heading in an offered language");
+        match parse(&yaml("de")) {
+            Err(Error::Invalid { field, .. }) => {
+                assert_eq!(
+                    field,
+                    "spec.appearance.display.dataset.sections[0].heading.de"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
