@@ -201,6 +201,12 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
         "{}",
         stderr(&out)
     );
+    // With the variable set it applies onto the same (empty) state and reports in markdown.
+    let out = kaisatsu(&["apply", "-f", p(&prune_plan), "--output", "markdown"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("### kaisatsu plan for realm `cli`"), "{md}");
+    assert!(md.contains("| Delete | 0 |"), "{md}");
     let out = kaisatsu(&["export", "--realm", "cli"]);
     assert_eq!(code(&out), 1, "nothing to export from an empty store");
     // `--database-url` needs the KEK that encrypts the stored secrets.
