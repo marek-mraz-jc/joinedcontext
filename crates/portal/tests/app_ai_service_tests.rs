@@ -398,6 +398,11 @@ async fn a_failing_or_unreachable_proxy_is_a_503_and_holds_no_tokens() {
         })))
         .mount(&refusing)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/realms/banskabystrica/protocol/openid-connect/certs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+        .mount(&refusing)
+        .await;
     Mock::given(method("POST"))
         .respond_with(
             ResponseTemplate::new(401).set_body_json(json!({ "error": "unauthorized_client" })),
