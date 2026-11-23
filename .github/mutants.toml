@@ -20,6 +20,16 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
+  # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
+  # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
+  # T-7669 msgpack Reader::len: a length between what is left and buf.len() + pos passes the looser bound and
+  # then take() answers the same "unexpected EOF"; collect() over a Result reserves nothing up front.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
