@@ -287,6 +287,11 @@ mod tests {
             load_location("Nowhere/Town").unwrap_err(),
             "unknown time zone Nowhere/Town"
         );
+        // Go's names for UTC, none of them a zone file
+        for name in ["", "UTC", "Local"] {
+            let at = in_location(winter.clone(), &load_location(name).unwrap());
+            assert_eq!(format_rfc3339_nano(&at), "2026-01-15T12:00:00Z", "{name:?}");
+        }
         for name in ["../etc/passwd", "/etc/localtime", "\\x"] {
             assert_eq!(
                 load_location(name).unwrap_err(),
@@ -303,6 +308,15 @@ mod tests {
             format_rfc3339_nano(&utc_zoned(before)),
             "-0001-03-04T05:06:07Z"
         );
+        // an offset's hours and minutes are both taken off the wall time
+        for (text, utc) in [
+            ("2026-01-01T00:00:00+05:45", "2025-12-31T18:15:00Z"),
+            ("2026-01-01T00:00:00-03:30", "2026-01-01T03:30:00Z"),
+        ] {
+            let t = parse_rfc3339(text.as_bytes()).unwrap();
+            assert_eq!(format_rfc3339_nano(&t), text);
+            assert_eq!(format_rfc3339_nano(&utc_zoned(t.timestamp())), utc);
+        }
         // an offset of a day or more is taken off the wall time and the time kept in UTC
         let far = parse_rfc3339(b"2026-01-02T00:00:00+24:00").unwrap();
         assert_eq!(format_rfc3339_nano(&far), "2026-01-01T00:00:00Z");
