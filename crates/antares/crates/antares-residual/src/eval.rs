@@ -619,8 +619,55 @@ fn call(func: Func, args: Vec<Option<Val<'_>>>) -> Option<Val<'_>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{call, int_to_f64};
-    use crate::Func;
+    use super::{call, int_to_f64, order, Eval, Val};
+    use crate::{Error, Func, Lit, Node, MAX_STEPS};
+    use std::borrow::Cow;
+    use std::cmp::Ordering;
+
+    /// The step budget is inclusive: the evaluation that visits exactly
+    /// MAX_STEPS nodes answers, one more is TooComplex.
+    #[test]
+    fn the_step_budget_admits_exactly_max_steps() {
+        let entity = serde_json::json!({});
+        let lit = Node::Lit(Lit::Int(1));
+        let mut e = Eval {
+            entity: &entity,
+            scope: Vec::new(),
+            steps: MAX_STEPS - 1,
+        };
+        assert_eq!(e.value(&lit), Ok(Some(Val::Int(1))));
+        assert_eq!(e.value(&lit), Err(Error::TooComplex));
+    }
+
+    /// Two integers order exactly, past where f64 tells them apart.
+    #[test]
+    fn integers_order_exactly_beyond_f64_precision() {
+        let (big, next) = (Val::Int(9_007_199_254_740_993), Val::Int(9_007_199_254_740_992));
+        assert_eq!(order(&big, &next), Some(Ordering::Greater));
+    }
+
+    /// Only an exponent of exactly one half takes the square root.
+    #[test]
+    fn pow_takes_the_square_root_for_one_half_only() {
+        let pow = |b: f64, e: f64| call(Func::Pow, vec![Some(Val::Num(b)), Some(Val::Num(e))]);
+        assert_eq!(pow(4.0, 0.5), Some(Val::Num(2.0)));
+        let r = pow(4.0, 1.5);
+        assert!(matches!(r, Some(Val::Num(n)) if (n - 8.0).abs() < 1e-9), "{r:?}");
+    }
+
+    /// A concatenation of 4 KiB is well inside the string bound.
+    #[test]
+    fn a_four_kib_concatenation_is_known() {
+        let half = "a".repeat(2048);
+        let both = call(
+            Func::Concat,
+            vec![
+                Some(Val::Str(Cow::Borrowed(&half))),
+                Some(Val::Str(Cow::Borrowed(&half))),
+            ],
+        );
+        assert!(matches!(&both, Some(Val::Str(s)) if s.len() == 4096));
+    }
 
     #[test]
     fn functions_compile_folds_are_unknown_if_ever_called() {

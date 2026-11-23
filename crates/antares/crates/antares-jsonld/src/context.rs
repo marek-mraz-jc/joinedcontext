@@ -563,7 +563,8 @@ mod tests {
     /// the TermDef's fields past its IRI, and one pair in the inverse.
     #[test]
     fn heap_bytes_of_a_plain_term_is_two_pairs_and_the_def_fields() {
-        let pair = 2 * std::mem::size_of::<String>() + 48 + "a".len() + "https://example.org/a".len();
+        let pair =
+            2 * std::mem::size_of::<String>() + 48 + "a".len() + "https://example.org/a".len();
         let def = std::mem::size_of::<TermDef>() - std::mem::size_of::<String>();
         let plain = ctx(json!({"a": {"@id": "https://example.org/a"}}));
         assert_eq!(plain.heap_bytes(), 2 * pair + def);

@@ -1429,9 +1429,7 @@ pub fn expand_attr_fragment(obj: &Map<String, Value>, ctx: &Context) -> Result<V
                     out.insert("datasetId".into(), d);
                 }
             }
-            "languageMap"
-                if !(is_ngsi_null_langmap(v) || valid_language_map(v)) =>
-            {
+            "languageMap" if !(is_ngsi_null_langmap(v) || valid_language_map(v)) => {
                 return Err(bad("invalid languageMap in fragment (4.5.18.2)".into()));
             }
             _ if RESERVED_MEMBERS.contains(&k.as_str()) => {
@@ -2163,9 +2161,15 @@ mod tests {
     fn a_null_object_list_is_a_deletion_under_allow_null_only() {
         let lr = serde_json::json!({"type": "ListRelationship", "objectList": "urn:ngsi-ld:null"});
         let out = entity_with(lr.clone(), nulls()).expect("null list deletes");
-        assert_eq!(out[&format!("{DEFAULT}a")][0]["objectList"], "urn:ngsi-ld:null");
+        assert_eq!(
+            out[&format!("{DEFAULT}a")][0]["objectList"],
+            "urn:ngsi-ld:null"
+        );
         let err = entity_with(lr, ExpandOpts::default()).unwrap_err();
-        assert!(err.to_string().contains("objectList must be an array"), "{err}");
+        assert!(
+            err.to_string().contains("objectList must be an array"),
+            "{err}"
+        );
     }
 
     /// An entity type is a non-empty string, alone or in an array.
@@ -2174,8 +2178,12 @@ mod tests {
         for t in [serde_json::json!(""), serde_json::json!(["T", ""])] {
             let doc = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": t});
             assert!(
-                expand_entity(doc.as_object().expect("obj"), &core(), ExpandOpts::default())
-                    .is_err(),
+                expand_entity(
+                    doc.as_object().expect("obj"),
+                    &core(),
+                    ExpandOpts::default()
+                )
+                .is_err(),
                 "{t}"
             );
         }
@@ -2185,9 +2193,10 @@ mod tests {
     #[test]
     fn sub_attributes_nest_nine_levels_and_not_ten() {
         let nest = |n: usize| {
-            (1..n).fold(serde_json::json!({"type": "Property", "value": 1}), |v, _| {
-                serde_json::json!({"type": "Property", "value": 1, "s": v})
-            })
+            (1..n).fold(
+                serde_json::json!({"type": "Property", "value": 1}),
+                |v, _| serde_json::json!({"type": "Property", "value": 1, "s": v}),
+            )
         };
         entity_with(nest(9), ExpandOpts::default()).expect("nine levels");
         let err = entity_with(nest(10), ExpandOpts::default()).unwrap_err();
@@ -2214,7 +2223,10 @@ mod tests {
             serde_json::json!({"type": "Spot", "coordinates": [1.0, 2.0]}),
         ] {
             let err = entity_with(attr.clone(), ExpandOpts::default()).unwrap_err();
-            assert!(err.to_string().contains("invalid attribute type"), "{attr}: {err}");
+            assert!(
+                err.to_string().contains("invalid attribute type"),
+                "{attr}: {err}"
+            );
         }
     }
 
@@ -2225,7 +2237,10 @@ mod tests {
         let f = serde_json::json!({"value": 1,
             "where": {"type": "GeoProperty", "value": "urn:ngsi-ld:null"}});
         let out = expand_attr_fragment(f.as_object().expect("obj"), &core()).expect("null deletes");
-        assert_eq!(out[&format!("{DEFAULT}where")][0]["value"], "urn:ngsi-ld:null");
+        assert_eq!(
+            out[&format!("{DEFAULT}where")][0]["value"],
+            "urn:ngsi-ld:null"
+        );
     }
 
     #[test]

@@ -521,7 +521,15 @@ impl<'a> Text<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, days_from_civil, Date, DateTime, Time};
+    use super::{civil_from_days, days_from_civil, Date, DateTime, Duration, Time};
+
+    /// A duration takes one optional sign: `+` or `-`, never both.
+    #[test]
+    fn a_duration_takes_one_optional_sign() {
+        assert_eq!(Duration::parse("+PT1H"), Duration::parse("PT1H"));
+        assert!(Duration::parse("PT1H").is_some());
+        assert!(Duration::parse("-+PT1H").is_none());
+    }
 
     #[test]
     fn civil_round_trips_at_the_edges_and_the_leap_days() {
@@ -551,6 +559,11 @@ mod tests {
         assert_eq!(
             DateTime::parse("2026-10-11T12:00:00+02:30").map(DateTime::offset_minutes),
             Some(150)
+        );
+        // the widest offsets: 23 hours and 59 minutes
+        assert_eq!(
+            DateTime::parse("2026-10-11T12:00:00+23:59").map(DateTime::offset_minutes),
+            Some(23 * 60 + 59)
         );
         for bad in [
             "",
