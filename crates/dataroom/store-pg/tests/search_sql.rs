@@ -328,7 +328,9 @@ async fn anonymous_search_sees_no_private_draft_or_withdrawn_dataset() {
             "dlhe-slovo",
             "dochodky",
             "kvalita-ovzdusia",
-            "rozpocet"
+            "parky",
+            "rozpocet",
+            "zelen-park"
         ]
     );
     let (editor, _) = search_store(
