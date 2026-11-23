@@ -19,8 +19,8 @@ pub use odata::{
 };
 pub use outbox::{
     build_pr_webhook_payload, build_push_webhook_payload, compute_gitea_signature,
-    deliver_webhook_with_retries, dispatch_pending_outbox, emit_and_dispatch_event,
-    verify_gitea_signature,
+    deliver_webhook_now, dispatch_logged, dispatch_pending_outbox, emit_and_dispatch_event,
+    record_event, verify_gitea_signature,
 };
 pub use smart_http::smart_http_router;
 pub use state::{
