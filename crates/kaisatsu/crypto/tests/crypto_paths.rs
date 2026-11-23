@@ -661,6 +661,11 @@ fn totp_codes_match_the_rfc_6238_vectors() {
         generate_totp_code_for_credential(&cred, 59).unwrap(),
         "119246"
     );
+    // A code with a leading zero keeps all six digits.
+    assert_eq!(
+        generate_totp_code_for_credential(&cred, 780).unwrap(),
+        "021280"
+    );
     assert_eq!(
         generate_totp_code_for_credential(&cred, 89).unwrap(),
         generate_totp_code(seed256, 6, 30, "HmacSHA256", 89).unwrap()
