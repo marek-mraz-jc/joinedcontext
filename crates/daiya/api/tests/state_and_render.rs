@@ -21,12 +21,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// From, to, interval and variables of one query context.
+type SeenQuery = (i64, i64, u64, BTreeMap<String, String>);
+
 /// A driver answering every query with a time, a name and a value column (rows `b`, `a`, null).
 #[derive(Default)]
 struct Fixed {
     calls: AtomicUsize,
     /// Range, interval and variables of each query context the driver saw.
-    seen: std::sync::Mutex<Vec<(i64, i64, u64, BTreeMap<String, String>)>>,
+    seen: std::sync::Mutex<Vec<SeenQuery>>,
 }
 
 impl Datasource for Fixed {
