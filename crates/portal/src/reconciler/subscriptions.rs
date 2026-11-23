@@ -781,7 +781,7 @@ mod tests {
                     SubscriptionOutcome::Error(reason) => reason.clone(),
                     written => panic!("{name}: {written:?}"),
                 })
-                .unwrap_or_else(|| panic!("{name}: no outcome"))
+                .expect("each manifest has an outcome")
         };
         assert_eq!(
             error("secret"),
@@ -864,9 +864,7 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().expect("its address"));
         std::thread::spawn(move || {
             for answer in answers {
-                let Ok((mut stream, _)) = listener.accept() else {
-                    return;
-                };
+                let (mut stream, _) = listener.accept().expect("a connection");
                 if let Some(answer) = answer {
                     let mut request = [0u8; 8192];
                     let _ = stream.read(&mut request);
