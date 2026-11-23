@@ -402,8 +402,7 @@ fn eval(expr: &Expr, doc: &Value) -> bool {
         Expr::Cmp { path, op, value } => {
             let found = values_at(doc, path);
             match (op, value) {
-                // The parser takes `*` only after `:`, so no other operator comes without a value.
-                (op, None) => *op == Op::Has && !found.is_empty(),
+                (Op::Has, None) => !found.is_empty(),
                 (Op::Has, Some(want)) => found.iter().any(|v| match v {
                     Value::Object(map) => map.contains_key(want),
                     other => text_of(other).as_deref() == Some(want.as_str()),
@@ -419,6 +418,7 @@ fn eval(expr: &Expr, doc: &Value) -> bool {
                         _ => matches!(order, Some(Ordering::Greater | Ordering::Equal)),
                     }
                 }),
+                (_, None) => false,
             }
         }
     }

@@ -79,13 +79,16 @@ impl LabelSelector {
                 ));
             }
 
-            if let Some(open) = part.find('(') {
-                let Some(inside) = part[open + 1..].strip_suffix(')') else {
+            if part.contains('(') {
+                if !part.ends_with(')') {
                     return Err(SelectorError::Malformed(format!(
                         "unclosed set parenthesis: {part}"
                     )));
-                };
-                let before = part[..open].trim();
+                }
+                let (before, inside) = part[..part.len() - 1].split_once('(').ok_or_else(|| {
+                    SelectorError::Malformed(format!("malformed set requirement: {part}"))
+                })?;
+                let before = before.trim();
                 let values: Vec<String> = inside.split(',').map(|v| v.trim().to_string()).collect();
 
                 if values.is_empty() || values.iter().any(|v| v.is_empty()) {

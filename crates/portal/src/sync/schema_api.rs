@@ -189,6 +189,9 @@ fn reason(err: reqwest::Error) -> String {
     if err.is_timeout() {
         return "the peer did not answer in time".to_owned();
     }
+    if err.is_redirect() {
+        return "the peer redirected somewhere a mirror does not follow".to_owned();
+    }
     if err.is_connect() {
         return "the peer could not be reached".to_owned();
     }

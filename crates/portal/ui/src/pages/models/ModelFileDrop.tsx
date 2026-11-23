@@ -280,6 +280,8 @@ export function ModelFileDrop({
         return;
       }
       setDraft(draftOf(answer, orgDomain, name));
+    } catch {
+      setProblem(t("models.infer.failed", { detail: "network" }));
     } finally {
       setBusy(null);
     }

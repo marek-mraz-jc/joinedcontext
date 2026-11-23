@@ -436,14 +436,16 @@ export function AppGenerator({
     onSettled: () => {
       starting.current = false;
     },
-    // `act` throws only an ApiError, a lost connection included (the transport's status 0).
     onError: (err) => {
-      const refused = err as ApiError;
-      if (refused.status === 409) {
-        setConflictApp(chosen);
+      if (err instanceof ApiError) {
+        if (err.status === 409) {
+          setConflictApp(chosen);
+        }
+        setViolations(err.problem?.errors ?? []);
+        setError(err.problem?.detail ?? err.message);
+        return;
       }
-      setViolations(refused.problem?.errors ?? []);
-      setError(refused.problem?.detail ?? refused.message);
+      setError(t("app.error.generic"));
     },
   });
 

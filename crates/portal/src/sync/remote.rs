@@ -484,6 +484,9 @@ fn reason(err: reqwest::Error) -> String {
     if err.is_timeout() {
         return "the origin did not answer in time".to_owned();
     }
+    if err.is_redirect() {
+        return "the origin redirected somewhere a sync does not follow".to_owned();
+    }
     if err.is_connect() {
         return "the origin could not be reached".to_owned();
     }

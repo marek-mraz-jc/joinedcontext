@@ -365,7 +365,7 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   const publishedNames = new Set(apps.map((app) => app.metadata.name));
 
   const runItems = (runs.data?.items ?? []) as unknown as CatalogRun[];
-  const draftRuns: { run: CatalogRun; state: Exclude<ReturnType<typeof draftState>, null | "failed"> }[] = [];
+  const draftRuns: CatalogRun[] = [];
   const seenDraftApps = new Set<string>();
   for (const r of runItems) {
     if (r.appName && !publishedNames.has(r.appName) && !seenDraftApps.has(r.appName)) {
@@ -374,14 +374,14 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
       // An expired, cancelled or failed build is history, not an application: it stays in the
       // assistant's past work, not in this grid.
       if (state !== null && state !== "failed") {
-        draftRuns.push({ run: r, state });
+        draftRuns.push(r);
       }
     }
   }
 
   // The builds whose change waits for an approver, said once above the grid (T-2772): a run
   // that proposed used to expire twenty minutes later with nobody told.
-  const waiting = draftRuns.filter((draft) => draft.state === "waitingApproval").length;
+  const waiting = draftRuns.filter((draft) => draftState(draft.status) === "waitingApproval").length;
 
   return (
     <div className="space-y-4">
@@ -503,7 +503,9 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
             </li>
           );
         })}
-        {draftRuns.map(({ run: draft, state }) => {
+        {draftRuns.map((draft) => {
+          const state = draftState(draft.status);
+          if (!state) return null;
           return (
             <li
               key={draft.id}

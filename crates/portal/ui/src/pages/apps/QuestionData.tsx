@@ -70,8 +70,7 @@ export function QuestionData({
   const [problem, setProblem] = useState<string | null>(null);
   const [address, setAddress] = useState("");
   const [addressProblem, setAddressProblem] = useState<string | null>(null);
-  const rules = input.file;
-  const kilobytes = rules ? Math.floor(rules.maxBytes / 1024) : 0;
+  const kilobytes = input.file ? Math.floor(input.file.maxBytes / 1024) : 0;
   // A workbook of several sheets waits here for the person to say which one is the data.
   const [book, setBook] = useState<{ name: string; sheets: Sheet[]; sheet: string } | null>(null);
   const sheetId = useId();
@@ -91,11 +90,13 @@ export function QuestionData({
     onAnswer({ file: { name: sheetFileName(name, sheets, sheet), format: "csv", text } });
   };
 
-  // Only a question that takes a file draws the drop zone, so a file reaches `take` with its rules.
-  const take = async (file: File, rules: { accept: string[]; maxBytes: number }): Promise<void> => {
+  const take = async (file: File): Promise<void> => {
+    if (!input.file) {
+      return;
+    }
     const format = formatOf(file.name);
-    if (!rules.accept.includes(format)) {
-      setProblem(t("agentRun.question.file.wrongType", { formats: rules.accept.join(", ") }));
+    if (!input.file.accept.includes(format)) {
+      setProblem(t("agentRun.question.file.wrongType", { formats: input.file.accept.join(", ") }));
       return;
     }
     if (format === "xlsx") {
@@ -105,7 +106,7 @@ export function QuestionData({
         if (!only) {
           setProblem(t("agentRun.question.file.empty"));
         } else if (more.length === 0) {
-          sendSheet(file.name, sheets, only, rules.maxBytes);
+          sendSheet(file.name, sheets, only, input.file.maxBytes);
         } else {
           setProblem(null);
           setBook({ name: file.name, sheets, sheet: only.name });
@@ -115,7 +116,7 @@ export function QuestionData({
       }
       return;
     }
-    if (file.size === 0 || file.size > rules.maxBytes) {
+    if (file.size === 0 || file.size > input.file.maxBytes) {
       setProblem(file.size === 0 ? t("agentRun.question.file.empty") : t("agentRun.question.file.tooLarge", { kilobytes }));
       return;
     }
@@ -134,15 +135,15 @@ export function QuestionData({
 
   return (
     <div className="mt-3 flex flex-col gap-3" data-testid="question-data">
-      {rules ? (
+      {input.file ? (
         <FileDropZone
           label={t("agentRun.question.file.label")}
           button={t("agentRun.question.file.button")}
-          hint={t("agentRun.question.file.hint", { formats: rules.accept.join(", "), kilobytes })}
-          accept={rules.accept.map((format) => `.${format}`).join(",")}
+          hint={t("agentRun.question.file.hint", { formats: input.file.accept.join(", "), kilobytes })}
+          accept={input.file.accept.map((format) => `.${format}`).join(",")}
           onFiles={(files) => {
             if (!disabled && files[0]) {
-              void take(files[0], rules);
+              void take(files[0]);
             }
           }}
         >
@@ -154,7 +155,7 @@ export function QuestionData({
           ) : null}
         </FileDropZone>
       ) : null}
-      {rules && book ? (
+      {input.file && book ? (
         <div className="flex flex-col gap-2">
           <SheetChoice id={sheetId} sheets={book.sheets} value={book.sheet} onChange={(sheet) => setBook({ ...book, sheet })} />
           <Button
@@ -164,7 +165,7 @@ export function QuestionData({
             disabledReason={t("app.busyReason")}
             onClick={() => {
               const sheet = book.sheets.find((s) => s.name === book.sheet);
-              if (sheet) sendSheet(book.name, book.sheets, sheet, rules.maxBytes);
+              if (input.file && sheet) sendSheet(book.name, book.sheets, sheet, input.file.maxBytes);
             }}
           >
             {t("agentRun.question.file.sendSheet", { name: book.sheet })}
