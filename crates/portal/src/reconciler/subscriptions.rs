@@ -525,6 +525,401 @@ mod tests {
     }
 
     #[test]
+    fn a_geo_query_that_is_no_pairs_or_no_json_is_refused() {
+        assert_eq!(
+            geo_query("georel"),
+            Err("geoQ 'georel' is not key=value pairs".to_owned())
+        );
+        let reason =
+            geo_query("georel=near&&geometry=Point&coordinates=[13.4,").expect_err("half an array");
+        assert!(
+            reason.starts_with("geoQ coordinates '[13.4,' are not JSON"),
+            "{reason}"
+        );
+        assert_eq!(
+            geo_query("geometry=Point&coordinates= [1,2]"),
+            Err("geoQ 'geometry=Point&coordinates= [1,2]' names no georel".to_owned())
+        );
+    }
+
+    fn subscription(namespace: &str, name: &str, spec: Value) -> crate::resource::ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Subscription",
+            "metadata": { "name": name, "namespace": namespace },
+            "spec": spec,
+            "status": { "phase": "Pending" }
+        }))
+        .expect("a Subscription")
+    }
+
+    fn spec(space: &str, extra: Value) -> Value {
+        let mut spec = json!({
+            "contextSpaceRef": { "kind": "ContextSpace", "name": space },
+            "notification": { "endpoint": { "uri": "https://hooks.example/air" } }
+        });
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            spec[key] = value.clone();
+        }
+        spec
+    }
+
+    fn sync_on(server: &wiremock::MockServer) -> SubscriptionSync {
+        SubscriptionSync::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+            "hel.fi",
+        )
+    }
+
+    async fn realm_answers(server: &wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/realms/city/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "t"})))
+            .mount(server)
+            .await;
+    }
+
+    /// CC-72: a new manifest is created with every member it declares, one the space already
+    /// holds is patched without its id, the deliveries are read back, and a manifest that went
+    /// since the last run takes its subscription with it while the space's others stay.
+    #[tokio::test]
+    async fn a_converge_creates_patches_reads_back_and_removes_only_its_own() {
+        use wiremock::matchers::{bearer_token, body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        realm_answers(&server).await;
+        let base = "/cs/mesto-air/ngsi-ld/v1/subscriptions";
+        let alerts = "urn:ngsi-ld:Subscription:hel.fi:mesto-air:alerts";
+        let quiet = "urn:ngsi-ld:Subscription:hel.fi:mesto-air:quiet";
+        Mock::given(method("POST"))
+            .and(path(base))
+            .and(bearer_token("t"))
+            .and(body_json(json!({
+                "id": alerts, "type": "Subscription",
+                "subscriptionName": "Alerts", "description": "pm10 over 50",
+                "entities": [{ "type": "AirQualityObserved" }],
+                "watchedAttributes": ["pm10"], "q": "pm10>50",
+                "geoQ": { "georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [13.4, 52.5] },
+                "throttling": 60, "expiresAt": "2027-01-01T00:00:00Z", "isActive": true,
+                "notification": {
+                    "endpoint": { "uri": "https://hooks.example/air", "accept": "application/json",
+                                  "receiverInfo": [{ "key": "X-City", "value": "hel" }] },
+                    "attributes": ["pm10"], "format": "keyValues"
+                }
+            })))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{base}/{alerts}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": alerts, "notification": { "status": "ok", "timesSent": 2 }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/cs/mesto-traffic/ngsi-ld/v1/subscriptions"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+        let held = "urn:ngsi-ld:Subscription:hel.fi:mesto-traffic:alerts";
+        Mock::given(method("PATCH"))
+            .and(path(format!(
+                "/cs/mesto-traffic/ngsi-ld/v1/subscriptions/{held}"
+            )))
+            .and(body_json(json!({
+                "type": "Subscription", "isActive": false,
+                "notification": { "endpoint": { "uri": "https://hooks.example/air" } }
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/cs/mesto-traffic/ngsi-ld/v1/subscriptions/{held}"
+            )))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("{base}/{quiet}")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("{base}/{alerts}")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let mirror = Mirror::new();
+        mirror.upsert(subscription(
+            "mesto",
+            "alerts",
+            spec(
+                "air",
+                json!({
+                    "subscriptionName": "Alerts", "description": "pm10 over 50",
+                    "entities": [{ "type": "AirQualityObserved" }], "watchedAttributes": ["pm10"],
+                    "q": "pm10>50",
+                    "geoQ": "georel=near;maxDistance==2000&geometry=Point&coordinates=[13.4,52.5]",
+                    "throttling": 60, "expiresAt": "2027-01-01T00:00:00Z",
+                    "notification": {
+                        "endpoint": { "uri": "https://hooks.example/air", "accept": "application/json",
+                                      "receiverInfo": [{ "key": "X-City", "value": "hel" }] },
+                        "attributes": ["pm10"], "format": "keyValues"
+                    }
+                }),
+            ),
+        ));
+        let previous = Mirror::new();
+        previous.upsert(subscription("mesto", "alerts", spec("air", json!({}))));
+        previous.upsert(subscription("mesto", "quiet", spec("air", json!({}))));
+        mirror.upsert(subscription(
+            "mesto",
+            "broken",
+            json!({ "contextSpaceRef": "air" }),
+        ));
+
+        let sync = sync_on(&server);
+        let outcomes = sync
+            .converge(&mirror, &previous, Path::new("/nonexistent"), None)
+            .await;
+        assert_eq!(
+            outcomes,
+            [(
+                "mesto".to_owned(),
+                "alerts".to_owned(),
+                SubscriptionOutcome::Written(Some(Deliveries {
+                    status: Some("ok".into()),
+                    times_sent: Some(2),
+                    ..Deliveries::default()
+                }))
+            )],
+            "a manifest that does not parse is not written"
+        );
+
+        // The held one in another space is patched; its deliveries unread are nothing to show.
+        let other = Mirror::new();
+        other.upsert(subscription(
+            "mesto",
+            "alerts",
+            spec("traffic", json!({ "isActive": false })),
+        ));
+        let outcomes = sync
+            .converge(&other, &Mirror::new(), Path::new("/nonexistent"), None)
+            .await;
+        assert_eq!(
+            outcomes,
+            [(
+                "mesto".to_owned(),
+                "alerts".to_owned(),
+                SubscriptionOutcome::Written(None)
+            )]
+        );
+    }
+
+    /// MF-31: a credential with no backend, a refusal and a failed patch are errors of their
+    /// own manifest; a delete the space refuses leaves the run going.
+    #[tokio::test]
+    async fn each_failure_is_its_own_manifests_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        realm_answers(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/cs/mesto-closed/ngsi-ld/v1/subscriptions"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"title": "no"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/cs/mesto-held/ngsi-ld/v1/subscriptions"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({"title": "bad"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mirror = Mirror::new();
+        let secret = json!({ "notification": { "endpoint": {
+            "uri": "https://hooks.example/air", "secretRef": { "name": "hook-token" } } } });
+        mirror.upsert(subscription("mesto", "secret", spec("air", secret.clone())));
+        mirror.upsert(subscription("mesto", "sealed", spec("air", secret)));
+        mirror.upsert(subscription("mesto", "closed", spec("closed", json!({}))));
+        mirror.upsert(subscription("mesto", "held", spec("held", json!({}))));
+        mirror.upsert(subscription(
+            "mesto",
+            "fenced",
+            spec("air", json!({ "geoQ": "georel=near" })),
+        ));
+        let previous = Mirror::new();
+        previous.upsert(subscription("mesto", "gone", spec("air", json!({}))));
+
+        let sync = sync_on(&server);
+        let resolver = Resolver::new(crate::pipeline_secrets::Backend::Sops {
+            age_key_file: std::path::PathBuf::from("/nonexistent"),
+        });
+        let outcomes = sync
+            .converge(&mirror, &previous, Path::new("/nonexistent"), None)
+            .await;
+        let error = |name: &str| {
+            outcomes
+                .iter()
+                .find(|(_, n, _)| n == name)
+                .map(|(_, _, outcome)| match outcome {
+                    SubscriptionOutcome::Error(reason) => reason.clone(),
+                    written => panic!("{name}: {written:?}"),
+                })
+                .unwrap_or_else(|| panic!("{name}: no outcome"))
+        };
+        assert_eq!(
+            error("secret"),
+            "the notification credential hook-token cannot be resolved: no secret backend is configured"
+        );
+        assert!(
+            error("closed").starts_with("the space refused the subscription"),
+            "{}",
+            error("closed")
+        );
+        assert!(
+            error("held").starts_with("the space refused the update"),
+            "{}",
+            error("held")
+        );
+        assert_eq!(error("fenced"), "geoQ 'georel=near' names no geometry");
+        assert_eq!(outcomes.len(), 5);
+
+        // A backend that cannot read the reference refuses it, and the value is in no outcome.
+        let only = Mirror::new();
+        only.upsert(subscription(
+            "mesto",
+            "sealed",
+            spec(
+                "air",
+                json!({ "notification": { "endpoint": {
+            "uri": "https://hooks.example/air", "secretRef": { "name": "hook-token" } } } }),
+            ),
+        ));
+        let sealed = sync
+            .converge(
+                &only,
+                &Mirror::new(),
+                Path::new("/nonexistent"),
+                Some(&resolver),
+            )
+            .await;
+        assert!(
+            matches!(&sealed[0].2, SubscriptionOutcome::Error(reason) if reason.contains("hook-token")),
+            "{sealed:?}"
+        );
+    }
+
+    /// Without a token nothing is written: every manifest says why, once, and nothing is deleted.
+    #[tokio::test]
+    async fn a_refused_token_writes_nothing_and_every_manifest_says_so() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mirror = Mirror::new();
+        mirror.upsert(subscription("mesto", "a", spec("air", json!({}))));
+        mirror.upsert(subscription("mesto", "b", spec("air", json!({}))));
+        let previous = Mirror::new();
+        previous.upsert(subscription("mesto", "gone", spec("air", json!({}))));
+        let outcomes = sync_on(&server)
+            .converge(&mirror, &previous, Path::new("/nonexistent"), None)
+            .await;
+        let reason = "the realm refused the reconciler's client: 401 Unauthorized".to_owned();
+        assert_eq!(
+            outcomes,
+            [
+                (
+                    "mesto".to_owned(),
+                    "a".to_owned(),
+                    SubscriptionOutcome::Error(reason.clone())
+                ),
+                (
+                    "mesto".to_owned(),
+                    "b".to_owned(),
+                    SubscriptionOutcome::Error(reason)
+                ),
+            ]
+        );
+    }
+
+    /// T-0931: a written subscription is Live with its deliveries and no condition; a refused one
+    /// is Error with the reason; one that left the mirror meanwhile is not brought back.
+    #[test]
+    fn the_outcomes_become_each_manifests_status() {
+        let mirror = Mirror::new();
+        mirror.upsert(subscription("mesto", "ok", spec("air", json!({}))));
+        mirror.upsert(subscription("mesto", "refused", spec("air", json!({}))));
+        let shown = Deliveries {
+            status: Some("ok".into()),
+            ..Deliveries::default()
+        };
+        record(
+            &mirror,
+            vec![
+                (
+                    "mesto".into(),
+                    "ok".into(),
+                    SubscriptionOutcome::Written(Some(shown.clone())),
+                ),
+                (
+                    "mesto".into(),
+                    "refused".into(),
+                    SubscriptionOutcome::Error("403 from the space".into()),
+                ),
+                (
+                    "mesto".into(),
+                    "gone".into(),
+                    SubscriptionOutcome::Error("x".into()),
+                ),
+            ],
+        );
+        let status = |name: &str| {
+            mirror
+                .get("mesto", "Subscription", name)
+                .and_then(|env| env.status)
+                .expect("a status")
+        };
+        let ok = status("ok");
+        assert_eq!(ok.phase, crate::resource::Phase::Live);
+        assert!(ok.conditions.is_empty());
+        assert_eq!(ok.notifications, Some(shown));
+        let refused = status("refused");
+        assert_eq!(refused.phase, crate::resource::Phase::Error);
+        assert_eq!(
+            refused.conditions[0].reason.as_deref(),
+            Some("SpaceRefused")
+        );
+        assert_eq!(
+            refused.conditions[0].message.as_deref(),
+            Some("403 from the space")
+        );
+        assert!(mirror.get("mesto", "Subscription", "gone").is_none());
+    }
+
+    #[test]
     fn the_id_is_the_manifests_and_names_the_space() {
         let sync = SubscriptionSync::new(
             "https://city.example/",
