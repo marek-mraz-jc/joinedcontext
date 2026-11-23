@@ -19,6 +19,8 @@ import { PublicationPreview } from "./PublicationPreview";
 import {
   catalogOf,
   columnsOf,
+  fieldLabel,
+  fieldProblems,
   formOf,
   FREQUENCIES,
   hiddenOf,
@@ -27,7 +29,7 @@ import {
   textsWith,
   THEMES,
 } from "./publish";
-import type { CatalogBlock, DraftAttribute, PublishForm } from "./publish";
+import type { CatalogBlock, DatasetField, DraftAttribute, PublishForm } from "./publish";
 
 type Draft = components["schemas"]["CatalogueDraft"];
 type Step = "pick" | "describe" | "preview";
@@ -231,7 +233,9 @@ function Flow({
     ...problems(drafted.form),
     ...(drafted.title.trim() === "" ? { title: "catalogue.publish.error.title" } : {}),
   };
-  const invalid = Object.keys(found).length > 0;
+  const fieldDefs: DatasetField[] = (drafted.draft.datasetFields ?? []) as DatasetField[];
+  const fieldFound = fieldProblems(drafted.form, fieldDefs);
+  const invalid = Object.keys(found).length > 0 || Object.keys(fieldFound).length > 0;
   const errorOf = (field: keyof PublishForm | "title") => (touched && found[field] ? [t(found[field])] : undefined);
   const update = (patch: Partial<PublishForm>) =>
     setDrafted({ ...drafted, form: { ...drafted.form, ...patch } });
@@ -431,6 +435,15 @@ function Flow({
           <Input id="publish-end" type="date" value={drafted.form.temporalEnd} onChange={(e) => update({ temporalEnd: e.target.value })} />
         </Field>
       </div>
+      {fieldDefs.length > 0 ? (
+        <DatasetFields
+          fields={fieldDefs}
+          language={drafted.form.language}
+          values={drafted.form.fields}
+          errors={touched ? fieldFound : {}}
+          onChange={(name, value) => update({ fields: { ...drafted.form.fields, [name]: value } })}
+        />
+      ) : null}
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-body font-medium text-fg">{t("catalogue.publish.attributes")}</legend>
         <p className="text-caption text-fg-muted">{t("catalogue.publish.attributesHelp")}</p>
@@ -474,6 +487,70 @@ function Flow({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * The Organization's own dataset fields (T-7746): one control per field by its type, an enum a
+ * select of the values the Organization set, each with a hint and an example. The open data
+ * portal shows them in the dataset's About table as plain text.
+ */
+function DatasetFields({
+  fields,
+  language,
+  values,
+  errors,
+  onChange,
+}: {
+  fields: DatasetField[];
+  language: string;
+  values: Record<string, string>;
+  errors: Record<string, string>;
+  onChange: (name: string, value: string) => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <fieldset className="flex flex-col gap-3">
+      <legend className="mb-1 text-body font-medium text-fg">{t("catalogue.publish.orgFields")}</legend>
+      <p className="text-caption text-fg-muted">{t("catalogue.publish.orgFieldsHelp")}</p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {fields.map((field) => {
+          const id = `publish-field-${field.name}`;
+          const value = values[field.name] ?? "";
+          const error = errors[field.name];
+          return (
+            <Field
+              key={field.name}
+              id={id}
+              label={fieldLabel(field, language)}
+              required={field.required}
+              description={t(`catalogue.publish.fieldHint.${field.type}`)}
+              errors={error ? [t(error)] : undefined}
+            >
+              {field.type === "enum" ? (
+                <Select id={id} value={value} onChange={(e) => onChange(field.name, e.target.value)}>
+                  <option value="">{t("catalogue.publish.choose")}</option>
+                  {(field.values ?? []).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  id={id}
+                  type={field.type === "date" ? "date" : field.type === "url" ? "url" : "text"}
+                  inputMode={field.type === "number" ? "decimal" : undefined}
+                  maxLength={2000}
+                  value={value}
+                  onChange={(e) => onChange(field.name, e.target.value)}
+                />
+              )}
+            </Field>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 

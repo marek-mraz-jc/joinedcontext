@@ -61,7 +61,7 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 21] = [
+pub const CHECKS: [(&str, Check); 22] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("organization-name", organization_name),
@@ -81,6 +81,7 @@ pub const CHECKS: [(&str, Check); 21] = [
     ("quota", quota),
     ("mqtt-allowance", mqtt_allowance),
     ("catalogue-publication", catalogue_publication),
+    ("dataset-fields", dataset_fields),
     ("portal", portal),
     ("scripts", crate::scripts::check),
 ];
@@ -490,6 +491,20 @@ fn catalogue_publication(
     crate::catalog::check_publication(&envelope.kind, &envelope.spec)
 }
 
+/// An Endpoint's own dataset fields against its Organization's definitions (T-7746). A load of
+/// `main` keeps a record an Organization's new required field leaves unfilled: the page and the
+/// DCAT feed show only values the definitions admit.
+fn dataset_fields(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    if ground.load {
+        return Ok(());
+    }
+    crate::catalog::check_fields(ground.mirror, project, &envelope.kind, &envelope.spec)
+}
+
 /// `joinedcontext-portal validate --as-portal` (P-15): what `jcctl validate` finds in an
 /// organization checkout and its projects, and what this judge refuses of it, so a repository
 /// can be judged offline exactly as this Portal's load would judge it on a first run. Each
@@ -882,6 +897,15 @@ mod tests {
                 air(endpoint(
                     json!({ "audience": "organization", "publish": { "ckan": { "instanceRef": "opendata" } } }),
                 )),
+            ),
+            "dataset-fields" => (
+                vec![
+                    org(json!({ "domain": "hel.fi", "datasetFields": [
+                        { "name": "funding", "label": { "en": "Funding" }, "type": "enum",
+                          "values": ["eu", "city"], "required": true }] })),
+                    project(json!({})),
+                ],
+                air(endpoint(json!({ "catalog": { "fields": { "funding": "state" } } }))),
             ),
             "scripts" => {
                 let code = "bento.v0_msg_set_string('x')";

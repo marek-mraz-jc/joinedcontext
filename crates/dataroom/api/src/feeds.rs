@@ -455,6 +455,7 @@ fn render_dcat_catalog_response(
     selected: &Selected,
     page_param: Option<usize>,
     feed_path: &str,
+    fields: &dataroom_core::branding::BrandingDatasetFields,
 ) -> Response {
     let base = cat.base_url();
     let total = all_visible.len();
@@ -491,7 +492,15 @@ fn render_dcat_catalog_response(
 
     let profile_uri = selected.uri();
     let renderer = selected.stack.renderer;
-    let mut body = serialize_catalogue(cat, &slice, pub_map, format, renderer, hydra.as_ref());
+    let mut body = serialize_catalogue(
+        cat,
+        &slice,
+        pub_map,
+        format,
+        renderer,
+        hydra.as_ref(),
+        fields,
+    );
     if let (RdfFormat::Turtle, Some(h)) = (format, &hydra) {
         body = paging_first(body, &h.current_page_uri);
     }
@@ -690,7 +699,14 @@ async fn serve_catalog(
     };
 
     render_dcat_catalog_response(
-        &cat, datasets, &pub_map, format, &selected, query.page, &feed_path,
+        &cat,
+        datasets,
+        &pub_map,
+        format,
+        &selected,
+        query.page,
+        &feed_path,
+        &state.branding_of(&cat).dataset_fields,
     )
 }
 

@@ -42,6 +42,40 @@ pub fn check_contact(
     Ok(())
 }
 
+/// Refuses an Endpoint whose `spec.catalog.fields` its Organization's `spec.datasetFields` do not
+/// admit (T-7746): a field the Organization does not define, a value its type refuses, or a
+/// required field left empty. The definitions are always those of the Organization owning
+/// `project`, so no Organization's fields apply to another's datasets. 422 names the field.
+pub fn check_fields(mirror: &Mirror, project: &str, kind: &str, spec: &Value) -> Result<(), ApiError> {
+    let Some(catalog) = spec.get("catalog").filter(|_| kind == "Endpoint") else {
+        return Ok(());
+    };
+    let values: std::collections::BTreeMap<String, String> = match catalog.get("fields") {
+        None | Some(Value::Null) => Default::default(),
+        Some(fields) => serde_json::from_value(fields.clone()).map_err(|_| {
+            unprocessable("spec.catalog.fields: each value is text, such as {funding: eu}")
+        })?,
+    };
+    jc_core::kinds::dataset_fields::check_values(&dataset_fields_of(mirror, project), &values)
+        .map_err(|e| unprocessable(&e.to_string()))
+}
+
+/// The dataset fields of the Organization owning `project` (T-7746); none when it defines none.
+pub fn dataset_fields_of(mirror: &Mirror, project: &str) -> Vec<jc_core::kinds::DatasetField> {
+    crate::permissions::organization_of(mirror, project)
+        .and_then(|org| mirror.get(ORG_NAMESPACE, "Organization", &org))
+        .and_then(|org| org.spec.get("datasetFields").cloned())
+        .and_then(|defs| serde_json::from_value(defs).ok())
+        .unwrap_or_default()
+}
+
+fn unprocessable(line: &str) -> ApiError {
+    ApiError::Unprocessable {
+        detail: line.to_owned(),
+        errors: vec![line.to_owned()],
+    }
+}
+
 /// Refuses an Endpoint that declares `spec.publish.ckan` with an audience other than `public`:
 /// the CKAN dataset is an open-data entry anyone reads, and its resources would link a door that
 /// answers them 401 (EP-62). The one-step publish flow sets `audience: public` in the same change

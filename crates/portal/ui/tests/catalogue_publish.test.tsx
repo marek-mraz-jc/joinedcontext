@@ -8,7 +8,17 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
-import { applyFields, catalogOf, columnsOf, formOf, hiddenOf, problems, textsWith } from "../src/pages/catalogue/publish";
+import {
+  applyFields,
+  catalogOf,
+  columnsOf,
+  fieldProblems,
+  formOf,
+  hiddenOf,
+  problems,
+  textsWith,
+} from "../src/pages/catalogue/publish";
+import type { DatasetField } from "../src/pages/catalogue/publish";
 import { PublishDatasetDialog } from "../src/pages/catalogue/PublishDataset";
 import { PublicationPreview } from "../src/pages/catalogue/PublicationPreview";
 
@@ -64,6 +74,12 @@ const PAGE = {
   },
   unavailable: [],
 };
+
+/** T-7746: the bbsk Organization's own dataset fields, as the draft offers them. */
+const FIELDS: DatasetField[] = [
+  { name: "funding", label: { sk: "Financovanie", en: "Funding" }, type: "enum", values: ["eu", "city"], required: true },
+  { name: "reviewed", label: { sk: "Revízia", en: "Reviewed on" }, type: "date" },
+];
 
 type Sent = { method: string; url: URL; body: unknown };
 
@@ -294,6 +310,45 @@ describe("publish a dataset in one step (EP-83)", () => {
     expect(put.spec.audience).toBe("organization");
   });
 
+  it("fills the organization's own fields, refuses a missing required one and proposes them in catalog.fields (T-7746)", async () => {
+    const user = userEvent.setup();
+    draftAnswer = { status: 200, body: { ...DRAFT, makesPublic: false, datasetFields: FIELDS } };
+    stub();
+    window.history.pushState({}, "", "/catalogue");
+    render(
+      <QueryClientProvider client={client()}>
+        <I18nextProvider i18n={i18n}>
+          <App />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Publish a dataset" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("combobox", { name: "Endpoint" }));
+    await user.click(await within(dialog).findByRole("option", { name: /Ukazovatele kraja/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Draft the description" }));
+    const group = await within(dialog).findByRole("group", { name: "Your organization's fields" });
+    // The draft is in Slovak, so each label is the Slovak one; every field has its hint.
+    const funding = within(group).getByRole("combobox", { name: /Financovanie/ });
+    expect(funding).toHaveAccessibleDescription("Pick one of the values your organization set.");
+    expect(within(funding).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["", "eu", "city"]);
+    const reviewed = within(group).getByLabelText(/Revízia/);
+    expect(reviewed).toHaveAttribute("type", "date");
+    expect(reviewed).toHaveAccessibleDescription("A date, for example: 2026-11-23");
+
+    await user.click(within(dialog).getByRole("button", { name: "Preview the entry" }));
+    expect(await within(group).findByText("Your organization requires this field: fill it.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("region", { name: "3. Preview" })).toBeNull();
+    await user.selectOptions(funding, "eu");
+    fireEvent.change(reviewed, { target: { value: "2026-11-23" } });
+    await user.click(within(dialog).getByRole("button", { name: "Preview the entry" }));
+    await within(dialog).findByRole("region", { name: "3. Preview" });
+    await user.click(within(dialog).getByRole("button", { name: "Propose publication" }));
+    await within(dialog).findByText(/next reconcile/);
+    const put = sent.filter((s) => s.method === "PUT")[1].body as { spec: { catalog: Record<string, unknown> } };
+    expect(put.spec.catalog.fields).toEqual({ funding: "eu", reviewed: "2026-11-23" });
+  });
+
   it("opens nothing while closed", () => {
     stub();
     render(
@@ -387,6 +442,34 @@ describe("the publish form", () => {
     expect(problems({ ...form, temporalStart: "2025-02-01", temporalEnd: "2025-01-01" })).toEqual({
       temporalEnd: "catalogue.publish.error.period",
     });
+  });
+
+  it("checks each organization field by its type and writes only the filled ones (T-7746)", () => {
+    const form = formOf({ ...draft, fields: { funding: "eu" } }, "en");
+    expect(form.fields).toEqual({ funding: "eu" });
+    const defs: DatasetField[] = [
+      ...FIELDS,
+      { name: "budget", label: { en: "Budget" }, type: "number" },
+      { name: "page", label: { en: "Report" }, type: "url" },
+    ];
+    expect(fieldProblems(form, defs)).toEqual({});
+    expect(
+      fieldProblems(
+        { ...form, fields: { funding: "state", reviewed: "23.11.2026", budget: "1e3", page: "http://a.sk" } },
+        defs,
+      ),
+    ).toEqual({
+      funding: "catalogue.publish.error.field.enum",
+      reviewed: "catalogue.publish.error.field.date",
+      budget: "catalogue.publish.error.field.number",
+      page: "catalogue.publish.error.field.url",
+    });
+    expect(fieldProblems({ ...form, fields: { page: "javascript:alert(1)" } }, defs)).toEqual({
+      funding: "catalogue.publish.error.fieldRequired",
+      page: "catalogue.publish.error.field.url",
+    });
+    expect(catalogOf(draft, { ...form, fields: { funding: " eu ", reviewed: " " } }).fields).toEqual({ funding: "eu" });
+    expect(catalogOf({ ...draft, fields: { funding: "eu" } }, { ...form, fields: { funding: "" } }).fields).toBeUndefined();
   });
 
   it("a draft with nothing in it is a form with nothing in it", () => {

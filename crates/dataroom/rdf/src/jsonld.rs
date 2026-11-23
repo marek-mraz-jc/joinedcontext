@@ -373,6 +373,7 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
     }
 
     let mut nodes = Vec::new();
+    let mut field_prefixes: BTreeMap<String, String> = BTreeMap::new();
     for (subj, preds) in by_subj {
         let mut obj = Map::new();
         match subj {
@@ -420,8 +421,15 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
                     }
                 })
                 .collect();
+            let key = match field_term(pred) {
+                Some((prefix, namespace, name)) => {
+                    field_prefixes.insert(prefix.clone(), namespace);
+                    format!("{prefix}:{name}")
+                }
+                None => iri_text(pred).into_owned(),
+            };
             obj.insert(
-                iri_text(pred).into_owned(),
+                key,
                 if values.len() == 1 {
                     values[0].clone()
                 } else {
@@ -432,7 +440,7 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
         nodes.push(Value::Object(obj));
     }
 
-    let doc = json!({
+    let mut doc = json!({
         "@context": {
             "dcat": ns::DCAT,
             "dct": ns::DCT,
@@ -448,7 +456,25 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
         "@graph": nodes,
         "@included": nodes
     });
+    // T-7746: each Organization's dataset-field namespace, declared beside the vocabularies.
+    for (prefix, namespace) in field_prefixes {
+        doc["@context"][prefix] = json!(namespace);
+    }
     format!("{:#}", doc)
+}
+
+/// An Organization's dataset-field property `https://<host>/ns/dataset-fields/<org>/<name>` as
+/// its JSON-LD prefix `fields-<org>`, the namespace and the name (T-7746); `None` for any other
+/// IRI or one whose segments are not DNS labels.
+fn field_term(iri: &str) -> Option<(String, String, &str)> {
+    let rest = iri.strip_prefix("https://")?;
+    let (host, path) = rest.split_once('/')?;
+    let (org, name) = path.strip_prefix("ns/dataset-fields/")?.split_once('/')?;
+    let label = |s: &str| {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    (label(org) && label(name) && !host.is_empty())
+        .then(|| (format!("fields-{org}"), format!("https://{host}/ns/dataset-fields/{org}/"), name))
 }
 
 fn compact_contact(keys: &Contact, kind: &str, contact: &ContactPoint) -> Value {

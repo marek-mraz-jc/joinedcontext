@@ -74,14 +74,14 @@ fn feeds_match_their_golden_files() {
                 .map(|(name, ds)| {
                     (
                         format!("{label}-{name}.{extension}"),
-                        serialize_dataset(ds, &catalogue, None, format, profile),
+                        serialize_dataset(ds, &catalogue, None, format, profile, &Default::default()),
                     )
                 })
                 .collect();
             let all: Vec<Dataset> = datasets.iter().map(|(_, d)| d.clone()).collect();
             feeds.push((
                 format!("{label}-catalogue.{extension}"),
-                serialize_catalogue(&catalogue, &all, &BTreeMap::new(), format, profile, None),
+                serialize_catalogue(&catalogue, &all, &BTreeMap::new(), format, profile, None, &Default::default()),
             ));
             for (file, actual) in feeds {
                 let golden = fs::read_to_string(dir.join(&file)).ok();

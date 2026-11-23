@@ -62,7 +62,7 @@ fn inventions(profile: DcatProfile) -> Vec<String> {
         RdfFormat::RdfXml,
         RdfFormat::NTriples,
     ] {
-        let one = serialize_dataset(&dataset, &catalogue, None, format, profile);
+        let one = serialize_dataset(&dataset, &catalogue, None, format, profile, &Default::default());
         let all = serialize_catalogue(
             &catalogue,
             std::slice::from_ref(&dataset),
@@ -70,6 +70,7 @@ fn inventions(profile: DcatProfile) -> Vec<String> {
             format,
             profile,
             None,
+            &Default::default(),
         );
         for text in [one, all] {
             // A context dictionary names every term; the statements are what follows it.

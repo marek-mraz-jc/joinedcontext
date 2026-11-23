@@ -8,7 +8,7 @@ import { ChangeNotice } from "../../components/ChangeNotice";
 import { Alert, Badge, Button, Card, Checkbox, Field, Input } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 import { linesOf, usePortalChange } from "./PortalSources";
-import { displayFaults, displayOf, EXTRA_KEY, moved, resolved } from "./portalDisplay";
+import { completed, displayFaults, displayOf, EXTRA_KEY, fieldRowsOf, moved, resolved } from "./portalDisplay";
 import type { Display, DisplayLevel, DisplayList, DisplayRow } from "./portalDisplay";
 
 type Lists = Partial<Record<DisplayList, DisplayRow[]>>;
@@ -20,10 +20,10 @@ function storedDisplay(spec: { appearance?: unknown } | undefined): Display | un
 }
 
 /** The lists the portal sets itself, as editor rows; a list it inherits is absent. */
-export function ownLists(own: Display | undefined, organization: Display | undefined): Lists {
+export function ownLists(own: Display | undefined, organization: Display | undefined, fieldRows: string[] = []): Lists {
   const lists: Lists = {};
   for (const list of LISTS) {
-    const shown = resolved(own, organization, list);
+    const shown = resolved(own, organization, list, fieldRows);
     if (shown.from === "portal") lists[list] = shown.rows;
   }
   return lists;
@@ -35,13 +35,20 @@ export function ownLists(own: Display | undefined, organization: Display | undef
  * the portal sets its own, and reset to inherited again. Publishing proposes a Change.
  */
 export function PortalDisplayTab({ name, spec }: { name: string; spec: PortalSpec }): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const organizations = useOrganizationManifests();
-  const orgSpec = organizations.data?.items.find((o) => o.metadata.name === spec.organizationRef)?.spec as { appearance?: unknown } | undefined;
+  const orgSpec = organizations.data?.items.find((o) => o.metadata.name === spec.organizationRef)?.spec as
+    | { appearance?: unknown; datasetFields?: { name: string; label?: Record<string, string> }[] }
+    | undefined;
   const organization = storedDisplay(orgSpec);
+  // T-7746: the Organization's own dataset fields are about rows too, labelled as it names them.
+  const fieldRows = fieldRowsOf(orgSpec?.datasetFields);
+  const fieldLabels = new Map(
+    (orgSpec?.datasetFields ?? []).map((f) => [`extras.x_${f.name}`, f.label?.[i18n.resolvedLanguage ?? "en"] ?? Object.values(f.label ?? {})[0] ?? f.name]),
+  );
   const own = storedDisplay(spec);
   const languages = spec.languages?.length ? spec.languages : ["sk"];
-  const [lists, setLists] = useState<Lists>(() => ownLists(own, organization));
+  const [lists, setLists] = useState<Lists>(() => ownLists(own, organization, fieldRows));
   const [extra, setExtra] = useState("");
   const [tried, setTried] = useState(false);
   const [change, setChange] = useState<Change | null>(null);
@@ -55,8 +62,11 @@ export function PortalDisplayTab({ name, spec }: { name: string; spec: PortalSpe
   const extraFault = extra !== "" && !EXTRA_KEY.test(extra);
 
   // A list absent from the editor is inherited: it shows the level above's, never the portal's stored one.
-  const rowsOf = (list: DisplayList) => lists[list] ?? resolved(undefined, organization, list).rows;
-  const fromOf = (list: DisplayList): DisplayLevel => (lists[list] ? "portal" : resolved(undefined, organization, list).from);
+  const rowsOf = (list: DisplayList) => {
+    const mine = lists[list];
+    return mine ? completed(mine, list, fieldRows) : resolved(undefined, organization, list, fieldRows).rows;
+  };
+  const fromOf = (list: DisplayList): DisplayLevel => (lists[list] ? "portal" : resolved(undefined, organization, list, fieldRows).from);
   const edit = (list: DisplayList, fn: (rows: DisplayRow[]) => DisplayRow[]) => setLists({ ...lists, [list]: fn(rowsOf(list)) });
   const reset = (list: DisplayList) => {
     const rest = { ...lists };
@@ -84,7 +94,8 @@ export function PortalDisplayTab({ name, spec }: { name: string; spec: PortalSpe
   };
 
   const labelOf = (list: DisplayList, row: string) =>
-    row.startsWith("extras.") ? t("portals.display.extraRow", { key: row.slice(7) }) : t(`portals.display.${list}.${row}`);
+    fieldLabels.get(row) ??
+    (row.startsWith("extras.") ? t("portals.display.extraRow", { key: row.slice(7) }) : t(`portals.display.${list}.${row}`));
 
   return (
     <div className="space-y-4">
@@ -195,7 +206,7 @@ export function PortalDisplayTab({ name, spec }: { name: string; spec: PortalSpe
       <Card padding="md" className={dirty ? "sticky bottom-2 z-10 flex flex-wrap items-center gap-3 shadow-md" : "flex flex-wrap items-center gap-3"}>
         <p className="min-w-0 flex-1 basis-60 text-body text-fg-muted">{dirty ? t("portals.display.unpublished") : t("portals.display.published")}</p>
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" disabled={!dirty || propose.isPending} disabledReason={t("portals.display.why.nothing")} onClick={() => setLists(ownLists(own, organization))}>
+          <Button variant="secondary" disabled={!dirty || propose.isPending} disabledReason={t("portals.display.why.nothing")} onClick={() => setLists(ownLists(own, organization, fieldRows))}>
             {t("portals.display.discard")}
           </Button>
           <Button variant="primary" disabled={!dirty} disabledReason={t("portals.display.why.nothing")} loading={propose.isPending} onClick={publish}>

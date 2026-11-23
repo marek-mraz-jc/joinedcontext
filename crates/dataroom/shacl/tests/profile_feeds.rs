@@ -90,6 +90,81 @@ fn a_complete_dataset_passes_every_profiles_shapes() {
     }
 }
 
+/// T-7746: an Organization's own dataset fields add their properties to the feed under its
+/// namespace, typed by their definitions, and every profile's shapes still admit the feed.
+#[test]
+fn the_organization_dataset_fields_keep_every_feed_valid() {
+    let (catalogue, mut dataset) = complete();
+    dataset.extras.insert("x_funding".into(), "eu".into());
+    dataset.extras.insert("x_reviewed".into(), "2026-11-23".into());
+    dataset.extras.insert("x_reviewed_by".into(), "not a field".into());
+    let fields = dataroom_core::branding::BrandingDatasetFields {
+        organization: "bbsk".into(),
+        namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
+        fields: serde_json::from_value(serde_json::json!([
+            { "name": "funding", "label": { "sk": "Financovanie" }, "type": "enum",
+              "values": ["eu", "city"] },
+            { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" }
+        ]))
+        .expect("definitions"),
+    };
+    for profile in DcatProfile::installed().filter(|profile| profile.selectable) {
+        let stack = ProfileRegistry::new()
+            .stack((catalogue.org_id, catalogue.id), profile.id(), None)
+            .expect("a built-in profile");
+        let datasets = std::slice::from_ref(&dataset);
+        let mut graph = catalogue_to_graph(
+            &catalogue,
+            datasets,
+            &std::collections::BTreeMap::new(),
+            profile,
+            None,
+        );
+        dataroom_rdf::add_field_triples(&mut graph, &catalogue, datasets, &fields);
+        let ttl = dataroom_rdf::turtle::serialize_turtle(&graph);
+        assert!(
+            ttl.contains("https://bbsk.sk/ns/dataset-fields/bbsk/funding"),
+            "{}: {ttl}",
+            profile.id()
+        );
+        assert!(
+            ttl.contains("\"2026-11-23\"^^xsd:date")
+                || ttl.contains("\"2026-11-23\"^^<http://www.w3.org/2001/XMLSchema#date>"),
+            "the date typed: {ttl}"
+        );
+        assert!(!ttl.contains("not a field"), "an undefined extra stays out");
+        // The JSON-LD feed declares the Organization's namespace in its context.
+        let doc: Value = serde_json::from_str(&dataroom_rdf::jsonld::serialize_graph_jsonld(&graph))
+            .expect("JSON-LD");
+        assert_eq!(
+            doc["@context"]["fields-bbsk"],
+            "https://bbsk.sk/ns/dataset-fields/bbsk/",
+            "{}",
+            profile.id()
+        );
+        assert!(doc["@graph"]
+            .as_array()
+            .expect("graph")
+            .iter()
+            .any(|node| node["fields-bbsk:funding"] == "eu"));
+        let report = validate_graph_against_shapes(
+            &graph,
+            &stack.shapes,
+            catalogue.org_id,
+            catalogue.id,
+            "catalog",
+            profile.id(),
+            "1",
+        );
+        let violations: Vec<_> = report
+            .findings
+            .into_iter()
+            .filter(|f| f.severity == dataroom_core::ShaclSeverity::Violation)
+            .collect();
+        assert!(violations.is_empty(), "{}: {violations:#?}", profile.id());
+    }
+}
+
 #[test]
 fn an_undeclared_required_field_leaves_the_national_feeds_only() {
     type Undeclare = fn(&mut Dataset);

@@ -1629,6 +1629,9 @@ pub fn render_dataset_page_linked(
         ),
         dataset,
         &chrome.branding.display.dataset.about,
+        &chrome.branding.dataset_fields,
+        &chrome.lang,
+        &catalogue.default_language,
     );
     let sections = dataset_sections(&chrome.branding.display.dataset, &chrome.lang);
     let show_publisher = sections.iter().any(|s| s.name == "publisher");

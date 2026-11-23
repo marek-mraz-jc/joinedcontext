@@ -9920,7 +9920,15 @@
         "contactBoth": "Uveďte meno aj e-mail kontaktu, alebo ani jedno.",
         "email": "Zadajte e-mailovú adresu, napríklad opendata@example.org.",
         "period": "Koniec obdobia nemôže byť pred jeho začiatkom. Vyberte dátum konca po začiatku.",
-        "title": "Zadajte názov datasetu."
+        "title": "Zadajte názov datasetu.",
+        "fieldRequired": "Vaša organizácia toto pole vyžaduje: vyplňte ho.",
+        "field": {
+          "text": "Napíšte jeden riadok textu.",
+          "number": "Napíšte číslo.",
+          "date": "Vyberte dátum.",
+          "url": "Napíšte adresu https://.",
+          "enum": "Vyberte jednu z ponúknutých hodnôt."
+        }
       },
       "datasetTitle": "Názov datasetu",
       "datasetTitleHelp": "Názov, pod ktorým ho katalóg uvádza, v jazyku {language}.",
@@ -9948,7 +9956,16 @@
         "dcat": "Záznam DCAT-AP (JSON-LD)"
       },
       "inCatalogue": "Už v katalógu",
-      "typeNew": "V katalógu nič nezodpovedá: napíšte nový a vyberte „Nové“."
+      "typeNew": "V katalógu nič nezodpovedá: napíšte nový a vyberte „Nové“.",
+      "orgFields": "Polia vašej organizácie",
+      "orgFieldsHelp": "Ďalšie údaje, ktoré vaša organizácia žiada pri každom datasete. Portál otvorených dát ich ukáže v tabuľke O datasete.",
+      "fieldHint": {
+        "text": "Jeden riadok textu, napríklad: Financované mestom",
+        "number": "Číslo, napríklad: 12.5",
+        "date": "Dátum, napríklad: 2026-11-23",
+        "url": "Adresa https://, napríklad: https://example.org/sprava",
+        "enum": "Vyberte jednu z hodnôt, ktoré určila vaša organizácia."
+      }
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",

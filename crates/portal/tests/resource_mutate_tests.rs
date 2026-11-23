@@ -1667,6 +1667,87 @@ fn public_air() -> ResourceEnvelope {
     }
 }
 
+/// T-7746: an Endpoint's `spec.catalog.fields` meet its own Organization's `spec.datasetFields`
+/// at propose: a value the type refuses, a required field left empty and a field only another
+/// Organization defines are each refused 422 naming `spec.catalog.fields.<name>`.
+#[tokio::test]
+async fn dataset_fields_are_checked_against_the_endpoints_own_organization() {
+    let config = Config::for_tests();
+    let state = AppState::new(config.clone(), None);
+    let org = |name: &str, spec: serde_json::Value| ResourceEnvelope {
+        api_version: API_VERSION.into(),
+        kind: "Organization".into(),
+        metadata: ObjectMeta::new(name, joinedcontext_portal::permissions::ORG_NAMESPACE),
+        spec,
+        status: None,
+    };
+    state.mirror.upsert(org(
+        "bb",
+        json!({ "domain": "banskabystrica.sk", "locales": ["sk"], "defaultLocale": "sk",
+                "datasetFields": [
+                    { "name": "funding", "label": { "sk": "Financovanie" }, "type": "enum",
+                      "values": ["eu", "city"], "required": true },
+                    { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" }] }),
+    ));
+    state.mirror.upsert(org(
+        "other",
+        json!({ "domain": "other.sk", "locales": ["sk"], "defaultLocale": "sk",
+                "datasetFields": [{ "name": "budget", "label": { "sk": "Rozpočet" }, "type": "number" }] }),
+    ));
+    state.mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.into(),
+        kind: "Project".into(),
+        metadata: ObjectMeta::new("ovzdusie", joinedcontext_portal::permissions::ORG_NAMESPACE),
+        spec: json!({ "organizationRef": "bb" }),
+        status: None,
+    });
+    let post = |fields: serde_json::Value| {
+        let app = server::app(state.clone());
+        let config = config.clone();
+        let mut body = serde_json::to_value(public_air()).expect("json");
+        body["spec"]["catalog"] = json!({ "fields": fields });
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/projects/ovzdusie/endpoints")
+                        .header(header::COOKIE, session_and_csrf_cookies(&config))
+                        .echo_csrf()
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(serde_json::to_vec(&body).expect("json")))
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            let status = response.status();
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+    for (fields, named) in [
+        (json!({ "funding": "state" }), "spec.catalog.fields.funding"),
+        (json!({ "reviewed": "2026-11-23" }), "spec.catalog.fields.funding"),
+        (
+            json!({ "funding": "eu", "reviewed": "23.11.2026" }),
+            "spec.catalog.fields.reviewed",
+        ),
+        (
+            json!({ "funding": "eu", "budget": "5" }),
+            "spec.catalog.fields.budget",
+        ),
+    ] {
+        let (status, body) = post(fields.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{fields}: {body}");
+        assert!(body.contains(named), "{fields}: the refusal names {named}: {body}");
+    }
+}
+
 /// PF-73, PF-74: the write that would put the project over a quota is refused before a change
 /// exists, and the refusal names the count and the limit. The dry run says the same, so a person
 /// learns it from the form and not from the merge request.

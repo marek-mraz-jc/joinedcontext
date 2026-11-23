@@ -9920,7 +9920,15 @@
         "contactBoth": "Name und E-Mail des Kontakts gemeinsam angeben oder keines von beiden.",
         "email": "Eine E-Mail-Adresse wie opendata@example.org eingeben.",
         "period": "Das Ende des Zeitraums darf nicht vor seinem Beginn liegen. Wählen Sie ein Enddatum nach dem Beginn.",
-        "title": "Geben Sie dem Datensatz einen Titel."
+        "title": "Geben Sie dem Datensatz einen Titel.",
+        "fieldRequired": "Ihre Organisation verlangt dieses Feld: füllen Sie es aus.",
+        "field": {
+          "text": "Schreiben Sie eine Zeile Text.",
+          "number": "Schreiben Sie eine Zahl.",
+          "date": "Wählen Sie ein Datum.",
+          "url": "Schreiben Sie eine https://-Adresse.",
+          "enum": "Wählen Sie einen der angebotenen Werte."
+        }
       },
       "datasetTitle": "Titel des Datensatzes",
       "datasetTitleHelp": "Der Name, unter dem der Katalog ihn führt, in der Sprache {language}.",
@@ -9948,7 +9956,16 @@
         "dcat": "DCAT-AP-Eintrag (JSON-LD)"
       },
       "inCatalogue": "Bereits im Katalog",
-      "typeNew": "Im Katalog passt nichts: Neues eingeben und „Neu“ wählen."
+      "typeNew": "Im Katalog passt nichts: Neues eingeben und „Neu“ wählen.",
+      "orgFields": "Felder Ihrer Organisation",
+      "orgFieldsHelp": "Zusätzliche Angaben, die Ihre Organisation bei jedem Datensatz verlangt. Das Open-Data-Portal zeigt sie in der Tabelle Über den Datensatz.",
+      "fieldHint": {
+        "text": "Eine Zeile Text, zum Beispiel: Von der Stadt finanziert",
+        "number": "Eine Zahl, zum Beispiel: 12.5",
+        "date": "Ein Datum, zum Beispiel: 2026-11-23",
+        "url": "Eine https://-Adresse, zum Beispiel: https://example.org/bericht",
+        "enum": "Wählen Sie einen der Werte, die Ihre Organisation festgelegt hat."
+      }
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
