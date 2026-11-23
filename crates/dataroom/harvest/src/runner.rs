@@ -186,7 +186,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Ok {
@@ -204,7 +204,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Redirect {
@@ -219,7 +219,7 @@ impl MapFetcher {
     pub fn insert_status(&self, url: impl Into<String>, status: u16) {
         self.statuses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(url.into())
             .or_default()
             .push(status);
@@ -228,7 +228,7 @@ impl MapFetcher {
     pub fn pinned_seen(&self) -> Vec<(String, Vec<SocketAddr>)> {
         self.pinned_seen
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }
@@ -243,11 +243,14 @@ impl OutboundFetcher for MapFetcher {
     ) -> BoxFuture<'a, Result<FetchResponse>> {
         self.pinned_seen
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((target.host.clone(), target.pinned_addrs.clone()));
 
         let url = target.url.as_str();
-        let mut statuses = self.statuses.write().unwrap_or_else(|e| e.into_inner());
+        let mut statuses = self
+            .statuses
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(status) = statuses.get_mut(url).filter(|q| !q.is_empty()) {
             let status = status.remove(0);
             return Box::pin(std::future::ready(Err(DataroomError::OutboundRefused(
@@ -258,7 +261,7 @@ impl OutboundFetcher for MapFetcher {
         let found = self
             .responses
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(url)
             .cloned()
             .ok_or_else(|| DataroomError::OutboundRefused(format!("no response for {url}")));
