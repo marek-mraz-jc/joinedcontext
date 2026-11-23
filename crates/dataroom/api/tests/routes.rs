@@ -2455,17 +2455,32 @@ async fn a_catalogue_serves_the_profiles_it_chose_and_no_other() {
         }
     }
     let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
+    // The IRI a page's `hydra:<link>` names, when it has one.
+    let link = |body: &str, name: &str| -> Option<String> {
+        let at = body.find(&format!("hydra:{name} <"))? + name.len() + 8;
+        Some(body[at..at + body[at..].find('>')?].to_owned())
+    };
     assert!(
-        a.body.contains("?page=2&_profile=dcat-ap-sk-2.0") && a.body.contains("hydra:next"),
+        a.body.contains("?page=2&_profile=dcat-ap-sk-2.0"),
         "{}",
         &a.body[..900]
+    );
+    assert!(
+        link(&a.body, "next").is_some_and(|next| next.ends_with("?page=2&_profile=dcat-ap-sk-2.0"))
+            && link(&a.body, "previous").is_none(),
+        "page 1 links on to page 2 and back nowhere: {:?} {:?}",
+        link(&a.body, "next"),
+        link(&a.body, "previous")
     );
     let a = get(&w.app, "/catalog.ttl?page=2&_profile=dcat-ap-sk-2.0", None).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     assert!(
-        a.body.contains("hydra:previous") && !a.body.contains("hydra:next"),
-        "the last page has no next: {}",
-        &a.body[..900]
+        link(&a.body, "previous")
+            .is_some_and(|prev| prev.ends_with("?page=1&_profile=dcat-ap-sk-2.0"))
+            && link(&a.body, "next").is_none(),
+        "the last page links back to page 1 and on nowhere: {:?} {:?}",
+        link(&a.body, "previous"),
+        link(&a.body, "next")
     );
     assert!(a.header("content-profile").contains("dcat-ap-sk-2.0"));
     let a = get(&w.app, "/catalog.ttl", None).await;
