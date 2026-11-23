@@ -65,4 +65,5 @@
 "shako-api" = { lines = 91.12, functions = 84.02 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
 "shako-registry" = { lines = 98.65, functions = 97.14 }
+"shako-server" = { lines = 99.54, functions = 100.00 }
 "shako-web" = { lines = 96.69, functions = 87.83 }
