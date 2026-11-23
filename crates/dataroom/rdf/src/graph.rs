@@ -85,6 +85,14 @@ impl RdfLimits {
     }
 }
 
+/// The base every parser resolves a relative IRI against.
+pub(crate) const BASE_IRI: &str = "https://dataroom.local/";
+
+/// A parser that refused [`BASE_IRI`] as its base.
+pub(crate) fn base_iri_error(e: impl fmt::Display) -> DataroomError {
+    DataroomError::Rdf(format!("base IRI error: {e}"))
+}
+
 /// An IRI as RDF syntax may write it: characters no IRI may hold (controls, space and
 /// `<>"{}|^`\`) are percent-encoded. Dataset URL fields are free text; written raw, a `>` ended
 /// the IRI and the rest of the field wrote triples of its own into the feed.
@@ -466,6 +474,15 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_base_iri_is_an_rdf_error_naming_it() {
+        let e = base_iri_error("no scheme");
+        assert!(
+            matches!(&e, DataroomError::Rdf(m) if m == "base IRI error: no scheme"),
+            "{e:?}"
+        );
+    }
+
+    #[test]
     fn iri_text_encodes_only_what_no_iri_may_hold() {
         assert!(matches!(
             iri_text("https://e.org/a?b=1#ľ"),
@@ -505,6 +522,15 @@ mod tests {
         assert!(g
             .rdf_list(&Term::Literal(LiteralValue::plain("x")))
             .is_empty());
+        // A list node may be named: an IRI other than rdf:nil is walked like a blank node.
+        g.insert(
+            SubjectNode::Named("https://e.org/list".into()),
+            ns::RDF_FIRST,
+            Term::Literal(LiteralValue::plain("3")),
+        );
+        let named = g.rdf_list(&Term::Iri("https://e.org/list".into()));
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].string_value(), "3");
 
         // A list without rdf:rest ends after its first item; a cyclic list stops at 1024 items.
         let mut h = RdfGraph::new();

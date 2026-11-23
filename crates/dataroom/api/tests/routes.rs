@@ -103,22 +103,25 @@ impl Store for FailingStore {
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
         upsert_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher) -> Publisher;
-        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str) -> Publisher;
-        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Publisher;
+        save_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Publisher;
+        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str, activity: ActivityRow) -> Publisher;
+        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> Publisher;
         list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
         get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
         upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
         save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Dataset;
         withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
-        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> ();
+        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> ();
         get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
         list_resource_views<'a>(ctx: &'a RequestCtx, resource_id: &'a str) -> Vec<ResourceView>;
         get_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> Option<ResourceView>;
         upsert_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView) -> ResourceView;
-        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> ();
+        save_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView, activity: ActivityRow) -> ResourceView;
+        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str, activity: ActivityRow) -> ();
         list_harvest_sources<'a>(ctx: &'a RequestCtx) -> Vec<HarvestSource>;
         get_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<HarvestSource>;
         upsert_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource) -> HarvestSource;
+        save_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource, activity: ActivityRow) -> HarvestSource;
         delete_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> bool;
         list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
         get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
@@ -129,10 +132,12 @@ impl Store for FailingStore {
         list_shacl_reports<'a>(ctx: &'a RequestCtx, dataset_id: Option<&'a str>, profile_id: Option<&'a str>) -> Vec<ShaclValidationReport>;
         list_profiles<'a>(ctx: &'a RequestCtx) -> Vec<ProfileRecord>;
         upsert_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord) -> ProfileRecord;
+        save_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord, activity: ActivityRow) -> ProfileRecord;
         list_pages<'a>(ctx: &'a RequestCtx) -> Vec<StaticPage>;
         upsert_page<'a>(ctx: &'a RequestCtx, page: StaticPage) -> StaticPage;
         list_plugins<'a>(ctx: &'a RequestCtx) -> Vec<CataloguePlugin>;
         upsert_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin) -> CataloguePlugin;
+        save_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin, activity: ActivityRow) -> CataloguePlugin;
         odata_table<'a>(ctx: &'a RequestCtx, set_name: &'a str) -> Arc<dyn odata_table::Table>;
     }
 }
@@ -284,8 +289,14 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
             .unwrap();
     }
     store.withdraw_dataset(&ctx, "retired").await.unwrap();
-    store.withdraw_publisher(&ctx, "gone").await.unwrap();
-    store.merge_publishers(&ctx, "old", "city").await.unwrap();
+    store
+        .withdraw_publisher(&ctx, "gone", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    store
+        .merge_publishers(&ctx, "old", "city", audit("publisher.merge"))
+        .await
+        .unwrap();
     for (id, res) in [
         ("view-open", "res-open-0"),
         ("view-secret", "res-secret-0"),
@@ -2080,7 +2091,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"resource_id": "res-open-0", "view_type": "text_view"}),
         ),
         (
-            &["upsert_resource_view"],
+            &["save_resource_view"],
             "resource_view_create",
             Some("tok-editor"),
             json!({"resource_id": "res-open-0", "view_type": "text_view"}),
@@ -2098,7 +2109,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "view-open"}),
         ),
         (
-            &["upsert_resource_view"],
+            &["save_resource_view"],
             "resource_view_update",
             Some("tok-editor"),
             json!({"id": "view-open", "title": "x"}),
@@ -2123,7 +2134,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"name": "neworg"}),
         ),
         (
-            &["upsert_publisher"],
+            &["save_publisher"],
             "organization_create",
             Some("tok-admin"),
             json!({"name": "neworg"}),
@@ -2135,7 +2146,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "city"}),
         ),
         (
-            &["upsert_publisher"],
+            &["save_publisher"],
             "organization_patch",
             Some("tok-admin"),
             json!({"id": "city", "title": "x"}),
@@ -4713,4 +4724,21 @@ async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {
     assert_eq!(ckan_error(&a)["__type"], "Not Found Error", "{}", a.body);
     let a = get(app, "/api/3/action/package_show?id=open", None).await;
     assert_ne!(a.json()["result"]["notes"], "x");
+}
+
+/// An activity row with a fresh id for a store write the test sets up; the store files it under
+/// the write's tenant and names the record it wrote.
+fn audit(operation: &str) -> dataroom_core::ActivityRow {
+    dataroom_core::ActivityRow {
+        org_id: OrgId::from_uuid(Uuid::nil()),
+        catalogue_id: CatalogueId::from_uuid(Uuid::nil()),
+        id: format!("act-{}", Uuid::now_v7()),
+        at: jc_time::TimestampTz::now(),
+        actor: "test".into(),
+        operation: operation.into(),
+        object_type: String::new(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::Value::Null,
+    }
 }

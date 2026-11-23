@@ -38,10 +38,43 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
+  'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
+  # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
+  # sets the watermark (or the newest time) to the value it already holds.
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in (QueryReader|TemporalReader)::read',
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in Watermark::settle',
+  'ekiben-io-ngsild/src/input\.rs:\d+:42: replace > with >= in newest_observed::walk',
+  # T-7632 ekiben-io-ngsild TokenSource::token: Instant::now() equal to refresh_at to the nanosecond is never
+  # observed.
+  'ekiben-io-ngsild/src/token\.rs:\d+:\d+: replace < with <= in TokenSource::token',
+  # T-7632 ekiben-io-ngsild Writer::write: a message with no entities has no whole_text (None either way),
+  # and adding zero local refusals to the counter changes nothing.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:(31|27): replace > with >= in Writer::write',
+  # T-7632 ekiben-io-ngsild request_body: the sum only sizes the Vec's capacity; the body is the same.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:\d+: replace \+ with (-|\*) in request_body',
   # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
+  # T-7748 executor: the parser builds every Executor with an empty annotation.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace Executor::annotation -> &str with ""',
+  # T-7748 executor: stacker::maybe_grow's red zone and segment sizes only decide when a new stack
+  # segment is allocated, never a value.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace \* with (\+|/) in (EvalContext<.*>::(exec_named_map|eval_expr)|exec_statement)',
+  # T-7748 executor slice_items: a zero step is refused before the walk, so > 0 and >= 0 pick alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace > with >= in slice_items',
+  # T-7668 gorand seedrand: 48271 * x mod (2^31 - 1) is never 0 for a seed in range, so x < 0 and
+  # x <= 0 add int32max to the same values.
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace < with <= in seedrand',
+  # T-7668 gorand int63n: for a power of two n the slow path (max = 2^63 - 1, no redraw, v % n) gives
+  # int63() & (n - 1), so a power-of-two test that never fires (|, ^, n / 1) answers the same; a draw
+  # exactly equal to max (one in 2^63) is the only one > and >= tell apart.
+  'ekiben-bloblang/src/gorand\.rs:\d+:14: replace & with (\||\^) in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:19: replace - with / in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace > with >= in GoRand::int63n',
   # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
   # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
@@ -58,6 +91,9 @@ exclude_re = [
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
+  # dataroom-shacl derive_form_layout: `<=` differs from `<` only when the two orders are equal, and
+  # then both keep the same order (T-7625).
+  'dataroom/shacl/src/registry\.rs:\d+:\d+: replace < with <= in derive_form_layout',
   # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
   'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
   # Every Store sets org_id and catalogue_id from the request ctx on upsert (store-memory, store-pg), so the copy's own fields
@@ -115,6 +151,51 @@ exclude_re = [
   # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
   # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
   'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
+  # daiya-expr classic_reduce avg: with no valid value the mean is never read (all_null answers None),
+  # so dividing by a zero count or not is alike (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace > with >= in classic_reduce',
+  # daiya-expr classic_reduce median: for an odd count (len - 1) / 2 and len / 2 name the same index (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace - with / in classic_reduce',
+  # daiya-expr union_values: an empty label set is contained in every other, so the subset arms that
+  # follow pick the same labels the "either side empty" test picks (T-7633).
+  'daiya/expr/src/math\.rs:\d+:\d+: replace \|\| with && in union_values',
+  # daiya-expr reduce_slice Sum: a NaN added to the sum makes it NaN, which the guard answers too (T-7633).
+  'daiya/expr/src/reduce\.rs:\d+:\d+: replace match guard !x\.is_nan\(\) with true in reduce_slice',
+  # daiya-expr tx_calculate_field row index: with no rows the 0..row_cnt map never runs, so the
+  # `row_cnt > 0` guard of the percentile division decides nothing (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_calculate_field',
+  # daiya-expr tx_limit: a frame of exactly the limit is truncated (or drained) to its own length (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_limit',
+  # ngsild-residual decode_base64 and base64url: `acc << 6`, `b0 << 4` and `low << 2` have their low
+  # bits zero and the other operand fits in them, so `|` and `^` add the same bits (T-7693).
+  'antares-residual/src/binary\.rs:\d+:\d+: replace \| with \^ in (decode_base64|base64url)',
+  # ngsild-jsonld compact_entity(_shallow): `id`, `scope` and the four system dates fall to the `_`
+  # arm unchanged when their arm is deleted: no context term has the IRI "id", "scope" or "createdAt"
+  # (expansion keeps them under their own names), so compact_iri answers the key, and a string value
+  # or a one-element scope array compacts to what the arm writes (T-7693).
+  'antares-jsonld/src/compact\.rs:\d+:\d+: delete match arm "(id|scope|createdAt)".* in compact_entity',
+  # ngsild-jsonld loader: these functions are cfg(target_arch = "wasm32") (the browser build's
+  # SendWrapper, timers and builder); the native test run does not compile them. Each native arm
+  # has the same name, so the lines are pinned: a move makes the mutant read as missed, never hidden (T-7693).
+  'antares-jsonld/src/loader\.rs:(398|539|560|579|598):5: replace (http_interaction|client_builder|with_timeouts|pause|io_deadline) ',
+  # ngsild-jsonld slow_factor: only the sanitizer workflow sets ANTARES_TEST_SANITIZER, so the factor is 1
+  # in every run that measures mutants (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace slow_factor -> u64 with 1',
+  # ngsild-jsonld ip_is_local_host and ip_is_private: ::1 and :: are also the IPv4-compatible
+  # spellings of 0.0.0.1 and 0.0.0.0, which embedded_v4 already judges local and private, so the
+  # explicit loopback/unspecified tests decide nothing alone (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in EgressPolicy::ip_is_(local_host|private)',
+  # ngsild-jsonld embedded_v4: `hi << 16` has its low 16 bits zero, so `|` and `^` add the same bits (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \| with \^ in EgressPolicy::embedded_v4',
+  # ngsild-jsonld Loader::merge_entry: joining an absolute http(s) URL against the base answers that
+  # URL, which reqwest normalises the same way when it fetches, so the scheme test only saves a parse (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in Loader::merge_entry',
+  # ngsild-jsonld expand_common_members: a non-null observedAt/expiresAt copied by the null pass is
+  # overwritten by the validated value (or the validation fails) in the block right after it (T-7693).
+  'antares-jsonld/src/expand\.rs:\d+:\d+: replace && with \|\| in expand_common_members',
+  # ngsild-matcher is_active and throttled: an expiresAt or a throttling window ending at exactly the
+  # millisecond the clock reads is never observed by a test that reads the clock twice (T-7693).
+  'antares-matcher/src/lib\.rs:\d+:\d+: replace < with <= in (is_active|throttled)',
   # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).

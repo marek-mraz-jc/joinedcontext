@@ -343,29 +343,45 @@ mod tests {
         // a 64 MiB share by the entry count: both bounds are driven
         for share in [DEFAULT_REGEX_CACHE_BYTES, 64 << 20] {
             set_cache_bytes(share);
-            fill_past_both_bounds();
+            assert_eq!(cache_bytes(), share);
+            for i in 0..MAX_REGEX_CACHE * 3 {
+                let p = format!("^bounded-{i}-[a-z]+$");
+                let re = compile(&p).expect("valid pattern");
+                assert!(re.is_match(&format!("bounded-{i}-abc")));
+                assert!(!re.is_match(&format!("bounded-{i}-123")));
+                assert!(
+                    len() <= MAX_REGEX_CACHE,
+                    "retained {} patterns after {i} distinct ones",
+                    len()
+                );
+                assert!(
+                    retained_bytes() <= cache_bytes(),
+                    "charged {} bytes after {i} distinct patterns",
+                    retained_bytes()
+                );
+            }
+            assert!(len() > 0, "the cache must still be caching after a flush");
         }
         set_cache_bytes(DEFAULT_REGEX_CACHE_BYTES);
     }
 
-    fn fill_past_both_bounds() {
-        for i in 0..MAX_REGEX_CACHE * 3 {
-            let p = format!("^bounded-{i}-[a-z]+$");
-            let re = compile(&p).expect("valid pattern");
-            assert!(re.is_match(&format!("bounded-{i}-abc")));
-            assert!(!re.is_match(&format!("bounded-{i}-123")));
-            assert!(
-                len() <= MAX_REGEX_CACHE,
-                "retained {} patterns after {i} distinct ones",
-                len()
-            );
-            assert!(
-                retained_bytes() <= cache_bytes(),
-                "charged {} bytes after {i} distinct patterns",
-                retained_bytes()
-            );
-        }
-        assert!(len() > 0, "the cache must still be caching after a flush");
+    /// The byte budget is inclusive: programs that fill it exactly stay,
+    /// and only the one past it evicts.
+    #[test]
+    fn a_cache_filled_to_exactly_its_budget_keeps_every_program() {
+        let _serial = serial_lock();
+        set_cache_bytes(0);
+        compile("^exact-reset$").expect("valid");
+        set_cache_bytes(2 * PROGRAM_TIER_BYTES);
+        compile("^exact-one$").expect("valid");
+        compile("^exact-two$").expect("valid");
+        let held = (
+            cached("^exact-one$").is_some(),
+            cached("^exact-two$").is_some(),
+            len(),
+        );
+        set_cache_bytes(DEFAULT_REGEX_CACHE_BYTES);
+        assert_eq!(held, (true, true, 2));
     }
 
     /// A subscription fan-out evaluates the same `idPattern` per event while

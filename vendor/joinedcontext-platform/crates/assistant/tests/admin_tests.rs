@@ -180,6 +180,7 @@ async fn world(test: &str) -> World {
         organization: "hronov".into(),
         contexts: Default::default(),
         turns: Default::default(),
+        map_sources: Default::default(),
     });
     World {
         admin,

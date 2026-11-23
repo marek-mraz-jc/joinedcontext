@@ -340,6 +340,317 @@ async fn unauthenticated_notifications_need_public_true() {
 }
 
 #[tokio::test]
+async fn notification_limits_take_their_ceilings() {
+    let (sctx, _p, _stop) = ctx("org-n8n", true);
+    let c = json!({"mode": "notification", "path": "/notify", "auth": {"bearer": TOKEN},
+        "max_body_bytes": "16MiB", "max_in_flight": 1024, "dedupe_cap": 1_000_000});
+    assert!(input(c, &sctx).is_ok());
+}
+
+#[tokio::test]
+async fn a_stop_while_waiting_for_a_notification_ends_the_read() {
+    let (mut i, sctx, stop) = listening("org-n8o", json!({})).await;
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = stop.send(true);
+    });
+    let res = tokio::time::timeout(Duration::from_secs(5), i.read_batch(&sctx))
+        .await
+        .expect("the stop ends the wait");
+    assert!(matches!(res, Err(CoreError::EndOfInput)));
+}
+
+#[tokio::test]
+async fn a_notification_or_entity_with_an_empty_id_is_400() {
+    let (_i, sctx, _stop) = listening("org-n8p", json!({})).await;
+    let (org, stream) = stream_of(&sctx);
+    for (body, want) in [
+        (
+            json!({"id": "", "type": "Notification", "subscriptionId": "urn:s", "notifiedAt": "2026-11-08T10:00:00Z", "data": []}),
+            "the Notification has no id",
+        ),
+        (
+            json!({"id": "urn:n", "type": "Notification", "subscriptionId": "urn:s", "notifiedAt": "2026-11-08T10:00:00Z", "data": [{"id": "", "type": "T"}]}),
+            "data item 0 is not an entity with an id",
+        ),
+    ] {
+        let a = dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            Bytes::from(body.to_string()),
+        )
+        .await;
+        assert_eq!((a.status, a.body.as_str()), (400, want));
+    }
+}
+
+#[tokio::test]
+async fn a_notification_of_a_few_kib_fits_the_default_body_cap() {
+    let (mut i, sctx, _stop) = listening("org-n8m", json!({})).await;
+    let (org, stream) = stream_of(&sctx);
+    let body = notification("urn:n:8m", 60);
+    assert!(body.len() > 4096, "{}", body.len());
+    let call = tokio::spawn(async move {
+        dispatch(&org, &stream, "/notify", &headers(Some(TOKEN)), body).await
+    });
+    let (b, ack) = i.read_batch(&sctx).await.expect("delivered");
+    assert_eq!(b.len(), 60);
+    ack.ack();
+    assert_eq!(call.await.expect("joined").status, 204);
+}
+
+#[tokio::test]
+async fn notification_limits_are_refused_at_build() {
+    let (sctx, _p, _stop) = ctx("org-n8c", true);
+    let base = json!({"mode": "notification", "path": "/notify", "auth": {"bearer": TOKEN}});
+    for (extra, want) in [
+        (
+            json!({"auth": {"bearer": ""}}),
+            "auth needs bearer, or public: true",
+        ),
+        (
+            json!({"auth": {"bearer": TOKEN, "public": true}}),
+            "bearer or public: true, not both",
+        ),
+        (
+            json!({"max_body_bytes": 0}),
+            "max_body_bytes must be between 1 and",
+        ),
+        (
+            json!({"max_body_bytes": "17MiB"}),
+            "max_body_bytes must be between 1 and",
+        ),
+        (
+            json!({"max_in_flight": 0}),
+            "max_in_flight must be between 1 and",
+        ),
+        (
+            json!({"max_in_flight": 1025}),
+            "max_in_flight must be between 1 and",
+        ),
+        (json!({"timeout": "0s"}), "timeout must be above zero"),
+        (
+            json!({"dedupe_cap": 100_000_000}),
+            "dedupe_cap may be at most",
+        ),
+    ] {
+        let mut c = base.clone();
+        if let (Some(m), JsonValue::Object(e)) = (c.as_object_mut(), extra) {
+            m.extend(e);
+        }
+        let e = input(c.clone(), &sctx)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(e.contains(want), "{c}: {e}");
+        assert!(!e.contains(TOKEN), "{e}");
+    }
+}
+
+#[tokio::test]
+async fn without_dedupe_an_empty_notification_is_204_and_a_repeat_is_written_again() {
+    let (mut i, sctx, _stop) = listening("org-n8d", json!({"dedupe_cap": 0})).await;
+    let (org, stream) = stream_of(&sctx);
+    let empty = dispatch(
+        &org,
+        &stream,
+        "/notify",
+        &headers(Some(TOKEN)),
+        notification("urn:n:8d0", 0),
+    )
+    .await;
+    assert_eq!(empty.status, 204);
+    for round in 0..2 {
+        let (o, s) = (org.clone(), stream.clone());
+        let call = tokio::spawn(async move {
+            dispatch(
+                &o,
+                &s,
+                "/notify",
+                &headers(Some(TOKEN)),
+                notification("urn:n:8d1", 1),
+            )
+            .await
+        });
+        let (b, ack) = i.read_batch(&sctx).await.expect("delivered");
+        assert_eq!(b.len(), 1, "round {round}: emitted again without dedupe");
+        ack.ack();
+        assert_eq!(call.await.expect("joined").status, 204);
+    }
+}
+
+#[tokio::test]
+async fn a_busy_answer_carries_retry_after_on_the_wire() {
+    use axum::response::IntoResponse;
+    let (_i, sctx, _stop) =
+        listening("org-n8e", json!({"max_in_flight": 1, "timeout": "5s"})).await;
+    let (org, stream) = stream_of(&sctx);
+    let (o, s) = (org.clone(), stream.clone());
+    let first = tokio::spawn(async move {
+        dispatch(
+            &o,
+            &s,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8e", 1),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let busy = dispatch(
+        &org,
+        &stream,
+        "/notify",
+        &headers(Some(TOKEN)),
+        notification("urn:n:8f", 1),
+    )
+    .await
+    .into_response();
+    assert_eq!(busy.status().as_u16(), 503);
+    assert_eq!(
+        busy.headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok()),
+        Some("1")
+    );
+    first.abort();
+}
+
+#[tokio::test]
+async fn closing_the_input_while_a_notification_waits_answers_503() {
+    let (mut i, sctx, _stop) = listening("org-n8g", json!({"timeout": "5s"})).await;
+    let (org, stream) = stream_of(&sctx);
+    let call = tokio::spawn(async move {
+        dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8g", 1),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    i.close().await.expect("closes");
+    let a = call.await.expect("joined");
+    assert_eq!(a.status, 503);
+    assert_eq!(
+        a.body,
+        "the stream stopped before the Notification was written"
+    );
+}
+
+#[tokio::test]
+async fn a_stopped_stream_ends_the_read_and_a_dropped_stop_signal_keeps_it_listening() {
+    let (mut i, sctx, stop) = listening("org-n8h", json!({})).await;
+    stop.send(true).expect("stop");
+    assert!(matches!(
+        i.read_batch(&sctx).await,
+        Err(CoreError::EndOfInput)
+    ));
+
+    let (mut i, sctx, stop) = listening("org-n8i", json!({})).await;
+    tokio::spawn(async move {
+        // A signal that says "running" keeps the read waiting; then the signal goes away.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let _ = stop.send(false);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(stop);
+    });
+    let (org, stream) = stream_of(&sctx);
+    let call = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8i", 1),
+        )
+        .await
+    });
+    let (b, ack) = i.read_batch(&sctx).await.expect("still delivered");
+    assert_eq!(b.len(), 1);
+    ack.ack();
+    assert_eq!(call.await.expect("joined").status, 204);
+}
+
+#[tokio::test]
+async fn a_read_before_connect_registers_and_a_second_connect_keeps_the_route() {
+    let (sctx, _p, _stop) = ctx("org-n8j", true);
+    let mut i = input(
+        json!({"mode": "notification", "path": "/notify", "auth": {"bearer": TOKEN}}),
+        &sctx,
+    )
+    .expect("builds");
+    let (org, stream) = stream_of(&sctx);
+    let call = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8j", 1),
+        )
+        .await
+    });
+    let (b, ack) = i.read_batch(&sctx).await.expect("read connects");
+    assert_eq!(b.len(), 1);
+    ack.ack();
+    assert_eq!(call.await.expect("joined").status, 204);
+    i.connect(&sctx).await.expect("a second connect is a no-op");
+    let (org, stream) = stream_of(&sctx);
+    // The same empty Notification twice: remembered once, 204 both times.
+    for _ in 0..2 {
+        let a = dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8k", 0),
+        )
+        .await;
+        assert_eq!(a.status, 204);
+    }
+}
+
+#[tokio::test]
+async fn closing_a_replaced_registration_keeps_the_new_one() {
+    let (mut first, sctx, _stop) = listening("org-n8l", json!({})).await;
+    let mut second = input(
+        json!({"mode": "notification", "path": "/notify", "auth": {"bearer": TOKEN}}),
+        &sctx,
+    )
+    .expect("builds");
+    second.connect(&sctx).await.expect("connects");
+    first.close().await.expect("closes");
+    let (org, stream) = stream_of(&sctx);
+    assert!(ekiben_io_ngsild::notification::has_route(
+        &org, &stream, "/notify"
+    ));
+    let call = tokio::spawn(async move {
+        dispatch(
+            &org,
+            &stream,
+            "/notify",
+            &headers(Some(TOKEN)),
+            notification("urn:n:8l", 1),
+        )
+        .await
+    });
+    let (b, ack) = second
+        .read_batch(&sctx)
+        .await
+        .expect("the new registration reads");
+    assert_eq!(b.len(), 1);
+    ack.ack();
+    assert_eq!(call.await.expect("joined").status, 204);
+}
+
+#[tokio::test]
 async fn close_unregisters_the_route() {
     let (mut i, sctx, _stop) = listening("org-n9", json!({})).await;
     let (org, stream) = stream_of(&sctx);
@@ -375,6 +686,32 @@ async fn the_router_serves_a_route_over_http() {
             .header("content-type", "application/ld+json")
             .bearer_auth(TOKEN)
             .body(notification("urn:n:10", 1))
+            .send()
+            .await
+            .map(|r| r.status().as_u16())
+    });
+    let (_b, ack) = i.read_batch(&sctx).await.expect("delivered");
+    ack.ack();
+    assert_eq!(call.await.expect("joined").expect("answered"), 204);
+}
+
+#[tokio::test]
+async fn the_router_serves_the_root_path() {
+    let (mut i, sctx, _stop) = listening("org-n10b", json!({"path": "/"})).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router()).await;
+    });
+    let url = format!("http://{addr}/{}/{}", sctx.org.org_id.0, sctx.stream_id);
+    let call = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .header("content-type", "application/json")
+            .bearer_auth(TOKEN)
+            .body(notification("urn:n:10b", 1))
             .send()
             .await
             .map(|r| r.status().as_u16())
@@ -423,4 +760,13 @@ async fn the_ingest_listener_serves_notifications_beside_http_server_inputs() {
             "404 page not found"
         );
     }
+    let too_big = client
+        .post(format!("{base}/notify"))
+        .header("content-type", "application/json")
+        .bearer_auth(TOKEN)
+        .body(vec![b' '; 16 * 1024 * 1024 + 1])
+        .send()
+        .await
+        .expect("answered");
+    assert_eq!(too_big.status().as_u16(), 413);
 }

@@ -80,6 +80,72 @@ impl Completion {
     pub fn whole(&self) -> bool {
         matches!(self.finish.as_deref(), None | Some("stop"))
     }
+
+    /// Whether the call ran out of output while thinking (T-7758): cut at its length with more
+    /// than nine in ten of the tokens it wrote spent on reasoning.
+    pub fn thought_out(&self) -> bool {
+        self.finish.as_deref() == Some("length")
+            && self
+                .reasoning
+                .is_some_and(|r| r.saturating_mul(10) > self.output.saturating_mul(9))
+    }
+
+    /// This completion, a second call, with the tokens and the cost of the `first` it replaces
+    /// added, so the spend caps count both (T-7758). A cost either call did not report leaves the
+    /// sum unreported, never a lower figure.
+    fn after(mut self, first: &Self) -> Self {
+        let sum = |a: Option<u64>, b: Option<u64>| match (a, b) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0).saturating_add(b.unwrap_or(0))),
+        };
+        self.tokens = self.tokens.saturating_add(first.tokens);
+        self.input = self.input.saturating_add(first.input);
+        self.output = self.output.saturating_add(first.output);
+        self.cost_micros = self
+            .cost_micros
+            .zip(first.cost_micros)
+            .map(|(a, b)| a.saturating_add(b));
+        self.reasoning = sum(self.reasoning, first.reasoning);
+        self.cached = sum(self.cached, first.cached);
+        self
+    }
+}
+
+/// The request `body` once more at `minimal` effort and the same `max_tokens`, for a call that
+/// thought through its output (T-7758); `None` when it already asked for no or minimal reasoning.
+fn at_minimal_effort(body: &Value) -> Option<Value> {
+    let reasoning = body.get("reasoning")?;
+    let effort = reasoning.get("effort").and_then(Value::as_str);
+    if reasoning.get("enabled") == Some(&Value::Bool(false))
+        || matches!(effort, None | Some("minimal"))
+    {
+        return None;
+    }
+    let mut again = body.clone();
+    again["reasoning"] = jc_core::kinds::ReasoningEffort::Minimal.openrouter();
+    Some(again)
+}
+
+/// Logs a call cut by its own reasoning as its own event (T-7758), with whether it is asked again.
+fn log_thought_out(deployment: &str, body: &Value, cut: &Completion, again: bool) {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let max_tokens = body
+        .get("max_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    tracing::warn!(
+        %deployment,
+        model,
+        effort = cut.effort.as_deref().unwrap_or_default(),
+        max_tokens,
+        tokens_out = cut.output,
+        reasoning = cut.reasoning.unwrap_or_default(),
+        again,
+        "reasoning_cut: the model thought through the call's output"
+    );
 }
 
 /// `choices[0].finish_reason`, at most 32 characters of `a-z _`; anything else is not kept.
@@ -351,11 +417,7 @@ impl Model {
                 body["tool_choice"] = json!("none");
             }
         }
-        let answer = self.send(deployment, tokens_per_day, &body).await?;
-        let reply = reply(deployment, answer).await?;
-        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
-            unavailable(deployment, "the provider's answer is not a chat completion")
-        })
+        self.answered(deployment, tokens_per_day, &body).await
     }
 
     /// One call without tools on `call.model` (the service's model when `None`), its output held
@@ -368,11 +430,7 @@ impl Model {
         messages: &[Value],
     ) -> Result<Completion, CallError> {
         let body = self.body(call, messages, false);
-        let answer = self.send(deployment, tokens_per_day, &body).await?;
-        let reply = reply(deployment, answer).await?;
-        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
-            unavailable(deployment, "the provider's answer is not a chat completion")
-        })
+        self.answered(deployment, tokens_per_day, &body).await
     }
 
     /// One step of the data loop (T-4294): [`Model::ask`]'s call with `tools` offered, or shown
@@ -393,9 +451,42 @@ impl Model {
                 body["tool_choice"] = json!("none");
             }
         }
-        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        self.answered(deployment, tokens_per_day, &body).await
+    }
+
+    /// One unstreamed call of `body`; a call that thought through its output is asked once more
+    /// at minimal effort, and the answer carries both calls' tokens (T-7758). When the second
+    /// call fails, the first is returned, so what it cost is still counted.
+    async fn answered(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        body: &Value,
+    ) -> Result<Completion, CallError> {
+        let first = self.once(deployment, tokens_per_day, body).await?;
+        if !first.thought_out() {
+            return Ok(first);
+        }
+        let again = at_minimal_effort(body);
+        log_thought_out(deployment, body, &first, again.is_some());
+        let Some(again) = again else {
+            return Ok(first);
+        };
+        Ok(match self.once(deployment, tokens_per_day, &again).await {
+            Ok(second) => second.after(&first),
+            Err(_) => first,
+        })
+    }
+
+    async fn once(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        body: &Value,
+    ) -> Result<Completion, CallError> {
+        let answer = self.send(deployment, tokens_per_day, body).await?;
         let reply = reply(deployment, answer).await?;
-        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
+        parse(&reply).map(|c| c.of(body)).ok_or_else(|| {
             unavailable(deployment, "the provider's answer is not a chat completion")
         })
     }
@@ -412,7 +503,37 @@ impl Model {
         deltas: &Sender<Event>,
     ) -> Result<(Completion, Option<Instant>), CallError> {
         let body = self.body(call, messages, true);
-        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        let (first, at) = self
+            .streamed(deployment, tokens_per_day, &body, deltas)
+            .await?;
+        // Only a cut that showed the reader nothing is asked again (T-7758).
+        if !first.thought_out() || !first.text.is_empty() {
+            return Ok((first, at));
+        }
+        let again = at_minimal_effort(&body);
+        log_thought_out(deployment, &body, &first, again.is_some());
+        let Some(again) = again else {
+            return Ok((first, at));
+        };
+        Ok(
+            match self
+                .streamed(deployment, tokens_per_day, &again, deltas)
+                .await
+            {
+                Ok((second, at)) => (second.after(&first), at),
+                Err(_) => (first, at),
+            },
+        )
+    }
+
+    async fn streamed(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        body: &Value,
+        deltas: &Sender<Event>,
+    ) -> Result<(Completion, Option<Instant>), CallError> {
+        let answer = self.send(deployment, tokens_per_day, body).await?;
         let mut reader = StreamReader::default();
         let mut first = None;
         let mut bytes = answer.bytes_stream();
@@ -428,14 +549,14 @@ impl Model {
         let completion = reader.finish().ok_or_else(|| {
             unavailable(deployment, "the provider's stream ended without an answer")
         })?;
-        Ok((completion.of(&body), first))
+        Ok((completion.of(body), first))
     }
 
     fn body(&self, call: &Call<'_>, messages: &[Value], stream: bool) -> Value {
         let mut body = json!({
             "model": call.model.unwrap_or(&self.config.model),
             "messages": messages,
-            "max_tokens": call.max_tokens,
+            "max_tokens": call.max_tokens.saturating_add(call.reasoning.allowance()),
             "reasoning": call.reasoning.openrouter(),
             "provider": call.provider.map_or_else(
                 || jc_core::kinds::ProviderRouting::fastest().openrouter(),
@@ -537,7 +658,8 @@ fn unavailable(deployment: &str, why: &str) -> CallError {
 pub struct Call<'a> {
     /// `vendor/name`; the service's configured model when `None`.
     pub model: Option<&'a str>,
-    /// The most tokens the call may write, its thinking included.
+    /// The most tokens the call's visible answer may take; the request asks for this plus its
+    /// effort's [`allowance`](jc_core::kinds::ReasoningEffort::allowance) for the thinking (T-7758).
     pub max_tokens: u64,
     /// Whether the answer must be one JSON object.
     pub json: bool,
@@ -918,7 +1040,192 @@ mod tests {
         let asked = proxy.received_requests().await.expect("recorded");
         let body: Value = serde_json::from_slice(&asked[0].body).expect("a JSON body");
         assert_eq!(body["model"], "vendor/answer", "{body}");
-        assert_eq!(body["max_tokens"], 900, "{body}");
+        assert_eq!(body["max_tokens"], 900 + 1_024, "{body}");
+    }
+
+    /// A provider that thinks inside `max_tokens`, as Gemini does (T-7758): 1,000 tokens of
+    /// reasoning at `low` and 80 of answer, cut at its length when they do not fit; at `minimal`
+    /// it thinks 10. Each answer costs 100 micro-dollars.
+    fn thinking_provider(req: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let body: Value = serde_json::from_slice(&req.body).expect("a JSON body");
+        let max = body["max_tokens"].as_u64().expect("max_tokens");
+        let thinks = if body["reasoning"]["effort"] == "minimal" {
+            10
+        } else {
+            1_000
+        };
+        let stream = body["stream"] == true;
+        let (text, output, finish) = if thinks + 80 <= max {
+            ("Knižnica je otvorená.", thinks + 80, "stop")
+        } else {
+            ("", max, "length")
+        };
+        let usage = json!({
+            "prompt_tokens": 50, "completion_tokens": output, "total_tokens": 50 + output,
+            "cost": 0.0001, "completion_tokens_details": { "reasoning_tokens": thinks.min(max) },
+        });
+        if stream {
+            let chunk =
+                json!({ "choices": [{ "delta": { "content": text }, "finish_reason": finish }] });
+            let last = json!({ "choices": [], "usage": usage });
+            return wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("data: {chunk}\n\ndata: {last}\n\ndata: [DONE]\n\n"));
+        }
+        wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{ "message": { "role": "assistant", "content": text }, "finish_reason": finish }],
+            "usage": usage,
+        }))
+    }
+
+    async fn thinking_model() -> (Model, wiremock::MockServer, wiremock::MockServer) {
+        use wiremock::{matchers::method, Mock, MockServer};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(thinking_provider)
+            .mount(&proxy)
+            .await;
+        (a_model(&realm.uri(), &proxy.uri()), realm, proxy)
+    }
+
+    async fn bodies(proxy: &wiremock::MockServer) -> Vec<Value> {
+        let asked = proxy.received_requests().await.expect("recorded");
+        asked
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).expect("a JSON body"))
+            .collect()
+    }
+
+    fn answer_call(max_tokens: u64, reasoning: jc_core::kinds::ReasoningEffort) -> Call<'static> {
+        Call {
+            model: None,
+            max_tokens,
+            json: false,
+            provider: None,
+            reasoning,
+        }
+    }
+
+    /// T-7758: the 700-token answer at `low` that came back cut after 697 tokens of thought gets
+    /// its effort's allowance on top, and answers in one call.
+    #[tokio::test]
+    async fn a_model_that_thinks_inside_max_tokens_answers_in_its_allowance() {
+        use jc_core::kinds::ReasoningEffort;
+        let (model, _realm, proxy) = thinking_model().await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let call = answer_call(700, ReasoningEffort::Low);
+        let done = model
+            .ask("p/d", 0, &call, &messages)
+            .await
+            .expect("an answer");
+        assert_eq!(
+            (done.text.as_str(), done.finish.as_deref()),
+            ("Knižnica je otvorená.", Some("stop"))
+        );
+        let sent = bodies(&proxy).await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["max_tokens"], 700 + 1_024);
+        assert_eq!(sent[0]["reasoning"], json!({ "effort": "low" }));
+        for (effort, allowance) in [
+            (ReasoningEffort::None, 0),
+            (ReasoningEffort::Minimal, 512),
+            (ReasoningEffort::Medium, 4_096),
+            (ReasoningEffort::High, 8_192),
+        ] {
+            assert_eq!(effort.allowance(), allowance, "{effort:?}");
+        }
+    }
+
+    /// T-7758: a call its reasoning cut is logged as its own event and asked once more at
+    /// `minimal` with the same `max_tokens`; the answer carries both calls' tokens and cost.
+    #[tokio::test]
+    async fn a_call_cut_by_its_reasoning_is_asked_once_more_at_minimal_effort() {
+        let (model, _realm, proxy) = thinking_model().await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        // An answer cap of 0 leaves the thinking only the allowance, which 1,000 + 80 overrun.
+        let call = answer_call(0, jc_core::kinds::ReasoningEffort::Low);
+        let (log, _guard) = Log::capture();
+        let done = model
+            .ask("p/d", 0, &call, &messages)
+            .await
+            .expect("an answer");
+        assert_eq!(done.text, "Knižnica je otvorená.");
+        assert_eq!(done.effort.as_deref(), Some("minimal"));
+        assert_eq!(
+            (done.output, done.reasoning),
+            (1_024 + 90, Some(1_000 + 10))
+        );
+        assert_eq!((done.input, done.cost_micros), (100, Some(200)));
+        let sent = bodies(&proxy).await;
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1]["reasoning"], json!({ "effort": "minimal" }));
+        assert_eq!(sent[1]["max_tokens"], sent[0]["max_tokens"]);
+        let text = log.text();
+        assert!(
+            text.contains("reasoning_cut") && text.contains("again=true"),
+            "{text}"
+        );
+    }
+
+    /// T-7758: a streamed answer cut before it showed a word is asked again the same way; a call
+    /// already at `minimal` is not asked again, and still logged.
+    #[tokio::test]
+    async fn a_streamed_answer_cut_by_its_reasoning_is_asked_again_once() {
+        let (model, _realm, proxy) = thinking_model().await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let (deltas, mut shown) = tokio::sync::mpsc::channel(8);
+        let (log, _guard) = Log::capture();
+        let call = answer_call(0, jc_core::kinds::ReasoningEffort::Low);
+        let (done, _) = model
+            .stream("p/d", 0, &call, &messages, &deltas)
+            .await
+            .expect("an answer");
+        assert_eq!(done.text, "Knižnica je otvorená.");
+        assert!(matches!(shown.try_recv(), Ok(Event::Delta(piece)) if piece == done.text));
+        assert_eq!(bodies(&proxy).await.len(), 2);
+        assert!(log.text().contains("again=true"), "{}", log.text());
+    }
+
+    /// T-7758: only a call that asked for more than minimal reasoning is asked again, and only a
+    /// length cut with more than nine in ten of its output thought counts as cut by reasoning.
+    #[test]
+    fn only_a_call_above_minimal_effort_cut_by_its_thinking_is_asked_again() {
+        for (reasoning, again) in [
+            (json!({ "effort": "low" }), true),
+            (json!({ "effort": "high" }), true),
+            (json!({ "effort": "minimal" }), false),
+            (json!({ "enabled": false }), false),
+        ] {
+            let body = json!({ "model": "m", "max_tokens": 700, "reasoning": reasoning });
+            let asked = at_minimal_effort(&body);
+            assert_eq!(asked.is_some(), again, "{body}");
+            if let Some(asked) = asked {
+                assert_eq!(asked["reasoning"], json!({ "effort": "minimal" }));
+                assert_eq!(asked["max_tokens"], 700);
+            }
+        }
+        assert_eq!(at_minimal_effort(&json!({ "model": "m" })), None);
+        let cut = |finish: &str, output, reasoning| Completion {
+            finish: Some(finish.into()),
+            output,
+            reasoning,
+            ..Completion::default()
+        };
+        assert!(cut("length", 700, Some(697)).thought_out());
+        assert!(
+            !cut("length", 700, Some(600)).thought_out(),
+            "the answer had room"
+        );
+        assert!(!cut("stop", 700, Some(697)).thought_out());
+        assert!(
+            !cut("length", 700, None).thought_out(),
+            "no reasoning reported"
+        );
     }
 
     fn a_model(realm: &str, proxy: &str) -> Model {

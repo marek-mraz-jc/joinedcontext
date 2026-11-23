@@ -492,6 +492,9 @@ mod clause_4_19 {
             intersect_scope_q("/#", &at(super::MAX_SCOPE_Q_BYTES + 1)),
             None
         );
+        // a scopeQ of exactly the ceiling is accepted and pushed down
+        assert!(check_scope_q(&at(super::MAX_SCOPE_Q_BYTES)).is_ok());
+        assert!(super::subtree_scope_q(&at(super::MAX_SCOPE_Q_BYTES)).is_some());
     }
 
     /// 4.19 grammar: the shapes the examples use pass; an empty piece, a

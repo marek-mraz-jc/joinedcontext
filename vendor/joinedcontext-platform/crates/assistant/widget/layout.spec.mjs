@@ -3,7 +3,7 @@
 // route that streams one long answer, and a host page with the launcher (embed.js).
 //   cd crates/assistant/widget && npm i --no-save @playwright/test@1.62.1 && npx playwright test -c layout.config.mjs
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,11 +52,31 @@ const MAP = { $schema: "urn:joinedcontext:map:v1", label: "name", time: "observe
 // The renderer stands in as a page that keeps what it was sent and tells its height.
 const VIZ_PAGE = `<!doctype html><script>addEventListener("message", (e) => { window.got = { origin: e.origin, data: e.data };
   parent.postMessage({ type: "jc-viz-height", height: 300 }, e.origin); });</script>`;
+// T-7755: a read of 1,651 bridges draws its first 50 rows and names a map source; the source's
+// pages hold every located bridge, 500 a page. `ALL_BRIDGES` > 20,000 stands for a type past the cap.
+const SOURCE = "/api/v1/d/bb/map/0123456789abcdef0123456789abcdef";
+let ALL_BRIDGES = 1651;
+const bridge = (i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [+(18.8 + ((i * 37) % 1500) / 1000).toFixed(6), +(48.2 + ((i * 53) % 700) / 1000).toFixed(6)] },
+  properties: { name: `Most ${i + 1}`, yearBuilt: 1900 + (i % 120) } });
+const bridgesRead = () => ({ type: "Bridge", total: ALL_BRIDGES, columns: ["name", "yearBuilt"], units: [null, null],
+  rows: Array.from({ length: 50 }, (_, i) => [`Most ${i + 1}`, 1900 + (i % 120)]),
+  map: { $schema: "urn:joinedcontext:map:v1", label: "name", popup: [{ field: "yearBuilt", label: "yearBuilt" }], count: { total: ALL_BRIDGES },
+    data: { type: "FeatureCollection", features: Array.from({ length: 50 }, (_, i) => bridge(i)) } },
+  mapSource: SOURCE });
+function mapPage(cursor) {
+  const from = Number(cursor || 0);
+  const cap = Math.min(ALL_BRIDGES, 20000);
+  const features = Array.from({ length: Math.max(0, Math.min(500, cap - from)) }, (_, i) => bridge(from + i));
+  const page = { type: "FeatureCollection", features };
+  if (from + 500 < ALL_BRIDGES) page[from + 500 >= 20000 ? "capped" : "next"] = from + 500 >= 20000 ? true : String(from + 500);
+  return page;
+}
+let MAP_PAGES_READ = 0;
 function sse(res, data) {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const send = (name, data) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
   send("conversation", { id: "c1", at: "2026-10-16T12:17:05Z" });
-  if (data) send("data", data === "map" ? { ...DATA, map: MAP } : DATA);
+  if (data) send("data", data === "bridges" ? bridgesRead() : data === "map" ? { ...DATA, map: MAP } : DATA);
   send("answer", { text: LONG });
   send("citations", [1, 2, 3, 4, 5].map((n) => ({ n, url: `https://${n < 3 ? "example" : "site" + n}.sk/strana-${n}`, title: `Source ${n}` })));
   send("followups", { questions: ["Where is the client centre?", "Do I need an appointment?"] });
@@ -96,6 +116,47 @@ function events(res) {
   send("answer", { text: "V Banskej Bystrici je 55 podujatí, ktoré sa ešte neskončili [1]." });
   send("citations", [{ n: 1, url: BRIDGE_PAGE, tool: "query_entities", title: "Podujatia" }]);
   send("done", { totalMs: 3100, stagesMs: { route: 700, answer: 1800 } });
+  res.end();
+}
+
+// T-7753: the live steps of "What are the oldest bridges in the region?" as src/chat/routed.rs
+// streams them, a pause after each; `hold` keeps the answer back (long wait, Stop), `fail` ends in
+// an error after a failed read.
+async function steps(res, asked) {
+  res.writeHead(200, { "Content-Type": "text/event-stream" });
+  const send = (name, data) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+  const gap = Number(/gap(\d+)/.exec(asked)?.[1] || 250);
+  send("conversation", { id: "c3", at: "2026-11-23T21:00:00Z" });
+  await pause(gap);
+  send("stage", { stage: "understanding" });
+  await pause(gap);
+  send("stage", { stage: "searching", topic: "oldest bridges region", count: 412 });
+  send("tool", { name: "search", status: "started" });
+  await pause(gap);
+  send("tool", { name: "search", status: "done" });
+  send("stage", { stage: "reading", topic: "Bridge", source: "BBSK bridge register", filter: "yearBuilt<1950" });
+  send("tool", { name: "query_entities", status: "started" });
+  await pause(gap);
+  if (asked.includes("fail")) {
+    send("tool", { name: "query_entities", status: "failed" });
+    await pause(gap);
+    send("error", { status: 502, title: "Bad Gateway", detail: "The data source did not answer." });
+    return res.end();
+  }
+  send("tool", { name: "query_entities", status: "done" });
+  send("step", { source: "BBSK bridge register", type: "Bridge", q: "yearBuilt<1950", count: 1651, ms: 800, url: BRIDGE_PAGE });
+  await pause(gap);
+  send("stage", { stage: "checking", count: 6 });
+  await pause(gap);
+  send("stage", { stage: "checking", count: 6, verdict: "answers" });
+  await pause(gap);
+  send("stage", { stage: "answering", count: 2 });
+  if (asked.includes("hold")) await pause(60000);
+  await pause(gap);
+  send("answer", { text: "The oldest bridge in the register was built in 1820 [1]." });
+  send("citations", [{ n: 1, url: BRIDGE_PAGE, tool: "query_entities", title: "BBSK bridge register" }]);
+  send("done", { totalMs: 3000, stagesMs: { route: 500, answer: 900 } });
   res.end();
 }
 
@@ -206,6 +267,12 @@ test.beforeAll(async () => {
       });
       return;
     }
+    if (path === SOURCE) {
+      // T-7755: a page of the map source, with the visitor's token like every other request.
+      if (req.headers["x-jc-visitor"] !== `visitor-${TOKENS}`) return res.writeHead(401, { "Content-Type": "application/json" }).end("{}");
+      MAP_PAGES_READ += 1;
+      return res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(mapPage(new URL(req.url, "http://x").searchParams.get("cursor"))));
+    }
     if (path === "/api/v1/d/bb/chat") {
       // T-4653: every question carries the token the worker's proof earned; the newest alone holds.
       if (req.headers["x-jc-visitor"] !== `visitor-${TOKENS}`) return res.writeHead(401, { "Content-Type": "application/json" }).end("{}");
@@ -220,8 +287,8 @@ test.beforeAll(async () => {
       req.on("data", (chunk) => { body += chunk; });
       // The question asked now, not the history the request carries beside it.
       const asked = () => { try { return String(JSON.parse(body).message || ""); } catch { return body; } };
-      return req.on("end", () => (asked().includes("mostov") ? bridges(res) : asked().includes("podujatia") ? events(res)
-        : sse(res, asked().includes("mape") ? "map" : asked().includes("ovzdušia"))));
+      return req.on("end", () => (asked().includes("oldest") ? steps(res, asked()) : asked().includes("mostov") ? bridges(res) : asked().includes("podujatia") ? events(res)
+        : sse(res, asked().includes("mosty na mape") ? "bridges" : asked().includes("mape") ? "map" : asked().includes("ovzdušia"))));
     }
     res.writeHead(404).end();
   });
@@ -405,6 +472,62 @@ for (const [width, height] of [[1366, 768], [768, 1024], [390, 844], [320, 640]]
   });
 }
 
+/** Asks `question` on the English full page and returns the texts the live step line announced. */
+async function askLive(page, question) {
+  await page.goto(`${base}/d/bb?lang=en`);
+  await page.locator("#jc-question").fill(question);
+  await page.evaluate(() => {
+    window.said = [];
+    new MutationObserver(() => {
+      const now = document.querySelector(".jc-now");
+      if (now && window.said[window.said.length - 1] !== now.textContent) window.said.push(now.textContent);
+    }).observe(document.querySelector(".jc-log"), { subtree: true, childList: true, characterData: true });
+  });
+  await page.locator(".jc-form .jc-submit").click();
+}
+
+test("the pending answer shows each real step as it happens, then gives way to the answer (T-7753)", async ({ page }) => {
+  await askLive(page, "What are the oldest bridges in the region?");
+  // The bubble is there before the first event, its dots moving, the line a polite live region.
+  const bubble = page.locator(".jc-bot .jc-progress");
+  await expect(bubble).toBeVisible({ timeout: 200 });
+  expect(await bubble.locator(".jc-dots i").first().evaluate((i) => getComputedStyle(i).animationName)).toBe("jc-pulse");
+  await expect(bubble.locator(".jc-now")).toHaveAttribute("role", "status");
+  await expect(bubble.locator(".jc-elapsed")).toHaveAttribute("aria-hidden", "true");
+  // Each step ends ticked under the newest, a read with its count and time.
+  await expect(bubble.locator(".jc-now")).toHaveText("Writing the answer from 2 sources…");
+  await expect(bubble.locator(".jc-done li")).toHaveText(["Reading your question", "Searching 412 sources for „oldest bridges region“",
+    "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s", "Checked 6 passages: they answer the question"]);
+  await expect(page.locator(".jc-bot .jc-answer")).toContainText("built in 1820");
+  await expect(page.locator(".jc-progress")).toHaveCount(0);
+  // One announcement per step, none twice and never a second.
+  const said = await page.evaluate(() => window.said);
+  expect(said).toEqual(["Looking it up…", "Reading your question…", "Searching 412 sources for „oldest bridges region“…",
+    "Reading BBSK bridge register: Bridges, Year built < 1950…", "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s",
+    "Checking 6 passages…", "Checked 6 passages: they answer the question", "Writing the answer from 2 sources…"]);
+});
+
+test("a long wait counts the seconds, Stop ends it, and a failed read says which step failed (T-7753)", async ({ page }) => {
+  await askLive(page, "oldest hold gap50");
+  const bubble = page.locator(".jc-bot .jc-progress");
+  await expect(bubble.locator(".jc-elapsed")).toHaveText(/^\d+ s$/, { timeout: 5000 });
+  await page.locator(".jc-form .jc-stop").click();
+  await expect(page.locator(".jc-progress")).toHaveCount(0);
+  await expect(page.locator(".jc-bot .jc-status")).toHaveText("You stopped the answer.");
+  await askLive(page, "oldest fail gap50");
+  await expect(page.locator(".jc-bot.jc-error [role=alert]")).toBeVisible();
+  expect(await page.evaluate(() => window.said)).toContain("Reading BBSK bridge register: Bridges, Year built < 1950 (failed)");
+});
+
+test("reduced motion keeps the bubble and its steps still (T-7753)", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await askLive(page, "oldest hold gap50");
+  const dot = page.locator(".jc-bot .jc-progress .jc-dots i").first();
+  await expect(dot).toBeVisible();
+  expect(await dot.evaluate((i) => getComputedStyle(i).animationName)).toBe("none");
+  await page.locator(".jc-form .jc-stop").click();
+});
+
 test("the full page that names ?lang= does not ask", async ({ page }) => {
   await page.goto(`${base}/d/bb?lang=en`);
   await expect(page.locator("#jc-question")).toBeVisible();
@@ -548,6 +671,127 @@ test("a data card with places opens on its map from the viz origin", async ({ pa
   await expect(page.locator(".jc-data")).toHaveCount(2);
   await expect(page.locator(".jc-data").nth(1).locator(".jc-tab")).toHaveCount(0);
 });
+
+// T-7755: the real renderer (vendor/viz) on its own origin draws every bridge of the read, not
+// the 50 rows of the answer: the widget reads the map source's pages and MapLibre clusters them.
+const VIZ_SITE = join(here, "../../../../viz");
+const STYLE = { version: 8, sources: {}, layers: [{ id: "land", type: "background", paint: { "background-color": "#eef1f4" } }] };
+async function realViz(context) {
+  const { gunzipSync } = await import("node:zlib");
+  await context.route("https://viz.dev.joinedcontext.com/**", (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/$/, "/index.html");
+    const types = { html: "text/html", js: "text/javascript", mjs: "text/javascript", css: "text/css" };
+    const type = types[path.split(".").pop()] || "application/octet-stream";
+    const body = path.startsWith("/vendor/") && path.endsWith(".mjs") ? gunzipSync(readFileSync(join(VIZ_SITE, path + ".gz")))
+      : readFileSync(join(VIZ_SITE, path.startsWith("/vendor/") ? path : "site" + path));
+    return route.fulfill({ status: 200, contentType: type, body });
+  });
+  await context.route("https://tiles.dev.joinedcontext.com/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(STYLE) }));
+  // The widget on an https origin of the domain, as the renderer admits (host.js ourOrigin).
+  await context.route("https://assistant.dev.joinedcontext.com/**", async (route) => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({ url: base + url.pathname + url.search });
+    return route.fulfill({ response });
+  });
+}
+const mapFrame = (page) => page.frames().find((f) => f.url().endsWith("/map.html"));
+/** What the map's layers hold: each cluster's count and each lone point, once. */
+const layerCount = (frame) => frame.evaluate(() => {
+  const map = window.jcMap;
+  const seen = new Set();
+  let n = 0;
+  for (const f of map.queryRenderedFeatures({ layers: ["jc-cluster", "jc-single"] })) {
+    const key = f.properties.cluster ? "c" + f.properties.cluster_id : "p" + f.properties.jcIndex;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    n += f.properties.cluster ? f.properties.point_count : 1;
+  }
+  return n;
+});
+const SHOTS = process.env.JC_SHOTS;
+/** A shot into $JC_SHOTS; at 400 px with its phone check beside it (crates/portal/ui/e2e/phoneCheck.cts, T-7512). */
+async function shoot(page, name, width) {
+  if (!SHOTS) return;
+  const shot = `${SHOTS}/${name}-${width}.png`;
+  await page.screenshot({ path: shot });
+  if (width > 430) return;
+  const axe = readFileSync(process.env.JC_AXE, "utf8");
+  const check = read("../../../../../crates/portal/ui/e2e/phoneCheck.browser.js").replace(/^\/\*[\s\S]*?\*\/\s*/, "").trim();
+  const hits = [];
+  for (const frame of page.frames()) {
+    const element = frame.parentFrame() ? await frame.frameElement() : null;
+    if (element && !((await element.isVisible()) && (await element.boundingBox())?.height > 1)) continue;
+    await frame.evaluate(axe);
+    hits.push(...(await frame.evaluate(`(${check})(${frame === page.mainFrame() ? width : null})`)));
+  }
+  const sha256 = createHash("sha256").update(readFileSync(shot)).digest("hex");
+  writeFileSync(shot.replace(/\.png$/, ".phone.json"), `${JSON.stringify({ sha256, hits }, null, 1)}\n`);
+}
+/** A page at `width`: a phone (touch, mobile) at 400 px. */
+async function opened(browser, width) {
+  const context = await browser.newContext(width > 430 ? { viewport: { width, height: 900 } } : { viewport: { width, height: 860 }, isMobile: true, hasTouch: true });
+  await realViz(context);
+  return { context, page: await context.newPage() };
+}
+
+for (const width of [1440, 400]) {
+  test(`every bridge of the read is on the map, clustered, at ${width} px (T-7755)`, async ({ browser }) => {
+    test.setTimeout(90000);
+    WIDGET = undefined;
+    ALL_BRIDGES = 1651;
+    MAP_PAGES_READ = 0;
+    const { context, page } = await opened(browser, width);
+    await page.goto("https://assistant.dev.joinedcontext.com/d/bb?lang=sk");
+    await page.locator("#jc-question").fill("Ukáž mi všetky mosty na mape");
+    await page.locator(".jc-form .jc-submit").click();
+    await expect(page.locator(".jc-tab[aria-selected=true]")).toHaveText("Mapa");
+    const numbers = new Intl.NumberFormat("sk");
+    await expect(page.locator(".jc-data summary").first()).toHaveText(`Mosty — ${numbers.format(1651)} z ${numbers.format(1651)}`);
+    // Chromium draws no frame of an iframe out of view: the map is in view, as the answer puts it.
+    await page.locator("iframe.jc-viz").scrollIntoViewIfNeeded();
+    await expect.poll(() => mapFrame(page)?.evaluate(() => window.jcMapReady === true), { timeout: 30000 }).toBe(true);
+    const frame = mapFrame(page);
+    expect(MAP_PAGES_READ).toBe(4);
+    expect(await frame.evaluate(() => window.jcMapFeatures)).toBe(1651);
+    await expect(frame.locator("#count")).toHaveText(`Zobrazené: ${numbers.format(1651)}, spolu ${numbers.format(1651)}`);
+    // Region zoom: bubbles, whose counts with the lone points add up to every bridge.
+    await expect.poll(() => layerCount(frame), { timeout: 15000 }).toBe(1651);
+    expect(await frame.evaluate(() => window.jcMap.queryRenderedFeatures({ layers: ["jc-cluster"] }).length)).toBeGreaterThan(0);
+    await shoot(page, "region", width);
+    // City zoom: lone points, and a point's popup names it.
+    await frame.evaluate(() => new Promise((done) => { window.jcMap.once("idle", done); window.jcMap.jumpTo({ center: [19.17, 48.73], zoom: 15 }); }));
+    const lone = await frame.evaluate(() => window.jcMap.queryRenderedFeatures({ layers: ["jc-single"] }).map((f) => f.geometry.coordinates));
+    expect(lone.length).toBeGreaterThan(0);
+    await shoot(page, "city", width);
+    const at = await frame.evaluate((c) => window.jcMap.project(c), lone[0]);
+    await frame.locator("#map canvas").click({ position: { x: at.x, y: at.y } });
+    await expect(frame.locator(".maplibregl-popup")).toContainText("Most");
+    await shoot(page, "popup", width);
+    await context.close();
+  });
+
+  test(`a type past 20,000 draws the first 20,000 and says where the rest is, at ${width} px (T-7755)`, async ({ browser }) => {
+    test.setTimeout(120000);
+    WIDGET = undefined;
+    ALL_BRIDGES = 45000;
+    MAP_PAGES_READ = 0;
+    const { context, page } = await opened(browser, width);
+    await page.goto("https://assistant.dev.joinedcontext.com/d/bb?lang=sk");
+    await page.locator("#jc-question").fill("Ukáž mi všetky mosty na mape");
+    await page.locator(".jc-form .jc-submit").click();
+    const numbers = new Intl.NumberFormat("sk");
+    await expect(page.locator(".jc-viz-box .jc-viz-note")).toHaveText(`Na mape je prvých ${numbers.format(20000)}; ostatné sú v datasete.`, { timeout: 30000 });
+    await expect(page.locator(".jc-data summary").first()).toHaveText(`Mosty — ${numbers.format(20000)} z ${numbers.format(45000)}`);
+    await page.locator("iframe.jc-viz").scrollIntoViewIfNeeded();
+    await expect.poll(() => mapFrame(page)?.evaluate(() => window.jcMapReady === true), { timeout: 60000 }).toBe(true);
+    expect(MAP_PAGES_READ).toBe(40);
+    expect(await mapFrame(page).evaluate(() => window.jcMapFeatures)).toBe(20000);
+    await expect.poll(() => layerCount(mapFrame(page)), { timeout: 30000 }).toBe(20000);
+    await shoot(page, "capped", width);
+    await context.close();
+    ALL_BRIDGES = 1651;
+  });
+}
 
 // T-4343: the deployment's widget.language decides; the browser's languages never leave the page.
 test("a Slovak browser opens in Slovak with no question", async ({ browser }) => {

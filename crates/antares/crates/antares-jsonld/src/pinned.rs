@@ -79,11 +79,7 @@ pub fn core_context() -> Context {
 /// 13.4.3 `core`), for the versions whose core is pinned in this build;
 /// `None` for anything else, a malformed version included.
 pub fn core_context_url(version: &str) -> Option<&'static str> {
-    let (major, minor) = version.split_once('.')?;
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !digits(major) || !digits(minor) {
-        return None;
-    }
+    // an exact match against the pinned URLs: a malformed version names none
     let want = format!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v{version}.jsonld");
     PINNED.iter().map(|(u, _)| *u).find(|u| *u == want)
 }
@@ -277,6 +273,32 @@ mod tests {
             url: "https://example.org/ctx.jsonld",
             doc: serde_json::json!({"speed": "https://example.org/speed"}),
         }
+    }
+
+    /// The nesting bound admits eight levels of arrays and refuses the ninth.
+    #[test]
+    fn eight_nested_context_arrays_resolve_and_nine_are_refused() {
+        let nest = |n: usize| (0..n).fold(serde_json::json!({}), |v, _| serde_json::json!([v]));
+        resolve_with(&PinnedOnly, &nest(8)).expect("eight levels");
+        assert!(matches!(
+            resolve_with(&PinnedOnly, &nest(9)),
+            Err(NgsiError::BadRequestData(m)) if m.contains("too deep")
+        ));
+    }
+
+    /// 5.5.7: a document fetched from a URL that is not a pinned core is the
+    /// user's, so a scoped context inside it is refused like an inline one.
+    #[test]
+    fn a_fetched_user_document_merges_under_the_user_rule() {
+        let loader = Counting {
+            doc: serde_json::json!({"Vehicle": {"@id": "https://example.org/Vehicle",
+                "@context": {"speed": "https://example.org/hidden-speed"}}}),
+            ..counting()
+        };
+        assert!(matches!(
+            resolve_with(&loader, &Value::String(loader.url.into())),
+            Err(NgsiError::BadRequestData(_))
+        ));
     }
 
     #[test]
