@@ -261,7 +261,7 @@ async fn an_api_path_no_route_serves_is_a_problem_naming_the_path() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(
         body.to_string()
-            .contains("API endpoint '/api/v1/no-such-thing' not found"),
+            .contains("API endpoint '/no-such-thing' not found"),
         "{body}"
     );
 }

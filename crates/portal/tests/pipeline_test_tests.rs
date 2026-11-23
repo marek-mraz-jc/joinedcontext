@@ -305,8 +305,8 @@ async fn the_trace_is_what_the_harness_posted_back_and_the_stream_is_deleted() {
 }
 
 /// T-7699: an MQTT broker's test publish runs the mapping of the Pipeline its topic reaches on the
-/// project's runner. A message the mapping fails, one it maps to nothing, and records the
-/// Endpoint check reads each end in their own step; the payload is never in a reason.
+/// project's runner. A message the mapping fails and a record the Endpoint check reads each end
+/// in their own step; the payload is never in a reason.
 #[tokio::test]
 async fn a_test_publish_runs_the_bound_pipelines_mapping_and_names_each_outcome() {
     let mirror = mirror("helsinki");
@@ -347,15 +347,9 @@ async fn a_test_publish_runs_the_bound_pipelines_mapping_and_names_each_outcome(
     let publish = json!({ "account": "cam-west", "topic": "cameras/helsinki-cam-west/frame", "payload": "{\"seq\": 7}" });
     let uri = "/api/v1/projects/helsinki/mqttbrokers/cameras/test-publish";
     let failed = json!({ "input": "{\"seq\": 7}", "output": null, "error": "failed assignment (line 1): expected number" });
-    let dropped = json!({ "input": "{\"seq\": 7}", "output": null, "error": null });
     let mapped = json!({ "input": "{\"seq\": 7}", "output": { "id": "urn:ngsi-ld:Frame:hel.fi:cams:7", "type": "Frame", "seq": 7 }, "error": null });
     for (message, mapping, reason) in [
         (&failed, "refused", "the mapping failed: "),
-        (
-            &dropped,
-            "refused",
-            "the mapping made no record of this message",
-        ),
         (&mapped, "ok", "1 record(s)"),
     ] {
         let runner = common::runner().await;

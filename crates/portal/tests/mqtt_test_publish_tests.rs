@@ -221,6 +221,24 @@ async fn a_bound_topic_names_its_source_and_pipeline() {
 }
 
 #[tokio::test]
+async fn a_broker_whose_manifest_does_not_read_tests_as_no_broker() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "cameras",
+        "helsinki",
+        json!({ "roles": "camera" }),
+    ));
+    let (status, body) = test(
+        &state,
+        "jana",
+        json!({"account": "cam-west", "topic": "cameras/x", "payload": ""}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
 async fn a_source_no_pipeline_takes_is_refused_and_a_second_pipeline_is_counted() {
     let state = state();
     state.mirror.upsert(envelope(
@@ -401,7 +419,20 @@ async fn the_gateways_record_reads_as_refusals_and_a_refusal_to_read_says_so() {
 
 #[tokio::test]
 async fn a_gateway_url_that_does_not_parse_is_the_reason_nothing_was_read() {
-    for gateway in ["not a url", "mailto:gateway@example.org"] {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address");
+    // A parseable gateway is read on its internal port, where nothing listens in this test.
+    let parseable = format!("http://{closed}");
+    for (gateway, reason) in [
+        ("not a url", "does not parse"),
+        ("mailto:gateway@example.org", "does not parse"),
+        (
+            parseable.as_str(),
+            "the gateway did not answer the refusal read",
+        ),
+    ] {
         let mut config = Config::for_tests();
         config.gateway_url = Some(gateway.to_owned());
         let state = state_with(config);
@@ -411,9 +442,7 @@ async fn a_gateway_url_that_does_not_parse_is_the_reason_nothing_was_read() {
         let seen: Value = serde_json::from_str(&answer.text).expect("json");
         assert_eq!(seen["refusalsRead"], false, "{gateway}");
         assert!(
-            seen["reason"]
-                .as_str()
-                .is_some_and(|r| r.contains("does not parse")),
+            seen["reason"].as_str().is_some_and(|r| r.contains(reason)),
             "{gateway}: {seen}"
         );
     }

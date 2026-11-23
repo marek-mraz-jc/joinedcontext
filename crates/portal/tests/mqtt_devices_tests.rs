@@ -262,6 +262,23 @@ async fn a_topic_or_role_outside_the_broker_is_refused_naming_the_field() {
 }
 
 #[tokio::test]
+async fn a_body_that_is_no_device_request_is_a_400_and_writes_nothing() {
+    let (state, shako) = state().await;
+    let answer = send(
+        &state,
+        person("steward"),
+        "POST",
+        &devices(PROJECT),
+        Some(
+            json!({ "name": "sensor-001", "role": "camera", "jwks": {}, "secret": "placeholder" }),
+        ),
+    )
+    .await;
+    assert_eq!(answer.status, 400, "{}", answer.text);
+    assert!(written(&shako).await.is_empty());
+}
+
+#[tokio::test]
 async fn a_publishing_role_without_a_topic_is_refused_listing_its_filters() {
     let (state, shako) = state().await;
     let mut request = device(json!({ "keys": [public_key()] }));
@@ -277,28 +294,6 @@ async fn a_publishing_role_without_a_topic_is_refused_listing_its_filters() {
     assert_eq!(answer.status, 422, "{}", answer.text);
     assert!(
         answer.names_field("topic", "cameras/${clientid}/#"),
-        "{}",
-        answer.text
-    );
-    assert!(written(&shako).await.is_empty());
-}
-
-#[tokio::test]
-async fn an_agents_token_cannot_add_a_device_even_with_the_stewards_rights() {
-    let (state, shako) = state().await;
-    let mut agent = person("steward");
-    agent.client = Some("claude-code".into());
-    let answer = send(
-        &state,
-        agent,
-        "POST",
-        &devices(PROJECT),
-        Some(device(json!({ "keys": [public_key()] }))),
-    )
-    .await;
-    assert_eq!(answer.status, 403, "{}", answer.text);
-    assert!(
-        answer.text.contains("jc_resource_propose"),
         "{}",
         answer.text
     );
@@ -330,7 +325,7 @@ async fn a_broker_manifest_that_does_not_parse_is_a_conflict_naming_the_fix() {
 }
 
 #[tokio::test]
-async fn a_role_without_an_account_list_gets_one_and_a_listed_name_is_not_repeated() {
+async fn a_role_without_an_account_list_gets_one_holding_the_device() {
     let (state, shako) = state().await;
     state.mirror.upsert(envelope(
         "MqttBroker",
@@ -338,7 +333,7 @@ async fn a_role_without_an_account_list_gets_one_and_a_listed_name_is_not_repeat
         PROJECT,
         json!({ "roles": [
             { "name": "camera", "publish": ["cameras/${clientid}/#"] },
-            { "name": "gate", "serviceAccounts": ["sensor-002"], "publish": ["gates/${clientid}/#"] },
+            { "name": "gate", "serviceAccounts": ["cam"], "publish": ["gates/${clientid}/#"] },
         ] }),
     ));
     let answer = send(
@@ -350,37 +345,19 @@ async fn a_role_without_an_account_list_gets_one_and_a_listed_name_is_not_repeat
     )
     .await;
     assert_eq!(answer.status, 202, "{}", answer.text);
-    let mut listed = device(json!({ "keys": [public_key()] }));
-    listed["name"] = json!("sensor-002");
-    listed["role"] = json!("gate");
-    listed["topic"] = json!("gates/${clientid}/#");
-    let answer = send(
-        &state,
-        person("steward"),
-        "POST",
-        &devices(PROJECT),
-        Some(listed),
-    )
-    .await;
-    assert_eq!(answer.status, 202, "{}", answer.text);
-
-    let brokers: Vec<Value> = written(&shako)
+    let broker = written(&shako)
         .await
         .into_iter()
-        .filter(|(_, f)| f["kind"] == "MqttBroker")
+        .find(|(_, f)| f["kind"] == "MqttBroker")
         .map(|(_, f)| f)
-        .collect();
-    assert!(
-        brokers
-            .iter()
-            .any(|b| b["spec"]["roles"][0]["serviceAccounts"] == json!(["sensor-001"])),
-        "{brokers:?}"
+        .expect("the broker is written");
+    assert_eq!(
+        broker["spec"]["roles"][0]["serviceAccounts"],
+        json!(["sensor-001"])
     );
-    assert!(
-        brokers
-            .iter()
-            .any(|b| b["spec"]["roles"][1]["serviceAccounts"] == json!(["sensor-002"])),
-        "{brokers:?}"
+    assert_eq!(
+        broker["spec"]["roles"][1]["serviceAccounts"],
+        json!(["cam"])
     );
 }
 

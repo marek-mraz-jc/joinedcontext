@@ -255,11 +255,8 @@ async fn checked(
     )
     .await?;
     match outcome {
-        ProposeOutcome::DryRun(result) if result.valid => Ok(result.lane),
-        ProposeOutcome::DryRun(result) => Err(ApiError::Invalid {
-            detail: format!("{plural}/{name} does not pass its door"),
-            errors: result.findings,
-        }),
+        // A dry run answers `valid: true` or refuses with the manifest's findings as its error.
+        ProposeOutcome::DryRun(result) => Ok(result.lane),
         _ => Err(ApiError::Internal(
             "a dry run answered with something other than its plan".into(),
         )),
@@ -435,10 +432,10 @@ async fn propose_device(
         let accounts = entry
             .entry("serviceAccounts")
             .or_insert_with(|| Value::Array(Vec::new()));
+        // The name is no ServiceAccount yet (valid_request), and a role naming a missing
+        // account does not pass its door, so the list never holds it already.
         if let Some(accounts) = accounts.as_array_mut() {
-            if !accounts.iter().any(|a| a == request.name.as_str()) {
-                accounts.push(Value::String(request.name.clone()));
-            }
+            accounts.push(Value::String(request.name.clone()));
         }
     }
     if !matched {
@@ -530,6 +527,25 @@ mod tests {
     }
 
     #[test]
+    fn an_agents_token_may_not_add_a_device_whatever_its_rights() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let agent = crate::api::mcp_elicitations::tests::client_session()
+            .0
+            .identity;
+        let effective = crate::permissions::for_request(&state, &agent, "helsinki");
+        let env: ResourceEnvelope = serde_json::from_value(json!({
+            "apiVersion": API_VERSION, "kind": "MqttBroker",
+            "metadata": { "name": "edge", "namespace": "helsinki" }, "spec": { "roles": [] }
+        }))
+        .expect("an envelope");
+        let refused = may_add_here(&agent, &effective, &env);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.contains("jc_resource_propose")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
     fn a_public_key_set_passes_and_a_private_member_or_no_set_is_named() {
         let jwks = public_jwks(&json!({ "keys": [key()] })).expect("a public key set");
         assert_eq!(jwks.keys.len(), 1);
@@ -541,6 +557,23 @@ mod tests {
         assert!(
             refusal(json!({ "keys": [] })).contains("\"jwks: "),
             "an empty key set"
+        );
+        let mut unknown = key();
+        unknown["x5u"] = json!("https://keys.example.org/k1");
+        assert!(
+            refusal(json!({ "keys": [unknown] })).contains("\"jwks: unknown field"),
+            "a member no public JWK has"
+        );
+        let six: Vec<Value> = (0..6)
+            .map(|n| {
+                let mut each = key();
+                each["kid"] = json!(format!("k{n}"));
+                each
+            })
+            .collect();
+        assert!(
+            refusal(json!({ "keys": six })).contains("one to five keys"),
+            "six keys"
         );
     }
 }

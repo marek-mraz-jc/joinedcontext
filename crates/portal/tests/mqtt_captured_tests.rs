@@ -169,6 +169,26 @@ async fn a_reader_another_projects_steward_and_an_unknown_broker_get_the_same_40
 }
 
 #[tokio::test]
+async fn a_broker_whose_manifest_does_not_read_is_the_same_404_as_a_missing_one() {
+    let state = state().await;
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "broken",
+        "helsinki",
+        json!({ "roles": "camera" }),
+    ));
+    for method in ["GET", "DELETE"] {
+        let (broken, _) = call(&state, "eva", method, "broken").await;
+        let (missing, _) = call(&state, "eva", method, "nope").await;
+        assert_eq!(
+            (broken, missing),
+            (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND),
+            "{method}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_wildcard_topic_or_a_limit_out_of_range_is_refused_naming_it() {
     let state = state().await;
     for query in ["cameras?limit=0", "cameras?limit=1001"] {
@@ -205,6 +225,15 @@ fn closed_pool() -> sqlx::PgPool {
 #[tokio::test]
 async fn a_capture_store_that_does_not_answer_is_a_503_with_a_next_step() {
     let mut state = state().await;
+    // The capture of a project with an Organization asks the database for the project's key.
+    for manifest in [
+        json!({ "apiVersion": joinedcontext_portal::resource::API_VERSION, "kind": "Organization", "metadata": { "name": "hel", "namespace": ORG_NAMESPACE }, "spec": { "displayName": { "en": "Helsinki" }, "domain": "hel.fi" } }),
+        json!({ "apiVersion": joinedcontext_portal::resource::API_VERSION, "kind": "Project", "metadata": { "name": "helsinki", "namespace": ORG_NAMESPACE }, "spec": { "organizationRef": "hel" } }),
+    ] {
+        state
+            .mirror
+            .upsert(serde_json::from_value(manifest).expect("manifest"));
+    }
     state.mqtt_capture =
         std::sync::Arc::new(joinedcontext_portal::mqtt_capture::CaptureStore::new(
             Some(closed_pool()),

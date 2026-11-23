@@ -307,34 +307,9 @@ async fn a_decision_the_broker_no_longer_holds_is_a_404_and_a_refused_one_a_503(
     }
 }
 
-#[tokio::test]
-async fn a_client_token_neither_reads_nor_decides_a_question() {
-    let broker = MockServer::start().await;
-    holding(&broker).await;
-    let state = state(&broker.uri(), None, "client");
-    let mut client = person("ana");
-    client.client = Some("claude-code".into());
-    let read = send(&state, client.clone(), "GET", PAGE, None).await;
-    assert_eq!(read.status, StatusCode::FORBIDDEN, "{}", read.text);
-    let decided = send(
-        &state,
-        client,
-        "POST",
-        &format!("{PAGE}/decision"),
-        Some(json!({"decision": "accept"})),
-    )
-    .await;
-    assert_eq!(decided.status, StatusCode::FORBIDDEN, "{}", decided.text);
-    assert!(broker
-        .received_requests()
-        .await
-        .unwrap_or_default()
-        .is_empty());
-}
-
 /// T-5699: a Portal MCP call's own question, held in the Portal. The person whose client asked
-/// reads and decides it in the project it was asked in; anyone else, another project, a spent id
-/// and a client's token are refused.
+/// reads and decides it in the project it was asked in; anyone else, another project and a spent
+/// id are refused (a client's token: the lib tests of api::mcp_elicitations).
 #[tokio::test]
 async fn the_portal_question_is_read_and_decided_by_its_asker_in_its_project_only() {
     let state = state("http://127.0.0.1:9", None, "portal-q");
@@ -392,30 +367,6 @@ async fn the_portal_question_is_read_and_decided_by_its_asker_in_its_project_onl
             decided.text
         );
     }
-
-    let mut client = person("ana");
-    client.client = Some("claude-code".into());
-    let by_client = send(&state, client.clone(), "GET", &page, None).await;
-    assert_eq!(
-        by_client.status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        by_client.text
-    );
-    let by_client = send(
-        &state,
-        client,
-        "POST",
-        &format!("{page}/decision"),
-        Some(json!({"decision": "accept"})),
-    )
-    .await;
-    assert_eq!(
-        by_client.status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        by_client.text
-    );
 
     let garbled = send(
         &state,

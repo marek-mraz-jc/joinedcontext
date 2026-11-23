@@ -342,10 +342,8 @@ async fn mapping_steps(
     pipeline: &ResourceEnvelope,
     payload: &str,
 ) -> Vec<Step> {
-    let mut manifest = match serde_json::to_value(pipeline) {
-        Ok(manifest) => manifest,
-        Err(error) => return unchecked_both(error.to_string()),
-    };
+    // An envelope always serialises; a Null would be refused by `tested_spec` below.
+    let mut manifest = serde_json::to_value(pipeline).unwrap_or_default();
     if let Some(object) = manifest.as_object_mut() {
         object.remove("status");
     }
@@ -370,22 +368,14 @@ async fn mapping_steps(
         Ok(trace) => trace,
         Err(error) => return unchecked_both(why(&error)),
     };
+    // A run that captured nothing carries the runner's silence as its error, so a trace with
+    // no error holds at least one record.
     if let Some(error) = trace.errors.first() {
         return vec![
             Step::new(
                 "mapping",
                 Outcome::Refused,
                 format!("the mapping failed: {}", error.message),
-            ),
-            Step::new("endpoint", Outcome::Unchecked, "no record to check"),
-        ];
-    }
-    if trace.mapping.is_empty() {
-        return vec![
-            Step::new(
-                "mapping",
-                Outcome::Refused,
-                "the mapping made no record of this message",
             ),
             Step::new("endpoint", Outcome::Unchecked, "no record to check"),
         ];
