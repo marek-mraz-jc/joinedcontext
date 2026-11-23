@@ -390,6 +390,14 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     .await;
     assert_eq!(out[0][0].error_get().map(|e| e.to_string()), None);
     assert_eq!(out[0][0].as_bytes_ref().len(), 64 << 20);
+    let out = run("jq:\n  query: range(100000)\n  output_raw: true\n", &["{}"]).await;
+    assert_eq!(out[0][0].error_get().map(|e| e.to_string()), None);
+    let out = run("jq:\n  query: range(100001)\n  output_raw: true\n", &["{}"]).await;
+    let err = out[0][0].error_get().map(|e| e.to_string());
+    assert_eq!(
+        err.as_deref(),
+        Some("jq query emitted more than 100000 values for one message")
+    );
     // A cut error never splits a character, whatever the prefix before it.
     for pad in 0..3 {
         let conf = format!(
