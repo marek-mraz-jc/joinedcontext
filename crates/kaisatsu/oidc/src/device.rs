@@ -78,11 +78,7 @@ pub async fn device_authorization(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
     ensure_device_enabled(&client)?;
@@ -351,11 +347,7 @@ pub async fn device_page(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let user_code = q
         .user_code
@@ -445,11 +437,7 @@ pub async fn device_submit(
     client_ip: crate::client_ip::ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let action = page_path(&mount, &realm);
     let Some(sso) = signed_in(&state, &realm, &headers).await? else {

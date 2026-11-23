@@ -96,11 +96,7 @@ async fn broker_login_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let mut auth_session = state
         .store
@@ -169,11 +165,7 @@ async fn broker_endpoint_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
     let presented_state = query
@@ -427,11 +419,7 @@ async fn broker_endpoint_confirm_post(
     client_ip: ClientIp,
     Form(form): Form<BrokerConfirmForm>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let auth_session = state
         .store

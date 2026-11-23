@@ -798,6 +798,76 @@ async fn userinfo_refusals() {
     );
 }
 
+/// `GET .../auth` from a browser: an error met before the flow can go back to the app is the
+/// realm's error page (status of the error, the parameter it is about, the way back to the app
+/// when the client names an http(s) base URL, else the next step); other callers keep JSON.
+#[tokio::test]
+async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_back() {
+    let (app, store, _) = app().await;
+    client(&store, "named-app", |c| {
+        c.name = Some("Parking".into());
+        c.base_url = Some("https://parking.example.test/".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    client(&store, "plain-app", |c| {
+        c.base_url = Some("https://plain.example.test/".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    client(&store, "script-app", |c| {
+        c.base_url = Some("javascript:alert(1)".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    let auth = "/realms/dev/protocol/openid-connect/auth";
+    let page = |query: String| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .uri(format!("{auth}?{query}"))
+                .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .body(Body::empty())
+                .unwrap();
+            send(&app, req).await
+        }
+    };
+    let bad_redirect = |id: &str| {
+        format!("client_id={id}&response_type=code&redirect_uri=https%3A%2F%2Fevil.example.test%2F")
+    };
+
+    let (st, h, html) = page(bad_redirect("named-app")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{html}");
+    assert!(h[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html"));
+    assert!(html.contains("(redirect_uri)"), "{html}");
+    assert!(html.contains("https://parking.example.test/"), "{html}");
+    assert!(html.contains("Back to Parking"), "{html}");
+
+    let (st, _, html) = page(bad_redirect("plain-app")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(html.contains("Back to the application"), "{html}");
+
+    let (_, _, html) = page(bad_redirect("script-app")).await;
+    assert!(!html.contains("javascript:alert"), "{html}");
+    assert!(html.contains("open the app again from its link"), "{html}");
+
+    // No client_id: the page names it and, in the language asked for, the next step.
+    let (st, _, html) = page("response_type=code&kc_locale=sk".into()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(html.contains("(client_id)"), "{html}");
+    assert!(html.contains("lang=\"sk\""), "{html}");
+    assert!(html.contains("otvorte aplikáciu znova"), "{html}");
+
+    // An unknown client: the error names client_id, and there is no client to go back to.
+    let (_, _, html) = page(bad_redirect("nobody")).await;
+    assert!(html.contains("(client_id)"), "{html}");
+
+    // A caller that does not ask for HTML keeps the OAuth JSON error.
+    let (st, _, body) = get(&app, &format!("{auth}?{}", bad_redirect("named-app")), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(!err(&body).is_empty(), "{body}");
+}
+
 #[tokio::test]
 async fn logout_reads_accept_language_and_refuses_a_token_that_is_not_base64url() {
     let (app, _, _) = app().await;

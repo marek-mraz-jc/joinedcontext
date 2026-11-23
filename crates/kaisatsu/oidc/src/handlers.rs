@@ -131,16 +131,22 @@ pub async fn active_realm(
     next.run(request).await
 }
 
+/// The realm a route names. `active_realm` already answered 404 for an unknown or disabled one; a
+/// realm deleted between that check and the handler's read answers the same 404.
+pub(crate) async fn named_realm(state: &OidcState, name: &str) -> Result<RealmConfig> {
+    state
+        .store
+        .get_realm(name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
+}
+
 async fn realm_info(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
     Ok(Json(json!({
@@ -159,11 +165,7 @@ async fn openid_configuration(
     Path(realm_name): Path<String>,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
     let oidc_base = format!("{issuer}/protocol/openid-connect");
@@ -220,11 +222,7 @@ async fn jwks_certs(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let records = state.store.list_signing_keys(&realm.id).await?;
     let jwks = KeyManager::build_jwks(&records);
     let body = serde_json::to_string(&jwks).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
@@ -499,11 +497,7 @@ async fn par_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(mut params): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &params).await?;
     params.remove("client_secret");
@@ -927,11 +921,7 @@ async fn authorize_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
     let client_id = params
@@ -2095,11 +2085,7 @@ async fn token_endpoint(
     client_ip: ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
@@ -3419,11 +3405,7 @@ async fn introspect_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Json<Value>> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
     if client.public_client {
@@ -3526,11 +3508,7 @@ async fn revoke_endpoint(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<StatusCode> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
@@ -3625,11 +3603,7 @@ async fn userinfo_inner(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<(Map<String, Value>, Option<String>)> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let (dpop_scheme, raw_token) = crate::dpop_guard::parse_authz_header(&headers)?;
 
@@ -4015,11 +3989,7 @@ async fn signed_out_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let bundle = logout_bundle(&params, &headers, &realm);
     let branding = state
@@ -4079,11 +4049,7 @@ async fn handle_logout_request(
     mount_ext: Option<Extension<Mount>>,
     is_post: bool,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
     let id_token_hint = params.get("id_token_hint").filter(|s| !s.is_empty());
@@ -4305,5 +4271,38 @@ mod auth_cookie_tests {
         let planted = jar(&format!("__Host-wk_auth=x.{}..{first}", "a".repeat(44)));
         assert_eq!(auth_cookie_handles(&planted), vec![first.clone()]);
         assert!(!auth_cookie_holds(&HeaderMap::new(), &sha256_hex(&first)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaisatsu_store_memory::MemoryStore;
+
+    fn state() -> OidcState {
+        OidcState {
+            store: Arc::new(MemoryStore::new(Kek::generate_for_tests())),
+            kek: Kek::generate_for_tests(),
+            guard: OutboundGuard::default(),
+            default_mount: Mount::new("kaisatsu", "https", "idm.example.test", "").unwrap(),
+            second_factor: crate::SecondFactor::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_realm_deleted_after_the_active_realm_check_answers_404() {
+        let state = state();
+        state
+            .store
+            .upsert_realm(RealmConfig {
+                realm: "dev".into(),
+                ..RealmConfig::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(named_realm(&state, "dev").await.unwrap().realm, "dev");
+        let err = named_realm(&state, "gone").await.unwrap_err();
+        assert!(matches!(&err, KaisatsuError::NotFound(m) if m == "realm not found"));
+        assert_eq!(err.status_code(), 404);
     }
 }
