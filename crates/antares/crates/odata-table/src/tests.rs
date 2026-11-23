@@ -203,6 +203,11 @@ async fn a_source_by_default_has_no_etag_and_refuses_writes() {
         .expect("no source call");
     assert!(!decision.allowed);
     assert_eq!(decision.reason, "Things is served read only");
+    // reading is no write: a read-only source still answers it
+    let read = allowed(&source, &Scope::all(), Operation::Read, None)
+        .await
+        .expect("no source call");
+    assert!(read.allowed, "{}", read.reason);
 }
 
 #[test]
@@ -217,7 +222,31 @@ fn a_key_is_a_string_or_an_integer() {
             "{bad}"
         );
     }
-    assert!(key_options(&i, &json!(7), None).is_ok());
+    let select = Some(vec![SelectItem::Path(vec!["org".into()])]);
+    let one = key_options(&i, &json!(7), select.clone()).expect("an integer key");
+    assert_eq!((one.select, one.top), (select, Some(1)));
+}
+
+#[test]
+fn a_scope_holds_what_it_grants_and_an_operation_parses_by_its_name() {
+    assert!(Scope::all().holds("things.delete"));
+    assert!(!Scope::default().holds("things.read"));
+    let only = Scope::all().holding(&["things.read"]);
+    assert_eq!(
+        only.permissions,
+        crate::Permissions::Only(vec!["things.read".into()])
+    );
+    assert!(only.holds("things.read"));
+    assert!(!only.holds("things.delete"));
+    for op in Operation::ALL {
+        assert_eq!(Operation::parse(op.as_str()), Some(op));
+    }
+    assert_eq!(Operation::parse("fly"), None);
+    let open: Vec<(Operation, Option<String>)> = crate::open_rules()
+        .into_iter()
+        .map(|r| (r.operation, r.permission))
+        .collect();
+    assert_eq!(open, [(Operation::Read, None), (Operation::Export, None)]);
 }
 
 #[tokio::test]
@@ -838,6 +867,22 @@ fn service() -> Service {
             },
         ],
     }
+}
+
+#[test]
+fn a_set_s_info_carries_its_definition_s_rules() {
+    let service = service();
+    let model = Arc::new(service.model());
+    let named = service.info(model.clone(), "Named").expect("a defined set");
+    assert_eq!(named.key, "id");
+    assert_eq!(
+        named.rules,
+        [Rule {
+            operation: Operation::Read,
+            permission: Some("things.read".into()),
+        }]
+    );
+    assert!(service.info(model, "Nope").is_none());
 }
 
 #[test]
