@@ -84,7 +84,12 @@ export function PublishDatasetDialog({
       closeLabel={t("app.close")}
     >
       {/* Mounted only while open: every opening starts from the draft, never from a half-edit. */}
-      {open ? <Flow project={project} endpoint={endpoint} onDone={() => onOpenChange(false)} /> : null}
+      {/* The phone keeps the 12/14 px text floors while the form is open (T-7521). */}
+      {open ? (
+        <div data-phone-floors>
+          <Flow project={project} endpoint={endpoint} onDone={() => onOpenChange(false)} />
+        </div>
+      ) : null}
     </Dialog>
   );
 }

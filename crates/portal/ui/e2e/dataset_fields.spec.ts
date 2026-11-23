@@ -99,11 +99,7 @@ async function shoot(page: Page, info: TestInfo, state: string, width: number, h
   if (width === 400) {
     const sha256 = createHash("sha256").update(readFileSync(path)).digest("hex");
     writeFileSync(path.replace(/\.png$/, ".phone.json"), `${JSON.stringify({ sha256, hits }, null, 1)}\n`);
-    // With a modal open Chrome's mobile text autosizing stops, so the page under the dialog and the
-    // dialog read the Portal's 80 % type scale (body 11.2 px) as under 12 px, and the page behind
-    // keeps its own targets: recorded in the report, not this form's. Overflow stays held, and
-    // each field control is measured for a finger below.
-    expect(hits.filter((hit) => !modal || hit.kind === "overflow")).toEqual([]);
+    expect(hits).toEqual([]);
     if (modal) {
       for (const control of await page.locator('input[id^="publish-field-"], select[id^="publish-field-"]').all()) {
         const box = await control.boundingBox();
