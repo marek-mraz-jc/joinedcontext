@@ -632,10 +632,8 @@ impl Hub {
             caller,
             subject,
             runner,
-            state: Mutex::new(State {
-                next_seq: 1,
-                ..State::default()
-            }),
+            // every read of next_seq takes at least 1
+            state: Mutex::new(State::default()),
             wake: Notify::new(),
         });
         conns.insert(id.clone(), conn.clone());
@@ -803,6 +801,12 @@ mod tests {
         assert_eq!(st.ring.len(), 3);
         st.trim(2, 1024, 0);
         assert_eq!(st.ring.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [2, 3]);
+        // exactly at the byte budget nothing more leaves; one byte under it, the oldest does
+        st.ring_bytes = 2;
+        st.trim(9, 2, 0);
+        assert_eq!(st.ring.len(), 2);
+        st.trim(9, 1, 0);
+        assert_eq!(st.ring.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [3]);
     }
 
     /// A resume after the last seq an overflow lost replays nothing of it:
