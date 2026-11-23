@@ -57,16 +57,18 @@ fn stopped(out: &Output) -> (bool, String) {
     )
 }
 
-/// A loopback port nothing listens on, held bound (not listening) by the returned socket.
+/// A loopback port taken by the returned listener while it lives.
 fn held_port() -> (std::net::TcpListener, String) {
     let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = held.local_addr().expect("addr").to_string();
     (held, addr)
 }
 
-/// A port free a moment ago, for a listener the binary binds itself.
-fn free_port() -> String {
-    held_port().1
+/// N different ports free a moment ago, for listeners the binary binds itself: all are held until
+/// every address is read, so one call never hands out a port twice.
+fn free_ports<const N: usize>() -> [String; N] {
+    let held: [_; N] = std::array::from_fn(|_| held_port());
+    held.map(|(_, addr)| addr)
 }
 
 #[test]
@@ -129,7 +131,7 @@ fn a_port_taken_by_another_listener_stops_it() {
         !ok && log.contains(&format!("{taken} could not be bound")),
         "{log}"
     );
-    let path = config(&dir, &model, &free_port(), Some(&taken));
+    let path = config(&dir, &model, &free_ports::<1>()[0], Some(&taken));
     let (ok, log) = stopped(&embedder().arg("--config").arg(&path).output().expect("run"));
     assert!(
         !ok && log.contains(&format!("{taken} could not be bound")),
@@ -169,7 +171,7 @@ fn it_serves_exports_metrics_and_stops_cleanly_on_a_signal() {
     let model = model_dir();
     for signal in ["TERM", "INT"] {
         let dir = scratch(&format!("serve-{signal}"));
-        let (listen, metrics) = (free_port(), free_port());
+        let [listen, metrics] = free_ports();
         let path = config(&dir, &model, &listen, Some(&metrics));
         let mut child = embedder()
             .arg("--config")
