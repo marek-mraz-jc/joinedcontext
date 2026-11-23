@@ -2642,6 +2642,21 @@ async fn odata_rows_follow_package_show() {
     assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
     let a = get(app, "/odata/v4/Datasets('pkg-open')", None).await;
     assert_eq!(a.json()["name"], "open", "{}", a.body);
+    // The count keeps the filter and its aliases.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20'open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "the filter counts one");
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20@n&@n='open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "an alias fills the filter");
     let a = get(app, "/odata/v4/Distributions/$count", None).await;
     assert_eq!(a.body, "4", "two datasets with two distributions each");
     let a = get(app, "/odata/v4/Datasets?$count=true&$top=1", None).await;
@@ -4198,18 +4213,18 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     // `?lang=` picks an offered language; any other value leaves the default in place.
     let a = get(app, "/about?lang=en", None).await;
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
     // A language in the path outranks `?lang=`.
     let a = get(app, "/sk/about?lang=en", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
