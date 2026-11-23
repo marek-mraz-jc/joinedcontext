@@ -1045,6 +1045,31 @@ mod tests {
         Ok(())
     }
 
+    /// The access surface shows each split policy's selectors as narrowed, in the words of
+    /// the document: a read that does not give `pm10` names `name` alone.
+    #[test]
+    fn a_split_policy_shows_its_narrowed_selectors_as_written() -> Result<(), String> {
+        let t = compile(&json!({"policies": [air(
+            &json!({"pm10": {"read": false}}),
+            &json!(["5.7.2", "5.7.3"]),
+        )]}))?;
+        let shown = |clause: &str| {
+            t.policies
+                .iter()
+                .find(|p| p.clauses.contains(clause))
+                .map(|p| p.source.selectors.clone())
+        };
+        let selector = |attributes: &[&str]| Selector {
+            entity_type: "Air".into(),
+            id: None,
+            id_pattern: None,
+            attributes: attributes.iter().map(|a| (*a).to_owned()).collect(),
+        };
+        assert_eq!(shown("5.7.2"), Some(vec![selector(&["name"])]));
+        assert_eq!(shown("5.7.3"), Some(vec![selector(&["name", "pm10"])]));
+        Ok(())
+    }
+
     #[test]
     fn an_entry_listing_no_attribute_is_narrowed_only_by_naming() -> Result<(), String> {
         let every = json!({"id": "p", "assignee": {"kind": "role", "id": "public"},
