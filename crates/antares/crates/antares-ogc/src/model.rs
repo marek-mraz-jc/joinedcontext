@@ -472,7 +472,7 @@ mod tests {
     };
 
     fn schema(json: &str) -> Model {
-        Model::read(json.as_bytes(), &LIMITS).unwrap_or_else(|e| unreachable!("{e:?}"))
+        Model::read(json.as_bytes(), &LIMITS).expect("a valid schema")
     }
 
     const CITY: &str = r#"{
@@ -536,7 +536,7 @@ mod tests {
             ["Car", "Stop"],
             "Hidden is not shown"
         );
-        let car = c.get("Car").unwrap_or_else(|| unreachable!());
+        let car = c.get("Car").expect("a shown class");
         assert_eq!(car.description.as_deref(), Some("A car"));
         assert_eq!(
             car.geometry.as_deref(),
@@ -559,7 +559,7 @@ mod tests {
                 ("seen".into(), "https://example.org/city/seen".into())
             ]
         );
-        let stop = c.get("Stop").unwrap_or_else(|| unreachable!());
+        let stop = c.get("Stop").expect("a shown class");
         assert_eq!(
             stop.geometry.as_deref(),
             Some(LOCATION),
@@ -590,7 +590,7 @@ mod tests {
                 &["https://example.org/city/speed"],
             )]),
         );
-        let car = c.get("Car").unwrap_or_else(|| unreachable!());
+        let car = c.get("Car").expect("a shown class");
         assert_eq!((car.geometry.as_ref(), car.time.as_ref()), (None, None));
     }
 
@@ -645,7 +645,7 @@ mod tests {
                 all("Booth", &["size", "count", "area"]),
             ]),
         );
-        let kiosk = c.get("Kiosk").unwrap_or_else(|| unreachable!());
+        let kiosk = c.get("Kiosk").expect("a shown class");
         assert_eq!(kiosk.geometry.as_deref(), Some("https://e.org/s/spot"));
         assert_eq!(
             kiosk.time,
@@ -659,7 +659,7 @@ mod tests {
             Some("label"),
             "a role of no place or time is kept"
         );
-        let booth = c.get("Booth").unwrap_or_else(|| unreachable!());
+        let booth = c.get("Booth").expect("a shown class");
         assert_eq!(booth.geometry, None, "a float is no geometry");
         assert_eq!(booth.time, None, "an integer and a GeoProperty are no time");
     }

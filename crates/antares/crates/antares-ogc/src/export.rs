@@ -996,7 +996,10 @@ mod tests {
 
     #[test]
     fn f_asks_for_a_file_only_in_a_build_that_writes_it() {
-        let offered: Vec<(&str, &str)> = ITEMS.iter().map(|e| (e.0, e.1)).collect();
+        let mut offered = Vec::new();
+        for (name, media, _) in ITEMS {
+            offered.push((*name, *media));
+        }
         let asked_for = asked(&HeaderMap::new(), pairs(&[("f", "parquet")]), &offered);
         assert_eq!(asked_for.file.is_some(), cfg!(feature = "parquet"));
         assert_eq!(asked_for.pairs.is_empty(), asked_for.file.is_some());

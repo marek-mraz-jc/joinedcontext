@@ -326,6 +326,58 @@ fn attribute(p: &Prop, value: &Value) -> Value {
 mod tests {
     use super::*;
 
+    /// T-5912: only the data model's refusal of an attribute the collection shows passes on;
+    /// a hidden attribute, another 400 and a detail without a name stay the broker's.
+    #[test]
+    fn a_model_refusal_passes_on_only_for_a_shown_attribute() {
+        let prop = |name: &str| Prop {
+            name: name.into(),
+            iri: format!("https://e.org/{name}"),
+            schema: json!({"type": "number"}),
+            role: None,
+            unit: None,
+            description: None,
+            sortable: true,
+            kind: "Property".into(),
+            reference: false,
+            target: None,
+        };
+        let car = Collection {
+            history: false,
+            output: None,
+            id: "Car".into(),
+            description: None,
+            type_iri: "https://e.org/Car".into(),
+            geometry: Some(crate::model::LOCATION.into()),
+            properties: vec![prop("speed")],
+            time: None,
+        };
+        let refusal = |name: &str| {
+            format!(
+                "the attribute {name} {} Car: too fast",
+                linkml_model::check::MARK
+            )
+        };
+        assert!(shown_refusal(&car, &refusal("speed")), "a shown property");
+        assert!(
+            shown_refusal(&car, &refusal("location")),
+            "the shown geometry"
+        );
+        assert!(
+            !shown_refusal(&car, &refusal("secret")),
+            "a hidden attribute"
+        );
+        assert!(
+            !shown_refusal(&car, "speed must be a number"),
+            "another 400"
+        );
+        let no_geometry = Collection {
+            geometry: None,
+            ..car
+        };
+        assert!(!shown_refusal(&no_geometry, &refusal("location")));
+    }
+
     #[test]
     fn each_kind_writes_its_own_member() {
         let kinds = [
