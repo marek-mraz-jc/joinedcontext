@@ -132,12 +132,13 @@ pub async fn active_realm(
 }
 
 /// The realm a route names. `active_realm` already answered 404 for an unknown or disabled one; a
-/// realm deleted between that check and the handler's read answers the same 404.
+/// realm deleted or disabled between that check and the handler's read answers the same 404.
 pub async fn named_realm(state: &OidcState, name: &str) -> Result<RealmConfig> {
     state
         .store
         .get_realm(name)
         .await?
+        .filter(|r| r.enabled)
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
 }
 
@@ -4574,7 +4575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_realm_deleted_after_the_active_realm_check_answers_404() {
+    async fn a_realm_deleted_or_disabled_after_the_active_realm_check_answers_404() {
         let state = state();
         state
             .store
@@ -4588,5 +4589,17 @@ mod tests {
         let err = named_realm(&state, "gone").await.unwrap_err();
         assert!(matches!(&err, KaisatsuError::NotFound(m) if m == "realm not found"));
         assert_eq!(err.status_code(), 404);
+        // Disabled after the check: the handler refuses it as an unknown realm.
+        state
+            .store
+            .upsert_realm(RealmConfig {
+                realm: "dev".into(),
+                enabled: false,
+                ..RealmConfig::default()
+            })
+            .await
+            .unwrap();
+        let err = named_realm(&state, "dev").await.unwrap_err();
+        assert!(matches!(&err, KaisatsuError::NotFound(m) if m == "realm not found"));
     }
 }

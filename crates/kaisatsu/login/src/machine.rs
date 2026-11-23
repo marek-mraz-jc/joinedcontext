@@ -190,10 +190,14 @@ pub enum TransitionError {
 /// required actions -> organization choice -> consent -> `Code`.
 fn advance_post_factors(
     user_id: String,
+    first_factor_passed: bool,
     second_factor_passed: bool,
     ctx: &LoginPolicyContext,
     chosen_org: Option<String>,
 ) -> Result<LoginState, TransitionError> {
+    if !first_factor_passed {
+        return Err(TransitionError::InvalidTransition);
+    }
     if ctx.needs_second_factor() && !second_factor_passed {
         return Err(TransitionError::SecondFactorMissing);
     }
@@ -203,34 +207,34 @@ fn advance_post_factors(
             "CONFIGURE_TOTP" if !second_factor_passed => {
                 return Ok(LoginState::EnrolTotp {
                     user_id,
-                    first_factor_passed: true,
+                    first_factor_passed,
                 });
             }
             "UPDATE_PASSWORD" => {
                 return Ok(LoginState::UpdatePassword {
                     user_id,
-                    first_factor_passed: true,
+                    first_factor_passed,
                     second_factor_passed,
                 });
             }
             "VERIFY_EMAIL" => {
                 return Ok(LoginState::VerifyEmail {
                     user_id,
-                    first_factor_passed: true,
+                    first_factor_passed,
                     second_factor_passed,
                 });
             }
             "TERMS_AND_CONDITIONS" => {
                 return Ok(LoginState::TermsAndConditions {
                     user_id,
-                    first_factor_passed: true,
+                    first_factor_passed,
                     second_factor_passed,
                 });
             }
             "webauthn-register" | "CONFIGURE_PASSKEY" => {
                 return Ok(LoginState::RegisterWebAuthn {
                     user_id,
-                    first_factor_passed: true,
+                    first_factor_passed,
                     second_factor_passed,
                 });
             }
@@ -242,13 +246,13 @@ fn advance_post_factors(
         Some("CONFIGURE_TOTP") => {
             return Ok(LoginState::EnrolTotp {
                 user_id,
-                first_factor_passed: true,
+                first_factor_passed,
             });
         }
         Some("UPDATE_PASSWORD") => {
             return Ok(LoginState::UpdatePassword {
                 user_id,
-                first_factor_passed: true,
+                first_factor_passed,
                 second_factor_passed,
             });
         }
@@ -259,7 +263,7 @@ fn advance_post_factors(
     if resolved_org.is_none() && ctx.org_choices.len() > 1 {
         return Ok(LoginState::OrganizationChoice {
             user_id,
-            first_factor_passed: true,
+            first_factor_passed,
             second_factor_passed,
             candidates: ctx.org_choices.clone(),
         });
@@ -269,7 +273,7 @@ fn advance_post_factors(
     if ctx.consent_required {
         return Ok(LoginState::Consent {
             user_id,
-            first_factor_passed: true,
+            first_factor_passed,
             second_factor_passed,
             chosen_org: final_org,
         });
@@ -340,7 +344,7 @@ pub fn transition(
                     })
                 }
             } else {
-                advance_post_factors(user_id, false, ctx, None)
+                advance_post_factors(user_id, true, false, ctx, None)
             }
         }
         (
@@ -354,7 +358,7 @@ pub fn transition(
                 return Err(TransitionError::UserVerificationRequired);
             }
             // A user-verified passkey counts as both first and second factor (research-keycloak §5.1, W7)
-            advance_post_factors(user_id, true, ctx, None)
+            advance_post_factors(user_id, true, true, ctx, None)
         }
         (
             LoginState::SecondFactorOtp {
@@ -410,7 +414,7 @@ pub fn transition(
         ) => {
             let mut next_ctx = ctx.clone();
             next_ctx.pending_actions.retain(|a| a != "CONFIGURE_TOTP");
-            advance_post_factors(user_id, true, &next_ctx, None)
+            advance_post_factors(user_id, true, true, &next_ctx, None)
         }
         (
             LoginState::RegisterWebAuthn {
@@ -425,7 +429,7 @@ pub fn transition(
                 .pending_actions
                 .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
             // The passkey just created answers the second factor, as an enrolled TOTP does.
-            advance_post_factors(user_id, true, &next_ctx, None)
+            advance_post_factors(user_id, true, true, &next_ctx, None)
         }
         (
             LoginState::UpdatePassword {
@@ -437,7 +441,7 @@ pub fn transition(
         ) => {
             let mut next_ctx = ctx.clone();
             next_ctx.pending_actions.retain(|a| a != "UPDATE_PASSWORD");
-            advance_post_factors(user_id, second_factor_passed, &next_ctx, None)
+            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
         }
         (
             LoginState::VerifyEmail {
@@ -449,7 +453,7 @@ pub fn transition(
         ) => {
             let mut next_ctx = ctx.clone();
             next_ctx.pending_actions.retain(|a| a != "VERIFY_EMAIL");
-            advance_post_factors(user_id, second_factor_passed, &next_ctx, None)
+            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
         }
         (
             LoginState::TermsAndConditions {
@@ -463,7 +467,7 @@ pub fn transition(
             next_ctx
                 .pending_actions
                 .retain(|a| a != "TERMS_AND_CONDITIONS");
-            advance_post_factors(user_id, second_factor_passed, &next_ctx, None)
+            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
         }
         (
             LoginState::OrganizationChoice {
@@ -479,7 +483,7 @@ pub fn transition(
             }
             let mut next_ctx = ctx.clone();
             next_ctx.pending_actions.clear();
-            advance_post_factors(user_id, second_factor_passed, &next_ctx, Some(org_id))
+            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, Some(org_id))
         }
         (
             LoginState::Consent {
@@ -493,7 +497,7 @@ pub fn transition(
             let mut next_ctx = ctx.clone();
             next_ctx.pending_actions.clear();
             next_ctx.consent_required = false;
-            advance_post_factors(user_id, second_factor_passed, &next_ctx, chosen_org)
+            advance_post_factors(user_id, true, second_factor_passed, &next_ctx, chosen_org)
         }
         (LoginState::Consent { .. }, LoginInput::DenyConsent) => {
             Err(TransitionError::ConsentDenied)
@@ -660,6 +664,22 @@ mod tests {
             .unwrap(),
             LoginState::LoggedOut
         );
+    }
+
+    /// The post-factor steps are reached only after the first factor; a call without it is an
+    /// invalid transition, whatever the context holds.
+    #[test]
+    fn post_factor_steps_refuse_a_login_without_its_first_factor() {
+        let ctx = LoginPolicyContext {
+            pending_actions: vec!["UPDATE_PASSWORD".into()],
+            ..LoginPolicyContext::default()
+        };
+        for second in [false, true] {
+            assert_eq!(
+                advance_post_factors("u1".into(), false, second, &ctx, None),
+                Err(TransitionError::InvalidTransition)
+            );
+        }
     }
 
     /// A step that carries no second factor while the person now holds one is refused; a
