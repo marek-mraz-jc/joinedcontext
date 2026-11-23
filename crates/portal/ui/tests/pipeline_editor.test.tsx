@@ -828,6 +828,44 @@ it("tells a feed from a space and reads the attributes of a class from an inline
     expect((firstShape(body.spec).compute as { bloblang: string }).bloblang).toContain("pm10Sum");
   });
 
+  it("forgets the sample on another Endpoint or type and says why a sample could not be read", async () => {
+    renderPipelines([EXISTING], undefined, new Set(["/ngsi-ld/v1/entities"]));
+    const dialog = await openNew();
+    const studio = within(dialog).getByTestId("pipeline-studio");
+    const source = section(studio, "studio-source");
+    await user.selectOptions(within(source).getByLabelText(en.pipelines.studio.sourceKind), "space");
+    await user.selectOptions(within(source).getByLabelText(en.pipelines.studio.space), "ovzdusie");
+    const readThrough = within(source).getByLabelText(en.pipelines.studio.readThrough);
+    await user.selectOptions(readThrough, "");
+    expect(readThrough).toHaveValue("");
+    await user.selectOptions(readThrough, "public-air");
+    const entities = () => section(studio, "studio-entities");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "");
+    expect(within(entities()).getByLabelText(en.entities.type)).toHaveValue("");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.click(within(entities()).getByRole("button", { name: en.pipelines.studio.loadSample }));
+    const alerts = await within(entities()).findAllByRole("alert");
+    // The gateway answers the sample read with a bare status; the studio says it as it came.
+    expect(alerts.map((a) => a.textContent)).toContainEqual(expect.stringContaining("HTTP 503"));
+  });
+
+  it("ticks and unticks an entity of the sample", async () => {
+    renderPipelines();
+    const dialog = await openNew();
+    const studio = within(dialog).getByTestId("pipeline-studio");
+    await user.selectOptions(within(section(studio, "studio-source")).getByLabelText(en.pipelines.studio.sourceKind), "space");
+    await user.selectOptions(within(section(studio, "studio-source")).getByLabelText(en.pipelines.studio.space), "ovzdusie");
+    await user.selectOptions(within(section(studio, "studio-entities")).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.click(within(section(studio, "studio-entities")).getByRole("button", { name: en.pipelines.studio.loadSample }));
+    const first = await within(section(studio, "studio-entities")).findByLabelText(SAMPLE[0].id);
+    await user.click(first);
+    expect(within(studio).getByText(/1 entit(y|ies) ticked/)).toBeInTheDocument();
+    await user.click(first);
+    expect(first).not.toBeChecked();
+    expect(within(studio).queryByText(/entit(y|ies) ticked/)).toBeNull();
+  });
+
   it("shows only the fields of the chosen source, compute and execution (T-2754)", async () => {
     renderPipelines();
     const dialog = await openNew();
