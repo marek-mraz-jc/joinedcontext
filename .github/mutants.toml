@@ -92,6 +92,8 @@ exclude_re = [
   # daiya-expr tx_calculate_field row index: with no rows the 0..row_cnt map never runs, so the
   # `row_cnt > 0` guard of the percentile division decides nothing (T-7633).
   'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_calculate_field',
+  # daiya-expr tx_limit: a frame of exactly the limit is truncated (or drained) to its own length (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_limit',
   # ngsild-residual decode_base64 and base64url: `acc << 6`, `b0 << 4` and `low << 2` have their low
   # bits zero and the other operand fits in them, so `|` and `^` add the same bits (T-7693).
   'antares-residual/src/binary\.rs:\d+:\d+: replace \| with \^ in (decode_base64|base64url)',

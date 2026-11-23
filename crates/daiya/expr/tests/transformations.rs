@@ -675,6 +675,11 @@ fn join_by_field_outer_joins_sorted_and_inner_keeps_shared_keys() {
         ],
     );
     let out = tx_join_by_field(vec![a.clone(), b.clone()], &json!({}));
+    // an empty byField names no field: the default join
+    assert_eq!(
+        tx_join_by_field(vec![a.clone(), b.clone()], &json!({ "byField": "" })),
+        out
+    );
     let j = &out[0];
     assert_eq!(j.name, "joined");
     assert_eq!(names(j), ["Time", "temp", "hum"]);
@@ -984,9 +989,9 @@ fn edge_cases_of_names_replacements_and_join_keys() {
     // `$$` is one dollar anywhere; a `$` before a letter is text, digits after the letter too
     let out = tx_rename_by_regex(
         vec![g],
-        &json!({ "regex": "(abc)(.*)", "renamePattern": "x$$y$x1$z" }),
+        &json!({ "regex": "(abc)(.*)", "renamePattern": "x$$y$x1$z$3$&" }),
     );
-    assert_eq!(names(&out[0]), ["x$y$x1$z"]);
+    assert_eq!(names(&out[0]), ["x$y$x1$z$3abcdefghij"]);
 
     // A null key sorts before the numbers of an outer join.
     let k1 = frame(

@@ -1113,7 +1113,7 @@ pub fn tx_convert_field_type(frames: Vec<Frame>, options: &Value) -> Vec<Frame> 
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 for f in &mut frame.fields {
-                    if f.name != target && f.effective_name() != target {
+                    if !answers_to(f, target) {
                         continue;
                     }
                     match dest {
