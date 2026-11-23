@@ -28,6 +28,9 @@ exclude_re = [
   # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
   # carries; without it the count is the same, the page is built and dropped (T-7627).
   'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
+  # dataroom-api handle_odata `/{set}/$export?`: odata_url parses `Datasets?` as `Datasets`, so
+  # an empty query string adds nothing either way (routes.rs pins the answer, T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: replace match guard !q\.is_empty\(\) with true in handle_odata',
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
