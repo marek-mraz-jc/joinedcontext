@@ -351,6 +351,11 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         "{first}"
     );
     assert!(!first.contains("rel=\"previous\""), "{first}");
+    // offset 1 has a previous page; offset + limit at exactly the last entry has no next
+    let (_, middle) = send(&app, "GET", &format!("{ALL}/atom.xml?limit=2&offset=1"), "").await;
+    assert_eq!(ids("atom.xml", &middle).len(), 2, "{middle}");
+    assert!(middle.contains("rel=\"previous\""), "{middle}");
+    assert!(!middle.contains("rel=\"next\""), "{middle}");
     let (_, second) = send(
         &app,
         "GET",
@@ -449,6 +454,8 @@ async fn a_conditional_get_of_an_unchanged_feed_is_304() {
     for stale in [
         ("If-None-Match", "\"other\""),
         ("If-Modified-Since", "Fri, 02 Oct 2026 10:00:00 GMT"),
+        // one second before the newest entry's 10:00:00: changed since then
+        ("If-Modified-Since", "Sat, 03 Oct 2026 09:59:59 GMT"),
     ] {
         let (status, _, _) = call(&app, "GET", &uri, "", &[stale]).await;
         assert_eq!(status, StatusCode::OK, "{stale:?}");
@@ -508,14 +515,15 @@ async fn a_request_naming_another_tenant_is_refused() {
 async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
     let app = fixture().await;
     let one = json!({"name": "x", "sources": [{"type": "Event", "preset": "event"}]});
-    let many: Vec<Value> = (0..21)
-        .map(
-            |i| json!({"name": format!("o{i}"), "sources": [{"type": "Event", "preset": "event"}]}),
-        )
-        .collect();
+    let list = |n: usize| -> Vec<Value> {
+        (0..n)
+            .map(|i| json!({"name": format!("o{i}"), "sources": [{"type": "Event", "preset": "event"}]}))
+            .collect()
+    };
     let broken = json!([{"name": "zle", "sources": [{"type": "Event", "unknown": 1}]}, one]);
     for (id, feed) in [
-        ("many", json!(many)),
+        ("many", json!(list(21))),
+        ("twenty", json!(list(20))),
         ("twice", json!([one, one])),
         ("broken", broken),
     ] {
@@ -542,6 +550,14 @@ async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
         StatusCode::OK,
         "a broken sibling does not stop this output: {body}"
     );
+    // the event preset dates an entry by its modifiedAt, a system attribute the read asks for
+    assert_eq!(
+        ids("atom.xml", &body),
+        ["urn:ngsi-ld:Event:e2", "urn:ngsi-ld:Event:e1"],
+        "{body}"
+    );
+    let (status, body) = send(&app, "GET", "/x/views/twenty/feed/v1/o19/atom.xml", "").await;
+    assert_eq!(status, StatusCode::OK, "twenty outputs is the limit, not over it: {body}");
 }
 
 /// F-ANT5-010: a view of every type pushes the output's types, so a Tenant
