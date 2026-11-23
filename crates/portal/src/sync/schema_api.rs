@@ -189,9 +189,6 @@ fn reason(err: reqwest::Error) -> String {
     if err.is_timeout() {
         return "the peer did not answer in time".to_owned();
     }
-    if err.is_redirect() {
-        return "the peer redirected somewhere a mirror does not follow".to_owned();
-    }
     if err.is_connect() {
         return "the peer could not be reached".to_owned();
     }
@@ -201,6 +198,144 @@ fn reason(err: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A peer on this host behind the test TLS front (`super::super::tls_test`).
+    async fn peer(behind: std::net::SocketAddr, timeout: Duration) -> (String, Arc<PeerSchemaApi>) {
+        let base = crate::sync::tls_test::front(behind).await;
+        let http = crate::sync::tls_test::client(timeout, MAX_REDIRECTS);
+        (base, Arc::new(PeerSchemaApi { http }))
+    }
+
+    async fn get(api: &Arc<PeerSchemaApi>, url: String) -> Result<Option<Vec<u8>>, FetchError> {
+        let api = api.clone();
+        tokio::task::spawn_blocking(move || api.get(&url))
+            .await
+            .expect("the blocking call")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_peer_document_is_read_absent_refused_or_cut_at_the_ceiling() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, ResponseTemplate};
+        let mock = wiremock::MockServer::start().await;
+        Mock::given(path("/index.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&mock)
+            .await;
+        Mock::given(path("/broken.json"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock)
+            .await;
+        Mock::given(path("/huge.json"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![b' '; MAX_BODY as usize + 1]),
+            )
+            .mount(&mock)
+            .await;
+        let (base, api) = peer(*mock.address(), TIMEOUT).await;
+        assert_eq!(
+            get(&api, format!("{base}/index.json")).await,
+            Ok(Some(b"{}".to_vec()))
+        );
+        assert_eq!(get(&api, format!("{base}/gone.json")).await, Ok(None));
+        assert_eq!(
+            get(&api, format!("{base}/broken.json")).await,
+            Err(FetchError::Refused {
+                url: format!("{base}/broken.json"),
+                status: 500
+            })
+        );
+        assert_eq!(
+            get(&api, format!("{base}/huge.json")).await,
+            Err(FetchError::Unavailable(format!(
+                "{base}/huge.json is larger than the {MAX_BODY} bytes a schema document may have"
+            )))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chunked_body_past_the_ceiling_is_cut_without_a_declared_length() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let plain = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = plain.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = plain.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+            socket.write_all(head.as_bytes()).await?;
+            let chunk = vec![b' '; 1 << 16];
+            for _ in 0..=(MAX_BODY >> 16) {
+                socket
+                    .write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                    .await?;
+                socket.write_all(&chunk).await?;
+                socket.write_all(b"\r\n").await?;
+            }
+            socket.write_all(b"0\r\n\r\n").await
+        });
+        let (base, api) = peer(at, TIMEOUT).await;
+        assert_eq!(
+            get(&api, format!("{base}/drip.json")).await,
+            Err(FetchError::Unavailable(format!(
+                "{base}/drip.json is larger than the {MAX_BODY} bytes a schema document may have"
+            )))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_peer_that_is_closed_or_silent_is_named_so() {
+        let closed = crate::sync::tls_test::closed();
+        let (base, api) = peer(closed.local_addr().expect("address"), TIMEOUT).await;
+        // The front takes the connection and drops it when the peer behind refuses: no answer.
+        assert!(matches!(
+            get(&api, format!("{base}/index.json")).await,
+            Err(FetchError::Unavailable(_))
+        ));
+        let port = closed.local_addr().expect("address").port();
+        assert_eq!(
+            get(&api, format!("https://localhost:{port}/index.json")).await,
+            Err(FetchError::Unavailable(
+                "the peer could not be reached".to_owned()
+            ))
+        );
+        drop(closed);
+        let (base, api) = peer(
+            crate::sync::tls_test::silent().await,
+            Duration::from_millis(300),
+        )
+        .await;
+        assert_eq!(
+            get(&api, format!("{base}/index.json")).await,
+            Err(FetchError::Unavailable(
+                "the peer did not answer in time".to_owned()
+            ))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_document_of_ours_is_read_from_the_view_and_its_failure_named() {
+        let api = Arc::new(LocalSchemaApi::new(
+            "http://127.0.0.1:42101/",
+            Arc::new(crate::reconciler::views::ViewSync::new(
+                "http://127.0.0.1:9",
+                "/nonexistent",
+            )),
+            tokio::runtime::Handle::current(),
+        ));
+        let url = "http://127.0.0.1:42101/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/schema/v1/model.linkml.yaml";
+        let read = tokio::task::spawn_blocking(move || api.get(url))
+            .await
+            .expect("the blocking call");
+        match read {
+            Err(FetchError::Unavailable(why)) => {
+                assert!(why.starts_with(&format!("{url}: ")), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn only_a_schema_document_of_one_of_our_endpoints_is_routed() {
