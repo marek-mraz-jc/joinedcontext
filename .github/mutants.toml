@@ -205,6 +205,10 @@ exclude_re = [
   'crates/antares-ws/src/socket\.rs:\d+:\d+: replace < with <= in leased',
   # antares-ws Session::tick: a pong exactly `pong_within` old to the nanosecond is never observed (T-7675).
   'crates/antares-ws/src/socket\.rs:552:44: replace > with >= in Session::tick',
+  # antares-ws Session::tick idle and the STA MQTT tick's CONNECT deadline and keep alive: an age exactly the limit to
+  # the nanosecond is never observed at a tick (T-7675).
+  'crates/antares-ws/src/socket\.rs:555:82: replace > with >= in Session::tick',
+  'crates/antares-ws/src/sta_mqtt\.rs:(710:58|715:61): replace > with >= in Session::tick',
   # antares-ws Conn::is_attached: the resume wakes the connection and the old socket, already waiting, drains first and
   # ends because Conn::next answers None to a generation no longer attached; the heartbeat's check covers a wake the
   # new socket takes first, an ordering no test can force (T-7675).

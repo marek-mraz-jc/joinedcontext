@@ -433,11 +433,37 @@ async fn sta_mqtt_bounds_close_a_connection() -> Result<(), String> {
     let mut ws = connected(&b, "m5", 1).await?;
     assert_eq!(next(&mut ws, WAIT).await?, None, "keep alive");
     assert!(started.elapsed() < Duration::from_secs(3), "{started:?}");
+    // ... and a client that pings inside it stays
+    let mut ws = connected(&b, "m5", 1).await?;
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        send(&mut ws, vec![0xc0, 0]).await?;
+        assert_eq!(
+            next(&mut ws, WAIT).await?,
+            Some(vec![0xd0, 0]),
+            "kept alive"
+        );
+    }
 
     // a subscribed connection renews its lease and ends at its lifetime
     let mut ws = connected(&b, "m5", 0).await?;
     send(&mut ws, subscribe(1, &["v1.1/Things('urn:ngsi-ld:Car:1')"])).await?;
     assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 1, 0]));
+    // past the 3 s lease its Subscription still has a lease ahead of it
+    tokio::time::sleep(Duration::from_millis(3300)).await;
+    let tenant = [("NGSILD-Tenant", "city")];
+    let (code, subs) = b
+        .http
+        .call("GET", "/ngsi-ld/v1/subscriptions", &tenant, None)
+        .await?;
+    assert_eq!(code, 200, "{subs}");
+    let leased = subs.as_array().into_iter().flatten().any(|s| {
+        s.get("expiresAt")
+            .and_then(Value::as_str)
+            .and_then(jc_time::parse_rfc3339)
+            .is_some_and(|t| t > jiff::Timestamp::now())
+    });
+    assert!(leased, "{subs}");
     assert_eq!(next(&mut ws, WAIT).await?, None, "lifetime");
 
     // a removed view closes its connections
