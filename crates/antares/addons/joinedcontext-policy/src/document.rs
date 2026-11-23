@@ -990,6 +990,20 @@ mod tests {
         Ok(())
     }
 
+    /// A narrowed entry carries its Attribute lists alone: the capabilities are spent on the
+    /// narrowing, a schema read's entry included.
+    #[test]
+    fn a_narrowed_entry_carries_no_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+        let info: Information = serde_json::from_value(json!({"entities": [{"type": "Air"}],
+            "propertyNames": ["name"], "attributes": {"name": {"read": true}}}))?;
+        for need in [Need::Schema, Need::Read] {
+            let narrowed = info.narrowed(need)?.ok_or("the entry grants nothing")?;
+            assert!(narrowed.attributes.is_empty(), "{need:?}");
+            assert_eq!(narrowed.property_names, ["name"], "{need:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn write_kinds_narrow_each_write_clause() -> Result<(), String> {
         let got = split(&air(
