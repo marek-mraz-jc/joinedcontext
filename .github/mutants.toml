@@ -142,6 +142,9 @@ exclude_re = [
   # antares-icsr Internal::deliver: Grant::allows(false) is `!false || ...`, true for every grant, so the guard
   # replaced with true reads alike; the guard stays as the read-access statement of the delivery (T-7673).
   'crates/antares-icsr/src/lib\.rs:\d+:\d+: replace match guard g\.allows\(false\) with true in Internal::deliver',
+  # antares-ical Zone::local: the year test picks the fallback end only when jiff cannot convert the instant, which
+  # happens below -9999 or above 9999, never at year 0, so `<` and `<=` answer alike (T-7673).
+  'crates/antares-ical/src/zone\.rs:\d+:\d+: replace < with <= in Zone::local',
   # antares-icsr SelfUrls::matching: an URL with a user or a password serialises with its userinfo, and no self URL
   # holds one, so no prefix matches either way; the explicit refusal stays (T-7673).
   'crates/antares-icsr/src/self_url\.rs:\d+:\d+: replace \|\| with && in SelfUrls::matching',
