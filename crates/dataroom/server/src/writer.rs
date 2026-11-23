@@ -155,7 +155,23 @@ impl CatalogueWriter {
             || row.portal_base != cat.portal_base
         {
             row.modified = jc_time::TimestampTz::now();
-            cat = store.upsert_catalogue(row).await?;
+            // Guarded on the version read, so a branding or profile write in between is never
+            // lost: a conflict fails this pass and the reconciler's next pass reads again.
+            let activity = ActivityRow {
+                org_id: org,
+                catalogue_id: id,
+                id: format!("act-{}", uuid::Uuid::now_v7()),
+                at: jc_time::TimestampTz::now(),
+                actor: "portal".into(),
+                operation: "catalogue.portal".into(),
+                object_type: "Catalogue".into(),
+                object_id: id.to_string(),
+                summary: format!("Portal hosts of catalogue {} updated", row.name),
+                details: serde_json::json!({ "host": row.host, "leftHosts": row.left_hosts }),
+            };
+            cat = store
+                .save_catalogue(row, Some(cat.modified), activity)
+                .await?;
         }
         let ctx = RequestCtx::new(org, id, Subject::anonymous());
         if store
