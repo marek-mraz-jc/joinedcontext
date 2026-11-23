@@ -2346,6 +2346,19 @@ async fn long_feeds_page_with_next_and_previous_links() {
         .body
         .contains("rel=\"previous\" href=\"https://data.city.test/feeds/dataset.atom?page=1\""));
     assert_eq!(a.body.matches("<entry>").count(), 20);
+    let last = a
+        .body
+        .split("rel=\"last\" href=\"https://data.city.test")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_default()
+        .to_owned();
+    let a = get(app, &last, None).await;
+    assert_eq!(a.status, StatusCode::OK, "{last}");
+    assert!(
+        a.body.contains("rel=\"previous\"") && !a.body.contains("rel=\"next\""),
+        "the last page {last} has no next"
+    );
 }
 
 #[tokio::test]
