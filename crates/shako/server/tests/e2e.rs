@@ -1432,6 +1432,73 @@ async fn a_secret_ref_never_reaches_another_repositorys_secret() {
     }
 }
 
+/// Each API commit adds a pack; the write that reaches the threshold compacts them (S6-42), and
+/// every commit stays readable.
+#[tokio::test]
+async fn api_commits_are_compacted_once_the_packs_reach_the_threshold() {
+    let world = setup_world().await;
+    create_repo(&world, "busy").await;
+    let commits = shako_git::AUTO_COMPACT_PACK_THRESHOLD + 4;
+    for n in 0..commits {
+        let (st, body) = send_json(
+            &world.app,
+            "PUT",
+            &format!("/api/v1/repos/joinedcontext/busy/contents/file-{n}.txt"),
+            Some("portal-token"),
+            Some(json!({
+                "branch": "main",
+                "message": format!("commit {n}"),
+                "content": STANDARD.encode(format!("{n}\n")),
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "commit {n}: {body}");
+    }
+    let repo = world
+        .state
+        .store()
+        .list_repos(world.state.default_instance_id, world.org_a)
+        .await
+        .expect("repos")
+        .into_iter()
+        .find(|r| r.name == "busy")
+        .expect("busy");
+    let disk = shako_core::repo_disk_path(world.state.repo_root(), repo.instance_id, repo.id)
+        .expect("disk path");
+    let packs = std::fs::read_dir(disk.join("objects/pack"))
+        .expect("pack dir")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        // A superseded pack stays an hour without its index, for readers that loaded it.
+        .filter(|e| e.path().with_extension("idx").is_file())
+        .count();
+    assert!(
+        packs < shako_git::AUTO_COMPACT_PACK_THRESHOLD / 2,
+        "{packs} packs after {commits} commits"
+    );
+    assert!(
+        shako_git::fsck_repository(&disk)
+            .expect("fsck")
+            .verified_refs
+            >= 1
+    );
+    for n in [0, commits - 1] {
+        let (st, file) = send_json(
+            &world.app,
+            "GET",
+            &format!("/api/v1/repos/joinedcontext/busy/contents/file-{n}.txt?ref=main"),
+            Some("portal-token"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "file-{n} after compaction");
+        assert_eq!(
+            file["content"].as_str().map(|c| c.replace('\n', "")),
+            Some(STANDARD.encode(format!("{n}\n")))
+        );
+    }
+}
+
 /// A commit status names a known state and a full commit id; an unknown state never reads as
 /// green.
 #[tokio::test]
