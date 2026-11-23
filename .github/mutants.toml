@@ -4,6 +4,9 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # T-7665 shako-web is_safe_href: the javascript:/data:/vbscript: deny-list stays as defence in depth, and the
+  # https/http/mailto allow-list after it refuses those schemes too, so weakening one `||` changes no answer.
+  'shako/web/src/lib\.rs:\d+:\d+: replace \|\| with && in is_safe_href',
   # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
   # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',

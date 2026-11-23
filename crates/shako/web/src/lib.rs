@@ -99,8 +99,13 @@ fn is_safe_href(url: &str) -> bool {
     {
         return true;
     }
-    // An allow-list: `javascript:`, `data:`, `vbscript:` and every other scheme are refused.
     let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("javascript:")
+        || lower.starts_with("data:")
+        || lower.starts_with("vbscript:")
+    {
+        return false;
+    }
     lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")
 }
 
