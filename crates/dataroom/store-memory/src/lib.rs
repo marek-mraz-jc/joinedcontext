@@ -1077,6 +1077,6 @@ mod tests {
             CatalogueId::from_uuid(uuid::Uuid::now_v7()),
         );
         store.write_inner().plugins.clear();
-        assert!(store.read_inner().catalogues.get(&(org, cat)).is_none());
+        assert!(!store.read_inner().catalogues.contains_key(&(org, cat)));
     }
 }

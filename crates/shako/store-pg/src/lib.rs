@@ -447,6 +447,7 @@ impl SecretStore for PgSecretStore {
         secret_ref: &'a str,
     ) -> StoreFuture<'a, Option<String>> {
         Box::pin(async move {
+            let failed = |e: sqlx::Error| ShakoError::Storage(format!("secret read failed: {e}"));
             let mut tx = self.tenant_tx(org_id).await?;
             let sealed: Option<Vec<u8>> = sqlx::query_scalar(
                 "SELECT sealed FROM shako.secret WHERE instance_id = $1 AND org_id = $2 AND secret_ref = $3",
@@ -456,10 +457,8 @@ impl SecretStore for PgSecretStore {
             .bind(secret_ref)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
-            jc_audit::commit(tx)
-                .await
-                .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
+            .map_err(failed)?;
+            jc_audit::commit(tx).await.map_err(failed)?;
             let Some(sealed) = sealed else {
                 return Ok(None);
             };
@@ -491,6 +490,7 @@ impl SecretStore for PgSecretStore {
                 .seal
                 .encrypt(&self.aad(org_id, secret_ref), value.as_bytes())
                 .map_err(|_| ShakoError::Storage("the secret could not be sealed".into()))?;
+            let failed = |e: sqlx::Error| ShakoError::Storage(format!("secret write failed: {e}"));
             let mut tx = self.tenant_tx(org_id).await?;
             sqlx::query(
                 "INSERT INTO shako.secret (instance_id, org_id, secret_ref, sealed) VALUES ($1, $2, $3, $4)
@@ -502,10 +502,8 @@ impl SecretStore for PgSecretStore {
             .bind(sealed)
             .execute(&mut *tx)
             .await
-            .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))?;
-            jc_audit::commit(tx)
-                .await
-                .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))
+            .map_err(failed)?;
+            jc_audit::commit(tx).await.map_err(failed)
         })
     }
 }
