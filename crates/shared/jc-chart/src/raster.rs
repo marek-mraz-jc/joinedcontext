@@ -1497,6 +1497,165 @@ mod tests {
         assert_eq!(color_of(Some(palette().len() + 1)), color_of(Some(1)));
     }
 
+    /// The sha256 of an RGB buffer, as hex.
+    fn digest(pixels: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(pixels)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    /// Each mark, the legend, the title and a montage drawn to the pixel, pinned by hash: a
+    /// change to any coordinate the drawing computes changes one of them. A deliberate change
+    /// of the drawing updates the hash it moved, with the reason in the commit.
+    #[test]
+    fn each_chart_draws_its_pinned_pixels() {
+        let day = 86_400_000.0;
+        let series = |group: usize, offset: f64| -> Vec<Point> {
+            (0..6)
+                .map(|i| {
+                    at(
+                        1.7e12 + f64::from(i) * day,
+                        offset + f64::from(i * i % 7),
+                        Some(group),
+                    )
+                })
+                .collect()
+        };
+        let titled = |mut c: Chart, title: &str| {
+            c.title = title.into();
+            c
+        };
+        let line = titled(
+            chart(
+                Mark::Line,
+                Some(Scale::Temporal),
+                Some(Scale::Quantitative),
+                series(0, 1.0),
+            ),
+            "PM10 (ug/m3)",
+        );
+        let area = chart(
+            Mark::Area,
+            Some(Scale::Temporal),
+            Some(Scale::Quantitative),
+            [series(0, -2.0), series(1, 3.0)].concat(),
+        );
+        let bars = titled(
+            chart(
+                Mark::Bar,
+                Some(Scale::Nominal),
+                Some(Scale::Quantitative),
+                vec![
+                    Point {
+                        x: Some(Cell::Category(0)),
+                        y: Some(Cell::Number(4.0)),
+                        color: Some(0),
+                        ..Point::default()
+                    },
+                    Point {
+                        x: Some(Cell::Category(0)),
+                        y: Some(Cell::Number(2.5)),
+                        color: Some(1),
+                        ..Point::default()
+                    },
+                    Point {
+                        x: Some(Cell::Category(1)),
+                        y: Some(Cell::Number(-1.0)),
+                        color: Some(0),
+                        ..Point::default()
+                    },
+                    Point {
+                        x: Some(Cell::Category(2)),
+                        y: Some(Cell::Number(7.0)),
+                        color: Some(1),
+                        ..Point::default()
+                    },
+                ],
+            ),
+            "Stations",
+        );
+        let points = chart(
+            Mark::Point,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            (0..5)
+                .map(|i| Point {
+                    size: Some(f64::from(i)),
+                    ..at(f64::from(i) * 1e6, f64::from(i) * 0.25, Some(0))
+                })
+                .collect(),
+        );
+        let rules = chart(
+            Mark::Rule,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![
+                at(1.0, 4.0, Some(0)),
+                Point {
+                    y: None,
+                    ..at(2.0, 0.0, Some(1))
+                },
+                Point {
+                    x: None,
+                    ..at(0.0, 2.0, Some(2))
+                },
+            ],
+        );
+        let arc = Chart {
+            mark: Mark::Arc,
+            width: 240,
+            height: 200,
+            title: "Share".into(),
+            x: None,
+            y: None,
+            colors: 3,
+            points: [5.0, 3.0, 2.0]
+                .iter()
+                .enumerate()
+                .map(|(i, t)| Point {
+                    theta: Some(*t),
+                    color: Some(i),
+                    ..Point::default()
+                })
+                .collect(),
+        };
+        let mut got = Vec::new();
+        for c in [&line, &area, &bars, &points, &rules, &arc] {
+            got.push(digest(&canvas(c, later()).expect("drawn").pixels));
+        }
+        let tiles = [
+            Tile::Chart(line.clone()),
+            Tile::Error {
+                width: 200,
+                height: 120,
+                text: "Widget 2: no data".into(),
+            },
+            Tile::Chart(titled(
+                Chart {
+                    width: 180,
+                    height: 140,
+                    ..bars.clone()
+                },
+                "",
+            )),
+        ];
+        got.push(digest(
+            &decode(&montage(&tiles, later()).expect("montage")).2,
+        ));
+        let want = [
+            "3d0d3a1418485101c9a0e165d174ebe1d6c84af74eaec2d3f5a76de5563cc128",
+            "404114c34b79f4761d39c4b850252f2d8c382d49fe8fcdef3a7f0e14c84d2f22",
+            "533f1d38ba50adfecd07fb3941c62f09b752bc3a713bea075ae43eb58f8e0be0",
+            "95ebec0cf90f21ea06fc6144c71ece59aad984cfc9972fd8bcd6044b95ad114e",
+            "591f720c1f39e59520089d2cc8260e67577d71a49b007d1daaa95fe1a43873a4",
+            "e9825373ca3c6382a21c29d74fc6befb85320b23746208c1d028166dc69ca256",
+            "ed6f55af21f3f3e72ceabc1548db7d31695f7d0680877ea5d832716498c8eb5c",
+        ];
+        assert_eq!(got, want);
+    }
+
     #[test]
     fn ticks_are_round_and_cover_the_domain() {
         assert_eq!(ticks(0.0, 10.0), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
