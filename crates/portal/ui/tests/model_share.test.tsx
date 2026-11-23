@@ -51,7 +51,7 @@ const organization = (origin: unknown) => ({
   smartDataModels: [],
 });
 
-function world(options: { lifecycle?: string; linkml?: string; origin?: unknown; share?: Response }) {
+function world(options: { lifecycle?: string; linkml?: string; origin?: unknown; share?: Response; write?: Response }) {
   const sent: { method: string; path: string; body: string }[] = [];
   const answer = (path: string, request: Request): Response | undefined => {
     if (request.method !== "GET") {
@@ -70,7 +70,7 @@ function world(options: { lifecycle?: string; linkml?: string; origin?: unknown;
       return new Response(SHARED, { status: 200, headers: { "Content-Type": "text/yaml" } });
     }
     if (path === "/api/v1/projects/helsinki/datamodels/air/source" && request.method === "PUT") {
-      return jsonResponse({ ...CHANGE, metadata: { name: "chg-0000000a", namespace: "helsinki" } }, 202);
+      return options.write ?? jsonResponse({ ...CHANGE, metadata: { name: "chg-0000000a", namespace: "helsinki" } }, 202);
     }
     return undefined;
   };
@@ -117,6 +117,23 @@ describe("using the organization's copy (DM-78)", () => {
     expect(put?.path).toBe("/api/v1/projects/helsinki/datamodels/air/source");
     expect(proposed.imports).toContain("org.air.v1");
     expect(Object.keys(proposed.classes)).toEqual(["Sensor"]);
+  });
+
+  it("starts the import list of a source that had none", () => {
+    const bare = SOURCE.replace("imports:\n  - linkml:types\n", "");
+    const adopted = parse(adoptOrganizationCopy(bare, SHARED, "org.air.v1")) as { imports: string[] };
+    expect(adopted.imports).toEqual(["linkml:types", "org.air.v1"]);
+  });
+
+  it("says why when the proposal of the import is refused, and keeps the button", async () => {
+    const write = jsonResponse({ title: "Unprocessable", status: 422, detail: "the model does not validate against its import" }, 422);
+    const { answer } = world({ origin: { project: "helsinki", space: "ilma", name: "air", version: "1.2.0" }, write });
+    await renderRoute({ path: "/projects/helsinki/models/air", answer });
+    const adopt = await screen.findByRole("button", { name: en.models.share.adopt });
+    await waitFor(() => expect(adopt).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(adopt);
+    expect(await screen.findByText(/the model does not validate against its import/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.models.share.adopt })).toBeInTheDocument();
   });
 
   it("is not offered for a copy shared from elsewhere, nor once the model imports it", async () => {

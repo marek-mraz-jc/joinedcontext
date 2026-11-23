@@ -260,23 +260,23 @@ export function MappingsEditor({
             disabledReason={refusal ?? undefined}
             loading={proposal.mutation.isPending}
             onClick={() => {
-              if (refusal !== null || !sourceModel || !targetModel || !space) {
-                return;
+              // The button is disabled while `refusal` stands, so only the models and the space are narrowed here.
+              if (sourceModel && targetModel && space) {
+                proposal.mutation.mutate({
+                  body: mappingManifest(
+                    project,
+                    name,
+                    space,
+                    sourceModel,
+                    targetModel,
+                    toTransformationSpec(rows, className(source), className(target)),
+                    blocks,
+                    example,
+                    result?.output ?? {},
+                  ),
+                  create: true,
+                });
               }
-              proposal.mutation.mutate({
-                body: mappingManifest(
-                  project,
-                  name,
-                  space,
-                  sourceModel,
-                  targetModel,
-                  toTransformationSpec(rows, className(source), className(target)),
-                  blocks,
-                  example,
-                  result?.output ?? {},
-                ),
-                create: true,
-              });
             }}
           >
             {t("mappings.propose")}

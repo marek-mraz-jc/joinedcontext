@@ -2,15 +2,17 @@
  * T-2765 (DM-61, DM-62, UI-84): the Data models page opens on the project's models, a row opens
  * the model's own page, and that page shows the model six ways without editing it.
  */
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
-import { jsonResponse, list, renderRoute } from "./pageHarness";
+import dataModelSchema from "./fixtures/kinds/DataModel.json";
+import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
+import { renderPart } from "./page_contract";
 import { odataCall } from "./odata";
 import { narrowsAndOrders } from "./grid_checks";
 import { usesOfModel } from "../src/pages/models/modelUsage";
-import { yamlParts } from "../src/pages/models/ModelViews";
+import { ModelForm, ModelYaml, yamlParts } from "../src/pages/models/ModelViews";
 import { lastChangeOf, TYPES_SHOWN } from "../src/pages/models/ModelsList";
 import { organizationImportName } from "../src/pages/models/OrganizationModels";
 import type { Manifest } from "../src/api/manifest";
@@ -252,6 +254,33 @@ describe("organization models beside the project's (T-2883, DM-75, DM-79)", () =
     });
   });
 
+  it("shows the Change a grid edit of a model proposes, under the grid", async () => {
+    const change = { apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "c-9", namespace: "helsinki" }, status: { phase: "Pending" } };
+    const air = MODELS[0];
+    await renderRoute({
+      path: "/projects/helsinki/models",
+      permissions: { project: "helsinki", bootstrap: false, grants: [{ scope: "project:helsinki", rule: { kinds: ["DataModel"], verbs: ["read", "propose"] } }] },
+      answer: (path, request) => {
+        if (path === "/api/v1/kinds/DataModel/schema") return jsonResponse(dataModelSchema);
+        if (path === "/api/v1/projects/helsinki/datamodels/air") {
+          if (request.method === "PUT") {
+            return new URL(request.url).searchParams.get("dryRun") === "All" ? jsonResponse({ valid: true }) : jsonResponse(change, 202);
+          }
+          return new Response(JSON.stringify(air), { headers: { "Content-Type": "application/json", ETag: '"v1"' } });
+        }
+        return answer(path);
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: /More actions.*Air quality/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: en.grid.details }));
+    const dialog = await screen.findByRole("dialog");
+    const version = await within(dialog).findByRole("textbox", { name: new RegExp(en.models.field.version) });
+    await userEvent.clear(version);
+    await userEvent.type(version, "1.3.0");
+    await userEvent.click(within(dialog).getByRole("button", { name: en.grid.propose }));
+    expect(await screen.findByText(/c-9/)).toBeInTheDocument();
+  });
+
   it("names the import by the major version alone", () => {
     expect(organizationImportName("stations", "2.1.0")).toBe("org.stations.v2");
     expect(organizationImportName("air", "0.3.1")).toBe("org.air.v0");
@@ -323,6 +352,165 @@ describe("a model's own page", () => {
     await userEvent.click(screen.getByRole("button", { name: en.models.page.copyYaml }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("name: air"));
     expect(await screen.findByText(en.models.page.copied)).toBeInTheDocument();
+  });
+
+  it("says the copy failed without a clipboard or when the browser refuses it, and downloads the file", async () => {
+    renderPart(<ModelYaml source={AIR} name="air" />);
+    const copy = screen.getByRole("button", { name: en.models.page.copyYaml });
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    await userEvent.click(copy);
+    expect(screen.getByRole("status")).toHaveTextContent(en.models.page.copyFailed);
+
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("denied")) }, configurable: true });
+    await userEvent.click(copy);
+    expect(await screen.findByText(en.models.page.copyFailed)).toBeInTheDocument();
+
+    const made: Blob[] = [];
+    Object.defineProperty(URL, "createObjectURL", { value: (blob: Blob) => (made.push(blob), "blob:yaml"), configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: () => undefined, configurable: true });
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    try {
+      await userEvent.click(screen.getByRole("button", { name: en.models.page.downloadYaml }));
+      expect(names).toEqual(["air.linkml.yaml"]);
+      expect(await made[0].text()).toBe(AIR);
+    } finally {
+      click.mockRestore();
+      Reflect.deleteProperty(URL, "createObjectURL");
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
+  });
+
+  it("shows the form of a class without an example of it, and sends nothing when the preview is submitted", async () => {
+    const calls: string[] = [];
+    renderPart(<ModelForm source={AIR} initialClass="Station" />, {
+      answer: (url) => {
+        calls.push(url.pathname);
+        return url.pathname === "/api/v1/tools/generate"
+          ? jsonResponse({
+              jsonSchema: {
+                definitions: {
+                  AirQualityObserved: { type: "object", properties: { pm10: { type: "number", title: "pm10" } } },
+                  Station: { type: "object", properties: { name: { type: "string", title: "name" }, reading: { anyOf: [{ type: "number" }, { type: "string" }] } } },
+                },
+              },
+              example: { type: "AirQualityObserved", pm10: 31.4 },
+            })
+          : undefined;
+      },
+    });
+    const name = await screen.findByLabelText(/name/);
+    expect(name).toHaveValue("");
+    expect(screen.queryByDisplayValue("31.4")).toBeNull();
+    const before = calls.length;
+    fireEvent.submit(name.closest("form") as HTMLFormElement);
+    expect(calls.length).toBe(before);
+    expect(screen.getAllByText(en.models.page.jsonType.number).length).toBeGreaterThan(0);
+  });
+
+  it("says the preview is unavailable with the service's words, and asks again on Retry", async () => {
+    let failing = true;
+    renderPart(<ModelForm source={AIR} />, {
+      answer: (url) => {
+        if (url.pathname !== "/api/v1/tools/generate") return undefined;
+        return failing
+          ? problem(503, "Model Tools did not answer.")
+          : jsonResponse({ jsonSchema: { definitions: { AirQualityObserved: { type: "object", properties: { pm10: { type: "number", title: "pm10" } } } } } });
+      },
+    });
+    expect(await screen.findByText(/Model Tools did not answer/)).toBeInTheDocument();
+    failing = false;
+    await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByLabelText("pm10")).toBeInTheDocument();
+  });
+
+  it("says a model without classes has no form to show", () => {
+    renderPart(<ModelForm source={"id: https://x.test/m\nname: m\nclasses: {}\n"} />, { answer: () => jsonResponse({}) });
+    expect(screen.getByText(en.models.page.noClasses)).toBeInTheDocument();
+  });
+
+  it("proposes a field from a type's dialog, shows the Change under the types, and closes the dialog on Escape", async () => {
+    const sent: { method: string; path: string }[] = [];
+    await renderRoute({
+      path: "/projects/helsinki/models/air",
+      answer: (path, request) => {
+        if (request.method !== "GET") sent.push({ method: request.method, path });
+        if (request.method === "PUT") {
+          return jsonResponse(
+            { apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-field-1", namespace: "helsinki" }, status: { phase: "PendingApproval", lane: "green", plan: { create: 0, update: 1, delete: 0 } } },
+            202,
+          );
+        }
+        return answer(path);
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Add field to Station" }));
+    let dialog = await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await userEvent.click(screen.getByRole("button", { name: "Add field to Station" }));
+    dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText(new RegExp(en.spaces.fields.name)), "capacity");
+    await userEvent.selectOptions(within(dialog).getByLabelText(en.spaces.fields.type), "integer");
+    await userEvent.click(within(dialog).getByRole("button", { name: en.spaces.fields.propose }));
+    expect(await screen.findByText(/chg-field-1/)).toBeInTheDocument();
+    expect(sent.some((call) => call.method === "PUT" && call.path === "/api/v1/projects/helsinki/datamodels/air/source")).toBe(true);
+  });
+
+  it("opens the form of a class from its box on the drawing", async () => {
+    await renderRoute({ path: "/projects/helsinki/models/air", answer });
+    await userEvent.click(await screen.findByRole("button", { name: en.models.graph.openClass.replace("{name}", "Station") }));
+    expect(await screen.findByRole("tab", { name: en.models.page.view.form, selected: true })).toBeInTheDocument();
+  });
+
+  it("says why the models could not be read, and reads them again on Retry", async () => {
+    let failing = true;
+    await renderRoute({
+      path: "/projects/helsinki/models/air",
+      answer: (path) => (path === "/api/v1/projects/helsinki/datamodels" && failing ? problem(503, "The registry did not answer.") : answer(path)),
+    });
+    expect(await screen.findByText(/The registry did not answer/)).toBeInTheDocument();
+    failing = false;
+    await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByRole("heading", { name: "Air quality", level: 1 })).toBeInTheDocument();
+  });
+
+  it("names the model from its record when its source cannot be read, and reads it again on Retry", async () => {
+    let failing = true;
+    const BIKES = "id: https://hel.fi/models/bikes\nname: bikes\nclasses:\n  Dock:\n    slots: []\nslots: {}\n";
+    await renderRoute({
+      path: "/projects/helsinki/models/bikes",
+      answer: (path) => {
+        if (path === "/api/v1/projects/helsinki/datamodels/bikes/source") {
+          return failing ? problem(503, "The repository did not answer.") : new Response(BIKES, { status: 200, headers: { "Content-Type": "text/yaml" } });
+        }
+        return answer(path);
+      },
+    });
+    expect(await screen.findByText(/The repository did not answer/)).toBeInTheDocument();
+    const known = within(screen.getByRole("region", { name: en.models.page.known }));
+    expect(known.getByText("1.0.0")).toBeInTheDocument();
+    expect(known.getByRole("link", { name: "mobility" })).toBeInTheDocument();
+    failing = false;
+    await userEvent.click(screen.getAllByRole("button", { name: en.app.error.retry })[0]);
+    expect(await screen.findByRole("button", { name: en.models.graph.openClass.replace("{name}", "Dock") })).toBeInTheDocument();
+  });
+
+  it("offers a mapping between the model and each other model of the project, as the Mappings tab", async () => {
+    const BIKES = "id: https://hel.fi/models/bikes\nname: bikes\nclasses:\n  Dock:\n    slots: [capacity]\nslots:\n  capacity: { range: integer }\n";
+    await renderRoute({
+      path: "/projects/helsinki/models/air?tab=mappings",
+      answer: (path) =>
+        path === "/api/v1/projects/helsinki/datamodels/bikes/source" || path === "/api/v1/projects/helsinki/datamodels/events/source"
+          ? new Response(BIKES, { status: 200, headers: { "Content-Type": "text/yaml" } })
+          : answer(path),
+    });
+    const source = await screen.findByRole("combobox", { name: en.mappings.source });
+    await waitFor(() => expect(within(source).getAllByRole("option").map((option) => option.textContent)).toEqual(["air 1.2.0", "bikes 1.0.0", "events 0.1.0"]));
+    expect(screen.getByRole("combobox", { name: en.mappings.target })).toBeInTheDocument();
   });
 
   it("lists where the model is used, each a link", async () => {
@@ -400,6 +588,25 @@ describe("what uses a model", () => {
     expect(usesOfModel(MODELS[2], PROJECT_LISTS).map((use) => use.kind)).toEqual(["ContextSpace"]);
     // A model whose space the person may not read counts nothing through it.
     expect(usesOfModel(MODELS[0], {})).toEqual([]);
+  });
+
+  it("finds a model's space through the space that names it, and a dashboard through its widgets", () => {
+    const orphan = manifest("DataModel", "noise", { linkml: "./noise.yaml", version: "1.0.0", classes: ["NoiseObserved"] });
+    const lists: Record<string, Manifest[]> = {
+      spaces: [manifest("ContextSpace", "hluk", { dataModelRef: "noise" })],
+      endpoints: [manifest("Endpoint", "noise-public", { contextSpaceRef: "hluk", slug: "n" })],
+      dashboards: [
+        manifest("Dashboard", "levels", { pages: [{ widgets: [{ endpointRef: "noise-public" }, {}], layers: [7, "gone"] }] }),
+        manifest("Dashboard", "elsewhere", { pages: [{ widgets: [{ endpointRef: "other" }] }] }),
+      ],
+    };
+    expect(usesOfModel(orphan, lists).map((use) => `${use.kind}/${use.name}`)).toEqual([
+      "ContextSpace/hluk",
+      "Endpoint/noise-public",
+      "Dashboard/levels",
+    ]);
+    // Without any space naming it, the model has no space and nothing hangs off it.
+    expect(usesOfModel(orphan, {})).toEqual([]);
   });
 
   it("finds the newest change among the model's conditions", () => {
