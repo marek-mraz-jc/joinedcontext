@@ -7134,7 +7134,6 @@ dependencies = [
  "sqlx",
  "sqlx-core",
  "tokio",
- "tracing",
 ]
 
 [[package]]
