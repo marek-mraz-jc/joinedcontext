@@ -171,22 +171,24 @@ async fn the_order_and_the_cursor_are_stable_across_views() -> Result<(), String
     Ok(())
 }
 
-/// Each view is read with the request's headers: a Link naming a @context
-/// that cannot be retrieved is the views' 504, never a read that dropped it.
+/// Each view is read with the request's headers: a mapped view, which takes
+/// no Link @context, refuses a union read that names one, and answers the
+/// same read without it.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_link_context_reaches_every_view() -> Result<(), String> {
-    let f = fixture().await?;
-    let link = "<http://127.0.0.1:9/missing.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"";
+async fn the_request_headers_reach_every_view() -> Result<(), String> {
+    let f = crate::views_mapped::vehicles().await?;
+    let plain = union(&f.app, "views=vehicles&type=Vehicle").await;
+    assert_eq!(plain.status, StatusCode::OK, "{}", plain.text);
+    let link = "<https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"";
     let a = send(
         &f.app,
         Method::GET,
-        &format!("{UNION}?views=cars&type=Car"),
+        &format!("{UNION}?views=vehicles&type=Vehicle"),
         &[("Link", link)],
         None,
     )
     .await;
-    assert_eq!(a.status, StatusCode::GATEWAY_TIMEOUT, "{}", a.text);
-    assert!(a.text.contains("LdContextNotAvailable"), "{}", a.text);
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text);
     Ok(())
 }
 
