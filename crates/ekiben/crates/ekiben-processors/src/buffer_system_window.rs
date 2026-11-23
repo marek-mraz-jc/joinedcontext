@@ -55,7 +55,10 @@ pub struct SystemWindowBuffer {
 }
 
 fn fire(ack: &SharedAck, err: Option<BatchError>) {
-    let taken = ack.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let taken = ack
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
     if let Some(a) = taken {
         a.respond(err);
     }
@@ -251,7 +254,9 @@ impl SystemWindowBuffer {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|p| p.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// `(prevStart, prevEnd, start, end)` of the window the clock is in, as Bento's `nextSystemWindow`.
@@ -537,7 +542,16 @@ mod tests {
     #[test]
     fn test_system_window_buffer_configs() {
         let env = ekiben_bloblang::Environment::new();
-        let cases: [(&str, Option<&str>); 10] = [
+        let cases: [(&str, Option<&str>); 13] = [
+            (r#"{"size":5}"#, Some("field size must be a string")),
+            (
+                r#"{"size":"5x"}"#,
+                Some("failed to parse field 'size' as duration: time: unknown unit"),
+            ),
+            (
+                r#"{"size":"60m","timestamp_mapping":1}"#,
+                Some("field timestamp_mapping must be a string"),
+            ),
             (r#"{"size":"60m"}"#, None),
             (r#"{"size":"24h"}"#, None),
             (
@@ -569,12 +583,14 @@ mod tests {
         ];
         for (conf, want) in cases {
             let obj: serde_json::Map<String, JsonValue> = serde_json::from_str(conf).expect("json");
-            match (SystemWindowBuffer::parse(&obj, &env), want) {
-                (Ok(_), None) => {}
-                (Err(e), Some(text)) => assert!(e.to_string().contains(text), "{conf}: {e}"),
-                (Ok(_), Some(text)) => panic!("{conf}: accepted, want {text}"),
-                (Err(e), None) => panic!("{conf}: {e}"),
-            }
+            let got = SystemWindowBuffer::parse(&obj, &env)
+                .err()
+                .map(|e| e.to_string());
+            assert_eq!(got.is_some(), want.is_some(), "{conf}: {got:?}");
+            assert!(
+                got.unwrap_or_default().contains(want.unwrap_or_default()),
+                "{conf}"
+            );
         }
     }
 
@@ -946,5 +962,87 @@ mod tests {
         assert_eq!(go_duration_string(90 * SECOND + 500_000_000), "1m30.5s");
         assert_eq!(go_duration_string(1_500_000), "1.5ms");
         assert_eq!(go_duration_string(0), "0s");
+        assert_eq!(go_duration_string(999), "999ns");
+        assert_eq!(go_duration_string(1_500), "1.5µs");
+        assert_eq!(go_duration_string(5 * SECOND), "5s");
+        assert_eq!(go_duration_string(-SECOND), "-1s");
+        assert_eq!(go_round(unix(10, 7), 0), unix(10, 7));
+    }
+
+    #[test]
+    fn a_timestamp_comes_from_text_bytes_or_is_refused_by_reason() {
+        let clock: Clock = Arc::new(|| 0);
+        let window = |mapping: &str| {
+            let m = ekiben_bloblang::Environment::new()
+                .compile_mapping(mapping)
+                .expect("mapping");
+            SystemWindowBuffer::new(m, clock.clone(), [HOUR, 0, 0, 0])
+        };
+        let batch = [Part::from_str("1970-01-01T00:00:10.5Z")];
+        assert_eq!(
+            window("root = content()").timestamp(0, &batch),
+            Ok(unix(10, 500_000_000))
+        );
+        assert_eq!(
+            window("root = deleted()").timestamp(0, &batch),
+            Err("timestamp mapping failed: the mapping deleted the message".to_string())
+        );
+        let err = window("root = this.ts").timestamp(0, &batch).unwrap_err();
+        assert!(err.starts_with("timestamp mapping failed: "), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_while_a_window_is_open_nacks_what_it_holds() {
+        let f = Fixture::new(unix(10, 1), [HOUR, 0, 0, 0]);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        f.write(&[r#"{"id":"1","ts":10.5}"#], counting_ack(&calls));
+        let (_tx, rx) = watch::channel(true);
+        assert!(matches!(
+            f.w.read_batch(rx).await,
+            Err(CoreError::EndOfInput)
+        ));
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            [Some(
+                "message rejected as window did not complete".to_string()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn push_and_pop_carry_a_transaction_and_its_ack() {
+        let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        f.w.push(Transaction::new(
+            vec![Part::from_str(r#"{"ts":10.5}"#)],
+            counting_ack(&calls),
+        ))
+        .await
+        .expect("pushed");
+        f.set(unix(11, 1));
+        let (_tx, rx) = watch::channel(false);
+        let ctx = StreamContext {
+            stream_id: "s".into(),
+            org: ekiben_core::OrgContext::new(
+                ekiben_core::OrgId::default(),
+                ekiben_core::OrgQuotas::default(),
+            ),
+            resources: ekiben_core::ResourceManager::new(),
+            registry: Arc::new(ekiben_core::Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: ekiben_core::StreamMetrics::new("s", "o"),
+            label: String::new(),
+            path: String::new(),
+            file_root: None,
+            env_vars: Arc::new(std::collections::HashMap::new()),
+            shutdown_rx: rx,
+        };
+        let tx = f.w.pop(&ctx).await.expect("a window");
+        assert_eq!(
+            tx.payload.iter().map(body).collect::<Vec<_>>(),
+            [r#"{"ts":10.5}"#]
+        );
+        tx.ack.respond(None);
+        assert_eq!(*calls.lock().expect("calls"), [None]);
     }
 }

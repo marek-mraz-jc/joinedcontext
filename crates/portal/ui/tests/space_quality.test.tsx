@@ -4,6 +4,7 @@
  * first run it says so rather than "all valid".
  */
 import { cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -93,5 +94,14 @@ describe("the Data quality section (DM-74)", () => {
     );
     expect(await screen.findByText(/context space 'bikes' not found/)).toBeInTheDocument();
     expect(screen.queryByText(en.spaces.quality.notYet)).toBeNull();
+  });
+
+  it("reads the report again on Retry, and shows it once it answers", async () => {
+    let down = true;
+    renderQuality(() => (down ? json({ title: "Service Unavailable", status: 503, detail: "quality store down" }, 503) : json(REPORT)));
+    const retry = await screen.findByRole("button", { name: en.app.error.retry });
+    down = false;
+    await userEvent.click(retry);
+    expect(await screen.findByText("98.7% valid · 2 rules failing · 1 pipeline stale")).toBeInTheDocument();
   });
 });

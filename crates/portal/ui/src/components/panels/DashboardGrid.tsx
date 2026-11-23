@@ -75,7 +75,7 @@ function Cells({ panels, render, wide }: { panels: PanelDefinition[]; render: Da
 
 export function DashboardGrid({ panels, render }: DashboardGridProps): JSX.Element {
   const { t } = useTranslation();
-  const wide = useSyncExternalStore(onWideChange, isWide, () => true);
+  const wide = useSyncExternalStore(onWideChange, isWide);
   const [open, setOpen] = useState<Record<number, boolean>>({});
   return (
     <div className="flex flex-col gap-4">

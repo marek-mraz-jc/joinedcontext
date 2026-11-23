@@ -747,6 +747,11 @@ test("a message's time is the visitor's HH:MM with the UTC minute beside it, kep
   // A 24-hour clock in English too, never "02:17 PM".
   assert.doesNotMatch(stamp("2026-10-16T12:17:00Z", "en").text, /AM|PM/);
   for (const none of [null, undefined, "", "yesterday", NaN]) assert.equal(stamp(none), null);
+  // A language tag the browser cannot read still gives the 24-hour HH:MM of the visitor's clock.
+  const odd = stamp("2026-10-16T12:05:00Z", "not a locale!");
+  const clock = new Date("2026-10-16T12:05:00Z");
+  assert.equal(odd.text, ("0" + clock.getHours()).slice(-2) + ":" + ("0" + clock.getMinutes()).slice(-2));
+  assert.equal(odd.datetime, "2026-10-16T12:05Z");
   const conversation = "0b8e7e8e-3f7a-4b9e-9a51-1d2c3b4a5f60";
   const kept = remember(null, conversation, 1, { question: "q", text: "a", turn: 1, citations: [],
     askedAt: "2026-10-16T12:05:01Z", at: "2026-10-16T12:05:09Z" });
@@ -813,6 +818,21 @@ test("opening hours read as a list of bold days and their times, not one paragra
       { tag: "li", children: [{ tag: "strong", children: ["Piatok:"] }, " 8:00 – 12:00 ", { tag: "cite", numbers: [1] }] },
     ] },
   ]);
+});
+
+test("as a Web Worker the visitor proof answers the page's challenge with its nonce (T-4653)", async () => {
+  const vm = require("node:vm");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const posted = [];
+  const context = vm.createContext({ crypto: globalThis.crypto, TextEncoder, Promise, Math, String, Number, Uint8Array, postMessage: (nonce) => posted.push(nonce) });
+  // As the browser loads it: no `module`, so it listens for the page's messages.
+  const file = path.join(__dirname, "visitor.js");
+  new vm.Script(fs.readFileSync(file, "utf8"), { filename: file }).runInContext(context);
+  context.onmessage({ data: { challenge: "abc", difficulty: "4" } });
+  while (posted.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  const { solve } = require("./visitor.js");
+  assert.deepEqual(posted, [await solve("abc", 4)]);
 });
 
 test("the visitor proof finds a nonce whose hash starts with the bits asked (T-4653)", async () => {

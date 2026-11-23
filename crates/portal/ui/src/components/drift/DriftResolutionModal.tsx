@@ -59,17 +59,13 @@ export function DriftResolutionModal({
   const [proposed, setProposed] = useState(false);
 
   const resolve = useMutation({
-    mutationFn: async (resolution: "revert" | "adopt") => {
-      if (!entity) {
-        throw new Error("no entity");
-      }
-      return doorAction(
+    mutationFn: async ({ resolution, target }: { resolution: "revert" | "adopt"; target: DriftedEntity }) =>
+      doorAction(
         resolution === "revert" ? "portal_drift_revert" : "portal_drift_adopt",
-        { space: entity.space, id: entity.id },
+        { space: target.space, id: target.id },
         project,
-      );
-    },
-    onSuccess: (_result, resolution) => {
+      ),
+    onSuccess: (_result, { resolution }) => {
       setProposed(resolution === "adopt");
       // The scan runs on the reconciler's tick, so the list here is refetched rather than
       // edited: what the next scan finds is the answer, not what this page assumed.
@@ -120,13 +116,13 @@ export function DriftResolutionModal({
               <Button
                 variant="secondary"
                 disabled={resolve.isPending} disabledReason={t("app.busyReason")}
-                onClick={() => resolve.mutate("adopt")}
+                onClick={() => resolve.mutate({ resolution: "adopt", target: entity })}
               >
                 {t("drift.modal.adopt")}
               </Button>
             ) : null}
             {may("revert") ? (
-              <Button disabled={resolve.isPending} disabledReason={t("app.busyReason")} onClick={() => resolve.mutate("revert")}>
+              <Button disabled={resolve.isPending} disabledReason={t("app.busyReason")} onClick={() => resolve.mutate({ resolution: "revert", target: entity })}>
                 {t("drift.modal.revert")}
               </Button>
             ) : null}

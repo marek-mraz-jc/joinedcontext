@@ -63,6 +63,7 @@
       },
       "tests": [
         "activity_feed.test.tsx",
+        "components_root_dialogs.test.tsx",
         "form_activity_feed.test.tsx"
       ]
     },
@@ -73,7 +74,8 @@
         "RadioGroup": 1
       },
       "tests": [
-        "alert_dialog.test.tsx"
+        "alert_dialog.test.tsx",
+        "components_root_dialogs.test.tsx"
       ]
     },
     "src/components/DeleteProjectDialog.tsx": {
@@ -81,6 +83,7 @@
         "Button": 4
       },
       "tests": [
+        "components_root_dialogs.test.tsx",
         "organization_page.test.tsx"
       ]
     },
@@ -89,6 +92,7 @@
         "Button": 4
       },
       "tests": [
+        "components_root_dialogs.test.tsx",
         "form_delete_resource_dialog.test.tsx",
         "permission_guard.test.tsx"
       ]
@@ -98,6 +102,7 @@
         "Button": 4
       },
       "tests": [
+        "components_root_duplicate.test.tsx",
         "project_duplicate_import.test.tsx"
       ]
     },
@@ -116,6 +121,7 @@
         "Button": 4
       },
       "tests": [
+        "components_root_edit_body.test.tsx",
         "form_edit_resource_dialog.test.tsx",
         "yaml_manifest_view.test.tsx"
       ]
@@ -126,6 +132,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_root_error_boundary.test.tsx",
         "error_boundary_chunk.test.tsx",
         "lazy_dialogs.test.tsx"
       ]
@@ -136,6 +143,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "components_feedback_screenshot.test.tsx",
         "feedback_button.test.tsx",
         "page_help.test.tsx"
       ]
@@ -155,6 +163,7 @@
         "FilePicker": 1
       },
       "tests": [
+        "components_root_import_project.test.tsx",
         "project_duplicate_import.test.tsx"
       ]
     },
@@ -163,6 +172,7 @@
         "Button": 1
       },
       "tests": [
+        "components_root_jobs_menu.test.tsx",
         "jobs.test.tsx"
       ]
     },
@@ -179,6 +189,7 @@
         "Button": 4
       },
       "tests": [
+        "components_root2_release.test.tsx",
         "project_release.test.tsx"
       ]
     },
@@ -201,6 +212,7 @@
         "Button": 3
       },
       "tests": [
+        "components_root2_history.test.tsx",
         "resource_history.test.tsx"
       ]
     },
@@ -210,6 +222,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "components_root2_save_as.test.tsx",
         "form_save_as_dialog.test.tsx",
         "save_as.test.tsx"
       ]
@@ -219,6 +232,7 @@
         "Button": 3
       },
       "tests": [
+        "components_root2_session.test.tsx",
         "session_ended.test.tsx"
       ]
     },
@@ -227,6 +241,7 @@
         "Button": 2
       },
       "tests": [
+        "components_root2_session.test.tsx",
         "step_up.test.tsx"
       ]
     },
@@ -235,6 +250,7 @@
         "Button": 3
       },
       "tests": [
+        "components_root2_work_on_copy.test.tsx",
         "form_work_on_copy_dialog.test.tsx",
         "workspaces_ui.test.tsx"
       ]
@@ -254,6 +270,7 @@
         "Button": 4
       },
       "tests": [
+        "components_dash_drift.test.tsx",
         "drift_modal.test.tsx"
       ]
     },
@@ -262,7 +279,8 @@
         "Button": 1
       },
       "tests": [
-        "access_matrix.test.tsx"
+        "access_matrix.test.tsx",
+        "components_endpoints_edges.test.tsx"
       ]
     },
     "src/components/endpoints/QueryCard.tsx": {
@@ -278,6 +296,7 @@
         "Button": 1
       },
       "tests": [
+        "components_endpoints_edges.test.tsx",
         "endpoint_usage.test.tsx"
       ]
     },
@@ -287,6 +306,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_endpoints_edges.test.tsx",
         "endpoint_reads_name_a_type.test.tsx",
         "endpoint_representation_summary.test.tsx",
         "endpoint_representations.test.ts",
@@ -298,6 +318,7 @@
         "Button": 1
       },
       "tests": [
+        "components_endpoints_edges.test.tsx",
         "endpoint_grants_words.test.tsx"
       ]
     },
@@ -306,7 +327,8 @@
         "Button": 6
       },
       "tests": [
-        "attribute_history.test.tsx"
+        "attribute_history.test.tsx",
+        "components_entities_attribute_history.test.tsx"
       ]
     },
     "src/components/entities/AddFieldDialog.tsx": {
@@ -315,7 +337,8 @@
         "Checkbox": 2
       },
       "tests": [
-        "add_field.test.tsx"
+        "add_field.test.tsx",
+        "components_entities_add_field_dialog.test.tsx"
       ]
     },
     "src/components/entities/DataToolbar.tsx": {
@@ -324,6 +347,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "components_entities_panels.test.tsx",
         "data_toolbar.test.tsx"
       ]
     },
@@ -332,6 +356,7 @@
         "Button": 7
       },
       "tests": [
+        "components_entities_endpoint_data_view.test.tsx",
         "data_toolbar.test.tsx",
         "endpoint_data_view.test.tsx",
         "explorer_mount.test.tsx"
@@ -343,6 +368,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "components_entities_entity_filters.test.tsx",
         "form_entity_filters.test.tsx"
       ]
     },
@@ -351,6 +377,7 @@
         "Button": 7
       },
       "tests": [
+        "components_entities_panels.test.tsx",
         "grid_toolbar.test.tsx"
       ]
     },
@@ -360,6 +387,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "components_entities_view_bar.test.tsx",
         "view_bar.test.tsx"
       ]
     },
@@ -368,6 +396,7 @@
         "Button": 3
       },
       "tests": [
+        "components_entities_panels.test.tsx",
         "count_scope.test.tsx",
         "grid_sort_group.test.tsx",
         "grid_toolbar.test.tsx"
@@ -379,6 +408,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "components_entities_panels.test.tsx",
         "count_scope.test.tsx",
         "grid_toolbar.test.tsx",
         "view_options.test.tsx"
@@ -398,6 +428,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "components_dash_export.test.tsx",
         "export_filename.test.ts",
         "export_modal.test.tsx"
       ]
@@ -415,6 +446,7 @@
         "Button": 5
       },
       "tests": [
+        "components_forms_footer_yaml.test.tsx",
         "form_dialog_parts.test.tsx"
       ]
     },
@@ -432,6 +464,7 @@
         "Button": 1
       },
       "tests": [
+        "components_forms_footer_yaml.test.tsx",
         "form_dialog_parts.test.tsx"
       ]
     },
@@ -466,7 +499,8 @@
         "Checkbox": 1
       },
       "tests": [
-        "assistant_deployment_form.test.tsx"
+        "assistant_deployment_form.test.tsx",
+        "components_forms_knowledge_sources.test.tsx"
       ]
     },
     "src/components/forms/widgets/ListFailed.tsx": {
@@ -482,6 +516,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "components_forms_widgets_misc.test.tsx",
         "operations_picker.test.tsx"
       ]
     },
@@ -500,6 +535,7 @@
         "Switch": 1
       },
       "tests": [
+        "components_grid_manifest.test.tsx",
         "manifest_grid.test.tsx"
       ]
     },
@@ -516,6 +552,7 @@
         "Button": 4
       },
       "tests": [
+        "components_layout_new_project.test.tsx",
         "form_new_project.test.tsx"
       ]
     },
@@ -534,6 +571,7 @@
         "Button": 1
       },
       "tests": [
+        "components_layout_small.test.tsx",
         "public_app.test.tsx"
       ]
     },
@@ -551,6 +589,7 @@
         "Button": 2
       },
       "tests": [
+        "components_pickers_retry.test.tsx",
         "pickers.test.tsx"
       ]
     },
@@ -633,6 +672,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_ui_basics.test.tsx",
         "contract_alert_badge_button.test.tsx",
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
@@ -708,6 +748,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_ui_basics.test.tsx",
         "contract_alert_badge_button.test.tsx",
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
@@ -732,6 +773,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_ui_basics.test.tsx",
         "contract_alert_badge_button.test.tsx",
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
@@ -830,6 +872,7 @@
       },
       "tests": [
         "browser_security.test.tsx",
+        "components_ui_basics.test.tsx",
         "contract_alert_badge_button.test.tsx",
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
@@ -1014,7 +1057,8 @@
       },
       "tests": [
         "app_open_page.test.tsx",
-        "browser_security.test.tsx"
+        "browser_security.test.tsx",
+        "components_layout_shell.test.tsx"
       ]
     },
     "src/pages/apps/AppPage.tsx": {
@@ -1482,6 +1526,7 @@
         "Button": 1
       },
       "tests": [
+        "components_panels_logic.test.tsx",
         "dashboard_panels.test.tsx"
       ]
     },
@@ -1490,6 +1535,7 @@
         "Button": 3
       },
       "tests": [
+        "components_vega_chart.test.tsx",
         "dashboard_panels.test.tsx",
         "geomap_panel.test.tsx"
       ]
@@ -1499,6 +1545,7 @@
         "Button": 10
       },
       "tests": [
+        "components_time_picker.test.tsx",
         "dashboard_time.test.tsx"
       ]
     },
@@ -1507,6 +1554,7 @@
         "Button": 1
       },
       "tests": [
+        "components_vega_chart.test.tsx",
         "dashboard_panels.test.tsx"
       ]
     },
@@ -2711,6 +2759,7 @@
         "Button": 5
       },
       "tests": [
+        "components_forms_outputs_more.test.tsx",
         "representation_outputs_field.test.tsx"
       ]
     },
@@ -2719,6 +2768,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "components_forms_output_sources.test.tsx",
         "representation_outputs_field.test.tsx"
       ]
     },
@@ -2786,6 +2836,7 @@
         "Button": 2
       },
       "tests": [
+        "components_root2_space_yaml.test.tsx",
         "space_usage_info.test.tsx"
       ]
     },
@@ -2805,6 +2856,8 @@
         "access_forms.test.tsx",
         "access_presets.test.tsx",
         "app_form.test.tsx",
+        "components_forms_schema_form_fix.test.tsx",
+        "components_forms_widgets_misc.test.tsx",
         "contextsourceregistration_form.test.tsx",
         "contract_form_submit_state.test.tsx",
         "contract_widget_describedby.test.tsx",

@@ -6,7 +6,7 @@
 
 use clap::Parser;
 use dataroom_core::{CatalogueId, DataroomError, OrgId, RequestCtx, Store, Subject};
-use dataroom_server::{ensure_default_catalogue, import_ckan_json, run_cli, Cli};
+use dataroom_server::{ensure_catalogue, ensure_default_catalogue, import_ckan_json, run_cli, Cli};
 use dataroom_store_memory::MemoryStore;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -188,6 +188,46 @@ async fn serve_answers_on_its_host_and_reports_a_taken_port() {
 }
 
 #[tokio::test]
+async fn ensure_catalogue_creates_keeps_renames_and_moves() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xc21));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc22));
+    let store = MemoryStore::new();
+    let made = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        (made.name.as_str(), made.host.as_str()),
+        ("mesto", "data.mesto.test")
+    );
+    let pause = || tokio::time::sleep(std::time::Duration::from_millis(5));
+    pause().await;
+    let kept = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.modified, made.modified,
+        "the same name and host write nothing"
+    );
+    for (name, host) in [
+        ("mesto", "opendata.mesto.test"),
+        ("kraj", "opendata.mesto.test"),
+    ] {
+        pause().await;
+        let before = store
+            .get_catalogue(org, cat)
+            .await
+            .unwrap()
+            .unwrap()
+            .modified;
+        let moved = ensure_catalogue(&store, org, cat, name, host)
+            .await
+            .unwrap();
+        assert_eq!((moved.name.as_str(), moved.host.as_str()), (name, host));
+        assert_ne!(moved.modified, before, "{name} on {host} is written");
+    }
+}
+
+#[tokio::test]
 async fn import_ckan_json_reads_every_dump_shape() {
     let org = OrgId::from_uuid(Uuid::from_u128(0xc11));
     let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc12));
@@ -230,7 +270,7 @@ async fn import_ckan_json_reads_every_dump_shape() {
         .await
         .unwrap();
     let dump = json!({
-        "organizations": ["mesto", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
+        "organizations": ["mesto", "obec", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
                           {"name": ""}, {"title": "no name"}, 42],
         "hidden": ["skryty"],
         "result": {"results": [{"name": "bez-org", "title": "Bez organizácie"}, package("skryty", "mesto")]}
@@ -238,7 +278,12 @@ async fn import_ckan_json_reads_every_dump_shape() {
     let (pubs, dss) = import_ckan_json(&store, &ctx, &dump.to_string(), "sk")
         .await
         .unwrap();
-    assert_eq!((pubs, dss), (3, 2));
+    assert_eq!((pubs, dss), (4, 2));
+    let obec = store.get_publisher(&ctx, "obec").await.unwrap().unwrap();
+    assert_eq!(
+        obec.title["sk"], "obec",
+        "a bare name is a publisher no package names"
+    );
     let kraj = store.get_publisher(&ctx, "kraj").await.unwrap().unwrap();
     assert_eq!(
         kraj.logo_url.as_deref(),
@@ -406,6 +451,17 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
     .await
     .unwrap();
     assert!(out.to_string().contains("cli-pg-ovzdusie"), "{out}");
+    // With a publisher and a dataset held, the feed check reads the dataset and finds it valid. Whether the feed
+    // conforms depends on the default catalogue declaring a publisher, which this database may or may not hold.
+    let out = run_cli(pg(&["feed-check"])).await.unwrap();
+    assert_eq!(
+        (
+            out["datasetsChecked"].as_u64(),
+            out["datasetsValid"].as_u64()
+        ),
+        (Some(1), Some(1)),
+        "{out}"
+    );
 
     // A harvest source on loopback is saved, and its run is refused by the outbound guard.
     let looped = json!({"name": "cli-pg-loop2", "kind": "dcat-ap", "url": "https://127.0.0.1/feed.ttl",
@@ -426,6 +482,20 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
         matches!(err, DataroomError::OutboundRefused(ref m) if m.contains("127.0.0.1")),
         "{err:?}"
     );
+
+    // Started as an operation, the run goes on in a task: the command waits for its end and
+    // prints the finished run, failed by the same guard.
+    let run = run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_run.start",
+        "--input",
+        r#"{"source": "cli-pg-loop2"}"#,
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(run["state"], "failed", "{run}");
+    assert!(run["error"].to_string().contains("127.0.0.1"), "{run}");
 
     let err = run_cli(pg(&["harvest", "--source", "cli-pg-none"]))
         .await

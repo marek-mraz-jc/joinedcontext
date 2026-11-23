@@ -896,4 +896,255 @@ mod tests {
         assert_eq!(got["coordinates"][0], Json::Array(ccw));
         assert!(polygon(vec![ring(&[(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)])]).is_err());
     }
+
+    /// Little-endian record content: the shape type, then `f64`s and `i32`s as given.
+    fn content(kind: i32, f: &[f64], ints: &[i32], tail: &[f64]) -> Vec<u8> {
+        let mut v = kind.to_le_bytes().to_vec();
+        f.iter().for_each(|x| v.extend(x.to_le_bytes()));
+        ints.iter().for_each(|x| v.extend(x.to_le_bytes()));
+        tail.iter().for_each(|x| v.extend(x.to_le_bytes()));
+        v
+    }
+
+    fn read_shape(buf: &[u8]) -> Result<Json, String> {
+        let mut r = Bytes { buf, at: 0 };
+        let kind = r.i32_le()?;
+        shape(kind, &mut r)
+    }
+
+    #[test]
+    fn every_shape_kind_reads_as_its_geojson_geometry() {
+        assert_eq!(read_shape(&content(0, &[], &[], &[])), Ok(Json::Null));
+        assert_eq!(
+            read_shape(&content(11, &[1.0, 2.0, 3.0], &[], &[])),
+            Ok(json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0]}))
+        );
+        let bbox = [0.0; 4];
+        // MultiPointZ: bbox, 2 points, xy, z range, z values.
+        let mut mp = content(18, &bbox, &[2], &[1.0, 2.0, 3.0, 4.0]);
+        [0.0f64, 9.0, 5.0, 6.0]
+            .iter()
+            .for_each(|x| mp.extend(x.to_le_bytes()));
+        assert_eq!(
+            read_shape(&mp),
+            Ok(json!({"type": "MultiPoint", "coordinates": [[1.0, 2.0, 5.0], [3.0, 4.0, 6.0]]}))
+        );
+        // A PolyLine of one part is a LineString, of two a MultiLineString.
+        let line = content(3, &bbox, &[1, 2, 0], &[0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(
+            read_shape(&line),
+            Ok(json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0]]}))
+        );
+        let multi = content(
+            3,
+            &bbox,
+            &[2, 4, 0, 2],
+            &[0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0],
+        );
+        assert_eq!(
+            read_shape(&multi),
+            Ok(json!({"type": "MultiLineString",
+                "coordinates": [[[0.0, 0.0], [1.0, 1.0]], [[2.0, 2.0], [3.0, 3.0]]]}))
+        );
+        for (buf, want) in [
+            (
+                content(3, &bbox, &[1, 2, 3], &[0.0; 4]),
+                "a part starts outside the record's points",
+            ),
+            (
+                content(3, &bbox, &[2, 2, 1, 0], &[0.0; 4]),
+                "a part starts outside the record's points",
+            ),
+            (
+                content(1, &[f64::NAN, 0.0], &[], &[]),
+                "a coordinate is not a finite number",
+            ),
+            (
+                content(11, &[0.0, 0.0, f64::INFINITY], &[], &[]),
+                "a coordinate is not a finite number",
+            ),
+            (
+                content(31, &[], &[], &[]),
+                "MultiPatch shapes are not supported",
+            ),
+            (content(7, &[], &[], &[]), "unknown shape type 7"),
+        ] {
+            let err = read_shape(&buf).unwrap_err();
+            assert!(err.contains(want), "{want}: {err}");
+        }
+    }
+
+    /// A .shp of `kind` holding `records` (each the content of one record).
+    fn shp(kind: i32, records: &[Vec<u8>]) -> Vec<u8> {
+        let body: usize = records.iter().map(|r| 8 + r.len()).sum();
+        let mut v = 9994i32.to_be_bytes().to_vec();
+        v.extend([0u8; 20]);
+        v.extend((((100 + body) / 2) as i32).to_be_bytes());
+        v.extend(1000i32.to_le_bytes());
+        v.extend(kind.to_le_bytes());
+        v.extend([0u8; 64]);
+        for (i, r) in records.iter().enumerate() {
+            v.extend((i as i32 + 1).to_be_bytes());
+            v.extend(((r.len() / 2) as i32).to_be_bytes());
+            v.extend(r);
+        }
+        v
+    }
+
+    #[test]
+    fn a_shp_header_and_its_record_types_are_checked() {
+        let point = content(1, &[1.0, 2.0], &[], &[]);
+        assert_eq!(
+            shapes(&shp(1, &[point.clone(), content(0, &[], &[], &[])]), 10),
+            Ok(vec![
+                json!({"type": "Point", "coordinates": [1.0, 2.0]}),
+                Json::Null
+            ])
+        );
+        let mut wrong = shp(1, std::slice::from_ref(&point));
+        wrong[3] = 0;
+        assert_eq!(
+            shapes(&wrong, 10),
+            Err("is not a shapefile (file code is not 9994)".to_string())
+        );
+        assert_eq!(
+            shapes(&shp(3, &[point]), 10),
+            Err("record 1 is shape type 1 in a file of shape type 3".to_string())
+        );
+    }
+
+    fn dbf(encoding: Encoding) -> Dbf<'static> {
+        Dbf {
+            buf: &[],
+            records: 0,
+            header: 0,
+            record_len: 0,
+            fields: Vec::new(),
+            encoding,
+        }
+    }
+
+    #[test]
+    fn dbase_values_read_by_field_type() {
+        let t = dbf(Encoding::Guess);
+        let field = |kind: u8, decimals: u8| Field {
+            name: "f".into(),
+            kind,
+            len: 10,
+            decimals,
+        };
+        for (kind, decimals, raw, want) in [
+            (b'N', 0, &b" 42 "[..], json!(42)),
+            (b'N', 2, b"4.50", json!(4.5)),
+            (b'F', 0, b"1e3", json!(1000.0)),
+            (b'N', 0, b"****", Json::Null),
+            (b'N', 0, b"   ", Json::Null),
+            (b'L', 0, b"y", json!(true)),
+            (b'L', 0, b"N", json!(false)),
+            (b'L', 0, b"?", Json::Null),
+            (b'D', 0, b"20261123", json!("2026-11-23")),
+            (b'D', 0, b"2026-11", Json::Null),
+            (b'M', 0, b"memo", json!("memo")),
+            (b'C', 0, b"  a b  \0", json!("a b")),
+        ] {
+            assert_eq!(t.value(&field(kind, decimals), raw), Ok(want), "{raw:?}");
+        }
+        assert_eq!(
+            t.value(&field(b'N', 0), b"12abc"),
+            Err("\"12abc\" is not a number".to_string())
+        );
+        // Without a driver or .cpg, text that is not UTF-8 reads as Windows-1252.
+        assert_eq!(t.text(b"T\xf6\xf6l\xf6"), Ok("Töölö".to_string()));
+        // An undecodable DOS code page still reads ASCII.
+        assert_eq!(
+            dbf(Encoding::Unsupported(0x02)).text(b"abc"),
+            Ok("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn a_dbf_whose_fields_outgrow_its_records_is_refused() {
+        let mut buf = vec![0u8; 32];
+        buf[8..10].copy_from_slice(&65u16.to_le_bytes());
+        buf[10..12].copy_from_slice(&5u16.to_le_bytes());
+        let mut field = [0u8; 32];
+        field[..1].copy_from_slice(b"A");
+        field[11] = b'C';
+        field[16] = 10;
+        buf.extend(field);
+        buf.push(0x0D);
+        assert_eq!(
+            Dbf::parse(&buf, None).err(),
+            Some("its fields are wider than its records".to_string())
+        );
+    }
+
+    #[test]
+    fn code_page_numbers_and_every_language_driver_name_an_encoding() {
+        let name = |c: &[u8]| cpg_encoding(c).map(|e| e.name());
+        for (cpg, want) in [
+            (&b"65001"[..], "UTF-8"),
+            (b"874", "windows-874"),
+            (b"932", "Shift_JIS"),
+            (b"936", "GBK"),
+            (b"949", "EUC-KR"),
+            (b"950", "Big5"),
+            (b"866", "IBM866"),
+            (b"28592", "ISO-8859-2"),
+        ] {
+            assert_eq!(name(cpg), Ok(want), "{cpg:?}");
+        }
+        for (ldid, want) in [
+            (0x03, "windows-1252"),
+            (0xC8, "windows-1250"),
+            (0xC9, "windows-1251"),
+            (0xCA, "windows-1254"),
+            (0xCB, "windows-1253"),
+            (0x7D, "windows-1255"),
+            (0x7E, "windows-1256"),
+            (0x7C, "windows-874"),
+            (0x13, "Shift_JIS"),
+            (0x4D, "GBK"),
+            (0x4E, "EUC-KR"),
+            (0x4F, "Big5"),
+            (0x26, "IBM866"),
+        ] {
+            assert!(
+                matches!(ldid_encoding(ldid), Encoding::Known(e) if e.name() == want),
+                "{ldid:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prj_names_its_crs_by_an_id_and_a_zip_holds_one_layer_within_the_caps() {
+        assert_eq!(
+            top_authority("PROJCRS[\"x\",ID[\"EPSG\",3067]]"),
+            Some(3067)
+        );
+        assert_eq!(top_authority("PROJCRS[\"x\",ID[\"OGC\",1]]"), None);
+        // A layer already in WGS 84 passes its geometry as it is, and a directory is skipped.
+        let wgs84 = rezip(|m| {
+            *member(m, ".prj") = br#"GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984"]]"#.to_vec();
+            m.push(("sub/".into(), Vec::new()));
+        });
+        let raw = features(&wgs84, 100).unwrap();
+        let shp = rezip(|_| {});
+        let projected = features(&shp, 100).unwrap();
+        assert_eq!(raw.len(), projected.len());
+        assert_ne!(
+            raw[0].to_json_value()["geometry"],
+            projected[0].to_json_value()["geometry"]
+        );
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for i in 0..=crate::archive::MAX_ARCHIVE_MEMBERS {
+            zw.start_file(format!("m{i}"), zip::write::SimpleFileOptions::default())
+                .unwrap();
+        }
+        let many = zw.finish().unwrap().into_inner();
+        assert_eq!(
+            features(&many, 100).err(),
+            Some("shapefile zip has more than 10000 members".to_string())
+        );
+    }
 }

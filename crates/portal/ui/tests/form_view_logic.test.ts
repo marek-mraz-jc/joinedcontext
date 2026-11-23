@@ -142,6 +142,31 @@ describe("what is sent", () => {
     expect(problemsOf(fields, { name: "A" })).toEqual({});
   });
 
+  it("asks a required point for both coordinates, and a date-time for a readable instant", () => {
+    const more: FormField[] = [
+      { attr: "where", label: "Where", required: true, kind: "point" },
+      { attr: "seen", label: "Seen", required: false, kind: "datetime" },
+    ];
+    expect(problemsOf(more, {})).toEqual({ where: "required" });
+    expect(problemsOf(more, { "where.lon": "200", "where.lat": "48", seen: "yesterday" })).toEqual({ where: "point", seen: "date" });
+    expect(problemsOf(more, { "where.lon": "19", "where.lat": "x" })).toEqual({ where: "point" });
+    expect(problemsOf(more, { "where.lon": "19", "where.lat": "48", seen: "2026-10-07T08:00" })).toEqual({});
+  });
+
+  it("sends a date-time as an instant in UTC, and no point with one coordinate", () => {
+    const more: FormField[] = [
+      { attr: "where", label: "Where", required: false, kind: "point" },
+      { attr: "seen", label: "Seen", required: false, kind: "datetime" },
+      { attr: "note", label: "Note", required: false, kind: "text" },
+    ];
+    expect(entityOf("T", more, { "where.lon": "19", seen: "2026-10-07T08:00:00Z", note: " ok " }, "en", "urn:ngsi-ld:T:1")).toEqual({
+      id: "urn:ngsi-ld:T:1",
+      type: "T",
+      seen: { type: "Property", value: { "@type": "DateTime", "@value": "2026-10-07T08:00:00.000Z" } },
+      note: { type: "Property", value: "ok" },
+    });
+  });
+
   it("is one NGSI-LD entity of the answered fields, typed, with nothing blank or hidden in it", () => {
     const shown = visibleFields(fields, [{ attr: "fee", when: { attr: "category", equals: "garage" } }], { category: "street" });
     const entity = entityOf(
@@ -206,6 +231,28 @@ describe("a public form's fields", () => {
     expect(fields[0].help).toBe("What it is called");
     expect(fields[2].options).toEqual([{ value: "street" }, { value: "garage" }]);
     expect(fieldsOfSchema(undefined, {})).toEqual([]);
+  });
+
+  it("type a language text, a number, a yes-no and a date from the schema, and label by the title", () => {
+    const fields = fieldsOfSchema(
+      {
+        properties: {
+          name: { "x-ngsi-ld-kind": "LanguageProperty", title: " Názov " },
+          fee: { type: ["number", "null"] },
+          covered: { type: "boolean" },
+          opened: { type: "string", format: "date" },
+          unknownRef: { $ref: "#/definitions/Missing" },
+        },
+      },
+      {},
+    );
+    expect(fields.map((f) => [f.attr, f.kind, f.label])).toEqual([
+      ["name", "language", "Názov"],
+      ["fee", "number", "fee"],
+      ["covered", "boolean", "covered"],
+      ["opened", "date", "opened"],
+      ["unknownRef", "text", "unknownRef"],
+    ]);
   });
 });
 
