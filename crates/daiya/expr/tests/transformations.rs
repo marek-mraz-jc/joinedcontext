@@ -156,6 +156,12 @@ fn organize_filters_orders_and_renames() {
         Some("PM10"),
         "empty rename is ignored"
     );
+    // an includeByName that names nothing as included filters nothing
+    let all = tx_organize(
+        vec![f.clone()],
+        &json!({ "includeByName": { "station": false } }),
+    );
+    assert_eq!(names(&all[0]), names(&f));
 
     // excludeByName by display name; fields without an index keep their order after indexed ones.
     let out = tx_organize(
