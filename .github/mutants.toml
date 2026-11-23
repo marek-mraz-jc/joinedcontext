@@ -4,6 +4,22 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
+  # the same; the clamp only bounds the loop (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',
+  # jc-chart Canvas::line: on an axis the line does not move along, the step's sign is never used
+  # (dx or dy is 0 and Bresenham never steps that way), so < and <= draw alike (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace < with <= in Canvas::line',
+  # jc-chart Canvas::disc: the offsets run -r..=r, so cx - x covers the same pixels as cx + x (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace \+ with - in Canvas::disc',
+  # jc-chart check: Instant::now() equal to the deadline to the nanosecond is never observed (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in check',
+  # jc-chart canvas: with no legend (0 px) the swatch loop runs for at most one colour and draws it
+  # past the right edge, which set() drops (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in canvas',
+  # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
+  # skipping them by name or not is alike; the @context half is held by a test (T-7622).
+  'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
