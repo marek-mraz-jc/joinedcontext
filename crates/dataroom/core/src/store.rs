@@ -142,19 +142,34 @@ pub trait Store: Send + Sync {
         publisher: Publisher,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
-    /// Merges publisher `source_id` into `target_id` (moves datasets, sets `merged_into`, C16).
+    /// [`Store::save_dataset`] for a publisher: the write and its activity row in one
+    /// transaction, guarded on the stored `modified` when `expected` is given (S11-13, S11-25).
+    fn save_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        publisher: Publisher,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>>;
+
+    /// Merges publisher `source_id` into `target_id` (moves datasets, sets `merged_into`, C16),
+    /// with `activity` in the same transaction; an activity row with no `object_id` names the
+    /// target.
     fn merge_publishers<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         source_id_or_name: &'a str,
         target_id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
-    /// Withdraws a publisher (its datasets leave public feeds, C16).
+    /// Withdraws a publisher (its datasets leave public feeds, C16), read and written in one
+    /// transaction with `activity`.
     fn withdraw_publisher<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
     /// Lists all datasets in `ctx`'s catalogue (including drafts/withdrawn for internal callers).
@@ -194,11 +209,12 @@ pub trait Store: Send + Sync {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Dataset>>;
 
-    /// Permanently purges a dataset (`dataset_purge`).
+    /// Permanently purges a dataset (`dataset_purge`), with `activity` in the same transaction.
     fn purge_dataset<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Gets a distribution and its parent dataset by distribution `id`.
@@ -229,11 +245,21 @@ pub trait Store: Send + Sync {
         view: ResourceView,
     ) -> BoxFuture<'a, Result<ResourceView>>;
 
-    /// Deletes a resource view by `id`.
+    /// Writes a resource view and its activity row in one transaction (S11-13); an activity row
+    /// with no `object_id` names the saved view.
+    fn save_resource_view<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        view: ResourceView,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ResourceView>>;
+
+    /// Deletes a resource view by `id`, with `activity` in the same transaction.
     fn delete_resource_view<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         view_id: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Lists harvest sources in `ctx`'s catalogue.
@@ -254,6 +280,14 @@ pub trait Store: Send + Sync {
         &'a self,
         ctx: &'a RequestCtx,
         source: HarvestSource,
+    ) -> BoxFuture<'a, Result<HarvestSource>>;
+
+    /// Writes a harvest source and its activity row in one transaction (S11-13).
+    fn save_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        source: HarvestSource,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<HarvestSource>>;
 
     /// Deletes the harvest source `id_or_name` of `ctx`'s catalogue and its runs; `false` when
@@ -343,6 +377,15 @@ pub trait Store: Send + Sync {
         profile: ProfileRecord,
     ) -> BoxFuture<'a, Result<ProfileRecord>>;
 
+    /// Stores a new profile version and its activity row in one transaction (S11-13). A
+    /// version is never rewritten: a stored `(id, version)` is a conflict and nothing is written.
+    fn save_profile<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        profile: ProfileRecord,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ProfileRecord>>;
+
     /// Lists static pages for `ctx`'s catalogue.
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>>;
 
@@ -364,6 +407,14 @@ pub trait Store: Send + Sync {
         &'a self,
         ctx: &'a RequestCtx,
         plugin: CataloguePlugin,
+    ) -> BoxFuture<'a, Result<CataloguePlugin>>;
+
+    /// Writes a plugin and its activity row in one transaction (S11-13).
+    fn save_plugin<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        plugin: CataloguePlugin,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<CataloguePlugin>>;
 
     /// Returns an `odata_table::Table` for the named entity set (`Catalogues`, `Datasets`,

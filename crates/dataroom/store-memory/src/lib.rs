@@ -173,6 +173,228 @@ fn put_catalogue(inner: &mut Inner, catalogue: Catalogue) -> Result<Catalogue> {
     Ok(catalogue)
 }
 
+impl MemoryStore {
+    /// Runs `write` and appends `activity` under one lock, as PgStore's transaction (AUD-02): a
+    /// taken activity id refuses before anything is written (the table's primary key there),
+    /// and a refused write leaves no row. A row with no `object_id` names what `object_id` says.
+    fn audited<T>(
+        &self,
+        (org_id, catalogue_id): (OrgId, CatalogueId),
+        mut activity: ActivityRow,
+        write: impl FnOnce(&mut Inner) -> Result<T>,
+        object_id: impl FnOnce(&T) -> String,
+    ) -> Result<T> {
+        let mut inner = self.write_inner();
+        if inner
+            .activity
+            .iter()
+            .any(|a| a.org_id == org_id && a.catalogue_id == catalogue_id && a.id == activity.id)
+        {
+            return Err(DataroomError::Conflict(
+                "duplicate record (cat_activity_pkey)".into(),
+            ));
+        }
+        let out = write(&mut inner)?;
+        activity.org_id = org_id;
+        activity.catalogue_id = catalogue_id;
+        if activity.object_id.is_empty() {
+            activity.object_id = object_id(&out);
+        }
+        inner.activity.push(activity);
+        Ok(out)
+    }
+}
+
+/// The conflict a guarded write answers unless the stored record's `modified` is `expected`.
+fn guard(
+    stored: Option<TimestampTz>,
+    expected: Option<TimestampTz>,
+    kind: &str,
+    name: &str,
+) -> Result<()> {
+    match expected {
+        Some(expected) if stored != Some(expected) => Err(changed_since_read(kind, name)),
+        _ => Ok(()),
+    }
+}
+
+/// Stores `publisher` under the caller's lock: the checks and the write of `upsert_publisher`.
+fn put_publisher(
+    inner: &mut Inner,
+    ctx: &RequestCtx,
+    mut publisher: Publisher,
+) -> Result<Publisher> {
+    publisher.org_id = ctx.org_id;
+    publisher.catalogue_id = ctx.catalogue_id;
+    if publisher.id.is_empty() {
+        publisher.id = format!("pub-{}", publisher.name);
+    }
+    let name_conflict = inner.publishers.iter().any(|((oid, cid, _), p)| {
+        *oid == ctx.org_id
+            && *cid == ctx.catalogue_id
+            && p.name == publisher.name
+            && p.id != publisher.id
+    });
+    if name_conflict {
+        return Err(DataroomError::Conflict(format!(
+            "publisher name '{}' already exists in this catalogue",
+            publisher.name
+        )));
+    }
+    inner.publishers.insert(
+        (ctx.org_id, ctx.catalogue_id, publisher.id.clone()),
+        publisher.clone(),
+    );
+    Ok(publisher)
+}
+
+/// Merges `source_id_or_name` into `target_id_or_name` under the caller's lock.
+fn merge_publishers_in(
+    inner: &mut Inner,
+    ctx: &RequestCtx,
+    source_id_or_name: &str,
+    target_id_or_name: &str,
+) -> Result<Publisher> {
+    let find =
+        |key: &str| publisher_key(inner, ctx, key).and_then(|k| inner.publishers.get(&k).cloned());
+    let source = find(source_id_or_name);
+    // The target as published: its merge redirects followed, as PgStore follows them (C16).
+    let mut target = find(target_id_or_name);
+    for _ in 0..4 {
+        let Some(next) = target.as_ref().and_then(|t| t.merged_into.clone()) else {
+            break;
+        };
+        match find(&next) {
+            Some(found) => target = Some(found),
+            None => break,
+        }
+    }
+    let (Some(mut source), Some(target)) = (source, target) else {
+        return Err(DataroomError::NotFound(
+            "source or target publisher not found".into(),
+        ));
+    };
+    if source.id == target.id {
+        return Err(DataroomError::field_error(
+            "target",
+            "cannot merge a publisher into itself",
+        ));
+    }
+    // Move datasets from source to target publisher (C16).
+    for ((oid, cid, _), ds) in inner.datasets.iter_mut() {
+        if *oid == ctx.org_id
+            && *cid == ctx.catalogue_id
+            && (ds.publisher_id == source.id || ds.publisher_id == source.name)
+        {
+            ds.publisher_id = target.name.clone();
+            ds.modified = TimestampTz::now();
+        }
+    }
+    source.merged_into = Some(target.name.clone());
+    source.state = RecordState::Withdrawn;
+    source.modified = TimestampTz::now();
+    inner
+        .publishers
+        .insert((ctx.org_id, ctx.catalogue_id, source.id.clone()), source);
+    Ok(target)
+}
+
+/// Withdraws the publisher `id_or_name` names (never the one a merge points it to).
+fn withdraw_publisher_in(
+    inner: &mut Inner,
+    ctx: &RequestCtx,
+    id_or_name: &str,
+) -> Result<Publisher> {
+    let key = publisher_key(inner, ctx, id_or_name);
+    let Some(p) = key.and_then(|k| inner.publishers.get_mut(&k)) else {
+        return Err(DataroomError::NotFound(format!(
+            "publisher '{id_or_name}' not found"
+        )));
+    };
+    p.state = RecordState::Withdrawn;
+    p.modified = next_modified(TimestampTz::now(), Some(p.modified));
+    Ok(p.clone())
+}
+
+/// Removes the dataset `id_or_name` names, its views and its SHACL findings.
+fn purge_dataset_in(inner: &mut Inner, ctx: &RequestCtx, id_or_name: &str) -> Result<()> {
+    let Some(key) = dataset_key(inner, ctx, id_or_name) else {
+        return Err(DataroomError::NotFound(format!(
+            "dataset '{id_or_name}' not found"
+        )));
+    };
+    if let Some(removed) = inner.datasets.remove(&key) {
+        let res_ids: Vec<String> = removed.distributions.iter().map(|r| r.id.clone()).collect();
+        inner.views.retain(|(oid, cid, _), v| {
+            !(*oid == ctx.org_id && *cid == ctx.catalogue_id && res_ids.contains(&v.resource_id))
+        });
+        inner.shacl_reports.retain(|(oid, cid, _), r| {
+            !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
+        });
+    }
+    Ok(())
+}
+
+fn put_view(inner: &mut Inner, ctx: &RequestCtx, mut view: ResourceView) -> ResourceView {
+    if view.id.is_empty() {
+        view.id = format!("view-{}", uuid::Uuid::now_v7());
+    }
+    inner.views.insert(
+        (ctx.org_id, ctx.catalogue_id, view.id.clone()),
+        view.clone(),
+    );
+    view
+}
+
+fn delete_view_in(inner: &mut Inner, ctx: &RequestCtx, view_id: &str) -> Result<()> {
+    match inner
+        .views
+        .remove(&(ctx.org_id, ctx.catalogue_id, view_id.to_owned()))
+    {
+        Some(_) => Ok(()),
+        None => Err(DataroomError::NotFound(format!(
+            "resource view '{view_id}' not found"
+        ))),
+    }
+}
+
+fn put_source(
+    inner: &mut Inner,
+    ctx: &RequestCtx,
+    mut source: HarvestSource,
+) -> Result<HarvestSource> {
+    source.org_id = ctx.org_id;
+    source.catalogue_id = ctx.catalogue_id;
+    if source.id.is_empty() {
+        source.id = format!("hs-{}", source.name);
+    }
+    refuse_deleted(inner, ctx)?;
+    inner.harvest_sources.insert(
+        (ctx.org_id, ctx.catalogue_id, source.id.clone()),
+        source.clone(),
+    );
+    Ok(source)
+}
+
+fn put_plugin(inner: &mut Inner, ctx: &RequestCtx, mut plugin: CataloguePlugin) -> CataloguePlugin {
+    plugin.org_id = ctx.org_id;
+    plugin.catalogue_id = ctx.catalogue_id;
+    inner.plugins.insert(
+        (ctx.org_id, ctx.catalogue_id, plugin.name.clone()),
+        plugin.clone(),
+    );
+    plugin
+}
+
+fn profile_key(ctx: &RequestCtx, profile: &ProfileRecord) -> (OrgId, CatalogueId, String, String) {
+    (
+        ctx.org_id,
+        ctx.catalogue_id,
+        profile.id.clone(),
+        profile.version.clone(),
+    )
+}
+
 impl Store for MemoryStore {
     fn resolve_host<'a>(&'a self, host: &'a str) -> BoxFuture<'a, Result<Option<Catalogue>>> {
         let clean = host
@@ -257,32 +479,90 @@ impl Store for MemoryStore {
         &'a self,
         mut catalogue: Catalogue,
         expected: Option<TimestampTz>,
-        mut activity: ActivityRow,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Catalogue>> {
-        let mut inner = self.write_inner();
-        if let Some(expected) = expected {
-            let stored = inner
-                .catalogues
-                .get(&(catalogue.org_id, catalogue.id))
-                .map(|c| c.modified);
-            if stored != Some(expected) {
-                return Box::pin(std::future::ready(Err(changed_since_read(
-                    "catalogue",
-                    &catalogue.name,
-                ))));
-            }
-        }
-        catalogue.modified = next_modified(catalogue.modified, expected);
-        let saved = put_catalogue(&mut inner, catalogue);
-        if let Ok(c) = &saved {
-            activity.org_id = c.org_id;
-            activity.catalogue_id = c.id;
-            if activity.object_id.is_empty() {
-                activity.object_id = c.id.to_string();
-            }
-            inner.activity.push(activity);
-        }
+        let saved = self.audited(
+            (catalogue.org_id, catalogue.id),
+            activity,
+            |inner| {
+                let stored = inner
+                    .catalogues
+                    .get(&(catalogue.org_id, catalogue.id))
+                    .map(|c| c.modified);
+                guard(stored, expected, "catalogue", &catalogue.name)?;
+                catalogue.modified = next_modified(catalogue.modified, expected);
+                put_catalogue(inner, catalogue)
+            },
+            |c| c.id.to_string(),
+        );
         Box::pin(std::future::ready(saved))
+    }
+
+    fn upsert_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        publisher: Publisher,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        let saved = put_publisher(&mut self.write_inner(), ctx, publisher);
+        Box::pin(std::future::ready(saved))
+    }
+
+    fn save_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut publisher: Publisher,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        if publisher.id.is_empty() {
+            publisher.id = format!("pub-{}", publisher.name);
+        }
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| {
+                let stored = inner
+                    .publishers
+                    .get(&(ctx.org_id, ctx.catalogue_id, publisher.id.clone()))
+                    .map(|p| p.modified);
+                guard(stored, expected, "publisher", &publisher.name)?;
+                publisher.modified = next_modified(publisher.modified, expected);
+                put_publisher(inner, ctx, publisher)
+            },
+            |p| p.id.clone(),
+        );
+        Box::pin(std::future::ready(saved))
+    }
+
+    fn merge_publishers<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        source_id_or_name: &'a str,
+        target_id_or_name: &'a str,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        let merged = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| merge_publishers_in(inner, ctx, source_id_or_name, target_id_or_name),
+            |p| p.id.clone(),
+        );
+        Box::pin(std::future::ready(merged))
+    }
+
+    fn withdraw_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        id_or_name: &'a str,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        let out = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| withdraw_publisher_in(inner, ctx, id_or_name),
+            |p| p.id.clone(),
+        );
+        Box::pin(std::future::ready(out))
     }
 
     fn list_publishers<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Publisher>>> {
@@ -338,112 +618,6 @@ impl Store for MemoryStore {
         Box::pin(std::future::ready(Ok(current)))
     }
 
-    fn upsert_publisher<'a>(
-        &'a self,
-        ctx: &'a RequestCtx,
-        mut publisher: Publisher,
-    ) -> BoxFuture<'a, Result<Publisher>> {
-        publisher.org_id = ctx.org_id;
-        publisher.catalogue_id = ctx.catalogue_id;
-        if publisher.id.is_empty() {
-            publisher.id = format!("pub-{}", publisher.name);
-        }
-        let mut guard = self.write_inner();
-        let name_conflict = guard.publishers.iter().any(|((oid, cid, _), p)| {
-            *oid == ctx.org_id
-                && *cid == ctx.catalogue_id
-                && p.name == publisher.name
-                && p.id != publisher.id
-        });
-        if name_conflict {
-            return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
-                "publisher name '{}' already exists in this catalogue",
-                publisher.name
-            )))));
-        }
-        guard.publishers.insert(
-            (ctx.org_id, ctx.catalogue_id, publisher.id.clone()),
-            publisher.clone(),
-        );
-        Box::pin(std::future::ready(Ok(publisher)))
-    }
-
-    fn merge_publishers<'a>(
-        &'a self,
-        ctx: &'a RequestCtx,
-        source_id_or_name: &'a str,
-        target_id_or_name: &'a str,
-    ) -> BoxFuture<'a, Result<Publisher>> {
-        let mut guard = self.write_inner();
-        let source = publisher_key(&guard, ctx, source_id_or_name)
-            .and_then(|k| guard.publishers.get(&k).cloned());
-        let find = |key: &str| {
-            publisher_key(&guard, ctx, key).and_then(|k| guard.publishers.get(&k).cloned())
-        };
-        // The target as published: its merge redirects followed, as PgStore follows them (C16).
-        let mut target = find(target_id_or_name);
-        for _ in 0..4 {
-            let Some(next) = target.as_ref().and_then(|t| t.merged_into.clone()) else {
-                break;
-            };
-            match find(&next) {
-                Some(found) => target = Some(found),
-                None => break,
-            }
-        }
-
-        let (Some(mut source), Some(target)) = (source, target) else {
-            return Box::pin(std::future::ready(Err(DataroomError::NotFound(
-                "source or target publisher not found".into(),
-            ))));
-        };
-        if source.id == target.id {
-            return Box::pin(std::future::ready(Err(DataroomError::field_error(
-                "target",
-                "cannot merge a publisher into itself",
-            ))));
-        }
-
-        // Move datasets from source to target publisher (C16).
-        for ((oid, cid, _), ds) in guard.datasets.iter_mut() {
-            if *oid == ctx.org_id
-                && *cid == ctx.catalogue_id
-                && (ds.publisher_id == source.id || ds.publisher_id == source.name)
-            {
-                ds.publisher_id = target.name.clone();
-                ds.modified = TimestampTz::now();
-            }
-        }
-
-        source.merged_into = Some(target.name.clone());
-        source.state = RecordState::Withdrawn;
-        source.modified = TimestampTz::now();
-        guard
-            .publishers
-            .insert((ctx.org_id, ctx.catalogue_id, source.id.clone()), source);
-
-        Box::pin(std::future::ready(Ok(target)))
-    }
-
-    fn withdraw_publisher<'a>(
-        &'a self,
-        ctx: &'a RequestCtx,
-        id_or_name: &'a str,
-    ) -> BoxFuture<'a, Result<Publisher>> {
-        let mut guard = self.write_inner();
-        let key = publisher_key(&guard, ctx, id_or_name);
-        let found = key.and_then(|k| guard.publishers.get_mut(&k));
-        let Some(p) = found else {
-            return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
-                "publisher '{id_or_name}' not found"
-            )))));
-        };
-        p.state = RecordState::Withdrawn;
-        p.modified = TimestampTz::now();
-        let out = p.clone();
-        Box::pin(std::future::ready(Ok(out)))
-    }
-
     fn list_datasets<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Dataset>>> {
         let mut list: Vec<Dataset> = self
             .read_inner()
@@ -482,37 +656,27 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         mut dataset: Dataset,
         expected: Option<TimestampTz>,
-        mut activity: ActivityRow,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Dataset>> {
-        let mut inner = self.write_inner();
-        if let Some(expected) = expected {
-            let id = if dataset.id.is_empty() {
-                format!("pkg-{}", dataset.name)
-            } else {
-                dataset.id.clone()
-            };
-            let stored = inner
-                .datasets
-                .get(&(ctx.org_id, ctx.catalogue_id, id))
-                .map(|d| d.modified);
-            if stored != Some(expected) {
-                return Box::pin(std::future::ready(Err(changed_since_read(
-                    "dataset",
-                    &dataset.name,
-                ))));
-            }
-        }
-        dataset.modified = next_modified(dataset.modified, expected);
-        let saved = put_dataset(&mut inner, ctx, dataset).inspect(|d| {
-            if activity.object_id.is_empty() {
-                activity.object_id.clone_from(&d.id);
-            }
-            activity.org_id = ctx.org_id;
-            activity.catalogue_id = ctx.catalogue_id;
-        });
-        if saved.is_ok() {
-            inner.activity.push(activity);
-        }
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| {
+                let id = if dataset.id.is_empty() {
+                    format!("pkg-{}", dataset.name)
+                } else {
+                    dataset.id.clone()
+                };
+                let stored = inner
+                    .datasets
+                    .get(&(ctx.org_id, ctx.catalogue_id, id))
+                    .map(|d| d.modified);
+                guard(stored, expected, "dataset", &dataset.name)?;
+                dataset.modified = next_modified(dataset.modified, expected);
+                put_dataset(inner, ctx, dataset)
+            },
+            |d| d.id.clone(),
+        );
         Box::pin(std::future::ready(saved))
     }
 
@@ -539,26 +703,15 @@ impl Store for MemoryStore {
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
-        let mut guard = self.write_inner();
-        let key = dataset_key(&guard, ctx, id_or_name);
-        let Some(key) = key else {
-            return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
-                "dataset '{id_or_name}' not found"
-            )))));
-        };
-        if let Some(removed) = guard.datasets.remove(&key) {
-            let res_ids: Vec<String> = removed.distributions.iter().map(|r| r.id.clone()).collect();
-            guard.views.retain(|(oid, cid, _), v| {
-                !(*oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && res_ids.contains(&v.resource_id))
-            });
-            guard.shacl_reports.retain(|(oid, cid, _), r| {
-                !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
-            });
-        }
-        Box::pin(std::future::ready(Ok(())))
+        let out = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| purge_dataset_in(inner, ctx, id_or_name),
+            |()| id_or_name.to_owned(),
+        );
+        Box::pin(std::future::ready(out))
     }
 
     fn get_distribution<'a>(
@@ -612,33 +765,40 @@ impl Store for MemoryStore {
     fn upsert_resource_view<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut view: ResourceView,
+        view: ResourceView,
     ) -> BoxFuture<'a, Result<ResourceView>> {
-        if view.id.is_empty() {
-            view.id = format!("view-{}", uuid::Uuid::now_v7());
-        }
-        self.write_inner().views.insert(
-            (ctx.org_id, ctx.catalogue_id, view.id.clone()),
-            view.clone(),
+        let saved = put_view(&mut self.write_inner(), ctx, view);
+        Box::pin(std::future::ready(Ok(saved)))
+    }
+
+    fn save_resource_view<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        view: ResourceView,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ResourceView>> {
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| Ok(put_view(inner, ctx, view)),
+            |v| v.id.clone(),
         );
-        Box::pin(std::future::ready(Ok(view)))
+        Box::pin(std::future::ready(saved))
     }
 
     fn delete_resource_view<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         view_id: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
-        let removed =
-            self.write_inner()
-                .views
-                .remove(&(ctx.org_id, ctx.catalogue_id, view_id.to_owned()));
-        if removed.is_none() {
-            return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
-                "resource view '{view_id}' not found"
-            )))));
-        }
-        Box::pin(std::future::ready(Ok(())))
+        let out = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| delete_view_in(inner, ctx, view_id),
+            |()| view_id.to_owned(),
+        );
+        Box::pin(std::future::ready(out))
     }
 
     fn list_harvest_sources<'a>(
@@ -675,22 +835,25 @@ impl Store for MemoryStore {
     fn upsert_harvest_source<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut source: HarvestSource,
+        source: HarvestSource,
     ) -> BoxFuture<'a, Result<HarvestSource>> {
-        source.org_id = ctx.org_id;
-        source.catalogue_id = ctx.catalogue_id;
-        if source.id.is_empty() {
-            source.id = format!("hs-{}", source.name);
-        }
-        let mut inner = self.write_inner();
-        if let Err(e) = refuse_deleted(&inner, ctx) {
-            return Box::pin(std::future::ready(Err(e)));
-        }
-        inner.harvest_sources.insert(
-            (ctx.org_id, ctx.catalogue_id, source.id.clone()),
-            source.clone(),
+        let saved = put_source(&mut self.write_inner(), ctx, source);
+        Box::pin(std::future::ready(saved))
+    }
+
+    fn save_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        source: HarvestSource,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<HarvestSource>> {
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| put_source(inner, ctx, source),
+            |s| s.id.clone(),
         );
-        Box::pin(std::future::ready(Ok(source)))
+        Box::pin(std::future::ready(saved))
     }
 
     fn delete_harvest_source<'a>(
@@ -812,12 +975,15 @@ impl Store for MemoryStore {
     fn record_activity<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut row: ActivityRow,
+        row: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
-        row.org_id = ctx.org_id;
-        row.catalogue_id = ctx.catalogue_id;
-        self.write_inner().activity.push(row);
-        Box::pin(std::future::ready(Ok(())))
+        let out = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            row,
+            |_| Ok(()),
+            |()| String::new(),
+        );
+        Box::pin(std::future::ready(out))
     }
 
     fn list_activity<'a>(
@@ -902,16 +1068,35 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         profile: ProfileRecord,
     ) -> BoxFuture<'a, Result<ProfileRecord>> {
-        self.write_inner().profiles.insert(
-            (
-                ctx.org_id,
-                ctx.catalogue_id,
-                profile.id.clone(),
-                profile.version.clone(),
-            ),
-            profile.clone(),
-        );
+        self.write_inner()
+            .profiles
+            .insert(profile_key(ctx, &profile), profile.clone());
         Box::pin(std::future::ready(Ok(profile)))
+    }
+
+    fn save_profile<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        profile: ProfileRecord,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ProfileRecord>> {
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| {
+                let key = profile_key(ctx, &profile);
+                if inner.profiles.contains_key(&key) {
+                    return Err(DataroomError::Conflict(format!(
+                        "profile '{}' version '{}' already exists; upload a new version",
+                        profile.id, profile.version
+                    )));
+                }
+                inner.profiles.insert(key, profile.clone());
+                Ok(profile)
+            },
+            |p| format!("{}:{}", p.id, p.version),
+        );
+        Box::pin(std::future::ready(saved))
     }
 
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>> {
@@ -961,15 +1146,25 @@ impl Store for MemoryStore {
     fn upsert_plugin<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut plugin: CataloguePlugin,
+        plugin: CataloguePlugin,
     ) -> BoxFuture<'a, Result<CataloguePlugin>> {
-        plugin.org_id = ctx.org_id;
-        plugin.catalogue_id = ctx.catalogue_id;
-        self.write_inner().plugins.insert(
-            (ctx.org_id, ctx.catalogue_id, plugin.name.clone()),
-            plugin.clone(),
+        let saved = put_plugin(&mut self.write_inner(), ctx, plugin);
+        Box::pin(std::future::ready(Ok(saved)))
+    }
+
+    fn save_plugin<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        plugin: CataloguePlugin,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<CataloguePlugin>> {
+        let saved = self.audited(
+            (ctx.org_id, ctx.catalogue_id),
+            activity,
+            |inner| Ok(put_plugin(inner, ctx, plugin)),
+            |p| p.name.clone(),
         );
-        Box::pin(std::future::ready(Ok(plugin)))
+        Box::pin(std::future::ready(saved))
     }
 
     fn odata_table<'a>(

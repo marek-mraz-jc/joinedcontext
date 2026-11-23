@@ -157,7 +157,10 @@ async fn world() -> World {
         .upsert_publisher(&admin, publisher("gone", &[]))
         .await
         .unwrap();
-    w.store.withdraw_publisher(&admin, "gone").await.unwrap();
+    w.store
+        .withdraw_publisher(&admin, "gone", audit("publisher.withdraw"))
+        .await
+        .unwrap();
     for ds in [
         dataset("open", "city", "public", json!({})),
         dataset(
@@ -1902,4 +1905,21 @@ async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
         }
     }
     assert!(empty.activity_ops().await.is_empty());
+}
+
+/// An activity row with a fresh id for a store write the test sets up; the store files it under
+/// the write's tenant and names the record it wrote.
+fn audit(operation: &str) -> dataroom_core::ActivityRow {
+    dataroom_core::ActivityRow {
+        org_id: OrgId::from_uuid(Uuid::nil()),
+        catalogue_id: CatalogueId::from_uuid(Uuid::nil()),
+        id: format!("act-{}", Uuid::now_v7()),
+        at: jc_time::TimestampTz::now(),
+        actor: "test".into(),
+        operation: operation.into(),
+        object_type: String::new(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::Value::Null,
+    }
 }

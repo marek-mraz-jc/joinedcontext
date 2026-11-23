@@ -152,3 +152,13 @@ pub fn view(id: &str, resource: &str, order: i32) -> ResourceView {
     }))
     .expect("view fixture")
 }
+
+/// An activity row with a fresh id and no object id: the store names the record it wrote.
+pub fn audit(operation: &str) -> ActivityRow {
+    serde_json::from_value(json!({
+        "orgId": Uuid::nil(), "catalogueId": Uuid::nil(),
+        "id": format!("act-{}", Uuid::now_v7()), "at": "2026-11-09T10:00:00Z", "actor": "editor",
+        "operation": operation, "objectType": "Publisher", "objectId": "", "summary": operation
+    }))
+    .expect("audit fixture")
+}

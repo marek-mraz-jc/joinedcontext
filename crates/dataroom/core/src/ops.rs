@@ -1608,24 +1608,22 @@ async fn dispatch(
                     }
                 }
             }
-            let saved = op_ctx.store.upsert_publisher(req_ctx, publisher).await?;
-            op_ctx
+            // The write lands on the record it was decided on, as long as that one is unchanged.
+            if let (Some(ex), true) = (&existing, publisher.id.is_empty()) {
+                publisher.id.clone_from(&ex.id);
+            }
+            let row = activity_row(
+                req_ctx,
+                "publisher.propose",
+                "Publisher",
+                &publisher.id,
+                format!("Saved publisher {}", publisher.name),
+                json!({"name": publisher.name}),
+            );
+            let read = existing.as_ref().map(|ex| ex.modified);
+            let saved = op_ctx
                 .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "publisher.propose".into(),
-                        object_type: "Publisher".into(),
-                        object_id: saved.id.clone(),
-                        summary: format!("Saved publisher {}", saved.name),
-                        details: json!({"name": saved.name}),
-                    },
-                )
+                .save_publisher(req_ctx, publisher, read, row)
                 .await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
@@ -1659,20 +1657,17 @@ async fn dispatch(
                 source_id: source.id.clone(),
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
-            let saved = op_ctx.store.upsert_harvest_source(req_ctx, source).await?;
-            op_ctx
+            let row = activity_row(
+                req_ctx,
+                "harvest_source.propose",
+                "HarvestSource",
+                &source.id,
+                format!("Saved harvest source {}", source.name),
+                json!({"name": source.name, "url": source.url}),
+            );
+            let saved = op_ctx
                 .store
-                .record_activity(
-                    req_ctx,
-                    activity_row(
-                        req_ctx,
-                        "harvest_source.propose",
-                        "HarvestSource",
-                        &saved.id,
-                        format!("Saved harvest source {}", saved.name),
-                        json!({"name": saved.name, "url": saved.url}),
-                    ),
-                )
+                .save_harvest_source(req_ctx, source, row)
                 .await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
@@ -1870,21 +1865,15 @@ async fn dispatch(
                 plugin_name: plugin.name.clone(),
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
-            let saved = op_ctx.store.upsert_plugin(req_ctx, plugin).await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    activity_row(
-                        req_ctx,
-                        "plugin.propose",
-                        "CataloguePlugin",
-                        &saved.name,
-                        format!("Saved plugin {} {}", saved.name, saved.version),
-                        json!({"name": saved.name, "version": saved.version, "enabled": saved.enabled}),
-                    ),
-                )
-                .await?;
+            let row = activity_row(
+                req_ctx,
+                "plugin.propose",
+                "CataloguePlugin",
+                &plugin.name,
+                format!("Saved plugin {} {}", plugin.name, plugin.version),
+                json!({"name": plugin.name, "version": plugin.version, "enabled": plugin.enabled}),
+            );
+            let saved = op_ctx.store.save_plugin(req_ctx, plugin, row).await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
         "catalogue.activity" => {
@@ -2008,27 +1997,19 @@ async fn dispatch(
                 catalogue_id: req_ctx.catalogue_id,
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Admin, &target_obj))?;
+            // The target named here may redirect to the publisher it was merged into: the store
+            // fills in the one it merged into (an empty object id names it).
+            let row = activity_row(
+                req_ctx,
+                "publisher.merge",
+                "Publisher",
+                "",
+                format!("Merged publisher {source_id} into {target_id}"),
+                json!({"source": source_id, "target": target_id}),
+            );
             let merged = op_ctx
                 .store
-                .merge_publishers(req_ctx, source_id, target_id)
-                .await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "publisher.merge".into(),
-                        object_type: "Publisher".into(),
-                        object_id: merged.id.clone(),
-                        summary: format!("Merged publisher {source_id} into {}", merged.name),
-                        details: json!({"source": source_id, "target": merged.name}),
-                    },
-                )
+                .merge_publishers(req_ctx, source_id, target_id, row)
                 .await?;
             Ok(serde_json::to_value(merged).unwrap_or(Value::Null))
         }
@@ -2059,27 +2040,17 @@ async fn dispatch(
                     ),
                 ));
             }
+            let row = activity_row(
+                req_ctx,
+                "publisher.withdraw",
+                "Publisher",
+                &pub_rec.id,
+                format!("Withdrew publisher {}", pub_rec.name),
+                json!({"name": pub_rec.name}),
+            );
             let withdrawn = op_ctx
                 .store
-                .withdraw_publisher(req_ctx, &pub_rec.id)
-                .await?;
-            op_ctx
-                .store
-                .record_activity(
-                    req_ctx,
-                    ActivityRow {
-                        org_id: req_ctx.org_id,
-                        catalogue_id: req_ctx.catalogue_id,
-                        id: format!("act-{}", Uuid::now_v7()),
-                        at: TimestampTz::now(),
-                        actor: req_ctx.actor_name().to_owned(),
-                        operation: "publisher.withdraw".into(),
-                        object_type: "Publisher".into(),
-                        object_id: withdrawn.id.clone(),
-                        summary: format!("Withdrew publisher {}", withdrawn.name),
-                        details: json!({"name": withdrawn.name}),
-                    },
-                )
+                .withdraw_publisher(req_ctx, &pub_rec.id, row)
                 .await?;
             Ok(serde_json::to_value(withdrawn).unwrap_or(Value::Null))
         }
@@ -2240,7 +2211,6 @@ async fn dataset_purge(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -
         .ok_or_else(not_found)?;
     // A purge cannot be undone: it needs Admin, while Delete (a withdrawal) is an editor's.
     authorize_dataset(op_ctx, req_ctx, &ds, Action::Admin).await?;
-    op_ctx.store.purge_dataset(req_ctx, &ds.id).await?;
     let row = activity_row(
         req_ctx,
         "dataset.purge",
@@ -2249,7 +2219,7 @@ async fn dataset_purge(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value) -
         format!("Purged dataset {}", ds.name),
         json!({"name": ds.name}),
     );
-    op_ctx.store.record_activity(req_ctx, row).await?;
+    op_ctx.store.purge_dataset(req_ctx, &ds.id, row).await?;
     Ok(json!({}))
 }
 
@@ -2452,16 +2422,15 @@ async fn resource_view_propose(
             }
         }
     }
-    let saved = store.upsert_resource_view(req_ctx, record).await?;
     let row = activity_row(
         req_ctx,
         "resource_view.propose",
         "ResourceView",
-        &saved.id,
-        format!("Saved view {} of dataset {}", saved.id, ds.name),
-        json!({"dataset": ds.name, "resource": saved.resource_id}),
+        &record.id,
+        format!("Saved view {} of dataset {}", record.id, ds.name),
+        json!({"dataset": ds.name, "resource": record.resource_id}),
     );
-    store.record_activity(req_ctx, row).await?;
+    let saved = store.save_resource_view(req_ctx, record, row).await?;
     Ok(resource_view_to_ckan(&saved))
 }
 
@@ -2491,7 +2460,6 @@ async fn resource_view_delete(
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
         }
     }
-    store.delete_resource_view(req_ctx, &id).await?;
     let row = activity_row(
         req_ctx,
         "resource_view.delete",
@@ -2500,7 +2468,7 @@ async fn resource_view_delete(
         format!("Deleted view {id}"),
         json!({"resource": view.resource_id}),
     );
-    store.record_activity(req_ctx, row).await?;
+    store.delete_resource_view(req_ctx, &id, row).await?;
     Ok(json!({}))
 }
 
@@ -2551,27 +2519,28 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
         let (datasets, publishers) = dry_run_records(op_ctx, req_ctx).await?;
         (profile, dry_run) = validator.upload_profile(profile, &cat, &datasets, &publishers)?;
     }
-    let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
     let row = activity_row(
         req_ctx,
         "profile.propose",
         "Profile",
-        &format!("{}:{}", saved.id, saved.version),
-        format!("Saved profile {} {}", saved.id, saved.version),
-        json!({"id": saved.id, "version": saved.version, "activated": activate}),
+        &format!("{}:{}", profile.id, profile.version),
+        format!("Saved profile {} {}", profile.id, profile.version),
+        json!({"id": profile.id, "version": profile.version, "activated": activate}),
     );
-    if activate {
-        let read = cat.modified;
-        cat.active_profiles.retain(|p| p.profile_id != saved.id);
-        cat.active_profiles.push(crate::model::ProfilePin {
-            profile_id: saved.id.clone(),
-            version: saved.version.clone(),
-        });
-        cat.modified = TimestampTz::now();
-        op_ctx.store.save_catalogue(cat, Some(read), row).await?;
-    } else {
-        op_ctx.store.record_activity(req_ctx, row).await?;
+    if !activate {
+        let saved = op_ctx.store.save_profile(req_ctx, profile, row).await?;
+        return Ok(json!({ "profile": saved, "dryRun": dry_run }));
     }
+    // Activated: the row commits with the catalogue's new pin.
+    let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
+    let read = cat.modified;
+    cat.active_profiles.retain(|p| p.profile_id != saved.id);
+    cat.active_profiles.push(crate::model::ProfilePin {
+        profile_id: saved.id.clone(),
+        version: saved.version.clone(),
+    });
+    cat.modified = TimestampTz::now();
+    op_ctx.store.save_catalogue(cat, Some(read), row).await?;
     Ok(json!({ "profile": saved, "dryRun": dry_run }))
 }
 

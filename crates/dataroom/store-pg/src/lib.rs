@@ -202,25 +202,35 @@ fn db_err(e: sqlx::Error) -> DataroomError {
     DataroomError::Storage(e.to_string())
 }
 
-/// The publisher with this id, name or IRI in the caller's tenant, without following merges.
+/// The publisher with this id, name or IRI in the caller's tenant, without following merges;
+/// with `lock`, its row stays locked for the rest of the caller's transaction.
 async fn find_publisher(
     conn: &mut PgConnection,
     ctx: &RequestCtx,
     id_or_name: &str,
+    lock: bool,
 ) -> Result<Option<Publisher>> {
-    let row: Option<(Json<Publisher>,)> = sqlx::query_as(
-        "SELECT doc FROM dataroom.cat_publisher
+    macro_rules! find {
+        () => {
+            "SELECT doc FROM dataroom.cat_publisher
          WHERE org_id = $1 AND catalogue_id = $2
            AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3 OR uri COLLATE \"C\" = $3)
          ORDER BY (id COLLATE \"C\" = $3) DESC, (name COLLATE \"C\" = $3) DESC
-         LIMIT 1",
-    )
-    .bind(ctx.org_id.as_uuid())
-    .bind(ctx.catalogue_id.as_uuid())
-    .bind(id_or_name)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(db_err)?;
+         LIMIT 1"
+        };
+    }
+    let sql = if lock {
+        concat!(find!(), " FOR UPDATE")
+    } else {
+        find!()
+    };
+    let row: Option<(Json<Publisher>,)> = sqlx::query_as(sql)
+        .bind(ctx.org_id.as_uuid())
+        .bind(ctx.catalogue_id.as_uuid())
+        .bind(id_or_name)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(db_err)?;
     Ok(row.map(|(Json(p),)| p))
 }
 
@@ -362,6 +372,107 @@ async fn insert_activity(
     .bind(&row.object_id)
     .bind(&row.summary)
     .bind(Json(&row))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// [`insert_activity`] in the request's tenant, then the commit: the row lands with the change
+/// the transaction holds or neither does (AUD-02). A row with no `object_id` names `object_id`.
+async fn commit_with_activity(
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    ctx: &RequestCtx,
+    mut row: ActivityRow,
+    object_id: &str,
+) -> Result<()> {
+    if row.object_id.is_empty() {
+        object_id.clone_into(&mut row.object_id);
+    }
+    insert_activity(&mut tx, ctx.org_id, ctx.catalogue_id, row).await?;
+    tx.commit().await.map_err(db_err)
+}
+
+/// Writes a resource view row inside the caller's tenant transaction.
+async fn write_view(conn: &mut PgConnection, ctx: &RequestCtx, view: &ResourceView) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO dataroom.cat_view
+         (org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+            view_type = EXCLUDED.view_type,
+            title = EXCLUDED.title,
+            view_order = EXCLUDED.view_order,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&view.resource_id)
+    .bind(&view.id)
+    .bind(&view.view_type)
+    .bind(&view.title)
+    .bind(view.order)
+    .bind(Json(view))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Writes a harvest source row inside the caller's tenant transaction.
+async fn write_source(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    source: &HarvestSource,
+) -> Result<()> {
+    refuse_deleted(conn, ctx).await?;
+    sqlx::query(
+        "INSERT INTO dataroom.cat_harvest_source
+         (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+            name = EXCLUDED.name,
+            kind = EXCLUDED.kind,
+            url = EXCLUDED.url,
+            publisher_id = EXCLUDED.publisher_id,
+            enabled = EXCLUDED.enabled,
+            modified = EXCLUDED.modified,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&source.id)
+    .bind(&source.name)
+    .bind(source.kind.as_str())
+    .bind(&source.url)
+    .bind(&source.publisher_id)
+    .bind(source.enabled)
+    .bind(source.modified)
+    .bind(Json(source))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Writes a plugin row inside the caller's tenant transaction.
+async fn write_plugin(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    plugin: &CataloguePlugin,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO dataroom.cat_plugin (org_id, catalogue_id, name, modified, doc)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, catalogue_id, name) DO UPDATE SET
+            modified = EXCLUDED.modified,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&plugin.name)
+    .bind(plugin.modified)
+    .bind(Json(plugin))
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
@@ -810,13 +921,13 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let mut resolved = find_publisher(&mut tx, ctx, id_or_name).await?;
+            let mut resolved = find_publisher(&mut tx, ctx, id_or_name, false).await?;
             // Follow merge redirects (up to 4 hops, C16).
             for _ in 0..4 {
                 let Some(next) = resolved.as_ref().and_then(|p| p.merged_into.clone()) else {
                     break;
                 };
-                match find_publisher(&mut tx, ctx, &next).await? {
+                match find_publisher(&mut tx, ctx, &next, false).await? {
                     Some(found) => resolved = Some(found),
                     None => break,
                 }
@@ -846,11 +957,51 @@ impl Store for PgStore {
         })
     }
 
+    fn save_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut publisher: Publisher,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        Box::pin(async move {
+            publisher.org_id = ctx.org_id;
+            publisher.catalogue_id = ctx.catalogue_id;
+            if publisher.id.is_empty() {
+                publisher.id = format!("pub-{}", publisher.name);
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            if let Some(expected) = expected {
+                let stored: Option<(TimestampTz,)> = sqlx::query_as(
+                    "SELECT modified FROM dataroom.cat_publisher
+                     WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3
+                     FOR UPDATE",
+                )
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(&publisher.id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                if stored.is_none_or(|(m,)| m != expected) {
+                    return Err(changed_since_read("publisher", &publisher.name));
+                }
+            }
+            publisher.modified = next_modified(publisher.modified, expected);
+            write_publisher(&mut tx, ctx, &publisher).await?;
+            commit_with_activity(tx, ctx, activity, &publisher.id).await?;
+            Ok(publisher)
+        })
+    }
+
     fn merge_publishers<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         source_id_or_name: &'a str,
         target_id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
             let mut tx = self
@@ -858,15 +1009,16 @@ impl Store for PgStore {
                 .await?;
             // The source by its own record (an already merged source does not redirect to the
             // publisher it was merged into); the target as published, following redirects.
-            let Some(mut source) = find_publisher(&mut tx, ctx, source_id_or_name).await? else {
+            let Some(mut source) = find_publisher(&mut tx, ctx, source_id_or_name, true).await?
+            else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{source_id_or_name}' not found"
                 )));
             };
-            let mut target = find_publisher(&mut tx, ctx, target_id_or_name).await?;
+            let mut target = find_publisher(&mut tx, ctx, target_id_or_name, true).await?;
             for _ in 0..4 {
                 match target.as_ref().and_then(|t| t.merged_into.clone()) {
-                    Some(next) => match find_publisher(&mut tx, ctx, &next).await? {
+                    Some(next) => match find_publisher(&mut tx, ctx, &next, true).await? {
                         Some(found) => target = Some(found),
                         None => break,
                     },
@@ -887,7 +1039,8 @@ impl Store for PgStore {
             let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2
-                   AND (publisher_id COLLATE \"C\" = $3 OR publisher_id COLLATE \"C\" = $4)",
+                   AND (publisher_id COLLATE \"C\" = $3 OR publisher_id COLLATE \"C\" = $4)
+                 FOR UPDATE",
             )
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
@@ -906,7 +1059,7 @@ impl Store for PgStore {
             source.state = RecordState::Withdrawn;
             source.modified = now;
             write_publisher(&mut tx, ctx, &source).await?;
-            tx.commit().await.map_err(db_err)?;
+            commit_with_activity(tx, ctx, activity, &target.id).await?;
             Ok(target)
         })
     }
@@ -915,22 +1068,24 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
-            // The record named, never the one a merge points it to (as MemoryStore).
+            // The record named, never the one a merge points it to (as MemoryStore), read and
+            // written under its row lock (S11-25).
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let found = find_publisher(&mut tx, ctx, id_or_name).await?;
-            tx.commit().await.map_err(db_err)?;
-            let Some(mut pub_rec) = found else {
+            let Some(mut pub_rec) = find_publisher(&mut tx, ctx, id_or_name, true).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{id_or_name}' not found"
                 )));
             };
             pub_rec.state = RecordState::Withdrawn;
-            pub_rec.modified = TimestampTz::now();
-            self.upsert_publisher(ctx, pub_rec).await
+            pub_rec.modified = next_modified(TimestampTz::now(), Some(pub_rec.modified));
+            write_publisher(&mut tx, ctx, &pub_rec).await?;
+            commit_with_activity(tx, ctx, activity, &pub_rec.id).await?;
+            Ok(pub_rec)
         })
     }
 
@@ -1052,16 +1207,17 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let Some(ds) = self.get_dataset(ctx, id_or_name).await? else {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let Some(ds) = dataset_for_update(&mut tx, ctx, id_or_name).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "dataset '{id_or_name}' not found"
                 )));
             };
-            let mut tx = self
-                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
-                .await?;
             // Tables in the migration's order, so a concurrent migration cannot deadlock.
             sqlx::query(
                 "DELETE FROM dataroom.cat_dataset
@@ -1106,7 +1262,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            commit_with_activity(tx, ctx, activity, &ds.id).await?;
             Ok(())
         })
     }
@@ -1202,28 +1358,27 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_view
-                 (org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    view_type = EXCLUDED.view_type,
-                    title = EXCLUDED.title,
-                    view_order = EXCLUDED.view_order,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&view.resource_id)
-            .bind(&view.id)
-            .bind(&view.view_type)
-            .bind(&view.title)
-            .bind(view.order)
-            .bind(Json(&view))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_view(&mut tx, ctx, &view).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(view)
+        })
+    }
+
+    fn save_resource_view<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut view: ResourceView,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ResourceView>> {
+        Box::pin(async move {
+            if view.id.is_empty() {
+                view.id = format!("view-{}", uuid::Uuid::now_v7());
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_view(&mut tx, ctx, &view).await?;
+            commit_with_activity(tx, ctx, activity, &view.id).await?;
             Ok(view)
         })
     }
@@ -1232,6 +1387,7 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         view_id: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut tx = self
@@ -1247,12 +1403,12 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
             if res.rows_affected() == 0 {
                 return Err(DataroomError::NotFound(format!(
                     "resource view '{view_id}' not found"
                 )));
             }
+            commit_with_activity(tx, ctx, activity, view_id).await?;
             Ok(())
         })
     }
@@ -1358,34 +1514,29 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            refuse_deleted(&mut tx, ctx).await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_harvest_source
-                 (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    kind = EXCLUDED.kind,
-                    url = EXCLUDED.url,
-                    publisher_id = EXCLUDED.publisher_id,
-                    enabled = EXCLUDED.enabled,
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&source.id)
-            .bind(&source.name)
-            .bind(source.kind.as_str())
-            .bind(&source.url)
-            .bind(&source.publisher_id)
-            .bind(source.enabled)
-            .bind(source.modified)
-            .bind(Json(&source))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_source(&mut tx, ctx, &source).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(source)
+        })
+    }
+
+    fn save_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut source: HarvestSource,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<HarvestSource>> {
+        Box::pin(async move {
+            source.org_id = ctx.org_id;
+            source.catalogue_id = ctx.catalogue_id;
+            if source.id.is_empty() {
+                source.id = format!("hs-{}", source.name);
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_source(&mut tx, ctx, &source).await?;
+            commit_with_activity(tx, ctx, activity, &source.id).await?;
             Ok(source)
         })
     }
@@ -1752,6 +1903,41 @@ impl Store for PgStore {
         })
     }
 
+    fn save_profile<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        profile: ProfileRecord,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ProfileRecord>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let inserted = sqlx::query(
+                "INSERT INTO dataroom.cat_profile (org_id, catalogue_id, id, version, doc)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (org_id, catalogue_id, id, version) DO NOTHING",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&profile.id)
+            .bind(&profile.version)
+            .bind(Json(&profile))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if inserted.rows_affected() == 0 {
+                return Err(DataroomError::Conflict(format!(
+                    "profile '{}' version '{}' already exists; upload a new version",
+                    profile.id, profile.version
+                )));
+            }
+            let object_id = format!("{}:{}", profile.id, profile.version);
+            commit_with_activity(tx, ctx, activity, &object_id).await?;
+            Ok(profile)
+        })
+    }
+
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>> {
         Box::pin(async move {
             let mut tx = self
@@ -1838,22 +2024,26 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_plugin (org_id, catalogue_id, name, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (org_id, catalogue_id, name) DO UPDATE SET
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&plugin.name)
-            .bind(plugin.modified)
-            .bind(Json(&plugin))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_plugin(&mut tx, ctx, &plugin).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(plugin)
+        })
+    }
+
+    fn save_plugin<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut plugin: CataloguePlugin,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<CataloguePlugin>> {
+        Box::pin(async move {
+            plugin.org_id = ctx.org_id;
+            plugin.catalogue_id = ctx.catalogue_id;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_plugin(&mut tx, ctx, &plugin).await?;
+            commit_with_activity(tx, ctx, activity, &plugin.name).await?;
             Ok(plugin)
         })
     }
