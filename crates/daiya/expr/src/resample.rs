@@ -314,9 +314,8 @@ mod tests {
             one,
         )
         .expect("exactly the bound");
-        let [ExprValue::Series { points, .. }] = at_bound.as_slice() else {
-            panic!("{at_bound:?}");
-        };
+        assert_eq!(at_bound.len(), 1);
+        let points = points_of(&at_bound[0]);
         assert_eq!(points.len(), MAX_NEW_SERIES_LENGTH + 1);
         // A range ending at the clock's last millisecond stops there instead of overflowing.
         let edge = resample_frames(
@@ -329,9 +328,8 @@ mod tests {
             one,
         )
         .expect("edge of the clock");
-        let [ExprValue::Series { points, .. }] = edge.as_slice() else {
-            panic!("{edge:?}");
-        };
+        assert_eq!(edge.len(), 1);
+        let points = points_of(&edge[0]);
         assert_eq!(points.len(), 3);
         // Result too big (Grafana case "upsampling, result too big").
         let err = resample_frames("B", 1, ReducerId::Mean, Upsampler::Pad, 0, 11_000_000, one)
