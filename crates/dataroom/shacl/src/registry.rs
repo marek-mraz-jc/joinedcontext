@@ -13,7 +13,7 @@ use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfile, RdfLimits}
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::hash::BuildHasher;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 /// Derives [`FormFieldLayout`] entries for the dataset editor from a [`ShapesGraph`] (C17).
 pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormFieldLayout> {
@@ -167,6 +167,11 @@ pub type ProfileScope = (OrgId, CatalogueId);
 type ProfileKey = (Option<ProfileScope>, String, String);
 type ProfileMap = BTreeMap<ProfileKey, (ProfileRecord, ShapesGraph)>;
 
+/// A dry run's report that did not turn into JSON.
+fn dry_run_error(e: serde_json::Error) -> DataroomError {
+    DataroomError::Storage(format!("dry run: {e}"))
+}
+
 fn scope_of(catalogue: &Catalogue) -> ProfileScope {
     (catalogue.org_id, catalogue.id)
 }
@@ -247,7 +252,7 @@ impl ProfileRegistry {
     fn forget_stacks(&self) {
         self.stacks
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clear();
     }
 
@@ -255,7 +260,7 @@ impl ProfileRegistry {
     pub fn list(&self, scope: ProfileScope) -> Vec<ProfileRecord> {
         self.profiles
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .iter()
             .filter(|((o, _, _), _)| o.is_none_or(|o| o == scope))
             .map(|(_, (p, _))| p.clone())
@@ -270,7 +275,7 @@ impl ProfileRegistry {
         id: &str,
         version: Option<&str>,
     ) -> Option<ProfileRecord> {
-        let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
+        let guard = self.profiles.read().unwrap_or_else(PoisonError::into_inner);
         resolve(&guard, scope, id, version).map(|(rec, _)| rec.clone())
     }
 
@@ -278,7 +283,10 @@ impl ProfileRegistry {
     /// another replica), so a pinned uploaded profile keeps validating. A stored record whose
     /// shapes no longer parse stays out and its pin answers "not found".
     pub fn load_stored(&self, scope: ProfileScope, stored: &[ProfileRecord]) {
-        let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self
+            .profiles
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         let before = guard.len();
         for rec in stored.iter().filter(|r| !r.built_in) {
             let key = (Some(scope), rec.id.clone(), rec.version.clone());
@@ -301,7 +309,7 @@ impl ProfileRegistry {
         id: &str,
         version: Option<&str>,
     ) -> Result<Arc<Stack>> {
-        let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
+        let guard = self.profiles.read().unwrap_or_else(PoisonError::into_inner);
         let (target, _) = resolve(&guard, scope, id, version)
             .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
         let key = (
@@ -312,7 +320,7 @@ impl ProfileRegistry {
         if let Some(stack) = self
             .stacks
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .get(&key)
         {
             return Ok(stack.clone());
@@ -361,7 +369,7 @@ impl ProfileRegistry {
         });
         self.stacks
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .insert(key, stack.clone());
         Ok(stack)
     }
@@ -384,7 +392,10 @@ impl ProfileRegistry {
 
         // Register in memory, under the uploading catalogue only, so stacked_shapes resolves it.
         let replaced = {
-            let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+            let mut guard = self
+                .profiles
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
             guard.insert(key.clone(), (record.clone(), sg))
         };
         self.forget_stacks();
@@ -395,7 +406,10 @@ impl ProfileRegistry {
                 record.form_fields =
                     derive_form_layout(&stack.shapes, "http://www.w3.org/ns/dcat#Dataset");
                 {
-                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    let mut guard = self
+                        .profiles
+                        .write()
+                        .unwrap_or_else(PoisonError::into_inner);
                     if let Some((stored_rec, _)) = guard.get_mut(&key) {
                         stored_rec.form_fields.clone_from(&record.form_fields);
                     }
@@ -413,7 +427,10 @@ impl ProfileRegistry {
             Err(e) => {
                 // A refused upload is stored nowhere, so it is not resolvable either.
                 {
-                    let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+                    let mut guard = self
+                        .profiles
+                        .write()
+                        .unwrap_or_else(PoisonError::into_inner);
                     match replaced {
                         Some(before) => guard.insert(key, before),
                         None => guard.remove(&key),
@@ -677,8 +694,7 @@ impl DatasetValidator for ProfileRegistry {
             )));
         }
         let (saved, report) = self.upload_and_dry_run(profile, catalogue, datasets, publishers)?;
-        let report = serde_json::to_value(report)
-            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        let report = serde_json::to_value(report).map_err(dry_run_error)?;
         Ok((saved, report))
     }
 
@@ -691,8 +707,7 @@ impl DatasetValidator for ProfileRegistry {
         publishers: &BTreeMap<String, Publisher>,
     ) -> Result<(Value, Vec<ShaclValidationReport>)> {
         let report = self.dry_run(profile_id, version, catalogue, datasets, publishers)?;
-        let value = serde_json::to_value(&report)
-            .map_err(|e| DataroomError::Storage(format!("dry run: {e}")))?;
+        let value = serde_json::to_value(&report).map_err(dry_run_error)?;
         Ok((value, report.dataset_reports))
     }
 }
@@ -1566,6 +1581,16 @@ mod tests {
             .unwrap();
         assert_eq!(reports[0].profile_id, "city-ext");
         assert!(restarted.get(other_scope, "city-ext", None).is_none());
+    }
+
+    #[test]
+    fn a_report_that_is_no_json_is_a_storage_error_naming_the_dry_run() {
+        let not_json = serde_json::from_str::<u8>("x").expect_err("x is no number");
+        let e = dry_run_error(not_json);
+        assert!(
+            matches!(&e, DataroomError::Storage(m) if m.starts_with("dry run: expected value")),
+            "{e:?}"
+        );
     }
 
     #[test]

@@ -667,5 +667,42 @@ mod tests {
             let err = load(&[("dcat-ap-3.0.1", EU, FILES), ("c", text, &[])]).expect_err(text);
             assert!(err.contains('c'), "{err}");
         }
+        let loaded = |sources: &[Embedded<'_>]| load(sources).expect_err("refused");
+        let row = format!(r#""bases":["dcat-ap-3.0.1"],{row}"#);
+        let text: &'static str = Box::leak(child(&row).into_boxed_str());
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", EU, FILES), ("d", text, &[])]),
+            "profile d: id is not the directory's name"
+        );
+        let unversioned =
+            r#"{"id":"c","version":"","uri":"urn:x:c","source":"s","title":{"en":"C"}}"#;
+        assert_eq!(
+            loaded(&[("c", unversioned, &[])]),
+            "profile c: version, title and source are required"
+        );
+        let empty_prefix: &'static str = Box::leak(
+            child(&format!(
+                r#""contexts":[{{"prefixes":[""],"file":"a.ttl"}}],{row}"#
+            ))
+            .into_boxed_str(),
+        );
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", EU, FILES), ("c", empty_prefix, FILES)]),
+            "profile c: an empty context prefix would take every @context"
+        );
+        let silent = EU.replace(r#""serialisations":["turtle"],"#, "");
+        let silent: &'static str = Box::leak(silent.into_boxed_str());
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", silent, FILES)]),
+            "profile dcat-ap-3.0.1: no serialisation"
+        );
+        let half = EU.replace(
+            r#""render":{"identifier":true,"licence":true}"#,
+            r#""render":{"personalData":{"contains":"urn:x:yes","doesNotContain":"urn:x:no"}}"#,
+        );
+        let half: &'static str = Box::leak(half.into_boxed_str());
+        assert!(loaded(&[("dcat-ap-3.0.1", half, FILES)]).contains("dcat-ap-3.0.1"));
+        let alone = r#"{"id":"x","version":"1","uri":"urn:x:x","source":"s","title":{"en":"X"},"serialisations":["turtle"],"shapes":["a.ttl"]}"#;
+        assert_eq!(loaded(&[("x", alone, FILES)]), "no dcat-ap-3.0.1");
     }
 }

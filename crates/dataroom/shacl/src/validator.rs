@@ -1597,6 +1597,90 @@ mod tests {
         assert_eq!(count("LanguageInConstraintComponent"), 1, "{seen:?}");
         assert_eq!(count("UniqueLangConstraintComponent"), 1, "{seen:?}");
     }
+    /// Values a component cannot hold (an IRI for a datatype or a language, a literal for a
+    /// class or a path step), per-language counts of `rdf:langString`, paths that meet one
+    /// value twice, a focus node reached twice, `sh:node` naming a property shape, and the
+    /// severity and untagged message a shape states.
+    #[test]
+    fn rare_values_paths_and_shape_options() {
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ; sh:targetNode ex:i ;
+               sh:closed true ; sh:ignoredProperties ( <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ex:must ex:hint ) ;
+               sh:property [ sh:path ex:dt ; sh:datatype xsd:string ] ;
+               sh:property [ sh:path ex:int ; sh:datatype xsd:integer ] ;
+               sh:property [ sh:path ex:count ; sh:datatype xsd:nonNegativeInteger ] ;
+               sh:property [ sh:path ex:cls ; sh:class ex:Kind ] ;
+               sh:property [ sh:path ex:lang ; sh:languageIn ( \"en\" ) ] ;
+               sh:property [ sh:path ex:name ; sh:datatype <http://www.w3.org/1999/02/22-rdf-syntax-ns#langString> ; sh:maxCount 1 ] ;
+               sh:property [ sh:path ( ex:hop ex:end ) ; sh:maxCount 1 ] ;
+               sh:property [ sh:path [ sh:alternativePath ( ex:a ex:b ) ] ; sh:maxCount 1 ] ;
+               sh:property [ sh:path ex:ref ; sh:node ex:Named ] ;
+               sh:property [ sh:path ex:hop ] ; sh:property [ sh:path ex:a ] ; sh:property [ sh:path ex:b ] .
+             ex:Named a sh:PropertyShape ; sh:path ex:v ; sh:minCount 1 .
+             ex:W a sh:NodeShape ; sh:targetClass ex:Item ; sh:property [ sh:path ex:must ;
+               sh:minCount 1 ; sh:severity sh:Warning ; sh:message \"Untagged\" ] .
+             ex:I a sh:NodeShape ; sh:targetClass ex:Item ; sh:property [ sh:path ex:hint ;
+               sh:minCount 1 ; sh:severity sh:Info ] .";
+        let ok = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:dt \"s\" ; ex:int \"-3\"^^xsd:integer ; ex:count \"3\"^^xsd:nonNegativeInteger ;
+                ex:cls ex:k ; ex:lang \"x\"@en-GB ; ex:name \"a\"@en, \"b\"@cs ;
+                ex:hop ex:h1, ex:h2 ; ex:a ex:same ; ex:b ex:same ; ex:ref ex:r ; ex:must 1 ; ex:hint 1 .
+             ex:h1 ex:end ex:same . ex:h2 ex:end ex:same . ex:k a ex:Kind . ex:r ex:v 1 .",
+        );
+        assert!(ok.conforms, "{:?}", ok.findings);
+        assert!(ok.findings.is_empty(), "{:?}", ok.findings);
+
+        let bad = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:dt ex:x ; ex:int \"x\"^^xsd:integer ; ex:count \"-1\"^^xsd:nonNegativeInteger ;
+                ex:cls \"k\" ; ex:lang ex:x ; ex:name \"a\"@en, \"b\"@en, \"c\"@cs ;
+                ex:hop \"lit\", ex:h1 ; ex:a ex:one ; ex:b ex:two ; ex:ref ex:r ; ex:extra 1 .
+             ex:h1 ex:end ex:e1, ex:e2 .",
+        );
+        let seen = components(&bad);
+        let count = |c: &str| seen.iter().filter(|s| *s == c).count();
+        assert_eq!(count("DatatypeConstraintComponent"), 3, "{seen:?}");
+        assert_eq!(count("ClassConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(count("LanguageInConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(
+            count("MaxCountConstraintComponent"),
+            3,
+            "per language, path, alternative: {seen:?}"
+        );
+        assert_eq!(count("NodeConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(
+            count("ClosedConstraintComponent"),
+            1,
+            "only ex:extra: {seen:?}"
+        );
+        let by_shape = |path: &str| {
+            bad.findings
+                .iter()
+                .filter(|f| f.result_path.as_deref() == Some(path))
+                .map(|f| (f.severity, f.message.get("en").cloned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            by_shape("https://example.org/must"),
+            [(ShaclSeverity::Warning, Some("Untagged".to_owned()))],
+            "an untagged message reads as English"
+        );
+        assert_eq!(
+            by_shape("https://example.org/hint")[0].0,
+            ShaclSeverity::Info
+        );
+        assert_eq!(
+            bad.findings
+                .iter()
+                .filter(|f| f.focus_node == "https://example.org/i"
+                    && f.source_constraint_component
+                        .ends_with("ClosedConstraintComponent"))
+                .count(),
+            1,
+            "a node both targeted and an instance is one focus"
+        );
+    }
+
     #[test]
     fn hex_binary_and_untagged_names() {
         let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
