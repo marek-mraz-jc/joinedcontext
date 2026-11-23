@@ -278,6 +278,14 @@ pub fn compile_shapes_from_rdf(g: &RdfGraph) -> Result<ShapesGraph> {
                     "property shape {p_subj} has an unsupported sh:path"
                 ));
             }
+            // One that states constraints without a path would check nothing, silently.
+            None if g
+                .triples
+                .iter()
+                .any(|t| t.subject == p_subj && t.predicate != ns::RDF_TYPE) =>
+            {
+                return refuse(format!("property shape {p_subj} has no sh:path"));
+            }
             None => {}
         }
     }
@@ -1685,6 +1693,21 @@ mod tests {
             1,
             "a node both targeted and an instance is one focus"
         );
+    }
+
+    /// A property shape without `sh:path` is refused, and a node shape without a target that
+    /// `sh:node` names checks the value as a node shape.
+    #[test]
+    fn a_pathless_property_is_refused_and_an_untargeted_node_shape_checks_values() {
+        let pathless =
+            shapes("ex:S a sh:NodeShape ; sh:targetClass ex:C ; sh:property [ sh:minCount 1 ] .");
+        assert!(pathless.is_err(), "{pathless:?}");
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:ref ; sh:node ex:N ] .
+             ex:N a sh:NodeShape ; sh:property [ sh:path ex:v ; sh:minCount 1 ] .";
+        assert!(report(shapes_body, "ex:i a ex:Item ; ex:ref ex:r . ex:r ex:v 1 .").conforms);
+        let bad = report(shapes_body, "ex:i a ex:Item ; ex:ref ex:r .");
+        assert_eq!(components(&bad), ["NodeConstraintComponent"]);
     }
 
     #[test]
