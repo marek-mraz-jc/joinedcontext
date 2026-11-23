@@ -558,6 +558,12 @@ async fn odata_a_hidden_target_or_value_reads_like_an_absent_one() {
     assert_eq!(status, StatusCode::CREATED, "{made}");
     let (status, body) = get(&app, "Car('urn:ngsi-ld:Car:7')/owner").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "no owner: {body}");
+    let (status, body) = get(&app, "Car('urn:ngsi-ld:Car:7')/owner/$ref").await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "no owner, no reference: {body}"
+    );
     let (status, body) = get(&app, "Car('urn:ngsi-ld:Car:7')/drivers").await;
     assert_eq!(
         (status, &body["value"]),
@@ -573,6 +579,7 @@ async fn odata_a_hidden_target_or_value_reads_like_an_absent_one() {
         "Car('urn:ngsi-ld:Car:1')/drivers?$filter=name%20eq%20'Ann'",
         "Car('urn:ngsi-ld:Car:1')/drivers/$count",
         "Car('urn:ngsi-ld:Car:1')/owner?$expand=*",
+        "Car('urn:ngsi-ld:Car:1')/owner?$select=@Core.Description",
         "Car('urn:ngsi-ld:Car:1')/scope",
     ] {
         let (status, body) = get(&app, path).await;

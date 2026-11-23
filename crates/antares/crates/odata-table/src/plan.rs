@@ -254,6 +254,10 @@ impl Planner<'_> {
             match model.member(&ty, name) {
                 None => return Err(TableError::UnknownProperty(member.path.join("/"))),
                 Some(Member::Primitive { collection: false }) if last => {}
+                // a primitive has no members: `org/size` names nothing
+                Some(Member::Primitive { collection: false }) => {
+                    return Err(TableError::UnknownProperty(member.path.join("/")))
+                }
                 Some(Member::Complex {
                     ty: next,
                     collection: false,

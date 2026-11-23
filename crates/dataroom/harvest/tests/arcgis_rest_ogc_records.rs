@@ -226,6 +226,7 @@ fn extents_and_licences_read_as_the_catalogue_knows_them() {
         Some("cc-zero")
     );
     assert_eq!(open_licence("© Esri"), None);
+    assert_eq!(open_licence("CC-BY-SA").map(|l| l.0), Some("cc-by-sa"));
 }
 
 #[test]
@@ -285,6 +286,141 @@ fn a_records_page_keeps_its_records_and_skips_a_malformed_one_with_its_reason() 
     }
 }
 
+#[test]
+fn a_record_reads_a_numeric_id_its_licence_link_bbox_html_page_and_link_formats() {
+    let (org, cat) = (
+        OrgId::from_uuid(Uuid::nil()),
+        CatalogueId::from_uuid(Uuid::nil()),
+    );
+    let url = format!("{RECORDS}/items?limit=100&f=json");
+    let link = |t: &str, href: &str| json!({"rel": "item", "type": t, "href": href, "title": ""});
+    let page = json!({"features": [{
+        "id": 7,
+        "bbox": [17.0, 48.1, 17.2, 48.2],
+        "properties": {"title": "Stromy &amp; parky", "description": "", "created": "2026-01-02T00:00:00Z"},
+        "links": [
+            {"rel": "license", "href": "https://creativecommons.org/licenses/by/4.0/"},
+            {"rel": "alternate", "type": "text/html", "href": "../html/7"},
+            link("text/csv", "a.csv"), link("application/zip", "a.zip"),
+            link("application/pdf", "a.pdf"), link("text/xml", "a.xml"),
+            link("application/x-shapefile", "a.shp"), link("OGC:WFS", "wfs"),
+            link("application/vnd.custom", "a.bin"),
+        ]
+    }]})
+    .to_string();
+    let mut src = records_source();
+    src.spelling_fixes
+        .insert("parky".into(), "parky mesta".into());
+    src.target_publisher_iri = Some("https://data.gov.cz/zdroj/ovm/1".into());
+    let got = parse_ogc_records_page(org, cat, &src, &url, &page, "sk").expect("page");
+    let (id, ds) = &got.kept[0];
+    assert_eq!(id, "7");
+    let publisher = ds.publisher.as_ref().expect("the publisher IRI");
+    assert_eq!(
+        publisher.uri.as_deref(),
+        Some("https://data.gov.cz/zdroj/ovm/1")
+    );
+    assert_eq!(publisher.name["sk"], "city");
+    assert_eq!(
+        title(ds),
+        "Stromy & parky mesta",
+        "entities decoded, spelling fixed"
+    );
+    assert_eq!(
+        ds.description["sk"], "Stromy & parky mesta",
+        "no description: the title"
+    );
+    assert_eq!(
+        ds.licence_id.as_deref(),
+        Some("cc-by"),
+        "{:?}",
+        ds.licence_id
+    );
+    assert!(ds.distributions.iter().all(|d| d.licence == ds.licence_url));
+    assert!(
+        ds.extras["spatial"].contains("48.2"),
+        "the bbox array: {:?}",
+        ds.extras
+    );
+    assert_eq!(
+        ds.landing_page.as_deref(),
+        Some("https://demo.pygeoapi.io/master/collections/html/7")
+    );
+    let formats: Vec<Option<&str>> = ds
+        .distributions
+        .iter()
+        .map(|d| d.format.as_deref())
+        .collect();
+    assert_eq!(
+        formats,
+        [
+            Some("CSV"),
+            Some("ZIP"),
+            Some("PDF"),
+            Some("XML"),
+            Some("SHP"),
+            Some("WFS"),
+            Some("application/vnd.custom")
+        ]
+    );
+    assert!(
+        ds.distributions
+            .iter()
+            .all(|d| d.title["sk"] == "Stromy & parky mesta"),
+        "an empty link title takes the record's"
+    );
+    // The source skips the record by its id, with its reason.
+    src.skip_items.insert("7".into(), "not ours".into());
+    let skipped = parse_ogc_records_page(org, cat, &src, &url, &page, "sk").expect("page");
+    assert!(skipped.kept.is_empty());
+    assert_eq!(skipped.skipped[0].reason, "not ours");
+    // A page address that does not parse is refused.
+    assert!(parse_ogc_records_page(org, cat, &src, "not a url", &page, "sk").is_err());
+}
+
+#[test]
+fn a_service_reads_its_initial_extent_and_skips_a_layer_without_an_id() {
+    let (org, cat) = (
+        OrgId::from_uuid(Uuid::nil()),
+        CatalogueId::from_uuid(Uuid::nil()),
+    );
+    let body = json!({
+        "serviceDescription": "Stromy &gt; kry",
+        "initialExtent": {"xmin": 17.0, "ymin": 48.1, "xmax": 17.2, "ymax": 48.2, "spatialReference": {"wkid": 4326}},
+        "layers": [{"name": "no id"}, {"id": 3, "name": "Stromy"}]
+    })
+    .to_string();
+    let ds = parse_arcgis_service(
+        org,
+        cat,
+        &gis_source(),
+        &format!("{GIS}/Trees/MapServer"),
+        "Trees/MapServer",
+        &body,
+        "sk",
+    )
+    .expect("a service");
+    assert!(ds.extras["spatial"].contains("48.2"), "{:?}", ds.extras);
+    assert_eq!(ds.description["sk"], "Stromy > kry", "entities decoded");
+    let urls: Vec<&str> = ds
+        .distributions
+        .iter()
+        .map(|d| d.access_url.as_str())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            format!("{GIS}/Trees/MapServer"),
+            format!("{GIS}/Trees/MapServer/3")
+        ],
+        "the service, then only the layer with an id"
+    );
+    assert_eq!(
+        arcgis_services_root("https://gis.example/arcgis/x?f=json"),
+        "https://gis.example/arcgis/x"
+    );
+}
+
 #[tokio::test]
 async fn an_arcgis_directory_harvests_its_map_and_feature_servers_and_reruns_changed_only() {
     let w = world(&[]).await;
@@ -336,6 +472,111 @@ async fn an_arcgis_url_naming_one_service_reads_that_service_alone() {
         Some("Elevation/GlacierBay/MapServer")
     );
     assert_eq!(title(&ds[0]), "Glacier Bay Elevation");
+}
+
+#[tokio::test]
+async fn a_service_the_source_skips_by_id_is_listed_as_skipped_with_its_title() {
+    let w = world(&[]).await;
+    let mut src = gis_source();
+    src.skip_items
+        .insert("Elevation/GlacierBay/MapServer".into(), "not ours".into());
+    let f = gis_fetcher();
+    // A service that answers an error is skipped with the reason, under its id.
+    f.insert(
+        format!("{GIS}/Census/MapServer?f=json"),
+        Some("application/json"),
+        json!({"error": {"code": 500, "message": "boom"}}).to_string(),
+    );
+    let run = engine(&f)
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    let census = run
+        .skipped
+        .iter()
+        .find(|s| s.item_id == "Census/MapServer")
+        .expect("census skipped");
+    assert_eq!(census.title, "Census/MapServer");
+    assert!(!census.reason.is_empty());
+    let skipped: Vec<(&str, &str)> = run
+        .skipped
+        .iter()
+        .filter(|s| s.item_id == "Elevation/GlacierBay/MapServer")
+        .map(|s| (s.title.as_str(), s.reason.as_str()))
+        .collect();
+    assert_eq!(skipped, [("Glacier Bay Elevation", "not ours")]);
+    assert!(run.created_count > 0, "the other services are kept");
+}
+
+/// A records page whose `next` is `next` and whose features are `ids`.
+fn records_page(ids: &[&str], matched: Option<usize>, next: Option<&str>) -> String {
+    let features: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"id": id, "properties": {"title": format!("Record {id}")}, "links": []}))
+        .collect();
+    let mut links = vec![];
+    if let Some(n) = next {
+        links.push(json!({"rel": "next", "href": n}));
+    }
+    let mut page = json!({"features": features, "links": links});
+    if let Some(m) = matched {
+        page["numberMatched"] = json!(m);
+    }
+    page.to_string()
+}
+
+#[tokio::test]
+async fn a_records_read_that_loops_pages_forever_or_repeats_an_id_changes_nothing() {
+    let first = format!("{RECORDS}/items?limit=100&f=json");
+    let geo = Some("application/geo+json");
+    let cases: Vec<(&str, MapFetcher)> = vec![
+        ("the pages loop back", {
+            let f = MapFetcher::new();
+            f.insert(&first, geo, records_page(&["a"], None, Some(&first)));
+            f
+        }),
+        ("still pages after", {
+            let f = MapFetcher::new();
+            f.insert(
+                &first,
+                geo,
+                records_page(&["p0"], None, Some(&format!("{RECORDS}/p/1"))),
+            );
+            for i in 1..=60 {
+                let id = format!("p{i}");
+                f.insert(
+                    format!("{RECORDS}/p/{i}"),
+                    geo,
+                    records_page(
+                        &[id.as_str()],
+                        None,
+                        Some(&format!("{RECORDS}/p/{}", i + 1)),
+                    ),
+                );
+            }
+            f
+        }),
+        ("1 of them distinct", {
+            let f = MapFetcher::new();
+            f.insert(&first, geo, records_page(&["a", "a"], Some(2), None));
+            f
+        }),
+    ];
+    for (want, f) in cases {
+        let w = world(&[]).await;
+        let res = engine(&f)
+            .run_source(&w.ctx, &w.store, &records_source())
+            .await;
+        let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+        let said = res
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default()
+            + runs[0].error.as_deref().unwrap_or("");
+        assert!(said.contains(want), "{want}: {said}");
+        assert!(active_names(&w).await.is_empty(), "{want}");
+    }
 }
 
 #[tokio::test]
@@ -449,6 +690,175 @@ async fn a_source_whose_name_resolves_to_a_private_address_is_refused() {
         assert!(f.pinned_seen().is_empty(), "{}", src.name);
         assert!(active_names(&w).await.is_empty(), "{}", src.name);
     }
+}
+
+#[tokio::test]
+async fn the_source_test_reads_a_service_and_a_sparql_answer_and_needs_its_catalogue() {
+    let w = world(&[]).await;
+    let f = MapFetcher::new();
+    let service = format!("{GIS}/Trees/MapServer");
+    f.insert(
+        format!("{service}?f=json"),
+        Some("application/json"),
+        json!({"layers": []}).to_string(),
+    );
+    let nkod_url = "https://data.gov.cz/sparql?query=SELECT%201";
+    f.insert(
+        nkod_url,
+        Some("application/sparql-results+json"),
+        json!({"results": {"bindings": []}}).to_string(),
+    );
+    let e = engine(&f);
+    let mut gis = gis_source();
+    gis.url = service.clone();
+    let nkod = source("nkod-sparql", "nkod", nkod_url, &["data.gov.cz"]);
+    for src in [&gis, &nkod] {
+        let got = e.test_source(&w.ctx, &w.store, src).await.unwrap();
+        assert_eq!(got, SourceTest::Ok, "{}", src.name);
+    }
+    // A service without layers still reads as one by its description.
+    f.insert(
+        format!("{service}?f=json"),
+        Some("application/json"),
+        json!({"serviceDescription": "Stromy"}).to_string(),
+    );
+    assert_eq!(
+        e.test_source(&w.ctx, &w.store, &gis).await.unwrap(),
+        SourceTest::Ok
+    );
+    // An error answer is no service; bindings that are no list are no SPARQL answer.
+    f.insert(
+        format!("{service}?f=json"),
+        Some("application/json"),
+        json!({"error": {"code": 499}}).to_string(),
+    );
+    f.insert(
+        nkod_url,
+        Some("application/json"),
+        json!({"results": {"bindings": {}}}).to_string(),
+    );
+    for src in [&gis, &nkod] {
+        let got = e.test_source(&w.ctx, &w.store, src).await.unwrap();
+        assert_eq!(got, SourceTest::NotTheExpectedFormat, "{}", src.name);
+    }
+    // Another catalogue's context finds no catalogue.
+    let other = dataroom_core::RequestCtx::new(
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+        w.ctx.subject.clone(),
+    );
+    let err = e.test_source(&other, &w.store, &gis).await.unwrap_err();
+    assert!(
+        matches!(err, dataroom_core::DataroomError::NotFound(_)),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn the_source_test_reads_ckan_and_hub_first_pages_and_refuses_an_nkod_source_without_its_iri()
+{
+    let w = world(&[]).await;
+    let f = MapFetcher::new();
+    let ckan = "https://ckan.remote.example";
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?rows=1&start=0"),
+        Some("application/json"),
+        ckan_page(0, vec![]),
+    );
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?q=air&rows=1&start=0"),
+        Some("application/json"),
+        ckan_page(0, vec![]),
+    );
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?rows=1&start=0&x=1"),
+        Some("application/json"),
+        "not json",
+    );
+    let hub = "https://hub.city.example";
+    f.insert(
+        format!("{hub}/api/search/v1/collections/dataset/items?limit=1"),
+        Some("application/json"),
+        json!({"features": []}).to_string(),
+    );
+    let e = engine(&f);
+    let hosts = ["ckan.remote.example", "hub.city.example", "data.gov.cz"];
+    let cases = [
+        (source("ckan-action", "c1", ckan, &hosts), SourceTest::Ok),
+        (
+            source(
+                "ckan-action",
+                "c2",
+                &format!("{ckan}/api/3/action/package_search?q=air"),
+                &hosts,
+            ),
+            SourceTest::Ok,
+        ),
+        (source("arc-gis-hub", "h", hub, &hosts), SourceTest::Ok),
+        (
+            source("nkod-sparql", "n", "https://data.gov.cz/sparql", &hosts),
+            SourceTest::RefusedHost,
+        ),
+    ];
+    for (src, want) in cases {
+        let got = e.test_source(&w.ctx, &w.store, &src).await.unwrap();
+        assert_eq!(got, want, "{}", src.name);
+    }
+}
+
+#[tokio::test]
+async fn a_preview_whose_listing_fails_is_partial_with_no_records() {
+    let w = world(&[]).await;
+    // The test's one-record page answers; the listing's first page does not.
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{RECORDS}/items?limit=1&f=json"),
+        Some("application/geo+json"),
+        fixture("ogc-records/page1.json"),
+    );
+    let p = engine(&f)
+        .preview_source(&w.ctx, &w.store, &records_source())
+        .await
+        .expect("preview");
+    assert_eq!(p.outcome, SourceTest::Ok);
+    assert!(p.partial);
+    assert!(p.records.is_empty());
+}
+
+#[tokio::test]
+async fn a_preview_lists_within_the_sources_budget_and_needs_its_catalogue() {
+    let w = world(&[]).await;
+    let f = records_fetcher();
+    f.insert(
+        format!("{RECORDS}/items?limit=1&f=json"),
+        Some("application/geo+json"),
+        fixture("ogc-records/page1.json"),
+    );
+    let e = engine(&f);
+    let mut src = records_source();
+    src.budget = Some(HarvestBudget {
+        records: 1,
+        bytes: 10_000_000,
+    });
+    let p = e
+        .preview_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("preview");
+    assert_eq!(p.outcome, SourceTest::Ok);
+    assert!(
+        !p.records.is_empty(),
+        "the page listed within its byte budget"
+    );
+    let other = dataroom_core::RequestCtx::new(
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+        w.ctx.subject.clone(),
+    );
+    let err = e.preview_source(&other, &w.store, &src).await.unwrap_err();
+    assert!(
+        matches!(err, dataroom_core::DataroomError::NotFound(_)),
+        "{err}"
+    );
 }
 
 #[tokio::test]

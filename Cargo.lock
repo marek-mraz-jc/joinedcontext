@@ -6987,6 +6987,7 @@ dependencies = [
  "axum",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
 ]
 

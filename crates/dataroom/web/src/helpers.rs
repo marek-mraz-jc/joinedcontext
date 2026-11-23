@@ -39,13 +39,14 @@ pub fn nuts_label(uri_or_code: &str, lang: &str) -> String {
     // Parsed once per process; a broken file leaves every label as its code.
     static NUTS: std::sync::LazyLock<BTreeMap<String, BTreeMap<String, String>>> =
         std::sync::LazyLock::new(|| serde_json::from_str(NUTS_JSON).unwrap_or_default());
-    if let Some(names) = NUTS.get(code) {
-        let l = normalize_lang_code(lang);
-        if let Some(name) = names.get(&l).or_else(|| names.get("en")) {
-            return format!("{name} ({text})");
-        }
+    let l = normalize_lang_code(lang);
+    match NUTS
+        .get(code)
+        .and_then(|names| names.get(&l).or_else(|| names.get("en")))
+    {
+        Some(name) => format!("{name} ({text})"),
+        None => text,
     }
-    text
 }
 
 /// Replaces Word Symbol-font private-use bullets (`\u{f0b7}` etc.) with Unicode bullets and drops
@@ -404,13 +405,12 @@ pub fn jc_data_formats(ds: &Dataset) -> Vec<&'static str> {
 
 /// Returns the human-readable format chips for a dataset (`jc_format_chips` in `plugin.py`).
 pub fn jc_format_chips(ds: &Dataset) -> Vec<String> {
-    let mut out = Vec::new();
-    for code in jc_data_formats(ds) {
-        if let Some((_, label)) = DATA_FORMATS_ORDER.iter().find(|(c, _)| *c == code) {
-            out.push((*label).to_owned());
-        }
-    }
-    out
+    let codes = jc_data_formats(ds);
+    DATA_FORMATS_ORDER
+        .iter()
+        .filter(|(c, _)| codes.contains(c))
+        .map(|(_, label)| (*label).to_owned())
+        .collect()
 }
 
 /// Checks if a distribution is the harvest's link to the publisher's own page (`jc_is_source` in `plugin.py`).
@@ -592,10 +592,9 @@ pub fn jc_resource_label(
     if jc_is_source(dist, ds) {
         return jc_t("at_publisher", lang);
     }
+    // `raw_name` is trimmed, so `rest` is empty only when the title is.
     if !rest.is_empty() {
         rest.to_owned()
-    } else if !raw_name.is_empty() {
-        raw_name.to_owned()
     } else {
         dist.format.clone().unwrap_or_else(|| dist.id.clone())
     }
@@ -691,8 +690,6 @@ pub fn jc_what(dist: &Distribution, lang: &str) -> String {
     };
     if base.is_empty() {
         String::new()
-    } else if base.ends_with('.') || base.ends_with('…') {
-        base.to_owned()
     } else {
         format!("{base}.")
     }
@@ -768,15 +765,14 @@ pub fn jc_resource_sections(
 
     let mut out = Vec::new();
     for key in ["data", "api", "schema", "source"] {
+        // A bucket exists only once an item went into it.
         if let Some(items) = buckets.remove(key) {
-            if !items.is_empty() {
-                out.push(ResourceSectionView {
-                    key: key.to_owned(),
-                    title: jc_t(&format!("section_{key}"), lang),
-                    lead: jc_t(&format!("section_{key}_lead"), lang),
-                    items,
-                });
-            }
+            out.push(ResourceSectionView {
+                key: key.to_owned(),
+                title: jc_t(&format!("section_{key}"), lang),
+                lead: jc_t(&format!("section_{key}_lead"), lang),
+                items,
+            });
         }
     }
     out
@@ -1779,8 +1775,7 @@ pub fn jc_schema_org_script(
     lang: &str,
 ) -> String {
     let val = jc_schema_org_dict(cat, ds, publisher, branding, lang);
-    serde_json::to_string(&val)
-        .unwrap_or_else(|_| "{}".into())
+    val.to_string()
         .replace('<', "\\u003c")
         .replace('>', "\\u003e")
         .replace('&', "\\u0026")
@@ -2201,11 +2196,10 @@ fn page_text(name: &str, branding: &BrandingBlock, code: &str) -> Option<(String
         .get(&(name.to_owned(), code.to_owned()))
         .map(|md| jc_core::opendata_pages::render(md, &vars));
     let shown = own.unwrap_or_else(|| jc_core::opendata_pages::render(built_in, &vars));
-    let title = shown.title.unwrap_or_else(|| {
-        jc_core::opendata_pages::render(built_in, &[])
-            .title
-            .unwrap_or_else(|| name.to_owned())
-    });
+    let title = shown
+        .title
+        .or_else(|| jc_core::opendata_pages::render(built_in, &[]).title)
+        .unwrap_or(name.to_owned());
     Some((title, shown.html))
 }
 

@@ -131,19 +131,19 @@ pub async fn begin(pool: &PgPool) -> Result<Tx, sqlx::Error> {
         return Ok(Tx(Inner::Own(pool.begin().await?)));
     };
     let mut guard: OwnedMutexGuard<Option<Held>> = unit.conn.lock_owned().await;
-    if guard.is_none() {
-        let mut held = Held {
-            conn: pool.acquire().await?,
-            open: true,
-        };
-        exec(&mut held.conn, "BEGIN").await?;
-        exec(&mut held.conn, IDLE_IN_TRANSACTION).await?;
-        *guard = Some(held);
-    }
-    let Ok(mut conn) = OwnedMutexGuard::try_map(guard, |held| held.as_mut().map(|h| &mut h.conn))
-    else {
-        return Err(sqlx::Error::PoolClosed);
+    let held = match guard.take() {
+        Some(held) => held,
+        None => {
+            let mut held = Held {
+                conn: pool.acquire().await?,
+                open: true,
+            };
+            exec(&mut held.conn, "BEGIN").await?;
+            exec(&mut held.conn, IDLE_IN_TRANSACTION).await?;
+            held
+        }
     };
+    let mut conn = OwnedMutexGuard::map(guard, |slot| &mut slot.insert(held).conn);
     undo_dirty(&mut conn, &unit.dirty).await?;
     exec(&mut conn, "SAVEPOINT jc_call").await?;
     Ok(Tx(Inner::Unit {
@@ -192,17 +192,12 @@ pub async fn after_commit<F>(fut: F)
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let mut fut = Some(fut);
-    let _ = UNIT.try_with(|u| {
-        if let Some(f) = fut.take() {
-            u.after
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(Box::pin(f));
-        }
-    });
-    if let Some(f) = fut {
-        f.await;
+    match UNIT.try_with(|u| Arc::clone(&u.after)) {
+        Ok(after) => after
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Box::pin(fut)),
+        Err(_) => fut.await,
     }
 }
 
@@ -261,17 +256,21 @@ where
         held.open = result.is_err();
         drop(held);
         if result.is_ok() {
-            run_after(after).await;
+            // On a task of its own: work that panics after the commit cannot make a change that
+            // stands answer as not saved.
+            let _ = tokio::spawn(run_after(after)).await;
         }
         result
     })
-    .await;
+    .await
+    .map_err(std::io::Error::other)
+    .map_err(sqlx::Error::Io)
+    .and_then(std::convert::identity);
     match ended {
-        Ok(Ok(())) => Ok(out),
-        Ok(Err(e)) if commit => Err(UnitError::Commit(e)),
-        Err(e) if commit => Err(UnitError::Commit(sqlx::Error::Io(std::io::Error::other(e)))),
+        Ok(()) => Ok(out),
+        Err(e) if commit => Err(UnitError::Commit(e)),
         // A rollback that failed closed its connection: the request already failed.
-        _ => Ok(out),
+        Err(_) => Ok(out),
     }
 }
 

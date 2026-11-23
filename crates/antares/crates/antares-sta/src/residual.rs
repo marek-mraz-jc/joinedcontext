@@ -594,21 +594,20 @@ fn rank(
     })
 }
 
-/// `items` in `$orderby` order, stable for ties. The order is worked out
-/// over positions, so each member's text fallback is written at most once
-/// per item and key instead of on both sides of every comparison (R3-027).
+/// `items` in `$orderby` order, stable for ties. Each item travels with its
+/// text fallbacks, so a member's text is written at most once per item and
+/// key instead of on both sides of every comparison (R3-027).
 pub fn sort(items: &mut [Value], keys: &[(Vec<String>, bool)]) {
-    let texts: Vec<Vec<OnceCell<String>>> = items
-        .iter()
-        .map(|_| keys.iter().map(|_| OnceCell::new()).collect())
+    let mut rows: Vec<(Value, Vec<OnceCell<String>>)> = items
+        .iter_mut()
+        .map(|v| {
+            (
+                std::mem::take(v),
+                keys.iter().map(|_| OnceCell::new()).collect(),
+            )
+        })
         .collect();
-    let mut at: Vec<usize> = (0..items.len()).collect();
-    at.sort_by(|&i, &j| {
-        let (Some(a), Some(b), Some(ta), Some(tb)) =
-            (items.get(i), items.get(j), texts.get(i), texts.get(j))
-        else {
-            return Ordering::Equal;
-        };
+    rows.sort_by(|(a, ta), (b, tb)| {
         keys.iter()
             .zip(ta.iter().zip(tb))
             .map(|((path, desc), (ca, cb))| {
@@ -622,11 +621,7 @@ pub fn sort(items: &mut [Value], keys: &[(Vec<String>, bool)]) {
             .find(|o| o.is_ne())
             .unwrap_or(Ordering::Equal)
     });
-    let sorted: Vec<Value> = at
-        .iter()
-        .map(|&i| items.get_mut(i).map(std::mem::take).unwrap_or_default())
-        .collect();
-    for (slot, v) in items.iter_mut().zip(sorted) {
+    for (slot, (v, _)) in items.iter_mut().zip(rows) {
         *slot = v;
     }
 }

@@ -532,6 +532,53 @@ mod tests {
     }
 
     #[test]
+    fn an_import_out_of_the_project_a_bound_stylesheet_and_a_redeclaration_are_named() {
+        let project = transpile(&files(&[
+            (
+                "src/App.tsx",
+                "import x from \"../../secrets\";\nexport default x;\n",
+            ),
+            (
+                "src/Look.tsx",
+                "import look from \"./app.css\";\nexport default look;\n",
+            ),
+            ("src/app.css", "p { color: red }"),
+            (
+                "src/Twice.ts",
+                "let a = 1;\nlet a = 2;\nexport default a;\n",
+            ),
+            (
+                "src/Lazy.ts",
+                "export const card = () => import(\"./Look\");\n",
+            ),
+        ]));
+        let named: Vec<String> = project.problems.iter().map(ToString::to_string).collect();
+        assert_eq!(named.len(), 3, "{named:#?}");
+        assert!(
+            named[0].starts_with("src/App.tsx:1:15: '../../secrets' leaves the project"),
+            "{named:#?}"
+        );
+        assert!(
+            named[1].starts_with("src/Look.tsx:1:18: './app.css' is a stylesheet"),
+            "{named:#?}"
+        );
+        assert!(
+            named[2].starts_with("src/Twice.ts:1:5: Identifier `a` has already been declared"),
+            "{named:#?}"
+        );
+        // a dynamic import of a file of the project is rewritten like a static one
+        let lazy = project
+            .modules
+            .get(&format!("{APP}src/Lazy.ts"))
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            lazy.contains(&format!("import(\"{APP}src/Look.tsx\")")),
+            "{lazy}"
+        );
+    }
+
+    #[test]
     fn sixty_files_transpile_in_under_a_second() {
         let mut entries = BTreeMap::new();
         for i in 0..60 {

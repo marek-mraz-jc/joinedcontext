@@ -121,7 +121,9 @@ pub(crate) async fn collection(
             };
             // validated as each `compute` came: a refusal here is never reached
             let aliases = &options.aliases;
-            compute(&computes, set, aliases, &mut shown, now()).map_err(|r| refused(r, version))?;
+            if let Err(r) = compute(&computes, set, aliases, &mut shown, now()) {
+                return Err(refused(r, version));
+            }
             attach(&mut docs, &shown, version)?;
             let page = Page {
                 count: counted.then_some(total),
