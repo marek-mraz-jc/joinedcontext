@@ -1049,6 +1049,14 @@ fn values_of_different_kinds_never_compare_equal() {
         value,
     };
     assert!(!crate::matches(&row, &cond("org", CompareOp::Eq, json!(1))));
+    assert!(crate::matches(
+        &row,
+        &cond("org", CompareOp::Ne, json!("b"))
+    ));
+    assert!(!crate::matches(
+        &row,
+        &cond("org", CompareOp::Ne, json!("a"))
+    ));
     assert!(!crate::matches(
         &row,
         &cond("org", CompareOp::Ne, json!(null))

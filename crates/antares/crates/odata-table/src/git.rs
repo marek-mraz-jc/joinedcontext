@@ -86,13 +86,10 @@ fn segments(pattern: &str) -> Result<Vec<&str>, TableError> {
             "the path pattern {pattern} leaves the repository root"
         ))
     };
-    if pattern.is_empty()
-        || pattern.starts_with('/')
-        || pattern.contains('\\')
-        || pattern.contains('\0')
-    {
+    if pattern.contains('\\') || pattern.contains('\0') {
         return Err(refused());
     }
+    // an empty pattern or a leading `/` gives an empty segment, refused here
     let parts: Vec<&str> = pattern.split('/').collect();
     if parts
         .iter()
@@ -574,7 +571,16 @@ mod tests {
 
     #[test]
     fn a_pattern_stays_under_the_root() {
-        for bad in ["../x/*.yaml", "a/../b", "/etc/*", "a//b", "./a", "a\\b", ""] {
+        for bad in [
+            "../x/*.yaml",
+            "a/../b",
+            "/etc/*",
+            "a//b",
+            "./a",
+            "a\\b",
+            "a\0b",
+            "",
+        ] {
             assert!(segments(bad).is_err(), "{bad} was accepted");
         }
         assert!(segments("spaces/*/endpoints/*.yaml").is_ok());
@@ -590,6 +596,10 @@ mod tests {
         assert!(!glob("a*x*b", "a-b"), "a middle part must occur");
         assert!(matched(&["spaces", "*", "e.yaml"], "spaces/s1/e.yaml"));
         assert!(!matched(&["spaces", "*", "e.yaml"], "spaces/s1/x/e.yaml"));
+        assert!(
+            !matched(&["spaces"], "spaces/s1"),
+            "a prefix of the path is no match"
+        );
     }
 
     #[test]
@@ -684,6 +694,26 @@ mod tests {
             )),
             bad("things/b.yaml is over the size this set reads")
         );
+        // a file of exactly the size cap, and files reaching exactly the total cap, are read
+        let exact = GitLimits {
+            max_file_bytes: 6,
+            max_total_bytes: 12,
+            ..limits
+        };
+        assert_eq!(
+            open(&repo, &sha, exact).map(|t| t.commit()),
+            Ok(sha.clone())
+        );
+        assert_eq!(
+            refused(GitTable::open(
+                info(),
+                &repo,
+                &"g".repeat(40),
+                "things/*",
+                limits
+            )),
+            bad("the commit must be a full hexadecimal object name")
+        );
         assert_eq!(open(&repo, &sha, limits).map(|t| t.commit()), Ok(sha));
     }
 
@@ -738,6 +768,7 @@ mod tests {
             keys: vec![json!("a")],
             guard: Cond::Const(true),
         };
+        assert!(!set().writable());
         assert_eq!(
             set().apply(&batch).await,
             Err(TableError::Forbidden("Things is served read only".into()))
@@ -746,12 +777,59 @@ mod tests {
         let writer = set()
             .on_branch("main", "a", "t@example.org")
             .expect("main is at the commit");
+        assert!(writer.writable());
         writer.apply(&batch).await.expect("one commit");
+        assert_eq!(
+            run(&repo, &["log", "-1", "--format=%s", "main"]),
+            "update 1 of Things"
+        );
         let text = run(&repo, &["show", "main:things/a.json"]);
         assert_eq!(
             serde_json::from_str::<Value>(&text).ok(),
             Some(json!({"id": "a", "org": "y"}))
         );
         refused_branch("main", "a", "has moved past the commit this set reads");
+    }
+
+    #[tokio::test]
+    async fn a_writer_keeps_its_files_in_step_after_a_delete() {
+        let (repo, sha) = repository(
+            "delete",
+            &[
+                ("things/a.yaml", "id: a\norg: x\n"),
+                ("things/b.yaml", "id: b\norg: x\n"),
+            ],
+        );
+        let writer = open(&repo, &sha, GitLimits::strict())
+            .expect("the set opens")
+            .on_branch("main", "a", "t@example.org")
+            .expect("main is at the commit");
+        let batch = |change, key: &str| Batch {
+            change,
+            keys: vec![json!(key)],
+            guard: Cond::Const(true),
+        };
+        writer
+            .apply(&batch(Change::Delete, "a"))
+            .await
+            .expect("a deleted");
+        assert_eq!(
+            run(&repo, &["log", "-1", "--format=%s", "main"]),
+            "delete 1 of Things"
+        );
+        let org_y = json!({"org": "y"}).as_object().cloned().unwrap_or_default();
+        writer
+            .apply(&batch(Change::Update(org_y), "b"))
+            .await
+            .expect("b updated");
+        assert_eq!(
+            run(&repo, &["ls-tree", "--name-only", "-r", "main"]),
+            "things/b.yaml"
+        );
+        let text = run(&repo, &["show", "main:things/b.yaml"]);
+        assert_eq!(
+            serde_norway::from_str::<Value>(&text).ok(),
+            Some(json!({"id": "b", "org": "y"}))
+        );
     }
 }
