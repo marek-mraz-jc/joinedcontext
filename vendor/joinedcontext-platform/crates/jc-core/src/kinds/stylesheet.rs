@@ -220,6 +220,14 @@ pub fn scoped_stylesheet(css: &str, class: &str) -> Result<String> {
             "free of `</`, which would end the page's markup",
         ));
     }
+    // An escape respells a name (`\75 rl(` is `url(`) and writes back respelled again, so the text
+    // a browser reads could differ from the text checked: a portal stylesheet holds none.
+    if let Some(at) = css.find('\\') {
+        return Err(refused(
+            line_at(css, at),
+            "free of backslash escapes; write each name and character as it is",
+        ));
+    }
     if css.contains('\0') {
         return Err(refused(
             line_at(css, css.find('\0').unwrap_or(0)),
@@ -233,6 +241,13 @@ pub fn scoped_stylesheet(css: &str, class: &str) -> Result<String> {
         ParseErrorKind::Custom(Refusal(line, what)) => refused(line, &what),
         ParseErrorKind::Basic(_) => refused(e.location.line + 1, "CSS that parses"),
     })?;
+    if out.contains('\\') {
+        // A name only an escape can write back (a control character in it): refused like one.
+        return Err(refused(
+            0,
+            "free of characters a name can only hold escaped, such as control characters",
+        ));
+    }
     if out.contains("</") {
         return Err(refused(0, "free of `</`, also as an escape in a string"));
     }
@@ -455,6 +470,9 @@ fn selector<'i>(
             })?;
             out.token(&Token::CloseSquareBracket);
         }
+        Token::Number { .. } | Token::Dimension { .. } if !plain_number(t) => {
+            return Err(refuse(p, at, "numbers from 0.0001 up to 1000000"));
+        }
         Token::Ident(_)
         | Token::IDHash(_)
         | Token::Hash(_)
@@ -491,6 +509,11 @@ fn media<'i>(
                 Ok(())
             })?;
             out.token(&Token::CloseParenthesis);
+        }
+        Token::Number { .. } | Token::Dimension { .. } | Token::Percentage { .. }
+            if !plain_number(t) =>
+        {
+            return Err(refuse(p, at, "numbers from 0.0001 up to 1000000"));
         }
         Token::Ident(_)
         | Token::WhiteSpace(_)
@@ -667,8 +690,8 @@ fn value_token<'i>(
         | Token::Percentage {
             unit_value: value, ..
         } => {
-            if value.is_nan() || value.abs() > 1e6 {
-                return Err(refuse(p, at, "numbers up to 1000000"));
+            if !plain_number(t) {
+                return Err(refuse(p, at, "numbers from 0.0001 up to 1000000"));
             }
             if property.ends_with("-shadow") && !small_shadow(t) {
                 return Err(refuse(
@@ -711,6 +734,26 @@ fn value_token<'i>(
         }
     }
     Ok(())
+}
+
+/// Whether a number writes back as itself: 0, or between 0.0001 and 1000000 either side of 0.
+/// Larger or smaller ones come back in exponent form with fewer digits, and a unit that reads as
+/// an exponent (`e2`) comes back as part of the number.
+fn plain_number(t: &Token<'_>) -> bool {
+    let value = match t {
+        // `3300` with the unit `e2` writes back as `3300e2`, which reads as one number.
+        Token::Dimension { unit, .. }
+            if unit.len() > 1
+                && unit.starts_with(['e', 'E'])
+                && unit[1..].starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+') =>
+        {
+            return false;
+        }
+        Token::Number { value, .. } | Token::Dimension { value, .. } => *value,
+        Token::Percentage { unit_value, .. } => *unit_value * 100.0,
+        _ => return true,
+    };
+    value == 0.0 || (1e-4..=1e6).contains(&value.abs())
 }
 
 /// The properties whose lengths are capped: spacing, borders and text size, any of which pushes
@@ -881,7 +924,10 @@ mod tests {
             ("a { display: none }", "`display: none`"),
             ("a { margin-top: -40px }", "negative margins"),
             (".x { margin-left: 3000px }", "at most 64px"),
-            (".x { line-height: 3e38 }", "numbers up to 1000000"),
+            (
+                ".x { line-height: 3e38 }",
+                "numbers from 0.0001 up to 1000000",
+            ),
             (".x { padding: 0 0 0 50% }", "at most 64px"),
             (".x { gap: 10vw }", "at most 64px"),
             (".x { font-size: 300px }", "at most 64px"),
@@ -920,10 +966,14 @@ mod tests {
 
     #[test]
     fn escapes_do_not_hide_a_refused_name() {
-        assert!(reason("a { background: \\75 rl(https://evil.example/) }").contains("`url()`"));
-        assert!(reason("a { color: expr\\65 ssion(1) }").contains("`expression()`"));
-        assert!(reason("a { \\7a -index: 1 }").contains("`z-index`"));
-        assert!(reason("a { content: \"\\3c/style>\" }").contains("free of `content`"));
+        for css in [
+            "a { background: \\75 rl(https://evil.example/) }",
+            "a { color: expr\\65 ssion(1) }",
+            "a { \\7a -index: 1 }",
+            "a { font-family: \"\\3c/style>\" }",
+        ] {
+            assert!(reason(css).contains("backslash escapes"), "{css}");
+        }
     }
 
     #[test]

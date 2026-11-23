@@ -16,8 +16,17 @@ fuzz_target!(|data: &[u8]| {
     let lower = out.to_ascii_lowercase();
     // What a browser reads as CSS, every string's text blanked: a string may say anything.
     let bare = outside_strings(&lower);
+    // A name right before is part of that name (`#0b53expression(` is a hash and a parenthesis).
+    let after_name = |at: usize| {
+        bare[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || "-_\\#@".contains(c) || !c.is_ascii())
+    };
     for refused in ["@import", "@font-face", "@namespace", "expression(", "!important", ":has("] {
-        assert!(!bare.contains(refused), "{refused} in {out}");
+        for (at, _) in bare.match_indices(refused) {
+            assert!(after_name(at), "{refused} in {out}");
+        }
     }
     for line in bare.lines() {
         let line = line.trim_start();
@@ -34,17 +43,17 @@ fuzz_target!(|data: &[u8]| {
     // A `url(` right after a name character is a dimension's unit and a parenthesis, which no
     // browser fetches; every function `url(` names a portal file.
     for (at, _) in bare.match_indices("url(") {
-        let after_name = lower[..at]
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || "-_\\".contains(c));
-        assert!(after_name || lower[at..].starts_with("url(\"/files/"), "{out}");
+        assert!(after_name(at) || lower[at..].starts_with("url(\"/files/"), "{out}");
     }
-    // Taking the prefixes off again is exact only when the author's text names none itself.
+    // What the check writes checks again, and a second rewrite changes nothing more (the first
+    // may still respell a token, `2e` + `x` as `2\65 x`). Taking the prefixes off is exact only
+    // when the author's text names none itself.
     if !css.contains("jc-portal") {
-        let again = scoped_stylesheet(&out.replace("body.jc-portal ", ""), CHECK_CLASS)
+        let strip = |text: &str| text.replace("body.jc-portal ", "");
+        let again = scoped_stylesheet(&strip(&out), CHECK_CLASS)
             .expect("what the check writes checks again");
-        assert_eq!(again, out);
+        let third = scoped_stylesheet(&strip(&again), CHECK_CLASS).expect("and again");
+        assert_eq!(third, again);
     }
 });
 
