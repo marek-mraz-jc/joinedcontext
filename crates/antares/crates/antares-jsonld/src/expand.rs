@@ -2177,15 +2177,13 @@ mod tests {
     fn an_empty_entity_type_is_refused() {
         for t in [serde_json::json!(""), serde_json::json!(["T", ""])] {
             let doc = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": t});
-            assert!(
-                expand_entity(
-                    doc.as_object().expect("obj"),
-                    &core(),
-                    ExpandOpts::default()
-                )
-                .is_err(),
-                "{t}"
-            );
+            let err = expand_entity(
+                doc.as_object().expect("obj"),
+                &core(),
+                ExpandOpts::default(),
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("non-empty string"), "{t}: {err}");
         }
     }
 
