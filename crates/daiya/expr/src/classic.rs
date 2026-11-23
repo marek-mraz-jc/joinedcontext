@@ -476,6 +476,18 @@ mod tests {
             ),
             Some(1.0)
         );
+        // No data joins like a truth value: `or` keeps it, `and` needs it on both sides.
+        let no_data_then = |op: &str| {
+            fire(
+                &[
+                    cond("avg", "gt", &[0.0], "and", "N"),
+                    cond("last", "gt", &[50.0], op, "A"),
+                ],
+                &vars,
+            )
+        };
+        assert_eq!(no_data_then("or"), None);
+        assert_eq!(no_data_then("and"), Some(0.0));
         // All values null: no data, unless the evaluator asks for no_value.
         assert_eq!(fire(&[cond("avg", "gt", &[0.0], "and", "N")], &vars), None);
         assert_eq!(
