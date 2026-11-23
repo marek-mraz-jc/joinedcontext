@@ -419,7 +419,7 @@ fn negotiate(rest: &[&str], headers: &HeaderMap, uri: &axum::http::Uri) -> Resul
         ));
     }
     let mut items = Vec::new();
-    for (name, media, _) in export::ITEMS {
+    for (name, media, ..) in export::ITEMS {
         items.push((*name, *media));
     }
     let asked = match rest {
@@ -938,7 +938,7 @@ impl Here<'_> {
             .collect();
         let separator = if this.contains('?') { '&' } else { '?' };
         let mut after: Vec<_> = profile_link(c, profile).into_iter().collect();
-        for (name, media, _) in export::ITEMS {
+        for (name, media, ..) in export::ITEMS {
             after.push(link(
                 "alternate",
                 media,

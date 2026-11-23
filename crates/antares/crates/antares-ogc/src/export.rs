@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn f_asks_for_a_file_only_in_a_build_that_writes_it() {
         let mut offered = Vec::new();
-        for (name, media, _) in ITEMS {
+        for (name, media, ..) in ITEMS {
             offered.push((*name, *media));
         }
         let asked_for = asked(&HeaderMap::new(), pairs(&[("f", "parquet")]), &offered);

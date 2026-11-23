@@ -133,7 +133,10 @@ mod tests {
     }"#;
 
     fn queryables_of(schema: &str, shown: &[&str]) -> Result<Value, String> {
-        let model = Model::read(schema.as_bytes(), &LIMITS).expect("a valid schema");
+        let model = match Model::read(schema.as_bytes(), &LIMITS) {
+            Ok(model) => model,
+            Err(e) => return Err(format!("{e:?}")),
+        };
         let attrs: BTreeSet<String> = shown
             .iter()
             .map(|a| match *a {
