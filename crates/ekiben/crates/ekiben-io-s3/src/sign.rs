@@ -27,8 +27,11 @@ pub fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn hmac(key: &[u8], data: &str) -> Result<Vec<u8>, CoreError> {
-    let mut mac = <Hmac<Sha256>>::new_from_slice(key)
-        .map_err(|e| CoreError::other(format!("aws_s3: signing key: {e}")))?;
+    // HMAC takes a key of any length: the error arm is never taken.
+    let mut mac = match <Hmac<Sha256>>::new_from_slice(key) {
+        Ok(mac) => mac,
+        Err(e) => return Err(CoreError::other(format!("aws_s3: signing key: {e}"))),
+    };
     mac.update(data.as_bytes());
     Ok(mac.finalize().into_bytes().to_vec())
 }
