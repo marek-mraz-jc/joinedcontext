@@ -1230,6 +1230,18 @@
             "null"
           ],
           "x-ngsi-ld-kind": "Property"
+        },
+        "organizer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Organizer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who runs the event: the museum, the library, the club or the city unit, never the feed or the register that announced it (that is `dataProvider` or `source`). Its name and, where the source names one, its web site; never a person's e-mail or phone. The same shape in every events space (praha-akce, slovensko-podujatia, bbsk-podujatia, banskabystrica-verejne), so one count per organizer reads across them.",
+          "x-ngsi-ld-kind": "Property"
         }
       },
       "required": [
@@ -4633,6 +4645,31 @@
         "informational": "For information (GTFS-RT INFO).",
         "medium": "A warning (GTFS-RT WARNING)."
       }
+    },
+    "Organizer": {
+      "additionalProperties": false,
+      "description": "The value of `organizer`, never an entity of its own.",
+      "properties": {
+        "name": {
+          "description": "The organizer's name in Finnish, else English or Swedish (`Tekniikan museo`).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The organizer's own web site, when the source names it.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Organizer",
+      "type": "object"
     }
   },
   "metamodel_version": "1.11.0",
