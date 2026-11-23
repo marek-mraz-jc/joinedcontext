@@ -904,6 +904,15 @@ async fn ckan_site_and_listing_actions() {
     // An authenticated GET is not publicly cacheable.
     let a = get(app, "/api/3/action/site_read", Some("tok-member")).await;
     assert_eq!(a.header("cache-control"), "private, no-store");
+    // A public dataset is publicly cacheable for anonymous callers alone.
+    for (token, cache) in [
+        (None, "public, max-age=60"),
+        (Some("tok-member"), "private, no-store"),
+    ] {
+        let a = get(app, "/api/3/action/package_show?id=open", token).await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.header("cache-control"), cache, "{token:?}");
+    }
 
     // tag_list: tags of public active datasets only.
     let tags = get(app, "/api/3/action/tag_list", None).await.json()["result"].clone();
@@ -4438,6 +4447,33 @@ async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
         }
     }
 
+    // The flags widen an admin's search, one each: a draft, a withdrawn publisher's dataset.
+    for (flags, draft, orphan) in [
+        ("", false, false),
+        ("&include_drafts=true", true, false),
+        ("&include_private=true", false, true),
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50{flags}"),
+            Some("tok-admin"),
+        )
+        .await;
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            (
+                names.iter().any(|n| n == "draft-one"),
+                names.iter().any(|n| n == "orphan")
+            ),
+            (draft, orphan),
+            "{flags}: {names:?}"
+        );
+    }
     let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     assert!(!a.body.contains("veiled"), "{}", a.body);
