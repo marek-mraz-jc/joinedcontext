@@ -510,6 +510,8 @@ root.local_hour = "2020-08-14T11:50:26Z".ts_strftime("%H", "Europe/Bratislava")
     for (mapping, says) in [
         (r#"root = "2020".ts_parse(5)"#, "string"),
         (r#"root = "2020".ts_strptime(5)"#, "string"),
+        (r#"root = "2020-01-01T00:00:00Z".ts_strftime(5)"#, "string"),
+        (r#"root = "2020-01-01T00:00:00Z".ts_strftime("%Y", 5)"#, "string"),
         (
             r#"root = "2020-01-01T00:00:00Z".ts_add_iso8601(5)"#,
             "string",
