@@ -259,7 +259,7 @@ pub async fn test_event(
         })?;
     let url = format!(
         "{}/ingest/{RUNNER_ORG}/{}/{name}",
-        runner.trim_end_matches('/'),
+        runner.replace("{project}", &project).trim_end_matches('/'),
         stream_id(&project, &event.pipeline)
     );
     let client = reqwest::Client::builder()

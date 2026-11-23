@@ -1411,6 +1411,194 @@ async fn a_webhook_source_answers_only_a_session_with_the_grant_each_route_names
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
 }
 
+/// The runner's environment as a host hands it: one credential, under the variable a sync names.
+struct OneCredential(String, String);
+
+impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for OneCredential {
+    fn replace(&self, _values: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>) {}
+
+    fn credential(&self, project: &str, name: &str) -> Option<zeroize::Zeroizing<String>> {
+        (project == "espoo" && name == self.0).then(|| zeroize::Zeroizing::new(self.1.clone()))
+    }
+}
+
+fn webhook_source(name: &str, auth: Value) -> ResourceEnvelope {
+    ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "DataSource".to_owned(),
+        metadata: ObjectMeta::new(name, "espoo"),
+        spec: json!({ "type": "webhook", "webhook": { "auth": auth } }),
+        status: None,
+    }
+}
+
+async fn get(state: &AppState, who: &str, uri: &str) -> (StatusCode, Value) {
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, cookies(&state.config, identity(who)))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// PL-122 (T-7657): the addresses name each reading pipeline under the published listener and the
+/// header a sender sets; a name that is no source, a stranger and a spec that does not parse
+/// answer 404, 404 and 400.
+#[tokio::test]
+async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() {
+    let mirror = with_saved_source("espoo");
+    mirror.upsert(webhook_source(
+        "ttn",
+        json!({ "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } }),
+    ));
+    mirror.upsert(webhook_source(
+        "gh",
+        json!({ "hmac": { "header": "X-Hub-Signature-256", "secretRef": { "name": "gh", "key": "secret" } } }),
+    ));
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "DataSource".to_owned(),
+        metadata: ObjectMeta::new("broken", "espoo"),
+        spec: json!({ "type": "webhook", "webhook": "not a block" }),
+        status: None,
+    });
+    let mut pipeline = request(".")["pipeline"].clone();
+    pipeline["spec"]["source"]["dataSourceRef"]["name"] = json!("ttn");
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Pipeline".to_owned(),
+        metadata: ObjectMeta::new("uplinks", "espoo"),
+        spec: pipeline["spec"].clone(),
+        status: None,
+    });
+    let mut config = config(None);
+    config.ingest_url = Some("https://ingest.example.org".into());
+    let state = AppState::new(config, None).with_mirror(mirror);
+    let base = "/api/v1/projects/espoo/datasources";
+
+    let (status, info) = get(&state, "reader@hel.fi", &format!("{base}/ttn/webhook")).await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["auth"], "bearer");
+    assert_eq!(info["header"], "Authorization");
+    assert_eq!(info["published"], true);
+    assert_eq!(
+        info["addresses"],
+        json!([{ "pipeline": "uplinks", "url": "https://ingest.example.org/espoo.uplinks/ttn" }])
+    );
+    let (status, info) = get(&state, "reader@hel.fi", &format!("{base}/gh/webhook")).await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["auth"], "hmac");
+    assert_eq!(info["header"], "X-Hub-Signature-256");
+    assert_eq!(info["addresses"], json!([]));
+
+    for (who, name, expected) in [
+        ("reader@hel.fi", "Not_A_Name", StatusCode::NOT_FOUND),
+        ("reader@hel.fi", "nope", StatusCode::NOT_FOUND),
+        ("stranger@hel.fi", "ttn", StatusCode::NOT_FOUND),
+        ("reader@hel.fi", "broken", StatusCode::BAD_REQUEST),
+        ("reader@hel.fi", "demo-counters", StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let (status, body) = get(&state, who, &format!("{base}/{name}/webhook")).await;
+        assert_eq!(status, expected, "{who} {name}: {body}");
+    }
+}
+
+/// PL-122 (T-7657): a test event goes to the project's runner (its `{project}` filled in) under
+/// the reading pipeline's stream, carries the source's credential, and answers the runner's
+/// status with the first 2048 characters of its body. Before that: a pipeline that reads no such
+/// source and an empty or oversized body are 422 naming the field, a Portal with no runner
+/// beside it or no credential yet is 503, and a runner that does not answer is 503.
+///
+/// The host's runner is process-wide, so this one test walks every step in order.
+#[tokio::test]
+async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_sources_credential() {
+    let runner = MockServer::start().await;
+    let mirror = mirror("espoo");
+    mirror.upsert(webhook_source(
+        "ttn",
+        json!({ "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } }),
+    ));
+    let mut pipeline = request(".")["pipeline"].clone();
+    pipeline["spec"]["source"]["dataSourceRef"]["name"] = json!("ttn");
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Pipeline".to_owned(),
+        metadata: ObjectMeta::new("uplinks", "espoo"),
+        spec: pipeline["spec"].clone(),
+        status: None,
+    });
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror.clone());
+    let uri = "/api/v1/projects/espoo/datasources/ttn/test-event";
+    let event = |pipeline: &str, body: String| json!({ "pipeline": pipeline, "body": body });
+
+    for (body, field) in [
+        (event("other", "{}".into()), "pipeline"),
+        (event("Not_A_Name", "{}".into()), "pipeline"),
+        (event("uplinks", "  ".into()), "body"),
+        (event("uplinks", "x".repeat(64 * 1024 + 1)), "body"),
+    ] {
+        let (status, answer) = send(&state, "dev@hel.fi", uri, &body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+        assert_eq!(answer["errors"][0]["path"], field, "{answer}");
+    }
+
+    let unconfigured = AppState::new(config(None), None).with_mirror(mirror.clone());
+    let (status, answer) = send(&unconfigured, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+
+    let reference: jc_core::envelope::SecretRef =
+        serde_json::from_value(json!({ "name": "ttn", "key": "token" })).expect("a reference");
+    let variable = jc_core::kinds::data_source::env_var_of("ttn", &reference);
+    joinedcontext_portal::pipeline_secrets::hand_runner_secrets_to(Arc::new(OneCredential(
+        "ANOTHER_VARIABLE".into(),
+        "tok-1".into(),
+    )));
+    let (status, answer) = send(&state, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert!(answer["detail"].as_str().unwrap_or_default().contains("secret 'ttn'"), "{answer}");
+
+    joinedcontext_portal::pipeline_secrets::hand_runner_secrets_to(Arc::new(OneCredential(
+        variable,
+        "tok-1".into(),
+    )));
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path("/espoo/ingest/default/espoo.uplinks/ttn"))
+        .and(wiremock::matchers::header("authorization", "Bearer tok-1"))
+        .and(wiremock::matchers::body_string(r#"{"temperature": 21.5}"#))
+        .respond_with(ResponseTemplate::new(202).set_body_string("é".repeat(3000)))
+        .expect(1)
+        .mount(&runner)
+        .await;
+    let (status, answer) = send(
+        &state,
+        "dev@hel.fi",
+        uri,
+        &event("uplinks", r#"{"temperature": 21.5}"#.into()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["status"], 202);
+    assert_eq!(answer["answer"], "é".repeat(2048));
+
+    // A bound port nobody listens on: the runner is down.
+    let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+    closed.bind("127.0.0.1:0".parse().unwrap()).expect("bound");
+    let mut down = config(None);
+    down.pipeline_runner_url = Some(format!("http://{}/", closed.local_addr().unwrap()));
+    let down = AppState::new(down, None).with_mirror(mirror);
+    let (status, answer) = send(&down, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert!(answer["detail"].as_str().unwrap_or_default().contains("did not answer"), "{answer}");
+    runner.verify().await;
+}
+
 /// T-4819: anonymous is 401, a reader is 403, an unknown source is 404, and none reaches the runner.
 #[tokio::test]
 async fn testing_a_source_needs_a_session_and_a_grant_that_proposes_it() {
