@@ -215,7 +215,10 @@ mod tests {
     fn a_need_within_reach_says_whether_it_writes() {
         let (mirror, both) = (mirror(), at(&["ops", "public"]));
         let read = need(json!(["owner"]), json!(["queryEntity"]));
-        assert!(!validate_data_needs(&mirror, "p", &both, "project", &[read.clone()]).unwrap());
+        assert!(
+            !validate_data_needs(&mirror, "p", &both, "project", std::slice::from_ref(&read))
+                .unwrap()
+        );
         let write = need(json!([]), json!(["createEntity"]));
         assert!(validate_data_needs(&mirror, "p", &both, "project", &[read, write]).unwrap());
     }
@@ -225,7 +228,7 @@ mod tests {
         let (mirror, ops) = (mirror(), at(&["ops"]));
         let read = need(json!([]), json!(["queryEntity"]));
         assert!(matches!(
-            validate_data_needs(&mirror, "p", &ops, "public", &[read.clone()]),
+            validate_data_needs(&mirror, "p", &ops, "public", std::slice::from_ref(&read)),
             Err(ApiError::BadRequest(m)) if m.contains("AP-42")
         ));
         assert!(matches!(
@@ -233,7 +236,7 @@ mod tests {
             Err(ApiError::BadRequest(m)) if m.contains("must not be empty")
         ));
         assert!(matches!(
-            validate_data_needs(&mirror, "p", &at(&["gone"]), "project", &[read.clone()]),
+            validate_data_needs(&mirror, "p", &at(&["gone"]), "project", std::slice::from_ref(&read)),
             Err(ApiError::NotFound(m)) if m.contains("'gone'") && m.contains("'p'")
         ));
         assert!(matches!(
@@ -263,7 +266,7 @@ mod tests {
             "p",
             &at(&["ops", "public"]),
             "project",
-            &[owner.clone()]
+            std::slice::from_ref(&owner)
         )
         .is_ok());
         assert_eq!(
