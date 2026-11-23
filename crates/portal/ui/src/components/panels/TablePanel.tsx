@@ -65,7 +65,7 @@ export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefi
   const taken = new Set<string>();
   const columns = names.map((name, index) => {
     const settings = settingsFor(fieldConfig, fields[index]);
-    return { attr: attrOf(name, index, taken), label: settings.displayName ?? name, settings, hidden: settings.custom.hidden === true };
+    return { attr: attrOf(name, index, taken), label: settings.displayName || name, settings, hidden: settings.custom.hidden === true };
   });
   // Grafana sorts by its first sortBy entry, named by the column's display name.
   const first = sortBy?.[0];
@@ -189,7 +189,7 @@ export function TablePanel({ title, frames, fieldConfig, options, locale }: Tabl
           attr: column.attr,
           label: column.label,
           // Grafana's width holds the text alone; the grid's head adds its kind mark and menu.
-          ...(typeof column.settings.custom.width === "number" ? { width: Math.max(MIN_WIDTH, column.settings.custom.width) } : {}),
+          ...(typeof column.settings.custom.width === "number" ? { width: Math.round(Math.max(MIN_WIDTH, column.settings.custom.width)) } : {}),
         })),
       }),
     [table],
