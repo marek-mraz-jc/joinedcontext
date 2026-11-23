@@ -143,6 +143,7 @@ fn the_sanitizer_keeps_plain_markup() {
         "<td data-sort aria-hidden>x</td>",
         "<abbr title=\"1 > 0\">gt</abbr>",
         "<p data-x=<>x</p>",
+        "<a href=\" https://a.example/\">a leading space is dropped as a browser drops it</a>",
     ] {
         assert_eq!(sanitize_view_html(ok), ok, "{ok}");
     }

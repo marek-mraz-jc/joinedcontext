@@ -1072,6 +1072,16 @@ mod tests {
             .await
             .expect("listed again");
         assert_eq!(again, ["air", "solo"]);
+        let air = store
+            .get_dataset(&target, "air")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            air.state,
+            RecordState::Active,
+            "a copy still selected stays listed"
+        );
         let none = writer
             .list_from(org, (from.id, base), to.id, marker, |_| false)
             .await
@@ -1243,6 +1253,8 @@ mod tests {
             json!({"uri": "https://elsewhere.test/own"}),
         );
         store.upsert_dataset(&ctx, own).await.expect("stored");
+        let blank = dataset(spec.org_id, spec.id, "blank", json!({"uri": "  "}));
+        store.upsert_dataset(&ctx, blank).await.expect("stored");
         let extra = dataset(
             spec.org_id,
             spec.id,
@@ -1268,6 +1280,11 @@ mod tests {
             "the dataset keeps its IRI"
         );
         assert_eq!(uris["own"].as_deref(), Some("https://elsewhere.test/own"));
+        assert_eq!(
+            uris["blank"].as_deref(),
+            Some("https://mobility.city.test/dataset/blank"),
+            "a blank IRI is pinned like none"
+        );
         assert_eq!(uris["extra"], None, "an IRI in the extras is its own");
         assert_eq!(
             state.portals.host("mobility.city.test"),

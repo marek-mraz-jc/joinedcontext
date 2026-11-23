@@ -159,7 +159,9 @@ export default defineConfig({
       // statements 90.71, functions 88.91, branches 81.68. Each threshold is that number floored
       // to the whole percent, so a single line does not flap the build and the figure can only be
       // raised by hand when the suite has earned it.
-      thresholds: { lines: 91, statements: 90, functions: 88, branches: 81 },
+      // Raised on 2026-11-22 (T-7587) from the whole suite (701 files, 7 820 cases): lines 93.02,
+      // statements 91.87, functions 88.35, branches 83.18.
+      thresholds: { lines: 93, statements: 91, functions: 88, branches: 83 },
     },
   },
 });

@@ -283,7 +283,7 @@ impl fmt::Display for InternalName {
 pub const INTERNAL_NAME_JOINER: &str = "__";
 
 /// Longest internal name: two path segments, two joiners and a label.
-pub const INTERNAL_NAME_MAX: usize = 2 * PATH_SEGMENT_LEN + 2 * INTERNAL_NAME_JOINER.len() + 63;
+pub const INTERNAL_NAME_MAX: usize = 2 * (PATH_SEGMENT_LEN + INTERNAL_NAME_JOINER.len()) + 63;
 
 /// The one builder of internal space, Tenant, queue and table-key names (ARCH/TEN-10):
 /// `{OrgId}__{ProjectId}__{label}`, ids in their path form. Two projects with the same label never
