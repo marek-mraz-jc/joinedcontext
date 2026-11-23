@@ -329,6 +329,14 @@ async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
         Some(1),
         "limit 1 keeps one"
     );
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(json!({"limit": 1})), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(
+        answer["events"].as_array().map(Vec::len),
+        Some(1),
+        "a limit without a sort keeps its limit: {answer}"
+    );
     let earliest = json!({"sort": "start", "limit": 1});
     let (status, answer) = send(&app, "POST", PREVIEW, &preset(earliest), true).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
@@ -410,6 +418,8 @@ async fn attrs_select_what_the_feed_reads_and_a_bad_bound_or_view_segment_is_ref
     assert!(uids(&ics).is_empty(), "no SUMMARY without name: {ics}");
     let (status, _) = send(&app, "GET", &format!("{FEED}?to=later"), "", false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = send(&app, "GET", &format!("{FEED}?limit=5"), "", false).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a parameter the feed does not read: {body}");
     let (status, _) = send(&app, "GET", "/x/views/%FF/ical/v1/events.ics", "", false).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

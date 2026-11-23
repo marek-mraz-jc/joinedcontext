@@ -346,6 +346,12 @@ mod tests {
             "x".repeat(MAX_MESSAGE_BYTES)
         );
         assert_eq!(read(&big), Err(Unread::Close("message too large")));
+        // exactly at the size bound it is read
+        let head = r#"{"metadata":{"x-op":"x-subscribe"},"body":{"d":""#;
+        let pad = MAX_MESSAGE_BYTES - head.len() - r#""}}"#.len();
+        let at_size = format!(r#"{head}{}"}}}}"#, "x".repeat(pad));
+        assert_eq!(at_size.len(), MAX_MESSAGE_BYTES);
+        assert_ne!(read(&at_size), Err(Unread::Close("message too large")));
         // at the depth bound it is read
         let at = format!(
             r#"{{"metadata":{{"x-op":"x-subscribe"}},"body":{{"a":{}{}}}}}"#,
