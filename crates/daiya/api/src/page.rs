@@ -276,3 +276,68 @@ pub fn page_router() -> Router<DaiyaState> {
         .route("/d/{uid}", get(page))
         .route("/d/{uid}/{slug}", get(page_with_slug))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use daiya_model::{InstallationId, InstanceId, PolicyAuthorizer};
+
+    const ORG: OrgId = OrgId::from_u128(41);
+    const OTHER: OrgId = OrgId::from_u128(42);
+
+    fn reader() -> PageReaderAuthorizer {
+        PageReaderAuthorizer {
+            org_id: ORG,
+            actor: format!("{PAGE_READER_PREFIX}anna"),
+            inner: std::sync::Arc::new(PolicyAuthorizer::new(Vec::new())),
+        }
+    }
+
+    fn ctx(actor: &str, org: OrgId, read_only: bool) -> RequestCtx {
+        let mut subject = Subject::authenticated(actor, vec![org], Vec::new());
+        subject.read_only = read_only;
+        RequestCtx::new(
+            InstallationId::SINGLE,
+            org,
+            InstanceId::from_u128(1),
+            subject,
+        )
+    }
+
+    /// The host's reader reads every dashboard of its one organization, read-only; anything
+    /// else (a write, another organization, another person, a subject that may write) is
+    /// the inner authorizer's, which grants this reader nothing.
+    #[test]
+    fn the_page_reader_reads_its_organization_alone_and_nothing_else() {
+        let auth = reader();
+        let anna = format!("{PAGE_READER_PREFIX}anna");
+        let board = |org_id| ObjectTarget::Dashboard {
+            org_id,
+            dashboard_uid: "b".into(),
+            folder_uid: None,
+        };
+        let own = ctx(&anna, ORG, true);
+        assert!(auth.check(&own, Action::Read, &board(ORG)).allowed);
+        assert!(matches!(
+            auth.read_scope(&own, ReadKind::Dashboard),
+            ReadScope::All
+        ));
+        assert!(!auth.check(&own, Action::Delete, &board(ORG)).allowed);
+        assert!(!auth.check(&own, Action::Read, &board(OTHER)).allowed);
+        for other in [
+            ctx(&anna, ORG, false),
+            ctx(&format!("{PAGE_READER_PREFIX}bob"), ORG, true),
+            ctx(&anna, OTHER, true),
+        ] {
+            assert!(
+                !auth
+                    .check(&other, Action::Read, &board(other.org_id))
+                    .allowed
+            );
+            assert!(matches!(
+                auth.read_scope(&other, ReadKind::Dashboard),
+                ReadScope::Nothing
+            ));
+        }
+    }
+}
