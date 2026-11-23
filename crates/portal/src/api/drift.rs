@@ -380,6 +380,17 @@ mod tests {
         assert!(adopted(&file, "urn:b", &live).is_err(), "not in the file");
         assert!(adopted("not json", "urn:a", &live).is_err());
         assert!(adopted("[1, 2]", "urn:a", &live).is_err());
+        assert!(adopted("\"urn:a\"", "urn:a", &live).is_err(), "no entity at all");
+    }
+
+    /// A live value that is no object (a concise attribute) is written as it is.
+    #[test]
+    fn a_concise_live_value_is_adopted_as_it_is() {
+        let file = json!([{ "id": "urn:a", "type": "T", "kept": 1 }, { "id": "urn:b" }]).to_string();
+        let live = json!({ "id": "urn:a", "kept": 5 });
+        let out: Value =
+            serde_json::from_str(&adopted(&file, "urn:a", &live).expect("adopted")).expect("json");
+        assert_eq!(out, json!([{ "id": "urn:a", "type": "T", "kept": 5 }, { "id": "urn:b" }]));
     }
 
     #[test]
