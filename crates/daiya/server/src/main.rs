@@ -96,15 +96,11 @@ fn exit_code_for(err: &CrError) -> i32 {
 async fn load_dashboard_inputs(path: &Path) -> Result<Vec<DashboardImportInput>, CrError> {
     let mut inputs = Vec::new();
     if path.is_dir() {
-        let mut dir = tokio::fs::read_dir(path)
-            .await
-            .map_err(|e| CrError::Internal(format!("failed to read directory: {e}")))?;
+        let unreadable =
+            |e: std::io::Error| CrError::Internal(format!("failed to read directory: {e}"));
+        let mut dir = tokio::fs::read_dir(path).await.map_err(unreadable)?;
         let mut entries = Vec::new();
-        while let Some(entry) = dir
-            .next_entry()
-            .await
-            .map_err(|e| CrError::Internal(e.to_string()))?
-        {
+        while let Some(entry) = dir.next_entry().await.map_err(unreadable)? {
             entries.push(entry.path());
         }
         entries.sort();
@@ -408,4 +404,29 @@ async fn main() {
     };
 
     process::exit(exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stale plan is 3; a quota, a store or anything else the server failed at is 4; what the
+    /// input caused is 1.
+    #[test]
+    fn each_failure_has_the_exit_code_an_operator_scripts_against() {
+        let quota = CrError::QuotaExceeded {
+            resource: "plans".into(),
+            limit: 100,
+        };
+        for (err, want) in [
+            (CrError::StalePlan("digest".into()), 3),
+            (quota, 4),
+            (CrError::Internal("store down".into()), 4),
+            (CrError::BadRequest("invalid JSON".into()), 1),
+            (CrError::NotFound("dashboard".into()), 1),
+            (CrError::Forbidden("refused".into()), 1),
+        ] {
+            assert_eq!(exit_code_for(&err), want, "{err}");
+        }
+    }
 }

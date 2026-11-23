@@ -227,6 +227,62 @@ fn plan_prints_the_digest_apply_takes_and_apply_refuses_anything_else() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
+/// A dashboard file that is no dashboard is refused by check and by import (1), and a plan the
+/// server refuses (a datasource only provisioning makes read-only) is 1 with the reason.
+#[test]
+fn check_import_and_plan_refuse_what_they_cannot_take() {
+    let scratch = Scratch::new();
+    let not_a_dashboard = scratch.write("list.json", "[1, 2]");
+    for cmd in ["check", "import"] {
+        let out = daiya(&[cmd, "-f", &not_a_dashboard]);
+        assert_eq!(out.status.code(), Some(1), "{cmd}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!("{cmd} failed")),
+            "{}",
+            stderr(&out)
+        );
+    }
+    let read_only = scratch.write(
+        "ro.json",
+        &json!({ "datasources": [{
+            "installationId": "00000000-0000-0000-0000-000000000001",
+            "orgId": "00000000-0000-0000-0000-000000000001",
+            "instanceId": "00000000-0000-0000-0000-000000000001",
+            "uid": "ro", "name": "ro", "type": "prometheus", "access": "proxy",
+            "url": "https://prom.example", "isDefault": false, "readOnly": true,
+            "jsonData": {}, "version": 1,
+            "createdAt": "2026-11-19T00:00:00Z", "updatedAt": "2026-11-19T00:00:00Z"
+        }] })
+        .to_string(),
+    );
+    let out = daiya(&["plan", "-f", &read_only]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("plan failed"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("readOnly"), "{}", stderr(&out));
+}
+
+/// `serve` refuses a path prefix that is no path (1) and an address it cannot bind (4) before
+/// it answers anything.
+#[test]
+fn serve_refuses_a_bad_mount_and_a_taken_address() {
+    let out = daiya(&["serve", "--path-prefix", "dashboards"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("invalid mount configuration"),
+        "{}",
+        stderr(&out)
+    );
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = taken.local_addr().unwrap().to_string();
+    let out = daiya(&["serve", "--listen", &addr]);
+    assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains(&format!("failed to bind {addr}")),
+        "{}",
+        stderr(&out)
+    );
+}
+
 #[test]
 fn plan_refuses_unreadable_and_invalid_files() {
     let scratch = Scratch::new();
