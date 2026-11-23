@@ -156,6 +156,33 @@ async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
     );
 }
 
+/// MF-48 (T-7657): the ops door's check answers the same waiting reference as the REST dry run:
+/// the change it waits on and the warning on the field.
+#[tokio::test]
+async fn the_ops_door_check_names_the_change_a_reference_waits_on() {
+    let (_shako, state) = forge_creating_air().await;
+    let answer = common::send(
+        &state,
+        steward(),
+        "POST",
+        &format!("/api/v1/projects/{PROJECT}/ops/jc_manifest_dry_run"),
+        Some(json!({ "manifest": endpoint() })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let checked: Value = serde_json::from_str(&answer.text).expect("a check");
+    let verdict = &checked["verdict"];
+    assert_eq!(verdict["ok"], true, "{verdict}");
+    assert_eq!(verdict["waitsOn"], json!(["chg-00000007"]), "{verdict}");
+    assert!(
+        verdict["findings"].as_array().is_some_and(|findings| findings.iter().any(|f| {
+            f["path"] == "spec.contextSpaceRef"
+                && f["message"] == "ContextSpace 'air' resolves once chg-00000007 is approved"
+        })),
+        "{verdict}"
+    );
+}
+
 /// MF-13: a reference neither the project nor an open change holds is still a red verdict
 /// naming the field.
 #[tokio::test]

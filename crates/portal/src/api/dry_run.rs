@@ -265,19 +265,10 @@ pub async fn execute_dry_run(
         None => crate::change::Operation::Create,
     };
 
-    let user = crate::auth::CurrentUser(crate::auth::Session {
-        identity: identity.clone(),
-        expires_at: i64::MAX,
-        issued_at: 0,
-        signed_in_at: None,
-        stepped_up_at: None,
-        id_token: String::new(),
-        access_expires_at: i64::MAX,
-        refresh_token: None,
-    });
-
-    let response = crate::api::mutate::propose(
-        &user,
+    // The typed outcome, not the route's JSON: `awaited` is no member of the answer, and a
+    // round trip through it emptied the open changes a reference waits on (MF-48).
+    match crate::api::mutate::propose_with_identity(
+        identity,
         state,
         project,
         kind_info.plural,
@@ -286,21 +277,10 @@ pub async fn execute_dry_run(
         true,
         manifest,
     )
-    .await?;
-
-    let bytes = match axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Err(ApiError::Internal(format!(
-                "failed to read dry-run response: {e}"
-            )))
-        }
-    };
-    match serde_json::from_slice::<DryRunResult>(&bytes) {
-        Ok(result) => Ok(result),
-        Err(e) => Err(ApiError::Internal(format!(
-            "failed to deserialize dry-run result: {e}"
-        ))),
+    .await?
+    {
+        crate::api::mutate::ProposeOutcome::DryRun(result) => Ok(result),
+        _ => Err(ApiError::Internal("a dry run proposed a change".to_owned())),
     }
 }
 
