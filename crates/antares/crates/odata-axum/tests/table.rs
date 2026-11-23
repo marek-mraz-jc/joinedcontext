@@ -11,8 +11,11 @@ use odata_axum::{table_router, ODataState};
 use odata_csdl::{
     CsdlVersion, EntityContainer, EntitySet, EntityType, Model, Property, Schema, TypeRef,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use odata_table::{
-    Fetching, MemoryTable, Operation, Plan, Rule, Scope, Table, TableError, TableInfo,
+    Applying, Batch, Fetched, Fetching, MemoryTable, Operation, Plan, Rule, Scope, Table,
+    TableError, TableInfo,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -74,6 +77,37 @@ impl Table for Tagged {
 
     fn etag(&self) -> Option<String> {
         Some("0123abcd".into())
+    }
+}
+
+/// A writable set whose rows are gone after the first read: a row deleted between the access
+/// decision and the call that follows it.
+struct Vanishing {
+    inner: MemoryTable,
+    read: AtomicBool,
+}
+
+impl Table for Vanishing {
+    fn info(&self) -> &TableInfo {
+        self.inner.info()
+    }
+
+    fn fetch<'a>(&'a self, plan: &'a Plan, scope: &'a Scope) -> Fetching<'a> {
+        if self.read.swap(true, Ordering::SeqCst) {
+            return Box::pin(std::future::ready(Ok(Fetched {
+                rows: vec![],
+                count: Some(0),
+            })));
+        }
+        self.inner.fetch(plan, scope)
+    }
+
+    fn writable(&self) -> bool {
+        true
+    }
+
+    fn apply<'a>(&'a self, batch: &'a Batch) -> Applying<'a> {
+        self.inner.apply(batch)
     }
 }
 
@@ -351,6 +385,17 @@ async fn a_bad_accept_or_version_header_is_refused_before_any_row() -> Result<()
         assert!(status.is_client_error(), "{uri} {header}: {status} {body}");
         assert!(body["error"]["code"].is_string(), "{uri} {header}: {body}");
     }
+    let request = Request::builder()
+        .uri("/odata/Things")
+        .header(
+            "odata-version",
+            axum::http::HeaderValue::from_bytes(b"4.0\xff").map_err(|e| e.to_string())?,
+        )
+        .body(Body::empty())
+        .map_err(|e| e.to_string())?;
+    let (status, _, body) = send(app(Some(Scope::all()))?, request).await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["message"], "a request header is not valid");
     Ok(())
 }
 
@@ -377,6 +422,28 @@ async fn a_header_of_exactly_the_limit_is_read_and_one_byte_more_is_refused() ->
             .map_err(|e| e.to_string())?;
         let (got, _, body) = send(router.clone(), request).await?;
         assert_eq!(got, status, "{version}: {body}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_row_gone_between_the_decision_and_the_call_is_not_found() -> Result<(), String> {
+    let model = model();
+    for method in ["GET", "DELETE"] {
+        let vanishing = Vanishing {
+            inner: counters(&model)?,
+            read: AtomicBool::new(false),
+        };
+        let tables: Vec<Arc<dyn Table>> = vec![Arc::new(vanishing)];
+        let router = Router::new()
+            .nest_service(
+                "/odata",
+                table_router(Arc::new(state(model.clone(), None)), tables, 2),
+            )
+            .layer(Extension(Scope::all()));
+        let (status, _, body) = call(router, method, "/odata/Counters(1)").await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method}: {body}");
+        assert_eq!(body["error"]["message"], "the resource does not exist");
     }
     Ok(())
 }
