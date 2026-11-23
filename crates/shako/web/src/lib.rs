@@ -99,13 +99,8 @@ fn is_safe_href(url: &str) -> bool {
     {
         return true;
     }
+    // An allow-list: `javascript:`, `data:`, `vbscript:` and every other scheme are refused.
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("javascript:")
-        || lower.starts_with("data:")
-        || lower.starts_with("vbscript:")
-    {
-        return false;
-    }
     lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")
 }
 
@@ -981,6 +976,7 @@ mod tests {
             ("/joinedcontext/a%2F..%2F..%2Fevil", "/"),
             ("/joinedcontext/%2F%2Fevil.example", "/"),
             ("/joinedcontext/..", "/"),
+            ("/joinedcontext/kiosk_%2F..", "/"),
             ("/joinedcontext/_x", "/"),
             ("/joinedcontext/a\\evil", "/"),
             ("/%2F%2Fevil/helsinki", "/"),

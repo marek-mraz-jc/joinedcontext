@@ -69,8 +69,9 @@ async fn shako(tmp: &tempfile::TempDir) -> Shako {
                 org_id: org,
                 principal: Principal::User("reader".into()),
                 actions: vec![Action::Read],
-                project_id: None,
-                repo: Some("helsinki".into()),
+                // Scoped to the project, which shako names after the repository.
+                project_id: Some("helsinki".into()),
+                repo: None,
             },
         ])),
         TokenVerifier::new(ShakoSigningKey::generate().expect("key")).with_static_tokens(vec![
@@ -114,6 +115,10 @@ async fn shako(tmp: &tempfile::TempDir) -> Shako {
                 put("notes.txt", b"hello\n"),
                 put("bin.dat", &[0xff, 0x00]),
                 put("big.txt", &vec![b'a'; 1024 * 1024 + 2]),
+                put("edge.txt", &vec![b'e'; 1024 * 1024]),
+                put("page.htm", b"<p>x</p>"),
+                put("doc.xhtml", b"<p>x</p>"),
+                put("feed.xml", b"<x/>"),
             ],
         ),
     )
@@ -131,6 +136,16 @@ async fn shako(tmp: &tempfile::TempDir) -> Shako {
     create_branch(&state, &ctx, "joinedcontext", "helsinki", "feature", None)
         .await
         .expect("branch");
+    // main moves on after the branch: the pull request's diff starts at the merge base.
+    commit_files(
+        &state,
+        &ctx,
+        "joinedcontext",
+        "helsinki",
+        commit("main only", None, vec![put("main-only.txt", b"m\n")]),
+    )
+    .await
+    .expect("main commit");
     commit_files(
         &state,
         &ctx,
@@ -294,6 +309,17 @@ async fn the_file_page_shows_a_file_and_says_when_it_shows_only_the_first_mib() 
     assert!(notes.contains("/joinedcontext/helsinki/raw/main/notes.txt"));
     let big = page(&s.app, "/joinedcontext/helsinki/blob/main/big.txt").await;
     assert!(big.contains("This page shows the first MiB of the file."));
+    assert!(
+        big.contains(&"a".repeat(1024 * 1024)),
+        "the first MiB is shown"
+    );
+    assert!(!big.contains(&"a".repeat(1024 * 1024 + 1)));
+    let edge = page(&s.app, "/joinedcontext/helsinki/blob/main/edge.txt").await;
+    assert!(edge.contains(&"e".repeat(1024 * 1024)));
+    assert!(
+        !edge.contains("first MiB"),
+        "exactly one MiB is the whole file"
+    );
     for missing in [
         "/joinedcontext/helsinki/blob/main/none.txt",
         "/joinedcontext/helsinki/blob/nobranch/notes.txt",
@@ -333,6 +359,21 @@ async fn a_raw_file_is_never_rendered_by_the_browser() {
             "bin.dat",
             "application/octet-stream",
             "attachment; filename=\"bin.dat\"",
+        ),
+        (
+            "page.htm",
+            "application/octet-stream",
+            "attachment; filename=\"page.htm\"",
+        ),
+        (
+            "doc.xhtml",
+            "application/octet-stream",
+            "attachment; filename=\"doc.xhtml\"",
+        ),
+        (
+            "feed.xml",
+            "application/octet-stream",
+            "attachment; filename=\"feed.xml\"",
         ),
     ] {
         let uri = format!("/joinedcontext/helsinki/raw/main/{path}");
@@ -449,6 +490,7 @@ async fn the_pull_request_pages_show_the_request_its_files_and_reviews() {
     let detail = page(&s.app, "/joinedcontext/helsinki/pulls/1").await;
     assert!(detail.contains("feature.txt"), "{detail}");
     assert!(detail.contains("Changed Files (1)"), "{detail}");
+    assert!(!detail.contains("main-only.txt"), "{detail}");
     assert!(detail.contains("Reviews (1)"), "{detail}");
     assert!(detail.contains("[COMMENT]: looks fine"), "{detail}");
     assert!(detail.contains("&lt;script&gt;"), "{detail}");
