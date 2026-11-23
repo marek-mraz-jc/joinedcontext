@@ -991,6 +991,18 @@ mod clause_4_9_extensions {
         assert!(q(&lexical, "speed==\"3.5\""));
     }
 
+    /// A compound value has no `@value`: the target value stays the whole
+    /// object, which equals no scalar, and a member path still reaches into it.
+    #[test]
+    fn a_compound_value_is_compared_whole_and_navigated_by_member() {
+        let e = expand(json!({"id": "urn:ngsi-ld:Vehicle:6", "type": "Vehicle",
+            "address": {"type": "Property", "value": {"city": "Berlin", "zip": 10115}}}));
+        assert!(!q(&e, "address==\"Berlin\""));
+        assert!(q(&e, "address"));
+        assert!(q(&e, "address[city]==\"Berlin\""));
+        assert!(q(&e, "address[zip]>10000"));
+    }
+
     /// A JsonProperty holds arbitrary JSON — the core `@context` types it
     /// `@json`, so nothing inside it is interpreted as JSON-LD. An `@value`
     /// member there is data, and the target value stays the whole JSON

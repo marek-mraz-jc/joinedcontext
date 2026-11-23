@@ -576,6 +576,7 @@ fn arithmetic_is_checked_and_rounding_keeps_integers() {
         (is_null(call(Func::Floor, vec![s("x")])), T),
         (eq(f2(Func::Add, p("pm10"), i(1)), i(13)), T),
         (is_null(f2(Func::Add, i(i64::MAX), i(1))), T),
+        (eq(f2(Func::Add, n(1.5), i(1)), n(2.5)), T),
         (eq(f2(Func::Sub, p("pm10"), n(0.5)), n(11.5)), T),
         (is_null(f2(Func::Sub, i(i64::MIN), i(1))), T),
         (eq(f2(Func::Mul, p("pm10"), i(2)), i(24)), T),
