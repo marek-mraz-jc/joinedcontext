@@ -109,7 +109,7 @@ describe("a pipeline's own page, acting", () => {
     await renderRoute({
       path: PATH,
       answer: answers({
-        extra: (path, request) =>
+        extra: (_path, request) =>
           request.method === "PUT" ? jsonResponse({ type: "about:blank", title: "Forbidden", status: 403, detail: "you may not propose Pipelines here" }, 403) : undefined,
       }),
       permissions: EDITOR,
