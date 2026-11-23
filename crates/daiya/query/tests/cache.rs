@@ -3,9 +3,11 @@
 //! organizations or permission scopes, expiry, the per-organization byte ceiling with oldest-first
 //! eviction, and the statistics of the QueryCacheStats entity set.
 
-use daiya_model::{FieldColumn, Frame, FrameSet, InstanceId, OrgId};
+use daiya_model::{FieldColumn, Frame, FrameSet, InstanceId, Notice, NoticeSeverity, OrgId};
 use daiya_query::{CacheKey, PublicCacheKey, QueryCache};
+use serde_json::Value;
 use serde_json::json;
+use std::sync::Arc;
 use std::time::Duration;
 
 const ORG: OrgId = OrgId::from_u128(1);
@@ -155,6 +157,90 @@ fn hits_misses_and_statistics_per_datasource() {
         .find(|s| s.datasource_uid == "public:pub")
         .unwrap();
     assert_eq!((public.hits, public.misses, public.entries), (1, 1, 1));
+}
+
+/// The ceiling counts what each part of a result holds: label pairs, custom meta, notices and
+/// the members of nested values.
+#[test]
+fn every_part_of_a_result_counts_against_the_ceiling() {
+    let held = |frame: Frame| {
+        let cache = QueryCache::new(1 << 20);
+        cache.insert(
+            key(ORG, &[], "prom", "up"),
+            vec![FrameSet::new("A", vec![frame])],
+            TTL,
+        );
+        cache.bytes_held()
+    };
+    let base = Frame {
+        name: "A".into(),
+        fields: vec![FieldColumn::strings("s", vec![Some("x".into())])],
+        ..Frame::default()
+    };
+    let before = held(base.clone());
+    let v = size_of::<Value>();
+    let mut labelled = base.clone();
+    labelled.fields[0].labels.insert("job".into(), "web".into());
+    assert_eq!(held(labelled) - before, 64 + 3 + 3);
+    let mut custom = base.clone();
+    custom.meta.custom.insert("k".into(), json!("abcd"));
+    assert_eq!(held(custom) - before, 64 + v + 1 + 4);
+    let mut noticed = base.clone();
+    noticed.meta.notices.push(Notice {
+        severity: NoticeSeverity::Info,
+        text: "hello".into(),
+    });
+    assert_eq!(held(noticed) - before, size_of::<Notice>() + 5);
+    let mut nested = base.clone();
+    nested.fields[0].values = vec![json!(["ab", { "k": "xyz", "n": 1, "b": null }])];
+    // ["ab", {...}] holds two values, "ab" two bytes, the object three members of two Values,
+    // their one-byte names and "xyz"; the string "x" it replaced held one byte.
+    let array = v + 2 + v + 3 * (2 * v + 1) + 3;
+    assert_eq!(held(nested) - before, array - 1);
+}
+
+#[test]
+fn without_a_runtime_there_is_no_timer_and_entries_wait_for_a_use() {
+    let cache = Arc::new(QueryCache::new(200_000));
+    cache.insert(
+        key(ORG, &[], "prom", "up"),
+        sized(10),
+        Duration::from_millis(1),
+    );
+    std::thread::sleep(Duration::from_millis(5));
+    cache.sweep_on_timer();
+    assert_eq!(
+        cache.entries_held(),
+        1,
+        "expired, held until a use or a sweep"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_timer_sweeps_expired_entries_and_ends_with_the_cache() {
+    let cache = Arc::new(QueryCache::new(200_000));
+    cache.insert(
+        key(ORG, &[], "prom", "up"),
+        sized(10),
+        Duration::from_millis(1),
+    );
+    cache.insert(key(ORG, &[], "prom", "kept"), sized(10), TTL * 10);
+    std::thread::sleep(Duration::from_millis(5));
+    cache.sweep_on_timer();
+    assert_eq!(cache.entries_held(), 2);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(
+        cache.entries_held(),
+        1,
+        "the expired entry went on the timer"
+    );
+    let weak = Arc::downgrade(&cache);
+    drop(cache);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert!(
+        weak.upgrade().is_none(),
+        "the timer holds no strong reference"
+    );
 }
 
 #[test]

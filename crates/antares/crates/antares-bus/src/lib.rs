@@ -174,10 +174,10 @@ mod tests {
         let limit = 256 * 1024;
         let checked = e.claim_check(limit);
         let wire = serde_json::to_vec(&checked).expect("serialize");
+        let len = wire.len();
         assert!(
-            wire.len() <= limit,
-            "the published message must fit the bus limit, got {} bytes",
-            wire.len()
+            len <= limit,
+            "the published message must fit the bus limit, got {len} bytes"
         );
         assert!(
             checked.payload.is_some(),
@@ -191,6 +191,31 @@ mod tests {
             !checked.types.is_empty(),
             "types must survive — the publish subject is built from them"
         );
+    }
+
+    /// The ceiling is 256 KiB, and a body or envelope of exactly the limit still fits.
+    #[test]
+    fn the_limit_itself_fits_and_one_byte_more_does_not() {
+        let body = |n: usize| Some(serde_json::Value::String("x".repeat(n)));
+        let mut e = event(3);
+        e.payload = body(200_000);
+        assert!(
+            !e.claim_checked_at(CLAIM_CHECK_BYTES),
+            "200 kB stays inline"
+        );
+        e.payload = body(300_000);
+        assert!(e.claim_checked_at(CLAIM_CHECK_BYTES), "300 kB is checked");
+
+        // A string body serialises to its length plus two quotes.
+        e.payload = body(98);
+        assert!(!e.claim_checked_at(100));
+        assert!(e.claim_checked_at(99));
+
+        let mut e = event(3);
+        e.changed_attrs = vec!["https://x/a".into()];
+        let envelope = serde_json::to_vec(&e).expect("serialize").len();
+        assert_eq!(e.clone().claim_check(envelope).changed_attrs.len(), 1);
+        assert!(e.claim_check(envelope - 1).changed_attrs.is_empty());
     }
 
     /// The publisher asks `claim_checked_at` BEFORE it publishes and keeps

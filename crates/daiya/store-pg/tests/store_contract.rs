@@ -1494,6 +1494,80 @@ async fn pool_config_reads_the_password_file_and_refuses_passwords_in_urls() {
 }
 
 #[tokio::test]
+async fn row_queries_refuse_what_the_set_lacks_and_compare_times_only_with_times() {
+    use daiya_model::{ReadScope, RowQuery, RowSet};
+    use odata_table::Cond;
+    use odata_url::CompareOp;
+    let _schema = SCHEMA_LOCK.read().await;
+    let Some(db) = pg().await else { return };
+    let store = &db.app;
+    let org = OrgId::generate();
+    store.upsert_folder(folder(org, "f", None)).await.unwrap();
+    for set in RowSet::ALL {
+        let refused = |query: RowQuery| async move {
+            store.read_rows(org, query).await.unwrap_err().to_string()
+        };
+        let mut unknown = RowQuery::every(set, ReadScope::All);
+        unknown.window.filter = Cond::IsNull {
+            path: vec!["nope".into()],
+        };
+        assert!(
+            refused(unknown)
+                .await
+                .contains(&format!("{} has no property nope", set.name())),
+            "{set:?}"
+        );
+        let mut nested = RowQuery::every(set, ReadScope::All);
+        nested.window.filter = Cond::IsNull {
+            path: vec![set.key().to_owned(), "x".into()],
+        };
+        assert!(refused(nested).await.contains("has no property"), "{set:?}");
+        let mut cursor = RowQuery::every(set, ReadScope::All);
+        cursor.window.after = Some(Vec::new());
+        assert!(
+            refused(cursor)
+                .await
+                .contains("the cursor is not one of this order"),
+            "{set:?}"
+        );
+    }
+    let set = RowSet::Folders;
+    let all = store
+        .read_rows(org, RowQuery::every(set, ReadScope::All))
+        .await
+        .unwrap()
+        .rows;
+    assert_eq!(all.len(), 1);
+    let time = all[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .find(|k| k.ends_with("At"))
+        .expect("a time member")
+        .clone();
+    let mut query = RowQuery::every(set, ReadScope::All);
+    query.window.filter = Cond::Or(
+        Box::new(Cond::Const(false)),
+        Box::new(Cond::Compare {
+            path: vec![time.clone()],
+            op: CompareOp::Ne,
+            value: json!("not a time"),
+        }),
+    );
+    let page = store.read_rows(org, query).await.unwrap();
+    assert!(
+        page.rows.is_empty(),
+        "a time compared with text matches nothing"
+    );
+    let mut query = RowQuery::every(set, ReadScope::All);
+    query.window.filter = Cond::Or(
+        Box::new(Cond::Const(false)),
+        Box::new(Cond::Not(Box::new(Cond::IsNull { path: vec![time] }))),
+    );
+    assert_eq!(store.read_rows(org, query).await.unwrap().rows.len(), 1);
+}
+
+#[tokio::test]
 async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
     let _schema = SCHEMA_LOCK.read().await;
     let Some(db) = pg().await else { return };
@@ -1551,6 +1625,16 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
             .unwrap_err(),
         store.delete_public_dashboard(org, "p").await.unwrap_err(),
         store.list_import_reports(org).await.unwrap_err(),
+        store
+            .read_rows(
+                org,
+                daiya_model::RowQuery::every(
+                    daiya_model::RowSet::ALL[0],
+                    daiya_model::ReadScope::All,
+                ),
+            )
+            .await
+            .unwrap_err(),
     ];
     let now = TimestampTz::now();
     errors.push(

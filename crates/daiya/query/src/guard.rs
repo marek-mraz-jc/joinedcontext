@@ -332,7 +332,10 @@ impl OutboundGuard {
                 "disallowed URL scheme '{scheme}' (https required)"
             )));
         }
-        let port = port.ok_or_else(|| DsError::GuardRefused("URL has unknown port".into()))?;
+        // Only http and https pass the scheme check above, and both have a known port.
+        let Some(port) = port else {
+            return Err(DsError::GuardRefused("URL has unknown port".into()));
+        };
 
         let host_with_port = format!("{host}:{port}");
         let allowed = self.config.allow_hosts.iter().any(|entry| {
