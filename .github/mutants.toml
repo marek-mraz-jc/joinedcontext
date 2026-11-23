@@ -139,6 +139,9 @@ exclude_re = [
   # Broker::with_store_alias (ANTARES_PUBLIC_URL, ANTARES_TEMPORAL_INSTANCE_LIMIT, ANTARES_SWEEP_SECS): the native
   # test run does not compile them, so their mutants change nothing it builds (the browser build runs them; T-7673).
   'crates/antares-wasm/src/(browser|opfs)\.rs:',
+  # antares-icsr Internal::deliver: Grant::allows(false) is `!false || ...`, true for every grant, so the guard
+  # replaced with true reads alike; the guard stays as the read-access statement of the delivery (T-7673).
+  'crates/antares-icsr/src/lib\.rs:\d+:\d+: replace match guard g\.allows\(false\) with true in Internal::deliver',
   'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection

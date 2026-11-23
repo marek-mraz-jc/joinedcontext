@@ -234,6 +234,11 @@ async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_
         (feed["title"].as_str(), feed["language"].as_str()),
         (Some("Everything"), Some("en"))
     );
+    // e1 names an organizer and a category; a1's author is hidden and it has no category
+    let items = &feed["items"];
+    assert_eq!(items[1]["authors"], json!([{"name": "Divadlo"}]), "{json}");
+    assert_eq!(items[1]["tags"], json!(["kultúra"]), "{json}");
+    assert!(items[2].get("authors").is_none() && items[2].get("tags").is_none(), "{json}");
     let (status, body) = send(&app, "HEAD", &format!("{ALL}/atom.xml"), "").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
     let info = antares_feed::Feed.version_info();
