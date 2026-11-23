@@ -25,6 +25,6 @@ pub use outbox::{
 pub use smart_http::smart_http_router;
 pub use state::{
     InProcessEventSubscriber, ShakoState, authenticate_request, gitea_error_response,
-    odata_error_response, problem_error_response, read_body_bounded, repo_to_gitea_json,
-    resolve_and_authorize_repo, stream_file_in_64k_chunks, strip_dot_git,
+    odata_error_response, read_body_bounded, repo_to_gitea_json, resolve_and_authorize_repo,
+    stream_file_in_64k_chunks, strip_dot_git,
 };
