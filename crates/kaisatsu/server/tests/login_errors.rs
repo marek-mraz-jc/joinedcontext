@@ -955,6 +955,24 @@ async fn passkey_helpers_refuse_every_broken_input() {
         1
     );
 
+    // An http mount still allows the https origin of its RP id; a configured RP id wins over
+    // the mount's host, for passkey login and second factor alike.
+    let http = Mount::new("kaisatsu", "http", "idm.dev.example.test:8080", "").unwrap();
+    assert_eq!(
+        allowed_origins_for_realm(&realm, &http)[..2],
+        [
+            "http://idm.dev.example.test:8080".to_owned(),
+            "https://idm.dev.example.test".to_owned()
+        ]
+    );
+    let mut configured = realm.clone();
+    configured.web_authn_policy_rp_id = " Hel.Example.Test ".into();
+    assert_eq!(effective_rp_id(&configured, &m, false), "hel.example.test");
+    assert_eq!(
+        effective_rp_id(&realm, &http, false),
+        "idm.dev.example.test"
+    );
+
     let rp_id = "idm.dev.example.test";
     let mut member = user(&mem, MEMBER).await;
     let handle = ensure_user_handle(&store, "dev", &mut member)
@@ -997,6 +1015,19 @@ async fn passkey_helpers_refuse_every_broken_input() {
     .await
     .unwrap();
     assert_eq!(rec.user_label.as_deref(), Some("Passkey"));
+    let again = complete_passkey_registration(
+        &store,
+        &m,
+        &realm,
+        &mut member,
+        &challenge,
+        &reg,
+        None,
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(again, KaisatsuError::Conflict(_)), "{again}");
 
     let opts = build_creation_options(&store, &m, &realm, &mut member, "opts-challenge")
         .await
@@ -1004,6 +1035,13 @@ async fn passkey_helpers_refuse_every_broken_input() {
     assert_eq!(opts["user"]["id"], handle.as_str());
     assert_eq!(opts["excludeCredentials"][0]["id"], pk.cred_id_b64.as_str());
     assert_eq!(opts["challenge"], "opts-challenge");
+    let mut unnamed = realm.clone();
+    unnamed.web_authn_policy_passwordless_rp_entity_name = String::new();
+    unnamed.display_name = "Helsinki ID".into();
+    let opts = build_creation_options(&store, &m, &unnamed, &mut member, "opts-challenge")
+        .await
+        .unwrap();
+    assert_eq!(opts["rp"]["name"], "Helsinki ID");
 
     let ch = URL_SAFE_NO_PAD.encode(b"login-challenge-1");
     let auth = |expected: Option<String>, body: serde_json::Value| {
@@ -1043,6 +1081,14 @@ async fn passkey_helpers_refuse_every_broken_input() {
             .is_err(),
         "usernameless needs userHandle"
     );
+    // A passkey stored before it ever verified the person learns it at its first verified use.
+    let mut stored = store
+        .get_webauthn_by_credential_id("dev", &pk.cred_id_b64)
+        .await
+        .unwrap()
+        .unwrap();
+    stored.uv_initialized = false;
+    store.update_webauthn_credential(stored).await.unwrap();
     let (u, uv) = auth(
         Some(member.id.clone()),
         assertion_json(&pk, &ch, rp_id, Some(&handle)),
@@ -1051,6 +1097,14 @@ async fn passkey_helpers_refuse_every_broken_input() {
     .unwrap();
     assert_eq!(u.id, member.id);
     assert!(uv);
+    assert!(
+        store
+            .get_webauthn_by_credential_id("dev", &pk.cred_id_b64)
+            .await
+            .unwrap()
+            .unwrap()
+            .uv_initialized
+    );
 
     let mut disabled = user(&mem, MEMBER).await;
     disabled.enabled = false;
