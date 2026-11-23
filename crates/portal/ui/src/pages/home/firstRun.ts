@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../api/client";
 import { readPreferences, savePreferences } from "../../navigation/places";
 
-export function useFirstRun(): { shown: boolean; dismiss: () => void; restore: () => void } {
+export function useFirstRun(): { shown: boolean; dismiss: () => void } {
   const queryClient = useQueryClient();
   const [local, setLocal] = useState<boolean | null>(null);
   const preferences = useQuery({
@@ -28,10 +28,6 @@ export function useFirstRun(): { shown: boolean; dismiss: () => void; restore: (
     dismiss: () => {
       setLocal(true);
       save.mutate(true);
-    },
-    restore: () => {
-      setLocal(false);
-      save.mutate(false);
     },
   };
 }

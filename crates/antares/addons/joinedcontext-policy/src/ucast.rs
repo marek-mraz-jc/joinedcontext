@@ -293,6 +293,13 @@ mod tests {
             grant("b", "Air", &json!({"q": "pm25>0", "scopeQ": "/b"}))
         ]))?;
         assert_eq!(at(&a, "/Air/q"), "(pm10>0)|(pm25>0)");
+        let only_q = ast(&json!([grant("a", "Air", &json!({"q": "pm10>0"}))]))?;
+        assert_eq!(at(&only_q, "/Air/q"), "pm10>0");
+        assert_eq!(
+            at(&only_q, "/Air/where"),
+            Value::Null,
+            "a q alone is no tree"
+        );
         assert_eq!(at(&a, "/Air/where/operator"), "or");
         let half = ast(&json!([
             grant("a", "Air", &json!({"q": "pm10>0"})),

@@ -4,10 +4,12 @@
 //! restricted, a hidden (`jc_hide`), a withdrawn dataset and one of a withdrawn publisher, so each
 //! surface is checked against the rules of `package_show` (C4, C7, C11, D2, G2).
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::Router;
-use dataroom_api::{mount, router, DataroomState, TokenBinding};
+use dataroom_api::{mount, router, DataroomState};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     Action, ActivityRow, BrandingBlock, Catalogue, CatalogueId, CataloguePlugin, DataroomError,
@@ -76,6 +78,7 @@ impl Store for FailingStore {
         list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
         get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
         upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        save_catalogue<'a>(catalogue: Catalogue, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Catalogue;
         delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
@@ -85,6 +88,7 @@ impl Store for FailingStore {
         list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
         get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
         upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
+        save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Dataset;
         withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
         purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> ();
         get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
@@ -200,8 +204,8 @@ fn view(id: &str, resource: &str) -> ResourceView {
     .unwrap()
 }
 
-fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> TokenBinding {
-    TokenBinding {
+fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> common::Caller {
+    common::Caller {
         token: token.into(),
         subject: Subject::authenticated(
             actor,
@@ -299,21 +303,24 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
         b.subject.client_id = Some(client.into());
         b
     };
-    let state = DataroomState::new(store.clone(), Arc::new(authz), org, cat).with_tokens(vec![
-        binding("tok-admin", "admin", org, &[]),
-        instance("tok-alpha", "alpha"),
-        instance("tok-beta", "beta"),
-        binding("tok-editor", "eva", org, &["city-editors"]),
-        binding("tok-member", "mo", org, &[]),
-        binding(
-            "tok-outsider",
-            "otto",
-            OrgId::from_uuid(uuid::Uuid::now_v7()),
-            &[],
-        ),
-        binding("tok-proposer", "pat", org, &[]),
-        reader,
-    ]);
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), Arc::new(authz), org, cat),
+        vec![
+            binding("tok-admin", "admin", org, &[]),
+            instance("tok-alpha", "alpha"),
+            instance("tok-beta", "beta"),
+            binding("tok-editor", "eva", org, &["city-editors"]),
+            binding("tok-member", "mo", org, &[]),
+            binding(
+                "tok-outsider",
+                "otto",
+                OrgId::from_uuid(uuid::Uuid::now_v7()),
+                &[],
+            ),
+            binding("tok-proposer", "pat", org, &[]),
+            reader,
+        ],
+    );
     World {
         store,
         app: build(state),
@@ -1951,7 +1958,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"package_id": "open"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_create",
             Some("tok-editor"),
             json!({"package_id": "open", "url": "https://f.example/x"}),
@@ -1963,7 +1970,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_update",
             Some("tok-editor"),
             json!({"id": "res-open-0", "name": "x"}),
@@ -1975,7 +1982,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_delete",
             Some("tok-editor"),
             json!({"id": "res-open-0"}),
@@ -2950,7 +2957,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
         ("list_datasets", "3.0.0"),
         ("list_publishers", "3.1.0"),
         ("upsert_profile", "3.2.0"),
-        ("upsert_catalogue", "3.3.0"),
+        ("save_catalogue", "3.3.0"),
     ] {
         w.store.fail(&[m]);
         let a = post(
@@ -2968,7 +2975,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
             a.body
         );
     }
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = post(
         app,
         "/api/v1/profiles/city/activate",
@@ -3140,7 +3147,7 @@ async fn branding_logo_and_static_assets() {
     );
     let a = get(app, "/robots.txt", None).await;
     assert_eq!(a.body, "User-agent: *\nDisallow: /\n");
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     assert_eq!(
         post(app, "/api/v1/branding", Some("tok-admin"), json!({}))
             .await
@@ -3190,7 +3197,7 @@ async fn branding_logo_and_static_assets() {
         get(app, "/assets/nothing.svg", None).await.status,
         StatusCode::NOT_FOUND
     );
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = send(
         app,
         Method::POST,
@@ -3875,10 +3882,12 @@ async fn the_bearer_scheme_is_case_insensitive() {
 async fn a_host_supplied_identity_comes_first_and_tokens_still_work() {
     let w = world_with(|s| {
         let org = s.default_org_id;
+        let callers = s.subject_resolver.clone();
         router(s.with_subject_resolver(move |h| {
             h.get("x-portal-session")
                 .filter(|v| v.as_bytes() == b"valid")
                 .map(|_| Subject::authenticated("admin", vec![org], Vec::new()))
+                .or_else(|| callers.as_ref().and_then(|known| known(h)))
         }))
     })
     .await;

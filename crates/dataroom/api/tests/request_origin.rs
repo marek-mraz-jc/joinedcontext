@@ -393,23 +393,30 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
         CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
         CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
     );
-    let (token_a, token_b) = ("a".repeat(40), "b".repeat(40));
-    let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "com_alpha").unwrap();
-    let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "com_beta").unwrap();
-    let state = two_organizations().await.with_tokens(vec![bind_a, bind_b]);
+    let issuer = jc_door::testing::Issuer::start("https://id.city.test", "k1").await;
+    let clients = ["portal-publisher".to_owned()];
+    let verifier = jc_door::Verifier::new(&issuer.issuer, &issuer.jwks_url, &clients).unwrap();
+    // One service token: who it is follows from the catalogue the address names.
+    let token = issuer.token("portal-publisher", "dataroom", 300);
+    let (subject_a, grant_a) = portal_publisher_on(org, a, "com_alpha");
+    let (subject_b, grant_b) = portal_publisher_on(org, b, "com_beta");
+    let state = two_organizations()
+        .await
+        .with_verifier(Arc::new(verifier))
+        .with_publishers([((org, a), subject_a), ((org, b), subject_b)].into());
     let state = DataroomState {
         authorizer: Arc::new(PolicyAuthorizer::new(vec![grant_a, grant_b])),
         ..state
     };
     let on = |org: &str| mount("https", "city.test", &format!("/{org}/opendata"));
-    for (who, token) in [("com_alpha", &token_a), ("com_beta", &token_b)] {
+    for who in ["com_alpha", "com_beta"] {
         let (status, body) = call(
             state.clone(),
             on(who),
             Some(who),
             "POST",
             "/api/3/action/organization_create",
-            Some(token),
+            Some(&token),
             Some(serde_json::json!({ "name": who, "title": who })),
         )
         .await;
@@ -420,7 +427,7 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
             Some(who),
             "POST",
             "/api/3/action/package_create",
-            Some(token),
+            Some(&token),
             Some(serde_json::json!({
                 "name": format!("{who}-budget"), "title": "Budget", "notes": "Budget",
                 "owner_org": who, "license_id": "cc-by",
@@ -430,6 +437,18 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
         assert_eq!(status, StatusCode::OK, "{who}: {body}");
     }
     for (who, other) in [("com_alpha", "com_beta"), ("com_beta", "com_alpha")] {
+        // The token writes as the publisher of the catalogue it was sent to, and as no other's.
+        let (status, body) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "POST",
+            "/api/3/action/organization_create",
+            Some(&token),
+            Some(serde_json::json!({ "name": other, "title": other })),
+        )
+        .await;
+        assert!(status.is_client_error(), "{who} creates {other}: {body}");
         let (status, body) = call(
             state.clone(),
             on(who),
@@ -504,12 +523,10 @@ fn the_portal_grant_of_one_catalogue_writes_no_other() {
         CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
         CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
     );
-    let token_a = "a".repeat(40);
-    let token_b = "b".repeat(40);
-    let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "alpha").unwrap();
-    let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "beta").unwrap();
+    let (as_a, grant_a) = portal_publisher_on(org, a, "alpha");
+    let (as_b, grant_b) = portal_publisher_on(org, b, "beta");
     // The installation's default publisher beside them, on catalogue a.
-    let (bind_d, grant_d) = portal_publisher(&"d".repeat(40), org, a).unwrap();
+    let (as_d, grant_d) = portal_publisher(org, a);
     let auth = PolicyAuthorizer::new(vec![grant_a, grant_b, grant_d]);
     let dataset = |cat, publisher: &str| ObjectTarget::Publisher {
         org_id: org,
@@ -522,13 +539,13 @@ fn the_portal_grant_of_one_catalogue_writes_no_other() {
         auth.check(&ctx, Action::Propose, &dataset(cat, publisher))
             .allowed
     };
-    assert!(may(&bind_a.subject, a, "alpha"));
-    assert!(may(&bind_b.subject, b, "beta"));
+    assert!(may(&as_a, a, "alpha"));
+    assert!(may(&as_b, b, "beta"));
     // Not the other catalogue, under any publisher; not another publisher in its own.
-    assert!(!may(&bind_a.subject, b, "beta"));
-    assert!(!may(&bind_a.subject, b, "alpha"));
-    assert!(!may(&bind_b.subject, a, "alpha"));
-    assert!(!may(&bind_a.subject, a, "hel-fi"));
+    assert!(!may(&as_a, b, "beta"));
+    assert!(!may(&as_a, b, "alpha"));
+    assert!(!may(&as_b, a, "alpha"));
+    assert!(!may(&as_a, a, "hel-fi"));
     // The default publisher, catalogue-wide on a, reaches nothing of b.
-    assert!(!may(&bind_d.subject, b, "beta"));
+    assert!(!may(&as_d, b, "beta"));
 }

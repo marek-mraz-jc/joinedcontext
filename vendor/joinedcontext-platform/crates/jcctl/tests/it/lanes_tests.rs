@@ -177,6 +177,13 @@ fn an_ephemeral_sandbox_space_is_green() {
     assert_eq!(verdict.lane, Lane::Green, "{}", verdict.reason);
 }
 
+/// CC-67 is self-service creation: a space that exists is reviewed, whatever it declares (T-7541).
+#[test]
+fn a_space_that_exists_is_reviewed_though_it_declares_itself_a_sandbox() {
+    let verdict = lane_of(&change(Action::Update, SANDBOX_SPACE));
+    assert_eq!(verdict.lane, Lane::Yellow, "{}", verdict.reason);
+}
+
 #[test]
 fn a_managed_space_and_a_new_pipeline_are_yellow() {
     assert_eq!(lane_of(&change(Action::Create, SPACE)).lane, Lane::Yellow);

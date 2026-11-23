@@ -293,12 +293,6 @@ export function AccountAccess({
         <AdminGrid
           stack
           storageKey={`${project}:account-access`}
-          query={{
-            isPending: false,
-            isError: false,
-            error: null,
-            refetch: () => undefined,
-          }}
           caption={t("access.agent.matrix", { account })}
           rows={rows}
           columns={columns}

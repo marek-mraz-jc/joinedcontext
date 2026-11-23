@@ -468,6 +468,49 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_whole_attribute_and_one_the_broker_lacks_are_one_path_each() {
+        let mut entity = entity("1", 42);
+        entity.body["name"] = json!("Námestie SNP");
+        entity.body["address"] = json!({ "type": "Property", "value": "SNP 1" });
+        entity.source = PathBuf::from("seed/s.json");
+        let mut live = entity.body.clone();
+        live["name"] = json!("Namestie");
+        live["createdAt"] = json!("2026-01-01T00:00:00Z");
+        live.as_object_mut().expect("an object").remove("address");
+        live["id"] = json!("urn:ngsi-ld:AirQualityObserved:other");
+
+        let drifted = drifted(&entity, Some(&live)).expect("two attributes moved");
+        assert_eq!(
+            drifted.diff,
+            vec![
+                Difference {
+                    path: "address".to_owned(),
+                    declared: json!({ "type": "Property", "value": "SNP 1" }),
+                    live: None,
+                },
+                Difference {
+                    path: "name".to_owned(),
+                    declared: json!("Námestie SNP"),
+                    live: Some(json!("Namestie")),
+                },
+            ],
+            "a plain value is one path, a missing attribute has no live side, and id is no attribute"
+        );
+        assert_eq!(
+            drifted.source, "seed/s.json",
+            "a path outside projects/ is kept"
+        );
+        assert_eq!(drifted.declared, entity.body);
+    }
+
+    #[test]
+    fn a_side_that_is_no_object_has_no_attribute_to_compare() {
+        assert!(differences(&json!("text"), Some(&json!({ "a": 1 }))).is_empty());
+        assert!(differences(&json!({ "a": 1 }), Some(&json!([1]))).is_empty());
+        assert!(differences(&json!({ "a": 1 }), None).is_empty());
+    }
+
+    #[test]
     fn the_store_answers_per_project_and_forgets_what_a_scan_no_longer_finds() {
         let store = Store::default();
         assert!(store.of("mesto").is_none());
@@ -527,6 +570,314 @@ mod tests {
             .await
             .expect("the history");
         assert_eq!(history["id"], "urn:ngsi-ld:A:1");
+    }
+
+    /// A watch on `server`, its realm `city` answering the Portal's client with token `t`.
+    async fn watch_on(server: &wiremock::MockServer) -> Watch {
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/realms/city/protocol/openid-connect/token"))
+            .and(body_string_contains("client_id=portal"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "t"})))
+            .mount(server)
+            .await;
+        Watch::new(
+            format!("{}/", server.uri()),
+            &format!("{}/realms/city/", server.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        )
+    }
+
+    /// DM-74: a page asks the type, the window and the system attributes with the scan's token.
+    #[tokio::test]
+    async fn a_page_reads_one_window_of_a_type_and_a_refusal_names_the_space() {
+        use wiremock::matchers::{bearer_token, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let watch = watch_on(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/cs/ovzdusie/ngsi-ld/v1/entities"))
+            .and(query_param("type", "AirQualityObserved"))
+            .and(query_param("limit", "50"))
+            .and(query_param("offset", "100"))
+            .and(query_param("options", "sysAttrs"))
+            .and(bearer_token("t"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"id": "urn:a"}])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/cs/closed/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let token = watch.scan_token().await.expect("the realm answers");
+        assert_eq!(token, "t");
+        let page = watch
+            .page(&token, "ovzdusie", "AirQualityObserved", 100, 50)
+            .await;
+        assert_eq!(page, Ok(vec![json!({"id": "urn:a"})]));
+        let refused = watch.page(&token, "closed", "Vehicle", 0, 10).await;
+        assert_eq!(
+            refused,
+            Err("closed answered 403 Forbidden for Vehicle".to_owned())
+        );
+        let (_, base) = watch.surface();
+        assert_eq!(base, server.uri(), "the base keeps no trailing slash");
+    }
+
+    /// UI-26: revert upserts the declared entity alone, with a fresh token.
+    #[tokio::test]
+    async fn a_revert_upserts_the_declared_entity_and_a_refusal_is_an_error() {
+        use wiremock::matchers::{bearer_token, body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let watch = watch_on(&server).await;
+        let declared = entity("1", 42).body;
+        Mock::given(method("POST"))
+            .and(path("/cs/ovzdusie/ngsi-ld/v1/entityOperations/upsert"))
+            .and(bearer_token("t"))
+            .and(body_json(json!([declared.clone()])))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/cs/closed/ngsi-ld/v1/entityOperations/upsert"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        assert_eq!(watch.put("ovzdusie", &declared).await, Ok(()));
+        assert_eq!(
+            watch.put("closed", &declared).await,
+            Err("closed refused the write: 403 Forbidden".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_revert_without_a_token_writes_nothing() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let watch = Watch::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        );
+        let refused = watch.put("ovzdusie", &json!({})).await;
+        assert_eq!(
+            refused,
+            Err("the realm refused the reconciler's client: 401 Unauthorized".to_owned())
+        );
+    }
+
+    /// A staged checkout with the projects `mesto` (entities 1 and 2 in `ovzdusie`) and `obec`
+    /// (entity 3 in `voda`), under a fresh directory of this test's own.
+    fn checkout(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("jc-drift-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (project, space, local, index) in [
+            ("mesto", "ovzdusie", "1", 42),
+            ("mesto", "ovzdusie", "2", 7),
+            ("obec", "voda", "3", 1),
+        ] {
+            let seed = dir.join(format!("projects/{project}/spaces/{space}/entities/seed"));
+            std::fs::create_dir_all(&seed).expect("the seed folder");
+            let body = entity(local, index).body;
+            std::fs::write(seed.join(format!("e{local}.json")), body.to_string()).expect("a seed");
+        }
+        dir
+    }
+
+    /// CC-21: one token for the scan; a lost entity and a moved one are reported per project, and
+    /// a project whose entities all match still answers with nothing drifted.
+    #[tokio::test]
+    async fn a_scan_reports_each_project_and_one_that_matches_answers_empty() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let watch = watch_on(&server).await;
+        let at = |space: &str, local: &str| {
+            format!("/cs/{space}/ngsi-ld/v1/entities/urn:ngsi-ld:AirQualityObserved:bb.sk:ovzdusie:{local}")
+        };
+        let mut moved = entity("1", 42).body;
+        moved["airQualityIndex"]["value"] = json!(5);
+        Mock::given(method("GET"))
+            .and(path(at("ovzdusie", "1")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(moved))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(at("ovzdusie", "2")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(at("voda", "3")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(entity("3", 1).body))
+            .mount(&server)
+            .await;
+        let repo = checkout("scan");
+        let found = watch.scan(&repo).await.expect("the scan");
+        let tokens = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(tokens, 1, "one token for the whole scan");
+        assert_eq!(
+            found.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["mesto", "obec"]
+        );
+        let mesto = &found["mesto"].entities;
+        assert_eq!(
+            mesto.iter().map(|d| d.drift).collect::<Vec<_>>(),
+            [Kind::Modified, Kind::Missing]
+        );
+        assert_eq!(mesto[0].diff[0].path, "airQualityIndex.value");
+        assert_eq!(
+            mesto[1].source,
+            "projects/mesto/spaces/ovzdusie/entities/seed/e2.json"
+        );
+        assert!(found["obec"].entities.is_empty(), "nothing drifted in obec");
+        assert_eq!(found["obec"].observed_at, found["mesto"].observed_at);
+
+        // A space that fails the read fails the scan rather than report a half.
+        server.reset().await;
+        let watch = watch_on(&server).await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            watch.scan(&repo).await,
+            Err("ovzdusie answered 503 Service Unavailable".to_owned())
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[tokio::test]
+    async fn a_checkout_without_seeds_asks_nobody_and_an_unreadable_one_is_an_error() {
+        use wiremock::MockServer;
+        let server = MockServer::start().await;
+        let watch = watch_on(&server).await;
+        let empty = std::env::temp_dir().join(format!("jc-drift-{}-empty", std::process::id()));
+        std::fs::create_dir_all(&empty).expect("a checkout");
+        assert_eq!(watch.scan(&empty).await, Ok(BTreeMap::new()));
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty(),
+            "no token, no read"
+        );
+        let missing = empty.join("gone");
+        let unreadable = watch.scan(&missing).await.expect_err("no checkout");
+        assert!(unreadable.contains("gone"), "{unreadable}");
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// A lock a panicking reader left poisoned still answers and still takes the next scan.
+    #[test]
+    fn a_poisoned_store_still_answers_and_takes_writes() {
+        let store = std::sync::Arc::new(Store::default());
+        let held = std::sync::Arc::clone(&store);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.found.write();
+            panic!("a reader died holding the lock");
+        })
+        .join();
+        assert!(store.found.is_poisoned());
+        assert!(store.of("mesto").is_none());
+        store.replace_all(BTreeMap::from([("mesto".to_owned(), Found::default())]));
+        assert!(store.of("mesto").is_some());
+    }
+
+    /// A space surface that does not answer is an error of every call, never an empty answer.
+    #[tokio::test]
+    async fn a_surface_that_does_not_answer_is_an_error_of_every_call() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let base = format!("http://{}", closed.local_addr().expect("its address"));
+        drop(closed);
+        let realm = wiremock::MockServer::start().await;
+        let answering = watch_on(&realm).await;
+        let watch = Watch::new(
+            base,
+            &format!("{}/realms/city", realm.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        );
+        assert!(watch.page("t", "ovzdusie", "A", 0, 1).await.is_err());
+        assert!(watch.named("t", "ovzdusie", "A", "a==1").await.is_err());
+        assert!(watch.live("t", "ovzdusie", "urn:a").await.is_err());
+        assert!(watch.put("ovzdusie", &json!({})).await.is_err());
+        assert_eq!(answering.scan_token().await.as_deref(), Ok("t"));
+    }
+
+    /// A realm that refuses the scan's client fails the scan before any space is read.
+    #[tokio::test]
+    async fn a_scan_without_a_token_reads_no_space() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let watch = Watch::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        );
+        let repo = checkout("no-token");
+        assert_eq!(
+            watch.scan(&repo).await,
+            Err("the realm refused the reconciler's client: 401 Unauthorized".to_owned())
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// A host that is no hierarchical URL builds no entity address: the read fails, it never
+    /// reaches another resource.
+    #[tokio::test]
+    async fn a_host_that_is_no_url_reads_nothing() {
+        for (base, why) in [
+            ("mailto:ops", "the space surface has no path"),
+            ("", "relative URL without a base"),
+        ] {
+            let watch = Watch::new(
+                base,
+                "https://id.example/realms/city",
+                "portal".to_owned(),
+                ClientAuth::Secret("s".into()),
+            );
+            assert_eq!(
+                watch.live("t", "ovzdusie", "urn:a").await,
+                Err(why.to_owned()),
+                "{base:?}"
+            );
+            assert_eq!(
+                watch.history("t", "ovzdusie", "urn:a").await,
+                Err(why.to_owned()),
+                "{base:?}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -68,4 +68,26 @@ mod tests {
         names.set_clients(BTreeSet::new());
         assert!(!names.has_client("app-board"));
     }
+
+    /// A writer that panicked mid-update leaves the sets readable and writable: the doors keep
+    /// answering, from what the last finished run wrote.
+    #[test]
+    fn a_poisoned_lock_still_answers() {
+        let names = std::sync::Arc::new(ForeignNames::default());
+        names.set_clients(BTreeSet::from(["app-board".to_owned()]));
+        names.set_groups(BTreeSet::from(["admins".to_owned()]));
+        let held = std::sync::Arc::clone(&names);
+        std::thread::spawn(move || {
+            let _clients = held.clients.write().expect("clients");
+            let _groups = held.groups.write().expect("groups");
+            panic!("poison both sets on purpose");
+        })
+        .join()
+        .expect_err("the writer panicked");
+        assert!(names.has_client("app-board") && names.has_group("admins"));
+        names.set_clients(BTreeSet::new());
+        names.set_groups(BTreeSet::from(["editors".to_owned()]));
+        assert!(!names.has_client("app-board"));
+        assert!(names.has_group("editors") && !names.has_group("admins"));
+    }
 }

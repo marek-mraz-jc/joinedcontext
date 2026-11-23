@@ -92,39 +92,38 @@ impl RowSet {
     /// The object whose read decision shows `row`.
     #[must_use]
     pub fn target(self, org_id: OrgId, row: &Value) -> Option<ObjectTarget> {
-        if self == Self::ImportReports {
-            return Some(ObjectTarget::Organization { org_id });
-        }
         let member = |column| {
             self.scope_member(column)
                 .and_then(|name| row.get(name))
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         };
-        let uid = member(ScopeColumn::Object)?;
-        let folder_uid = member(ScopeColumn::Folder);
+        // The object's uid; a row without one shows nothing. An import report has no object
+        // member: the Organization's read decides it.
+        let uid = || member(ScopeColumn::Object);
+        let folder_uid = || member(ScopeColumn::Folder);
         Some(match self {
             Self::Dashboards | Self::DashboardVersions => ObjectTarget::Dashboard {
                 org_id,
-                dashboard_uid: uid,
-                folder_uid,
+                dashboard_uid: uid()?,
+                folder_uid: folder_uid(),
             },
             Self::Folders => ObjectTarget::Folder {
                 org_id,
-                folder_uid: uid,
+                folder_uid: uid()?,
             },
             Self::Datasources => ObjectTarget::Datasource {
                 org_id,
-                datasource_uid: uid,
+                datasource_uid: uid()?,
             },
             Self::LibraryPanels => ObjectTarget::LibraryPanel {
                 org_id,
-                panel_uid: uid,
-                folder_uid,
+                panel_uid: uid()?,
+                folder_uid: folder_uid(),
             },
             Self::PublicDashboards => ObjectTarget::PublicDashboard {
                 org_id,
-                dashboard_uid: uid,
+                dashboard_uid: uid()?,
             },
             Self::ImportReports => ObjectTarget::Organization { org_id },
         })

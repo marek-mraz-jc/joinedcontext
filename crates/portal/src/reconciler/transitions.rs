@@ -160,6 +160,48 @@ mod tests {
         }
     }
 
+    /// A condition without a time is not remembered, a resource without a status changes nothing,
+    /// and a time already kept is no change the second time.
+    #[test]
+    fn untimed_conditions_statusless_resources_and_a_second_keep_change_nothing() {
+        let first: TimestampTz = "2026-09-25T20:26:28Z".parse().expect("a time");
+        let now: TimestampTz = "2026-09-25T20:27:28Z".parse().expect("a time");
+        let mirror = Mirror::new();
+        let mut untimed = ready("False", "NoBuild", first);
+        untimed.last_transition_time = None;
+        mirror.upsert(app(vec![untimed]));
+        let none = Transitions::of(&mirror);
+        let mut again = app(vec![ready("False", "NoBuild", now)]);
+        assert!(
+            !none.keep(&mut again),
+            "an untimed condition is not remembered"
+        );
+        assert_eq!(time(&again), Some(now));
+
+        let mirror = Mirror::new();
+        mirror.upsert(app(vec![ready("False", "NoBuild", first)]));
+        let before = Transitions::of(&mirror);
+        let mut bare = app(Vec::new());
+        bare.status = None;
+        assert!(!before.keep(&mut bare));
+        assert_eq!(time(&bare), None);
+        assert_eq!(time(&app(Vec::new())), None);
+
+        let mut kept = app(vec![ready("False", "NoBuild", now)]);
+        assert!(before.keep(&mut kept));
+        assert!(!before.keep(&mut kept), "already the first time");
+        assert_eq!(time(&kept), Some(first));
+
+        // keep_all leaves a changed condition as the run wrote it.
+        let fresh = Mirror::new();
+        fresh.upsert(app(vec![ready("True", "Built", now)]));
+        before.keep_all(&fresh);
+        let left = fresh
+            .get("helsinki", "App", "alerts-desk")
+            .expect("the app");
+        assert_eq!(time(&left), Some(now));
+    }
+
     #[test]
     fn a_condition_the_run_did_not_start_from_keeps_its_own_time() {
         let now: TimestampTz = "2026-09-25T20:27:28Z".parse().expect("a time");

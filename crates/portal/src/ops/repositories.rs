@@ -664,7 +664,7 @@ pub fn unified(old: &str, new: &str) -> String {
 
 /// An activity row for one read: who read what of which repository (OPS-48).
 async fn record(state: &AppState, caller: &Caller, project: &str, repository: &str, what: &str) {
-    let actor = &caller.identity.username;
+    let actor = &caller.identity.subject;
     let event = crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),
         project: project.to_owned(),

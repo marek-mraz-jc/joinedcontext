@@ -329,6 +329,15 @@ async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
         Some(1),
         "limit 1 keeps one"
     );
+    let earliest = json!({"sort": "start", "limit": 1});
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(earliest), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(
+        answer["events"].as_array().map(Vec::len),
+        Some(1),
+        "an ascending sort keeps its limit too: {answer}"
+    );
     for (body, why) in [
         (preset(json!({"limit": 0})), "limit"),
         (preset(json!({"timezone": "Mars/Base"})), "timezone"),
@@ -338,6 +347,7 @@ async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
             "one of them",
         ),
         (json!({}).to_string(), "one of them"),
+        (json!({"output": 5}).to_string(), "the output does not hold"),
     ] {
         let (status, answer) = send(&app, "POST", PREVIEW, &body, true).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {answer}");

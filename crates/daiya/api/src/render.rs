@@ -442,17 +442,18 @@ pub async fn panel_view(
         state.default_instance_id,
         subject.clone(),
     );
-    let (dash_record, doc) = load_dashboard_for_read(state, &req_ctx, dashboard_uid).await?;
+    let dash_record = load_dashboard_for_read(state, &req_ctx, dashboard_uid).await?;
+    let doc = dashboard_document(&dash_record)?;
     render_panel(state, &req_ctx, &dash_record, &doc, panel_id, range).await
 }
 
-/// The stored dashboard `dashboard_uid` and its document, once the caller in `req_ctx` may read
-/// it; a page of panels loads and authorises it once and renders each panel with [`render_panel`].
+/// The stored dashboard `dashboard_uid`, once the caller in `req_ctx` may read it; a page of
+/// panels loads and authorises it once and renders each panel with [`render_panel`].
 pub async fn load_dashboard_for_read(
     state: &DaiyaState,
     req_ctx: &RequestCtx,
     dashboard_uid: &str,
-) -> CrResult<(DashboardRecord, DashboardDocument)> {
+) -> CrResult<DashboardRecord> {
     let org_id = req_ctx.org_id;
     let dash_record = state
         .store
@@ -470,10 +471,13 @@ pub async fn load_dashboard_for_read(
         },
     );
     dash_decision.into_result(format!("Dashboard '{dashboard_uid}' not found"))?;
+    Ok(dash_record)
+}
 
-    let doc: DashboardDocument = serde_json::from_value(dash_record.data.clone())
-        .map_err(|e| CrError::Internal(format!("stored dashboard failed to deserialize: {e}")))?;
-    Ok((dash_record, doc))
+/// The document a stored dashboard holds.
+pub fn dashboard_document(record: &DashboardRecord) -> CrResult<DashboardDocument> {
+    serde_json::from_value(record.data.clone())
+        .map_err(|e| CrError::Internal(format!("stored dashboard failed to deserialize: {e}")))
 }
 
 /// Panel `panel_id` of a dashboard [`load_dashboard_for_read`] loaded for `req_ctx`: each of its

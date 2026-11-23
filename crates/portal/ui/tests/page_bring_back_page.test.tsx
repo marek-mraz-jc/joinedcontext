@@ -7,7 +7,7 @@
  * a set of hand-made inputs, that neither action is offered to someone who is not the owner, and
  * that axe is clean with a conflict on screen.
  */
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -135,6 +135,22 @@ describe("bringing a copy back", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: en.workspaces.bringBack.title }),
     ).toBeInTheDocument();
+  });
+
+  it("reads both again on Retry after an outage and shows the comparison", async () => {
+    let failing = true;
+    renderPage(<BringBackPage project={PROJECT} name={COPY} />, {
+      path: `/projects/${PROJECT}/workspaces/${COPY}/bring-back`,
+      answer: (url) => {
+        if (url.pathname.endsWith("/compare")) return failing ? problem(503, "The comparison store is not answering.") : json({ files: [FILE], conflicts: [] });
+        return url.pathname.endsWith(`/workspaces/${COPY}`) ? json(WORKSPACE) : undefined;
+      },
+    });
+    const retry = await screen.findByRole("button", { name: en.app.error.retry });
+    failing = false;
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByRole("heading", { level: 1, name: en.workspaces.bringBack.title })).toBeInTheDocument();
   });
 
   it("says the copy changes nothing when it changes nothing", async () => {

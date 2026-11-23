@@ -360,7 +360,12 @@ async fn a_broken_project_is_refused_alone_and_its_proposer_is_told() {
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].severity, "error");
     assert_eq!(rows[0].details["path"], "spaces/ovzdusie/twice.yaml");
-    assert_eq!(rows[0].details["proposer"], "jan@bb.sk");
+    // The feed keeps the commit, not the proposer's address; the notice reaches them (S2-28).
+    assert!(
+        rows[0].details.get("proposer").is_none(),
+        "{:?}",
+        rows[0].details
+    );
     assert!(
         rows[0].summary.contains("duplicate resource identity"),
         "{}",

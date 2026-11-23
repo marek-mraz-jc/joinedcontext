@@ -32,6 +32,7 @@ Specialises `Entity`.
 | `webSite` | Property | `uri` |  |  | `sdm:webSite` | The organizer's page for the event, the register's `info_url` in Finnish, else English or Swedish. |
 | `superEvent` | Relationship | [`Event`](#event) |  |  | `sdm:superEvent` | The recurring or umbrella event this event is one date or part of. |
 | `subEvent` | Relationship | [`Event`](#event) (list) |  |  | `sdm:subEvent` | The dates and parts of this event, computed from their superEvent and never stored. |
+| `organizer` | Property | [`Organizer`](#organizer) |  |  | `schema:organizer` | Who runs the event: the museum, the library, the club or the city unit, never the feed or the register that announced it (that is `dataProvider` or `source`). Its name and, where the source names one, its web site; never a person's e-mail or phone. The same shape in every events space (praha-akce, slovensko-podujatia, bbsk-podujatia, banskabystrica-verejne), so one count per organizer reads across them. |
 | `contactPoint` | Property | `string` |  |  | `schema:contactPoint` | The organizer's contact line as the register carries it, often a named person with a phone number. The space keeps it for the city's own coordination; no public endpoint serves it. |
 | `source` | Property | `uri` |  |  | `sdm:source` | The open-data service the entity was read from. |
 | `refPointOfInterest` | Relationship | `string` |  |  | `sdm:refPointOfInterest` | The venue as the city's service register knows it: a Linked Events `tprek:` place is the Service Map unit of that number, written by the services pipeline. |
@@ -726,6 +727,17 @@ IRI: `ngsi-ld:Entity`
 | `type` | Property | `string` | yes |  | `ngsi-ld:hasType` | The entity type, one class of a published data model. |
 | `location` | GeoProperty | `string` |  |  | `geojson:geometry` | Where the entity is, as GeoJSON geometry. |
 | `observedAt` | Property | `datetime` |  |  | `ngsi-ld:observedAt` | When the observation the entity reports was made. |
+
+### Organizer
+
+The value of `organizer`, never an entity of its own.
+
+IRI: `schema:Organization`
+
+| Attribute | NGSI-LD kind | Range | Required | Unit | IRI | Description |
+|---|---|---|---|---|---|---|
+| `name` | Property | `string` | yes |  | `schema:name` | The organizer's name in Finnish, else English or Swedish (`Tekniikan museo`). |
+| `url` | Property | `uri` |  |  | `schema:url` | The organizer's own web site, when the source names it. |
 
 ## Enumerations
 

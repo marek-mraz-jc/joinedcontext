@@ -317,8 +317,10 @@ impl Datasource for WasmPluginAdapter {
         Box::pin(async move {
             let _permits = self.permits()?;
 
-            let req_json =
-                serde_json::to_string(queries).map_err(|e| DsError::Wasm(e.to_string()))?;
+            let req_json = match serde_json::to_string(queries) {
+                Ok(json) => json,
+                Err(e) => return Err(DsError::Wasm(e.to_string())),
+            };
             self.check_limits(req_json.len())?;
 
             let imports = WasmHostImports {
@@ -382,8 +384,10 @@ impl Datasource for WasmPluginAdapter {
         r: ResourceReq,
     ) -> DsFuture<'a, Result<ResourceResp, DsError>> {
         Box::pin(async move {
-            let params_json =
-                serde_json::to_string(&r.params).map_err(|e| DsError::Wasm(e.to_string()))?;
+            let params_json = match serde_json::to_string(&r.params) {
+                Ok(json) => json,
+                Err(e) => return Err(DsError::Wasm(e.to_string())),
+            };
             self.check_limits(params_json.len() + r.path.len())?;
             let _permits = self.permits()?;
             let imports = WasmHostImports {
@@ -421,7 +425,7 @@ impl Datasource for WasmPluginAdapter {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let s = serde_json::to_string(grafana_target).map_err(|e| DsError::Wasm(e.to_string()))?;
+        let s = grafana_target.to_string();
         self.check_limits(s.len())?;
         let out = self.guest.export_import_target(&s).map_err(DsError::Wasm)?;
         if out.len() > self.host.limits.response_bytes {

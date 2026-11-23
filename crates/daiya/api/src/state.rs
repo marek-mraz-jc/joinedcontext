@@ -301,11 +301,9 @@ impl DaiyaState {
             .to_str()
             .ok()?
             .trim();
+        // `raw` is trimmed, so a credential after the first space is never empty.
         let (scheme, credential) = raw.split_once(' ')?;
         let credential = credential.trim();
-        if credential.is_empty() {
-            return None;
-        }
         if !scheme.eq_ignore_ascii_case("bearer") && !scheme.eq_ignore_ascii_case("basic") {
             return None;
         }

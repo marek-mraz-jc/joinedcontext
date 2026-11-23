@@ -85,7 +85,7 @@ impl WasmPluginGuest for SampleMetricsWasmPlugin {
                 };
                 out.push(FrameSet::new(q.ref_id, vec![frame]));
             }
-            serde_json::to_string(&out).map_err(|e| e.to_string())
+            to_json(&out)
         })
     }
 
@@ -151,7 +151,7 @@ impl WasmPluginGuest for SampleMetricsWasmPlugin {
             },
             warnings: Vec::new(),
         };
-        serde_json::to_string(&outcome).map_err(|e| e.to_string())
+        to_json(&outcome)
     }
 
     fn export_export_target(&self, query_json: &str) -> String {
@@ -161,6 +161,14 @@ impl WasmPluginGuest for SampleMetricsWasmPlugin {
         let mut map = q.model.as_object().cloned().unwrap_or_default();
         map.insert("refId".to_owned(), Value::String(q.ref_id));
         Value::Object(map).to_string()
+    }
+}
+
+/// Serialise a plugin answer; these types always serialise, the error arm keeps the plugin ABI.
+fn to_json(v: &impl serde::Serialize) -> Result<String, String> {
+    match serde_json::to_string(v) {
+        Ok(json) => Ok(json),
+        Err(e) => Err(e.to_string()),
     }
 }
 

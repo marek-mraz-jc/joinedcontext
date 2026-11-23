@@ -575,12 +575,17 @@ impl AppState {
         if let Some(client) = shako {
             let client = Arc::new(client);
             let mut syncer = Syncer::new(Arc::clone(&client), Arc::clone(&state.mirror))
+                .with_project_registry(state.db.clone())
                 .with_webhook_secrets(Arc::clone(&state.webhook_secrets))
                 .with_personal_keys(
                     Arc::clone(&state.personal_keys),
                     state.config.gateway_namespace.clone(),
                 )
                 .with_activity(state.activity.clone())
+                .with_audit(
+                    Arc::clone(&state.connectors),
+                    state.config.audit_retention_days,
+                )
                 .with_judge_settings(
                     state.config.organization_bounds.clone(),
                     state.config.app_settings.as_ref().map(|s| s.apex.clone()),

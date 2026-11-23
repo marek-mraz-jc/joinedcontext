@@ -232,14 +232,14 @@ mod tests {
         .collect();
         GeoQuery::from_params(&area)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| "no geoquery".to_owned())
+            .ok_or("no geoquery".to_owned())
     }
 
     /// Each member of the input is a key: another caller, Tenant, clause or
     /// Operation member is decided afresh (and its repeat kept), and a caller
     /// without the grant is refused although the last answer allowed.
     #[test]
-    fn another_input_is_decided_afresh() -> Result<(), String> {
+    fn another_input_is_decided_afresh() -> Result<(), Box<dyn std::error::Error>> {
         let t = table(&json!([grant("city")]))?;
         let (types, bus) = ([CAR.to_owned()], [CAR.replace("Car", "Bus")]);
         let op = || Operation {
@@ -249,7 +249,7 @@ mod tests {
         let (now, runs) = (Timestamp::now(), Cell::new(0));
         let city = subject("t6618-other", "city")?;
         let (stranger, elsewhere) = (subject("t6618-other", "x")?, subject("t6618-else", "city")?);
-        let q = antares_ql::parse_q("speed>1").map_err(|e| e.to_string())?;
+        let q = antares_ql::parse_q("speed>1")?;
         let geo = near()?;
         let (body, stored) = (json!({"q": "x"}), StoredImage::default());
         let (ids, attrs) = (["urn:ngsi-ld:Car:1"], [CAR.replace("Car", "speed")]);
@@ -396,6 +396,27 @@ mod tests {
             .push(("x-jc-restricted".into(), "true".into()));
         ask(&t, &restricted, &op, now, &runs);
         assert_eq!(runs.get(), 3);
+        Ok(())
+    }
+
+    /// The steady span ends at the first bound after `now`, whichever policy holds it.
+    #[test]
+    fn the_steady_span_ends_at_the_nearest_later_bound() -> Result<(), String> {
+        let now = Timestamp::now();
+        let at = |s: i64| now + SignedDuration::from_secs(s);
+        let mut policies = Vec::new();
+        for (group, from, to) in [("a", -60, 90), ("b", -30, 40), ("c", 10, 300)] {
+            let mut g = grant(group);
+            if let Some(o) = g.as_object_mut() {
+                o.insert(
+                    "validity".into(),
+                    json!({"from": at(from).to_string(), "to": at(to).to_string()}),
+                );
+            }
+            policies.push(g);
+        }
+        let t = table(&Value::Array(policies))?;
+        assert_eq!(steady(&t, now), (Some(at(-30)), Some(at(10))));
         Ok(())
     }
 

@@ -232,6 +232,8 @@ fn urls_are_refused_before_any_lookup() {
         ("http://user@127.0.0.1/", "userinfo"),
         ("http://:pw@127.0.0.1/", "userinfo"),
         ("http://10.0.0.1/", "allow-list"),
+        ("file:///etc/passwd", "missing host"),
+        ("data:text/plain,x", "missing host"),
     ] {
         let err = g.validate_url(url).unwrap_err();
         assert!(err.to_string().contains(needle), "{url}: {err}");
@@ -254,6 +256,19 @@ fn urls_are_refused_before_any_lookup() {
     assert!(opened.check_ip("11.0.0.1".parse().unwrap()).is_ok());
     assert!(opened.check_ip("192.168.0.1".parse().unwrap()).is_err());
     assert_eq!(GuardConfig::default().max_response_bytes, 8 * 1024 * 1024);
+}
+
+#[test]
+fn reaches_and_bases_that_are_no_url_are_refused() {
+    use daiya_query::guard::{EndpointBase, OperatorReach, OwnReach};
+    let text = |e: DsError| e.to_string();
+    assert!(text(OperatorReach::parse("not a url").unwrap_err()).contains("not a URL"));
+    assert!(text(EndpointBase::parse("not a url").unwrap_err()).contains("not a URL"));
+    assert!(
+        text(OwnReach::endpoints("not a url").unwrap_err())
+            .contains("own reach 'not a url': not a URL")
+    );
+    assert!(text(OwnReach::endpoints("file://127.0.0.1/x/").unwrap_err()).ends_with(": no port"));
 }
 
 #[test]

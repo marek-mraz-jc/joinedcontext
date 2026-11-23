@@ -1,7 +1,7 @@
 // covers (T-2137, the module gate in gate_modules.test.ts): the cases in this file drive
 // src/pages/ckan/CkanPage.tsx through the page they belong to; each was confirmed by
 // making the module throw and watching this file go red.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { byLabel } from "./formContract";
 import { narrowsAndOrders } from "./grid_checks";
@@ -125,7 +125,7 @@ function renderCkan(status: unknown = STATUS, permissions?: unknown) {
       return json({ instanceName: "joinedcontext", languages: { default: "en", offered: ["en"] } });
     }
     if (path.endsWith("/ckan/status")) {
-      return json(status);
+      return typeof status === "function" ? Promise.resolve((status as () => Response)()) : json(status);
     }
     if (path.endsWith("/activity") && new URL(request.url).searchParams.get("kind") === "catalogue.published") {
       return json(ACTIVITY);
@@ -312,6 +312,23 @@ describe("ckan publishing manager", () => {
     }
     // The steward is told where the proposal went, as with every other write.
     expect(await screen.findByText(/chg-0000a1b2/)).toBeInTheDocument();
+  });
+
+  it("says the catalogues did not load and reads them again on Retry", async () => {
+    let asked = 0;
+    renderCkan(() => {
+      asked += 1;
+      return asked === 1
+        ? new Response(JSON.stringify({ type: "about:blank", title: "Unavailable", status: 503, detail: "the catalogue store is not answering" }), {
+            status: 503,
+            headers: { "Content-Type": "application/problem+json" },
+          })
+        : new Response(JSON.stringify({ instances: [], publications: [] }), { headers: { "Content-Type": "application/json" } });
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByText(en.ckan.instances.empty)).toBeInTheDocument();
+    expect(asked).toBe(2);
   });
 
   it("says so when the project publishes nowhere", async () => {

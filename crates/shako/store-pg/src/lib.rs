@@ -14,10 +14,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use shako_core::{
     AuditRecord, BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
-    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
-    PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
-    SecretStore, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId,
-    WebhookRecord,
+    OutboxClaim, OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord,
+    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId,
+    RepoRecord, ReviewRecord, SecretStore, ShakoError, ShakoResult, Store, StoreFuture,
+    TagProtectionRecord, WebhookId, WebhookRecord,
 };
 use sqlx::Row;
 use sqlx::postgres::{PgConnectOptions, PgPool};
@@ -36,6 +36,7 @@ pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql")
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_store_log.sql");
 pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_secrets.sql");
 pub const JOBS_0001_SQL: &str = include_str!("../migrations/jobs/0001_mirror_sync.sql");
+pub const JOBS_0002_SQL: &str = include_str!("../migrations/jobs/0002_outbox_retry.sql");
 /// In a ledger of its own, which a previous release never reads (T-7508).
 pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/0001_projection.sql");
 
@@ -255,7 +256,10 @@ impl PgStore {
             .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("projection migration failed: {e}")))?;
-        let mut jobs = Migrator::with_migrations(vec![migration(1, "mirror_sync", JOBS_0001_SQL)]);
+        let mut jobs = Migrator::with_migrations(vec![
+            migration(1, "mirror_sync", JOBS_0001_SQL),
+            migration(2, "outbox_retry", JOBS_0002_SQL),
+        ]);
         jobs.create_schema("shako_jobs_migrations");
         jobs.dangerous_set_table_name("shako_jobs_migrations._sqlx_migrations");
         jobs.run(migrate_pool)
@@ -1357,16 +1361,23 @@ impl Store for PgStore {
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
-    ) -> StoreFuture<'_, Option<OutboxEvent>> {
+    ) -> StoreFuture<'_, Option<OutboxClaim>> {
         Box::pin(async move {
             let mut tx = self.read_tx((instance_id, org_id)).await?;
-            // The oldest alone, so events keep their order. A second claimer waits on the row,
-            // then finds it claimed and takes nothing.
+            // The oldest alone, so a repository's events keep their order. One waiting for a
+            // retry holds back its repository's later events only. A second claimer waits on
+            // the row, then finds it claimed and takes nothing.
             let row: Option<serde_json::Value> = sqlx::query_scalar(
                 "WITH head AS (
-                     SELECT id FROM shako.outbox
-                     WHERE instance_id = $1 AND org_id = $2 AND NOT dispatched
-                     ORDER BY position, created_at, id LIMIT 1)
+                     SELECT o.id FROM shako.outbox o
+                     WHERE o.instance_id = $1 AND o.org_id = $2 AND NOT o.dispatched
+                       AND (o.retry_at IS NULL OR o.retry_at <= now())
+                       AND NOT EXISTS (
+                           SELECT 1 FROM shako.outbox p
+                           WHERE p.instance_id = $1 AND p.org_id = $2 AND NOT p.dispatched
+                             AND p.repo_id IS NOT DISTINCT FROM o.repo_id
+                             AND (p.position, p.created_at, p.id) < (o.position, o.created_at, o.id))
+                     ORDER BY o.position, o.created_at, o.id LIMIT 1)
                  UPDATE shako.outbox t SET claimed_until = now() + make_interval(secs => $3)
                  FROM head
                  WHERE t.id = head.id AND t.instance_id = $1 AND t.org_id = $2 AND NOT t.dispatched
@@ -1381,10 +1392,42 @@ impl Store for PgStore {
             .map_err(tables::failed)?;
             jc_audit::commit(tx).await.map_err(tables::failed)?;
             row.map(|row| {
-                serde_json::from_value(tables::to_record(&tables::OUTBOX, row)?)
-                    .map_err(|e| ShakoError::Storage(e.to_string()))
+                let attempts = row
+                    .get("attempts")
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX));
+                let event = serde_json::from_value(tables::to_record(&tables::OUTBOX, row)?)
+                    .map_err(|e| ShakoError::Storage(e.to_string()))?;
+                Ok(OutboxClaim { event, attempts })
             })
             .transpose()
+        })
+    }
+
+    fn retry_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        event_id: uuid::Uuid,
+        after: Duration,
+    ) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let mut tx = self.read_tx((instance_id, org_id)).await?;
+            let done = sqlx::query(
+                "UPDATE shako.outbox
+                 SET attempts = attempts + 1, claimed_until = NULL,
+                     retry_at = now() + make_interval(secs => $4)
+                 WHERE instance_id = $1 AND org_id = $2 AND id = $3 AND NOT dispatched",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(event_id)
+            .bind(after.as_secs_f64())
+            .execute(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            Ok(done.rows_affected() > 0)
         })
     }
 

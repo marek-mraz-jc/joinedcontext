@@ -221,7 +221,7 @@ async fn audited(
     what: &str,
     details: Value,
 ) {
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let event = crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),
         project: project.to_owned(),

@@ -6,9 +6,12 @@
 //! on the Postgres store reached through the request role, where forced RLS binds the tenant the
 //! host chose (C1, C5, C6, contract "Security").
 
+#[path = "../../api/tests/common/mod.rs"]
+mod common;
+
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
-use dataroom_api::{router, DataroomState, TokenBinding};
+use dataroom_api::{router, DataroomState};
 use dataroom_core::{
     Action, CatalogueId, Dataset, GrantRule, OrgId, PolicyAuthorizer, Publisher, RequestCtx, Store,
     Subject,
@@ -218,16 +221,19 @@ fn app(store: Arc<dyn Store>, a: &Tenant, b: &Tenant) -> axum::Router {
         publisher_id: None,
     };
     let authz = PolicyAuthorizer::new(vec![rule(a, "alice"), rule(b, "bob")]);
-    let state = DataroomState::new(store, Arc::new(authz), a.org, a.cat).with_tokens(vec![
-        TokenBinding {
-            token: "tok-alice".into(),
-            subject: Subject::authenticated("alice", vec![a.org], Vec::new()),
-        },
-        TokenBinding {
-            token: "tok-bob".into(),
-            subject: Subject::authenticated("bob", vec![b.org], Vec::new()),
-        },
-    ]);
+    let state = common::with_callers(
+        DataroomState::new(store, Arc::new(authz), a.org, a.cat),
+        vec![
+            common::Caller {
+                token: "tok-alice".into(),
+                subject: Subject::authenticated("alice", vec![a.org], Vec::new()),
+            },
+            common::Caller {
+                token: "tok-bob".into(),
+                subject: Subject::authenticated("bob", vec![b.org], Vec::new()),
+            },
+        ],
+    );
     router(state)
 }
 

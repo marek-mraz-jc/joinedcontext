@@ -820,9 +820,9 @@ pub async fn upload_file(
         &state,
         &project,
         "knowledge.file.uploaded",
-        format!("{} uploaded {name} to {source}", user.0.identity.username),
+        format!("{} uploaded {name} to {source}", user.0.identity.subject),
         json!({
-            "actor": user.0.identity.username,
+            "actor": user.0.identity.subject,
             "source": source,
             "name": name,
             "bytes": bytes,
@@ -863,7 +863,7 @@ pub async fn remove_file(
     named("source", &source)?;
     let path = format!("{project}/knowledge/sources/{source}/files/{id}");
     ask(&state, reqwest::Method::DELETE, &path, None).await?;
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let message = format!("{actor} removed file {id} from {source}");
     let detail = json!({ "actor": actor, "source": source, "id": id });
     record(&state, &project, "knowledge.file.removed", message, detail).await;
@@ -937,7 +937,7 @@ pub async fn forget_answers(
     deployed(&state, &project, &deployment)?;
     let path = format!("{project}/knowledge/deployments/{deployment}/answers");
     let (_, body) = ask(&state, reqwest::Method::DELETE, &path, None).await?;
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let message = format!("{actor} forgot the kept answers of {deployment}");
     let detail =
         json!({ "actor": actor, "deployment": deployment, "forgotten": body["forgotten"] });
@@ -1120,7 +1120,7 @@ pub(super) async fn audited(
     what: &str,
     details: Value,
 ) {
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let event = crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),
         project: project.to_owned(),

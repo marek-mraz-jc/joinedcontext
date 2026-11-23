@@ -183,7 +183,6 @@ export function PortalsList(): JSX.Element {
         searchLabel={t("grid.searchIn", { list: t("portals.list.title") })}
         rows={items}
         rowKey={(portal) => portal.metadata.name}
-        query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
         name={{
           id: "title",
           label: t("portals.field.title"),

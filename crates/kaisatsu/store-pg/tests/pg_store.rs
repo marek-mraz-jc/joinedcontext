@@ -235,6 +235,51 @@ async fn data_survives_a_new_store_instance_and_secrets_stay_encrypted() {
             .is_err()
     );
     assert!(wrong.get_realm("dev").await.is_err());
+
+    // A row corrupted behind the store's back is refused with the reason, never read as data.
+    let refusal = |r: Result<String>| match r {
+        Ok(v) => panic!("a corrupt row was read: {v}"),
+        Err(e) => e.to_string(),
+    };
+    let aad = format!("kaisatsu:client-secret:dev:{}", client.id);
+    let not_utf8 = kek.encrypt(aad.as_bytes(), &[0xff, 0xfe]).expect("encrypt");
+    sqlx::query(
+        "UPDATE kaisatsu.applications SET secret_enc = $1 WHERE client_id = 'app-helsinki'",
+    )
+    .bind(not_utf8)
+    .execute(&su)
+    .await
+    .expect("corrupt the secret");
+    let e = refusal(
+        second
+            .get_client_by_client_id("dev", "app-helsinki")
+            .await
+            .map(|c| format!("{c:?}")),
+    );
+    assert!(e.contains("client secret is not UTF-8"), "{e}");
+    let not_utf8 = kek
+        .encrypt(b"kaisatsu:smtp-password:dev", &[0xff])
+        .expect("encrypt");
+    sqlx::query("UPDATE kaisatsu.realms SET smtp_password_enc = $1 WHERE realm_id = 'dev'")
+        .bind(not_utf8)
+        .execute(&su)
+        .await
+        .expect("corrupt the SMTP password");
+    let e = refusal(second.get_realm("dev").await.map(|r| format!("{r:?}")));
+    assert!(e.contains("SMTP password is not UTF-8"), "{e}");
+    sqlx::query(
+        "UPDATE kaisatsu.people SET doc = '{\"username\": 7}'::jsonb WHERE id = 'user-helsinki'",
+    )
+    .execute(&su)
+    .await
+    .expect("corrupt the person");
+    let e = refusal(
+        second
+            .get_user_by_id("dev", None, "user-helsinki")
+            .await
+            .map(|u| format!("{u:?}")),
+    );
+    assert!(e.contains("cannot decode stored record"), "{e}");
     su.close().await;
     db.drop_db().await;
 }

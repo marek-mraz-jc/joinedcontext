@@ -42,6 +42,7 @@ use serde_json::Value as JsonValue;
 /// The largest message the input hands to the pipeline.
 pub const MAX_MESSAGE_BYTES: usize = 64 << 20;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const NO_TLS: &str = "this build has no TLS backend; refusing to talk to the broker in the clear";
 /// How long `read_batch` waits for a delivery before it lets the runner look at shutdown.
 const READ_WAIT: Duration = Duration::from_secs(1);
 
@@ -284,10 +285,10 @@ impl AmqpInput {
     }
 
     async fn dial_one(&self, url: &SecretString, ctx: &StreamContext) -> Result<Live, CoreError> {
-        let mut uri: AMQPUri = url
-            .expose()
-            .parse()
-            .map_err(|_| CoreError::config("amqp_0_9 input: a URL does not parse"))?;
+        // parse() checked every URL when the input was built
+        let Ok(mut uri) = url.expose().parse::<AMQPUri>() else {
+            return Err(CoreError::config("amqp_0_9 input: a URL does not parse"));
+        };
         let addrs = ekiben_io_http::outbound::resolve_host_checked(
             &uri.authority.host,
             uri.authority.port,
@@ -298,9 +299,7 @@ impl AmqpInput {
         if tls {
             uri.scheme = AMQPScheme::AMQPS;
         }
-        let failed =
-            |what: &str, e: lapin::Error| CoreError::other(format!("amqp_0_9 input: {what}: {e}"));
-        let runtime = lapin::runtime::default_runtime().map_err(|e| failed("runtime", e))?;
+        let runtime = lapin::runtime::default_runtime().map_err(failed("runtime"))?;
         let root_cas = self.s.root_cas.clone();
         // Opens the TCP connection to the checked addresses and, with TLS, verifies the
         // broker's certificate for the URL's host.
@@ -314,9 +313,7 @@ impl AmqpInput {
                 cert_chain: root_cas.as_deref(),
             };
             match stream.into_tls(&uri.authority.host, config).await? {
-                AsyncTcpStream::Plain(_) => Err(lapin::Error::from(std::io::Error::other(
-                    "this build has no TLS backend; refusing to talk to the broker in the clear",
-                ))),
+                AsyncTcpStream::Plain(_) => Err(lapin::Error::from(std::io::Error::other(NO_TLS))),
                 s => Ok(s),
             }
         };
@@ -328,15 +325,12 @@ impl AmqpInput {
         .map_err(|_| {
             CoreError::other("amqp_0_9 input: the broker did not complete the handshake in 10 s")
         })?
-        .map_err(|e| failed("connect", e))?;
-        let channel = conn
-            .create_channel()
-            .await
-            .map_err(|e| failed("channel", e))?;
+        .map_err(failed("connect"))?;
+        let channel = conn.create_channel().await.map_err(failed("channel"))?;
         channel
             .basic_qos(self.s.prefetch_count, BasicQosOptions::default())
             .await
-            .map_err(|e| failed("qos", e))?;
+            .map_err(failed("qos"))?;
         if let Some((durable, auto_delete)) = self.s.declare {
             channel
                 .queue_declare(
@@ -349,7 +343,7 @@ impl AmqpInput {
                     FieldTable::default(),
                 )
                 .await
-                .map_err(|e| failed("queue declare", e))?;
+                .map_err(failed("queue declare"))?;
         }
         for (exchange, key) in &self.s.bindings {
             channel
@@ -361,7 +355,7 @@ impl AmqpInput {
                     FieldTable::default(),
                 )
                 .await
-                .map_err(|e| failed("queue bind", e))?;
+                .map_err(failed("queue bind"))?;
         }
         let consumer = channel
             .basic_consume(
@@ -374,7 +368,7 @@ impl AmqpInput {
                 FieldTable::default(),
             )
             .await
-            .map_err(|e| failed("consume", e))?;
+            .map_err(failed("consume"))?;
         Ok(Live { conn, consumer })
     }
 
@@ -420,6 +414,11 @@ impl AmqpInput {
         part.meta_set_str("amqp_routing_key", d.routing_key.to_string());
         (vec![part], ack)
     }
+}
+
+/// The error of a setup step the broker or the client refused, naming the step.
+fn failed(what: &'static str) -> impl FnOnce(lapin::Error) -> CoreError {
+    move |e| CoreError::other(format!("amqp_0_9 input: {what}: {e}"))
 }
 
 /// Bento's metadata of a delivery's properties and headers.

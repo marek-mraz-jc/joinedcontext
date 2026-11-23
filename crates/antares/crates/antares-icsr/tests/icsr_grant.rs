@@ -217,10 +217,28 @@ async fn the_grant_routes_check_what_they_store() {
             "/q/grants/b/a",
             json!({"target": "b", "source": "a", "view": "No View"}),
         ),
+        (
+            "/q/grants/b/a",
+            json!({"target": "b", "source": "a", "subject": {"x-subject": "line\nbreak"}}),
+        ),
     ] {
         let a = send(&app, "PUT", path, None, None, Some(doc.clone())).await;
         assert_eq!(a.status, 400, "{doc}: {}", a.body);
     }
+    let a = send(
+        &app,
+        "PUT",
+        "/q/grants/b/a",
+        None,
+        None,
+        Some(json!({"target": "b", "source": "a", "subject": {"x-subject": "a\u{7f}"}})),
+    )
+    .await;
+    assert!(
+        a.body.to_string().contains("no header can carry"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         send(&app, "GET", "/q/grants/b/a", None, None, None)
             .await

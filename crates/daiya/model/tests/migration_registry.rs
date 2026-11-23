@@ -473,6 +473,77 @@ fn v2beta1_documents_convert_with_layout_queries_and_library_panels() {
     assert_eq!(err.status_code(), 400);
 }
 
+/// A document every step 36..=42 changes: the chain from below 36 applies each step once, in order,
+/// exactly as running them by hand; from 36 it starts at 37 without a warning.
+#[test]
+fn the_chain_runs_each_step_from_the_version_after_the_documents() {
+    let doc = |version: u16| {
+        json!({
+            "schemaVersion": version,
+            "refresh": false,
+            "timepicker": {"time_options": ["5m"]},
+            "panels": [
+                {"type": "stat"},
+                {"type": "timeseries", "targets": [{"refId": "A"}],
+                 "options": {"legend": {"displayMode": "hidden"}}},
+                {"type": "table", "fieldConfig": {"defaults": {"custom": {"displayMode": "lcd-gauge"}}},
+                 "transformations": [{"id": "timeSeriesTable", "options": {"refIdToStat": {"A": "mean"}}}]},
+                {"type": "timeseries", "fieldConfig": {"overrides": [{"properties": [
+                    {"id": "custom.hideFrom", "value": {"viz": true}}
+                ]}]}}
+            ]
+        })
+    };
+    let steps: [fn(&mut Value); 6] = [
+        migrate_v37,
+        migrate_v38,
+        migrate_v39,
+        migrate_v40,
+        migrate_v41,
+        migrate_v42,
+    ];
+    let by_hand = |skip: Option<usize>, with_v36: bool| {
+        let mut d = doc(30);
+        if with_v36 {
+            migrate_v36(&mut d, &index());
+        }
+        for (i, step) in steps.iter().enumerate() {
+            if Some(i) != skip {
+                step(&mut d);
+            }
+        }
+        d["schemaVersion"] = json!(42);
+        d
+    };
+    let all = by_hand(None, true);
+    assert_ne!(by_hand(None, false), all, "v36 changes the document");
+    for i in 0..steps.len() {
+        assert_ne!(
+            by_hand(Some(i), true),
+            all,
+            "step v{} changes the document",
+            37 + i
+        );
+    }
+    // A top-level panel without targets gets the default target and datasource, as Grafana's v36.
+    assert_eq!(all["panels"][0]["targets"][0]["refId"], "A");
+    assert!(all["panels"][0]["datasource"].is_object());
+
+    let mut old = doc(30);
+    let report = migrate_to_latest(&mut old, &index()).unwrap();
+    assert_eq!(report.steps_applied, [36, 37, 38, 39, 40, 41, 42]);
+    assert_eq!(
+        report.warnings,
+        ["schemaVersion below 36: migrate in Grafana first"]
+    );
+    assert_eq!(old, all);
+
+    let mut at36 = doc(36);
+    let report = migrate_to_latest(&mut at36, &index()).unwrap();
+    assert_eq!(report.steps_applied, [37, 38, 39, 40, 41, 42]);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
 #[test]
 fn the_chain_converts_v2_refuses_non_objects_and_never_reruns_steps() {
     let mut v2 = json!({"spec": {"title": "x", "elements": {}, "layout": {}}});
@@ -616,6 +687,124 @@ fn allowed_uses_the_same_authorizer_on_every_object_kind() {
     let _ = ObjectTarget::Organization { org_id: org };
 }
 
+/// An authorizer that records the object it was asked about and allows it.
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<ObjectTarget>>);
+
+impl daiya_model::Authorizer for Recorder {
+    fn check(
+        &self,
+        _ctx: &RequestCtx,
+        _action: Action,
+        object: &ObjectTarget,
+    ) -> daiya_model::Decision {
+        self.0.lock().unwrap().push(object.clone());
+        daiya_model::Decision::allow("recorded")
+    }
+    fn read_scope(
+        &self,
+        _ctx: &RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        daiya_model::ReadScope::Nothing
+    }
+}
+
+/// `Allowed` judges the object the spec names, by each spelling of its kind; anything else is the
+/// Organization.
+#[test]
+fn allowed_asks_about_the_object_the_spec_names() {
+    let reg = daiya_registry();
+    let org = OrgId::from_u128(1);
+    let me = ctx(Subject::authenticated("me", vec![org], vec![]));
+    let dashboard = ObjectTarget::Dashboard {
+        org_id: org,
+        dashboard_uid: "u".into(),
+        folder_uid: None,
+    };
+    let datasource = ObjectTarget::Datasource {
+        org_id: org,
+        datasource_uid: "u".into(),
+    };
+    let folder = ObjectTarget::Folder {
+        org_id: org,
+        folder_uid: "u".into(),
+    };
+    let panel = ObjectTarget::LibraryPanel {
+        org_id: org,
+        panel_uid: "u".into(),
+        folder_uid: None,
+    };
+    let public = ObjectTarget::PublicDashboard {
+        org_id: org,
+        dashboard_uid: "u".into(),
+    };
+    let whole = ObjectTarget::Organization { org_id: org };
+    let cases = [
+        ("Dashboard:u", &dashboard),
+        ("dashboard:u", &dashboard),
+        ("Dashboards:u", &dashboard),
+        ("Datasource:u", &datasource),
+        ("datasource:u", &datasource),
+        ("Datasources:u", &datasource),
+        ("Folder:u", &folder),
+        ("folder:u", &folder),
+        ("Folders:u", &folder),
+        ("LibraryPanel:u", &panel),
+        ("libraryPanel:u", &panel),
+        ("LibraryPanels:u", &panel),
+        ("PublicDashboard:u", &public),
+        ("publicDashboard:u", &public),
+        ("PublicDashboards:u", &public),
+        ("DASHBOARD:u", &whole),
+        ("u", &whole),
+        ("", &whole),
+    ];
+    for (spec, want) in cases {
+        let rec = Recorder::default();
+        assert!(reg.check_allowed(&rec, &me, "read", Some(spec)).allowed);
+        assert_eq!(
+            rec.0.lock().unwrap().as_slice(),
+            std::slice::from_ref(want),
+            "{spec}"
+        );
+    }
+    let rec = Recorder::default();
+    assert!(reg.check_allowed(&rec, &me, "read", None).allowed);
+    assert_eq!(rec.0.lock().unwrap().as_slice(), [whole]);
+}
+
+/// Each set's permissions: a writable set proposes and deletes, a history or index set only reads.
+#[test]
+fn entity_sets_carry_their_permission_rules() {
+    let reg = daiya_registry();
+    let perms = |set: &str| -> Vec<String> {
+        reg.service
+            .sets
+            .iter()
+            .find(|s| s.set == set)
+            .unwrap_or_else(|| panic!("{set}"))
+            .rules
+            .iter()
+            .map(|r| r.permission.clone().unwrap_or_default())
+            .collect()
+    };
+    assert_eq!(
+        perms("Dashboards"),
+        [
+            "dashboards:read",
+            "dashboards:read",
+            "dashboards:propose",
+            "dashboards:propose",
+            "dashboards:delete"
+        ]
+    );
+    assert_eq!(
+        perms("DashboardVersions"),
+        ["dashboards:read", "dashboards:read"]
+    );
+}
+
 #[test]
 fn csdl_json_and_xml_describe_the_same_sets_and_operations() {
     let reg = daiya_registry();
@@ -655,6 +844,15 @@ fn csdl_json_and_xml_describe_the_same_sets_and_operations() {
         assert!(xml.contains(t), "{t}");
     }
     assert!(xml.trim_end().ends_with("</edmx:Edmx>"));
+    // The key and the required members are never nullable; an optional member is.
+    for (name, nullable) in [("uid", "false"), ("title", "false"), ("folderUid", "true")] {
+        assert!(
+            xml.contains(&format!(
+                "<Property Name=\"{name}\" Type=\"Edm.String\" Nullable=\"{nullable}\"/>"
+            )),
+            "{name}"
+        );
+    }
 }
 
 #[test]

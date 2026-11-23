@@ -183,7 +183,6 @@ function ProfileCard({ project, profile }: { project: string; profile: ProfileAc
         <AdminGrid
           stack
           storageKey={`agent-access:${profile.name}`}
-          query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
           caption={t("assistantPage.access.caption", { name: profile.name })}
           rows={profile.operations}
           columns={operationColumns}

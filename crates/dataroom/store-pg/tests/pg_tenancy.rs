@@ -753,3 +753,61 @@ async fn database_failures_surface_as_storage_errors() {
         assert!(matches!(err, Some(DataroomError::Storage(_))), "{err:?}");
     }
 }
+
+/// AUD-02 (S11-13): the activity row commits with the change or neither does. An activity id
+/// that is taken makes the insert fail, and the dataset and catalogue writes go with it.
+#[tokio::test]
+async fn an_activity_row_that_fails_rolls_the_change_back() {
+    let Some(pg) = pg("an_activity_row_that_fails_rolls_the_change_back").await else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "aud", &unique_host("aud")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    let read = store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    let row = |id: &str| dataroom_core::ActivityRow {
+        org_id: org,
+        catalogue_id: cat,
+        id: id.into(),
+        at: jc_time::TimestampTz::now(),
+        actor: "editor".into(),
+        operation: "resource.propose".into(),
+        object_type: "Dataset".into(),
+        object_id: String::new(),
+        summary: "taken".into(),
+        details: serde_json::json!({}),
+    };
+    store.record_activity(&ctx, row("act-taken")).await.unwrap();
+
+    let mut edit = read.clone();
+    edit.tags = vec!["lost".into()];
+    let failed = store
+        .save_dataset(&ctx, edit, Some(read.modified), row("act-taken"))
+        .await;
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        store.get_dataset(&ctx, "air").await.unwrap(),
+        Some(read.clone())
+    );
+
+    let c0 = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    let mut branded = c0.clone();
+    branded.branding = Some(serde_json::json!({"primary": "#123456"}));
+    assert!(store
+        .save_catalogue(branded, Some(c0.modified), row("act-taken"))
+        .await
+        .is_err());
+    assert_eq!(store.get_catalogue(org, cat).await.unwrap(), Some(c0));
+    assert_eq!(store.list_activity(&ctx, None, 10).await.unwrap().len(), 1);
+}

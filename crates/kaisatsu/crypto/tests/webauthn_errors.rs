@@ -103,6 +103,40 @@ fn cbor_refuses_every_malformed_head_and_length() {
         many.extend_from_slice(&[0x81, 0x00]);
     }
     assert!(bad(&many).contains("item count"));
+    // Each cap holds at its value and refuses one past it: 1024 items, depth 8.
+    let mut items = vec![0x99, 0x03, 0xff]; // array(1023) of 0: 1024 items
+    items.resize(3 + 1023, 0);
+    assert!(decode_cbor(&items).is_ok());
+    let mut full = vec![0x99, 0x04, 0x00]; // array(1024): its length passes, the 1025th item does not
+    full.resize(3 + 1024, 0);
+    assert!(bad(&full).contains("item count"));
+    let mut pairs = vec![0xb9, 0x04, 0x00]; // map(1024): 2049 items
+    pairs.resize(3 + 2048, 0);
+    assert!(bad(&pairs).contains("item count"));
+    let nested = |head: &[u8], levels: usize| {
+        let mut v = Vec::new();
+        for _ in 0..levels {
+            v.extend_from_slice(head);
+        }
+        v.push(0x00);
+        v
+    };
+    assert!(
+        decode_cbor(&nested(&[0x81], 8)).is_ok(),
+        "depth 8 under the top item"
+    );
+    assert!(bad(&nested(&[0x81], 9)).contains("depth"));
+    assert!(decode_cbor(&nested(&[0xa1, 0x00], 8)).is_ok());
+    assert!(
+        bad(&nested(&[0xa1, 0x00], 9)).contains("depth"),
+        "map values nest too"
+    );
+    // Keys nest too: a map whose key is a map, nine levels down, then the eight values.
+    let mut deep_key = vec![0xa1; 9];
+    deep_key.extend_from_slice(&[0x00; 10]);
+    assert!(bad(&deep_key).contains("depth"), "map keys nest too");
+    assert!(decode_cbor(&deep_key[1..deep_key.len() - 1]).is_ok());
+    assert!(bad(&[0x5f]).contains("indefinite"));
     // A map whose value is missing, and a truncated nested key.
     decode_cbor(&[0xa1, 0x01]).expect_err("value missing");
     decode_cbor(&[0xa1, 0x61]).expect_err("key truncated");
@@ -121,6 +155,7 @@ fn cbor_refuses_every_malformed_head_and_length() {
     assert_eq!(v.as_str(), Some("x"));
     assert!(v.as_i64().is_none() && v.as_bytes().is_none());
     assert!(v.map_get_int(1).is_none() && v.map_get_str("x").is_none());
+    assert_eq!(decode_cbor(&int(5)).unwrap().as_str(), None);
 }
 
 type Entries = Vec<(i64, Vec<u8>)>;
@@ -320,12 +355,19 @@ fn authenticator_data_refuses_every_layout_violation() {
     let ok = ParsedAuthData::parse(&auth_data(ed, 7, &map(&[(1, int(1))]))).unwrap();
     assert_eq!(ok.sign_count, 7);
     assert!(ok.attested.is_none() && ok.user_present() && !ok.backup_state());
+    let backed_up = AUTH_DATA_FLAG_BE | AUTH_DATA_FLAG_BS | AUTH_DATA_FLAG_UP;
+    let synced = ParsedAuthData::parse(&auth_data(backed_up, 1, &[])).unwrap();
+    assert!(synced.backup_eligible() && synced.backup_state());
     // Trailing bytes after the attested key.
     let mut tail = attested(b"id", &ec2_key());
     tail.push(0);
     assert!(err(auth_data(AT, 0, &tail)).contains("trailing"));
     let ok = ParsedAuthData::parse(&auth_data(AT, 0, &attested(b"id", &ec2_key()))).unwrap();
     assert_eq!(ok.attested.unwrap().credential_id, b"id");
+    // The longest credential id the spec allows is accepted.
+    let longest = [7u8; 1023];
+    let ok = ParsedAuthData::parse(&auth_data(AT, 0, &attested(&longest, &ec2_key()))).unwrap();
+    assert_eq!(ok.attested.unwrap().credential_id.len(), 1023);
 }
 
 fn client_data(value: serde_json::Value) -> String {

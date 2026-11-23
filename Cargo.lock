@@ -2801,6 +2801,9 @@ version = "0.1.0"
 dependencies = [
  "daiya-model",
  "jc-time",
+ "jiff",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
+ "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2946,6 +2949,7 @@ dependencies = [
  "dataroom-web",
  "http-body-util",
  "jc-core",
+ "jc-door",
  "jc-router",
  "jc-time",
  "jcctl",
@@ -2969,12 +2973,12 @@ dependencies = [
  "dataroom-store-memory",
  "jc-core",
  "jc-time",
+ "jiff",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "schemars 0.8.22",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -3064,6 +3068,7 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "http-body-util",
+ "jc-door",
  "jc-pool",
  "jc-time",
  "serde_json",
@@ -7697,8 +7702,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "http-body-util",
  "jc-audit",
  "jc-router",
+ "jc-time",
  "kaisatsu-admin",
  "kaisatsu-core",
  "kaisatsu-crypto",
@@ -7707,6 +7714,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]

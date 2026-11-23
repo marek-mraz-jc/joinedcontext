@@ -571,6 +571,336 @@ mod tests {
         );
     }
 
+    /// Only a published `wasm` App with a namespace, a shard and a recorded component is placed;
+    /// a `server` that does not read schedules nothing and keeps the App on its shard.
+    #[test]
+    fn an_app_missing_any_part_of_its_placement_is_not_placed() {
+        let base = serde_json::to_value(wasm_app("helsinki", "notes")).expect("a value");
+        assert!(PlacedApp::of(&envelope(base.clone())).is_some());
+        let without = |edit: &dyn Fn(&mut Value)| {
+            let mut value = base.clone();
+            edit(&mut value);
+            PlacedApp::of(&envelope(value))
+        };
+        assert_eq!(without(&|v| v["kind"] = json!("Endpoint")), None);
+        assert_eq!(without(&|v| v["spec"]["kind"] = json!("static")), None);
+        assert_eq!(without(&|v| v["spec"]["lifecycle"] = json!("draft")), None);
+        assert_eq!(without(&|v| v["status"] = Value::Null), None);
+        assert_eq!(
+            without(&|v| {
+                v["metadata"].as_object_mut().map(|m| m.remove("namespace"));
+            }),
+            None
+        );
+        assert_eq!(
+            without(&|v| {
+                v["status"].as_object_mut().map(|m| m.remove("shard"));
+            }),
+            None
+        );
+        assert_eq!(
+            without(&|v| {
+                v["status"]["build"]
+                    .as_object_mut()
+                    .map(|m| m.remove("component"));
+            }),
+            None
+        );
+        assert_eq!(
+            without(&|v| {
+                v["status"].as_object_mut().map(|m| m.remove("build"));
+            }),
+            None
+        );
+        let odd =
+            without(&|v| v["spec"]["server"] = json!({ "jobs": "hourly" })).expect("still placed");
+        assert!(odd.jobs.is_empty());
+    }
+
+    /// AP-158: a shard's key reaches each placed App's keyed prefix, and its old one only while
+    /// files wait there or the App has no key; an entry without an id reaches nothing.
+    #[test]
+    fn a_shards_key_reaches_exactly_the_prefixes_its_placement_names() {
+        let id = |name: &str| app_id("helsinki", name);
+        let placed = json!({ "apps": [
+            { "id": id("moved"), "prefix": "org/o/project/p/apps/moved/", "legacy": false },
+            { "id": id("moving"), "prefix": "org/o/project/p/apps/moving/", "legacy": true },
+            { "id": id("unkeyed") },
+            { "name": "no-id", "prefix": "org/o/project/p/apps/x/" }
+        ]});
+        assert_eq!(
+            prefixes(3, &placed),
+            [
+                "org/o/project/p/apps/moved/".to_owned(),
+                "org/o/project/p/apps/moving/".to_owned(),
+                crate::apps::files::legacy_prefix(3, &id("moving")),
+                crate::apps::files::legacy_prefix(3, &id("unkeyed")),
+            ]
+        );
+        assert!(prefixes(0, &json!({})).is_empty());
+        let mut keyed = app("helsinki", "moving", 0);
+        keyed.prefix = Some("org/o/project/p/apps/moving/".into());
+        keyed.legacy = true;
+        let (placed, _) = placement(0, &[keyed]);
+        assert_eq!(placed["apps"][0]["legacy"], json!(true));
+        assert_eq!(
+            placed["apps"][0]["prefix"],
+            json!("org/o/project/p/apps/moving/")
+        );
+    }
+
+    fn shards(kube: &str) -> WasmShards {
+        WasmShards::new(
+            KubeClient::with_token(kube, "t").expect("a client"),
+            "apps-host".into(),
+            2,
+            "jc-apps".into(),
+        )
+    }
+
+    fn store_on(server: &wiremock::MockServer) -> artifact_store::Client {
+        artifact_store::Client::new(artifact_store::Settings {
+            endpoint: server.uri(),
+            bucket: "jc-artifacts".into(),
+            region: "us-east-1".into(),
+            root_access_key: "root".into(),
+            root_secret_key: "the-root-secret".into(),
+        })
+        .expect("a store client")
+    }
+
+    /// Without the Portal's database no App has a key: each stays under its old prefix. A
+    /// database that does not answer says so per App and keeps it there.
+    #[tokio::test]
+    async fn an_app_whose_project_key_is_not_read_stays_where_it_was() {
+        let apps = [app("helsinki", "notes", 0)];
+        let (kept, problems) = shards("http://127.0.0.1:9").keyed(&apps, None).await;
+        assert_eq!((kept.as_slice(), problems.len()), (apps.as_slice(), 0));
+
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let port = closed.local_addr().expect("its address").port();
+        drop(closed);
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .connect_lazy(&format!("postgres://u:p@127.0.0.1:{port}/db"))
+            .expect("a lazy pool");
+        let with_keys = shards("http://127.0.0.1:9").with_keys(pool);
+        let (kept, problems) = with_keys.keyed(&apps, None).await;
+        assert_eq!(kept, apps);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].starts_with("App helsinki/notes: its project key was not read: "),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// TEN-15: a keyed App's old prefix that holds nothing finishes its move at once and is not
+    /// listed again; one the store will not list keeps the App reading it.
+    #[tokio::test]
+    async fn a_keyed_app_moves_once_and_a_store_that_fails_keeps_its_old_prefix() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = crate::db::connect(&url).await.expect("connect and migrate");
+        let mirror = crate::store::Mirror::new();
+        let run = jc_types::ProjectId::mint().path_segment();
+        let (project, org) = (format!("t7650-{run}"), format!("t7650org-{run}"));
+        crate::project_ids::placed(&db, &mirror, &project, &org).await;
+        let key = crate::project_ids::key(&db, &org, &project)
+            .await
+            .expect("the registry")
+            .expect("a key");
+        let id = app_id(&project, "notes");
+        let legacy = crate::apps::files::legacy_prefix(0, &id);
+
+        let store = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("prefix", legacy.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>",
+            ))
+            .expect(1)
+            .mount(&store)
+            .await;
+        let client = store_on(&store);
+        let wasm = shards("http://127.0.0.1:9").with_keys(db.clone());
+        let apps = [app(&project, "notes", 0), app(&project, "air", 0)];
+        let (keyed, problems) = wasm.keyed(&apps[..1], Some(&client)).await;
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            keyed[0].prefix.as_deref(),
+            Some(crate::apps::files::keyed_prefix(&key, &id).as_str())
+        );
+        assert!(!keyed[0].legacy, "nothing is left under the old prefix");
+        let (again, _) = wasm.keyed(&apps[..1], Some(&client)).await;
+        assert!(!again[0].legacy, "the finished move is remembered");
+        store.verify().await;
+
+        // Without a store the move waits: the App reads both prefixes.
+        let (waiting, _) = wasm.keyed(&apps[1..], None).await;
+        assert!(waiting[0].legacy);
+        assert!(waiting[0].prefix.is_some());
+
+        store.reset().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&store)
+            .await;
+        let (failed, problems) = wasm.keyed(&apps[1..], Some(&client)).await;
+        assert!(failed[0].legacy, "the old prefix is still read");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].starts_with(&format!(
+                "App {project}/air: its files were not moved under its project key: "
+            )),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// AP-154: each shard's `/jobs` on its admin port; a shard that answers an error or does not
+    /// answer is said, and keeps the runs it answered before.
+    #[tokio::test]
+    async fn the_job_runs_of_every_shard_are_read_and_a_silent_shard_keeps_its_last() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let hosts = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jobs"))
+            .and(header(
+                "host",
+                "jc-wasm-host-0.apps-host.svc.cluster.local:9090",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "jobs": [
+                { "app": "a1", "job": "hourly", "lastRun": "2026-10-10T00:00:00Z", "outcome": "ok" }
+            ]})))
+            .mount(&hosts)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/jobs"))
+            .and(header(
+                "host",
+                "jc-wasm-host-1.apps-host.svc.cluster.local:9090",
+            ))
+            .respond_with(ResponseTemplate::new(502))
+            .mount(&hosts)
+            .await;
+        let through = |proxy: &str| {
+            reqwest::Client::builder()
+                .proxy(reqwest::Proxy::http(proxy).expect("a proxy"))
+                .build()
+                .expect("a client")
+        };
+        let mut wasm = shards("http://127.0.0.1:9");
+        wasm.http = through(&hosts.uri());
+        let (runs, problems) = wasm.runs().await;
+        assert_eq!(runs.keys().map(String::as_str).collect::<Vec<_>>(), ["a1"]);
+        assert_eq!(runs["a1"][0].outcome, "ok");
+        assert_eq!(problems, ["shard 1: /jobs answered HTTP 502"]);
+
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let gone = format!("http://{}", closed.local_addr().expect("its address"));
+        drop(closed);
+        wasm.http = through(&gone);
+        let (kept, problems) = wasm.runs().await;
+        assert_eq!(kept, runs, "the last answer stands");
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(
+            problems[0].starts_with("shard 0: /jobs did not answer: "),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// AP-157, AP-158: every shard gets its placement and, with a store, its key; each refusal is
+    /// said once with its shard, and a name two projects share is said rather than served twice.
+    #[tokio::test]
+    async fn a_converge_writes_each_shards_placement_and_key_and_says_what_failed() {
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let kube = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path(
+                "/api/v1/namespaces/apps-host/configmaps/jc-wasm-host-0-placements",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(3)
+            .mount(&kube)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path(
+                "/api/v1/namespaces/apps-host/configmaps/jc-wasm-host-1-placements",
+            ))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({})))
+            .mount(&kube)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path_regex("/secrets/apps-host-0-store$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&kube)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path_regex("/secrets/apps-host-1-store$"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({})))
+            .mount(&kube)
+            .await;
+        let store = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&store)
+            .await;
+        let wasm = shards(&kube.uri());
+        let apps = [
+            app("helsinki", "notes", 0),
+            app("praha", "notes", 0),
+            app("helsinki", "air", 1),
+        ];
+        let problems = wasm.converge(&apps, Some(&store_on(&store))).await;
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert_eq!(
+            problems[0],
+            "shard 0: App praha/notes is not served, another project's App of the same name is"
+        );
+        assert!(
+            problems[1].starts_with("shard 1: its placement was not written: "),
+            "{}",
+            problems[1]
+        );
+        assert!(
+            problems[2].starts_with("shard 1: its store key was not handed over: "),
+            "{}",
+            problems[2]
+        );
+
+        // A store that refuses the key is said per shard; without one nothing asks it.
+        store.reset().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&store)
+            .await;
+        let refused = wasm.converge(&apps[..1], Some(&store_on(&store))).await;
+        assert!(
+            refused
+                .iter()
+                .any(|p| p.starts_with("shard 0: the store refused its key: ")),
+            "{refused:?}"
+        );
+        let quiet = wasm.converge(&apps[..1], None).await;
+        assert_eq!(
+            quiet.iter().filter(|p| p.contains("store")).count(),
+            0,
+            "{quiet:?}"
+        );
+    }
+
     #[test]
     fn the_config_map_carries_the_placement_under_its_key() {
         let (placed, _) = placement(1, &[app("helsinki", "notes", 1)]);
