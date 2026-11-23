@@ -384,17 +384,6 @@ impl Driver {
             .await?;
             return Ok(format!("error: {reason}"));
         }
-        if let Err(reason) =
-            self.access
-                .check(&call.name, &self.identity, &self.state, &self.project)
-        {
-            self.event(
-                "tool",
-                failed_step(&call.name, started, &call.arguments, &reason),
-            )
-            .await?;
-            return Ok(format!("error: {reason}"));
-        }
         let op = match crate::ops::find(&call.name) {
             Some(op) => op,
             None => {
@@ -407,6 +396,17 @@ impl Driver {
                 return Ok(format!("error: {reason}"));
             }
         };
+        if let Err(reason) =
+            self.access
+                .check(&call.name, &self.identity, &self.state, &self.project)
+        {
+            self.event(
+                "tool",
+                failed_step(&call.name, started, &call.arguments, &reason),
+            )
+            .await?;
+            return Ok(format!("error: {reason}"));
+        }
         let caller = crate::ops::Caller {
             bearer: None,
             identity: self.identity.clone(),
@@ -1951,5 +1951,322 @@ mod tests {
             let err = route_of("helsinki", &call).expect_err("no route");
             assert!(err.contains(needed), "{err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod driver_tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    fn driver() -> Driver {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        Driver::for_tests(state, "helsinki")
+    }
+
+    /// The bootstrap group of the test configuration: every right in every project.
+    fn admin(driver: &mut Driver) {
+        driver.identity.groups = vec!["portal-approver".into()];
+    }
+
+    async fn tool_events(driver: &Driver) -> Vec<Value> {
+        driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "tool")
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    fn endpoint(name: &str, spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: ObjectMeta::new(name, "helsinki"),
+            spec,
+            status: None,
+        }
+    }
+
+    /// AG-70, AG-77: a call that would open a Change, an operation nobody registered and one the
+    /// profile does not grant each go back as an error the model reads, with a failed step the
+    /// person sees; nothing runs.
+    #[tokio::test]
+    async fn a_call_the_run_may_not_make_goes_back_as_its_reason() {
+        let mut driver = driver();
+        admin(&mut driver);
+        let write = crate::ops::registry()
+            .iter()
+            .find(|op| !op.annotations.read_only_hint && opens_a_change(op.name).is_none())
+            .expect("a write operation");
+        for (name, said) in [
+            ("jc_resource_delete", "opens a Change of its own"),
+            (
+                "jc_no_such_thing",
+                "operation 'jc_no_such_thing' is not registered",
+            ),
+            (write.name, "the agent profile does not grant"),
+        ] {
+            let call = RegistryCall {
+                name: name.to_owned(),
+                arguments: json!({}),
+            };
+            let answer = driver.registry_call(&call).await.expect("an answer");
+            assert!(
+                answer.starts_with("error: ") && answer.contains(said),
+                "{answer}"
+            );
+        }
+        let events = tool_events(&driver).await;
+        assert_eq!(events.len(), 3);
+        assert!(
+            events.iter().all(|event| event["status"] == "failed"),
+            "{events:?}"
+        );
+    }
+
+    /// AG-56: a granted read answers the model with its output and shows the person the step;
+    /// one the operation refuses is its error, said the same way.
+    #[tokio::test]
+    async fn a_granted_read_answers_with_its_output_and_a_refused_one_with_its_error() {
+        let mut driver = driver();
+        admin(&mut driver);
+        driver
+            .state
+            .mirror
+            .upsert(endpoint("bikes", json!({ "audience": "public" })));
+        let listed = driver
+            .registry_call(&RegistryCall {
+                name: "jc_resource_list".into(),
+                arguments: json!({ "kind": "Endpoint" }),
+            })
+            .await
+            .expect("an answer");
+        let listed: Value = serde_json::from_str(&listed).expect("the output as JSON");
+        assert_eq!(listed["items"][0]["name"], "bikes", "{listed}");
+        let missing = driver
+            .registry_call(&RegistryCall {
+                name: "jc_resource_get".into(),
+                arguments: json!({ "kind": "Endpoint", "name": "trams" }),
+            })
+            .await
+            .expect("an answer");
+        assert!(
+            missing.starts_with("error: ") && missing.contains("trams"),
+            "{missing}"
+        );
+        let events = tool_events(&driver).await;
+        assert_eq!(events[0]["status"], "ok");
+        assert_eq!(events[0]["input"], json!({ "kind": "Endpoint" }));
+        assert_eq!(events[1]["status"], "failed");
+    }
+
+    #[test]
+    fn describe_shows_an_offered_operation_and_refuses_any_other() {
+        let driver = driver();
+        let offered: Vec<OperationSummary> = crate::ops::registry()
+            .iter()
+            .filter(|op| op.name == "jc_resource_list")
+            .map(crate::ops::summary)
+            .collect();
+        let shown: Value =
+            serde_json::from_str(&driver.describe("jc_resource_list", &offered)).expect("JSON");
+        assert_eq!(shown["name"], "jc_resource_list");
+        assert!(shown["input"].is_object(), "{shown}");
+        let refused = driver.describe("jc_resource_get", &offered);
+        assert!(
+            refused.starts_with("error: 'jc_resource_get' is not an operation"),
+            "{refused}"
+        );
+    }
+
+    /// UI-59, T-2768: a draft page opens on the kind of the draft the person may read under that
+    /// name; a name without such a draft is refused, with a failed step and no navigation.
+    #[tokio::test]
+    async fn a_draft_page_opens_on_its_drafts_kind_and_an_unknown_draft_is_refused() {
+        let mut driver = driver();
+        admin(&mut driver);
+        let by = driver.created_by.clone();
+        driver
+            .state
+            .drafts
+            .put(
+                "helsinki",
+                "Endpoint",
+                "bikes",
+                json!({}),
+                None,
+                &by,
+                "assistant",
+            )
+            .await
+            .expect("a draft");
+        let call = NavigateCall {
+            page: "draft".into(),
+            name: Some("bikes".into()),
+            plural: None,
+            endpoint: None,
+            entity_type: None,
+            q: None,
+            color: None,
+        };
+        assert_eq!(
+            driver.open_page(&call).await.expect("an answer"),
+            "opened /projects/helsinki/endpoints?draft=bikes"
+        );
+        let unknown = NavigateCall {
+            name: Some("trams".into()),
+            ..call.clone()
+        };
+        let refused = driver.open_page(&unknown).await.expect("an answer");
+        assert!(refused.starts_with("error: "), "{refused}");
+        let nameless = NavigateCall {
+            name: Some("  ".into()),
+            ..call
+        };
+        assert!(driver
+            .open_page(&nameless)
+            .await
+            .expect("an answer")
+            .starts_with("error: "));
+        let events = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        let kinds: Vec<&str> = events.iter().map(|event| event.kind.as_str()).collect();
+        assert_eq!(kinds, ["tool", "navigate", "tool", "tool"]);
+        assert_eq!(
+            events[1].payload["route"],
+            "/projects/helsinki/endpoints?draft=bikes"
+        );
+    }
+
+    /// AG-83: a pick question offers what the person may read, narrowed by the names the model
+    /// gave and never widened; an endpoint option says where it lives and to whom it is served.
+    #[tokio::test]
+    async fn a_pick_offers_what_the_person_reads_narrowed_by_the_names_given() {
+        let mut driver = driver();
+        admin(&mut driver);
+        let ask = |names: &[&str]| AskCall {
+            question: "Which endpoint?".into(),
+            options: names
+                .iter()
+                .map(|name| AskOption {
+                    value: (*name).to_owned(),
+                    title: (*name).to_owned(),
+                    description: None,
+                    disabled: None,
+                })
+                .collect(),
+            default: None,
+            pick: Some("endpoints"),
+            multiple: false,
+            min: None,
+            max: None,
+            input: AskInput::default(),
+            step: None,
+        };
+        let empty = driver.fill_options(ask(&[])).await.expect_err("nothing");
+        assert_eq!(
+            empty,
+            "there are no endpoints in project 'helsinki' to pick from"
+        );
+        driver
+            .state
+            .mirror
+            .upsert(endpoint("bikes", json!({ "audience": "public" })));
+        driver.state.mirror.upsert(endpoint("trams", json!({})));
+        let all = driver.fill_options(ask(&[])).await.expect("options");
+        let values: Vec<&str> = all.options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, ["bikes", "trams"]);
+        let bikes = all.options[0].description.as_deref().unwrap_or_default();
+        assert!(
+            bikes.starts_with("ngsi-ld") && bikes.ends_with(" · public"),
+            "{bikes}"
+        );
+        let trams = all.options[1].description.as_deref().unwrap_or_default();
+        assert!(
+            trams.starts_with("ngsi-ld") && !trams.contains("public"),
+            "{trams}"
+        );
+        let one = driver
+            .fill_options(ask(&["trams", "metro"]))
+            .await
+            .expect("options");
+        assert_eq!(one.options.len(), 1);
+        assert_eq!(one.options[0].value, "trams");
+        let none = driver
+            .fill_options(ask(&["metro"]))
+            .await
+            .expect_err("none");
+        assert_eq!(
+            none,
+            "none of the endpoints named is one the person may pick"
+        );
+        assert_eq!(
+            describe_option(
+                &driver.state,
+                "helsinki",
+                "DataModel",
+                &json!({ "space": "air" })
+            ),
+            Some("space air".to_owned())
+        );
+        assert_eq!(
+            describe_option(&driver.state, "helsinki", "Endpoint", &json!({})),
+            None
+        );
+    }
+
+    /// AG-80, T-2694: the question event carries the options, a disabled one with its reason,
+    /// and what the person hands over; the turn ends on the question's words.
+    #[tokio::test]
+    async fn a_question_reaches_the_person_with_its_options_and_input() {
+        let driver = driver();
+        let call = AskCall {
+            question: "Which file?".into(),
+            options: vec![AskOption {
+                value: "a".into(),
+                title: "A".into(),
+                description: None,
+                disabled: Some("not yet served".into()),
+            }],
+            default: None,
+            pick: None,
+            multiple: false,
+            min: None,
+            max: None,
+            input: AskInput {
+                file: true,
+                url: true,
+            },
+            step: None,
+        };
+        assert_eq!(
+            driver.ask_person(&call, Some(7)).await.expect("asked"),
+            "Which file?"
+        );
+        let events = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        assert_eq!(events[0].kind, "question");
+        let question = &events[0].payload;
+        assert_eq!(question["options"][0]["disabledReason"], "not yet served");
+        assert_eq!(question["input"]["url"], true);
+        assert_eq!(
+            question["input"]["file"]["maxBytes"],
+            json!(SAMPLE_MAX_BYTES)
+        );
+        assert_eq!(question["elapsedMs"], 7);
+        assert_eq!(events[1].kind, "thought");
     }
 }
