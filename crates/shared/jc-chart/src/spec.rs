@@ -924,20 +924,27 @@ mod tests {
                 "o3": { "type": "Property", "max": "not a series" } }),
             json!({ "id": "urn:b", "pm10": { "type": "Property", "value": 9 }, "name": "B" }),
         ]);
-        // Attributes in name order: no2's aggregate, pm10's two values, then urn:b.
+        // Attribute order follows serde_json's map (sorted, or input order under the
+        // preserve_order feature another workspace crate may unify in), so find rows by content.
         assert_eq!(rows.len(), 4, "{rows:?}");
-        assert_eq!(rows[0]["no2.avg"], json!(3));
-        assert_eq!(rows[0]["no2"], json!(3));
-        assert_eq!(rows[0]["method"], json!("avg"));
-        assert_eq!(rows[0]["observedAt"], json!("2026-01-01T00:00:00Z"));
-        assert!(!rows[0].contains_key("o3") && !rows[0].contains_key("@context"));
-        assert_eq!(
-            (rows[1]["id"].clone(), rows[1]["type"].clone()),
-            (json!("urn:a"), json!("T"))
-        );
-        assert_eq!(rows[1]["pm10"], json!(1.5));
-        assert_eq!(rows[2]["observedAt"], json!("2026-01-02T00:00:00Z"));
-        assert_eq!(rows[2]["pm10"], json!(2.5));
+        let agg = rows
+            .iter()
+            .find(|r| r.contains_key("no2.avg"))
+            .expect("no2's aggregate row");
+        assert_eq!(agg["no2"], json!(3));
+        assert_eq!(agg["method"], json!("avg"));
+        assert_eq!(agg["observedAt"], json!("2026-01-01T00:00:00Z"));
+        assert!(!agg.contains_key("o3") && !agg.contains_key("@context"));
+        let pm10: Vec<_> = rows
+            .iter()
+            .filter(|r| r.contains_key("pm10") && r["id"] == json!("urn:a"))
+            .collect();
+        assert_eq!(pm10.len(), 2, "{pm10:?}");
+        assert_eq!(pm10[0]["type"], json!("T"));
+        assert_eq!(pm10[0]["pm10"], json!(1.5));
+        assert_eq!(pm10[1]["observedAt"], json!("2026-01-02T00:00:00Z"));
+        assert_eq!(pm10[1]["pm10"], json!(2.5));
+        // urn:b is the last entity, so its row comes last in either order.
         assert_eq!(rows[3]["pm10"], json!(9));
         assert_eq!(rows[3]["name"], json!("B"));
         // An inline @context is the entity's vocabulary, never a series of it.
