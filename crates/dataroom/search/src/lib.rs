@@ -1353,21 +1353,25 @@ mod tests {
         assert_eq!(sorted(Some("modified desc")), ["zz", "aa-ovzdusie"]);
     }
 
-    /// `dataset_visible` lets an editor read another catalogue's dataset and a withdrawn
-    /// publisher's one, so the search itself keeps the first out and the second behind
-    /// include_private.
+    /// The search keeps another catalogue's dataset out and a withdrawn publisher's one behind
+    /// include_private by itself, whatever the Authorizer (the Portal's live one) allows.
     #[test]
     fn an_editor_search_keeps_its_catalogue_and_withdrawn_publishers_behind_the_flag() {
+        struct AllowAll;
+        impl Authorizer for AllowAll {
+            fn check(
+                &self,
+                _: &RequestCtx,
+                _: Action,
+                _: &dataroom_core::ObjectTarget,
+            ) -> dataroom_core::Decision {
+                dataroom_core::Decision::allow("test")
+            }
+        }
         let (org_id, catalogue_id) = test_ids();
         let editor = Subject::authenticated("ed", vec![org_id], Vec::new());
         let ctx = RequestCtx::new(org_id, catalogue_id, editor);
-        let authz = PolicyAuthorizer::default().with_rule(GrantRule {
-            org_id,
-            catalogue_id: None,
-            principal: "ed".into(),
-            actions: vec![Action::Read, Action::Propose],
-            publisher_id: None,
-        });
+        let authz = AllowAll;
         let mut elsewhere =
             make_dataset("elsewhere", "pub-a", "Inde", &[], &[], Visibility::Public);
         elsewhere.catalogue_id = CatalogueId::from_uuid(Uuid::from_u128(77));
