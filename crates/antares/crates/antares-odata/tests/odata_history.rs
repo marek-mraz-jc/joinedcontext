@@ -502,25 +502,11 @@ async fn each_bound_on_observed_at_and_each_other_conjunct_narrows_the_rows() {
     }
 }
 
+/// A sorted page smaller than the rows links to the next one; an annotation in `$select`, a
+/// system member in `$filter` and a forged `$skiptoken` are refused.
 #[tokio::test(flavor = "multi_thread")]
-async fn select_orderby_keys_and_what_a_history_does_not_serve() {
+async fn a_sorted_page_links_on_and_what_a_history_refuses_besides() {
     let app = past().await.expect("fixture");
-    let (status, body) = get(&app, "Car_history?$select=id,label").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let first = body["value"].get(1).cloned().unwrap_or_default();
-    assert_eq!(
-        first,
-        json!({"id": car(7), "observedAt": T1, "label": "seven"}),
-        "the key is always selected"
-    );
-    let (_, star) = get(&app, "Car_history?$select=*").await;
-    assert_eq!(rows(&star).len(), 5);
-    let (_, by_speed) = read(&app, "Car_history?$orderby=speed%20desc").await;
-    assert_eq!(
-        by_speed,
-        [key(8, T3), key(8, T1), key(7, T2), key(7, T0), key(7, T1)],
-        "equal speeds keep the natural order"
-    );
     // a sorted page of one keeps the first row and links to the next
     let (status, page) = send_paged(
         &app,
@@ -549,6 +535,42 @@ async fn select_orderby_keys_and_what_a_history_does_not_serve() {
         ),
         (StatusCode::OK, Some(key(8, T1))),
         "{next}: {second}"
+    );
+    for (path, status) in [
+        (
+            "Car_history?$select=@Core.Description",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        // a history row carries no system member to filter on: the name is unknown
+        (
+            "Car_history?$filter=createdAt%20gt%202026-01-01T00:00:00Z",
+            StatusCode::BAD_REQUEST,
+        ),
+        ("Car_history?$skiptoken=3.garbage", StatusCode::BAD_REQUEST),
+    ] {
+        let (got, body) = get(&app, path).await;
+        assert_eq!(got, status, "{path}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn select_orderby_keys_and_what_a_history_does_not_serve() {
+    let app = past().await.expect("fixture");
+    let (status, body) = get(&app, "Car_history?$select=id,label").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let first = body["value"].get(1).cloned().unwrap_or_default();
+    assert_eq!(
+        first,
+        json!({"id": car(7), "observedAt": T1, "label": "seven"}),
+        "the key is always selected"
+    );
+    let (_, star) = get(&app, "Car_history?$select=*").await;
+    assert_eq!(rows(&star).len(), 5);
+    let (_, by_speed) = read(&app, "Car_history?$orderby=speed%20desc").await;
+    assert_eq!(
+        by_speed,
+        [key(8, T3), key(8, T1), key(7, T2), key(7, T0), key(7, T1)],
+        "equal speeds keep the natural order"
     );
     let (_, natural) = get(&app, "Car_history").await;
     for order in ["id", "id,observedAt"] {
@@ -594,19 +616,6 @@ async fn select_orderby_keys_and_what_a_history_does_not_serve() {
         (
             "Car_history('urn:ngsi-ld:Car:7')".to_owned(),
             StatusCode::NOT_FOUND,
-        ),
-        (
-            "Car_history?$select=@Core.Description".to_owned(),
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        // a history row carries no system member to filter on: the name is unknown
-        (
-            "Car_history?$filter=createdAt%20gt%202026-01-01T00:00:00Z".to_owned(),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            "Car_history?$skiptoken=3.garbage".to_owned(),
-            StatusCode::BAD_REQUEST,
         ),
     ];
     for (path, status) in refused {
