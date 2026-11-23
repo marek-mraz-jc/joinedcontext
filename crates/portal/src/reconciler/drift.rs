@@ -787,6 +787,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&empty);
     }
 
+    /// A lock a panicking reader left poisoned still answers and still takes the next scan.
+    #[test]
+    fn a_poisoned_store_still_answers_and_takes_writes() {
+        let store = std::sync::Arc::new(Store::default());
+        let held = std::sync::Arc::clone(&store);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.found.write();
+            panic!("a reader died holding the lock");
+        })
+        .join();
+        assert!(store.found.is_poisoned());
+        assert!(store.of("mesto").is_none());
+        store.replace_all(BTreeMap::from([("mesto".to_owned(), Found::default())]));
+        assert!(store.of("mesto").is_some());
+    }
+
+    /// A space surface that does not answer is an error of every call, never an empty answer.
+    #[tokio::test]
+    async fn a_surface_that_does_not_answer_is_an_error_of_every_call() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let base = format!("http://{}", closed.local_addr().expect("its address"));
+        drop(closed);
+        let realm = wiremock::MockServer::start().await;
+        let answering = watch_on(&realm).await;
+        let watch = Watch::new(
+            base,
+            &format!("{}/realms/city", realm.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        );
+        assert!(watch.page("t", "ovzdusie", "A", 0, 1).await.is_err());
+        assert!(watch.named("t", "ovzdusie", "A", "a==1").await.is_err());
+        assert!(watch.live("t", "ovzdusie", "urn:a").await.is_err());
+        assert!(watch.put("ovzdusie", &json!({})).await.is_err());
+        assert_eq!(answering.scan_token().await.as_deref(), Ok("t"));
+    }
+
+    /// A realm that refuses the scan's client fails the scan before any space is read.
+    #[tokio::test]
+    async fn a_scan_without_a_token_reads_no_space() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let watch = Watch::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+        );
+        let repo = checkout("no-token");
+        assert_eq!(
+            watch.scan(&repo).await,
+            Err("the realm refused the reconciler's client: 401 Unauthorized".to_owned())
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
     /// A host that is no hierarchical URL builds no entity address: the read fails, it never
     /// reaches another resource.
     #[tokio::test]

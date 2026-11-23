@@ -606,6 +606,12 @@ mod tests {
             }),
             None
         );
+        assert_eq!(
+            without(&|v| {
+                v["status"].as_object_mut().map(|m| m.remove("build"));
+            }),
+            None
+        );
         let odd =
             without(&|v| v["spec"]["server"] = json!({ "jobs": "hourly" })).expect("still placed");
         assert!(odd.jobs.is_empty());
@@ -825,7 +831,7 @@ mod tests {
                 "/api/v1/namespaces/apps-host/configmaps/jc-wasm-host-0-placements",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-            .expect(1)
+            .expect(3)
             .mount(&kube)
             .await;
         Mock::given(method("PATCH"))

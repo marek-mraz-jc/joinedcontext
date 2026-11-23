@@ -275,10 +275,7 @@ impl SubscriptionSync {
             body.insert("description".to_owned(), json!(description));
         }
         if !spec.entities.is_empty() {
-            body.insert(
-                "entities".to_owned(),
-                serde_json::to_value(&spec.entities).map_err(|err| err.to_string())?,
-            );
+            body.insert("entities".to_owned(), json!(spec.entities));
         }
         if !spec.watched_attributes.is_empty() {
             body.insert(
@@ -859,6 +856,77 @@ mod tests {
         );
     }
 
+    /// A one-shot HTTP peer: each connection gets the next scripted answer, or is dropped
+    /// unanswered when the script says `None`. Answers the address to call.
+    fn scripted(answers: Vec<Option<&'static str>>) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let base = format!("http://{}", listener.local_addr().expect("its address"));
+        std::thread::spawn(move || {
+            for answer in answers {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                if let Some(answer) = answer {
+                    let mut request = [0u8; 8192];
+                    let _ = stream.read(&mut request);
+                    let _ = stream.write_all(answer.as_bytes());
+                }
+            }
+        });
+        base
+    }
+
+    const CONFLICT: &str =
+        "HTTP/1.1 409 Conflict\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+    const CREATED: &str = "HTTP/1.1 201 Created\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+
+    /// A space that stops answering mid-write is an error of that write; one that stops before
+    /// the read-back leaves the write standing with nothing to show.
+    #[tokio::test]
+    async fn a_space_that_stops_answering_fails_the_write_and_not_the_read_back() {
+        let sync = |base: String| {
+            SubscriptionSync::new(
+                base,
+                "https://id.example/realms/city",
+                "portal".to_owned(),
+                ClientAuth::Secret("s".into()),
+                "hel.fi",
+            )
+        };
+        let body = json!({ "id": "urn:x", "type": "Subscription" });
+        let silent = sync(scripted(vec![None]));
+        assert!(silent.write("t", "air", "urn:x", &body).await.is_err());
+        let patch_lost = sync(scripted(vec![Some(CONFLICT), None]));
+        assert!(patch_lost.write("t", "air", "urn:x", &body).await.is_err());
+        let gone = sync(scripted(vec![None]));
+        assert!(gone.delete("t", "air", "urn:x").await.is_err());
+        let read_lost = sync(scripted(vec![Some(CREATED), None]));
+        assert_eq!(read_lost.write("t", "air", "urn:x", &body).await, Ok(()));
+        assert_eq!(read_lost.deliveries("t", "air", "urn:x").await, None);
+    }
+
+    /// A read-back that is no JSON object with a notification shows nothing.
+    #[tokio::test]
+    async fn a_read_back_that_does_not_read_shows_nothing() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cs/air/ngsi-ld/v1/subscriptions/urn:a"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/cs/air/ngsi-ld/v1/subscriptions/urn:b"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "urn:b" })))
+            .mount(&server)
+            .await;
+        let sync = sync_on(&server);
+        assert_eq!(sync.deliveries("t", "air", "urn:a").await, None);
+        assert_eq!(sync.deliveries("t", "air", "urn:b").await, None);
+    }
+
     /// Without a token nothing is written: every manifest says why, once, and nothing is deleted.
     #[tokio::test]
     async fn a_refused_token_writes_nothing_and_every_manifest_says_so() {
@@ -948,6 +1016,22 @@ mod tests {
             Some("403 from the space")
         );
         assert!(mirror.get("mesto", "Subscription", "gone").is_none());
+
+        // A manifest without a status yet is kept as it is.
+        let mut bare = subscription("mesto", "bare", spec("air", json!({})));
+        bare.status = None;
+        mirror.upsert(bare);
+        record(
+            &mirror,
+            vec![(
+                "mesto".into(),
+                "bare".into(),
+                SubscriptionOutcome::Error("x".into()),
+            )],
+        );
+        assert!(mirror
+            .get("mesto", "Subscription", "bare")
+            .is_some_and(|env| env.status.is_none()));
     }
 
     #[test]

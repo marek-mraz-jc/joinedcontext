@@ -465,10 +465,11 @@ mod tests {
                 json!({"temporalQ": "timerel=after;timeAt=2020-01-01T00:00:00Z"}),
             ),
         ] {
-            match compile_read("p", &agreement("finalized", constraints), &fenced) {
-                Err(CompileError::Widens { dimension: d, .. }) => assert_eq!(d, dimension),
-                other => panic!("{dimension}: {other:?}"),
-            }
+            let refused = compile_read("p", &agreement("finalized", constraints), &fenced);
+            assert!(
+                matches!(&refused, Err(CompileError::Widens { dimension: d, .. }) if *d == dimension),
+                "{dimension}: {refused:?}"
+            );
         }
         // The same fence repeated is not a widening.
         let same = json!({"geoQ": "georel=within;geometry=Polygon"});
@@ -504,16 +505,6 @@ mod tests {
         let mut consumer = agreement("accepted", json!({}));
         consumer.role = AgreementRole::Consumer;
         assert_eq!(compile_read("p", &consumer, &offered()), Ok(Vec::new()));
-        let none = compile_all(
-            &[(
-                "helsinki".into(),
-                "p".into(),
-                agreement("accepted", json!({})),
-            )],
-            &BTreeMap::new(),
-            |_, _| offered(),
-        );
-        assert!(none.is_empty());
     }
 
     fn offer(endpoints: &[&str], action: &str) -> DataOfferSpec {
@@ -555,6 +546,11 @@ mod tests {
                     agreement("accepted", json!({})),
                 ),
                 ("helsinki".into(), "mine".into(), consumer),
+                (
+                    "espoo".into(),
+                    "elsewhere".into(),
+                    agreement("accepted", json!({})),
+                ),
                 ("helsinki".into(), "odd".into(), odd),
                 (
                     "helsinki".into(),
@@ -578,8 +574,11 @@ mod tests {
             "the Policy both Endpoints bind is granted once"
         );
         assert!(
-            !asked.borrow().iter().any(|e| e.contains("mine")),
-            "a consumer agreement asks for no binding"
+            !asked
+                .borrow()
+                .iter()
+                .any(|e| e.contains("mine") || e.starts_with("espoo/")),
+            "a consumer agreement and one on an offer the project lacks ask for no binding"
         );
     }
 
