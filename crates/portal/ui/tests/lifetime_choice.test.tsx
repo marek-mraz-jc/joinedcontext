@@ -151,6 +151,16 @@ describe("LifetimeChoice", () => {
     expect(manifests.at(-1)).toEqual({ lifetime: undefined, expiry: undefined });
   });
 
+  it("writes the span after a field and a typed fixed date", async () => {
+    await show({ lifetime: [{ type: "Vehicle", entity: { from: "observedAt", plus: "PT10M" } }] });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Plus" }), { target: { value: "5" } });
+    expect(manifests.at(-1)?.lifetime).toEqual([{ type: "Vehicle", entity: { from: "observedAt", plus: "PT5M" } }]);
+
+    await userEvent.click(screen.getByRole("radio", { name: /On a fixed date/ }));
+    fireEvent.change(screen.getByLabelText(/^Date and time/), { target: { value: toLocalInput("2027-01-31T10:00:00Z") } });
+    expect(manifests.at(-1)?.lifetime).toEqual([{ type: "Vehicle", entity: { at: "2027-01-31T10:00:00Z" } }]);
+  });
+
   it("reads a manifest's fixed date back and refuses one in the past in words", async () => {
     await show({ lifetime: [{ type: "Vehicle", entity: { at: "2026-10-01T08:00:00Z" } }] });
     expect(screen.getByRole("radio", { name: /Whole entity expires/ })).toBeChecked();
@@ -190,6 +200,15 @@ describe("LifetimeChoice", () => {
     expect(manifests.at(-1)?.lifetime).toEqual([{ type: "Vehicle", attributes: [{ names: ["speed"], rolling: "PT10M" }] }]);
   });
 
+  it("renames a field's end and changes its span in its own row", async () => {
+    const user = userEvent.setup();
+    await show({ lifetime: [{ type: "Vehicle", attributes: [{ names: ["location"], from: "observedAt", plus: "PT10M" }] }] });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Field" }), "delay");
+    expect(manifests.at(-1)?.lifetime).toEqual([{ type: "Vehicle", attributes: [{ names: ["delay"], from: "observedAt", plus: "PT10M" }] }]);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Plus" }), { target: { value: "2" } });
+    expect(manifests.at(-1)?.lifetime).toEqual([{ type: "Vehicle", attributes: [{ names: ["delay"], from: "observedAt", plus: "PT2M" }] }]);
+  });
+
   it("says when the Endpoint grants no field to end", async () => {
     const user = userEvent.setup();
     await show({ attributes: [] });
@@ -212,7 +231,11 @@ describe("LifetimeChoice", () => {
     expect(screen.getByRole("radio", { name: /Keep entities/ })).toBeChecked();
     await user.click(screen.getByRole("radio", { name: /Delete when the source stops sending them/ }));
     expect(manifests.at(-1)?.expiry).toEqual({ after: "2d", types: ["Stop", "Vehicle"] });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Not updated for" }), { target: { value: "3" } });
+    expect(manifests.at(-1)?.expiry).toEqual({ after: "3d", types: ["Stop", "Vehicle"] });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Unit of the window" }), "h");
+    expect(manifests.at(-1)?.expiry).toEqual({ after: "3h", types: ["Stop", "Vehicle"] });
     await user.click(screen.getByRole("radio", { name: /Keep entities/ }));
-    expect(manifests.at(-1)?.expiry).toEqual({ after: "2d", types: ["Stop"] });
+    expect(manifests.at(-1)?.expiry).toEqual({ after: "3h", types: ["Stop"] });
   });
 });

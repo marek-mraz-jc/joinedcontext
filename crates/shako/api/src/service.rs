@@ -37,7 +37,8 @@ use std::path::PathBuf;
 /// What a merge of two refs holds at its largest.
 const MERGE_OPERATION_BYTES: u64 = 8 * 1024 * 1024;
 
-async fn blocking<T: Send + 'static>(
+/// Runs `f` on the blocking pool; a task that panicked is an internal error.
+pub async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> ShakoResult<T> + Send + 'static,
 ) -> ShakoResult<T> {
     tokio::task::spawn_blocking(f)

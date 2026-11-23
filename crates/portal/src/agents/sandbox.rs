@@ -199,10 +199,19 @@ pub fn project(files: &BTreeMap<String, String>) -> Result<Vec<u8>, String> {
         .iter()
         .filter(|(path, _)| !path.split('/').any(|part| part.starts_with('.')))
         .collect();
-    let json = serde_json::to_vec(&kept).map_err(|err| err.to_string())?;
+    // a map of strings into a Vec, compressed into a Vec: neither step has a way to fail
+    let json = match serde_json::to_vec(&kept) {
+        Ok(json) => json,
+        Err(err) => return Err(err.to_string()),
+    };
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gz.write_all(&json).map_err(|err| err.to_string())?;
-    let bytes = gz.finish().map_err(|err| err.to_string())?;
+    if let Err(err) = gz.write_all(&json) {
+        return Err(err.to_string());
+    }
+    let bytes = match gz.finish() {
+        Ok(bytes) => bytes,
+        Err(err) => return Err(err.to_string()),
+    };
     if bytes.len() > MAX_PROJECT_BYTES {
         return Err(format!(
             "the version is {} KiB compressed; the sandbox takes at most {} KiB",
@@ -653,6 +662,16 @@ mod tests {
             ["The test \"a\" in src/a.test.ts fails: boom"]
         );
         assert_eq!(report.summary(), "1 of 2 tests fail: a.");
+        let passed = parse_log("JC-TESTS {\"outcome\":\"passed\",\"passed\":9}\n");
+        assert_eq!(passed.summary(), "The tests pass: 9 of 9.");
+        assert_eq!(
+            Report::error("the Job is gone").summary(),
+            "The tests could not run: the Job is gone"
+        );
+        assert_eq!(
+            Report::skipped("this version has no tests").summary(),
+            "The tests were not run: this version has no tests"
+        );
 
         let many: Vec<Value> = (0..40)
             .map(|i| json!({"file": "f", "name": format!("t{i}"), "message": "m".repeat(5000)}))

@@ -75,11 +75,11 @@ impl<K: Copy + Eq + Hash> Inner<K> {
     fn give_back(&self, key: K, bytes: u64) {
         let mut state = self.lock();
         state.used = state.used.saturating_sub(bytes);
-        if let Some(share) = state.keys.get_mut(&key) {
-            share.held = share.held.saturating_sub(bytes);
-            if share.held == 0 && share.waiting == 0 {
-                state.keys.remove(&key);
-            }
+        // A permit's key always has a share: `or_default` only spares an unreachable branch.
+        let share = state.keys.entry(key).or_default();
+        share.held = share.held.saturating_sub(bytes);
+        if share.held == 0 && share.waiting == 0 {
+            state.keys.remove(&key);
         }
         drop(state);
         self.changed.notify_waiters();
@@ -172,11 +172,11 @@ impl<K: Copy + Eq + Hash> Drop for Waiter<'_, K> {
     fn drop(&mut self) {
         let mut state = self.inner.lock();
         state.waiting = state.waiting.saturating_sub(1);
-        if let Some(share) = state.keys.get_mut(&self.key) {
-            share.waiting = share.waiting.saturating_sub(1);
-            if share.held == 0 && share.waiting == 0 {
-                state.keys.remove(&self.key);
-            }
+        // A waiter's key always has a share, as in `give_back`.
+        let share = state.keys.entry(self.key).or_default();
+        share.waiting = share.waiting.saturating_sub(1);
+        if share.held == 0 && share.waiting == 0 {
+            state.keys.remove(&self.key);
         }
         drop(state);
         self.inner.changed.notify_waiters();
@@ -282,7 +282,13 @@ mod tests {
     async fn growing_never_waits_and_every_byte_comes_back() {
         let budget = FairBudget::new(100);
         let mut mine = budget.acquire(1, 4, NOW).await.expect("mine");
-        mine.grow_to(90).expect("alone, up to the whole budget");
+        mine.grow_to(100).expect("alone, up to the whole budget");
+        mine.grow_to(90)
+            .expect("a smaller size keeps what it holds");
+        assert_eq!(mine.bytes(), 100);
+        drop(mine);
+        let mut mine = budget.acquire(1, 4, NOW).await.expect("mine");
+        mine.grow_to(90).expect("alone");
         assert_eq!(mine.grow_to(101), Err(Refused::TooLarge(100)));
         let other = budget.acquire(2, 10, NOW).await.expect("other");
         assert_eq!(mine.grow_to(95), Err(Refused::Busy));
@@ -293,6 +299,84 @@ mod tests {
         drop((mine, other));
         let state = budget.0.lock();
         assert_eq!((state.used, state.waiting, state.keys.len()), (0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn a_second_permit_of_a_key_grows_within_the_fair_share_only() {
+        let budget = FairBudget::new(100);
+        assert_eq!(budget.capacity(), 100);
+        assert_eq!(FairBudget::<u8>::new(0).capacity(), 1);
+        let mut first = budget.acquire(1, 10, NOW).await.expect("first");
+        let _second = budget.acquire(1, 10, NOW).await.expect("second");
+        first.grow_to(5).expect("shrinking asks nothing");
+        assert_eq!(first.bytes(), 10);
+        // 20 held, a quarter (25) stays free: 55 more fits, 56 does not.
+        first.grow_to(65).expect("within the share");
+        assert_eq!(first.bytes(), 65);
+        assert_eq!(first.grow_to(66), Err(Refused::Busy));
+        assert_eq!(budget.0.lock().used, 75);
+    }
+
+    /// Only another key that waits and holds less than this one goes first: a key holding less
+    /// without waiting and a waiter holding as much take nothing from a holder with headroom.
+    #[tokio::test]
+    async fn only_a_waiter_holding_less_outwaits_a_holder() {
+        let budget = FairBudget::new(100);
+        let _mine = budget.acquire(1, 10, NOW).await.expect("mine");
+        let _small = budget
+            .acquire(2, 5, NOW)
+            .await
+            .expect("holds less, not waiting");
+        let _same = budget.acquire(3, 10, NOW).await.expect("holds as much");
+        let waiting = tokio::spawn({
+            let budget = budget.clone();
+            async move { budget.acquire(3, 80, NOW).await }
+        });
+        tokio::task::yield_now().await;
+        {
+            let state = budget.0.lock();
+            assert_eq!((state.waiting, state.keys[&3].waiting), (1, 1));
+        }
+        assert!(
+            budget.acquire(1, 10, NOW).await.is_ok(),
+            "nobody outwaits key 1"
+        );
+        assert_eq!(waiting.await.expect("join").err(), Some(Refused::Busy));
+    }
+
+    /// A waiter that gives up leaves no trace of a key holding nothing, and keeps the share of a
+    /// key that holds something.
+    #[tokio::test]
+    async fn a_waiter_that_gives_up_leaves_only_what_its_key_holds() {
+        let budget = FairBudget::new(10);
+        let all = budget.acquire(1, 10, NOW).await.expect("all");
+        assert_eq!(budget.acquire(2, 1, NOW).await.err(), Some(Refused::Busy));
+        assert_eq!(budget.acquire(1, 1, NOW).await.err(), Some(Refused::Busy));
+        {
+            let state = budget.0.lock();
+            assert_eq!(state.waiting, 0);
+            assert_eq!(state.keys.len(), 1);
+            assert_eq!((state.keys[&1].held, state.keys[&1].waiting), (10, 0));
+        }
+        drop(all);
+        assert_eq!(budget.0.lock().keys.len(), 0);
+    }
+
+    /// Bytes come back while another permit of the key waits: its share stays until both end.
+    #[tokio::test]
+    async fn a_key_with_a_waiter_keeps_its_share_when_a_permit_ends() {
+        let budget = FairBudget::new(10);
+        let first = budget.acquire(1, 6, NOW).await.expect("first");
+        let other = budget.acquire(2, 4, NOW).await.expect("other");
+        let waiting = tokio::spawn({
+            let budget = budget.clone();
+            async move { budget.acquire(1, 8, Duration::from_secs(2)).await }
+        });
+        tokio::task::yield_now().await;
+        drop(first);
+        assert_eq!(budget.0.lock().keys[&1].waiting, 1);
+        drop(other);
+        assert_eq!(waiting.await.expect("join").expect("the waiter").bytes(), 8);
     }
 
     #[tokio::test]

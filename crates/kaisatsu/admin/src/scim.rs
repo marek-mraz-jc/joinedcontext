@@ -75,10 +75,12 @@ fn parse_scim_filter_with_depth(input: &str, depth: usize) -> Result<ScimExpr> {
 
     // Parse `<attr> <eq|co|sw> "<value>"`
     let mut parts = trimmed.splitn(3, char::is_whitespace);
-    let attr = parts
-        .next()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| KaisatsuError::BadRequest("missing SCIM filter attribute".into()))?;
+    // `trimmed` is not empty and starts with a non-space, so the first part is the attribute.
+    let Some(attr) = parts.next() else {
+        return Err(KaisatsuError::BadRequest(
+            "missing SCIM filter attribute".into(),
+        ));
+    };
     let op_str = parts
         .next()
         .map(str::trim)
@@ -591,11 +593,7 @@ async fn run_op(
     key: Option<&str>,
     params: &Value,
 ) -> Result<Option<Value>> {
-    let op = state
-        .registry
-        .find(name)
-        .ok_or_else(|| KaisatsuError::NotSupported(name.to_owned()))?;
-    crate::operations::execute(state, mount, ctx, op, key, params).await
+    crate::operations::execute_named(state, mount, ctx, name, key, params).await
 }
 
 /// Creates a person through the registry executor, so SCIM, REST, OData and MCP make the same
@@ -629,21 +627,23 @@ async fn scim_create_user(
         email_verified: false,
         ..Default::default()
     };
-    let body =
-        serde_json::to_value(&person).map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
-    let created = run_op(&state, &mount, &ctx, "person_create", None, &body)
-        .await?
-        .ok_or_else(|| KaisatsuError::Storage("person_create returned nothing".into()))?;
-    let id = created
-        .get("id")
+    let body = match serde_json::to_value(&person) {
+        Ok(body) => body,
+        Err(e) => return Err(KaisatsuError::BadRequest(e.to_string())),
+    };
+    let created = run_op(&state, &mount, &ctx, "person_create", None, &body).await?;
+    let Some(id) = created
+        .as_ref()
+        .and_then(|c| c.get("id"))
         .and_then(Value::as_str)
-        .ok_or_else(|| KaisatsuError::Storage("created person has no id".into()))?;
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, None, id)
-        .await?
-        .ok_or_else(|| KaisatsuError::Storage("created person vanished".into()))?;
+    else {
+        return Err(KaisatsuError::Storage(
+            "person_create returned no id".into(),
+        ));
+    };
+    let Some(user) = state.oidc.store.get_user_by_id(&realm, None, id).await? else {
+        return Err(KaisatsuError::Storage("created person vanished".into()));
+    };
     if let Some(ext) = payload.external_id {
         let mut u = user;
         u.attributes.insert("externalId".into(), vec![ext]);
@@ -1811,6 +1811,29 @@ mod tests {
         let deep = format!("{}userName eq \"a\"{}", "(".repeat(200), ")".repeat(200));
         let err = parse_scim_filter(&deep).expect_err("deep filter must be refused");
         assert_eq!(err.status_code(), 400);
+    }
+
+    #[test]
+    fn scim_filter_refuses_unbalanced_deep_and_malformed_input_with_a_reason() {
+        let refused = |f: &str| parse_scim_filter(f).expect_err(f).to_string();
+        let deep = format!("userName eq \"a\" and {}id eq \"b\"", "(".repeat(40));
+        for (filter, reason) in [
+            ("", "empty SCIM filter"),
+            ("userName eq \"a\")", "unbalanced ')'"),
+            (deep.as_str(), "parenthesis depth exceeded"),
+            ("userName", "missing SCIM filter operator"),
+            ("userName gt \"a\"", "unsupported SCIM filter operator: gt"),
+            ("userName eq a", "must be double-quoted"),
+        ] {
+            assert!(
+                refused(filter).contains(reason),
+                "{filter}: {}",
+                refused(filter)
+            );
+        }
+        // Two parenthesised terms: the outer pair is not one group, so the `and` splits them.
+        let two = parse_scim_filter(r#"(userName eq "a") and (id eq "u1")"#).unwrap();
+        assert!(matches!(two, ScimExpr::And(..)), "{two:?}");
     }
 
     #[test]

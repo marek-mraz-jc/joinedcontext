@@ -125,6 +125,33 @@ describe("a snapshot pipeline's source vs space", () => {
     expect(page.calls()).toContain(`POST ${REPORT}`);
   });
 
+  it("says the server's refusal to keep the held run, and exports the ids as a CSV file", async () => {
+    const { answer } = world("snapshot", held);
+    await renderRoute({
+      path: PAGE,
+      answer: (path, request) =>
+        path === REPORT && request.method === "POST" ? problem(409, "run r3 was released by another steward") : answer(path, request),
+      permissions: grants(["read", "approve"]),
+    });
+    const panel = await screen.findByTestId("source-report");
+    await userEvent.click(within(panel).getByRole("button", { name: S.keep }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("run r3 was released by another steward");
+
+    const blobs: Blob[] = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      blobs.push(blob as Blob);
+      return "blob:source-vs-space";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    await userEvent.click(within(panel).getByRole("button", { name: S.export }));
+    expect(saved).toEqual(["registry-source-vs-space.csv"]);
+    expect(await blobs[0].text()).toBe(sourceCsv(held));
+  });
+
   it("lets a reader see the report but not release or keep the held run", async () => {
     const { answer } = world("snapshot", held);
     await renderRoute({ path: PAGE, answer, permissions: grants(["read"]) });

@@ -56,10 +56,12 @@ pub(crate) async fn create(
     // The reader checks a key against its Edm type, and leaves one out
     // only where `$metadata` says the service computes it (W1).
     let (id, own) = match payload.key.first() {
-        Some((_, value)) => (
-            body_id(set, value).ok_or_else(|| body_error(&invalid_key(), version))?,
-            value.clone(),
-        ),
+        Some((_, value)) => {
+            let Some(id) = body_id(set, value) else {
+                return Err(body_error(&invalid_key(), version));
+            };
+            (id, value.clone())
+        }
         None => minted(set, set_name),
     };
     let mut doc = attributes(set, &payload.properties, WriteKind::Create);
@@ -421,7 +423,9 @@ pub(crate) async fn referenced(
         };
         let target = set_of(reads, target, version)?;
         // The body reader checked the value against the key's Edm type.
-        let urn = body_id(target, value).ok_or_else(|| body_error(&invalid_key(), version))?;
+        let Some(urn) = body_id(target, value) else {
+            return Err(body_error(&invalid_key(), version));
+        };
         run(
             reads,
             caller,

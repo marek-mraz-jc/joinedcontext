@@ -282,8 +282,9 @@ mod tests {
         let unreachable: Vec<&str> = ops::registry()
             .iter()
             .filter(|op| op.verb.is_none())
-            .filter(|op| op.kind != "*" && crate::resource::by_kind(op.kind).is_none())
-            .map(|op| op.name)
+            .filter_map(|op| {
+                (op.kind != "*" && crate::resource::by_kind(op.kind).is_none()).then_some(op.name)
+            })
             .collect();
         assert!(
             unreachable.is_empty(),

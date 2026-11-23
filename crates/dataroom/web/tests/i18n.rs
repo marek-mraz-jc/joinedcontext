@@ -112,6 +112,17 @@ fn counted_nouns_take_the_slavic_plural_forms() {
 }
 
 #[test]
+fn topics_found_counts_in_every_shipped_language() {
+    assert_eq!(jc_rows(1, "topics_found", "sk"), "1 téma nájdená");
+    assert_eq!(jc_rows(3, "topics_found", "cs"), "3 nalezená témata");
+    assert_eq!(jc_rows(5, "topics_found", "cs"), "5 nalezených témat");
+    assert_eq!(jc_rows(2, "topics_found", "de"), "2 Themen gefunden");
+    assert_eq!(jc_rows(1, "topics_found", "hu"), "1 téma található");
+    assert_eq!(jc_rows(1, "topics_found", "en"), "1 topic found");
+    assert_eq!(jc_rows(7, "topics_found", "fr"), "7 topics found");
+}
+
+#[test]
 fn numbers_group_thousands_with_a_narrow_space() {
     assert_eq!(jc_number(0), "0");
     assert_eq!(jc_number(999), "999");
@@ -225,6 +236,16 @@ fn language_resolution_edges() {
     assert_eq!(
         r("/dataset", None, None, "fi"),
         resolved("sk", "/dataset", false)
+    );
+}
+
+#[test]
+fn a_quality_that_is_no_number_keeps_the_tag_at_full_weight() {
+    let offered: Vec<String> = vec!["sk".into(), "en".into()];
+    // "en;q=x" is read as q=1 and beats sk at 0.5.
+    assert_eq!(
+        resolve_request_language("/", None, Some("sk;q=0.5, en;q=x"), &offered, "sk"),
+        resolved("en", "/", false)
     );
 }
 

@@ -561,6 +561,8 @@ export function PipelineEditorDialog({
     ok: boolean;
     bloblang: string;
   } | null>(null);
+  // The workbench and the studio both test the draft; either verdict gates Propose.
+  const onVerdict = (ok: boolean, tested: string) => setVerdict({ ok, bloblang: tested });
   const bloblang = draft?.compute?.kind === "bloblang" ? (draft.compute.bloblang ?? "") : "";
   // Gated: a pipeline with a Bloblang mapping must pass the test before proposing (PL-49).
   const hasSource =
@@ -740,7 +742,7 @@ export function PipelineEditorDialog({
             endpoints={endpointList}
             targets={endpointOptions}
             toManifest={source.toManifest}
-            onVerdict={(ok, tested) => setVerdict({ ok, bloblang: tested })}
+            onVerdict={onVerdict}
             mappingFile={mappingFile}
             draftName={editing?.metadata.name ?? draftName}
             pipeline={editing?.metadata.name}
@@ -762,7 +764,7 @@ export function PipelineEditorDialog({
                   dataSources={dataSourceList}
                   endpoints={endpointList}
                   toManifest={source.toManifest}
-                  onVerdict={(ok, tested) => setVerdict({ ok, bloblang: tested })}
+                  onVerdict={onVerdict}
                 />
               </div>
             </details>

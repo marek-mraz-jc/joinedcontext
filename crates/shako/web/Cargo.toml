@@ -19,6 +19,7 @@ tokio = { version = "1.54", features = ["rt"] }
 
 [dev-dependencies]
 shako-store-memory = { path = "../store-memory" }
+base64 = "0.22"
 http-body-util = "0.1"
 tempfile = "3.27"
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

@@ -30,4 +30,6 @@ uuid = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
+rcgen = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

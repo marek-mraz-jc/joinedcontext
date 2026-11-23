@@ -281,5 +281,26 @@ mod tests {
         assert_eq!(bare("idm.localhost:8080"), "idm.localhost");
         assert!(under_domain("a.bbsk.sk", "bbsk.sk."));
         assert!(!under_domain("bbsk.sk", ""));
+        assert!(!under_domain("abbsk.sk", "bbsk.sk"));
+        assert!(!under_domain(".bbsk.sk", "bbsk.sk"));
+        check_labels(&RULES, &entry("api2.bbsk.sk")).expect("a digit is plain");
+        // 253 characters is the longest host name (RFC 1035), one more is refused.
+        let long = |last: usize| {
+            format!(
+                "{}.{}.{}.{}.sk",
+                "a".repeat(63),
+                "b".repeat(63),
+                "c".repeat(63),
+                "d".repeat(last)
+            )
+        };
+        assert_eq!(long(58).len(), 253);
+        check_labels(&RULES, &entry(&long(58))).expect("253 characters");
+        assert_eq!(
+            check_labels(&RULES, &entry(&long(59)))
+                .unwrap_err()
+                .status(),
+            422
+        );
     }
 }

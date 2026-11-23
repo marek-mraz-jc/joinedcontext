@@ -684,6 +684,14 @@ mod tests {
                 shape: point
             })
         );
+        // a position takes at least two values: the second is required, not optional
+        let one = read("geography'SRID=0;Point(1 x)'");
+        assert_eq!(
+            one.err().map(|e| e.kind),
+            Some(crate::UrlErrorKind::Syntax {
+                expected: "doubleValue"
+            })
+        );
     }
 
     fn ok(input: &str) -> Literal {

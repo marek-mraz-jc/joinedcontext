@@ -141,11 +141,11 @@ impl Reader<'_> {
     /// A length header must fit in what is left of the input (one byte per element at
     /// least), so a forged length cannot reserve memory.
     fn len(&mut self, n: usize) -> Result<usize, String> {
-        let len = usize::try_from(self.uint(n)?).map_err(|_| "msgpack: length overflow")?;
-        if len > self.buf.len() - self.pos {
+        let len = self.uint(n)?;
+        if len > (self.buf.len() - self.pos) as u64 {
             return Err("msgpack: unexpected EOF".to_string());
         }
-        Ok(len)
+        Ok(len as usize)
     }
 
     fn string(&mut self, len: usize) -> Result<Value, String> {
@@ -229,6 +229,175 @@ mod tests {
             "85a16101a162ffa163cb3ff8000000000000a166cd012ca167cf0000000100000000"
         );
         assert_eq!(decode(&encode(&v)), Ok(v));
+    }
+
+    fn hex_of(v: &Value) -> String {
+        hex::encode(encode(v))
+    }
+
+    #[test]
+    fn integers_take_the_smallest_code_at_each_boundary() {
+        for (u, want) in [
+            (0x7f_u64, "7f"),
+            (0x80, "cc80"),
+            (0xff, "ccff"),
+            (0x100, "cd0100"),
+            (0xffff, "cdffff"),
+            (0x1_0000, "ce00010000"),
+            (0xffff_ffff, "ceffffffff"),
+            (0x1_0000_0000, "cf0000000100000000"),
+        ] {
+            assert_eq!(hex_of(&Value::Uint(u)), want, "uint {u:#x}");
+            assert_eq!(decode(&encode(&Value::Uint(u))), Ok(Value::Int(u as i64)));
+        }
+        assert_eq!(hex_of(&Value::Uint(u64::MAX)), "cfffffffffffffffff");
+        assert_eq!(
+            decode(&encode(&Value::Uint(u64::MAX))),
+            Ok(Value::Uint(u64::MAX))
+        );
+        for (i, want) in [
+            (5_i64, "05"),
+            (-1, "ff"),
+            (-32, "e0"),
+            (-33, "d0df"),
+            (-128, "d080"),
+            (-129, "d1ff7f"),
+            (-32768, "d18000"),
+            (-32769, "d2ffff7fff"),
+            (i64::from(i32::MIN), "d280000000"),
+            (i64::from(i32::MIN) - 1, "d3ffffffff7fffffff"),
+            (i64::MIN, "d38000000000000000"),
+        ] {
+            assert_eq!(hex_of(&Value::Int(i)), want, "int {i}");
+            assert_eq!(decode(&encode(&Value::Int(i))), Ok(Value::Int(i)));
+        }
+    }
+
+    #[test]
+    fn strings_bytes_arrays_and_maps_switch_header_width_at_their_limits() {
+        let s = |n: usize| Value::String("x".repeat(n));
+        for (n, head) in [
+            (31, "bf"),
+            (32, "d920"),
+            (255, "d9ff"),
+            (256, "da0100"),
+            (0xffff, "daffff"),
+            (0x1_0000, "db00010000"),
+        ] {
+            assert!(hex_of(&s(n)).starts_with(head), "str {n}");
+            assert_eq!(decode(&encode(&s(n))), Ok(s(n)));
+        }
+        let b = |n: usize| Value::Bytes(vec![7; n]);
+        for (n, head) in [
+            (0, "c400"),
+            (255, "c4ff"),
+            (256, "c50100"),
+            (0x1_0000, "c600010000"),
+        ] {
+            assert!(hex_of(&b(n)).starts_with(head), "bin {n}");
+            assert_eq!(decode(&encode(&b(n))), Ok(b(n)));
+        }
+        let a = |n: usize| Value::Array(vec![Value::Null; n].into());
+        for (n, head) in [(15, "9f"), (16, "dc0010"), (0x1_0000, "dd00010000")] {
+            assert!(hex_of(&a(n)).starts_with(head), "array {n}");
+            assert_eq!(decode(&encode(&a(n))), Ok(a(n)));
+        }
+        let m = |n: usize| {
+            Value::Object(
+                (0..n)
+                    .map(|i| (format!("{i:05}"), Value::Bool(i % 2 == 0)))
+                    .collect(),
+            )
+        };
+        for (n, head) in [(15, "8f"), (16, "de0010"), (0x1_0000, "df00010000")] {
+            assert!(hex_of(&m(n)).starts_with(head), "map {n}");
+            assert_eq!(decode(&encode(&m(n))), Ok(m(n)));
+        }
+    }
+
+    #[test]
+    fn scalars_number_text_and_timestamps_encode_as_bento_does(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(hex_of(&Value::Null), "c0");
+        assert_eq!(hex_of(&Value::Nothing), "c0");
+        assert_eq!(hex_of(&Value::Delete), "c0");
+        assert_eq!(hex_of(&Value::Bool(false)), "c2");
+        assert_eq!(hex_of(&Value::Bool(true)), "c3");
+        assert_eq!(hex_of(&Value::Number("1E2".into())), "cb4059000000000000");
+        assert_eq!(hex_of(&Value::Number("7".into())), "07");
+        let ts = "2024-01-02T03:04:05Z"
+            .parse::<jiff::Timestamp>()?
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        assert_eq!(
+            decode(&encode(&Value::Timestamp(ts))),
+            Ok(Value::String("2024-01-02T03:04:05Z".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_reads_every_code_family() {
+        assert_eq!(decode(&[0xc2]), Ok(Value::Bool(false)));
+        assert_eq!(decode(&[0xc3]), Ok(Value::Bool(true)));
+        assert_eq!(decode(&[0xca, 0x3f, 0xc0, 0, 0]), Ok(Value::Float(1.5)));
+        assert_eq!(decode(&[0xd0, 0x80]), Ok(Value::Int(-128)));
+        assert_eq!(decode(&[0xd1, 0xff, 0x7f]), Ok(Value::Int(-129)));
+        assert_eq!(decode(&[0xf0]), Ok(Value::Int(-16)));
+        assert_eq!(decode(&[0xc4, 1, 9]), Ok(Value::Bytes(vec![9])));
+        // A map key that is no string is read as its text, as Bento's decoder coerces it.
+        assert_eq!(
+            decode(&[0x82, 0x01, 0xc3, 0xc0, 0x02]),
+            Ok(Value::Object(
+                [
+                    ("1".to_string(), Value::Bool(true)),
+                    ("null".to_string(), Value::Int(2)),
+                ]
+                .into_iter()
+                .collect()
+            ))
+        );
+    }
+
+    #[test]
+    fn truncated_input_and_unsupported_codes_are_refused_with_the_reason() {
+        let eof = Err("msgpack: unexpected EOF".to_string());
+        assert_eq!(decode(&[]), eof);
+        assert_eq!(decode(&[0xcd, 0x01]), eof);
+        assert_eq!(decode(&[0xc4, 2, 9]), eof);
+        assert_eq!(decode(&[0xd9, 1]), eof);
+        assert_eq!(decode(&[0xdc, 0, 1]), eof);
+        assert_eq!(decode(&[0xde, 0, 1]), eof);
+        for code in [0xc1_u8, 0xc7, 0xd4, 0xd8] {
+            assert_eq!(
+                decode(&[code, 0, 0, 0]),
+                Err(format!("msgpack: unsupported code {code:#x}"))
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_is_allowed_to_the_limit_and_refused_past_it() {
+        let nested = |depth: usize| {
+            let mut buf = vec![0x91; depth];
+            buf.push(0xc0);
+            buf
+        };
+        assert!(decode(&nested(MAX_DEPTH)).is_ok());
+        assert_eq!(
+            decode(&nested(MAX_DEPTH + 1)),
+            Err("msgpack: exceeded max depth".to_string())
+        );
+        // A map's key sits one level below the map, as its value does.
+        let mut key_deep = vec![0x81];
+        key_deep.extend(nested(MAX_DEPTH));
+        key_deep.push(0xc0);
+        assert_eq!(
+            decode(&key_deep),
+            Err("msgpack: exceeded max depth".to_string())
+        );
+        let mut map = vec![0x81, 0xa1, b'k'];
+        map.extend(nested(MAX_DEPTH));
+        assert_eq!(decode(&map), Err("msgpack: exceeded max depth".to_string()));
     }
 
     #[test]

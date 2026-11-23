@@ -38,8 +38,23 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
+  # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
+  # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
+  # T-7669 msgpack Reader::len: a length between what is left and buf.len() + pos passes the looser bound and
+  # then take() answers the same "unexpected EOF"; collect() over a Result reserves nothing up front.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-http carried_v4 (T-7623): `high << 16` has its low 16 bits zero and `low` fits in them, so `|` and `^` add the same bits.
+  'jc-http/src/lib\.rs:\d+:\d+: replace \| with \^ in carried_v4',
+  # jc-time from_system_time (T-7623): the comparison picks the clamp only when jiff refuses the instant; at exactly
+  # UNIX_EPOCH jiff never refuses, so `<` and `<=` cannot be told apart.
+  'jc-time/src/lib\.rs:\d+:\d+: replace < with <= in from_system_time',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
@@ -59,9 +74,19 @@ exclude_re = [
   # side by side), so only a fresh server tells; streams_and_bucket_carry_their_contract pins the
   # configs it creates (T-7530).
   'antares-bus/src/nats\.rs:.*replace NatsBus::ensure_streams -> Result<\(\), BusError> with Ok\(\(\)\)',
+  # odata-table git.rs segments() (T-7597): an empty pattern or one starting with `/` also yields an empty
+  # segment, which the segment rule refuses with the same error, so `||` and `&&` between those two
+  # checks answer alike; both checks stay as the root guard (integrator bounce 2026-11-23).
+  'odata-table/src/git\.rs:90:9: replace \|\| with && in segments',
+  # odata-axum read `/$count` (T-7597): `top: Some(0)` only spares fetching rows nobody reads; the
+  # count is computed apart from the page, so the answer is the same number with or without it.
+  'odata-axum/src/table\.rs:\d+:\d+: delete field top from struct QueryOptions expression in read',
   # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
   # carries; without it the count is the same, the page is built and dropped (T-7627).
   'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
+  # dataroom-api handle_odata `/{set}/$export?`: odata_url parses `Datasets?` as `Datasets`, so
+  # an empty query string adds nothing either way (routes.rs pins the answer, T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: replace match guard !q\.is_empty\(\) with true in handle_odata',
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
@@ -87,6 +112,9 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
+  # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
+  'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
   # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
   # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
   # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
@@ -140,4 +168,9 @@ exclude_re = [
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
   # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
   'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
+  # T-7740 odata-json visit_unit: serde_json's Value::default() is Value::Null, the value it answers.
+  'crates/odata-json/src/json\.rs:\d+:\d+: replace <impl Visitor<.de> for Node<._, ._>>::visit_unit -> Result<Value, E> with Ok\(Default::default\(\)\)',
+  # T-7740 odata-url strength: only `not` and `-` bind at 7; a parent offers its operands at most 7 (an arithmetic right
+  # operand) and `not` offers its own strength, so 7 and 8 parenthesise every expression the same.
+  'crates/odata-url/src/display\.rs:\d+:\d+: delete match arm Expr::Not\(_\) \| Expr::Neg\(_\) in strength',
 ]
