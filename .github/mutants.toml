@@ -87,6 +87,22 @@ exclude_re = [
   # (expansion keeps them under their own names), so compact_iri answers the key, and a string value
   # or a one-element scope array compacts to what the arm writes (T-7693).
   'antares-jsonld/src/compact\.rs:\d+:\d+: delete match arm "(id|scope|createdAt)".* in compact_entity',
+  # ngsild-jsonld loader: these functions are cfg(target_arch = "wasm32") (the browser build's
+  # SendWrapper, timers and builder); the native test run does not compile them. Each native arm
+  # has the same name, so the lines are pinned: a move makes the mutant read as missed, never hidden (T-7693).
+  'antares-jsonld/src/loader\.rs:(398|539|560|579|598):5: replace (http_interaction|client_builder|with_timeouts|pause|io_deadline) ',
+  # ngsild-jsonld slow_factor: only the sanitizer workflow sets ANTARES_TEST_SANITIZER, so the factor is 1
+  # in every run that measures mutants (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace slow_factor -> u64 with 1',
+  # ngsild-jsonld ip_is_local_host and ip_is_private: ::1 and :: are also the IPv4-compatible
+  # spellings of 0.0.0.1 and 0.0.0.0, which embedded_v4 already judges local and private, so the
+  # explicit loopback/unspecified tests decide nothing alone (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in EgressPolicy::ip_is_(local_host|private)',
+  # ngsild-jsonld embedded_v4: `hi << 16` has its low 16 bits zero, so `|` and `^` add the same bits (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \| with \^ in EgressPolicy::embedded_v4',
+  # ngsild-jsonld Loader::merge_entry: joining an absolute http(s) URL against the base answers that
+  # URL, which reqwest normalises the same way when it fetches, so the scheme test only saves a parse (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in Loader::merge_entry',
   # ngsild-jsonld expand_common_members: a non-null observedAt/expiresAt copied by the null pass is
   # overwritten by the validated value (or the validation fails) in the block right after it (T-7693).
   'antares-jsonld/src/expand\.rs:\d+:\d+: replace && with \|\| in expand_common_members',

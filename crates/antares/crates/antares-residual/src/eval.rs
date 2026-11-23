@@ -625,7 +625,7 @@ mod tests {
     use std::cmp::Ordering;
 
     /// The step budget is inclusive: the evaluation that visits exactly
-    /// MAX_STEPS nodes answers, one more is TooComplex.
+    /// `MAX_STEPS` nodes answers, one more is `TooComplex`.
     #[test]
     fn the_step_budget_admits_exactly_max_steps() {
         let entity = serde_json::json!({});
