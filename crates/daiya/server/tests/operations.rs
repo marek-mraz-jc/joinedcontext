@@ -178,7 +178,7 @@ async fn an_unknown_command_is_404() {
 }
 
 #[tokio::test]
-async fn a_registry_operation_the_cli_does_not_wire_is_501_not_a_guess() {
+async fn a_registry_operation_the_dispatcher_does_not_wire_is_501_not_a_guess() {
     let mut f = fixture().await;
     let mut registry = (*f.state.registry).clone();
     let mut op = registry.operations[0].clone();

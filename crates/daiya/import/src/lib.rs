@@ -209,9 +209,8 @@ pub fn prepare_dashboard(
         .cloned()
         .unwrap_or_else(|| raw_input.clone());
 
-    let raw_bytes_len = serde_json::to_vec(&dash_val)
-        .map_err(|e| CrError::BadRequest(format!("invalid dashboard JSON: {e}")))?
-        .len();
+    // The compact text a Value always serialises to: its byte length is the input's size.
+    let raw_bytes_len = dash_val.to_string().len();
 
     inline_library_panels(&mut dash_val, library_panels);
 
@@ -543,7 +542,11 @@ pub async fn compute_org_state_etag(store: &dyn DaiyaStore, org_id: OrgId) -> Cr
 pub const PLAN_TTL_MILLIS: i64 = 60 * 60 * 1000;
 
 /// SHA-256 hex of the canonical `{ baseEtag, desired }`: the name `Apply` takes for a plan.
-#[must_use]
+/// A step that only a broken invariant fails, as an internal error naming it.
+fn internal<E: std::fmt::Display>(step: &'static str) -> impl FnOnce(E) -> CrError {
+    move |e| CrError::Internal(format!("{step}: {e}"))
+}
+
 pub fn plan_digest(base_etag: &str, desired: &Value) -> String {
     let canonical =
         CanonicalJson::canonicalize(&json!({ "baseEtag": base_etag, "desired": desired }));
@@ -682,12 +685,12 @@ pub async fn compute_plan(
     }
 
     let has_changes = diffs.iter().any(|d| d.action != "unchanged");
-    let desired_val = serde_json::to_value(desired)
-        .map_err(|e| CrError::Internal(format!("plan bundle did not serialize: {e}")))?;
+    let desired_val =
+        serde_json::to_value(desired).map_err(internal("plan bundle did not serialize"))?;
     let digest = plan_digest(&base_etag, &desired_val);
     let created_at = TimestampTz::now();
     let expires_at = TimestampTz::from_millis(created_at.as_millis() + PLAN_TTL_MILLIS)
-        .ok_or_else(|| CrError::Internal("plan expiry out of range".into()))?;
+        .ok_or(CrError::Internal("plan expiry out of range".into()))?;
     store
         .insert_plan(PlanRecord {
             installation_id,
@@ -766,7 +769,7 @@ pub async fn load_plan(
         ));
     }
     let desired = serde_json::from_value(record.desired.clone())
-        .map_err(|e| CrError::Internal(format!("stored plan bundle did not parse: {e}")))?;
+        .map_err(internal("stored plan bundle did not parse"))?;
     Ok(LoadedPlan { record, desired })
 }
 

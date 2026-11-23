@@ -194,10 +194,13 @@ pub fn interpolate_postgres_macros(
         .replace("$__interval", &format!("'{interval_str}'"))
         .replace("${__interval}", &format!("'{interval_str}'"));
 
-    let re = Regex::new(r"\$(__[_a-zA-Z0-9]+)\(([^)]*)\)").map_err(|e| DsError::InvalidQuery {
-        ref_id: "sql".into(),
-        reason: e.to_string(),
-    })?;
+    // A constant pattern: the else arm is never taken.
+    let Ok(re) = Regex::new(r"\$(__[_a-zA-Z0-9]+)\(([^)]*)\)") else {
+        return Err(DsError::InvalidQuery {
+            ref_id: "sql".into(),
+            reason: "the macro pattern does not compile".into(),
+        });
+    };
 
     let from_iso = TimestampTz::from_millis(from_ms)
         .unwrap_or(TimestampTz::UNIX_EPOCH)
@@ -1045,8 +1048,8 @@ pub const MAX_SQL_ROWS: usize = 50_000;
 
 /// The database's own message for a refused statement (what a query author needs); any other
 /// failure (connection, TLS, I/O) answers a fixed text, since its detail can name addresses.
-fn pg_err(e: &sqlx::Error) -> DsError {
-    let message = match e {
+fn pg_err(e: sqlx::Error) -> DsError {
+    let message = match &e {
         sqlx::Error::Database(db) => format!("postgres refused the query: {}", db.message()),
         _ => "postgres connection failed".to_owned(),
     };
@@ -1066,22 +1069,22 @@ async fn run_read_only(
     timeout: std::time::Duration,
 ) -> Result<(Vec<sqlx::postgres::PgRow>, bool), DsError> {
     use futures_util::TryStreamExt;
-    let mut tx = pool.begin().await.map_err(|e| pg_err(&e))?;
+    let mut tx = pool.begin().await.map_err(pg_err)?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
         .await
-        .map_err(|e| pg_err(&e))?;
+        .map_err(pg_err)?;
     let timeout_ms = timeout.as_millis().clamp(1, 60_000).to_string();
     sqlx::query("SELECT set_config('statement_timeout', $1, true), set_config('standard_conforming_strings', 'on', true)")
         .bind(timeout_ms)
         .execute(&mut *tx)
         .await
-        .map_err(|e| pg_err(&e))?;
+        .map_err(pg_err)?;
     let mut rows = Vec::new();
     let mut truncated = false;
     {
         let mut stream = sqlx::query(sqlx::AssertSqlSafe(verified_sql.to_owned())).fetch(&mut *tx);
-        while let Some(row) = stream.try_next().await.map_err(|e| pg_err(&e))? {
+        while let Some(row) = stream.try_next().await.map_err(pg_err)? {
             if rows.len() == MAX_SQL_ROWS {
                 truncated = true;
                 break;
@@ -1089,7 +1092,7 @@ async fn run_read_only(
             rows.push(row);
         }
     }
-    tx.rollback().await.map_err(|e| pg_err(&e))?;
+    tx.rollback().await.map_err(pg_err)?;
     Ok((rows, truncated))
 }
 
@@ -1101,12 +1104,8 @@ fn numeric_to_f64(value: &PgValueRef<'_>) -> Option<f64> {
         return None;
     }
     if value.format() == PgValueFormat::Text {
-        return value
-            .as_str()
-            .ok()?
-            .parse::<f64>()
-            .ok()
-            .filter(|f| f.is_finite());
+        let f = value.as_str().ok()?.parse::<f64>().ok()?;
+        return f.is_finite().then_some(f);
     }
     let b = value.as_bytes().ok()?;
     let word = |i: usize| -> Option<u16> { Some(u16::from_be_bytes([*b.get(i)?, *b.get(i + 1)?])) };
@@ -1446,10 +1445,15 @@ impl Datasource for PostgresDatasource {
                 if !fields.is_empty()
                     && q.model.get("format").and_then(Value::as_str) == Some("time_series")
                 {
-                    fields = sql_time_series(fields).map_err(|reason| DsError::InvalidQuery {
-                        ref_id: q.ref_id.clone(),
-                        reason,
-                    })?;
+                    fields = match sql_time_series(fields) {
+                        Ok(wide) => wide,
+                        Err(reason) => {
+                            return Err(DsError::InvalidQuery {
+                                ref_id: q.ref_id.clone(),
+                                reason,
+                            });
+                        }
+                    };
                 }
                 if truncated {
                     notices.push(Notice {
