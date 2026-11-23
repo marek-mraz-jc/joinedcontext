@@ -4,4 +4,13 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
+  # way, since order() has no ordering between a Boolean and any other kind (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',
+  # ngsild-residual pow: the exact 1/b^e arm exists for platforms whose powf is not correctly
+  # rounded; on glibc powf gives the same bits for every integer case (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: delete match arm \(Val::Int\(b\), Val::Int\(e\)\) in call',
+  # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
+  # way, so the guard `if class` changes nothing observable (T-7599).
+  'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
 ]

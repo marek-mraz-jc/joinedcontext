@@ -598,6 +598,7 @@ fn arithmetic_is_checked_and_rounding_keeps_integers() {
         (eq(f2(Func::Pow, n(2.0), n(0.5)), n(2.0_f64.sqrt())), T),
         // exact on every platform, Miri included: a division and a square root
         (eq(f2(Func::Pow, i(2), i(-2)), n(0.25)), T),
+        (eq(f2(Func::Pow, n(2.0), i(3)), n(8.0)), T),
         (eq(f2(Func::Pow, n(4.0), n(0.5)), n(2.0)), T),
         (is_null(f2(Func::Pow, i(0), i(-1))), T),
         // past i64 the integer route has no answer, and powf still gives one

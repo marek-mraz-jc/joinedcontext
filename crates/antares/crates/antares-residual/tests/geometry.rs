@@ -184,6 +184,12 @@ fn a_value_past_the_vertex_bound_is_unknown() -> Result<(), Error> {
         truth(Spatial::Intersects, &entity, &rect(0.0, 0.0, 2.0, 2.0))?,
         Truth::Unknown
     );
+    // exactly at the bound still relates
+    let at_bound = located(&json!({"type": "LineString", "coordinates": long.get(1..)}));
+    assert_eq!(
+        truth(Spatial::Intersects, &at_bound, &rect(0.0, 0.0, 2.0, 2.0))?,
+        Truth::True
+    );
     Ok(())
 }
 
