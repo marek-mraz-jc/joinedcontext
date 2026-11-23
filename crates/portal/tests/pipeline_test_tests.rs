@@ -1411,6 +1411,39 @@ async fn a_webhook_source_answers_only_a_session_with_the_grant_each_route_names
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
 }
 
+/// G-08, G-22 (T-7657): a discovery and a paging guess read the address once on the project's
+/// runner, and a read that fails answers 200 with the reason in `skipped` (the refusals before
+/// the read are `datasource_test`'s own tests).
+#[tokio::test]
+async fn a_discovery_and_a_paging_guess_read_once_on_the_runner_and_say_why_they_found_nothing() {
+    let failed = [json!({ "input": "", "error": "fetch: dial tcp 1.1.1.1:443: connect: connection refused" })];
+    for (project, route, body) in [
+        (
+            "loviisa",
+            "datasource-discovery",
+            json!({ "kind": "ckan", "url": "https://1.1.1.1/api/3/action/package_search" }),
+        ),
+        ("kotka", "datasource-paging", json!({ "url": "https://1.1.1.1/api/items" })),
+    ] {
+        let runner = common::runner().await;
+        let (create, delete) = runner_mocks(ResponseTemplate::new(200));
+        create.mount(&runner).await;
+        delete.mount(&runner).await;
+        let state = AppState::new(config(Some(&runner)), None).with_mirror(with_saved_source(project));
+        let uri = format!("/api/v1/projects/{project}/{route}");
+        let (answer, _) = tokio::join!(
+            send(&state, "dev@hel.fi", &uri, &body),
+            play_runner(&runner, &state, &failed),
+        );
+        assert_eq!(answer.0, StatusCode::OK, "{route}: {}", answer.1);
+        assert!(
+            answer.1["skipped"].as_str().is_some_and(|why| why.contains("connection refused")),
+            "{route}: {}",
+            answer.1
+        );
+    }
+}
+
 /// The runner's environment as a host hands it: one credential, under the variable a sync names.
 struct OneCredential(String, String);
 
@@ -1418,7 +1451,7 @@ impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for OneCredential {
     fn replace(&self, _values: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>) {}
 
     fn credential(&self, project: &str, name: &str) -> Option<zeroize::Zeroizing<String>> {
-        (project == "espoo" && name == self.0).then(|| zeroize::Zeroizing::new(self.1.clone()))
+        (project == "porvoo" && name == self.0).then(|| zeroize::Zeroizing::new(self.1.clone()))
     }
 }
 
@@ -1426,7 +1459,7 @@ fn webhook_source(name: &str, auth: Value) -> ResourceEnvelope {
     ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "DataSource".to_owned(),
-        metadata: ObjectMeta::new(name, "espoo"),
+        metadata: ObjectMeta::new(name, "porvoo"),
         spec: json!({ "type": "webhook", "webhook": { "auth": auth } }),
         status: None,
     }
@@ -1453,7 +1486,7 @@ async fn get(state: &AppState, who: &str, uri: &str) -> (StatusCode, Value) {
 /// answer 404, 404 and 400.
 #[tokio::test]
 async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() {
-    let mirror = with_saved_source("espoo");
+    let mirror = with_saved_source("porvoo");
     mirror.upsert(webhook_source(
         "ttn",
         json!({ "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } }),
@@ -1465,7 +1498,7 @@ async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() 
     mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "DataSource".to_owned(),
-        metadata: ObjectMeta::new("broken", "espoo"),
+        metadata: ObjectMeta::new("broken", "porvoo"),
         spec: json!({ "type": "webhook", "webhook": "not a block" }),
         status: None,
     });
@@ -1474,14 +1507,14 @@ async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() 
     mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "Pipeline".to_owned(),
-        metadata: ObjectMeta::new("uplinks", "espoo"),
+        metadata: ObjectMeta::new("uplinks", "porvoo"),
         spec: pipeline["spec"].clone(),
         status: None,
     });
     let mut config = config(None);
     config.ingest_url = Some("https://ingest.example.org".into());
     let state = AppState::new(config, None).with_mirror(mirror);
-    let base = "/api/v1/projects/espoo/datasources";
+    let base = "/api/v1/projects/porvoo/datasources";
 
     let (status, info) = get(&state, "reader@hel.fi", &format!("{base}/ttn/webhook")).await;
     assert_eq!(status, StatusCode::OK, "{info}");
@@ -1490,7 +1523,7 @@ async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() 
     assert_eq!(info["published"], true);
     assert_eq!(
         info["addresses"],
-        json!([{ "pipeline": "uplinks", "url": "https://ingest.example.org/espoo.uplinks/ttn" }])
+        json!([{ "pipeline": "uplinks", "url": "https://ingest.example.org/porvoo.uplinks/ttn" }])
     );
     let (status, info) = get(&state, "reader@hel.fi", &format!("{base}/gh/webhook")).await;
     assert_eq!(status, StatusCode::OK, "{info}");
@@ -1520,7 +1553,7 @@ async fn a_webhook_source_lists_each_reading_pipelines_address_and_its_header() 
 #[tokio::test]
 async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_sources_credential() {
     let runner = MockServer::start().await;
-    let mirror = mirror("espoo");
+    let mirror = mirror("porvoo");
     mirror.upsert(webhook_source(
         "ttn",
         json!({ "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } }),
@@ -1530,12 +1563,12 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: "Pipeline".to_owned(),
-        metadata: ObjectMeta::new("uplinks", "espoo"),
+        metadata: ObjectMeta::new("uplinks", "porvoo"),
         spec: pipeline["spec"].clone(),
         status: None,
     });
     let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror.clone());
-    let uri = "/api/v1/projects/espoo/datasources/ttn/test-event";
+    let uri = "/api/v1/projects/porvoo/datasources/ttn/test-event";
     let event = |pipeline: &str, body: String| json!({ "pipeline": pipeline, "body": body });
 
     for (body, field) in [
@@ -1569,7 +1602,7 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
         "tok-1".into(),
     )));
     Mock::given(method("POST"))
-        .and(wiremock::matchers::path("/espoo/ingest/default/espoo.uplinks/ttn"))
+        .and(wiremock::matchers::path("/porvoo/ingest/default/porvoo.uplinks/ttn"))
         .and(wiremock::matchers::header("authorization", "Bearer tok-1"))
         .and(wiremock::matchers::body_string(r#"{"temperature": 21.5}"#))
         .respond_with(ResponseTemplate::new(202).set_body_string("é".repeat(3000)))
