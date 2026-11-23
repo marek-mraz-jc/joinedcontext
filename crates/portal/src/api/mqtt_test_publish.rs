@@ -665,6 +665,18 @@ pub async fn watch(
         .map(Json)
 }
 
+/// The clients connected now as `account`, or as any account of the broker; `None` unmeasured.
+fn connected(measured: &crate::api::mqtt_measured::Measured, account: Option<&str>) -> Option<u32> {
+    measured.measured.then(|| {
+        measured
+            .accounts
+            .iter()
+            .filter(|seen| account.is_none_or(|account| seen.service_account == account))
+            .map(|seen| seen.connected)
+            .sum()
+    })
+}
+
 /// The broker's kept refusals and the account's connections, once the caller may read it.
 async fn watched(
     state: &AppState,
@@ -704,14 +716,7 @@ async fn watched(
     if let Some(reason) = &measured.reason {
         reasons.push(reason.clone());
     }
-    let connected = measured.measured.then(|| {
-        measured
-            .accounts
-            .iter()
-            .filter(|seen| account.is_none_or(|account| seen.service_account == account))
-            .map(|seen| seen.connected)
-            .sum()
-    });
+    let connected = connected(&measured, account);
     Ok(Watched {
         observed_at: TimestampTz::now(),
         refusals: filtered(refused, query.since, account),
@@ -752,6 +757,117 @@ mod tests {
             topic: topic.into(),
             payload: payload.into(),
         }
+    }
+
+    fn finding(field: &str, reason: &str) -> crate::record_check::Finding {
+        crate::record_check::Finding {
+            source: crate::record_check::Source::Endpoint,
+            rule: "policy".into(),
+            field: field.into(),
+            reason: reason.into(),
+            access: None,
+        }
+    }
+
+    fn record(
+        endpoint: Option<&str>,
+        findings: Vec<crate::record_check::Finding>,
+    ) -> crate::record_check::RecordCheck {
+        crate::record_check::RecordCheck {
+            index: 0,
+            ok: findings.is_empty(),
+            endpoint: endpoint.map(str::to_owned),
+            findings,
+            expires: None,
+        }
+    }
+
+    #[test]
+    fn the_endpoint_step_names_the_endpoint_and_at_most_three_findings() {
+        let checked = |ok: bool, records| crate::record_check::Checked {
+            ok,
+            checked: 1,
+            rejected: usize::from(!ok),
+            records,
+        };
+        let ok = endpoint_step(&checked(true, vec![record(Some("air-ep"), vec![])]));
+        assert_eq!(
+            (ok.outcome, ok.reason.as_str()),
+            (Outcome::Ok, "every attribute is written through air-ep")
+        );
+        let unnamed = endpoint_step(&checked(true, vec![record(None, vec![])]));
+        assert_eq!(
+            unnamed.reason,
+            "every attribute is written through its Endpoint"
+        );
+
+        let refused = endpoint_step(&checked(
+            false,
+            vec![
+                record(
+                    None,
+                    vec![
+                        finding("", "the record has no id"),
+                        finding("pm10", "not writable"),
+                    ],
+                ),
+                record(
+                    Some("air-ep"),
+                    vec![
+                        finding("no2", "not writable"),
+                        finding("o3", "not writable"),
+                    ],
+                ),
+            ],
+        ));
+        assert_eq!(refused.outcome, Outcome::Refused);
+        assert_eq!(
+            refused.reason,
+            "air-ep refuses: the record has no id; pm10: not writable; no2: not writable"
+        );
+    }
+
+    #[test]
+    fn an_error_reads_as_its_sentence_and_anything_else_as_try_again() {
+        for error in [
+            ApiError::Unavailable("u".into()),
+            ApiError::BadRequest("u".into()),
+            ApiError::Conflict("u".into()),
+            ApiError::NotFound("u".into()),
+        ] {
+            assert_eq!(why(&error), "u", "{error:?}");
+        }
+        assert_eq!(
+            why(&ApiError::Internal("a stack trace".into())),
+            "the runner could not test the mapping; try again in a minute"
+        );
+        assert_eq!(message_of("{\"pm10\": 4}"), serde_json::json!({"pm10": 4}));
+        assert_eq!(message_of("pm10=4"), serde_json::json!("pm10=4"));
+    }
+
+    #[test]
+    fn the_connected_count_is_the_accounts_own_or_every_accounts() {
+        use crate::api::mqtt_measured::{AccountSeen, Measured};
+        let seen = |account: &str, connected: u32| AccountSeen {
+            service_account: account.into(),
+            connected,
+            since: None,
+        };
+        let mut measured = Measured {
+            measured: true,
+            observed_at: TimestampTz::now(),
+            messages_per_second: None,
+            publishers: None,
+            reason: None,
+            accounts: vec![seen("cam-west", 2), seen("dashboard", 1)],
+            rates: Vec::new(),
+            refused_publishes: None,
+        };
+        assert_eq!(connected(&measured, Some("cam-west")), Some(2));
+        assert_eq!(connected(&measured, None), Some(3));
+        assert_eq!(connected(&measured, Some("nobody")), Some(0));
+        measured.measured = false;
+        assert_eq!(connected(&measured, None), None);
     }
 
     #[test]

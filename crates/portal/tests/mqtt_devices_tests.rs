@@ -262,6 +262,153 @@ async fn a_topic_or_role_outside_the_broker_is_refused_naming_the_field() {
 }
 
 #[tokio::test]
+async fn a_publishing_role_without_a_topic_is_refused_listing_its_filters() {
+    let (state, shako) = state().await;
+    let mut request = device(json!({ "keys": [public_key()] }));
+    request.as_object_mut().expect("object").remove("topic");
+    let answer = send(
+        &state,
+        person("steward"),
+        "POST",
+        &devices(PROJECT),
+        Some(request),
+    )
+    .await;
+    assert_eq!(answer.status, 422, "{}", answer.text);
+    assert!(
+        answer.names_field("topic", "cameras/${clientid}/#"),
+        "{}",
+        answer.text
+    );
+    assert!(written(&shako).await.is_empty());
+}
+
+#[tokio::test]
+async fn an_agents_token_cannot_add_a_device_even_with_the_stewards_rights() {
+    let (state, shako) = state().await;
+    let mut agent = person("steward");
+    agent.client = Some("claude-code".into());
+    let answer = send(
+        &state,
+        agent,
+        "POST",
+        &devices(PROJECT),
+        Some(device(json!({ "keys": [public_key()] }))),
+    )
+    .await;
+    assert_eq!(answer.status, 403, "{}", answer.text);
+    assert!(
+        answer.text.contains("jc_resource_propose"),
+        "{}",
+        answer.text
+    );
+    assert!(written(&shako).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_broker_manifest_that_does_not_parse_is_a_conflict_naming_the_fix() {
+    let (state, shako) = state().await;
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "edge",
+        PROJECT,
+        json!({ "roles": "camera" }),
+    ));
+    for (method, body) in [
+        ("GET", None),
+        ("POST", Some(device(json!({ "keys": [public_key()] })))),
+    ] {
+        let answer = send(&state, person("steward"), method, &devices(PROJECT), body).await;
+        assert_eq!(answer.status, 409, "{method}: {}", answer.text);
+        assert!(
+            answer.text.contains("fix its manifest first"),
+            "{}",
+            answer.text
+        );
+    }
+    assert!(written(&shako).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_role_without_an_account_list_gets_one_and_a_listed_name_is_not_repeated() {
+    let (state, shako) = state().await;
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "edge",
+        PROJECT,
+        json!({ "roles": [
+            { "name": "camera", "publish": ["cameras/${clientid}/#"] },
+            { "name": "gate", "serviceAccounts": ["sensor-002"], "publish": ["gates/${clientid}/#"] },
+        ] }),
+    ));
+    let answer = send(
+        &state,
+        person("steward"),
+        "POST",
+        &devices(PROJECT),
+        Some(device(json!({ "keys": [public_key()] }))),
+    )
+    .await;
+    assert_eq!(answer.status, 202, "{}", answer.text);
+    let mut listed = device(json!({ "keys": [public_key()] }));
+    listed["name"] = json!("sensor-002");
+    listed["role"] = json!("gate");
+    listed["topic"] = json!("gates/${clientid}/#");
+    let answer = send(
+        &state,
+        person("steward"),
+        "POST",
+        &devices(PROJECT),
+        Some(listed),
+    )
+    .await;
+    assert_eq!(answer.status, 202, "{}", answer.text);
+
+    let brokers: Vec<Value> = written(&shako)
+        .await
+        .into_iter()
+        .filter(|(_, f)| f["kind"] == "MqttBroker")
+        .map(|(_, f)| f)
+        .collect();
+    assert!(
+        brokers
+            .iter()
+            .any(|b| b["spec"]["roles"][0]["serviceAccounts"] == json!(["sensor-001"])),
+        "{brokers:?}"
+    );
+    assert!(
+        brokers
+            .iter()
+            .any(|b| b["spec"]["roles"][1]["serviceAccounts"] == json!(["sensor-002"])),
+        "{brokers:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_form_names_the_realms_token_endpoint_when_the_portal_signs_in_with_one() {
+    let (mut state, _forge) = state().await;
+    let mut config = (*state.config).clone();
+    config.oidc = Some(joinedcontext_portal::config::OidcConfig {
+        issuer: "https://login.example.org/realms/city/"
+            .parse()
+            .expect("a url"),
+        client_id: "portal".into(),
+        auth: joinedcontext_portal::config::ClientAuth::Secret("placeholder".into()),
+        extra_ca_pem: None,
+        admin_url: None,
+    });
+    state.config = std::sync::Arc::new(config);
+    let options = send(&state, person("steward"), "GET", &devices(PROJECT), None).await;
+    assert_eq!(options.status, 200, "{}", options.text);
+    let options: Value = serde_json::from_str(&options.text).expect("json");
+    assert_eq!(options["issuer"], "https://login.example.org/realms/city");
+    assert_eq!(
+        options["tokenUrl"],
+        "https://login.example.org/realms/city/protocol/openid-connect/token"
+    );
+}
+
+#[tokio::test]
 async fn an_existing_account_name_is_a_conflict() {
     let (state, _forge) = state().await;
     let mut taken = device(json!({ "keys": [public_key()] }));

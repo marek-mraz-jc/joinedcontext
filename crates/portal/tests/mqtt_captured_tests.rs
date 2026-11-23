@@ -189,6 +189,53 @@ async fn a_wildcard_topic_or_a_limit_out_of_range_is_refused_naming_it() {
     }
 }
 
+/// A pool on a port nothing listens on: every query fails after a short acquire timeout.
+fn closed_pool() -> sqlx::PgPool {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address")
+        .port();
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy(&format!("postgres://portal@127.0.0.1:{closed}/portal"))
+        .expect("a lazy pool")
+}
+
+#[tokio::test]
+async fn a_capture_store_that_does_not_answer_is_a_503_with_a_next_step() {
+    let mut state = state().await;
+    state.mqtt_capture =
+        std::sync::Arc::new(joinedcontext_portal::mqtt_capture::CaptureStore::new(
+            Some(closed_pool()),
+            state.mirror.clone(),
+        ));
+    for method in ["GET", "DELETE"] {
+        let (status, body) = call(&state, "eva", method, "cameras").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{method}: {body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("try again in a minute"),
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_delete_whose_activity_record_fails_still_removes_the_capture() {
+    let mut state = state().await;
+    state.activity = joinedcontext_portal::activity::ActivityStore::new(
+        Some(closed_pool()),
+        state.mirror.clone(),
+    );
+    let (status, _) = call(&state, "eva", "DELETE", "cameras").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = call(&state, "eva", "GET", "cameras").await;
+    assert_eq!(body["messages"], json!([]));
+}
+
 #[tokio::test]
 async fn a_delete_removes_the_capture_and_records_it_without_payloads() {
     let state = state().await;

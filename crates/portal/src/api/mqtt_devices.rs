@@ -375,13 +375,7 @@ fn valid_request(
         )));
     }
     let Some(role) = spec.roles.iter().find(|role| role.name == request.role) else {
-        return Err(unprocessable(
-            "the role is not one of the broker's",
-            format!(
-                "role: broker '{broker_name}' has no role '{}'",
-                request.role
-            ),
-        ));
+        return Err(no_role(broker_name, &request.role));
     };
     match (&request.topic, role.publish.is_empty()) {
         (Some(topic), _) if !role.publish.contains(topic) => {
@@ -409,6 +403,13 @@ fn valid_request(
     public_jwks(&request.jwks)
 }
 
+fn no_role(broker_name: &str, role: &str) -> ApiError {
+    unprocessable(
+        "the role is not one of the broker's",
+        format!("role: broker '{broker_name}' has no role '{role}'"),
+    )
+}
+
 /// The one Change that writes the device's account and adds it to its role of the broker.
 async fn propose_device(
     state: &AppState,
@@ -423,33 +424,25 @@ async fn propose_device(
     // A role written without `serviceAccounts` gets the list; a role the broker does not hold is
     // a refusal, never a Change that adds nobody (F-POR2-013).
     let mut matched = false;
-    if let Some(roles) = env.spec.get_mut("roles").and_then(Value::as_array_mut) {
-        for entry in roles
-            .iter_mut()
-            .filter(|r| r["name"] == request.role.as_str())
-        {
-            let Some(entry) = entry.as_object_mut() else {
-                continue;
-            };
-            matched = true;
-            let accounts = entry
-                .entry("serviceAccounts")
-                .or_insert_with(|| Value::Array(Vec::new()));
-            if let Some(accounts) = accounts.as_array_mut() {
-                if !accounts.iter().any(|a| a == request.name.as_str()) {
-                    accounts.push(Value::String(request.name.clone()));
-                }
+    let roles = env.spec.get_mut("roles").and_then(Value::as_array_mut);
+    for entry in roles
+        .into_iter()
+        .flatten()
+        .filter(|r| r["name"] == request.role.as_str())
+        .filter_map(Value::as_object_mut)
+    {
+        matched = true;
+        let accounts = entry
+            .entry("serviceAccounts")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(accounts) = accounts.as_array_mut() {
+            if !accounts.iter().any(|a| a == request.name.as_str()) {
+                accounts.push(Value::String(request.name.clone()));
             }
         }
     }
     if !matched {
-        return Err(ApiError::Unprocessable {
-            detail: format!("broker '{broker_name}' has no role '{}'", request.role),
-            errors: vec![format!(
-                "role: '{}' is not a role of broker '{broker_name}'; pick one of the broker's roles",
-                request.role
-            )],
-        });
+        return Err(no_role(broker_name, &request.role));
     }
     let broker_manifest = as_value(&env)?;
 
@@ -528,10 +521,12 @@ mod tests {
     }
 
     fn refusal(value: Value) -> String {
-        match public_jwks(&value) {
-            Err(ApiError::Unprocessable { errors, .. }) => errors.join("; "),
-            other => panic!("not a 422: {other:?}"),
-        }
+        let err = public_jwks(&value).expect_err("a refusal");
+        assert!(
+            matches!(err, ApiError::Unprocessable { .. }),
+            "not a 422: {err:?}"
+        );
+        format!("{err:?}")
     }
 
     #[test]
@@ -540,7 +535,12 @@ mod tests {
         assert_eq!(jwks.keys.len(), 1);
         let mut private = key();
         private["d"] = json!("ZGVtbw");
-        assert!(refusal(json!({ "keys": [private] })).starts_with("jwks.keys[0].d:"));
-        assert!(refusal(json!([key()])).starts_with("jwks:"));
+        assert!(refusal(json!({ "keys": [private] }))
+            .contains("\"jwks.keys[0].d: a private key member"));
+        assert!(refusal(json!([key()])).contains("\"jwks: a JSON Web Key Set is an object"));
+        assert!(
+            refusal(json!({ "keys": [] })).contains("\"jwks: "),
+            "an empty key set"
+        );
     }
 }

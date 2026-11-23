@@ -304,6 +304,108 @@ async fn the_trace_is_what_the_harness_posted_back_and_the_stream_is_deleted() {
     runner.verify().await;
 }
 
+/// T-7699: an MQTT broker's test publish runs the mapping of the Pipeline its topic reaches on the
+/// project's runner. A message the mapping fails, one it maps to nothing, and records the
+/// Endpoint check reads each end in their own step; the payload is never in a reason.
+#[tokio::test]
+async fn a_test_publish_runs_the_bound_pipelines_mapping_and_names_each_outcome() {
+    let mirror = mirror("helsinki");
+    mirror.upsert(org(
+        "Role",
+        "broker-steward",
+        json!({ "rules": [{ "kinds": ["MqttBroker", "DataSource", "Pipeline"], "verbs": ["read"] }] }),
+    ));
+    mirror.upsert(org(
+        "RoleBinding",
+        "dev-broker",
+        json!({ "subjects": [{ "user": "dev@hel.fi" }], "role": "broker-steward", "scope": { "project": "helsinki" } }),
+    ));
+    let placed = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
+        metadata: ObjectMeta::new(name, "helsinki"),
+        ..org(kind, name, spec)
+    };
+    mirror.upsert(placed(
+        "MqttBroker",
+        "cameras",
+        json!({ "roles": [{ "name": "camera", "serviceAccounts": ["cam-west"], "publish": ["cameras/${clientid}/#"] }] }),
+    ));
+    mirror.upsert(placed(
+        "DataSource",
+        "frames",
+        json!({ "type": "mqtt", "mqtt": { "brokerRef": { "kind": "MqttBroker", "name": "cameras" }, "topics": ["cameras/+/frame"] } }),
+    ));
+    mirror.upsert(placed(
+        "Pipeline",
+        "frames-in",
+        json!({
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "frames" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:cams:frames"
+        }),
+    ));
+    let publish = json!({ "account": "cam-west", "topic": "cameras/helsinki-cam-west/frame", "payload": "{\"seq\": 7}" });
+    let uri = "/api/v1/projects/helsinki/mqttbrokers/cameras/test-publish";
+    let failed = json!({ "input": "{\"seq\": 7}", "output": null, "error": "failed assignment (line 1): expected number" });
+    let dropped = json!({ "input": "{\"seq\": 7}", "output": null, "error": null });
+    let mapped = json!({ "input": "{\"seq\": 7}", "output": { "id": "urn:ngsi-ld:Frame:hel.fi:cams:7", "type": "Frame", "seq": 7 }, "error": null });
+    for (message, mapping, reason) in [
+        (&failed, "refused", "the mapping failed: "),
+        (
+            &dropped,
+            "refused",
+            "the mapping made no record of this message",
+        ),
+        (&mapped, "ok", "1 record(s)"),
+    ] {
+        let runner = common::runner().await;
+        let (create, delete) = runner_mocks(ResponseTemplate::new(200));
+        create.mount(&runner).await;
+        delete.mount(&runner).await;
+        let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror.clone());
+        let (answer, _) = tokio::join!(
+            send(&state, "dev@hel.fi", uri, &publish),
+            play_runner(&runner, &state, std::slice::from_ref(message)),
+        );
+        let (status, body) = answer;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let steps = body["steps"].as_array().expect("steps");
+        let step = |name: &str| {
+            steps
+                .iter()
+                .find(|s| s["step"] == name)
+                .cloned()
+                .expect(name)
+        };
+        assert_eq!(step("mapping")["outcome"], mapping, "{body}");
+        assert!(
+            step("mapping")["reason"]
+                .as_str()
+                .is_some_and(|r| r.starts_with(reason)),
+            "{body}"
+        );
+        let endpoint = step("endpoint");
+        match mapping {
+            "ok" => assert_ne!(
+                endpoint["outcome"], "ok",
+                "no Endpoint of that id exists: {body}"
+            ),
+            _ => assert_eq!(
+                (endpoint["outcome"].as_str(), endpoint["reason"].as_str()),
+                (Some("unchecked"), Some("no record to check")),
+                "{body}"
+            ),
+        }
+        assert!(
+            steps.iter().all(|s| !s["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("{\"seq\": 7}")),
+            "the payload stays out of every reason: {body}"
+        );
+    }
+}
+
 /// T-4050: with the pipelines' own identities on, the harness runs as the project's harness
 /// principal through the token service: the stream the runner gets names no client secret, and
 /// the capture route admits that principal of the test's own project.

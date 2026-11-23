@@ -180,6 +180,276 @@ async fn the_question_is_found_on_a_declared_broker_and_a_bad_id_asks_none() {
     );
 }
 
+/// A broker answering `status` with `body` to the question read and to the decision.
+async fn answering(status: u16, body: &str) -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(path(ASKED))
+        .respond_with(ResponseTemplate::new(status).set_body_string(body))
+        .mount(&server)
+        .await;
+    server
+}
+
+#[tokio::test]
+async fn a_broker_without_the_question_is_a_404_and_a_refusing_or_garbled_one_a_503() {
+    let missing = answering(404, "").await;
+    let read = send(
+        &state(&missing.uri(), None, "missing"),
+        person("ana"),
+        "GET",
+        PAGE,
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::NOT_FOUND, "{}", read.text);
+    assert!(read.text.contains("no open question"), "{}", read.text);
+
+    for (status, body, tag) in [(500, "", "refused"), (200, "not json", "garbled")] {
+        let broker = answering(status, body).await;
+        let read = send(
+            &state(&broker.uri(), None, tag),
+            person("ana"),
+            "GET",
+            PAGE,
+            None,
+        )
+        .await;
+        assert_eq!(
+            read.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{tag}: {}",
+            read.text
+        );
+        assert!(read.text.contains("try again in a minute"), "{}", read.text);
+    }
+}
+
+#[tokio::test]
+async fn an_answer_that_breaks_off_mid_body_is_a_503() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut request = [0_u8; 4096];
+        let _ = socket.read(&mut request).await;
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{\"id\":")
+            .await;
+    });
+    let state = state(&format!("http://{address}"), None, "broken");
+    let read = send(&state, person("ana"), "GET", PAGE, None).await;
+    assert_eq!(
+        read.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        read.text
+    );
+}
+
+#[tokio::test]
+async fn no_broker_address_is_a_404_and_no_admin_token_a_503_before_any_call() {
+    let mut config = Config::for_tests();
+    config.broker_url = None;
+    config.broker_url_template = None;
+    let none = AppState::new(config, None);
+    let read = send(&none, person("ana"), "GET", PAGE, None).await;
+    assert_eq!(read.status, StatusCode::NOT_FOUND, "{}", read.text);
+
+    let broker = MockServer::start().await;
+    holding(&broker).await;
+    let mut config = Config::for_tests();
+    config.broker_url = Some(broker.uri());
+    config.broker_admin_token_file = Some(std::env::temp_dir().join("mcp-confirm-no-such-token"));
+    let tokenless = AppState::new(config, None);
+    let read = send(&tokenless, person("ana"), "GET", PAGE, None).await;
+    assert_eq!(
+        read.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        read.text
+    );
+    assert!(
+        broker
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "no call goes out without the admin token"
+    );
+}
+
+#[tokio::test]
+async fn a_decision_the_broker_no_longer_holds_is_a_404_and_a_refused_one_a_503() {
+    for (status, expected, tag) in [
+        (404, StatusCode::NOT_FOUND, "spent"),
+        (500, StatusCode::SERVICE_UNAVAILABLE, "put-refused"),
+    ] {
+        let broker = MockServer::start().await;
+        holding(&broker).await;
+        Mock::given(method("PUT"))
+            .and(path(ASKED))
+            .respond_with(ResponseTemplate::new(status))
+            .expect(1)
+            .mount(&broker)
+            .await;
+        let decided = send(
+            &state(&broker.uri(), None, tag),
+            person("ana"),
+            "POST",
+            &format!("{PAGE}/decision"),
+            Some(json!({"decision": "decline"})),
+        )
+        .await;
+        assert_eq!(decided.status, expected, "{tag}: {}", decided.text);
+    }
+}
+
+#[tokio::test]
+async fn a_client_token_neither_reads_nor_decides_a_question() {
+    let broker = MockServer::start().await;
+    holding(&broker).await;
+    let state = state(&broker.uri(), None, "client");
+    let mut client = person("ana");
+    client.client = Some("claude-code".into());
+    let read = send(&state, client.clone(), "GET", PAGE, None).await;
+    assert_eq!(read.status, StatusCode::FORBIDDEN, "{}", read.text);
+    let decided = send(
+        &state,
+        client,
+        "POST",
+        &format!("{PAGE}/decision"),
+        Some(json!({"decision": "accept"})),
+    )
+    .await;
+    assert_eq!(decided.status, StatusCode::FORBIDDEN, "{}", decided.text);
+    assert!(broker
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+}
+
+/// T-5699: a Portal MCP call's own question, held in the Portal. The person whose client asked
+/// reads and decides it in the project it was asked in; anyone else, another project, a spent id
+/// and a client's token are refused.
+#[tokio::test]
+async fn the_portal_question_is_read_and_decided_by_its_asker_in_its_project_only() {
+    let state = state("http://127.0.0.1:9", None, "portal-q");
+    let id = state.mcp_elicitations.ask(
+        "sub-ana",
+        "jc_resource_delete",
+        "city",
+        "digest-1",
+        "Delete Endpoint air in project city.",
+        "Endpoint/air",
+    );
+    let page = format!("/api/v1/projects/city/mcp-elicitations/{id}");
+
+    let read = send(&state, person("ana"), "GET", &page, None).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let shown: Value = serde_json::from_str(&read.text).expect("json");
+    assert_eq!(shown["id"], json!(id));
+    assert!(shown["decision"].is_null(), "{shown}");
+
+    for (who, uri) in [
+        (person("bo"), page.clone()),
+        (
+            person("ana"),
+            format!("/api/v1/projects/other/mcp-elicitations/{id}"),
+        ),
+        (
+            person("ana"),
+            "/api/v1/projects/city/mcp-elicitations/eli-0000000000000000".to_owned(),
+        ),
+    ] {
+        let refused = send(&state, who.clone(), "GET", &uri, None).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::NOT_FOUND,
+            "{uri}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("no open question"),
+            "{}",
+            refused.text
+        );
+        let decided = send(
+            &state,
+            who,
+            "POST",
+            &format!("{uri}/decision"),
+            Some(json!({"decision": "accept"})),
+        )
+        .await;
+        assert_eq!(
+            decided.status,
+            StatusCode::NOT_FOUND,
+            "{uri}: {}",
+            decided.text
+        );
+    }
+
+    let mut client = person("ana");
+    client.client = Some("claude-code".into());
+    let by_client = send(&state, client.clone(), "GET", &page, None).await;
+    assert_eq!(
+        by_client.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        by_client.text
+    );
+    let by_client = send(
+        &state,
+        client,
+        "POST",
+        &format!("{page}/decision"),
+        Some(json!({"decision": "accept"})),
+    )
+    .await;
+    assert_eq!(
+        by_client.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        by_client.text
+    );
+
+    let garbled = send(
+        &state,
+        person("ana"),
+        "POST",
+        &format!("{page}/decision"),
+        Some(json!({"decision": "maybe"})),
+    )
+    .await;
+    assert_eq!(garbled.status, StatusCode::BAD_REQUEST, "{}", garbled.text);
+
+    let decided = send(
+        &state,
+        person("ana"),
+        "POST",
+        &format!("{page}/decision"),
+        Some(json!({"decision": "decline"})),
+    )
+    .await;
+    assert_eq!(decided.status, StatusCode::OK, "{}", decided.text);
+    assert_eq!(
+        serde_json::from_str::<Value>(&decided.text).expect("json")["decision"],
+        "decline"
+    );
+    assert_eq!(
+        state
+            .mcp_elicitations
+            .question("sub-ana", "city", &id)
+            .map(|q| serde_json::to_value(q).expect("json")["decision"].clone()),
+        Some(json!("decline")),
+        "the decision is held for the client's second call"
+    );
+}
+
 #[tokio::test]
 async fn a_broker_that_does_not_answer_is_a_503_not_a_missing_question() {
     let state = state("http://127.0.0.1:9", None, "down");
