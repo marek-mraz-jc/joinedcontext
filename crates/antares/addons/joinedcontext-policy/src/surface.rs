@@ -322,7 +322,9 @@ mod tests {
     fn the_process_engine_is_one_and_the_surface_names_its_routes() {
         let engine = JoinedcontextPolicy::process();
         assert!(Arc::ptr_eq(&engine, &JoinedcontextPolicy::process()));
-        let info = Access::new(engine).version_info();
+        let access = Access::new(engine);
+        assert_eq!((access.name(), access.prefix()), ("access", "/x/views"));
+        let info = access.version_info();
         assert_eq!(
             info.get("routes").and_then(Value::as_array).map(Vec::len),
             Some(4),

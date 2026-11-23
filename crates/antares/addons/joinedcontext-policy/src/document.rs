@@ -1380,6 +1380,13 @@ PT1H => Err("refused")
         ] {
             assert_eq!(duration(bad), None, "{bad}");
         }
+        // the longest window chrono held is still read, one second more is not
+        let longest = i64::MAX / 1000;
+        assert_eq!(
+            duration(&format!("PT{longest}S")),
+            Some(SignedDuration::from_secs(longest))
+        );
+        assert_eq!(duration(&format!("PT{}S", longest + 1)), None);
         // T-3729: a bound is a duration strictly before now
         assert_eq!(duration("P0D"), Some(SignedDuration::ZERO));
         for (raw, ok) in [("P0D", false), ("PT1S", false), ("-PT1S", true)] {
