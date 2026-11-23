@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: EUPL-1.2
 //! A grant's subject names 1 to 16 subject headers: its own binary, since the
-//! subject header list is read once per process (ANTARES_POLICY_SUBJECT_HEADERS).
+//! subject header list is read once per process (`ANTARES_POLICY_SUBJECT_HEADERS`).
 
 use antares_icsr::ExportGrant;
 use serde_json::{json, Map, Value};

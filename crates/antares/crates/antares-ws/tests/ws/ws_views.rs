@@ -101,8 +101,10 @@ async fn ws_a_refused_unsubscribe_keeps_the_subscription() -> Result<(), String>
         .await?;
         refusals.push(status(&c.result().await?));
     }
-    assert_ne!(refusals[0], 204, "{refusals:?}");
-    assert_eq!(refusals[0], refusals[1], "{refusals:?}");
+    assert!(
+        matches!(refusals.as_slice(), [a, b] if *a != 204 && a == b),
+        "{refusals:?}"
+    );
     Ok(())
 }
 
