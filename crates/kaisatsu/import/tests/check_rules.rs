@@ -203,6 +203,96 @@ fn every_reference_and_policy_rule_names_its_path() {
 }
 
 #[test]
+fn loose_but_valid_members_pass_the_check_with_their_warnings() {
+    let doc = json!({
+        "realm": "loose",
+        "organizations": [{"name": "Helsinki", "members": [{"username": "ann"}]}],
+        "groups": [{"subGroups": []}, {"name": "team"}],
+        "users": [{"username": "ann", "groups": ["team"]}],
+        "authenticatorConfig": [{"config": {}}],
+        "authenticationFlows": [{"alias": "custom browser"}]
+    });
+    let warnings = check_realm_value(&doc, &opts()).expect("valid");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("$.organizations[Helsinki].members are not imported")),
+        "{warnings:?}"
+    );
+    let mut dangling = doc.clone();
+    dangling["users"][0]["groups"] = json!(["nobody"]);
+    let e = check_realm_value(&dangling, &opts()).unwrap_err();
+    assert!(e.to_string().contains("$.users[0].groups[0]"), "{e}");
+}
+
+#[test]
+fn cimd_domains_come_only_from_an_enabled_https_client_id_policy_with_the_executor() {
+    let policy = |enabled: bool, condition: &str, schemes: Value, profile: &str| {
+        json!({
+            "enabled": enabled,
+            "profiles": [profile],
+            "conditions": [{"condition": condition, "configuration": {
+                "client-id-uri-scheme": schemes,
+                "client-id-uri-allow-permitted-domains": ["apps.city.example"]
+            }}]
+        })
+    };
+    let realm = |policies: Vec<Value>| {
+        json!({
+            "clientProfiles": {"profiles": [
+                {"name": "cimd", "executors": [{"executor": "client-id-metadata-document",
+                    "configuration": {"cimd-allow-permitted-domains": ["cb.city.example"]}}]},
+                {"name": "plain", "executors": [{"executor": "secure-session"}]}
+            ]},
+            "clientPolicies": {"policies": policies}
+        })
+    };
+    let none = (Vec::<String>::new(), Vec::<String>::new());
+    for refused in [
+        policy(false, "client-id-uri", json!(["https"]), "cimd"),
+        policy(true, "client-roles", json!(["https"]), "cimd"),
+        policy(true, "client-id-uri", json!(["https", "http"]), "cimd"),
+        policy(true, "client-id-uri", json!(["https"]), "plain"),
+    ] {
+        assert_eq!(
+            cimd_policy(&realm(vec![refused.clone()])),
+            none,
+            "{refused}"
+        );
+    }
+    let both = realm(vec![
+        policy(true, "client-id-uri", json!(["https"]), "cimd"),
+        policy(true, "client-id-uri", json!(["https"]), "cimd"),
+    ]);
+    assert_eq!(
+        cimd_policy(&both),
+        (
+            vec!["apps.city.example".to_owned()],
+            vec!["cb.city.example".to_owned()]
+        )
+    );
+}
+
+#[test]
+fn grants_with_adds_each_named_role_once_and_drops_empty_clients() {
+    let admin: Grants = (
+        vec!["reader".into()],
+        std::collections::HashMap::from([
+            ("app".into(), vec!["viewer".into()]),
+            ("old".into(), Vec::new()),
+        ]),
+    );
+    let (realm, clients) = grants_with(
+        admin,
+        &["reader".into(), "writer".into()],
+        &std::collections::HashMap::from([("app".into(), vec!["viewer".into(), "editor".into()])]),
+    );
+    assert_eq!(realm, ["reader", "writer"]);
+    assert_eq!(clients.len(), 1);
+    assert_eq!(clients["app"], ["viewer", "editor"]);
+}
+
+#[test]
 fn merging_files_in_name_order() {
     let merged = merge_realm_files(&[
         ("20-more.json".into(), json!({"clients": [{"clientId": "b"}], "attributes": {"y": "2"}, "displayName": "later"})),

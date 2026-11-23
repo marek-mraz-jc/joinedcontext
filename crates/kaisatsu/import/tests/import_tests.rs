@@ -643,6 +643,433 @@ async fn a_changed_secret_variable_is_applied_and_reported_once() {
 /// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
 /// start re-applies the unchanged file and gives the group its roles back; a role added since
 /// leaves the fast path alone.
+/// `--prune` also deletes the client scopes, realm roles, clients and client roles a file
+/// stopped naming; a dry run of a client the file adds plans its roles without writing them.
+#[tokio::test]
+async fn prune_deletes_scopes_roles_clients_and_client_roles_the_file_dropped() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let first = json!({
+        "realm": "prune",
+        "clientScopes": [{"name": "gone-scope", "protocol": "openid-connect"}],
+        "roles": {"realm": [{"name": "gone-role"}], "client": {"keep": [{"name": "gone-client-role"}]}},
+        "clients": [{"clientId": "keep", "publicClient": true}, {"clientId": "gone", "publicClient": true}]
+    });
+    let opts = ApplyOptions::default();
+    apply_realm_files(&store, &[("realm.json".into(), first)], &opts)
+        .await
+        .expect("first apply");
+    let keep = store
+        .get_client_by_client_id("prune", "keep")
+        .await
+        .unwrap()
+        .expect("client keep");
+    assert_eq!(
+        store
+            .list_roles("prune", Some(&keep.id))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let second = json!({
+        "realm": "prune",
+        "roles": {"client": {"keep": []}},
+        "clients": [{"clientId": "keep", "publicClient": true}]
+    });
+    let full = ApplyOptions {
+        mode: ApplyMode::Full,
+        ..ApplyOptions::default()
+    };
+    let report = apply_realm_files(&store, &[("realm.json".into(), second)], &full)
+        .await
+        .expect("prune apply");
+    let deleted: Vec<(String, String)> = report
+        .changes
+        .iter()
+        .filter(|c| c.action == ChangeAction::Delete)
+        .map(|c| (c.kind.clone(), c.id.clone()))
+        .collect();
+    for (kind, id) in [
+        ("ClientScope", "gone-scope"),
+        ("Role", "gone-role"),
+        ("Client", "gone"),
+        ("ClientRole", "keep/gone-client-role"),
+    ] {
+        assert!(
+            deleted.contains(&(kind.into(), id.into())),
+            "{kind} {id}: {deleted:?}"
+        );
+    }
+    assert!(
+        store
+            .list_client_scopes("prune")
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.name != "gone-scope")
+    );
+    assert!(
+        store
+            .list_roles("prune", None)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.name != "gone-role")
+    );
+    assert!(
+        store
+            .get_client_by_client_id("prune", "gone")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .list_roles("prune", Some(&keep.id))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A dry run plans the roles of a client only the file names, and writes neither.
+    let added = json!({
+        "realm": "prune",
+        "roles": {"client": {"fresh": [{"name": "viewer"}]}},
+        "clients": [{"clientId": "keep", "publicClient": true}, {"clientId": "fresh", "publicClient": true}]
+    });
+    let dry = ApplyOptions {
+        dry_run: true,
+        ..ApplyOptions::default()
+    };
+    let plan = apply_realm_files(&store, &[("realm.json".into(), added)], &dry)
+        .await
+        .expect("dry run");
+    assert!(
+        plan.changes.iter().any(|c| c.kind == "ClientRole"
+            && c.id == "fresh/viewer"
+            && c.action == ChangeAction::Create),
+        "{:?}",
+        plan.changes
+    );
+    assert!(
+        store
+            .get_client_by_client_id("prune", "fresh")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// Organizations: the alias defaults to the name, a name is required, attributes must be a map,
+/// and a domain the file adds later joins the stored ones unverified.
+#[tokio::test]
+async fn organizations_default_their_alias_and_add_new_domains_unverified() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let opts = ApplyOptions::default();
+    let org = |domains: Value| json!({"realm": "orgs", "organizations": [{"name": "Helsinki", "domains": domains}]});
+    apply_realm_files(
+        &store,
+        &[("r.json".into(), org(json!([{"name": "hel.fi"}])))],
+        &opts,
+    )
+    .await
+    .expect("first apply");
+    let held = store
+        .get_organization("orgs", "Helsinki")
+        .await
+        .unwrap()
+        .expect("alias is the name");
+    assert_eq!(held.domains.len(), 1);
+    apply_realm_files(
+        &store,
+        &[(
+            "r.json".into(),
+            org(json!([{"name": "hel.fi"}, {"name": "espoo.fi"}])),
+        )],
+        &opts,
+    )
+    .await
+    .expect("second apply");
+    let held = store
+        .get_organization("orgs", "Helsinki")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = held.domains.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["hel.fi", "espoo.fi"]);
+    assert!(
+        held.domains
+            .iter()
+            .all(|d| !d.verified && d.org_id == held.id)
+    );
+
+    for (doc, want) in [
+        (
+            json!({"realm": "orgs", "organizations": [{"alias": "x"}]}),
+            "$.organizations[].name is required",
+        ),
+        (
+            json!({"realm": "orgs", "organizations": [{"name": "Espoo", "attributes": "flat"}]}),
+            "$.organizations[Espoo].attributes",
+        ),
+    ] {
+        let err = apply_realm_files(&store, &[("r.json".into(), doc)], &opts)
+            .await
+            .expect_err(want);
+        assert!(
+            matches!(err, kaisatsu_core::KaisatsuError::BadRequest(_)),
+            "{err}"
+        );
+        assert!(err.to_string().contains(want), "{err}");
+    }
+}
+
+/// A client role or required action of the wrong type is refused naming its section; a required
+/// action keeps the id the file gives; a user keeps the `managedBy` the file gives.
+#[tokio::test]
+async fn client_roles_required_actions_and_users_are_read_as_the_file_names_them() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let opts = ApplyOptions {
+        allow_literal_secrets: true,
+        ..ApplyOptions::default()
+    };
+    let doc = json!({
+        "realm": "ra",
+        "requiredActions": [{"alias": "VERIFY_EMAIL", "id": "ra-verify", "name": "Verify e-mail"}],
+        "users": [{"username": "portal-made", "managedBy": "joinedcontext"}]
+    });
+    apply_realm_files(&store, &[("r.json".into(), doc)], &opts)
+        .await
+        .expect("apply");
+    let actions = store.list_required_actions("ra").await.unwrap();
+    assert_eq!(actions[0].id, "ra-verify");
+    let user = store
+        .get_user_by_username_or_email("ra", None, "portal-made")
+        .await
+        .unwrap()
+        .expect("user");
+    assert_eq!(user.managed_by.as_deref(), Some("joinedcontext"));
+
+    for (doc, want) in [
+        (
+            json!({"realm": "ra", "clients": [{"clientId": "c", "publicClient": true}],
+                   "roles": {"client": {"c": [{"name": "r", "composite": "yes"}]}}}),
+            "$.roles.client.c",
+        ),
+        (
+            json!({"realm": "ra", "requiredActions": [{"alias": "A", "enabled": "yes"}]}),
+            "$.requiredActions",
+        ),
+    ] {
+        let err = apply_realm_files(&store, &[("r.json".into(), doc)], &opts)
+            .await
+            .expect_err(want);
+        assert!(err.to_string().contains(want), "{err}");
+    }
+}
+
+/// A migrated Keycloak password hash (`secretData` + `credentialData`) is stored as given; a
+/// password entry with neither a value nor a hash and a credential of another type store nothing.
+/// A group named without its leading slash links like its path.
+#[tokio::test]
+async fn a_migrated_password_hash_is_stored_and_empty_credentials_store_nothing() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let hash = r#"{"value":"aGFzaA==","salt":"c2FsdA=="}"#;
+    let algo = r#"{"hashIterations":27500,"algorithm":"pbkdf2-sha256"}"#;
+    let doc = json!({
+        "realm": "creds",
+        "groups": [{"name": "team", "path": "/team"}],
+        "users": [
+            {"username": "migrated", "groups": ["team"],
+             "credentials": [{"type": "password", "secretData": hash, "credentialData": algo, "userLabel": "old"}]},
+            {"username": "empty", "credentials": [{"type": "password"}, {"type": "webauthn"}]}
+        ]
+    });
+    apply_realm_files(&store, &[("r.json".into(), doc)], &ApplyOptions::default())
+        .await
+        .expect("apply");
+    let user = |name: &'static str| {
+        let store = store.clone();
+        async move {
+            store
+                .get_user_by_username_or_email("creds", None, name)
+                .await
+                .unwrap()
+                .expect("user")
+        }
+    };
+    let migrated = user("migrated").await;
+    let creds = store.list_credentials("creds", &migrated.id).await.unwrap();
+    assert_eq!(creds.len(), 1);
+    assert_eq!(creds[0].credential_type, "password");
+    assert_eq!(creds[0].secret_data, hash);
+    assert_eq!(creds[0].credential_data, algo);
+    assert_eq!(creds[0].user_label.as_deref(), Some("old"));
+    let groups = store.list_user_groups("creds", &migrated.id).await.unwrap();
+    assert_eq!(
+        groups.iter().map(|g| g.path.as_str()).collect::<Vec<_>>(),
+        ["/team"]
+    );
+    let empty = user("empty").await;
+    assert!(
+        store
+            .list_credentials("creds", &empty.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Re-applying a person keeps the client roles an administrator mapped, merges the file's
+/// attributes into stored ones the person had none of, and re-creates a group the Portal deleted.
+#[tokio::test]
+async fn a_reapply_keeps_admin_client_roles_and_recreates_a_deleted_group() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let opts = ApplyOptions::default();
+    let doc = |attrs: Value| {
+        let mut ann = json!({"username": "ann"});
+        if !attrs.is_null() {
+            ann["attributes"] = attrs;
+        }
+        json!({
+            "realm": "keep",
+            "clients": [{"clientId": "app", "publicClient": true}],
+            "roles": {"client": {"app": [{"name": "viewer"}, {"name": "editor"}]}},
+            "groups": [{"name": "crew", "path": "/crew"}],
+            "users": [ann]
+        })
+    };
+    apply_realm_files(&store, &[("r.json".into(), doc(json!(null)))], &opts)
+        .await
+        .expect("first apply");
+    let ann = store
+        .get_user_by_username_or_email("keep", None, "ann")
+        .await
+        .unwrap()
+        .expect("ann");
+    // An administrator maps the client role `editor` (a role_mappings row and the user's grants).
+    let app = store
+        .get_client_by_client_id("keep", "app")
+        .await
+        .unwrap()
+        .expect("app");
+    let editor = store
+        .list_roles("keep", Some(&app.id))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "editor")
+        .expect("editor");
+    store
+        .add_role_mapping(kaisatsu_core::RoleMappingRecord {
+            id: "rm-ann-editor".into(),
+            realm_id: "keep".into(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: ann.id.clone(),
+            role_id: editor.id.clone(),
+            role_name: "editor".into(),
+            client_uuid: Some(app.id.clone()),
+        })
+        .await
+        .unwrap();
+    let grants_by_admin =
+        std::collections::HashMap::from([("app".to_owned(), vec!["editor".to_owned()])]);
+    store
+        .set_user_grants("keep", &ann.id, &[], &grants_by_admin)
+        .await
+        .unwrap();
+    let held = store
+        .get_user_by_username_or_email("keep", None, "ann")
+        .await
+        .unwrap()
+        .unwrap();
+    let grants = admin_grants(&store, "keep", &held).await.unwrap();
+    assert_eq!(grants.1["app"], ["editor"]);
+
+    let crew = store
+        .get_group_by_path("keep", None, "/crew")
+        .await
+        .unwrap()
+        .expect("crew");
+    store.delete_group("keep", None, &crew.id).await.unwrap();
+    let report = apply_realm_files(
+        &store,
+        &[("r.json".into(), doc(json!({"dept": ["roads"]})))],
+        &opts,
+    )
+    .await
+    .expect("re-apply");
+    assert!(report.has_changes());
+    assert!(
+        store
+            .get_group_by_path("keep", None, "/crew")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let ann = store
+        .get_user_by_username_or_email("keep", None, "ann")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ann.client_roles["app"], ["editor"]);
+    assert_eq!(ann.attributes["dept"], ["roads"]);
+
+    // The same file once more, the group deleted again: the fast path is not taken.
+    let crew = store
+        .get_group_by_path("keep", None, "/crew")
+        .await
+        .unwrap()
+        .unwrap();
+    store.delete_group("keep", None, &crew.id).await.unwrap();
+    let again = apply_realm_files(
+        &store,
+        &[("r.json".into(), doc(json!({"dept": ["roads"]})))],
+        &opts,
+    )
+    .await
+    .expect("third apply");
+    assert!(again.has_changes(), "a deleted group forces a real apply");
+    assert!(
+        store
+            .get_group_by_path("keep", None, "/crew")
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// The export replaces a pairwise mapper's salt with a variable reference, like every secret.
+#[tokio::test]
+async fn the_export_names_a_pairwise_salt_by_variable() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let doc = json!({
+        "realm": "salt",
+        "clients": [{"clientId": "city-app", "publicClient": true, "protocolMappers": [{
+            "name": "pairwise", "protocol": "openid-connect",
+            "protocolMapper": "oidc-sha256-pairwise-sub-mapper",
+            "config": {"pairwiseSubAlgorithmSalt": "literal-salt-value"}
+        }]}]
+    });
+    let opts = ApplyOptions {
+        allow_literal_secrets: true,
+        ..ApplyOptions::default()
+    };
+    apply_realm_files(&store, &[("r.json".into(), doc)], &opts)
+        .await
+        .expect("apply");
+    let out = export_realm(&store, "salt", false).await.expect("export");
+    let text = out.to_string();
+    assert!(!text.contains("literal-salt-value"), "{text}");
+    let mapper = &out["clients"][0]["protocolMappers"][0];
+    assert_eq!(
+        mapper["config"]["pairwiseSubAlgorithmSalt"],
+        "$(PAIRWISE_SALT_CITY_APP)"
+    );
+}
+
 #[tokio::test]
 async fn a_group_that_lost_its_roles_behind_an_unchanged_file_gets_them_back() {
     let doc = json!({
