@@ -1353,6 +1353,51 @@ mod tests {
         assert_eq!(sorted(Some("modified desc")), ["zz", "aa-ovzdusie"]);
     }
 
+    /// `dataset_visible` lets an editor read another catalogue's dataset and a withdrawn
+    /// publisher's one, so the search itself keeps the first out and the second behind
+    /// include_private.
+    #[test]
+    fn an_editor_search_keeps_its_catalogue_and_withdrawn_publishers_behind_the_flag() {
+        let (org_id, catalogue_id) = test_ids();
+        let editor = Subject::authenticated("ed", vec![org_id], Vec::new());
+        let ctx = RequestCtx::new(org_id, catalogue_id, editor);
+        let authz = PolicyAuthorizer::default().with_rule(GrantRule {
+            org_id,
+            catalogue_id: None,
+            principal: "ed".into(),
+            actions: vec![Action::Read, Action::Propose],
+            publisher_id: None,
+        });
+        let mut elsewhere =
+            make_dataset("elsewhere", "pub-a", "Inde", &[], &[], Visibility::Public);
+        elsewhere.catalogue_id = CatalogueId::from_uuid(Uuid::from_u128(77));
+        let all = [
+            make_dataset("mine", "pub-a", "Moje", &[], &[], Visibility::Public),
+            make_dataset("orphan", "pub-w", "Sirota", &[], &[], Visibility::Public),
+            elsewhere,
+        ];
+        let pubs = [
+            publisher("pub-a", "a-slug", "A", RecordState::Active),
+            publisher("pub-w", "w-slug", "W", RecordState::Withdrawn),
+        ];
+        let names = |include_private: bool| {
+            let filter = DatasetFilter {
+                include_private,
+                sort: Some("name".into()),
+                limit: 20,
+                ..DatasetFilter::default()
+            };
+            search_datasets(&ctx, &authz, &all, &pubs, &filter, "sk")
+                .expect("search")
+                .datasets
+                .into_iter()
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(false), ["mine"]);
+        assert_eq!(names(true), ["mine", "orphan"]);
+    }
+
     /// A licence id left empty is no licence facet, and an open period spans at most 100 years.
     #[test]
     fn facets_skip_an_empty_licence_and_bound_an_open_period() {
