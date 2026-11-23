@@ -5,7 +5,7 @@ use crate::entities::{
     ApplyBundle, AuditRecord, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
     FolderRecord, ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
 };
-use crate::error::CrResult;
+use crate::error::{CrError, CrResult};
 use crate::ids::{InstallationId, InstanceId, OrgId};
 use crate::limits::OrgQuotas;
 use crate::rows::{RowPage, RowQuery};
@@ -78,6 +78,9 @@ pub trait DaiyaStore: Send + Sync {
     fn list_folders(&self, org_id: OrgId) -> StoreFuture<'_, Vec<FolderRecord>>;
     fn get_folder(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, Option<FolderRecord>>;
     fn upsert_folder(&self, folder: FolderRecord) -> StoreFuture<'_, FolderRecord>;
+    /// Deletes an empty folder; whether it existed. A folder that still holds dashboards,
+    /// subfolders or library panels is refused with [`folder_content_refusal`]'s conflict and
+    /// nothing is deleted (S9-36).
     fn delete_folder(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, bool>;
 
     // Dashboards & Versions
@@ -170,4 +173,63 @@ pub trait DaiyaStore: Send + Sync {
     /// (`CrError::StalePlan` when it moved) and runs every save check of the single upserts.
     /// Answers the dashboards as saved.
     fn apply_bundle(&self, bundle: ApplyBundle) -> StoreFuture<'_, Vec<DashboardRecord>>;
+}
+
+/// How many uids of each kind a folder-delete refusal names before it counts the rest.
+const REFUSAL_NAMES: usize = 10;
+
+/// The 409 for deleting folder `uid` while it holds content: names up to ten uids of each
+/// kind and counts the rest, so the caller can move or delete them first. `Ok` when empty.
+pub fn folder_content_refusal(
+    uid: &str,
+    dashboards: Vec<String>,
+    subfolders: Vec<String>,
+    library_panels: Vec<String>,
+) -> CrResult<()> {
+    let parts: Vec<String> = [
+        ("dashboards", dashboards),
+        ("subfolders", subfolders),
+        ("library panels", library_panels),
+    ]
+    .into_iter()
+    .filter(|(_, uids)| !uids.is_empty())
+    .map(|(kind, mut uids)| {
+        let total = uids.len();
+        uids.sort();
+        uids.truncate(REFUSAL_NAMES);
+        let more = total - uids.len();
+        let tail = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        format!("{total} {kind} ({}{tail})", uids.join(", "))
+    })
+    .collect();
+    if parts.is_empty() {
+        return Ok(());
+    }
+    Err(CrError::Conflict(format!(
+        "Folder '{uid}' is not empty: it holds {}. Move or delete them first.",
+        parts.join("; ")
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::folder_content_refusal;
+
+    #[test]
+    fn a_refusal_names_ten_uids_per_kind_and_counts_the_rest() {
+        assert!(folder_content_refusal("f", vec![], vec![], vec![]).is_ok());
+        let many: Vec<String> = (0..12).map(|i| format!("d{i:02}")).collect();
+        let err = folder_content_refusal("f", many, vec!["sub".into()], vec![]).unwrap_err();
+        assert_eq!(err.status_code(), 409);
+        let text = err.to_string();
+        assert!(text.contains("12 dashboards (d00, d01"), "{text}");
+        assert!(text.contains("d09 and 2 more)"), "{text}");
+        assert!(!text.contains("d10"), "{text}");
+        assert!(text.contains("1 subfolders (sub)"), "{text}");
+        assert!(!text.contains("library"), "{text}");
+    }
 }
