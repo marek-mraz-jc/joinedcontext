@@ -106,11 +106,13 @@ pub struct Citation {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// The step the answer is at, for the one progress line the chat shows (T-4155): one of
-    /// `understanding`, `searching` (with the query), `reading` (with the entity type) or
-    /// `answering`. Fixed names, never a model call.
+    /// `understanding`, `searching` (with the query), `reading` (with the entity type),
+    /// `checking` (the judge, with its verdict) or `answering`, and what the step does in the
+    /// catalogue's words (T-7753). Fixed names, never a model call.
     Stage {
         stage: &'static str,
         topic: Option<String>,
+        detail: Detail,
     },
     Tool {
         name: String,
@@ -143,6 +145,45 @@ pub enum Event {
     Done(Spent, u64),
 }
 
+/// What a step does, from the catalogue and the executed query, never from model output (T-7753):
+/// the dataset a read names by its public title, its filter, how many sources, passages or
+/// citations the step covers, and a check's verdict (`answers`, `more` or `stop`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Detail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The source's title per language, as the `step` event carries it (T-5343).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub titles: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<&'static str>,
+}
+
+impl Detail {
+    /// A read of `connector` filtered by `q`: its public title, never its slug.
+    pub fn read(connector: &Connected, q: Option<&str>) -> Self {
+        let step = Step::new(connector, None, q, None, None);
+        Detail {
+            source: step.source,
+            titles: step.titles,
+            filter: step.q,
+            ..Detail::default()
+        }
+    }
+
+    /// A step that covers `count` sources, passages or citations.
+    pub fn counted(count: usize) -> Self {
+        Detail {
+            count: u64::try_from(count).ok(),
+            ..Detail::default()
+        }
+    }
+}
+
 /// One read of live data as the `step` event shows it (T-4801): where it read, the type and the
 /// `q` it asked, and how many entities matched, so a person can check each figure of the answer
 /// against the dataset it links. The source is the Endpoint's title, never its slug.
@@ -161,6 +202,9 @@ pub struct Step {
     pub count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// How long the read took, in milliseconds (T-7753).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u64>,
 }
 
 /// The first entity type a call names, for its stage line, its table and its step.
@@ -210,6 +254,7 @@ impl Step {
                 .filter(|q| !q.is_empty()),
             count,
             url,
+            ms: None,
         }
     }
 }
@@ -256,6 +301,13 @@ pub struct Table {
     /// Each row's location, checked and rounded, for the maps; never sent as it is (T-4657).
     #[serde(skip)]
     pub geometries: Vec<Option<Value>>,
+    /// The read behind a map of part of the matching entities, held as a map source when a
+    /// visitor asked (T-7755); never sent.
+    #[serde(skip)]
+    pub map_read: Option<super::map_source::Read>,
+    /// `/api/v1/d/{publicId}/map/{id}`: every located entity of the read, page by page (T-7755).
+    #[serde(rename = "mapSource", skip_serializing_if = "Option::is_none")]
+    pub map_source: Option<String>,
     /// The broker's profile of the type (`summarize`, T-4680) when the read was broad: the answer
     /// call reads it beside the first rows; the `data` event does not carry it.
     #[serde(skip)]
@@ -1024,11 +1076,9 @@ async fn run_tool(
                     }
                     None => (None, None),
                 };
-                send(
-                    events,
-                    Event::Step(Step::of(connector, &arguments, &text, url.clone())),
-                )
-                .await;
+                let mut step = Step::of(connector, &arguments, &text, url.clone());
+                step.ms = u64::try_from(began.elapsed().as_millis()).ok();
+                send(events, Event::Step(step)).await;
                 let n = citations.len() + 1;
                 citations.push(Citation {
                     n,

@@ -60,7 +60,6 @@ spec:
     # so one visitor may spend the whole day; the minute and hour above pace one address and the
     # day's cost stays the money guard.
     visitorSharePercent: 100
-  model: { router: google/gemini-3.8-flash, answer: google/gemini-3.8-flash }
   transcriptRetention: P90D
   transcriptRedaction: personal
   # T-4740 (owner 2026-10-19T13:50Z): "AI asistent" beside the chat icon, the landing page's blue

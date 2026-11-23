@@ -514,6 +514,69 @@ var JCRender = (function () {
     });
   }
 
+  // A map of every matching entity (T-7755): the most pages a map source is read for, and what a
+  // map stopped at its cap says under itself.
+  var MAP_PAGES = 40;
+  var MAP_CAP = {
+    sk: "Na mape je prvých {n}; ostatné sú v datasete.",
+    cs: "Na mapě je prvních {n}; ostatní jsou v datové sadě.",
+    en: "The map draws the first {n}; the dataset has the rest.",
+    de: "Die Karte zeigt die ersten {n}; der Datensatz hat den Rest."
+  };
+
+  /** The answer's map source (T-7755) when it is one this service names, else null. */
+  function mapSource(path) {
+    return typeof path === "string" && /^\/api\/v1\/d\/[A-Za-z0-9_-]{1,64}\/map\/[0-9a-f]{32}$/.test(path) ? path : null;
+  }
+
+  /**
+   * Every located entity of a map source (T-7755): `page(cursor)` resolves a page's body, or null
+   * when it failed; pages follow `next` until none, `capped` or MAP_PAGES. The spec comes back
+   * with the loaded features in place of the drawn rows (unchanged when no more came), with how
+   * many it draws and whether the source stopped at its cap.
+   */
+  async function loadMap(spec, page) {
+    var features = [];
+    var cursor = null;
+    var capped = false;
+    var complete = false;
+    for (var n = 0; n < MAP_PAGES; n++) {
+      var body = await Promise.resolve().then(function () { return page(cursor); }).catch(function () { return null; });
+      if (!body || !Array.isArray(body.features)) break;
+      Array.prototype.push.apply(features, body.features);
+      capped = body.capped === true;
+      cursor = typeof body.next === "string" && body.next ? body.next : null;
+      if (!cursor) {
+        complete = !capped;
+        break;
+      }
+    }
+    var had = spec && spec.data && Array.isArray(spec.data.features) ? spec.data.features.length : 0;
+    if (features.length <= had) return { spec: spec, drawn: had, capped: false };
+    var out = Object.assign({}, spec, { data: { type: "FeatureCollection", features: features } });
+    if (spec.count && typeof spec.count.total === "number") {
+      var total = Math.max(spec.count.total, features.length);
+      out.count = complete ? { total: total, unlocated: total - features.length } : { total: total };
+    }
+    return { spec: out, drawn: features.length, capped: capped };
+  }
+
+  /** The caption over a loaded map (T-7755): "Bridges — 1,651 of 1,651". "" without a type. */
+  function drawnCaption(data, drawn, lang) {
+    lang = YES_NO[lang] ? lang : "en";
+    var named = data && typeof data.type === "string" && data.type ? word(TYPES, data.type, lang) : "";
+    if (!named) return "";
+    var numbers = new Intl.NumberFormat(lang);
+    var total = typeof data.total === "number" ? Math.max(data.total, drawn) : drawn;
+    return named + " — " + numbers.format(drawn) + " " + OF[lang] + " " + numbers.format(total);
+  }
+
+  /** What a map stopped at its cap says under itself (T-7755). */
+  function mapCap(drawn, lang) {
+    lang = MAP_CAP[lang] ? lang : "en";
+    return MAP_CAP[lang].replace("{n}", new Intl.NumberFormat(lang).format(drawn));
+  }
+
   /** Whether a data card opens on its map (T-4657): every row of the table has a place. */
   function mapFirst(data) {
     var features = data && data.map && data.map.data && data.map.data.features;
@@ -1005,6 +1068,117 @@ var JCRender = (function () {
   }
 
 
+  // The live line's words per step (T-7753): what the step does, from the catalogue's titles and
+  // the executed query, never the model's text. `{n}` a count, `{t}` the search terms.
+  var LIVE = {
+    sk: { searching: "Hľadám v {n} pre „{t}“", reading: "Čítam", history: "Čítam históriu", schema: "Čítam schému",
+      checking: "Kontrolujem {n}", answers: "Skontrolované {n}: odpovedajú na otázku",
+      more: "{n} nestačí, hľadám ďalej", stop: "Skontrolované {n}", answering: "Píšem odpoveď z {n}",
+      failed: "nepodarilo sa", rows: { one: "záznam", few: "záznamy", other: "záznamov" },
+      passages: { one: "úryvok", few: "úryvky", other: "úryvkov" } },
+    en: { searching: "Searching {n} for „{t}“", reading: "Reading", history: "Reading the history of", schema: "Reading the schema of",
+      checking: "Checking {n}", answers: "Checked {n}: they answer the question",
+      more: "{n} are not enough, searching further", stop: "Checked {n}", answering: "Writing the answer from {n}",
+      failed: "failed", rows: { one: "row", other: "rows" }, passages: { one: "passage", other: "passages" } },
+    cs: { searching: "Hledám v {n} pro „{t}“", reading: "Čtu", history: "Čtu historii", schema: "Čtu schéma",
+      checking: "Kontroluji {n}", answers: "Zkontrolováno {n}: odpovídají na otázku",
+      more: "{n} nestačí, hledám dál", stop: "Zkontrolováno {n}", answering: "Píšu odpověď z {n}",
+      failed: "nepodařilo se", rows: { one: "záznam", few: "záznamy", other: "záznamů" },
+      passages: { one: "úryvek", few: "úryvky", other: "úryvků" } }
+  };
+  // The sources searched are counted in the locative in Slovak and Czech ("v 12 zdrojoch").
+  var IN_SOURCES = {
+    sk: { one: "zdroji", few: "zdrojoch", other: "zdrojoch" },
+    cs: { one: "zdroji", few: "zdrojích", other: "zdrojích" },
+    en: { one: "source", other: "sources" }
+  };
+
+  function counted(n, forms, lang) {
+    var category;
+    try {
+      category = new Intl.PluralRules(LIVE[lang] ? lang : "en").select(n);
+    } catch (e) {
+      category = n === 1 ? "one" : "other";
+    }
+    return new Intl.NumberFormat(LIVE[lang] ? lang : "en").format(n) + " " + (forms[category] || forms.other);
+  }
+
+  function count(data) {
+    var n = data && data.count;
+    return typeof n === "number" && isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  }
+
+  /**
+   * The live line of a `stage` event (T-7753): the step in words with what it does, the search's
+   * terms and how many sources it searches, the dataset a read names by its public title with its
+   * type and filter, how many passages a check covers and its verdict, how many sources the answer
+   * uses. A step without its detail says what `stage` says; null for a step the chat does not know.
+   */
+  function live(data, lang) {
+    var words = LIVE[lang] || LIVE.en;
+    var L = LIVE[lang] ? lang : "en";
+    var name = data && data.stage;
+    var n = count(data);
+    if (name === "searching" && n !== null && n > 0) {
+      var terms = text(data.topic, 60);
+      if (terms) return words.searching.replace("{n}", counted(n, IN_SOURCES[L], L)).replace("{t}", terms) + "…";
+    }
+    if (name === "reading" || name === "history" || name === "schema") {
+      var titles = data.titles && typeof data.titles === "object" && !Array.isArray(data.titles) ? data.titles : {};
+      var source = text(entry(titles, lang), 120) || text(data.source, 120);
+      if (source) {
+        var kind = name !== "schema" && Object.prototype.hasOwnProperty.call(TYPES, data.topic) ? word(TYPES, data.topic, lang) : "";
+        if (kind && source.toLowerCase().indexOf(kind.toLowerCase()) >= 0) kind = "";
+        var filter = text(data.filter, 160);
+        var said = filter && name === "history" ? filter.replace("..", " – ") : filter ? query(filter, lang) : "";
+        return words[name] + " " + source + ([kind, said].some(Boolean) ? ": " + [kind, said].filter(Boolean).join(", ") : "") + "…";
+      }
+    }
+    if (name === "checking" && n !== null) {
+      var passages = counted(n, words.passages, L);
+      var verdict = data.verdict;
+      if (verdict === "answers" || verdict === "more" || verdict === "stop") return words[verdict].replace("{n}", passages);
+      return words.checking.replace("{n}", passages) + "…";
+    }
+    if (name === "answering" && n !== null && n > 0) {
+      return words.answering.replace("{n}", counted(n, IN_SOURCES[L], L)) + "…";
+    }
+    if (name === "checking") return null;
+    return stage(data, lang);
+  }
+
+  /** The key a read's `stage` and its `step` share: the source's title and the type. */
+  function liveKey(data) {
+    return (data && typeof data.source === "string" ? data.source : "") + "|" +
+      (data && typeof (data.topic || data.type) === "string" ? (data.topic || data.type) : "");
+  }
+
+  /** A read's end from its `step` event (T-7753): `1 651 rows, 0.8 s`; null with neither. */
+  function ended(step, lang) {
+    var words = LIVE[lang] || LIVE.en;
+    var L = LIVE[lang] ? lang : "en";
+    var parts = [];
+    var n = count(step);
+    if (n !== null) parts.push(counted(n, words.rows, L));
+    var ms = step && step.ms;
+    if (typeof ms === "number" && isFinite(ms) && ms >= 0) {
+      parts.push(new Intl.NumberFormat(L, { maximumFractionDigits: 1 }).format(ms / 1000) + " s");
+    }
+    return parts.length > 0 ? parts.join(", ") : null;
+  }
+
+  /** A step that failed: its line with the failure in words, `Reading X: Bridge (failed)`. */
+  function failedLine(line, lang) {
+    return String(line || "").replace(/…$/, "") + " (" + (LIVE[lang] || LIVE.en).failed + ")";
+  }
+
+  /** The time since the question, shown from 3 s on: `4 s`, `1 min 5 s`; null before. */
+  function elapsed(ms) {
+    if (typeof ms !== "number" || !isFinite(ms) || ms < 3000) return null;
+    var s = Math.floor(ms / 1000);
+    return s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60) + " s";
+  }
+
   /** A `followups` event's questions (T-4174): strings, trimmed, 1 to 120 characters, at most 3. */
   function followups(data) {
     var out = [];
@@ -1362,11 +1536,12 @@ var JCRender = (function () {
     sourceCount: sourceCount, badges: badges, chosen: chosen, asksLanguage: asksLanguage, ordered: ordered,
     followups: followups, restore: restore, remember: remember, stamp: stamp,
     lasting: lasting, recalled: recalled, privacyLines: privacyLines,
-    cards: cards, stage: stage, steps: steps, firstTable: firstTable, tel: tel, mailto: mailto,
+    cards: cards, stage: stage, steps: steps, live: live, liveKey: liveKey, ended: ended, failedLine: failedLine, elapsed: elapsed, firstTable: firstTable, tel: tel, mailto: mailto,
     markdown: markdown, streamable: streamable, sources: sources, label: label, unlisted: unlisted, linkHost: linkHost,
     safeUrl: safeUrl, events: events, language: language, table: table, chart: chart, greeting: greeting, title: title,
     suggestions: suggestions, trouble: trouble, retryable: retryable, said: said, retry: retry,
-    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, chartNote: chartNote, mapFirst: mapFirst
+    vizOrigin: vizOrigin, vizSpec: vizSpec, vizRows: vizRows, aggregated: aggregated, chartNote: chartNote, mapFirst: mapFirst,
+    mapSource: mapSource, loadMap: loadMap, drawnCaption: drawnCaption, mapCap: mapCap
   };
 })();
 if (typeof module !== "undefined") module.exports = JCRender;

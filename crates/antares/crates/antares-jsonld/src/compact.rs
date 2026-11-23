@@ -306,6 +306,23 @@ mod tests {
         assert_eq!(compact_entity(&out, &ctx), vehicle);
     }
 
+    /// keyValues: the stored type compacts to its term, and a type held as
+    /// one string brings its type-scoped core context into force for the
+    /// members as an array of types does.
+    #[test]
+    fn shallow_compaction_compacts_a_single_string_type_and_its_scope() {
+        let ctx = std::sync::Arc::new(crate::core_context());
+        let internal = json!({
+            "id": "urn:ngsi-ld:Feature:1",
+            "type": "https://purl.org/geojson/vocab#Feature",
+            "https://purl.org/geojson/vocab#geometry": "point"
+        });
+        assert_eq!(
+            compact_entity_shallow(&internal, &ctx),
+            json!({"id": "urn:ngsi-ld:Feature:1", "type": "Feature", "geometry": "point"})
+        );
+    }
+
     /// 4.5.2.2: valueType is type coerced into a datatype URI on input, so
     /// it compacts back on output: the entity reads back as it was written
     /// (Coraine value_type_subattr).

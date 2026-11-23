@@ -2,9 +2,45 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, mapSource, loadMap, drawnCaption, mapCap, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
+
+test("the live line names what each step does, per language (T-7753)", () => {
+  assert.equal(live({ stage: "searching", topic: "mosty BBSK", count: 12 }, "sk"), "Hľadám v 12 zdrojoch pre „mosty BBSK“…");
+  assert.equal(live({ stage: "searching", topic: "bridges", count: 1 }, "en"), "Searching 1 source for „bridges“…");
+  assert.equal(live({ stage: "searching", topic: "mosty", count: 3 }, "cs"), "Hledám v 3 zdrojích pro „mosty“…");
+  assert.equal(live({ stage: "reading", topic: "AirQualityObserved", source: "Ovzdušie BB", filter: "yearBuilt<1950" }, "cs"),
+    "Čtu Ovzdušie BB: Kvalita ovzduší, Year built < 1950…");
+  assert.match(live({ stage: "reading", topic: "Bridge", source: "Register mostov", titles: { en: "Bridge register" } }, "en"), /^Reading Bridge register: Bridges…$/);
+  assert.equal(live({ stage: "history", source: "Ovzdušie", filter: "2026-10-01..2026-10-08" }, "sk"), "Čítam históriu Ovzdušie: 2026-10-01 – 2026-10-08…");
+  assert.equal(live({ stage: "checking", count: 6 }, "en"), "Checking 6 passages…");
+  assert.equal(live({ stage: "checking", count: 6, verdict: "answers" }, "en"), "Checked 6 passages: they answer the question");
+  assert.equal(live({ stage: "checking", count: 2, verdict: "more" }, "sk"), "2 úryvky nestačí, hľadám ďalej");
+  assert.equal(live({ stage: "checking", count: 5, verdict: "stop" }, "cs"), "Zkontrolováno 5 úryvků");
+  assert.equal(live({ stage: "answering", count: 3 }, "en"), "Writing the answer from 3 sources…");
+  // Without its detail a step says what it said before; an unknown one says nothing.
+  assert.equal(live({ stage: "answering" }, "en"), "Preparing the answer…");
+  assert.equal(live({ stage: "searching", topic: "x" }, "en"), "Searching the sources: „x“…");
+  assert.equal(live({ stage: "checking" }, "en"), null);
+  assert.equal(live({ stage: "__proto__", count: 1 }, "en"), null);
+  // A read never shows a type name the widget has no words for, nor an unknown language's words.
+  assert.equal(live({ stage: "reading", topic: "urn:x", source: "Data" }, "xx"), "Reading Data…");
+});
+
+test("a read's end, its key, a failed step and the elapsed seconds (T-7753)", () => {
+  assert.equal(ended({ count: 1651, ms: 800 }, "en"), "1,651 rows, 0.8 s");
+  assert.equal(ended({ count: 1, ms: 1250 }, "sk"), "1 záznam, 1,3 s");
+  assert.equal(ended({ count: 3 }, "cs"), "3 záznamy");
+  assert.equal(ended({ ms: -1 }, "en"), null);
+  assert.equal(liveKey({ source: "A", topic: "Bridge" }), liveKey({ source: "A", type: "Bridge" }));
+  assert.equal(failedLine("Reading A: Bridge…", "en"), "Reading A: Bridge (failed)");
+  assert.equal(failedLine("Čítam A…", "sk"), "Čítam A (nepodarilo sa)");
+  assert.equal(elapsed(2999), null);
+  assert.equal(elapsed(3000), "3 s");
+  assert.equal(elapsed(65000), "1 min 5 s");
+  assert.equal(elapsed(NaN), null);
+});
 
 test("lines of a paragraph keep their breaks and a blank line starts the next", () => {
   assert.deepEqual(markdown("one\ntwo\n\nthree"), [
@@ -1243,4 +1279,51 @@ test("an aggregation names its method and says when it is part of the data (T-75
   const years = { ...made, aggregation: { ...made.aggregation, per: "year" } };
   assert.equal(table(years, "sk").rows[0][1], "2026");
   assert.equal(table({ ...made, aggregation: { ...made.aggregation, per: "month" } }, "en").rows[0][1], "October 2026");
+});
+
+test("a map source loads every page, then the map draws them all and says so (T-7755)", async () => {
+  const pt = (i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [19, 48 + i / 10000] }, properties: { name: "Most " + i } });
+  const spec = { label: "name", popup: [], data: { type: "FeatureCollection", features: [pt(0), pt(1)] }, count: { total: 1651, unlocated: 0 } };
+  const asked = [];
+  const pages = { "": { features: Array.from({ length: 500 }, (_, i) => pt(i)), next: "c1" }, c1: { features: Array.from({ length: 500 }, (_, i) => pt(500 + i)), next: "c2" },
+    c2: { features: Array.from({ length: 500 }, (_, i) => pt(1000 + i)), next: "c3" }, c3: { features: Array.from({ length: 151 }, (_, i) => pt(1500 + i)) } };
+  const all = await loadMap(spec, async (cursor) => { asked.push(cursor); return pages[cursor || ""]; });
+  assert.deepEqual(asked, [null, "c1", "c2", "c3"]);
+  assert.equal(all.drawn, 1651);
+  assert.equal(all.capped, false);
+  assert.equal(all.spec.data.features.length, 1651);
+  assert.deepEqual(all.spec.count, { total: 1651, unlocated: 0 });
+  assert.equal(all.spec.label, "name");
+  assert.equal(spec.data.features.length, 2, "the answer's own spec is left as it was");
+  assert.equal(drawnCaption({ type: "Bridge", total: 1651 }, all.drawn, "en"), "Bridges — 1,651 of 1,651");
+});
+
+test("a capped map keeps no unlocated count and says where the rest is; a failed load keeps the drawn rows (T-7755)", async () => {
+  const pt = { type: "Feature", geometry: { type: "Point", coordinates: [19, 48] }, properties: {} };
+  const spec = { data: { type: "FeatureCollection", features: [pt] }, count: { total: 45000, unlocated: 3 } };
+  let n = 0;
+  const capped = await loadMap(spec, async () => (++n < 40 ? { features: Array(500).fill(pt), next: "c" + n } : { features: Array(500).fill(pt), capped: true }));
+  assert.equal(n, 40);
+  assert.equal(capped.drawn, 20000);
+  assert.equal(capped.capped, true);
+  assert.deepEqual(capped.spec.count, { total: 45000 });
+  assert.equal(mapCap(20000, "sk"), "Na mape je prvých " + new Intl.NumberFormat("sk").format(20000) + "; ostatné sú v datasete.");
+  assert.equal(mapCap(20000, "xx"), "The map draws the first 20,000; the dataset has the rest.");
+  const failed = await loadMap(spec, async () => null);
+  assert.equal(failed.spec, spec);
+  assert.equal(failed.drawn, 1);
+  const thrown = await loadMap(spec, () => { throw new Error("offline"); });
+  assert.equal(thrown.spec, spec);
+  const half = await loadMap(spec, async (c) => (c ? null : { features: [pt, pt, pt], next: "x" }));
+  assert.equal(half.drawn, 3);
+  assert.deepEqual(half.spec.count, { total: 45000 }, "a load cut short claims no unlocated count");
+});
+
+test("only a map source this service names is read (T-7755)", () => {
+  const id = "0123456789abcdef0123456789abcdef";
+  assert.equal(mapSource("/api/v1/d/bbsk-chat/map/" + id), "/api/v1/d/bbsk-chat/map/" + id);
+  assert.equal(mapSource("https://evil.example/api/v1/d/x/map/" + id), null);
+  assert.equal(mapSource("/api/v1/d/x/map/" + id + "?x=1"), null);
+  assert.equal(mapSource("/api/v1/d/../map/" + id), null);
+  assert.equal(mapSource(undefined), null);
 });

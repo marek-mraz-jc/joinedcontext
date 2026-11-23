@@ -559,6 +559,35 @@ mod tests {
         assert!((400_000..=700_000).contains(&wide.heap_bytes()));
     }
 
+    /// The estimate is exact for a plain term: one pair in the term map plus
+    /// the TermDef's fields past its IRI, and one pair in the inverse.
+    #[test]
+    fn heap_bytes_of_a_plain_term_is_two_pairs_and_the_def_fields() {
+        let pair =
+            2 * std::mem::size_of::<String>() + 48 + "a".len() + "https://example.org/a".len();
+        let def = std::mem::size_of::<TermDef>() - std::mem::size_of::<String>();
+        let plain = ctx(json!({"a": {"@id": "https://example.org/a"}}));
+        assert_eq!(plain.heap_bytes(), 2 * pair + def);
+    }
+
+    /// The term-definition budget admits a context of exactly the ceiling and
+    /// refuses the first byte past it.
+    #[test]
+    fn charge_admits_the_ceiling_and_refuses_one_byte_more() {
+        let mut c = Context::default();
+        c.charge(&"a".repeat(crate::pinned::MAX_CONTEXT_BYTES))
+            .expect("exactly the ceiling");
+        assert!(matches!(c.charge("a"), Err(NgsiError::BadRequestData(_))));
+    }
+
+    /// A term whose @id is neither an IRI nor a known term expands through
+    /// @vocab (JSON-LD 1.1 4.2.2 step 4).
+    #[test]
+    fn a_relative_term_id_expands_through_vocab() {
+        let c = ctx(json!({"@vocab": "https://example.org/v/", "T": "Thing"}));
+        assert_eq!(c.expand_key("T"), "https://example.org/v/Thing");
+    }
+
     /// 5.5.7: the user @context "shall not contain JSON-LD Scoped Contexts"
     /// — a term definition carrying its own @context "should result in an
     /// error of type BadRequestData" (it could reshape core terms during

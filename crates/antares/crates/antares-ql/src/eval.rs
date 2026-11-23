@@ -655,6 +655,9 @@ mod clause_4_9_extensions {
         assert!(!q(&e, "temperature.observedAt<2017-12-24T12:00:00Z"));
         assert!(q(&e, "temperature.observedAt==2017-12-24T13:00:00Z"));
         assert!(!q(&e, "humidity.observedAt>=2017-12-24T12:00:00Z"));
+        // with a trailing bracket the core member is no longer the target:
+        // the path navigates the value, which holds no observedAt
+        assert!(!q(&e, "temperature.observedAt[x]==2017-12-24T13:00:00Z"));
         let unit = expand(json!({"id": "urn:x", "type": "T",
             "temperature": {"type": "Property", "value": 20, "unitCode": "CEL"}}));
         assert!(q(&unit, r#"temperature.unitCode=="CEL""#));

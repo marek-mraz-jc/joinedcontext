@@ -99,6 +99,11 @@ fn reducer_display_name(id: &str) -> &str {
     }
 }
 
+/// Whether `f` is the field a transformation option names: by its name or its display name.
+fn answers_to(f: &FieldColumn, name: &str) -> bool {
+    f.name == name || f.effective_name() == name
+}
+
 /// 1. `organize`: excludeByName, includeByName, indexByName, renameByName (`organize.ts`).
 #[must_use]
 pub fn tx_organize(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
@@ -417,7 +422,7 @@ pub fn tx_filter_by_value(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                     let field_hit = frame
                         .fields
                         .iter()
-                        .find(|f| f.name == field_name || f.effective_name() == field_name)
+                        .find(|f| answers_to(f, field_name))
                         .is_some_and(|col| {
                             eval_value_matcher(col, r, m_id, m_opts, pattern.as_ref())
                         });
@@ -550,8 +555,8 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                     for i in 0..row_cnt {
                         let a = left_vals.get(i).copied().flatten().unwrap_or(0.0);
                         let b = right_vals.get(i).copied().flatten().unwrap_or(0.0);
+                        // "+" and an operator Grafana does not list add
                         let res = match op {
-                            "+" => a + b,
                             "-" => a - b,
                             "*" => a * b,
                             "/" => a / b,
@@ -573,9 +578,7 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                     let reducer = cum.get("reducer").and_then(Value::as_str).unwrap_or("sum");
                     let target = cum.get("field").and_then(Value::as_str);
                     let col = frame.fields.iter().find(|f| {
-                        target.map_or(f.field_type == FieldType::Number, |t| {
-                            f.name == t || f.effective_name() == t
-                        })
+                        target.map_or(f.field_type == FieldType::Number, |t| answers_to(f, t))
                     });
                     let mut total = 0.0;
                     let mut v = Vec::with_capacity(row_cnt);
@@ -658,11 +661,7 @@ fn resolve_binary_operand(frame: &Frame, spec: Option<&Value>, row_cnt: usize) -
         return vec![Some(0.0); row_cnt];
     };
     if let Some(s) = spec.as_str() {
-        if let Some(col) = frame
-            .fields
-            .iter()
-            .find(|f| f.name == s || f.effective_name() == s)
-        {
+        if let Some(col) = frame.fields.iter().find(|f| answers_to(f, s)) {
             return (0..row_cnt).map(|i| col.f64_at(i)).collect();
         }
         if let Ok(fixed) = s.parse::<f64>() {
@@ -673,10 +672,7 @@ fn resolve_binary_operand(frame: &Frame, spec: Option<&Value>, row_cnt: usize) -
         .get("matcher")
         .and_then(|m| m.get("options"))
         .and_then(Value::as_str)
-        && let Some(col) = frame
-            .fields
-            .iter()
-            .find(|f| f.name == name || f.effective_name() == name)
+        && let Some(col) = frame.fields.iter().find(|f| answers_to(f, name))
     {
         return (0..row_cnt).map(|i| col.f64_at(i)).collect();
     }
@@ -730,12 +726,7 @@ pub fn tx_group_by(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
         .filter_map(|frame| {
             let key_cols: Vec<&FieldColumn> = group_keys
                 .iter()
-                .filter_map(|k| {
-                    frame
-                        .fields
-                        .iter()
-                        .find(|f| &f.name == k || f.effective_name() == k)
-                })
+                .filter_map(|k| frame.fields.iter().find(|f| answers_to(f, k)))
                 .collect();
             if key_cols.is_empty() {
                 return None;
@@ -777,11 +768,7 @@ pub fn tx_group_by(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             }
 
             for (agg_field, aggs) in &agg_specs {
-                let Some(col) = frame
-                    .fields
-                    .iter()
-                    .find(|f| &f.name == agg_field || f.effective_name() == agg_field)
-                else {
+                let Some(col) = frame.fields.iter().find(|f| answers_to(f, agg_field)) else {
                     continue;
                 };
                 for agg_name in aggs {
@@ -839,7 +826,7 @@ pub fn tx_sort_by(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             let Some(col_idx) = frame
                 .fields
                 .iter()
-                .position(|f| f.name == target_field || f.effective_name() == target_field)
+                .position(|f| answers_to(f, target_field))
             else {
                 return frame;
             };
@@ -1016,7 +1003,7 @@ pub fn tx_join_by_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
     let join_type = frames[0]
         .fields
         .iter()
-        .find(|f| f.name == join_name || f.effective_name() == join_name)
+        .find(|f| answers_to(f, &join_name))
         .map_or(FieldType::Time, |f| f.field_type);
 
     let mut all_keys_order: Vec<String> = Vec::new();
@@ -1025,11 +1012,7 @@ pub fn tx_join_by_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 
     for frame in &frames {
         let mut map = BTreeMap::new();
-        if let Some(j_col) = frame
-            .fields
-            .iter()
-            .find(|f| f.name == join_name || f.effective_name() == join_name)
-        {
+        if let Some(j_col) = frame.fields.iter().find(|f| answers_to(f, &join_name)) {
             for (r, v) in j_col.values.iter().enumerate() {
                 let k = value_to_str(v);
                 if !key_raw_val.contains_key(&k) {
@@ -1079,7 +1062,7 @@ pub fn tx_join_by_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
     for (f_idx, frame) in frames.iter().enumerate() {
         let row_lookup = &frame_maps[f_idx];
         for col in &frame.fields {
-            if col.name == join_name || col.effective_name() == join_name {
+            if answers_to(col, &join_name) {
                 continue;
             }
             let values = kept_keys
@@ -1130,7 +1113,7 @@ pub fn tx_convert_field_type(frames: Vec<Frame>, options: &Value) -> Vec<Frame> 
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 for f in &mut frame.fields {
-                    if f.name != target && f.effective_name() != target {
+                    if !answers_to(f, target) {
                         continue;
                     }
                     match dest {
