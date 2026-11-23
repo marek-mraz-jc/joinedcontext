@@ -1,6 +1,6 @@
 // covers (T-2137, the module gate in gate_modules.test.ts): src/pages/home/HomePage.tsx and
 // src/pages/home/firstRun.ts: the project home, its first-run checklist and the role cards.
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -34,11 +34,16 @@ interface World {
   dashboards?: string[];
   /** The installation's branding, its hidden sections included. */
   branding?: unknown;
+  /** The Organization's people, for an administrator; refused (403) when unset. */
+  people?: { username: string; requiredActions?: string[] }[];
+  /** How many reads of the project's spaces fail before one answers. */
+  spacesFail?: number;
   /** What `GET /api/v1/organization/widgets` answers this person (T-6779). */
   widgets?: unknown[];
 }
 
 function show(world: World) {
+  let spacesFailed = 0;
   const sent: { method: string; path: string; body: unknown }[] = [];
   const result = renderPage(<HomePage project="helsinki" welcome={world.welcome} onWelcomeClosed={world.onWelcomeClosed} />, {
     path: "/projects/helsinki/home",
@@ -57,6 +62,10 @@ function show(world: World) {
       if (path === "/api/v1/organization/widgets") return json({ widgets: world.widgets ?? [] });
       if (path === "/api/v1/preferences") return json(world.preferences?.current ?? (world.dismissed ? { firstRunDismissed: true } : {}));
       if (path === "/api/v1/projects") return json({ apiVersion: "v1", kind: "List", items: world.projects ?? [{ name: "helsinki", sample: false }] });
+      if (path === "/api/v1/projects/helsinki/spaces" && spacesFailed < (world.spacesFail ?? 0)) {
+        spacesFailed += 1;
+        return json({ title: "Service Unavailable", status: 503, detail: "the mirror is not ready" }, 503);
+      }
       if (path === "/api/v1/projects/helsinki/spaces") return json(list((world.spaces ?? []).map((s) => named(s))));
       if (path.match(/\/spaces\/[^/]+\/usage$/)) return json({ entities: world.entities ?? 0, observedAt: "2026-10-07T20:00:00Z" });
       if (path === "/api/v1/projects/helsinki/endpoints")
@@ -64,7 +73,7 @@ function show(world: World) {
       if (path === "/api/v1/projects/helsinki/dashboards") return json(list((world.dashboards ?? []).map((name) => named(name))));
       if (path === "/api/v1/projects/helsinki/pipelines") return json(list((world.pipelines ?? []).map((phase, at) => named(`p${at}`, phase))));
       if (path === "/api/v1/projects/helsinki/changes") return json(list([{ metadata: { name: "chg-1" }, status: { phase: "PendingApproval" } }]));
-      if (path === "/api/v1/organization/people") return json({ title: "Forbidden", status: 403 }, 403);
+      if (path === "/api/v1/organization/people") return world.people ? json(list(world.people)) : json({ title: "Forbidden", status: 403 }, 403);
       if (path.startsWith("/api/v1/projects/helsinki/")) return json(list([]));
       return undefined;
     },
@@ -142,6 +151,20 @@ describe("the project home (T-3233, T-3235)", () => {
     await waitFor(() => expect(within(next).getAllByRole("link")).toHaveLength(2));
     expect(within(next).getByRole("link", { name: /1 change waits for approval/ })).toHaveAttribute("href", "/projects/helsinki/approvals");
     expect(within(next).getByRole("link", { name: /1 pipeline is failing/ })).toHaveAttribute("href", "/projects/helsinki/pipelines");
+  });
+
+  it("shows an administrator the invitations nobody accepted yet, leading to the people", async () => {
+    show({ verbs: ["read", "propose", "approve"], people: [{ username: "jana", requiredActions: ["VERIFY_EMAIL"] }, { username: "peter", requiredActions: [] }, { username: "eva" }] });
+    const next = await screen.findByRole("region", { name: en.home.next });
+    expect(await within(next).findByRole("link", { name: /1 invitation is not accepted yet/ })).toHaveAttribute("href", "/organization/people");
+  });
+
+  it("says the project's lists did not load and reads the failed list again on Retry", async () => {
+    show({ verbs: ["read", "propose", "approve"], spacesFail: 1 });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("the mirror is not ready");
+    fireEvent.click(within(alert).getByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(screen.queryByText("the mirror is not ready")).toBeNull());
   });
 
   it("shows a viewer no builder's checklist: they may make no space, source or pipeline (T-4165)", async () => {
@@ -309,6 +332,8 @@ describe("shared with me on its own", () => {
       answer: (url) => (url.pathname === "/api/v1/shared-apps" ? json({ title: "Unavailable", status: 503 }, 503) : undefined),
     });
     const section = await screen.findByRole("region", { name: en.home.shared.title });
-    expect(await within(section).findByRole("button", { name: /try again|retry/i })).toBeInTheDocument();
+    const asked = vi.mocked(fetch).mock.calls.length;
+    fireEvent.click(await within(section).findByRole("button", { name: /try again|retry/i }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(asked));
   });
 });

@@ -7676,7 +7676,6 @@
     "file": "Archív alebo manifesty",
     "fileHelp": "ZIP z exportu, alebo YAML prúd či JSON manifest.",
     "fileMissing": "Najprv vyberte súbor.",
-    "noFile": "Najprv vyberte súbor.",
     "noUrl": "Nahrajte balík ako súbor; Portál ho zo zadanej adresy nesťahuje.",
     "pastedSecret": "Tento balík má prihlasovací údaj napísaný priamo ({keys}). Nahraďte ho odkazom secretRef a vyberte súbor znova; import ho aj tak odmietne.",
     "namespace": "Projekt, do ktorého sa importuje",
