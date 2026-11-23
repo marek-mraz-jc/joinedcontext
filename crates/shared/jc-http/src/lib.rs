@@ -203,10 +203,12 @@ pub async fn resolve(
     let unreachable = || Error::Unreachable(host.to_owned());
     let resolved: Vec<SocketAddr> = match host.parse::<IpAddr>() {
         Ok(ip) => vec![SocketAddr::new(ip, port)],
+        // A lookup that times out and one that fails are the same refusal.
         Err(_) => tokio::time::timeout(timeout, tokio::net::lookup_host((host, port)))
             .await
-            .map_err(|_| unreachable())?
-            .map_err(|_| unreachable())?
+            .ok()
+            .and_then(Result::ok)
+            .ok_or_else(unreachable)?
             .collect(),
     };
     let allowed = |addr: &SocketAddr| !is_cloud_metadata(addr.ip()) && admit(addr.ip());
@@ -347,6 +349,31 @@ mod tests {
         ] {
             assert!(check_address(ip(blocked), false).is_err(), "{blocked}");
         }
+        // A public IPv4 address, built from its octets, plain and mapped into IPv6.
+        let public_v4 = Ipv4Addr::from([93, 184, 216, 34]);
+        for public in [
+            IpAddr::V4(public_v4),
+            ip("2606:2800:220:1::1"),
+            IpAddr::V6(public_v4.to_ipv6_mapped()),
+        ] {
+            assert_eq!(check_address(public, false), Ok(()), "{public}");
+        }
+        assert_eq!(
+            check_address(ip("fec0::1"), false).unwrap_err().class,
+            "site-local"
+        );
+        for (address, class) in [
+            ("224.0.0.1", "non-public IPv4"),
+            ("255.255.255.255", "non-public IPv4"),
+        ] {
+            assert_eq!(check_address(ip(address), false).unwrap_err().class, class);
+        }
+        assert_eq!(
+            check_address(ip("100.64.0.1"), false)
+                .unwrap_err()
+                .to_string(),
+            "blocked shared address space address 100.64.0.1"
+        );
         assert!(check_address(ip("127.0.0.1"), true).is_ok());
         assert!(check_address(ip("::1"), true).is_ok());
         assert!(check_address(ip("10.0.0.1"), true).is_err());
@@ -369,17 +396,22 @@ mod tests {
         }
     }
 
-    async fn serve(answer: &'static str) -> Url {
+    /// One connection on loopback: answers `answer` and hands back what the request sent.
+    async fn serve_one(answer: &'static str) -> (Url, tokio::task::JoinHandle<String>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let mut head = [0u8; 2048];
-                let _ = socket.read(&mut head).await;
-                let _ = socket.write_all(answer.as_bytes()).await;
-            }
+        let seen = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = [0u8; 2048];
+            let n = socket.read(&mut head).await.unwrap_or(0);
+            let _ = socket.write_all(answer.as_bytes()).await;
+            String::from_utf8_lossy(&head[..n]).into_owned()
         });
-        format!("http://{addr}/").parse().unwrap()
+        (format!("http://{addr}/").parse().unwrap(), seen)
+    }
+
+    async fn serve(answer: &'static str) -> Url {
+        serve_one(answer).await.0
     }
 
     fn get(url: Url, plain_http: bool) -> Request {
@@ -391,6 +423,29 @@ mod tests {
             plain_http,
             timeout: Duration::from_secs(5),
             max_response_bytes: 8,
+        }
+    }
+
+    /// A name resolves within the timeout and every address it gives must pass; one that does
+    /// not resolve, does not resolve in time or gives a refused address is the same refusal.
+    #[tokio::test]
+    async fn a_name_resolves_once_and_every_address_must_pass() {
+        let wait = Duration::from_secs(5);
+        let local = resolve("localhost", 80, wait, |_| true).await.unwrap();
+        assert!(!local.is_empty() && local.iter().all(|a| a.port() == 80 && a.ip().is_loopback()));
+        assert_eq!(
+            resolve("[::1]", 8, wait, |_| true).await.unwrap(),
+            vec![SocketAddr::new(ip("::1"), 8)]
+        );
+        for (host, timeout, strict) in [("localhost", wait, true), ("nothing.invalid", wait, false)]
+        {
+            let got = resolve(host, 80, timeout, |a| {
+                !strict || check_address(a, false).is_ok()
+            });
+            match got.await {
+                Err(Error::Unreachable(named)) => assert_eq!(named, host),
+                other => panic!("{host} {timeout:?}: {other:?}"),
+            }
         }
     }
 
@@ -422,5 +477,63 @@ mod tests {
             send(get(long, true), |_| true).await,
             Err(Error::TooLarge(8))
         ));
+    }
+
+    /// A name is pinned to the addresses resolved for it, the caller's headers and body go out,
+    /// and a declared length over the cap, a body cut short, a credential in the URL and a TLS
+    /// handshake that fails each refuse.
+    #[tokio::test]
+    async fn a_send_carries_headers_and_body_and_refuses_what_it_cannot_trust() {
+        let (url, seen) = serve_one("HTTP/1.1 201 Created\r\ncontent-length: 2\r\n\r\nok").await;
+        let mut named = url.clone();
+        named.set_host(Some("localhost")).unwrap();
+        let mut post = get(named, true);
+        post.method = Method::POST;
+        post.headers = vec![("x-probe".into(), "1".into())];
+        post.body = Some(Body::from("payload"));
+        let answer = send(post, |_| true).await.unwrap();
+        assert_eq!((answer.status, answer.body.as_slice()), (201, &b"ok"[..]));
+        let head = seen.await.unwrap();
+        assert!(head.starts_with("POST / HTTP/1.1"), "{head}");
+        assert!(
+            head.contains("x-probe: 1") && head.ends_with("payload"),
+            "{head}"
+        );
+
+        // Exactly the cap passes, declared or not.
+        for full in [
+            "HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\n12345678",
+            "HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n12345678",
+        ] {
+            let answer = send(get(serve(full).await, true), |_| true).await.unwrap();
+            assert_eq!(answer.body, b"12345678");
+        }
+        let big = serve("HTTP/1.1 200 OK\r\ncontent-length: 9\r\n\r\n123456789").await;
+        assert!(matches!(
+            send(get(big, true), |_| true).await,
+            Err(Error::DeclaredTooLarge {
+                declared: 9,
+                max: 8
+            })
+        ));
+        let cut =
+            serve("HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nab").await;
+        assert!(matches!(
+            send(get(cut, true), |_| true).await,
+            Err(Error::Body(_))
+        ));
+        let mut secret = url.clone();
+        secret.set_username("user").unwrap();
+        assert!(matches!(
+            send(get(secret, true), |_| true).await,
+            Err(Error::Url("no credentials in the URL"))
+        ));
+        let plain = serve("HTTP/1.1 200 OK\r\n\r\n").await;
+        let mut tls = plain.clone();
+        tls.set_scheme("https").unwrap();
+        match send(get(tls, false), |_| true).await {
+            Err(Error::Transport { host, .. }) => assert_eq!(host, "127.0.0.1"),
+            other => panic!("{other:?}"),
+        }
     }
 }

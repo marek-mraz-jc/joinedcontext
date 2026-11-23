@@ -245,9 +245,12 @@ pub(crate) fn challenge(door_base: &str) -> Response<Body> {
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
     );
-    if let Ok(value) = header::HeaderValue::from_str(&value) {
-        headers.insert(header::WWW_AUTHENTICATE, value);
-    }
+    // The door base is the request's own Host, which already read as a header value.
+    headers.extend(
+        header::HeaderValue::from_str(&value)
+            .ok()
+            .map(|value| (header::WWW_AUTHENTICATE, value)),
+    );
     resp
 }
 
@@ -326,9 +329,57 @@ mod tests {
                 organization: "bratislava",
                 id: EXPIRED_BRANCH,
                 name: "b-eaaaaaaaaaaaaaaaaaaaaaaaaa",
-                expires_at: Some(1),
+                // 2001: long gone, and past any clock a test could stub to a small number.
+                expires_at: Some(1_000_000_000),
             },
         ])
+    }
+
+    /// A form-encoded `+` is a space and a `%` without two hex digits stays as it is.
+    #[test]
+    fn a_query_token_decodes_plus_and_percent() {
+        assert_eq!(decoded("b-x+y%41%zz%4"), "b-x yA%zz%4");
+    }
+
+    /// MCP-33: only a 200 whose body is one JSON object within the limit becomes the door's
+    /// metadata; any other answer is the one 404.
+    #[tokio::test]
+    async fn the_door_metadata_takes_only_a_json_object() {
+        let answer = |status: StatusCode, body: Vec<u8>| {
+            let mut resp = Response::new(Body::from(body));
+            *resp.status_mut() = status;
+            resp
+        };
+        let got = metadata(
+            answer(StatusCode::OK, br#"{"a":1}"#.to_vec()),
+            "https://h/p",
+        )
+        .await;
+        assert_eq!(got.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(got.into_body(), 4096).await.unwrap();
+        let doc: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(doc["a"], 1);
+        assert_eq!(doc["resource"], door("https://h/p"));
+        // A document past a kilobyte is still within the limit.
+        let mut padded = br#"{"a":1}"#.to_vec();
+        padded.resize(2048, b' ');
+        assert_eq!(
+            metadata(answer(StatusCode::OK, padded), "https://h/p")
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        for refused in [
+            answer(StatusCode::UNAUTHORIZED, br#"{"a":1}"#.to_vec()),
+            answer(StatusCode::OK, b"[1]".to_vec()),
+            answer(StatusCode::OK, b"not json".to_vec()),
+            answer(StatusCode::OK, vec![b' '; METADATA_LIMIT + 1]),
+        ] {
+            assert_eq!(
+                metadata(refused, "https://h/p").await.status(),
+                StatusCode::NOT_FOUND
+            );
+        }
     }
 
     /// RTE-05: an id of this Organization goes to its name; another Organization's id, an
