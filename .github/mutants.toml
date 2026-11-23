@@ -84,6 +84,14 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # joinedcontext-policy read_filter: every rule names one type (rules() and the per-type loop), so with no
+  # type refused and no rule dropped the block keeps every rule and adds none; < and <= read alike (T-7672).
+  'addons/joinedcontext-policy/src/decide\.rs:\d+:\d+: replace < with <= in read_filter',
+  # joinedcontext-policy Information::narrowed: without `attributes` (or for a schema read, which every
+  # capability gives) the general path keeps every listed Attribute, so the early return answers the same; the
+  # `attributes` it clears is read by nothing after it (rules() takes the names alone) (T-7672).
+  'addons/joinedcontext-policy/src/document\.rs:\d+:\d+: replace \|\| with && in Information::narrowed',
+  'addons/joinedcontext-policy/src/document\.rs:\d+:\d+: delete field attributes from struct Self expression in Information::narrowed',
   # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
   # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
   'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
