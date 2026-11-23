@@ -448,9 +448,16 @@ pub fn aggregated(table: &Table) -> Option<Value> {
     let spec = &mut event["spec"];
     if !counts {
         spec["encoding"]["x"]["scale"] = json!({"type": "utc"});
-        if made.per == "day" {
+        let format = match made.per {
+            "day" if over_a_year(&table.rows) => Some("%-d %b %Y"),
+            "day" => Some("%-d %b"),
+            "month" => Some("%b %Y"),
+            "year" => Some("%Y"),
+            _ => None,
+        };
+        if let Some(format) = format {
             spec["encoding"]["x"]["axis"] =
-                json!({"format": "%-d %b", "labelOverlap": "greedy", "labelSeparation": 24});
+                json!({"format": format, "labelOverlap": "greedy", "labelSeparation": 24});
         }
         let first = table.rows.first()?.first();
         if table.rows.iter().all(|row| row.first() == first) {
@@ -514,6 +521,13 @@ pub fn aggregated(table: &Table) -> Option<Value> {
         event["enums"] = json!(words);
     }
     Some(event)
+}
+
+/// Whether a daily history's dates, its second column, lie in more than one year.
+fn over_a_year(rows: &[Vec<Value>]) -> bool {
+    let mut years = rows.iter().filter_map(|row| row.get(1)?.as_str()?.get(..4));
+    let first = years.next();
+    years.any(|year| Some(year) != first)
 }
 
 /// A title the renderer draws: one its refusal list would refuse is left out, so the chart still
@@ -1040,6 +1054,7 @@ mod tests {
             total: 1651,
             partial: false,
             days: None,
+            years: None,
         });
         let event = aggregated(&table).expect("a chart");
         assert_eq!(event["spec"]["layer"][0]["mark"]["type"], "bar");

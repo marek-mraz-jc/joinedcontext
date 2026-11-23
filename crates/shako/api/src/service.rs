@@ -17,13 +17,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use jc_time::TimestampTz;
 use shako_core::{
-    Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MergePolicyInput,
-    ObjectTarget, PackageFileRecord, PackageId, PackageRecord, PackageVersionRecord,
-    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId,
-    RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
-    WebhookId, WebhookRecord, check_repo_count_quota, remaining_storage_allowance, sha256_hex,
-    validate_branch_name, validate_package_segment, validate_repo_or_owner_name,
-    validate_tree_path,
+    Action, AuditRecord, BranchProtectionRule, CommitStatusRecord, DeliveryRecord,
+    MergePolicyInput, ObjectTarget, PackageFileRecord, PackageId, PackageRecord,
+    PackageVersionRecord, ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, RefPolicy,
+    RefUpdate, RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError,
+    ShakoResult, WebhookFormat, WebhookId, WebhookRecord, check_repo_count_quota,
+    remaining_storage_allowance, sha256_hex, validate_branch_name, validate_package_segment,
+    validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
     CommitAuthor, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
@@ -42,6 +42,59 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|e| ShakoError::Internal(e.to_string()))?
+}
+
+/// Writes without an operation of their own in the registry, with their audit kind.
+const UNLISTED_WRITES: &[(&str, &str)] = &[
+    ("PatchRepository", "REPO_UPDATE"),
+    ("PatchPullRequest", "PR_UPDATE"),
+    ("SetCommitStatus", "STATUS_SET"),
+];
+
+/// The longest `target` and `request_id` an audit row keeps.
+const AUDIT_TEXT_MAX: usize = 128;
+
+fn clipped(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// Writes the audit row of a forge write (S6-20) through the store, inside the request's unit
+/// (`jc_audit::layer` on the doors), so the change stands with its row or not at all: an error
+/// here fails the write. `operation` is the registry's name (`CreateRepository`), whose
+/// `audit_kind` the row carries; `target` names what was written by ids.
+pub async fn audit(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    operation: &str,
+    target: String,
+) -> ShakoResult<()> {
+    let kind = state
+        .registry
+        .find(operation)
+        .filter(|op| op.name == operation)
+        .map(|op| op.audit_kind)
+        .or_else(|| {
+            UNLISTED_WRITES
+                .iter()
+                .find(|(name, _)| *name == operation)
+                .map(|(_, kind)| *kind)
+        })
+        .ok_or_else(|| ShakoError::Internal(format!("no audit kind for '{operation}'")))?;
+    state
+        .store()
+        .append_audit(AuditRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: ctx.instance_id,
+            org_id: ctx.org_id,
+            kind: kind.to_owned(),
+            operation: operation.to_owned(),
+            actor_id: clipped(ctx.subject.login(), 256),
+            target: clipped(&target, 4 * AUDIT_TEXT_MAX),
+            decision: "allow".into(),
+            request_id: clipped(&ctx.request_id, AUDIT_TEXT_MAX),
+            created_at: TimestampTz::now(),
+        })
+        .await
 }
 
 /// The person a commit is attributed to when the caller names nobody: the token's subject.
@@ -107,11 +160,19 @@ async fn refuse_existing(
 async fn record_new_repo(
     state: &ShakoState,
     ctx: &RequestCtx,
+    operation: &str,
     rec: RepoRecord,
     disk_path: &std::path::Path,
 ) -> ShakoResult<RepoRecord> {
     let size = rec.size_bytes;
-    let created = match state.store().create_repo(rec).await {
+    let target = format!("repos/{}", rec.id);
+    let created = match async {
+        let created = state.store().create_repo(rec).await?;
+        audit(state, ctx, operation, target).await?;
+        Ok(created)
+    }
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(disk_path);
@@ -205,7 +266,7 @@ pub async fn create_repository(
         created_at: now,
         updated_at: now,
     };
-    record_new_repo(state, ctx, rec, &disk_path).await
+    record_new_repo(state, ctx, "CreateRepository", rec, &disk_path).await
 }
 
 /// A copy of a repository of this forge, with its whole history, under a new owner and name.
@@ -280,7 +341,7 @@ pub async fn import_repository(
         created_at: now,
         updated_at: now,
     };
-    record_new_repo(state, ctx, rec, &dest).await
+    record_new_repo(state, ctx, "ImportRepository", rec, &dest).await
 }
 
 /// What a repository update may change; `None` keeps the field.
@@ -303,6 +364,18 @@ pub async fn patch_repository(
 ) -> ShakoResult<RepoRecord> {
     let (mut repo, disk_path) =
         resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    // Archive is the registry's operation; any other change is a settings update.
+    let operation = if patch.archived == Some(true)
+        && patch.description.is_none()
+        && patch.default_branch.is_none()
+        && patch.private.is_none()
+        && patch.name.is_none()
+    {
+        "Archive"
+    } else {
+        "PatchRepository"
+    };
+    audit(state, ctx, operation, format!("repos/{}", repo.id)).await?;
     if let Some(a) = patch.archived {
         repo.archived = a;
     }
@@ -354,7 +427,12 @@ pub async fn delete_repository(
         .store()
         .delete_repo(repo.instance_id, repo.org_id, repo.id)
         .await?;
-    let _ = std::fs::remove_dir_all(&disk_path);
+    audit(state, ctx, "Delete", format!("repos/{}", repo.id)).await?;
+    // The objects go only once the deletion stands: a rolled-back request keeps the repository.
+    jc_audit::after_commit(async move {
+        let _ = tokio::fs::remove_dir_all(&disk_path).await;
+    })
+    .await;
     let _ = state
         .store()
         .adjust_quota_usage(
@@ -434,6 +512,14 @@ pub async fn create_branch(
             changed_paths: &[],
         },
     )?;
+    // The row first: a ref on disk does not roll back, a row does.
+    audit(
+        state,
+        ctx,
+        "CreateBranch",
+        format!("repos/{}/branches/{new_branch}", repo.id),
+    )
+    .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let from_ref = from.unwrap_or_else(|| repo.default_branch.clone());
     let new_b = new_branch.to_owned();
@@ -455,6 +541,13 @@ pub async fn delete_branch(
         .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
         .await?;
     check_branch_delete(state, ctx, &repo, &policy, branch)?;
+    audit(
+        state,
+        ctx,
+        "DeleteBranch",
+        format!("repos/{}/branches/{branch}", repo.id),
+    )
+    .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let b = branch.to_owned();
     if blocking(move || git_delete_branch(&disk_path, &b)).await? {
@@ -522,7 +615,8 @@ pub async fn protect_branch(
         &repo.name,
     )?;
     let now = TimestampTz::now();
-    state
+    let target = format!("repos/{}/protections/{}", repo.id, rule.rule_name);
+    let saved = state
         .store()
         .upsert_protection_rule(ProtectionRuleRecord {
             id: uuid::Uuid::now_v7(),
@@ -533,7 +627,9 @@ pub async fn protect_branch(
             created_at: now,
             updated_at: now,
         })
-        .await
+        .await?;
+    audit(state, ctx, "Protect", target).await?;
+    Ok(saved)
 }
 
 /// Changes the fields `patch` names on a stored branch rule and keeps every other field as
@@ -590,10 +686,20 @@ pub async fn unprotect_branch(
             "branch rule '{rule_name}' guards who writes the branch and is not removed through the API"
         )));
     }
-    state
+    let deleted = state
         .store()
         .delete_protection_rule(repo.instance_id, repo.org_id, repo.id, rule_name)
-        .await
+        .await?;
+    if deleted {
+        audit(
+            state,
+            ctx,
+            "Unprotect",
+            format!("repos/{}/protections/{rule_name}", repo.id),
+        )
+        .await?;
+    }
+    Ok(deleted)
 }
 
 /// A rule that keeps some writer off the branch: push closed, or push or merge narrowed to an
@@ -757,6 +863,13 @@ pub async fn commit_files(
     let author = req.author.unwrap_or_else(|| caller_as_author(ctx));
     let committer = req.committer.unwrap_or_else(|| author.clone());
 
+    audit(
+        state,
+        ctx,
+        "CommitFiles",
+        format!("repos/{}/branches/{branch}", repo.id),
+    )
+    .await?;
     let guard = state.repo_locks.lock(repo.id).await;
     let (disk, b, msg) = (disk_path.clone(), branch.clone(), req.message);
     // Only the default branch may start without history (the first commit of an empty
@@ -928,6 +1041,13 @@ pub async fn open_pull_request(
             closed_at: None,
         })
         .await?;
+    audit(
+        state,
+        ctx,
+        "OpenPullRequest",
+        format!("repos/{}/pulls/{}", repo.id, saved.number),
+    )
+    .await?;
     let payload = build_pr_webhook_payload(&repo, &saved, "opened", ctx.subject.login());
     let _ = emit_and_dispatch_event(
         state,
@@ -1049,7 +1169,7 @@ pub async fn create_review(
             ));
         }
     }
-    state
+    let saved = state
         .store()
         .create_review(ReviewRecord {
             id: uuid::Uuid::now_v7(),
@@ -1066,7 +1186,15 @@ pub async fn create_review(
             dismissed: false,
             created_at: TimestampTz::now(),
         })
-        .await
+        .await?;
+    audit(
+        state,
+        ctx,
+        "Review",
+        format!("repos/{}/pulls/{number}/reviews/{}", repo.id, saved.id),
+    )
+    .await?;
+    Ok(saved)
 }
 
 /// What a pull request update may change; `None` keeps the field.
@@ -1089,6 +1217,16 @@ pub async fn patch_pull_request(
 ) -> ShakoResult<(RepoRecord, PullRequestRecord)> {
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Propose).await?;
     let mut pr = load_pull(state, &repo, number).await?;
+    // Close is the registry's operation; any other change is an edit of the pull request.
+    let operation = match &patch {
+        PullRequestPatch {
+            state: Some(st),
+            title: None,
+            body: None,
+            base: None,
+        } if st == "closed" => "Close",
+        _ => "PatchPullRequest",
+    };
     match patch.state.as_deref() {
         Some("closed") if pr.state != "closed" => {
             pr.state = "closed".into();
@@ -1117,6 +1255,13 @@ pub async fn patch_pull_request(
         pr.base_ref = base;
     }
     let saved = state.store().update_pull_request(pr).await?;
+    audit(
+        state,
+        ctx,
+        operation,
+        format!("repos/{}/pulls/{number}", repo.id),
+    )
+    .await?;
     Ok((repo, saved))
 }
 
@@ -1159,6 +1304,13 @@ pub async fn update_pull_branch(
             changed_paths: &changed_paths,
         },
     )?;
+    audit(
+        state,
+        ctx,
+        "UpdateBranch",
+        format!("repos/{}/pulls/{number}", repo.id),
+    )
+    .await?;
     let author = caller_as_author(ctx);
     let (new_head, m) = state
         .git_work
@@ -1253,6 +1405,13 @@ pub async fn merge_pull_request(
         .message
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| format!("Merge pull request #{number}: {}", pr.title));
+    audit(
+        state,
+        ctx,
+        "Merge",
+        format!("repos/{}/pulls/{number}", repo.id),
+    )
+    .await?;
     let committer = caller_as_author(ctx);
     let author = req.author.unwrap_or_else(|| committer.clone());
     let (d, b, h, style) = (
@@ -1403,7 +1562,7 @@ pub async fn add_push_mirror(
             .put_secret(repo.org_id, &secret_ref, &format!("{user}:{pw}"))
             .await?;
     }
-    state
+    let saved = state
         .store()
         .upsert_push_mirror(PushMirrorRecord {
             id: uuid::Uuid::now_v7(),
@@ -1420,7 +1579,15 @@ pub async fn add_push_mirror(
             last_error: String::new(),
             created_at: TimestampTz::now(),
         })
-        .await
+        .await?;
+    audit(
+        state,
+        ctx,
+        "AddPushMirror",
+        format!("repos/{}/mirrors/{}", repo.id, saved.remote_name),
+    )
+    .await?;
+    Ok(saved)
 }
 
 /// Removes a push mirror by its name (Admin); a name that is not there is fine.
@@ -1432,10 +1599,20 @@ pub async fn remove_push_mirror(
     remote_name: &str,
 ) -> ShakoResult<()> {
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
-    let _ = state
+    let deleted = state
         .store()
         .delete_push_mirror(repo.instance_id, repo.org_id, repo.id, remote_name)
-        .await;
+        .await
+        .unwrap_or(false);
+    if deleted {
+        audit(
+            state,
+            ctx,
+            "RemovePushMirror",
+            format!("repos/{}/mirrors/{remote_name}", repo.id),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -1447,7 +1624,19 @@ pub async fn sync_push_mirrors(
     name: &str,
 ) -> ShakoResult<()> {
     let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
-    crate::mirror::sync_now(state, &repo).await
+    audit(
+        state,
+        ctx,
+        "SyncPushMirrors",
+        format!("repos/{}/mirrors", repo.id),
+    )
+    .await?;
+    // Outside the request's unit: the sync claims and records in transactions of its own while
+    // this request waits for it, which a mark held open in the unit would block.
+    let (state, repo) = (state.clone(), repo);
+    tokio::spawn(async move { crate::mirror::sync_now(&state, &repo).await })
+        .await
+        .map_err(|e| ShakoError::Internal(e.to_string()))?
 }
 
 /// Where a webhook's signing secret comes from.
@@ -1509,7 +1698,7 @@ pub async fn add_webhook(
     if let Some(r) = &req.previous_secret_ref {
         check_caller_secret_ref("previousSecretRef", r, &repo)?;
     }
-    state
+    let saved = state
         .store()
         .create_webhook(WebhookRecord {
             id,
@@ -1528,7 +1717,15 @@ pub async fn add_webhook(
             format: req.format,
             created_at: TimestampTz::now(),
         })
-        .await
+        .await?;
+    audit(
+        state,
+        ctx,
+        "AddWebhook",
+        format!("repos/{}/hooks/{}", repo.id, saved.id),
+    )
+    .await?;
+    Ok(saved)
 }
 
 // =========================================================================
@@ -1785,6 +1982,16 @@ pub async fn publish_generic_file(
         .store()
         .adjust_quota_usage(ctx.instance_id, ctx.org_id, 0, 0, size_bytes as i64)
         .await;
+    audit(
+        state,
+        ctx,
+        "PublishPackage",
+        format!(
+            "packages/{}/versions/{}/files/{}",
+            pkg_rec.id, ver_rec.id, saved.id
+        ),
+    )
+    .await?;
     Ok(saved)
 }
 
@@ -1833,5 +2040,12 @@ pub async fn redeliver_webhook(
         "",
         ctx.subject.login(),
     );
+    audit(
+        state,
+        ctx,
+        "RedeliverWebhook",
+        format!("repos/{}/hooks/{hook_id}", repo.id),
+    )
+    .await?;
     deliver_webhook_with_retries(state, &hook, "push", &payload).await
 }

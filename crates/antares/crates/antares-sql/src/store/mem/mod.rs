@@ -1428,6 +1428,41 @@ impl Store {
         })
     }
 
+    /// [`antares_store::CurrentStateDriver::context_put_capped`]: counted and
+    /// inserted under one write lock.
+    pub fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: antares_store::ContextCaps,
+    ) -> Result<antares_store::ContextPut, NgsiError> {
+        on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            if inner.contexts.contains_key(id) {
+                return Ok(antares_store::ContextPut::Stored);
+            }
+            let kind = doc.get("kind").and_then(Value::as_str);
+            let (held, bytes) = inner
+                .contexts
+                .values()
+                .filter(|r| {
+                    r.get("kind").and_then(Value::as_str) == kind
+                        && context_row_visible(r, Some(tenant))
+                })
+                .fold((0usize, 0u64), |(n, b), r| {
+                    let bytes = antares_store::context_row_bytes(r);
+                    (n.saturating_add(1), b.saturating_add(bytes))
+                });
+            let put = caps.admit(held, bytes, antares_store::context_row_bytes(&doc));
+            if put == antares_store::ContextPut::Stored {
+                self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
+                inner.contexts.insert(id.to_owned(), doc);
+            }
+            Ok(put)
+        })
+    }
+
     pub fn context_get(&self, tenant: Option<&TenantId>, id: &str) -> Option<Value> {
         self.inner
             .read()

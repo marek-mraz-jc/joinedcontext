@@ -192,6 +192,10 @@ const KNOWN_KEYS: &[&str] = &[
     // whole broker, and the share of that width one tenant may hold.
     "ANTARES_DELIVERY_WIDTH",
     "ANTARES_DELIVERY_WIDTH_PER_TENANT",
+    "ANTARES_CHANNELS_PER_TENANT",
+    "ANTARES_CHANNELS_MAX",
+    "ANTARES_CONTEXTS_PER_TENANT",
+    "ANTARES_CONTEXT_BYTES_PER_TENANT",
     // Estimated heap every delivery lane may hold at once (T-4549).
     "ANTARES_DELIVERY_LANE_BYTES",
     // Batch write bodies in flight at once, in bytes (T-4562).

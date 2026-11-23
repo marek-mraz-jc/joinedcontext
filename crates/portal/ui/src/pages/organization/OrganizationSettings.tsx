@@ -32,6 +32,7 @@ interface ProjectsPolicy {
 
 interface OrganizationSpec {
   domain?: string;
+  catalog?: unknown;
   gitRepositoryUrl?: string;
   /** The installation Organization (PF-121); its administrators run every other one. */
   installation?: boolean;
@@ -92,6 +93,11 @@ export function toOrganization(form: Record<string, unknown>, stored: unknown): 
     next.policies = { ...next.policies, agents };
   } else if (next.policies?.agents && models) {
     next.policies = { ...next.policies, agents: { ...next.policies.agents, models } };
+  }
+  // The form hands back empty objects for a publisher nobody typed; jc-core refuses those.
+  const catalog = next.catalog as { publisher?: { uri?: string; name?: object } } | undefined;
+  if (catalog && Object.keys(catalog).every((key) => key === "publisher")) {
+    if (!catalog.publisher?.uri && Object.keys(catalog.publisher?.name ?? {}).length === 0) delete next.catalog;
   }
   return { ...manifest, spec: next };
 }

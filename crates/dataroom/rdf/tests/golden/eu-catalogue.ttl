@@ -1,0 +1,212 @@
+@prefix adms: <http://www.w3.org/ns/adms#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcatap: <http://data.europa.eu/r5r/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix eli: <http://data.europa.eu/eli/ontology#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix leg: <https://data.gov.sk/def/ontology/legislation/> .
+@prefix locn: <http://www.w3.org/ns/locn#> .
+@prefix odrl: <http://www.w3.org/ns/odrl/2/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix pu: <https://data.gov.cz/slovník/podmínky-užití/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix spdx: <http://spdx.org/rdf/terms#> .
+@prefix time: <http://www.w3.org/2006/time#> .
+@prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://data.europa.eu/eli/reg_impl/2023/138/oj> a eli:LegalResource .
+
+<http://data.europa.eu/nuts/code/SK032> a dct:Location .
+
+<http://publications.europa.eu/resource/authority/continent/EUROPE> a dct:Location .
+
+<http://publications.europa.eu/resource/authority/data-theme/ENVI> a skos:Concept ;
+  skos:prefLabel "Environment"@en .
+
+<http://publications.europa.eu/resource/authority/data-theme/TRAN> a skos:Concept ;
+  skos:prefLabel "Transport"@en .
+
+<http://publications.europa.eu/resource/authority/file-type/CSV> a dct:MediaTypeOrExtent .
+
+<http://publications.europa.eu/resource/authority/file-type/ZIP> a dct:MediaTypeOrExtent .
+
+<http://publications.europa.eu/resource/authority/frequency/DAILY> a dct:Frequency .
+
+<http://publications.europa.eu/resource/authority/frequency/WEEKLY_3> a dct:Frequency .
+
+<http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> a dct:LicenseDocument .
+
+<http://www.iana.org/assignments/media-types/application/json> a dct:MediaType .
+
+<http://www.iana.org/assignments/media-types/application/zip> a dct:MediaType .
+
+<http://www.iana.org/assignments/media-types/text/csv> a dct:MediaType .
+
+<https://data.gov.cz/lkod/mdcr/datové-sady/vld> a dcat:Dataset ;
+  dcatap:applicableLegislation <https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> ;
+  dct:accrualPeriodicity <http://publications.europa.eu/resource/authority/frequency/WEEKLY_3> ;
+  dct:conformsTo <https://ofn.gov.cz/jízdní-řády/2020-05-01/> ;
+  dct:description "Obsahem datové sady jsou schválené a aktuálně platné jízdní řády veřejné linkové dopravy postoupené do Celostátního informačního systému o jízdních řádech ve strojově zpracovatelném formátu."@cs, "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."@en ;
+  dct:identifier "vld" ;
+  dct:issued "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+  dct:modified "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+  dct:publisher <https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008> ;
+  dct:spatial <http://publications.europa.eu/resource/authority/continent/EUROPE>, <https://linked.cuzk.cz/resource/ruian/stat/1> ;
+  dct:temporal _:b4 ;
+  dct:title "Jízdní řády veřejné linkové dopravy"@cs, "Public transport timetables"@en ;
+  dcat:contactPoint _:b3 ;
+  dcat:distribution <https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv>, <https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql> ;
+  dcat:keyword "autobus"@cs, "bus"@en, "jízdní řády"@cs, "public transport"@en, "timetable"@en, "veřejná linková doprava"@cs ;
+  dcat:spatialResolutionInMeters "12.0"^^xsd:decimal ;
+  dcat:temporalResolution "P1D"^^xsd:duration ;
+  dcat:theme <http://eurovoc.europa.eu/4512>, <http://publications.europa.eu/resource/authority/data-theme/TRAN> ;
+  foaf:page <https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy> .
+
+<https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv> a dcat:Distribution ;
+  dcatap:applicableLegislation <https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> ;
+  dct:conformsTo <https://portal.cisjr.cz/schemata/json-schema.json> ;
+  dct:format <http://publications.europa.eu/resource/authority/file-type/ZIP> ;
+  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
+  dct:title "JSON distribuce v ZIP soubrou"@cs, "JSON distribution in ZIP file"@en ;
+  dcat:accessURL <https://portal.cisjr.cz/pub/draha/mestske/JDF.zip> ;
+  dcat:compressFormat <http://www.iana.org/assignments/media-types/application/zip> ;
+  dcat:downloadURL <https://portal.cisjr.cz/pub/draha/mestske/JDF.zip> ;
+  dcat:mediaType <http://www.iana.org/assignments/media-types/application/json> ;
+  dcat:packageFormat <http://www.iana.org/assignments/media-types/application/zip> .
+
+<https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql> a dcat:Distribution ;
+  dcatap:applicableLegislation <https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> ;
+  dct:title "SPARQL endpoint for timetables"@en, "SPARQL endpoint pro jízdní řády"@cs ;
+  dcat:accessService <https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql> ;
+  dcat:accessURL <https://portal.cisjr.cz/sparql> .
+
+<https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql> a dcat:DataService ;
+  dcatap:applicableLegislation <https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> ;
+  dct:conformsTo <https://www.w3.org/TR/sparql11-protocol/> ;
+  dct:title "SPARQL endpoint for timetables"@en, "SPARQL endpoint pro jízdní řády"@cs ;
+  dcat:endpointDescription <https://portal.cisjr.cz/sparql> ;
+  dcat:endpointURL <https://portal.cisjr.cz/sparql> .
+
+<https://data.gov.sk/def/ontology/transport/> a dct:Standard .
+
+<https://data.gov.sk/id/nuts1/SK0> a dct:Location .
+
+<https://data.gov.sk/legal-subject/30416094> a foaf:Agent .
+
+<https://data.gov.sk/set/vld> a dcat:Dataset ;
+  dct:accrualPeriodicity <http://publications.europa.eu/resource/authority/frequency/WEEKLY_3> ;
+  dct:conformsTo <https://data.gov.sk/def/ontology/transport/> ;
+  dct:description "Obsahom datasetu sú schválené a aktuálne platné cestovné poriadky verejné linkové dopravy poskytnuté do Centrálneho informačního systému Cestovné poriadky ve strojovo spracovateľnom formáte."@sk, "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."@en ;
+  dct:identifier "vld" ;
+  dct:issued "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+  dct:modified "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+  dct:publisher <https://data.gov.sk/legal-subject/30416094> ;
+  dct:spatial <https://data.gov.sk/id/nuts1/SK0> ;
+  dct:temporal _:b6 ;
+  dct:title "Cestovné poriadky"@sk, "Public transport timetables"@en ;
+  dcat:contactPoint _:b5 ;
+  dcat:distribution <https://data.gov.sk/set/vld/resource/csv>, <https://data.gov.sk/set/vld/resource/sparql> ;
+  dcat:keyword "autobusy"@sk, "bus"@en, "cestovné poriadky"@sk, "public transport"@en, "timetable"@en, "verejná linková doprava"@sk ;
+  dcat:landingPage <https://opendata.mindop.sk/show/vld> ;
+  dcat:spatialResolutionInMeters "12.0"^^xsd:decimal ;
+  dcat:temporalResolution "P1D"^^xsd:duration ;
+  dcat:theme <http://eurovoc.europa.eu/4512>, <http://publications.europa.eu/resource/authority/data-theme/TRAN> .
+
+<https://data.gov.sk/set/vld/resource/csv> a dcat:Distribution ;
+  dct:conformsTo <https://opendata.middop.sk/schemy/json-schema.json> ;
+  dct:format <http://publications.europa.eu/resource/authority/file-type/ZIP> ;
+  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
+  dct:title "JSON distribution in ZIP file"@en, "JSON distribúcia v ZIP súbore"@sk ;
+  dcat:accessURL <https://opendata.middop.sk/pub/draha/mestske/JDF.zip> ;
+  dcat:compressFormat <http://www.iana.org/assignments/media-types/application/zip> ;
+  dcat:downloadURL <https://opendata.middop.sk/pub/draha/mestske/JDF.zip> ;
+  dcat:mediaType <http://www.iana.org/assignments/media-types/application/json> ;
+  dcat:packageFormat <http://www.iana.org/assignments/media-types/application/zip> .
+
+<https://data.gov.sk/set/vld/resource/sparql> a dcat:Distribution ;
+  dcat:accessURL <> .
+
+<https://linked.cuzk.cz/resource/ruian/stat/1> a dct:Location .
+
+<https://ofn.gov.cz/jízdní-řády/2020-05-01/> a dct:Standard .
+
+<https://opendata.example.org> a foaf:Document .
+
+<https://opendata.example.org/catalog> a dcat:Catalog ;
+  dct:description "Catalogue description"@en, "Popis katalogu"@cs, "Popis katalógu"@sk ;
+  dct:publisher <https://publisher.example.org/id/city> ;
+  dct:title "Catalogue"@en, "Katalog"@cs, "Katalóg"@sk ;
+  dcat:contactPoint _:b1 ;
+  dcat:dataset <https://data.gov.cz/lkod/mdcr/datové-sady/vld>, <https://data.gov.sk/set/vld>, <https://opendata.example.org/dataset/air> ;
+  foaf:homepage <https://opendata.example.org> .
+
+<https://opendata.example.org/dataset/air> a dcat:Dataset ;
+  dcatap:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj> ;
+  dct:accrualPeriodicity <http://publications.europa.eu/resource/authority/frequency/DAILY> ;
+  dct:description "Measurements"@en, "Merania"@sk, "Měření"@cs ;
+  dct:identifier "air" ;
+  dct:issued "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+  dct:modified "2026-11-02T10:00:00Z"^^xsd:dateTime ;
+  dct:publisher <https://publisher.example.org/id/city> ;
+  dct:spatial <http://data.europa.eu/nuts/code/SK032> ;
+  dct:title "Air quality"@en, "Kvalita ovzdušia"@sk, "Kvalita ovzduší"@cs ;
+  dcat:contactPoint _:b2 ;
+  dcat:distribution <https://opendata.example.org/dataset/air/resource/res-1> ;
+  dcat:keyword "PM10"@sk, "air"@en, "ovzdušie"@sk, "ovzduší"@cs ;
+  dcat:theme <http://publications.europa.eu/resource/authority/data-theme/ENVI> .
+
+<https://opendata.example.org/dataset/air/resource/res-1> a dcat:Distribution ;
+  dcatap:applicableLegislation <http://data.europa.eu/eli/reg_impl/2023/138/oj> ;
+  dct:format <http://publications.europa.eu/resource/authority/file-type/CSV> ;
+  dct:license <http://publications.europa.eu/resource/authority/licence/CC_BY_4_0> ;
+  dct:title "CSV súbor"@sk ;
+  dcat:accessURL <https://files.example.org/air> ;
+  dcat:downloadURL <https://files.example.org/air.csv> ;
+  dcat:mediaType <http://www.iana.org/assignments/media-types/text/csv> .
+
+<https://opendata.middop.sk/schemy/json-schema.json> a dct:Standard .
+
+<https://opendata.mindop.sk/show/vld> a foaf:Document .
+
+<https://portal.cisjr.cz/schemata/json-schema.json> a dct:Standard .
+
+<https://publisher.example.org/id/city> a foaf:Agent ;
+  foaf:name "City"@en, "Mesto"@sk, "Město"@cs .
+
+<https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008> a foaf:Agent .
+
+<https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19> a eli:LegalResource .
+
+<https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy> a foaf:Document .
+
+<https://www.w3.org/TR/sparql11-protocol/> a dct:Standard .
+
+_:b1 a vcard:Kind, vcard:Organization ;
+  vcard:fn "Oddelenie dát"@sk ;
+  vcard:hasEmail <mailto:data@city.example> .
+
+_:b2 a vcard:Kind, vcard:Organization ;
+  vcard:fn "Oddelenie"@sk ;
+  vcard:hasEmail <mailto:data@city.example> .
+
+_:b3 a vcard:Kind, vcard:Organization ;
+  vcard:fn "Ministerstvo dopravy, Odbor veřejné dopravy"@cs, "Ministry of Transport"@en ;
+  vcard:hasEmail <mailto:sekretariat.190@mdcr.cz> .
+
+_:b4 a dct:PeriodOfTime ;
+  dcat:endDate "2017-12-31"^^xsd:date ;
+  dcat:startDate "2009-01-01"^^xsd:date .
+
+_:b5 a vcard:Kind, vcard:Organization ;
+  vcard:fn "Ministerstvo dopravy, Odbor verejnej dopravy"@sk, "Ministry of Transport"@en ;
+  vcard:hasEmail <mailto:info@mindop.sk> .
+
+_:b6 a dct:PeriodOfTime ;
+  dcat:endDate "2017-12-31"^^xsd:date ;
+  dcat:startDate "2009-01-01"^^xsd:date .
+

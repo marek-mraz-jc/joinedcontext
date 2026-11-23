@@ -31,18 +31,23 @@ Three questions decide whether such a binding is safe here:
    body names `entity`, `attribute`, `broker`, `topic`, `retention`
    (`mirror` | `relay`), and optionally `maxRate` (samples per second,
    1 to 100, default 10) and `maxBytes` (1 to 65536, default 4096). Unknown
-   members are refused. The documents live under the broker's reserved
-   tenant `antares-channels`, keyed `{tenant}:{id}`.
+   members are refused. The documents live under the binder's own Tenant,
+   keyed `{id}` (amended 2026-11-22, S4-16). Until then they lived under the
+   reserved tenant `antares-channels`; a start moves what is left there, and
+   the name stays reserved.
 2. **The bind is the write it stands for.** Binding asks the policy seam
    about a 5.6.3 Append Attributes of that Attribute on that Entity, as the
    binding subject, through `AppState::call` with a task-local bind intent
    that stops the write after the decision: a refusal is the seam's own 403
-   and nothing is bound; an absent Entity is 404. The subject's headers are
-   stored with the Channel as a Subscription stores its creator's
-   (`__subject`, never served), and only that subject reads or unbinds it.
+   and nothing is bound; an absent Entity is 404. The identity of the
+   subject (`PolicyEngine::identity`: who it is, never a role, group or
+   membership) is stored with the Channel (`__subject`, never served) and
+   the bind is decided as that identity; only that identity reads or unbinds
+   it (amended 2026-11-22, S4-17).
 3. **Every sample is decided again.** A sample is a 5.6.3 Append Attributes
-   through `AppState::call` with the binder's tenant, `Link` and subject
-   headers: negotiation, the bounds wall, the policy seam and views apply as
+   through `AppState::call` with the binder's tenant, `Link` and identity,
+   marked `@identity` (membership unknown: no grant by it, every prohibition
+   by it): negotiation, the bounds wall, the policy seam and views apply as
    for a client. A grant withdrawn after the bind stops the samples; they
    count as `refused`.
 4. **Retention.** `mirror` is that write: current state, history by the
@@ -72,7 +77,10 @@ Three questions decide whether such a binding is safe here:
    the server hands each message to one of them. It resubscribes after a
    reconnect. A bridge that is down when a Channel is bound refuses the bind
    (500, nothing stored); one down at start is retried every 30 s.
-9. **Caps.** Per Channel: `maxBytes` per payload (larger is `tooLarge`), a
+9. **Caps.** Per Tenant 50 Channels and per process 1000
+   (`ANTARES_CHANNELS_PER_TENANT`, `ANTARES_CHANNELS_MAX`, S4-16). Each
+   process checks what it runs against the store every 5 s and stops what
+   another replica deleted or replaced. Per Channel: `maxBytes` per payload (larger is `tooLarge`), a
    one-second window of `maxRate` samples (more is `overRate`), and a queue
    of 256 samples between bridge and writer (a full queue drops the newest).
 10. **The loopback bridge** delivers what `Loopback::publish` sends from a

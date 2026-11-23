@@ -1,0 +1,308 @@
+{
+  "id": "dcat-ap-cz",
+  "version": "2026-09-23",
+  "uri": "https://ofn.gov.cz/dcat-ap-cz",
+  "source": "DCAT-AP-CZ 2026-09-23 SHACL (specs/dcat-ap-cz). The published shapes check ranges only: `required` holds the rows of cardinality [1..1] and [1..*] of the \"Hlavní profily tříd\" tables of https://ofn.gov.cz/dcat-ap-cz-otevřená-data/2026-09-23/cs/ (docs API/08 section 3), each with its own IRI. Upper bounds stay the published file's.",
+  "title": {
+    "en": "DCAT-AP-CZ (Základní datový model)",
+    "cs": "DCAT-AP-CZ (Česko)"
+  },
+  "country": "CZ",
+  "languages": [
+    "cs"
+  ],
+  "aliases": [
+    "cz",
+    "https://ofn.gov.cz/dcat-ap-cz/",
+    "https://ofn.gov.cz/dcat-ap-cz/2026-09-23/"
+  ],
+  "bases": [
+    "dcat-ap-3.0.1"
+  ],
+  "selectable": true,
+  "shapes": [
+    "../../specs/dcat-ap-cz/dcat-ap-cz.shacl.ttl",
+    "shapes.ttl"
+  ],
+  "required": [
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://purl.org/dc/terms/title",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.název"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://purl.org/dc/terms/description",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.popis"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://www.w3.org/ns/dcat#keyword",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.klíčovéSlovo"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://www.w3.org/ns/dcat#theme",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.téma"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://purl.org/dc/terms/accrualPeriodicity",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.periodicitaAktualizace"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://purl.org/dc/terms/publisher",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.poskytovatel"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://purl.org/dc/terms/spatial",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.souvisejícíGeografickéÚzemí-PrvekZRúian"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Dataset",
+      "path": "http://data.europa.eu/r5r/applicableLegislation",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada.příslušnýPrávníPředpis"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Distribution",
+      "path": "http://www.w3.org/ns/dcat#accessURL",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Distribuce.přístupovéUrl"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Distribution",
+      "path": "https://data.gov.cz/slovník/podmínky-užití/specifikace",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Distribuce.specifikacePodmínekUžití"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#Distribution",
+      "path": "http://data.europa.eu/r5r/applicableLegislation",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Distribuce.příslušnýPrávníPředpis"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#DataService",
+      "path": "http://www.w3.org/ns/dcat#endpointURL",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSlužba.přístupovýBodSlužby"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#DataService",
+      "path": "http://www.w3.org/ns/dcat#endpointDescription",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSlužba.popisPřístupovéhoBoduSlužby"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#DataService",
+      "path": "http://data.europa.eu/r5r/applicableLegislation",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSlužba.příslušnýPrávníPředpis"
+    },
+    {
+      "target": "http://www.w3.org/ns/dcat#DataService",
+      "path": "http://purl.org/dc/terms/title",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSlužba.název"
+    },
+    {
+      "target": "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
+      "path": "https://data.gov.cz/slovník/podmínky-užití/autorské-dílo",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SpecifikacePodmínekUžití.autorskéDílo"
+    },
+    {
+      "target": "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
+      "path": "https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SpecifikacePodmínekUžití.originálníDatabáze"
+    },
+    {
+      "target": "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
+      "path": "https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SpecifikacePodmínekUžití.zvláštníPrávoPořizovateleDatabáze"
+    },
+    {
+      "target": "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
+      "path": "https://data.gov.cz/slovník/podmínky-užití/osobní-údaje",
+      "source": "https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SpecifikacePodmínekUžití.osobníÚdaje"
+    }
+  ],
+  "catalogue": {
+    "publisher": true,
+    "publisherIriPrefixes": [
+      "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/"
+    ]
+  },
+  "render": {
+    "identifier": false,
+    "issuedModified": false,
+    "licence": false,
+    "inheritLegislation": true,
+    "terms": {
+      "link": "https://data.gov.cz/slovník/podmínky-užití/specifikace",
+      "class": "https://data.gov.cz/slovník/podmínky-užití/Specifikace",
+      "authorsWork": "https://data.gov.cz/slovník/podmínky-užití/autorské-dílo",
+      "authorName": "https://data.gov.cz/slovník/podmínky-užití/autor",
+      "databaseAsWork": "https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo",
+      "databaseAuthorName": "https://data.gov.cz/slovník/podmínky-užití/autor-databáze",
+      "suiGenerisDatabase": "https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy",
+      "personalData": "https://data.gov.cz/slovník/podmínky-užití/osobní-údaje"
+    },
+    "personalData": {
+      "contains": "https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/",
+      "doesNotContain": "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/"
+    },
+    "jsonLd": {
+      "iri": "iri",
+      "type": "typ",
+      "catalogue": {
+        "context": "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld",
+        "class": "Katalog",
+        "contact": {
+          "organization": "Organizace",
+          "individual": "Jednotlivec",
+          "name": [
+            "jméno"
+          ],
+          "email": "e-mail"
+        },
+        "members": [
+          [
+            "title",
+            "název"
+          ],
+          [
+            "description",
+            "popis"
+          ],
+          [
+            "contact",
+            "kontaktní_bod"
+          ],
+          [
+            "homepage",
+            "domovská_stránka"
+          ],
+          [
+            "publisher",
+            "poskytovatel"
+          ],
+          [
+            "accessPoint",
+            "přístupový_bod"
+          ],
+          [
+            "datasets",
+            "datová_sada"
+          ]
+        ]
+      },
+      "dataset": {
+        "context": "https://ofn.gov.cz/dcat-ap-cz/2026-09-23/datová-sada/kontext.jsonld",
+        "class": "Datová sada",
+        "contact": {
+          "organization": "Organizace",
+          "individual": "Jednotlivec",
+          "name": [
+            "jméno"
+          ],
+          "email": "e-mail"
+        },
+        "members": [
+          [
+            "title",
+            "název"
+          ],
+          [
+            "description",
+            "popis"
+          ],
+          [
+            "publisher",
+            "poskytovatel"
+          ],
+          [
+            "themes",
+            "téma"
+          ],
+          [
+            "keywords",
+            "klíčové_slovo"
+          ],
+          [
+            "frequency",
+            "periodicita_aktualizace"
+          ],
+          [
+            "spatial",
+            "geografické_území"
+          ],
+          [
+            "landingPage",
+            "vstupní_stránka"
+          ],
+          [
+            "contact",
+            "kontaktní_bod"
+          ],
+          [
+            "distributions",
+            "distribuce"
+          ]
+        ]
+      },
+      "distribution": {
+        "class": "Distribuce",
+        "members": [
+          [
+            "terms",
+            "podmínky_užití"
+          ],
+          [
+            "accessUrl",
+            "přístupové_url"
+          ],
+          [
+            "downloadUrl",
+            "soubor_ke_stažení"
+          ],
+          [
+            "format",
+            "formát"
+          ],
+          [
+            "mediaType",
+            "typ_média"
+          ],
+          [
+            "title",
+            "název"
+          ]
+        ]
+      },
+      "terms": {
+        "class": "Podmínky užití",
+        "members": [
+          [
+            "authorsWork",
+            "autorské_dílo"
+          ],
+          [
+            "databaseAsWork",
+            "databáze_jako_autorské_dílo"
+          ],
+          [
+            "suiGenerisDatabase",
+            "databáze_chráněná_zvláštními_právy"
+          ],
+          [
+            "personalData",
+            "osobní_údaje"
+          ]
+        ]
+      }
+    }
+  },
+  "contexts": [
+    {
+      "prefixes": [
+        "https://ofn.gov.cz/dcat-ap-cz"
+      ],
+      "file": "context.jsonld"
+    }
+  ]
+}

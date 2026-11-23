@@ -49,6 +49,53 @@ pub fn stored_object(doc: &mut Value) -> Result<&mut serde_json::Map<String, Val
         .ok_or_else(|| NgsiError::InternalError("stored document is not a JSON object".into()))
 }
 
+/// What one Tenant may hold of one kind of stored @context (S4-15).
+#[derive(Debug, Clone, Copy)]
+pub struct ContextCaps {
+    /// The most documents.
+    pub count: usize,
+    /// The most bytes of their JSON text together.
+    pub bytes: u64,
+}
+
+/// What [`CurrentStateDriver::context_put_capped`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextPut {
+    /// The row is stored, or its id was stored already.
+    Stored,
+    /// Not stored: the Tenant holds [`ContextCaps::count`] of the kind.
+    PastCount,
+    /// Not stored: it would pass [`ContextCaps::bytes`].
+    PastBytes,
+}
+
+impl ContextCaps {
+    /// Whether `charge` more bytes fit beside `held` documents of `bytes`.
+    #[must_use]
+    pub fn admit(self, held: usize, bytes: u64, charge: u64) -> ContextPut {
+        if held >= self.count {
+            ContextPut::PastCount
+        } else if bytes.saturating_add(charge) > self.bytes {
+            ContextPut::PastBytes
+        } else {
+            ContextPut::Stored
+        }
+    }
+}
+
+/// The text bytes a stored @context row is charged: its `bytes` member, else
+/// (a row written before the member) the length of the document it holds.
+#[must_use]
+pub fn context_row_bytes(doc: &Value) -> u64 {
+    match doc.get("bytes").and_then(Value::as_u64) {
+        Some(bytes) => bytes,
+        None => doc
+            .pointer("/body/@context")
+            .and_then(|c| u64::try_from(c.to_string().len()).ok())
+            .unwrap_or(0),
+    }
+}
+
 /// What a [`ChangeHook`] call returns: the hook records temporal history
 /// through the temporal driver, which is asynchronous, so the driver that
 /// fires the hook awaits it before its own write returns.
@@ -1049,6 +1096,17 @@ pub trait CurrentStateDriver: Send + Sync {
         id: &str,
         doc: Value,
     ) -> Result<(), NgsiError>;
+    /// Store a new @context row of `tenant` (Hosted or ImplicitlyCreated)
+    /// inside `caps`, which count that Tenant's rows of the row's kind. The
+    /// count and the insert are one step, so two replicas cannot both take
+    /// the last place. An id already stored is left as it is.
+    async fn context_put_capped(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        doc: Value,
+        caps: ContextCaps,
+    ) -> Result<ContextPut, NgsiError>;
     /// Read a stored @context document by id; `None` if absent or owned by
     /// another Tenant.
     async fn context_get(
@@ -1922,6 +1980,15 @@ mod tests {
             _doc: Value,
         ) -> Result<(), NgsiError> {
             Ok(())
+        }
+        async fn context_put_capped(
+            &self,
+            _t: &TenantId,
+            _id: &str,
+            _doc: Value,
+            _caps: ContextCaps,
+        ) -> Result<ContextPut, NgsiError> {
+            Ok(ContextPut::Stored)
         }
         async fn context_get(
             &self,

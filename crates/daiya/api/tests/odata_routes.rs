@@ -207,9 +207,39 @@ async fn bad_query_options_and_unknown_sets_are_refused() {
         assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert_eq!(body["error"]["code"], "cr.bad_request", "{body}");
     }
-    for uri in ["/odata/v4/Nothing", "/odata/v4/Nothing/$count"] {
+    for uri in [
+        "/odata/v4/Nothing",
+        "/odata/v4/Nothing/$count",
+        "/odata/v4/Nothing/$allowed?op=read",
+        "/odata/v4/Dashboards('edge')/Nope",
+    ] {
         let (st, _) = w.call("GET", uri, Some("admin"), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{uri}");
+    }
+    // An option the table service does not implement says so (501), never a silent full list.
+    let (st, body) = w
+        .call(
+            "GET",
+            "/odata/v4/Dashboards?$apply=groupby((uid))",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_IMPLEMENTED, "{body}");
+    // A body that is no JSON is refused at both kinds of action, the public one included.
+    for uri in [
+        "/odata/v4/PublicDashboard.Query",
+        "/odata/v4/Datasource.Query",
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{not json"))
+            .unwrap();
+        let (st, body) = w.send(req).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {body}");
     }
     // Without a credential, the organization's sets hold nothing readable.
     let (st, body) = w.call("GET", "/odata/v4/Dashboards", None, None).await;
@@ -448,6 +478,44 @@ async fn actions_query_import_plan_apply_and_rotate() {
             .await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{uid} was not written");
     }
+    // A plan naming a datasource provisioning made read-only is refused (403, as its save
+    // route); one naming a writable stored datasource is planned.
+    {
+        use daiya_model::DaiyaStore;
+        let mut prov = w
+            .store
+            .inner
+            .get_datasource(ORG, "prom")
+            .await
+            .unwrap()
+            .unwrap();
+        prov.uid = "prov".into();
+        prov.name = "Provisioned".into();
+        prov.read_only = true;
+        w.store.inner.upsert_datasource(prov).await.unwrap();
+    }
+    let prom_url = w.ok("GET", "/api/datasources/uid/prom", None).await["url"].clone();
+    let (st, answer) = w
+        .call(
+            "POST",
+            "/odata/v4/Plan",
+            Some("admin"),
+            Some(json!({ "bundle": { "datasources": [source("prov", "https://prom.example", false)] } })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{answer}");
+    assert!(
+        answer.to_string().contains("read-only data source 'prov'"),
+        "{answer}"
+    );
+    let planned = w
+        .ok(
+            "POST",
+            "/odata/v4/Plan",
+            Some(json!({ "bundle": { "datasources": [source("prom", prom_url.as_str().unwrap(), false)] } })),
+        )
+        .await;
+    assert!(planned["digest"].is_string(), "{planned}");
     let (st, _) = w
         .call("POST", "/odata/v4/Plan", Some("viewer"), Some(json!({})))
         .await;
@@ -522,6 +590,194 @@ async fn actions_query_import_plan_apply_and_rotate() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// Every write and decision of daiya, through its door, leaves exactly one audit row that
+/// commits with it (S9-28): the kind of `AUDITED_WRITES`, the actor's subject id and ids, never
+/// a token, a secret or a name. A write operation of the registry or a door missing from the
+/// table fails this test.
+#[tokio::test]
+async fn every_write_operation_leaves_one_audit_row() {
+    use daiya_api::AUDITED_WRITES;
+    use daiya_model::DaiyaStore as _;
+    let w = world();
+    let (prom, _) = prometheus().await;
+    let ds = |name: &str| json!({ "uid": "prom", "name": name, "type": "prometheus", "url": prom });
+    let mut steps: Vec<(&str, &str, String, Option<Value>)> = vec![
+        (
+            "CreateOrg",
+            "POST",
+            "/api/orgs".into(),
+            Some(json!({ "name": "tampere" })),
+        ),
+        (
+            "AddDatasource",
+            "POST",
+            "/api/datasources".into(),
+            Some(ds("Prom")),
+        ),
+        (
+            "UpdateDatasource",
+            "PUT",
+            "/api/datasources/uid/prom".into(),
+            Some(ds("Prom city")),
+        ),
+        (
+            "CreateFolder",
+            "POST",
+            "/api/folders".into(),
+            Some(json!({ "uid": "ops", "title": "Ops" })),
+        ),
+        (
+            "Import",
+            "POST",
+            "/api/dashboards/db".into(),
+            Some(json!({ "dashboard": dashboard("edge", "prom"), "overwrite": true })),
+        ),
+        (
+            "Import",
+            "POST",
+            "/odata/v4/Import".into(),
+            Some(json!({ "dashboard": dashboard("two", "prom") })),
+        ),
+        (
+            "Plan",
+            "POST",
+            "/odata/v4/Plan".into(),
+            Some(
+                json!({ "bundle": { "dashboards": [{ "rawJson": dashboard("planned", "prom") }] } }),
+            ),
+        ),
+        (
+            "SavePublicDashboard",
+            "POST",
+            "/api/dashboards/uid/edge/public-dashboards".into(),
+            // Disabled: an enabled one needs Endpoint datasources.
+            Some(json!({ "isEnabled": false })),
+        ),
+        (
+            "DeleteDashboard",
+            "DELETE",
+            "/api/dashboards/uid/two".into(),
+            None,
+        ),
+        ("DeleteFolder", "DELETE", "/api/folders/ops".into(), None),
+    ];
+    let mut tokens = Vec::new();
+    let mut seen = Vec::new();
+    let mut i = 0;
+    while i < steps.len() {
+        let (operation, method, uri, body) = steps[i].clone();
+        let before = w.store.list_audit(ORG).await.expect("rows").len();
+        let (st, answer) = w.call(method, &uri, Some("admin"), body).await;
+        assert_eq!(st, StatusCode::OK, "{operation}: {answer}");
+        let rows = w.store.list_audit(ORG).await.expect("rows");
+        assert_eq!(rows.len(), before + 1, "{operation} leaves one row");
+        let row = rows.last().expect("row");
+        let kind = AUDITED_WRITES
+            .iter()
+            .find(|(name, _)| *name == operation)
+            .map(|(_, kind)| *kind);
+        assert_eq!(
+            (row.operation.as_str(), Some(row.kind.as_str())),
+            (operation, kind)
+        );
+        assert_eq!(
+            (row.actor_id.as_str(), row.decision.as_str()),
+            ("admin", "allow")
+        );
+        if let Some(token) = answer["accessToken"].as_str() {
+            tokens.push(token.to_owned());
+        }
+        let text = serde_json::to_string(row).expect("row json");
+        for never in tokens.iter().map(String::as_str).chain(["@", "Board "]) {
+            assert!(
+                !text.contains(never),
+                "{operation}: the row holds {never}: {text}"
+            );
+        }
+        match operation {
+            "CreateOrg" => {
+                let number = answer["orgId"].as_i64().expect("org number");
+                steps.push(("RetireOrg", "DELETE", format!("/api/orgs/{number}"), None));
+            }
+            "Plan" => {
+                let digest = answer["digest"].as_str().expect("digest").to_owned();
+                // Apply right after its Plan: any later write moves the organization's state.
+                steps.insert(
+                    i + 1,
+                    (
+                        "Apply",
+                        "POST",
+                        "/odata/v4/Apply".into(),
+                        Some(json!({ "digest": digest })),
+                    ),
+                );
+            }
+            "SavePublicDashboard" if method == "POST" => {
+                let uid = answer["uid"].as_str().expect("uid").to_owned();
+                steps.push((
+                    "PublicDashboard/Rotate",
+                    "POST",
+                    "/odata/v4/PublicDashboard.Rotate".into(),
+                    Some(json!({ "uid": uid })),
+                ));
+                steps.push((
+                    "SavePublicDashboard",
+                    "PATCH",
+                    format!("/api/dashboards/uid/edge/public-dashboards/{uid}"),
+                    Some(json!({ "timeSelectionEnabled": true })),
+                ));
+            }
+            "DeleteFolder" => {
+                steps.push((
+                    "DeleteDatasource",
+                    "DELETE",
+                    "/api/datasources/uid/prom".into(),
+                    None,
+                ));
+            }
+            _ => {}
+        }
+        seen.push(operation);
+        i += 1;
+    }
+    let unaudited: Vec<&str> = AUDITED_WRITES
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !seen.contains(name))
+        .collect();
+    assert!(
+        unaudited.is_empty(),
+        "writes without an audit row step: {unaudited:?}"
+    );
+    let registry_writes: Vec<String> = w
+        .state
+        .registry
+        .operations
+        .iter()
+        .filter(|op| op.required_action != Action::Read)
+        .map(|op| op.name.clone())
+        .filter(|name| !AUDITED_WRITES.iter().any(|(audited, _)| audited == name))
+        .collect();
+    assert!(
+        registry_writes.is_empty(),
+        "registry writes without an audit kind: {registry_writes:?}"
+    );
+    // A write whose name has no audit kind fails, so it never stands without its row.
+    let ctx = RequestCtx::new(
+        daiya_model::InstallationId::from_u128(1),
+        ORG,
+        daiya_model::InstanceId::from_u128(1),
+        daiya_model::Subject::authenticated("admin", vec![ORG], vec![]),
+    );
+    let before = w.store.list_audit(ORG).await.expect("rows").len();
+    let err = daiya_api::state::audit(&w.state, &ctx, "Dashboard/Archive", "edge".into())
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 500, "{err}");
+    assert!(err.to_string().contains("'Dashboard/Archive'"), "{err}");
+    assert_eq!(w.store.list_audit(ORG).await.expect("rows").len(), before);
 }
 
 #[tokio::test]
@@ -771,6 +1027,112 @@ async fn every_entity_set_hides_what_the_caller_cannot_read() {
     assert_eq!(uids(&panels, "uid"), ["lp-open"], "{panels}");
 }
 
+/// `and`, `or` and `not` combine; a time compares with a date or a timestamp literal, and a
+/// literal that is no time matches nothing; text functions work on text; a `$skiptoken` longer
+/// than any this service writes is refused before it is decoded.
+#[tokio::test]
+async fn filters_combine_compare_times_and_refuse_what_they_cannot_read() {
+    let w = seeded().await;
+    for (filter, want) in [
+        ("uid%20eq%20'edge'%20or%20uid%20eq%20'loose'", 2),
+        ("uid%20eq%20'edge'%20and%20not%20(uid%20eq%20'loose')", 1),
+        ("not%20(uid%20eq%20'edge')", 1),
+        ("updatedAt%20gt%202000-01-01", 2),
+        ("updatedAt%20lt%202000-01-01", 0),
+        ("updatedAt%20eq%20'soon'", 0),
+        ("contains(title,'edge')", 1),
+        ("startswith(title,'Board')", 2),
+    ] {
+        let uri = format!("/odata/v4/Dashboards/$count?$filter={filter}");
+        assert_eq!(w.ok("GET", &uri, None).await, json!(want), "{filter}");
+    }
+    let oversized = format!("/odata/v4/Folders?$skiptoken={}", "A".repeat(40 * 1024));
+    {
+        let (st, body) = w.call("GET", &oversized, Some("admin"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body.to_string().contains("not one this service wrote"),
+            "{body}"
+        );
+    }
+}
+
+/// Grants read on the whole organization in the read scope but denies folder `hidden` in the
+/// per-object decision: an authorizer whose two answers disagree.
+struct WideScope;
+
+impl Authorizer for WideScope {
+    fn check(&self, ctx: &RequestCtx, _action: Action, object: &ObjectTarget) -> Decision {
+        match object {
+            ObjectTarget::Folder { folder_uid, .. } if folder_uid == "hidden" => {
+                Decision::deny_hidden("not yours")
+            }
+            ObjectTarget::Dashboard { dashboard_uid, .. } if dashboard_uid == "secret" => {
+                Decision::deny_hidden("not yours")
+            }
+            _ if ctx.subject.is_member_of(object.org_id()) => Decision::allow("member"),
+            _ => Decision::deny_hidden("other organization"),
+        }
+    }
+
+    fn read_scope(&self, ctx: &RequestCtx, _kind: daiya_model::ReadKind) -> daiya_model::ReadScope {
+        if ctx.subject.is_member_of(ctx.org_id) {
+            daiya_model::ReadScope::All
+        } else {
+            daiya_model::ReadScope::Nothing
+        }
+    }
+}
+
+/// A row the read scope lets through but the decision refuses is an error, never an answer:
+/// the set, its export and search show no row of it.
+#[tokio::test]
+async fn a_read_scope_wider_than_the_decision_is_an_error_not_a_leak() {
+    let w = world_with(Arc::new(WideScope), loopback());
+    w.add_folder("open", "Open").await;
+    w.add_dashboard(dashboard("shown", "prom"), Some("open"))
+        .await;
+    {
+        use daiya_model::DaiyaStore;
+        let mut hidden = w
+            .store
+            .inner
+            .get_folder(ORG, "open")
+            .await
+            .unwrap()
+            .unwrap();
+        hidden.uid = "hidden".into();
+        hidden.title = "Hidden".into();
+        w.store.inner.upsert_folder(hidden).await.unwrap();
+        let mut secret = w
+            .store
+            .inner
+            .get_dashboard(ORG, "shown")
+            .await
+            .unwrap()
+            .unwrap();
+        secret.uid = "secret".into();
+        secret.title = "Secret".into();
+        w.store
+            .inner
+            .upsert_dashboard(secret, "copied", true)
+            .await
+            .unwrap();
+    }
+    for uri in ["/odata/v4/Folders", "/odata/v4/Folders/$export"] {
+        let (st, body) = w.call("GET", uri, Some("admin"), None).await;
+        assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{uri}: {body}");
+        assert!(!body.to_string().contains("Hidden"), "{body}");
+    }
+    // Search lists what the folder list can answer and no dashboard of the disagreeing set.
+    let hits = w.ok("GET", "/api/search", None).await;
+    assert!(!hits.to_string().contains("Secret"), "{hits}");
+    assert!(
+        !hits.to_string().contains("shown"),
+        "the whole set is withheld: {hits}"
+    );
+}
+
 fn uids(page: &Value, field: &str) -> Vec<String> {
     let mut out: Vec<String> = page["value"]
         .as_array()
@@ -856,6 +1218,52 @@ async fn store_failures_are_errors_in_every_set_and_action() {
     w.store.heal();
     assert_eq!(st, StatusCode::OK);
     assert_eq!(answer["responses"][0]["status"], 500);
+}
+
+/// An export stops at 10 000 rows and says how to narrow it, rather than holding a set of any
+/// size in memory.
+#[tokio::test]
+async fn an_export_over_ten_thousand_rows_is_refused_with_how_to_narrow_it() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let now = jc_time::TimestampTz::now();
+    for i in 0..10_001 {
+        w.store
+            .inner
+            .upsert_folder(daiya_model::FolderRecord {
+                installation_id: daiya_model::InstallationId::from_u128(1),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                project_id: None,
+                uid: format!("f{i:05}"),
+                parent_uid: None,
+                title: format!("F{i}"),
+                version: 1,
+                managed_by: None,
+                created_by: "t".into(),
+                updated_by: "t".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+    let (st, body) = w
+        .call("GET", "/odata/v4/Folders/$export", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.to_string().contains("narrow it with $filter"),
+        "{body}"
+    );
+    let narrowed = w
+        .ok(
+            "GET",
+            "/odata/v4/Folders/$export?$filter=uid%20eq%20'f00007'",
+            None,
+        )
+        .await;
+    assert_eq!(narrowed.as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -973,6 +1381,77 @@ async fn paging_keys_cache_stats_and_refused_exports() {
         "{batch}"
     );
     assert_eq!(batch["responses"][1]["body"]["uid"], "f007", "{batch}");
+
+    // An export reads page after page by cursor and answers every row once.
+    let export = w
+        .ok("GET", "/odata/v4/Folders/$export?$select=uid", None)
+        .await;
+    let exported: Vec<&str> = export
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uid"].as_str().unwrap())
+        .collect();
+    assert_eq!(exported.len(), 502);
+    assert_eq!(
+        exported
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        502
+    );
+
+    // A cursor's values have the types of its order's properties: a null starts anywhere, a
+    // number is an integer, a time is spelled as the rows spell it; anything else is foreign.
+    {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let token = next.split_once("$skiptoken=").unwrap().1;
+        let real: Value = serde_json::from_slice(&b64.decode(token).unwrap()).unwrap();
+        let keyed = |set: &str, by: &str, after: Value| {
+            let mut cursor = real.clone();
+            cursor["set"] = json!(set);
+            let mut order = vec![json!([by, false])];
+            order.extend(real["order"].as_array().unwrap().iter().cloned());
+            cursor["order"] = json!(order);
+            let mut values = vec![after];
+            values.extend(real["after"].as_array().unwrap().iter().cloned());
+            cursor["after"] = json!(values);
+            b64.encode(serde_json::to_vec(&cursor).unwrap())
+        };
+        for (set, by, after, want) in [
+            ("Folders", "version", json!(1), StatusCode::OK),
+            ("Folders", "version", json!(null), StatusCode::OK),
+            ("Folders", "version", json!(1.5), StatusCode::BAD_REQUEST),
+            ("Folders", "version", json!("1"), StatusCode::BAD_REQUEST),
+            (
+                "Folders",
+                "updatedAt",
+                json!("2026-11-19T00:00:00+00:00"),
+                StatusCode::OK,
+            ),
+            (
+                "Folders",
+                "updatedAt",
+                json!("2026-11-19"),
+                StatusCode::BAD_REQUEST,
+            ),
+            ("Dashboards", "isProvisioned", json!(false), StatusCode::OK),
+            (
+                "Dashboards",
+                "isProvisioned",
+                json!("no"),
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let uri = format!(
+                "/odata/v4/{set}?$orderby={by}&$skiptoken={}",
+                keyed(set, by, after.clone())
+            );
+            let (st, body) = w.call("GET", &uri, Some("admin"), None).await;
+            assert_eq!(st, want, "{set} by {by} after {after}: {body}");
+        }
+    }
 
     // A skiptoken this service did not write is refused at every door.
     for uri in [

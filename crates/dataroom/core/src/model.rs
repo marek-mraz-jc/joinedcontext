@@ -304,7 +304,91 @@ fn default_true() -> bool {
     true
 }
 
+impl Publisher {
+    /// Whether the record's IRI is the publisher's own: declared, and not the page `catalogue`
+    /// mints for the record (`{base}/publisher/{name}`, or CKAN's `{base}/organization/{name}`, on
+    /// one of its hosts or on the Organization's `/opendata` address), which only identifies it
+    /// here.
+    pub fn has_own_iri(&self, catalogue: &Catalogue) -> bool {
+        if !jc_core::kinds::is_declared_iri(&self.uri) {
+            return false;
+        }
+        let uri = self.uri.trim_end_matches('/');
+        let Some(at) = ["publisher", "organization"]
+            .iter()
+            .find_map(|page| uri.strip_suffix(&format!("/{page}/{}", self.name)))
+        else {
+            return true;
+        };
+        let host = jc_core::kinds::http_url_host(at);
+        let here = host == jc_core::kinds::http_url_host(&catalogue.base_url())
+            || host.as_deref().is_some_and(|h| {
+                h == catalogue.host || catalogue.left_hosts.iter().any(|left| left == h)
+            })
+            || at.ends_with("/opendata");
+        !here
+    }
+}
+
+/// The members of a catalogue the Organization's manifest declares (T-7520). A member left
+/// `None` is not declared there and stays as stored.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogueDeclaration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_uri: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_name: Option<Texts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_point: Option<ContactPoint>,
+    /// The pins of `Portal.spec.profiles`, the catalogue's own uploads beside them (T-7521).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_profiles: Option<Vec<ProfilePin>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_profile: Option<String>,
+}
+
+impl CatalogueDeclaration {
+    /// Writes the declared members into `catalogue`; whether one of them changed.
+    pub fn apply(&self, catalogue: &mut Catalogue) -> bool {
+        fn set<T: Clone + PartialEq>(held: &mut Option<T>, declared: &Option<T>) -> bool {
+            let changed = declared.is_some() && held != declared;
+            if changed {
+                held.clone_from(declared);
+            }
+            changed
+        }
+        // Declared as none clears it; not declared keeps it.
+        let uri = match &self.publisher_uri {
+            Some(declared) if *declared != catalogue.publisher_uri => {
+                catalogue.publisher_uri.clone_from(declared);
+                true
+            }
+            _ => false,
+        };
+        let name = set(&mut catalogue.publisher_name, &self.publisher_name);
+        let contact = set(&mut catalogue.contact_point, &self.contact_point);
+        let mut changed = uri || name || contact;
+        if let Some(pins) = &self.active_profiles {
+            changed |= catalogue.active_profiles != *pins;
+            catalogue.active_profiles.clone_from(pins);
+        }
+        if let Some(main) = &self.main_profile {
+            changed |= catalogue.main_profile != *main;
+            catalogue.main_profile.clone_from(main);
+        }
+        changed
+    }
+}
+
 impl Catalogue {
+    /// The publisher's IRI when one is declared; a registry placeholder is none.
+    pub fn declared_publisher_uri(&self) -> Option<&str> {
+        self.publisher_uri
+            .as_deref()
+            .filter(|uri| jc_core::kinds::is_declared_iri(uri))
+    }
+
     /// Base URL for this catalogue: the configured public URL, else `https://{host}`.
     pub fn base_url(&self) -> String {
         if let Some(base) = &self.public_base {
@@ -457,6 +541,14 @@ pub struct TemporalPeriod {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<Date>,
 }
+
+/// The dataset extra holding the publisher's personal-data statement (`spec.catalog.personalData`,
+/// API/08 section 5): [`PERSONAL_DATA_CONTAINS`] or [`PERSONAL_DATA_NONE`].
+pub const PERSONAL_DATA: &str = "personal_data";
+/// The data holds personal data.
+pub const PERSONAL_DATA_CONTAINS: &str = "contains";
+/// The data holds no personal data.
+pub const PERSONAL_DATA_NONE: &str = "does-not-contain";
 
 /// National terms-of-use specification (`pu:Specifikace` in DCAT-AP-CZ, `leg:TermsOfUse` in DCAT-AP-SK).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
