@@ -43,11 +43,10 @@ impl MockClock {
         *self.now.lock().unwrap()
     }
 
-    pub fn advance(&self, delta: SignedDuration) -> Timestamp {
+    pub fn advance(&self, delta: SignedDuration) {
         let mut guard = self.now.lock().unwrap();
         *guard = guard
             .checked_add(delta)
             .expect("a time within jiff's range");
-        *guard
     }
 }
