@@ -68,6 +68,7 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
+        offline_since: None,
         revoked: false,
         expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
         act: None,
