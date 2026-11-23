@@ -636,7 +636,7 @@ fn unwritable() -> ODataErrorResponse {
     ODataErrorResponse::new(
         StatusCode::INTERNAL_SERVER_ERROR,
         "InternalError",
-        "the service model could not be written",
+        "the answer could not be written",
     )
 }
 

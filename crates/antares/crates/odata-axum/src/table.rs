@@ -19,8 +19,8 @@ use odata_table::{
 use odata_url::{EdmModel, Key, KeyValue, Literal, ODataUri, QueryOptions, Segment};
 
 use crate::{
-    json_level, json_response, metadata_router, read_only, url_error, ODataErrorResponse,
-    ODataRequest, ODataState,
+    json_level, json_response, metadata_router, read_only, unwritable, url_error,
+    ODataErrorResponse, ODataRequest, ODataState,
 };
 
 #[derive(Clone)]
@@ -653,13 +653,7 @@ fn write(
             &mut out,
         ),
     };
-    if written.is_err() {
-        return Err(ODataErrorResponse::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalServerError",
-            "the answer could not be written",
-        )
-        .with_version(version));
-    }
+    // into a Vec only a serializer could fail, and a JSON value always serializes
+    written.map_err(|_| unwritable().with_version(version))?;
     Ok(json_response(version, level, out))
 }
