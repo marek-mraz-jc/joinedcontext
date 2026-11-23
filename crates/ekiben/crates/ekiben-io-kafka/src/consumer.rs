@@ -609,13 +609,15 @@ impl KafkaInput {
         }
         let node = self.leaders[self.next_leader % self.leaders.len()];
         self.next_leader = self.next_leader.wrapping_add(1);
-        // step fetches only once take_ready has emptied the queue, so no partition is queued here
+        let queued: Vec<&Tp> = self.ready.iter().map(|r| &r.tp).collect();
         let want: Vec<(Tp, i64)> = self
             .lock()
             .parts
             .iter()
             .filter(|(tp, p)| {
-                self.leader(tp).ok() == Some(node) && p.unacked() < self.s.checkpoint_limit
+                self.leader(tp).ok() == Some(node)
+                    && p.unacked() < self.s.checkpoint_limit
+                    && !queued.contains(tp)
             })
             .map(|(tp, p)| (tp.clone(), p.fetch))
             .collect();
@@ -801,7 +803,7 @@ impl KafkaInput {
             self.refresh().await?;
             self.leaders_of_assignment();
         }
-        if self.needs_rejoin() {
+        if self.member.is_some() && self.needs_rejoin() {
             tracing::info!("kafka_franz input: the group rebalances; rejoining");
             self.drop_assignment().await;
         }

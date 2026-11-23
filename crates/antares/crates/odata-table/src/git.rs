@@ -86,10 +86,13 @@ fn segments(pattern: &str) -> Result<Vec<&str>, TableError> {
             "the path pattern {pattern} leaves the repository root"
         ))
     };
-    if pattern.contains('\\') || pattern.contains('\0') {
+    if pattern.is_empty()
+        || pattern.starts_with('/')
+        || pattern.contains('\\')
+        || pattern.contains('\0')
+    {
         return Err(refused());
     }
-    // an empty pattern or a leading `/` gives an empty segment, refused here
     let parts: Vec<&str> = pattern.split('/').collect();
     if parts
         .iter()
