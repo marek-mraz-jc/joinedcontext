@@ -521,6 +521,35 @@ async fn select_orderby_keys_and_what_a_history_does_not_serve() {
         [key(8, T3), key(8, T1), key(7, T2), key(7, T0), key(7, T1)],
         "equal speeds keep the natural order"
     );
+    // a sorted page of one keeps the first row and links to the next
+    let (status, page) = send_paged(
+        &app,
+        &format!("{PAST}/Car_history?$orderby=speed%20desc"),
+        1,
+    )
+    .await;
+    assert_eq!(
+        (
+            status,
+            rows(&page).first().map(|r| (r.0.clone(), r.1.clone()))
+        ),
+        (StatusCode::OK, Some(key(8, T3))),
+        "{page}"
+    );
+    let next = page["@nextLink"]
+        .as_str()
+        .and_then(|l| l.split_once("/x/views"))
+        .map(|(_, p)| format!("/x/views{p}"))
+        .unwrap_or_default();
+    let (status, second) = send_paged(&app, &next, 1).await;
+    assert_eq!(
+        (
+            status,
+            rows(&second).first().map(|r| (r.0.clone(), r.1.clone()))
+        ),
+        (StatusCode::OK, Some(key(8, T1))),
+        "{next}: {second}"
+    );
     let (_, natural) = get(&app, "Car_history").await;
     for order in ["id", "id,observedAt"] {
         let (_, got) = get(&app, &format!("Car_history?$orderby={order}")).await;
@@ -565,6 +594,19 @@ async fn select_orderby_keys_and_what_a_history_does_not_serve() {
         (
             "Car_history('urn:ngsi-ld:Car:7')".to_owned(),
             StatusCode::NOT_FOUND,
+        ),
+        (
+            "Car_history?$select=@Core.Description".to_owned(),
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        // a history row carries no system member to filter on: the name is unknown
+        (
+            "Car_history?$filter=createdAt%20gt%202026-01-01T00:00:00Z".to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "Car_history?$skiptoken=3.garbage".to_owned(),
+            StatusCode::BAD_REQUEST,
         ),
     ];
     for (path, status) in refused {
