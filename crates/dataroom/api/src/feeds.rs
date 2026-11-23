@@ -19,7 +19,7 @@ use dataroom_rdf::{
 use dataroom_shacl::{predicate_to_field_name, validate_graph_against_shapes, Stack};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 /// Datasets per DCAT feed page (`ours/deployment/README.md`: 100 datasets per page).
@@ -30,33 +30,70 @@ pub const ATOM_PAGE_SIZE: usize = 20;
 /// Verdicts a feed keeps before it starts over (a few MB at most).
 const CONFORMANCE_CAP: usize = 100_000;
 
-/// The fields that keep a dataset out of a profile's feed, none when it conforms, by a hash of the exact graph validated,
-/// the shapes and the report subject: a feed page validates only a dataset, catalogue,
-/// publisher or profile that changed since the last page (P-7-02). The hasher's keys are
-/// random per process, so nobody can craft a dataset that collides with another's verdict.
+/// The fields that keep a dataset out of a profile's feed, none when it conforms, by a hash of
+/// everything its graph is built from (the dataset, its catalogue and publisher records, the
+/// stacked shapes and the profile that renders it): a feed page builds and validates the graph
+/// only of a dataset, catalogue, publisher or profile that changed since the last page
+/// (P-7-02, S11-16). The hasher's keys are random per process, so nobody can craft a dataset
+/// that collides with another's verdict.
 #[derive(Debug, Default)]
 pub struct FeedConformance {
     hasher: std::hash::RandomState,
     verdicts: Mutex<HashMap<u64, Arc<[String]>>>,
 }
 
+/// Feeds serde_json's output into a hasher, so a record is hashed without a copy of its JSON.
+struct HashWriter<'a>(&'a mut std::hash::DefaultHasher);
+
+impl std::io::Write for HashWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 impl FeedConformance {
+    /// The part of a verdict's key every dataset of one page shares: the stacked shapes, the
+    /// profile that renders the graph and the catalogue record with the base its IRIs are minted
+    /// under (`public_base` is per request and not serialized). Computed once per page.
+    pub(crate) fn page_key(&self, stack: &Stack, cat: &Catalogue) -> Option<u64> {
+        let mut h = self.hasher.build_hasher();
+        stack.key.hash(&mut h);
+        stack.record.id.hash(&mut h);
+        stack.renderer.profile_uri().hash(&mut h);
+        cat.base_url().hash(&mut h);
+        serde_json::to_writer(HashWriter(&mut h), cat).ok()?;
+        Some(h.finish())
+    }
+
+    /// `dataset_to_graph` is a function of the page's inputs and these alone: equal keys, equal
+    /// graphs.
+    fn key(&self, page: u64, ds: &Dataset, publisher: Option<&Publisher>) -> Option<u64> {
+        let mut h = self.hasher.build_hasher();
+        h.write_u64(page);
+        // JSON values delimit themselves; the tag tells a missing publisher from a record.
+        serde_json::to_writer(HashWriter(&mut h), ds).ok()?;
+        h.write_u8(u8::from(publisher.is_some()));
+        if let Some(p) = publisher {
+            serde_json::to_writer(HashWriter(&mut h), p).ok()?;
+        }
+        Some(h.finish())
+    }
+
     fn missing(
         &self,
         stack: &Stack,
-        graph: &dataroom_rdf::RdfGraph,
         cat: &Catalogue,
-        ds_id: &str,
+        page: Option<u64>,
+        ds: &Dataset,
+        publisher: Option<&Publisher>,
     ) -> Arc<[String]> {
-        let profile = &stack.record.id;
-        let key = self.hasher.hash_one((
-            stack.key,
-            &graph.triples,
-            cat.org_id,
-            cat.id,
-            ds_id,
-            profile,
-        ));
+        let Some(key) = page.and_then(|page| self.key(page, ds, publisher)) else {
+            return verdict(stack, cat, ds, publisher);
+        };
         let verdicts = || {
             self.verdicts
                 .lock()
@@ -65,29 +102,7 @@ impl FeedConformance {
         if let Some(missing) = verdicts().get(&key) {
             return missing.clone();
         }
-        let report = validate_graph_against_shapes(
-            graph,
-            &stack.shapes,
-            cat.org_id,
-            cat.id,
-            ds_id,
-            profile,
-            &stack.record.version,
-        );
-        let missing: Arc<[String]> = if report.conforms {
-            Arc::default()
-        } else {
-            let fields: BTreeSet<String> = report
-                .findings
-                .iter()
-                .filter(|f| f.severity == ShaclSeverity::Violation)
-                .map(|f| match &f.result_path {
-                    Some(path) => predicate_to_field_name(path.trim_matches(['<', '>'])),
-                    None => f.source_shape.clone(),
-                })
-                .collect();
-            fields.into_iter().collect()
-        };
+        let missing = verdict(stack, cat, ds, publisher);
         let mut v = verdicts();
         if v.len() >= CONFORMANCE_CAP {
             v.clear();
@@ -95,6 +110,40 @@ impl FeedConformance {
         v.insert(key, missing.clone());
         missing
     }
+}
+
+/// Builds `ds`'s graph in the stack's profile and validates it: the fields that keep it out of
+/// that profile's feed.
+fn verdict(
+    stack: &Stack,
+    cat: &Catalogue,
+    ds: &Dataset,
+    publisher: Option<&Publisher>,
+) -> Arc<[String]> {
+    let graph = dataroom_rdf::dataset_to_graph(ds, cat, publisher, stack.renderer);
+    let profile = &stack.record.id;
+    let report = validate_graph_against_shapes(
+        &graph,
+        &stack.shapes,
+        cat.org_id,
+        cat.id,
+        &ds.id,
+        profile,
+        &stack.record.version,
+    );
+    if report.conforms {
+        return Arc::default();
+    }
+    let fields: BTreeSet<String> = report
+        .findings
+        .iter()
+        .filter(|f| f.severity == ShaclSeverity::Violation)
+        .map(|f| match &f.result_path {
+            Some(path) => predicate_to_field_name(path.trim_matches(['<', '>'])),
+            None => f.source_shape.clone(),
+        })
+        .collect();
+    fields.into_iter().collect()
 }
 
 /// The profile one request is answered in: one selection for every feed and for a dataset's
@@ -188,16 +237,19 @@ pub(crate) async fn select_profile(
     })
 }
 
-/// The fields that keep `ds` out of the stack's feed.
+/// The fields that keep `ds` out of the stack's feed; `page` is
+/// [`FeedConformance::page_key`] of the stack and catalogue.
 pub(crate) fn dataset_gaps(
     state: &DataroomState,
     cat: &Catalogue,
     ds: &Dataset,
     publisher: Option<&Publisher>,
     stack: &Stack,
+    page: Option<u64>,
 ) -> Arc<[String]> {
-    let graph = dataroom_rdf::dataset_to_graph(ds, cat, publisher, stack.renderer);
-    state.feed_conformance.missing(stack, &graph, cat, &ds.id)
+    state
+        .feed_conformance
+        .missing(stack, cat, page, ds, publisher)
 }
 
 /// The admin report (T-7520): for each of `datasets`, the profiles of the catalogue whose feed
@@ -219,11 +271,17 @@ pub fn profile_gaps(
     if profiles.iter().all(|(id, _)| *id != cat.main_profile) {
         profiles.push((cat.main_profile.as_str(), None));
     }
-    let stacks: Vec<(&str, Option<Arc<Stack>>)> = profiles
+    // Each profile's stack with its page key, none when the profile is not installed.
+    type Keyed = Option<(Arc<Stack>, Option<u64>)>;
+    let stacks: Vec<(&str, Keyed)> = profiles
         .into_iter()
         .map(|(id, version)| {
             let stack = state.profiles.stack((cat.org_id, cat.id), id, version);
-            (id, stack.ok())
+            let keyed = stack.ok().map(|stack| {
+                let page = state.feed_conformance.page_key(&stack, cat);
+                (stack, page)
+            });
+            (id, keyed)
         })
         .collect();
     datasets
@@ -236,9 +294,14 @@ pub fn profile_gaps(
                 .iter()
                 .filter_map(|(id, stack)| {
                     let missing = match stack {
-                        Some(stack) => {
-                            dataset_gaps(state, cat, ds, publishers.get(&ds.publisher_id), stack)
-                        }
+                        Some((stack, page)) => dataset_gaps(
+                            state,
+                            cat,
+                            ds,
+                            publishers.get(&ds.publisher_id),
+                            stack,
+                            *page,
+                        ),
                         None => Arc::from([format!("profile {id} is not installed")]),
                     };
                     (!missing.is_empty()).then(|| ((*id).to_owned(), missing))
@@ -305,8 +368,9 @@ async fn public_feed_datasets(
         move || {
             let mut visible = Vec::new();
             let mut gaps = BTreeSet::new();
+            let page = state.feed_conformance.page_key(&stack, &cat);
             for (ds, publisher) in public {
-                let missing = dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack);
+                let missing = dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack, page);
                 if missing.is_empty() {
                     visible.push(ds);
                 } else {
@@ -807,7 +871,7 @@ fn render_atom_xml(
 #[cfg(test)]
 mod tests {
     use super::{escape_xml, paging_first, FeedConformance};
-    use dataroom_core::Catalogue;
+    use dataroom_core::{Catalogue, Dataset};
     use dataroom_rdf::{DcatProfile, RdfLimits};
 
     /// A dataset title or description lands in the Atom feed as XML 1.0 text: a character
@@ -821,41 +885,80 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_verdict_follows_the_graph_it_was_given_for() {
+    fn a_kept_verdict_follows_the_records_its_graph_is_built_from() {
         let sg = dataroom_shacl::parse_shapes_graph(
-            "@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix ex: <http://example.org/> .
-             ex:S a sh:NodeShape ; sh:targetClass ex:R ; sh:property [ sh:path ex:v ; sh:minCount 1 ] .",
+            "@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix dcat: <http://www.w3.org/ns/dcat#> .
+             @prefix dct: <http://purl.org/dc/terms/> . @prefix ex: <http://example.org/> .
+             ex:S a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+               sh:property [ sh:path dct:description ; sh:minCount 1 ] .",
             &RdfLimits::uploaded_shapes(),
         )
         .unwrap();
-        let graph =
-            |ttl: &str| dataroom_rdf::turtle::parse_turtle(ttl, &RdfLimits::default()).unwrap();
-        let full = graph("<urn:a> a <http://example.org/R> ; <http://example.org/v> 1 .");
-        let bare = graph("<urn:a> a <http://example.org/R> .");
+        let (org, id) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
         let cat: Catalogue = serde_json::from_value(serde_json::json!({
-            "orgId": uuid::Uuid::now_v7(), "id": uuid::Uuid::now_v7(), "name": "city",
+            "orgId": org, "id": id, "name": "city",
             "host": "data.city.test", "title": {"sk": "Katalóg"}, "description": {},
             "defaultLanguage": "sk", "languages": ["sk"], "mainProfile": "dcat-ap-3.0.1",
             "activeProfiles": [], "modified": "2026-11-01T10:00:00Z"
         }))
         .unwrap();
+        let dataset = |description: serde_json::Value| -> Dataset {
+            serde_json::from_value(serde_json::json!({
+                "orgId": org, "catalogueId": id, "id": "pkg-a", "name": "pkg-a",
+                "title": {"sk": "Ovzdušie"}, "description": description,
+                "publisherId": "city", "visibility": "public", "state": "active",
+                "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+            }))
+            .unwrap()
+        };
+        let (full, bare) = (
+            dataset(serde_json::json!({"sk": "Popis"})),
+            dataset(serde_json::json!({})),
+        );
         let seen = FeedConformance::default();
-        let profile = DcatProfile::eu();
         let stack = |key| dataroom_shacl::Stack {
             record: dataroom_shacl::built_in_profiles().remove(0),
             shapes: sg.clone(),
-            renderer: profile,
+            renderer: DcatProfile::eu(),
             key,
         };
         let (held, changed) = (stack(1), stack(2));
+        let pk = |stack: &dataroom_shacl::Stack, cat: &Catalogue| seen.page_key(stack, cat);
         // The same dataset id, edited between two pages: each edit gets its own verdict.
-        assert!(seen.missing(&held, &full, &cat, "pkg-a").is_empty());
-        assert!(!seen.missing(&held, &bare, &cat, "pkg-a").is_empty());
-        assert!(seen.missing(&held, &full, &cat, "pkg-a").is_empty());
+        assert!(seen
+            .missing(&held, &cat, pk(&held, &cat), &full, None)
+            .is_empty());
+        assert_eq!(
+            &*seen.missing(&held, &cat, pk(&held, &cat), &bare, None),
+            ["notes".to_owned()]
+        );
+        assert!(seen
+            .missing(&held, &cat, pk(&held, &cat), &full, None)
+            .is_empty());
         assert_eq!(seen.verdicts.lock().unwrap().len(), 2);
         // Other shapes (a profile change) validate again.
-        assert!(!seen.missing(&changed, &bare, &cat, "pkg-a").is_empty());
+        assert!(!seen
+            .missing(&changed, &cat, pk(&changed, &cat), &bare, None)
+            .is_empty());
         assert_eq!(seen.verdicts.lock().unwrap().len(), 3);
+        // An edited catalogue record builds another graph: validated again.
+        let renamed = Catalogue {
+            name: "town".into(),
+            ..cat.clone()
+        };
+        assert!(seen
+            .missing(&held, &renamed, pk(&held, &renamed), &full, None)
+            .is_empty());
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 4);
+        // The same record served under another base mints other IRIs: validated again.
+        let moved = Catalogue {
+            public_base: Some("https://data.town.test".into()),
+            ..cat.clone()
+        };
+        assert!(seen
+            .missing(&held, &moved, pk(&held, &moved), &full, None)
+            .is_empty());
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 5);
     }
 
     #[test]
