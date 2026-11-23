@@ -764,6 +764,20 @@ async fn every_write_operation_leaves_one_audit_row() {
         registry_writes.is_empty(),
         "registry writes without an audit kind: {registry_writes:?}"
     );
+    // A write whose name has no audit kind fails, so it never stands without its row.
+    let ctx = RequestCtx::new(
+        daiya_model::InstallationId::from_u128(1),
+        ORG,
+        daiya_model::InstanceId::from_u128(1),
+        daiya_model::Subject::authenticated("admin", vec![ORG], vec![]),
+    );
+    let before = w.store.list_audit(ORG).await.expect("rows").len();
+    let err = daiya_api::state::audit(&w.state, &ctx, "Dashboard/Archive", "edge".into())
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 500, "{err}");
+    assert!(err.to_string().contains("'Dashboard/Archive'"), "{err}");
+    assert_eq!(w.store.list_audit(ORG).await.expect("rows").len(), before);
 }
 
 #[tokio::test]
