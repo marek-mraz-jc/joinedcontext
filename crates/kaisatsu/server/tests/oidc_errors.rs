@@ -320,6 +320,30 @@ async fn scope_refusals_and_client_token_settings() {
     assert!(v["scope"].as_str().unwrap().contains("fam:abc"), "{v}");
 }
 
+/// A client whose service account user is gone gets it made again at its next
+/// client_credentials grant (W3), owned by that client.
+#[tokio::test]
+async fn a_missing_service_account_is_made_again_at_the_grant() {
+    let (app, store, _) = app().await;
+    client(&store, "sa-app", |_| {}).await;
+    let sa = store
+        .get_user_by_username_or_email("dev", None, "service-account-sa-app")
+        .await
+        .unwrap()
+        .unwrap();
+    store.delete_user("dev", None, &sa.id).await.unwrap();
+    let (st, body) = cc(&app, "sa-app", None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let again = store
+        .get_user_by_username_or_email("dev", None, "service-account-sa-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(again.id, sa.id);
+    assert_eq!(again.service_account_client_id.as_deref(), Some("sa-app"));
+    assert!(again.enabled);
+}
+
 fn jwt_alg(jwt: &str) -> Value {
     let header: Value = serde_json::from_slice(
         &URL_SAFE_NO_PAD
