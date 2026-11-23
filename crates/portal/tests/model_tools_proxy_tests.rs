@@ -2,12 +2,10 @@
 //! what happens when the compiler is absent (DM-10, DM-18, DM-19).
 
 mod common;
-#[path = "common/csrf_echo.rs"]
-mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
-use csrf_echo::EchoCsrf;
+use common::csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
@@ -422,6 +420,9 @@ async fn a_broken_upload_or_an_unknown_format_is_the_persons_400() {
     };
     let broken = send("--b\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nabc").await;
     assert_eq!(broken.status, StatusCode::BAD_REQUEST, "{}", broken.text);
+    let cut = send("--b\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\ncsv").await;
+    assert_eq!(cut.status, StatusCode::BAD_REQUEST, "{}", cut.text);
+    assert!(cut.text.contains("field 'format'"), "{}", cut.text);
     let unknown = send(concat!(
         "--b\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\nexe\r\n",
         "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\r\na,b\r\n",
