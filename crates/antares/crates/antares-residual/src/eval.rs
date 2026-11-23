@@ -642,7 +642,10 @@ mod tests {
     /// Two integers order exactly, past where f64 tells them apart.
     #[test]
     fn integers_order_exactly_beyond_f64_precision() {
-        let (big, next) = (Val::Int(9_007_199_254_740_993), Val::Int(9_007_199_254_740_992));
+        let (big, next) = (
+            Val::Int(9_007_199_254_740_993),
+            Val::Int(9_007_199_254_740_992),
+        );
         assert_eq!(order(&big, &next), Some(Ordering::Greater));
     }
 
@@ -652,7 +655,10 @@ mod tests {
         let pow = |b: f64, e: f64| call(Func::Pow, vec![Some(Val::Num(b)), Some(Val::Num(e))]);
         assert_eq!(pow(4.0, 0.5), Some(Val::Num(2.0)));
         let r = pow(4.0, 1.5);
-        assert!(matches!(r, Some(Val::Num(n)) if (n - 8.0).abs() < 1e-9), "{r:?}");
+        assert!(
+            matches!(r, Some(Val::Num(n)) if (n - 8.0).abs() < 1e-9),
+            "{r:?}"
+        );
     }
 
     /// A concatenation of 4 KiB is well inside the string bound.
