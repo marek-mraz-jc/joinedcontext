@@ -98,6 +98,43 @@ pipeline:
         message: 'linked-events: ${! @kept } events kept, dropped by reason ${! @dropped }'
     - unarchive: { format: json_array }
 
+    # The organizer (T-7567). Linked Events' `provider` names it only when it is not the publisher
+    # (the editor's "organizer, if other than the publisher"), so an event without one is run by
+    # its publisher, which the record gives only as an organisation id (`ahjo:u42030010`). The id's
+    # name comes from the register's organisation list, one GET per id, kept in the runner's
+    # `linked_events_orgs` cache for a day (components/pipeline-runner/streams/resources.yaml):
+    # the register lists about 1,550 organisations, so the cache holds at most that many short
+    # names, and a nightly sweep of 14,000 events asks only for the ids it has not seen today. A
+    # failed or empty answer leaves the event without an organizer and is asked again next run.
+    - branch:
+        request_map: |
+          let provided = [this.provider.fi.or(null), this.provider.en.or(null), this.provider.sv.or(null)].filter(p -> p != null && p.type() == "string" && p.trim() != "")
+          let code = this.publisher.or("")
+          root = if $provided.length() > 0 || $code.type() != "string" || !$code.re_match("^[A-Za-z0-9_-]{1,40}:[A-Za-z0-9_.-]{1,60}$") || $code.contains("..") { deleted() } else { $code }
+        processors:
+          - try:
+              - cached:
+                  cache: linked_events_orgs
+                  key: ${! content() }
+                  ttl: 24h
+                  # A failed ask keeps the id as the message; never store that as the name.
+                  skip_on: errored()
+                  processors:
+                    - http:
+                        url: https://api.hel.fi/linkedevents/v1/organization/${! content() }/
+                        verb: GET
+                        headers:
+                          Accept: application/json
+                          User-Agent: joinedcontext-platform/1.0 (+https://dev.joinedcontext.com; public events)
+                        timeout: 20s
+                        retries: 1
+                    - mapping: |
+                        let name = if content().length() > 65536 { "" } else { this.name.or("") }
+                        root = if $name.type() != "string" || $name.trim() == "" { throw("the organisation has no name") } else { $name }
+          - catch:
+              - mapping: root = ""
+        result_map: meta publisher_name = content().string()
+
     - mapping: |
         # The domain comes from the deployment, never from this file (PF-44). A Linked Events
         # id is `helsinki:agpg4hzprq`; the colon would open a segment inside the URN's own
@@ -120,6 +157,11 @@ pipeline:
         # The register's publisher (an organization id such as `ahjo:u480400`): one source of the
         # city's events inventory, so each publisher's count can be read back (T-5666).
         let publisher = this.publisher.or("").re_find_all("^[A-Za-z0-9_:.-]{1,100}$").index(0).or(null)
+        # Who runs the event: the provider the record names, else its publisher's name (above). One
+        # name in Finnish, else English or Swedish, spaces collapsed; an e-mail address or a phone
+        # number typed into it stays on the register's page (the free text can be a person's line).
+        let provided = [this.provider.fi.or(null), this.provider.en.or(null), this.provider.sv.or(null)].filter(p -> p != null && p.type() == "string" && p.trim() != "").index(0).or(@publisher_name.or(""))
+        let organizer = $provided.re_replace_all("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "").re_replace_all("(\\+358|\\b0)[0-9][0-9 -]{5,}[0-9]", "").re_replace_all("\\s+", " ").re_replace_all("^[ ,;:/-]+|[ ,;:/-]+$", "")
         root = {
           "id": $id,
           "type": "Event",
@@ -157,6 +199,9 @@ pipeline:
           # unit, which the services pipeline writes as a PointOfInterest of the same number.
           "refPointOfInterest": if $place == null { null } else {
             { "type": "Relationship", "object": $urn.format("PointOfInterest", $domain, $space, "servicemap-" + $place) }
+          },
+          "organizer": if $organizer == "" { null } else {
+            { "type": "Property", "value": { "name": $organizer.slice(0, [$organizer.length(), 300].min()) } }
           },
           "contactPoint": if $contact == null || $contact == "" { null } else {
             { "type": "Property", "value": $contact }
