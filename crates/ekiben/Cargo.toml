@@ -160,3 +160,12 @@ sqlx-mysql = { version = "=0.9.1", default-features = false, features = ["json",
 [patch.crates-io]
 jaq-core = { path = "../../vendor/jaq-core" }
 jaq-json = { path = "../../vendor/jaq-json" }
+
+# Debug and test builds carry line tables instead of full DWARF: full debuginfo made one worker's
+# jc target/debug/deps 39 GB (T-7568), and a panic backtrace still names file:line. `test` states the
+# same value so an override of one cannot leave the other on full DWARF. Release is untouched.
+# Full debuginfo for a debugger session: CARGO_PROFILE_DEV_DEBUG=true CARGO_PROFILE_TEST_DEBUG=true cargo ...
+[profile.dev]
+debug = "line-tables-only"
+[profile.test]
+debug = "line-tables-only"
