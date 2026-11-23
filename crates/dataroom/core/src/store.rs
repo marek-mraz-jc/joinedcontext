@@ -57,6 +57,19 @@ pub struct DatasetFilter {
     pub limit: usize,
 }
 
+impl SearchQuery {
+    /// Whether the state and public-only part of the query keeps `ds` (the terms aside).
+    #[must_use]
+    pub fn keeps(&self, ds: &Dataset) -> bool {
+        let state_kept = match ds.state {
+            crate::model::RecordState::Active => true,
+            crate::model::RecordState::Draft => self.include_drafts,
+            crate::model::RecordState::Withdrawn => self.include_withdrawn,
+        };
+        state_kept && (!self.public_only || ds.visibility == Visibility::Public)
+    }
+}
+
 impl DatasetFilter {
     pub fn public_default() -> Self {
         Self {
@@ -65,6 +78,40 @@ impl DatasetFilter {
         }
     }
 }
+
+/// The text and state part of a catalogue search a store answers (S11-38): the store narrows
+/// and ranks, the search crate authorizes, facets and pages.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchQuery {
+    /// Per query word, the folded prefixes any of which matches it (`word_stem_candidates`);
+    /// a dataset matches when every word does. Empty: every dataset matches.
+    pub terms: Vec<Vec<String>>,
+    pub include_drafts: bool,
+    pub include_withdrawn: bool,
+    /// Only `public` datasets: an anonymous search without `include_private`.
+    pub public_only: bool,
+}
+
+/// One dataset a store found for a [`SearchQuery`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchCandidate {
+    /// With `rank` set, a slim record: no description, distributions holding only id and
+    /// format. With `rank` unset, the full record, which the caller still has to match.
+    pub dataset: Dataset,
+    pub rank: Option<usize>,
+}
+
+/// The answer of [`Store::search_page`]: the catalogue's publishers and the full records of
+/// the page `pick` chose, in its order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SearchPage {
+    pub publishers: Vec<Publisher>,
+    pub datasets: Vec<Dataset>,
+}
+
+/// Chooses a page from the candidates of a [`Store::search_page`] and returns its dataset ids.
+pub type PickPage<'a> =
+    dyn FnMut(&[Publisher], Vec<SearchCandidate>) -> Result<Vec<String>> + Send + 'a;
 
 /// The storage contract for `dataroom`.
 ///
@@ -175,6 +222,54 @@ pub trait Store: Send + Sync {
     /// Lists all datasets in `ctx`'s catalogue (including drafts/withdrawn for internal callers).
     fn list_datasets<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Dataset>>>;
 
+    /// One search page in one read (S11-38): the publishers, the datasets `query` keeps
+    /// (state, public-only, every term matched), `pick` choosing the page from them, and the
+    /// page's full records. This default reads whole records and leaves the match to the
+    /// caller (every rank unset); the Postgres store matches and ranks in SQL.
+    fn search_page<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        query: &'a SearchQuery,
+        pick: &'a mut PickPage<'_>,
+    ) -> BoxFuture<'a, Result<SearchPage>> {
+        Box::pin(async move {
+            let publishers = self.list_publishers(ctx).await?;
+            let candidates: Vec<SearchCandidate> = self
+                .list_datasets(ctx)
+                .await?
+                .into_iter()
+                .filter(|ds| query.keeps(ds))
+                .map(|dataset| SearchCandidate {
+                    dataset,
+                    rank: None,
+                })
+                .collect();
+            let mut by_id: std::collections::HashMap<String, Dataset> = candidates
+                .iter()
+                .map(|c| (c.dataset.id.clone(), c.dataset.clone()))
+                .collect();
+            let ids = pick(&publishers, candidates)?;
+            let datasets = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            Ok(SearchPage {
+                publishers,
+                datasets,
+            })
+        })
+    }
+
+    /// The datasets of one `dataset_type` (`dashboard`), in name order.
+    fn list_datasets_of_type<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset_type: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Dataset>>> {
+        Box::pin(async move {
+            let mut all = self.list_datasets(ctx).await?;
+            all.retain(|d| d.dataset_type == dataset_type);
+            Ok(all)
+        })
+    }
+
     /// Gets a dataset by `id` or `name` slug.
     fn get_dataset<'a>(
         &'a self,
@@ -230,6 +325,22 @@ pub trait Store: Send + Sync {
         ctx: &'a RequestCtx,
         resource_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ResourceView>>>;
+
+    /// The views of several distributions (one dataset's) in one read: grouped in the order of
+    /// `distribution_ids`, each group as [`Store::list_resource_views`] orders it.
+    fn list_views_of<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        distribution_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<ResourceView>>> {
+        Box::pin(async move {
+            let mut out = Vec::new();
+            for id in distribution_ids {
+                out.extend(self.list_resource_views(ctx, id).await?);
+            }
+            Ok(out)
+        })
+    }
 
     /// Gets a resource view by `id`.
     fn get_resource_view<'a>(
