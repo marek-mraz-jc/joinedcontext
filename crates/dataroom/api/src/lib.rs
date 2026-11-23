@@ -2002,19 +2002,10 @@ async fn dispatch_ui_route(
                 Vec::new()
             };
             // ponytail: one catalogue listing per dataset page; a store query by type when
-            // catalogues hold thousands of packages.
-            let dashboards: Vec<Dataset> = state
-                .store
-                .list_datasets(&ctx)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|d| {
-                    is_dashboard(d)
-                        && d.state != RecordState::Withdrawn
-                        && dataset_shown(&state, &ctx, &cat, d, None)
-                })
-                .collect();
+            // catalogues hold thousands of packages. A dashboard of a withdrawn publisher is
+            // linked nowhere, as its own page is not found.
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
             let html = dataroom_web::render_dataset_page_linked(
                 &cat,
                 Some(&state.branding_of(&cat)),

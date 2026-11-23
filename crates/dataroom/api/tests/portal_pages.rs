@@ -193,6 +193,32 @@ async fn the_portal_catalogue_pages_by_twenty() {
     for i in 0..25 {
         dataset(store.as_ref(), a, own, &format!("set-{i:02}")).await;
     }
+    let ctx = RequestCtx::new(a, own, Subject::authenticated("seed", vec![a], Vec::new()));
+    let other = serde_json::from_value(json!({
+        "orgId": a, "catalogueId": own, "id": "other", "name": "other",
+        "title": {"en": "Other"}, "description": {}, "uri": "https://a.test/publisher/other",
+        "state": "active", "editorGrants": [],
+        "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z",
+    }))
+    .expect("publisher");
+    store
+        .upsert_publisher(&ctx, other)
+        .await
+        .expect("publisher");
+    for (name, publisher, kind) in [
+        ("zz-other", "other", "dataset"),
+        ("zz-board", "city", "dashboard"),
+    ] {
+        let ds = serde_json::from_value(json!({
+            "orgId": a, "catalogueId": own, "id": format!("id-{name}"), "name": name,
+            "title": {"en": format!("Dataset {name}")}, "description": {"en": "About"},
+            "publisherId": publisher, "visibility": "public", "state": "active",
+            "datasetType": kind, "themes": ["ENVI"],
+            "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+        }))
+        .expect("dataset");
+        store.upsert_dataset(&ctx, ds).await.expect("dataset");
+    }
     let app = router(DataroomState::new(
         store,
         Arc::new(PolicyAuthorizer::default()),
@@ -214,14 +240,15 @@ async fn the_portal_catalogue_pages_by_twenty() {
         }
     };
     let (first, second) = (page(1).await, page(2).await);
-    assert_eq!(first["total"], 25);
+    // The portal's catalogue lists every record, Dashboards and other publishers' included.
+    assert_eq!(first["total"], 27);
     assert_eq!(first["datasets"].as_array().map(Vec::len), Some(20));
     assert_eq!(
         (
             second["page"].as_u64(),
             second["datasets"].as_array().map(Vec::len)
         ),
-        (Some(2), Some(5))
+        (Some(2), Some(7))
     );
     let names = |v: &serde_json::Value| -> Vec<String> {
         v["datasets"]
@@ -257,8 +284,32 @@ async fn the_portal_catalogue_pages_by_twenty() {
     // A dataset address ends in an RDF extension or is a name: `.csv` is neither.
     let (status, _, _) = get(app.clone(), "opendata.a.test", "/dataset/set-01.csv", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _, _) = get(app, "opendata.a.test", "/dataset/set-01.ttl", None).await;
+    let (status, _, _) = get(app.clone(), "opendata.a.test", "/dataset/set-01.ttl", None).await;
     assert_eq!(status, StatusCode::OK);
+    // A publisher's page lists its own datasets alone, in the asked order.
+    let (_, _, page) = get(
+        app.clone(),
+        "opendata.a.test",
+        "/organization/city?sort=name%20desc",
+        None,
+    )
+    .await;
+    assert!(
+        page.contains("set-24") && !page.contains("set-00") && !page.contains("zz-other"),
+        "{page}"
+    );
+    let (_, _, publishers) = get(app.clone(), "opendata.a.test", "/organization", None).await;
+    let (_, _, topics) = get(app, "opendata.a.test", "/group", None).await;
+    // A Dashboard counts as no dataset of its publisher or its topic.
+    assert!(publishers.contains("25 Datasets"), "{publishers}");
+    let envi = topics.split(">ENVI<").nth(1).unwrap_or_default();
+    assert!(
+        envi.split("class=\"count\">")
+            .nth(1)
+            .unwrap_or_default()
+            .starts_with("1 dataset<"),
+        "{topics}"
+    );
 }
 
 #[tokio::test]
@@ -297,24 +348,26 @@ async fn a_dashboard_of_a_withdrawn_publisher_is_hidden_whether_named_by_id_or_b
             .await
             .expect("publisher");
     }
-    for (name, publisher) in [
-        ("by-id-gone", "p2"),
-        ("by-name-gone", "second"),
-        ("by-id-kept", "p1"),
-        ("by-name-kept", "first"),
+    const AIR: &str = "https://api.a.test/endpoint/air0000000000000000";
+    for (name, publisher, state) in [
+        ("by-id-gone", "p2", "active"),
+        ("by-name-gone", "second", "active"),
+        ("by-id-kept", "p1", "active"),
+        ("by-name-kept", "first", "active"),
+        ("withdrawn-board", "p1", "withdrawn"),
     ] {
         let ds = serde_json::from_value(json!({
             "orgId": a, "catalogueId": own, "id": format!("id-{name}"), "name": name,
             "title": {"en": format!("Board {name}")}, "description": {"en": "About"},
-            "publisherId": publisher, "visibility": "public", "state": "active",
-            "datasetType": "dashboard",
+            "publisherId": publisher, "visibility": "public", "state": state,
+            "datasetType": "dashboard", "extras": {"jc_endpoints": AIR},
             "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
         }))
         .expect("dashboard");
         store.upsert_dataset(&ctx, ds).await.expect("dashboard");
     }
     let app = router(DataroomState::new(
-        store,
+        store.clone(),
         Arc::new(PolicyAuthorizer::default()),
         a,
         own,
@@ -340,6 +393,29 @@ async fn a_dashboard_of_a_withdrawn_publisher_is_hidden_whether_named_by_id_or_b
         )
         .await;
         assert_eq!(status == StatusCode::OK, shown, "{name}: {status}");
+    }
+    // The dataset page links the dashboards that read its Endpoint and may be shown.
+    let air = serde_json::from_value(json!({
+        "orgId": a, "catalogueId": own, "id": "id-air", "name": "air",
+        "title": {"en": "Air"}, "description": {"en": "About"},
+        "publisherId": "p1", "visibility": "public", "state": "active", "endpointUrl": AIR,
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dataset");
+    store.upsert_dataset(&ctx, air).await.expect("dataset");
+    let (status, _, page) = get(app.clone(), "opendata.a.test", "/dataset/air", None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for (name, linked) in [
+        ("by-id-kept", true),
+        ("by-name-kept", true),
+        ("by-id-gone", false),
+        ("withdrawn-board", false),
+    ] {
+        assert_eq!(
+            page.contains(&format!("/dashboards/{name}\"")),
+            linked,
+            "{name} linked: {page}"
+        );
     }
 }
 
