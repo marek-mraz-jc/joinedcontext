@@ -13,8 +13,8 @@ use dataroom_core::{
     DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, RequestCtx, Result, Store,
 };
 use dataroom_harvest::{
-    harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher, OutboundFetcher,
-    ValidatedTarget, RETRIES,
+    cron_matches, harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher,
+    OutboundFetcher, ValidatedTarget, RETRIES,
 };
 use dataroom_store_memory::MemoryStore;
 use jc_time::TimestampTz;
@@ -269,6 +269,71 @@ async fn a_start_runs_every_enabled_source_off_schedule() {
     let out = scheduler(&w, store, f.clone(), false).run_all().await;
     assert!(matches!(out[0].1, Err(DataroomError::Forbidden(_))));
     assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_catalogue_added_while_the_scheduler_runs_is_read_on_its_next_check() {
+    let (w, store, f) = scheduled_world(0).await;
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(f.clone())),
+        store.clone(),
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        Vec::new(),
+    );
+    assert!(s.run_all().await.is_empty(), "no catalogue yet");
+    s.catalogues()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((w.org, w.cat));
+    assert_eq!(s.run_all().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_source_whose_schedule_does_not_read_is_skipped_and_the_others_run() {
+    let (w, store, f) = scheduled_world(0).await;
+    let mut bad = source("arc-gis-hub", "bad", HUB, &["hub.city.example"]);
+    bad.schedule = "61 * * * *".into();
+    store.upsert_harvest_source(&w.ctx, bad).await.unwrap();
+    let out = scheduler(&w, store, f, true).run_due(at(3, 23)).await;
+    let names: Vec<&str> = out.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["hub"]);
+}
+
+#[test]
+fn sunday_reads_as_seven_and_a_range_end_that_is_no_number_is_refused() {
+    // 2026-11-08 is a Sunday.
+    let sunday = TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::date(2026, 11, 8).at(3, 23, 0, 0))
+            .expect("in range"),
+    );
+    assert!(cron_matches("23 3 * * 7", sunday).unwrap());
+    assert!(cron_matches("23 3 * * 6-7", sunday).unwrap());
+    assert!(!cron_matches("23 3 * * 7", at(3, 23)).unwrap(), "a Monday");
+    assert!(cron_matches("23 3 * * 1-x", sunday).is_err());
+}
+
+/// The spawned loop runs every enabled source in its first minute (paused time: the sleeps pass
+/// at once while the wall clock stays in one minute, so later checks run nothing).
+#[tokio::test(start_paused = true)]
+async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
+    let (w, store, f) = scheduled_world(0).await;
+    let handle = scheduler(&w, store, f.clone(), true).spawn();
+    // A virtual second per look: the runtime idles, so paused time moves to the next timer.
+    for _ in 0..600 {
+        if !active_names(&w).await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    handle.abort();
+    assert_eq!(active_names(&w).await, vec!["city-cesty-aaa111".to_owned()]);
+    assert_eq!(
+        f.calls.load(Ordering::SeqCst),
+        1,
+        "one run, no second in the same minute"
+    );
 }
 
 #[tokio::test]

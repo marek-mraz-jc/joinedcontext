@@ -310,9 +310,16 @@ fn a_record_reads_a_numeric_id_its_licence_link_bbox_html_page_and_link_formats(
     let mut src = records_source();
     src.spelling_fixes
         .insert("parky".into(), "parky mesta".into());
+    src.target_publisher_iri = Some("https://data.gov.cz/zdroj/ovm/1".into());
     let got = parse_ogc_records_page(org, cat, &src, &url, &page, "sk").expect("page");
     let (id, ds) = &got.kept[0];
     assert_eq!(id, "7");
+    let publisher = ds.publisher.as_ref().expect("the publisher IRI");
+    assert_eq!(
+        publisher.uri.as_deref(),
+        Some("https://data.gov.cz/zdroj/ovm/1")
+    );
+    assert_eq!(publisher.name["sk"], "city");
     assert_eq!(
         title(ds),
         "Stromy & parky mesta",
