@@ -9,7 +9,7 @@ use axum::http::{Request, StatusCode};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
-use shako_api::{ShakoState, compat_and_native_rest_router};
+use shako_api::{ShakoState, compat_and_native_rest_router, odata_router};
 use shako_core::{
     Action, InstanceId, LocalAuthorizer, OrgId, OutboundGuard, OutboundPolicy, Principal,
     RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject, TokenVerifier,
@@ -79,7 +79,9 @@ fn world(root: &std::path::Path) -> Router {
         verifier,
         guard,
     );
-    compat_and_native_rest_router().with_state(state)
+    compat_and_native_rest_router()
+        .merge(odata_router())
+        .with_state(state)
 }
 
 async fn send(
@@ -518,4 +520,187 @@ async fn a_repository_lives_through_the_compat_surface() {
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = send(&app, "GET", R, READER, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// Every entity set the service document names answers a page to a reader, after a repository
+/// has a branch, a commit status, a pull request with a review and a branch rule; an anonymous
+/// caller reads none of it.
+#[tokio::test]
+async fn every_odata_set_answers_a_reader_and_refuses_the_anonymous() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app = world(tmp.path());
+    let (st, repo) = send(
+        &app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        ADMIN,
+        Some(json!({ "name": "site", "auto_init": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{repo}");
+    send(
+        &app,
+        "POST",
+        &format!("{R}/branches"),
+        ADMIN,
+        Some(json!({ "new_branch_name": "feature" })),
+    )
+    .await;
+    let (_, file) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/a.txt"),
+        ADMIN,
+        Some(put("a", "add a", "feature")),
+    )
+    .await;
+    let head = file["commit"]["sha"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{file}"))
+        .to_owned();
+    send(
+        &app,
+        "POST",
+        &format!("{R}/statuses/{head}"),
+        ADMIN,
+        Some(json!({ "state": "pending", "context": "ci" })),
+    )
+    .await;
+    send(
+        &app,
+        "POST",
+        &format!("{R}/branch_protections"),
+        ADMIN,
+        Some(json!({ "rule_name": "main" })),
+    )
+    .await;
+    let (st, pull) = send(
+        &app,
+        "POST",
+        &format!("{R}/pulls"),
+        ADMIN,
+        Some(json!({ "title": "a", "head": "feature", "base": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{pull}");
+    send(
+        &app,
+        "POST",
+        &format!("{R}/pulls/1/reviews"),
+        APPROVER,
+        Some(json!({ "event": "COMMENT", "body": "looks fine" })),
+    )
+    .await;
+
+    let (st, hook) = send(&app, "POST", &format!("{R}/hooks"), ADMIN, Some(json!({ "type": "gitea",
+        "config": { "url": "https://github.com/joinedcontext-apps/hook", "content_type": "json", "secret": "hook-signing-value" },
+        "events": ["push"], "active": true }))).await;
+    assert_eq!(st, StatusCode::CREATED, "{hook}");
+    let (st, mirror) = send(
+        &app,
+        "POST",
+        &format!("{R}/push_mirrors"),
+        ADMIN,
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{mirror}");
+    let (st, doc) = send(&app, "GET", "/odata/", READER, None).await;
+    assert_eq!(st, StatusCode::OK, "{doc}");
+    let sets: Vec<String> = doc["value"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{doc}"))
+        .iter()
+        .filter_map(|s| s["name"].as_str().map(str::to_owned))
+        .collect();
+    for set in [
+        "Repositories",
+        "Branches",
+        "Commits",
+        "PullRequests",
+        "Reviews",
+        "ProtectionRules",
+    ] {
+        assert!(sets.iter().any(|s| s == set), "{set} in {sets:?}");
+    }
+    let (st, _) = send(&app, "GET", "/odata/$metadata", READER, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, repos) = send(&app, "GET", "/odata/Repositories", READER, None).await;
+    let rid = repos["value"][0]["Id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{repos}"))
+        .to_owned();
+    let mut rows = std::collections::BTreeMap::new();
+    for set in &sets {
+        let (mut st, mut page) = send(&app, "GET", &format!("/odata/{set}"), READER, None).await;
+        if st == StatusCode::BAD_REQUEST || st == StatusCode::NOT_IMPLEMENTED {
+            assert!(
+                page["error"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("RepoId")),
+                "{set}: {page}"
+            );
+            (st, page) = send(
+                &app,
+                "GET",
+                &format!("/odata/{set}?$filter=RepoId%20eq%20'{rid}'"),
+                READER,
+                None,
+            )
+            .await;
+        }
+        assert_eq!(st, StatusCode::OK, "{set}: {page}");
+        rows.insert(set.clone(), page["value"].as_array().map_or(0, Vec::len));
+        let req = Request::builder()
+            .uri(format!("/odata/{set}"))
+            .body(Body::empty())
+            .expect("request");
+        let anon = app.clone().oneshot(req).await.expect("answer").status();
+        assert_eq!(anon, StatusCode::UNAUTHORIZED, "{set}");
+    }
+    for (set, at_least) in [
+        ("Repositories", 1),
+        ("Branches", 2),
+        ("Commits", 1),
+        ("PullRequests", 1),
+        ("Instances", 1),
+        ("Reviews", 1),
+        ("ProtectionRules", 1),
+    ] {
+        assert!(
+            rows.get(set).copied().unwrap_or(0) >= at_least,
+            "{set}: {rows:?}"
+        );
+    }
+    let (st, page) = send(&app, "GET", &format!("/odata/Branches?$filter=RepoId%20eq%20'{rid}'%20and%20Name%20eq%20'feature'&$select=Name"), READER, None).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    assert_eq!(page["value"].as_array().map(Vec::len), Some(1), "{page}");
+    let (st, page) = send(
+        &app,
+        "GET",
+        &format!("/odata/Repositories('{rid}')/Branches"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    // A hook's and a mirror's targets are the admin's: a reader's page holds neither.
+    for set in ["Webhooks", "PushMirrors"] {
+        assert_eq!(rows.get(set), Some(&0), "{set}: {rows:?}");
+        let (st, page) = send(
+            &app,
+            "GET",
+            &format!("/odata/{set}?$filter=RepoId%20eq%20'{rid}'"),
+            ADMIN,
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, page["value"].as_array().map(Vec::len)),
+            (StatusCode::OK, Some(1)),
+            "{set}: {page}"
+        );
+    }
+    let (st, err) = send(&app, "GET", "/odata/NoSuchSet", READER, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{err}");
 }
