@@ -635,7 +635,8 @@ async fn answer_ckan_action(
                 &op_ctx,
                 &ctx,
                 "dataset.propose",
-                json!({ "dataset": merged }),
+                // The patch was merged into this read: a write since then is a conflict.
+                json!({ "dataset": merged, "expectedModified": existing.modified }),
             )
             .await
             {

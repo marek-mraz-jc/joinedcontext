@@ -8,11 +8,33 @@ use crate::model::{
     Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, ResourceView,
     ShaclValidationReport, StaticPage, Visibility,
 };
+use jc_time::TimestampTz;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// The `modified` a guarded write stores: the proposed one, moved one microsecond past
+/// `expected` when it is not later, so every guarded write changes the version the next writer
+/// compares (Postgres keeps microseconds).
+#[must_use]
+pub fn next_modified(proposed: TimestampTz, expected: Option<TimestampTz>) -> TimestampTz {
+    match expected {
+        Some(prev) if proposed <= prev => prev
+            .checked_add(jiff::SignedDuration::from_micros(1))
+            .unwrap_or(proposed),
+        _ => proposed,
+    }
+}
+
+/// The conflict a guarded write answers when another write changed the record since it was read.
+#[must_use]
+pub fn changed_since_read(kind: &str, id: &str) -> crate::error::DataroomError {
+    crate::error::DataroomError::Conflict(format!(
+        "{kind} '{id}' was changed by another write since it was read: read it again and retry"
+    ))
+}
 
 /// Structured filter for dataset queries (compatible with CKAN `fq` and search facets).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -64,6 +86,15 @@ pub trait Store: Send + Sync {
 
     /// Creates or updates a catalogue.
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>>;
+
+    /// [`Store::save_dataset`] for a catalogue row: the write and its activity row in one
+    /// transaction, refused with a conflict when the stored `modified` is no longer `expected`.
+    fn save_catalogue<'a>(
+        &'a self,
+        catalogue: Catalogue,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Catalogue>>;
 
     /// Writes only the declared members of a catalogue, so a concurrent edit of another one
     /// (hidden datasets, branding) is never lost; `None` when there is no such catalogue.
@@ -141,6 +172,19 @@ pub trait Store: Send + Sync {
         &'a self,
         ctx: &'a RequestCtx,
         dataset: Dataset,
+    ) -> BoxFuture<'a, Result<Dataset>>;
+
+    /// Writes `dataset` and its activity row in one transaction (AUD-02): the row commits with
+    /// the change or neither does. With `expected`, the stored record's `modified` must still be
+    /// the one the caller read, else nothing is written and the answer is a conflict (S11-25).
+    /// The saved `modified` always moves past `expected` ([`next_modified`]), and an activity
+    /// row with no `object_id` names the saved dataset's id.
+    fn save_dataset<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset: Dataset,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Dataset>>;
 
     /// Marks a dataset as withdrawn (`state = Withdrawn`).
