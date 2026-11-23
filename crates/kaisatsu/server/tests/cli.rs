@@ -187,6 +187,20 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
         serde_json::from_slice(&std::fs::read(&prune_plan).expect("plan written"))
             .expect("plan json");
     assert_eq!(saved["mode"], "full");
+    // The saved plan's base state still holds, but the client secret's variable is unset here:
+    // refused as invalid input (exit 1), not as a stale plan (exit 3).
+    let out = Command::new(BIN)
+        .args(["apply", "-f", p(&prune_plan)])
+        .env_remove("KAISATSU_CLI_TEST_CLIENT_SECRET")
+        .env_remove("KAISATSU_CLI_TEST_ALICE_PASSWORD")
+        .output()
+        .expect("run kaisatsu");
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("$.clients[0].secret: secret variable is not set"),
+        "{}",
+        stderr(&out)
+    );
     let out = kaisatsu(&["export", "--realm", "cli"]);
     assert_eq!(code(&out), 1, "nothing to export from an empty store");
     // `--database-url` needs the KEK that encrypts the stored secrets.
