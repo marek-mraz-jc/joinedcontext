@@ -10,3 +10,5 @@
 "daiya-server" = { lines = 97.10, functions = 98.70 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 97.70, functions = 92.30 }
+"kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
+"kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
