@@ -4,11 +4,11 @@
 //! verification (R8, §5.3).
 
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
-    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
-    InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, org_state_etag,
-    store::StoreFuture,
+    ApplyBundle, AuditRecord, CrError, CrResult, DASHBOARD_VERSIONS_KEPT, DaiyaStore,
+    DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT,
+    ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
+    OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage, RowQuery, RowSet,
+    constant_time_eq, folder_content_refusal, org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
@@ -113,6 +113,13 @@ fn upsert_folder_in(org: &mut OrgState, mut folder: FolderRecord) -> CrResult<Fo
     Ok(folder)
 }
 
+/// Keeps the newest `kept` of `rows`, which are in insertion order.
+fn trim_oldest<T>(rows: &mut Vec<T>, kept: i64) {
+    let kept = usize::try_from(kept).unwrap_or(usize::MAX);
+    let excess = rows.len().saturating_sub(kept);
+    rows.drain(..excess);
+}
+
 fn upsert_dashboard_in(
     org: &mut OrgState,
     mut dashboard: DashboardRecord,
@@ -190,10 +197,9 @@ fn upsert_dashboard_in(
         created_at: now,
     };
 
-    org.versions
-        .entry(dashboard.uid.clone())
-        .or_default()
-        .push(ver_record);
+    let versions = org.versions.entry(dashboard.uid.clone()).or_default();
+    versions.push(ver_record);
+    trim_oldest(versions, DASHBOARD_VERSIONS_KEPT);
     org.dashboards
         .insert(dashboard.uid.clone(), dashboard.clone());
     Ok(dashboard)
@@ -433,16 +439,29 @@ impl DaiyaStore for MemoryStore {
             let Some(org) = guard.orgs.get_mut(&org_id) else {
                 return Ok(false);
             };
-            let removed = org.folders.remove(&uid).is_some();
-            if removed {
-                org.dashboards
-                    .retain(|_, d| d.folder_uid.as_deref() != Some(uid.as_str()));
-                let kept = &org.dashboards;
-                org.versions.retain(|d, _| kept.contains_key(d));
-                org.public_dashboards
-                    .retain(|_, p| kept.contains_key(&p.dashboard_uid));
+            if !org.folders.contains_key(&uid) {
+                return Ok(false);
             }
-            Ok(removed)
+            let held = |f: Option<&str>| f == Some(uid.as_str());
+            folder_content_refusal(
+                &uid,
+                org.dashboards
+                    .values()
+                    .filter(|d| held(d.folder_uid.as_deref()))
+                    .map(|d| d.uid.clone())
+                    .collect(),
+                org.folders
+                    .values()
+                    .filter(|f| held(f.parent_uid.as_deref()))
+                    .map(|f| f.uid.clone())
+                    .collect(),
+                org.library_panels
+                    .values()
+                    .filter(|p| held(p.folder_uid.as_deref()))
+                    .map(|p| p.uid.clone())
+                    .collect(),
+            )?;
+            Ok(org.folders.remove(&uid).is_some())
         })
     }
 
@@ -781,12 +800,9 @@ impl DaiyaStore for MemoryStore {
     ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let mut guard = self.inner.write();
-            guard
-                .orgs
-                .entry(report.org_id)
-                .or_default()
-                .import_reports
-                .push(report);
+            let reports = &mut guard.orgs.entry(report.org_id).or_default().import_reports;
+            reports.push(report);
+            trim_oldest(reports, IMPORT_REPORTS_KEPT);
             Ok(())
         })
     }

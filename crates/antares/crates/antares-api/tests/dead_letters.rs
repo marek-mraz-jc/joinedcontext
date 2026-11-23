@@ -141,7 +141,7 @@ async fn list_is_per_tenant_newest_first_filtered_and_bounded() {
     seed(
         &st,
         "acme",
-        "urn:ngsi-ld:DeadLetter:2",
+        "urn:ngsi-ld:DeadLetter:3",
         "urn:s:2",
         "http://127.0.0.1:9/n",
         "2026-01-01T00:00:03Z",
@@ -150,7 +150,7 @@ async fn list_is_per_tenant_newest_first_filtered_and_bounded() {
     seed(
         &st,
         "acme",
-        "urn:ngsi-ld:DeadLetter:3",
+        "urn:ngsi-ld:DeadLetter:2",
         "urn:s:1",
         "http://127.0.0.1:9/n",
         "2026-01-01T00:00:02Z",
@@ -177,10 +177,45 @@ async fn list_is_per_tenant_newest_first_filtered_and_bounded() {
     assert_eq!(
         ids,
         [
-            "urn:ngsi-ld:DeadLetter:2",
             "urn:ngsi-ld:DeadLetter:3",
+            "urn:ngsi-ld:DeadLetter:2",
             "urn:ngsi-ld:DeadLetter:1"
         ]
+    );
+    // S4-31: the listing pages and carries no payload; the letter read
+    // alone carries it
+    assert!(b[0].get("payload").is_none(), "{b}");
+    assert!(b[0]["payloadBytes"].as_u64().is_some_and(|n| n > 0), "{b}");
+    let (_, b) = send(&st, "GET", "/q/dead-letters?tenant=acme&limit=1&offset=1").await;
+    assert_eq!(b.as_array().expect("array").len(), 1);
+    assert_eq!(b[0]["id"], "urn:ngsi-ld:DeadLetter:2");
+    let (_, b) = send(&st, "GET", "/q/dead-letters?tenant=acme&offset=3").await;
+    assert_eq!(b, json!([]), "past the end");
+    let (_, b) = send(
+        &st,
+        "GET",
+        "/q/dead-letters?tenant=acme&subscription=urn:s:1&limit=1&offset=1",
+    )
+    .await;
+    assert_eq!(b[0]["id"], "urn:ngsi-ld:DeadLetter:1", "{b}");
+    let (s, b) = send(
+        &st,
+        "GET",
+        "/q/dead-letters/urn:ngsi-ld:DeadLetter:2?tenant=acme",
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["payload"]["type"], "Notification", "{b}");
+    let (s, _) = send(
+        &st,
+        "GET",
+        "/q/dead-letters/urn:ngsi-ld:DeadLetter:9?tenant=acme",
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::NOT_FOUND,
+        "another tenant's letter is not found"
     );
     assert!(
         !b.to_string().contains("DeadLetter:9"),
@@ -196,7 +231,7 @@ async fn list_is_per_tenant_newest_first_filtered_and_bounded() {
     assert_eq!(b.as_array().expect("array").len(), 2);
     let (_, b) = send(&st, "GET", "/q/dead-letters?tenant=acme&limit=1").await;
     assert_eq!(b.as_array().expect("array").len(), 1);
-    assert_eq!(b[0]["id"], "urn:ngsi-ld:DeadLetter:2");
+    assert_eq!(b[0]["id"], "urn:ngsi-ld:DeadLetter:3");
     let (_, b) = send(&st, "GET", "/q/dead-letters").await;
     assert_eq!(b, json!([]), "the default tenant holds none");
     let (_, b) = send(&st, "GET", "/q/dead-letters?tenant=never-seen").await;
@@ -214,6 +249,8 @@ async fn bad_tenant_and_bad_limit_are_400() {
         "/q/dead-letters?limit=0",
         "/q/dead-letters?limit=-1",
         "/q/dead-letters?limit=ten",
+        "/q/dead-letters?offset=-1",
+        "/q/dead-letters?offset=x",
     ] {
         let (s, b) = send(&st, "GET", path).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{path}: {b}");
@@ -244,6 +281,16 @@ async fn the_endpoint_userinfo_is_redacted_in_the_listing_only() {
     .await;
     let (_, b) = send(&st, "GET", "/q/dead-letters?tenant=acme").await;
     assert!(!b.to_string().contains("s3cret"), "{b}");
+    let (_, one) = send(
+        &st,
+        "GET",
+        "/q/dead-letters/urn:ngsi-ld:DeadLetter:1?tenant=acme",
+    )
+    .await;
+    assert!(
+        one["id"] == "urn:ngsi-ld:DeadLetter:1" && !one.to_string().contains("s3cret"),
+        "{one}"
+    );
     assert!(
         b[0]["uri"]
             .as_str()

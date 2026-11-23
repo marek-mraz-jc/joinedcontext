@@ -30,9 +30,10 @@ pub use dashboard::{
     VariableOption,
 };
 pub use entities::{
-    ApplyBundle, AuditRecord, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
-    FolderRecord, ImportReportRecord, LibraryPanelRecord, MAX_LIVE_PLANS, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag,
+    ApplyBundle, AuditRecord, DASHBOARD_VERSIONS_KEPT, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT, ImportReportRecord, LibraryPanelRecord,
+    MAX_LIVE_PLANS, PlanRecord, PublicDashboardRecord, QueryCacheStatRecord, ShareType,
+    org_state_etag,
 };
 pub use error::{CrError, CrResult, ProblemDetails};
 pub use frames::{
@@ -50,7 +51,7 @@ pub use registry::{
     daiya_registry,
 };
 pub use rows::{RowPage, RowQuery, RowSet, RowWindow};
-pub use store::{DaiyaStore, OrgKey, OrgRow};
+pub use store::{DaiyaStore, OrgKey, OrgRow, folder_content_refusal};
 pub use validation::{
     FeatureFinding, ValidationReport, Verdict, classify_and_validate, sanitize_markdown_to_html,
 };

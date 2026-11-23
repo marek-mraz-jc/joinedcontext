@@ -996,8 +996,63 @@ mod metric_tests {
         assert_eq!(metrics.get_counter("n"), 3);
     }
 
+    #[tokio::test]
+    async fn counter_and_timing_reach_the_exporter_and_a_bad_timing_is_dropped() {
+        let reg = MetricsRegistry::new();
+        let metrics = StreamMetrics::new("s", "default");
+        reg.register_stream(metrics.clone());
+        let ctx = proc_ctx(metrics.clone());
+        let counter = MetricProcessor::from_config(
+            &conf(serde_json::json!({"type": "counter", "name": "seen", "labels": {"k": "b"}})),
+            &ctx,
+        )
+        .unwrap();
+        counter
+            .process_batch(&ctx, vec![Part::from_str("{}"), Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert_eq!(metrics.get_counter("seen"), 2);
+        let timing = MetricProcessor::from_config(
+            &conf(serde_json::json!({
+                "type": "timing", "name": "took", "value": "${! json(\"n\") }", "labels": {"k": "c"}
+            })),
+            &ctx,
+        )
+        .unwrap();
+        timing
+            .process_batch(
+                &ctx,
+                vec![Part::from_str(r#"{"n":7}"#), Part::from_str(r#"{"n":-1}"#)],
+            )
+            .await
+            .unwrap();
+        let text = reg.render_prometheus();
+        assert!(text.contains("seen{k=\"b\",stream=\"s\"} 2"), "{text}");
+        assert!(
+            text.contains("took_count{k=\"c\",stream=\"s\"} 1"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_cache_failure_other_than_a_miss_names_the_key() {
+        assert_eq!(
+            cache_op_error("k", &CoreError::config("down")),
+            "operator failed for key 'k': configuration error: down"
+        );
+    }
+
     #[test]
     fn a_bad_type_or_a_missing_value_is_refused() {
+        let ctx = proc_ctx(StreamMetrics::new("s", "default"));
+        let err = MetricProcessor::from_config(
+            &conf(serde_json::json!({"type": "counter", "labels": {"k": 1}})),
+            &ctx,
+        )
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+        assert!(err.contains("metric label k must be a string"), "{err}");
         let ctx = proc_ctx(StreamMetrics::new("s", "default"));
         assert!(MetricProcessor::from_config(
             &conf(serde_json::json!({"type": "histogram"})),

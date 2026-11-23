@@ -68,6 +68,7 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
+        offline_since: None,
         revoked: false,
         expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
         act: None,
@@ -1348,6 +1349,14 @@ async fn sessions_and_tokens(store: &dyn Store) {
         .upsert_refresh_family(family("f3", "sso2", "u1", "grafana"))
         .await
         .expect("family");
+    // An offline family of sso1 outlives that session, not a password change (S3-22).
+    let mut offline = family("f1-offline", "sso1", "u1", "portal");
+    offline.offline = true;
+    offline.offline_since = Some(TimestampTz::now());
+    store
+        .upsert_refresh_family(offline)
+        .await
+        .expect("offline family");
     store
         .upsert_refresh_family(family("f4", "sso-x", "u2", "portal"))
         .await
@@ -1446,6 +1455,34 @@ async fn sessions_and_tokens(store: &dyn Store) {
             .expect("get")
             .expect("f1")
             .revoked
+    );
+    let kept = store
+        .get_refresh_family(R, "f1-offline")
+        .await
+        .expect("get")
+        .expect("f1-offline");
+    assert!(!kept.revoked, "an offline family outlives its SSO session");
+    assert!(kept.offline_since.is_some(), "the start is stored");
+    store
+        .revoke_offline_families_for_user(R, "u1")
+        .await
+        .expect("revoke offline");
+    assert!(
+        store
+            .get_refresh_family(R, "f1-offline")
+            .await
+            .expect("get")
+            .expect("f1-offline")
+            .revoked
+    );
+    assert!(
+        !store
+            .get_refresh_family(R, "f2")
+            .await
+            .expect("get")
+            .expect("f2")
+            .revoked,
+        "an online family stays for its own session"
     );
     store
         .revoke_refresh_families_for_session(R, "sso2", Some("grafana"))

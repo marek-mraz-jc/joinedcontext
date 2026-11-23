@@ -7,7 +7,9 @@
 mod common;
 
 use common::{ORG, OTHER_ORG, World, dashboard, prometheus, world};
-use daiya_api::render::{find_panel_in_slice, parse_time_str_ms, render_frames_html_table};
+use daiya_api::render::{
+    TimeEdge, find_panel_in_slice, parse_time_str_ms, render_frames_html_table,
+};
 use daiya_api::{DaiyaState, PanelTimeRange, panel_view};
 use daiya_model::{DaiyaStore, FieldColumn, Frame, FrameSet, OrgId, OrgKey, PanelSpec, Subject};
 use daiya_query::{
@@ -21,10 +23,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// From, to, interval and variables of one query context.
+type SeenQuery = (i64, i64, u64, BTreeMap<String, String>);
+
 /// A driver answering every query with a time, a name and a value column (rows `b`, `a`, null).
 #[derive(Default)]
 struct Fixed {
     calls: AtomicUsize,
+    /// Range, interval and variables of each query context the driver saw.
+    seen: std::sync::Mutex<Vec<SeenQuery>>,
 }
 
 impl Datasource for Fixed {
@@ -33,13 +40,21 @@ impl Datasource for Fixed {
     }
     fn query<'a>(
         &'a self,
-        _ctx: &'a QueryCtx,
+        ctx: &'a QueryCtx,
         q: &'a [Query],
     ) -> DsFuture<'a, Result<Vec<FrameSet>, DsError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push((
+            ctx.from_ms,
+            ctx.to_ms,
+            ctx.interval_ms,
+            ctx.variables.clone(),
+        ));
         Box::pin(async move {
             Ok(q.iter()
                 .map(|q| {
+                    // Query C reads ten times A's values, so a combined result tells them apart.
+                    let k = if q.ref_id == "C" { 10.0 } else { 1.0 };
                     FrameSet::new(
                         q.ref_id.clone(),
                         vec![Frame {
@@ -53,11 +68,15 @@ impl Datasource for Fixed {
                                     "name",
                                     vec![Some("b<".into()), Some("a".into()), None],
                                 ),
-                                FieldColumn::numbers(
-                                    "value",
-                                    BTreeMap::new(),
-                                    vec![Some(2.0), Some(1.0), None],
-                                ),
+                                FieldColumn {
+                                    // Shown as `Amount`: a sort may name either.
+                                    display_name: Some("Amount".into()),
+                                    ..FieldColumn::numbers(
+                                        "value",
+                                        BTreeMap::new(),
+                                        vec![Some(2.0 * k), Some(k), None],
+                                    )
+                                },
                             ],
                             ..Frame::default()
                         }],
@@ -320,44 +339,236 @@ async fn registered_drivers_come_first_and_built_ones_are_cached_per_revision() 
     assert_eq!(c.kind(), "fixed");
 }
 
+/// Built drivers are bounded per process (S9-33): ten times the Organizations hold no more
+/// drivers or bytes, and a deleted datasource gives its driver back at once.
+#[tokio::test]
+async fn built_drivers_stay_bounded_across_ten_times_the_organizations() {
+    use daiya_api::state::BUILT_DRIVERS_KEPT;
+    let w = world();
+    let (url, _) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let record = w
+        .store
+        .inner
+        .get_datasource(ORG, "prom")
+        .await
+        .unwrap()
+        .unwrap();
+    w.state.driver_for_record(&record).await.unwrap();
+    assert_eq!(w.state.built_drivers.len(), 1);
+    w.ok("DELETE", "/api/datasources/uid/prom", None).await;
+    assert!(
+        w.state.built_drivers.is_empty(),
+        "the deleted source's driver goes"
+    );
+
+    let mut held = Vec::new();
+    for orgs in [BUILT_DRIVERS_KEPT, 10 * BUILT_DRIVERS_KEPT] {
+        for n in 0..orgs {
+            let mut other = record.clone();
+            other.org_id = OrgId::from_u128(10_000 + n as u128);
+            w.state.driver_for_record(&other).await.unwrap();
+        }
+        held.push((w.state.built_drivers.len(), w.state.built_drivers.bytes()));
+    }
+    assert!(held[0].0 <= BUILT_DRIVERS_KEPT, "{held:?}");
+    assert_eq!(held[0], held[1], "flat across 10x Organizations");
+}
+
+/// A dashboard page loads and authorises its dashboard once, not once per panel (S9-34).
+#[tokio::test]
+async fn a_twenty_panel_page_authorises_its_dashboard_once() {
+    struct Counting {
+        inner: daiya_model::PolicyAuthorizer,
+        dashboard_reads: AtomicUsize,
+    }
+    impl daiya_model::Authorizer for Counting {
+        fn check(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            action: daiya_model::Action,
+            object: &daiya_model::ObjectTarget,
+        ) -> daiya_model::Decision {
+            if matches!(object, daiya_model::ObjectTarget::Dashboard { .. }) {
+                self.dashboard_reads.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner.check(ctx, action, object)
+        }
+        fn read_scope(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            kind: daiya_model::ReadKind,
+        ) -> daiya_model::ReadScope {
+            self.inner.read_scope(ctx, kind)
+        }
+    }
+    let authz = Arc::new(Counting {
+        inner: daiya_model::PolicyAuthorizer::new(common::bindings()),
+        dashboard_reads: AtomicUsize::new(0),
+    });
+    let w = common::world_with(authz.clone(), common::loopback());
+    let panels: Vec<Value> = (1..=20)
+        .map(|id| {
+            json!({
+                "id": id, "type": "text", "title": format!("Note {id}"),
+                "gridPos": { "x": 0, "y": id, "w": 12, "h": 2 },
+                "options": { "mode": "markdown", "content": format!("panel {id}") }
+            })
+        })
+        .collect();
+    let mut board = dashboard("many", "prom");
+    board["panels"] = Value::Array(panels);
+    w.add_dashboard(board, None).await;
+    authz.dashboard_reads.store(0, Ordering::SeqCst);
+
+    let (st, page) = w.call("GET", "/d/many", Some("viewer"), None).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    let page = page.as_str().unwrap();
+    assert_eq!(page.matches("<section>").count(), 20);
+    let order: Vec<usize> = (1..=20)
+        .map(|id| page.find(&format!("<h2>Note {id}</h2>")).unwrap())
+        .collect();
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "panels in dashboard order"
+    );
+    assert_eq!(authz.dashboard_reads.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn time_strings_parse_as_grafana_writes_them() {
+    use TimeEdge::{From, To};
     let now = jc_time::TimestampTz::now().as_millis();
     let near = |v: i64, want: i64| (v - want).abs() < 5_000;
-    assert!(near(parse_time_str_ms(None, -1000), now - 1000));
-    assert!(near(parse_time_str_ms(Some("  "), 0), now));
-    assert!(near(parse_time_str_ms(Some("now"), -1), now));
-    assert!(near(parse_time_str_ms(Some("now-1h"), 0), now - 3_600_000));
+    let p = |raw: &str, edge| parse_time_str_ms(Some(raw), edge).unwrap();
     assert!(near(
-        parse_time_str_ms(Some("now-1d/d"), 0),
-        now - 86_400_000
+        parse_time_str_ms(None, From).unwrap(),
+        now - 6 * 3_600_000
     ));
-    assert_eq!(
-        parse_time_str_ms(Some("1700000000000"), 0),
-        1_700_000_000_000
-    );
+    assert!(near(parse_time_str_ms(Some("  "), To).unwrap(), now));
+    assert!(near(p("now", From), now));
+    assert!(near(p("now-1h", From), now - 3_600_000));
+    assert!(near(p("now+2m", To), now + 120_000));
+    assert!(near(p("now-1w", From), now - 7 * 86_400_000));
+    assert_eq!(p("1700000000000", From), 1_700_000_000_000);
+    assert_eq!(p("2023-11-14T22:13:20Z", From), 1_700_000_000_000);
     // A time outside the years 0..=9999 is clamped to them, so no range arithmetic
     // downstream can overflow.
     for (wild, want) in [
         ("9223372036854775807", 253_402_300_799_999),
         ("-9223372036854775808", -62_167_219_200_000),
         ("now-99999999999999w", -62_167_219_200_000),
+        ("now-99999999999999y", -62_167_219_200_000),
+        ("now+99999999999999M", 253_402_300_799_999),
+        ("now+99999999999999y/y", 253_402_300_799_999),
     ] {
-        assert_eq!(parse_time_str_ms(Some(wild), 0), want, "{wild}");
+        assert_eq!(p(wild, To), want, "{wild}");
     }
+}
+
+/// Months, years and `/unit` rounding follow Grafana's date math in UTC: `from` rounds down to
+/// the unit's start, `to` up to its last millisecond, weeks start on Monday (S9-21).
+#[test]
+fn date_math_reads_months_years_and_rounding() {
+    use TimeEdge::{From, To};
+    let utc = |s: &str| jc_time::parse_rfc3339(s).unwrap().as_millisecond();
+    let p = |raw: &str, edge| parse_time_str_ms(Some(raw), edge).unwrap();
+    let now = jc_time::TimestampTz::now();
+    let today = now.utc().date();
+    let day_start = utc(&format!("{today}T00:00:00Z"));
+    assert_eq!(p("now/d", From), day_start);
+    assert_eq!(p("now/d", To), day_start + 86_400_000 - 1);
+    assert_eq!(p("now-1d/d", From), day_start - 86_400_000);
+    assert_eq!(p("now-7d/d", To), day_start - 6 * 86_400_000 - 1);
+    let month_start = utc(&format!(
+        "{:04}-{:02}-01T00:00:00Z",
+        today.year(),
+        today.month()
+    ));
+    assert_eq!(p("now/M", From), month_start);
+    assert_eq!(p("now-1M/M", To), month_start - 1);
     assert_eq!(
-        parse_time_str_ms(Some("2023-11-14T22:13:20Z"), 0),
-        1_700_000_000_000
+        p("now/y", From),
+        utc(&format!("{:04}-01-01T00:00:00Z", today.year()))
     );
-    // Unparseable: the default offset, also after a bad relative duration.
-    assert!(near(
-        parse_time_str_ms(Some("now-banana"), -7_000),
-        now - 7_000
-    ));
-    assert!(near(
-        parse_time_str_ms(Some("yesterday"), -7_000),
-        now - 7_000
-    ));
+    let monday = p("now/w", From);
+    assert_eq!(monday % 86_400_000, 0);
+    assert!(monday <= now.as_millis() && now.as_millis() - monday < 7 * 86_400_000);
+    assert_eq!(
+        jc_time::TimestampTz::from_millis(monday)
+            .unwrap()
+            .utc()
+            .weekday(),
+        jiff::civil::Weekday::Monday
+    );
+    // A month back from a month's last day lands on the shorter month's last day.
+    // The parser reads its own now after this test's, so both bounds allow 5 s.
+    let one_month = p("now-1M", From);
+    let span = now.as_millis() - one_month;
+    assert!(
+        (28 * 86_400_000 - 5_000..=31 * 86_400_000 + 5_000).contains(&span),
+        "{span}"
+    );
+    let one_year = p("now-1y", From);
+    let span = now.as_millis() - one_year;
+    assert!(
+        (365 * 86_400_000 - 5_000..=366 * 86_400_000 + 5_000).contains(&span),
+        "{span}"
+    );
+    assert_eq!(p("now-h/h", From) % 3_600_000, 0);
+    assert_eq!(p("now/m", To) % 60_000, 59_999);
+    assert_eq!(p("now/s", From) % 1_000, 0);
+}
+
+/// A time string nothing reads is a 400 that names the field; it never becomes another range
+/// (S9-21).
+#[test]
+fn an_unreadable_time_is_a_400_naming_the_field() {
+    for (raw, edge, field) in [
+        ("now-banana", TimeEdge::From, "from"),
+        ("yesterday", TimeEdge::To, "to"),
+        ("now-1q", TimeEdge::From, "from"),
+        ("now/q", TimeEdge::To, "to"),
+        ("now-", TimeEdge::From, "from"),
+        ("now*2d", TimeEdge::From, "from"),
+        ("now-500ms", TimeEdge::From, "from"),
+        ("now\u{20ac}1d", TimeEdge::From, "from"),
+        ("now-1\u{20ac}", TimeEdge::To, "to"),
+        ("now/\u{20ac}", TimeEdge::To, "to"),
+    ] {
+        let err = parse_time_str_ms(Some(raw), edge).unwrap_err();
+        assert_eq!(err.status_code(), 400, "{raw}");
+        let text = err.to_string();
+        assert!(text.starts_with(&format!("{field}: ")), "{text}");
+        assert!(text.contains(raw), "{text}");
+    }
+}
+
+/// Every time range of the real exported dashboards in the import fixtures parses (S9-21).
+#[test]
+fn every_saved_range_of_the_fixture_dashboards_parses() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../import/tests/fixtures");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let Some(time) = doc.get("time") else {
+            continue;
+        };
+        for (key, edge) in [("from", TimeEdge::From), ("to", TimeEdge::To)] {
+            let raw = time[key].as_str().unwrap();
+            assert!(
+                parse_time_str_ms(Some(raw), edge).is_ok(),
+                "{}: {key} {raw}",
+                path.display()
+            );
+            seen += 1;
+        }
+    }
+    assert!(seen >= 10, "{seen}");
 }
 
 #[test]
@@ -458,7 +669,16 @@ fn fixed_board() -> Value {
                 "id": 5, "type": "table", "title": "No sort column",
                 "options": { "sortBy": [{ "displayName": "", "desc": true }] },
                 "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }]
-            }
+            },
+            { "id": 6, "type": "table", "title": "Merged",
+              "transformations": [{ "id": "merge", "options": {} }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
+            { "id": 7, "type": "table", "title": "Joined",
+              "transformations": [{ "id": "joinByField", "options": { "byField": "time", "mode": "outer" } }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
+            { "id": 8, "type": "table", "title": "Rows",
+              "transformations": [{ "id": "seriesToRows", "options": {} }],
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] }
         ]
     })
 }
@@ -520,6 +740,244 @@ async fn panel_view_runs_targets_expressions_transformations_and_sort() {
         .await
         .unwrap_err();
     assert_eq!(err.status_code(), 404);
+}
+
+#[tokio::test]
+async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_transformations() {
+    let (w, fixed) = fixed_world().await;
+    let admin = Subject::authenticated("admin", vec![ORG], vec![]);
+    // Saved values: `$__all` reads as its allValue, a current value as itself, an unset
+    // variable as its allValue.
+    panel_view(&w.state, &admin, ORG, "fx", 1, PanelTimeRange::default())
+        .await
+        .unwrap();
+    let vars = fixed.seen.lock().unwrap().last().unwrap().3.clone();
+    assert_eq!(
+        vars,
+        BTreeMap::from([
+            ("all".to_owned(), ".*".to_owned()),
+            ("one".to_owned(), "x".to_owned()),
+            ("unset".to_owned(), "*".to_owned()),
+        ])
+    );
+    // A wide range: never finer than 11 000 points, so 100 s over 1.1e9 ms.
+    let wide = PanelTimeRange {
+        from: Some("1700000000000".into()),
+        to: Some("1701100000000".into()),
+        ..PanelTimeRange::default()
+    };
+    panel_view(&w.state, &admin, ORG, "fx", 1, wide)
+        .await
+        .unwrap();
+    let (from, to, interval, _) = fixed.seen.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (from, to, interval),
+        (1_700_000_000_000, 1_701_100_000_000, 100_000)
+    );
+
+    // No range anywhere: the last six hours. A panel's transformations shape its frames.
+    let (w, fixed) = fixed_world().await;
+    let mut board = fixed_board();
+    board["uid"] = json!("fx-now");
+    board.as_object_mut().unwrap().remove("time");
+    board["panels"][0]["transformations"] =
+        json!([{ "id": "organize", "options": { "excludeByName": { "name": true } } }]);
+    // Panel 5 sorts by the name the field is shown as, not its own name.
+    board["panels"][4]["options"] =
+        json!({ "sortBy": [{ "displayName": "Amount", "desc": false }] });
+    w.add_dashboard(board, None).await;
+    let view = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx-now",
+        1,
+        PanelTimeRange {
+            from: None,
+            to: None,
+            ..PanelTimeRange::default()
+        },
+    )
+    .await
+    .unwrap();
+    let (from, to, _, _) = fixed.seen.lock().unwrap().last().unwrap().clone();
+    assert!((to - from - 6 * 3_600_000).abs() < 1_000, "{from}..{to}");
+    let names: Vec<&str> = view.frame_sets[0].frames[0]
+        .fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(names, ["time", "value"]);
+    let renamed = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx-now",
+        5,
+        PanelTimeRange::default(),
+    )
+    .await
+    .unwrap();
+    let amount = &renamed.frame_sets[0].frames[0].fields[2];
+    assert_eq!(
+        (amount.name.as_str(), amount.effective_name()),
+        ("value", "Amount")
+    );
+    assert_eq!(
+        amount.values[0],
+        Value::Null,
+        "nulls sort first: {:?}",
+        amount.values
+    );
+}
+
+/// Allows members everything except reading the routing uids `-- Mixed --` and `__expr__`,
+/// which are no datasources: a panel naming them is never refused for them.
+struct DenyRoutingUids;
+
+impl daiya_model::Authorizer for DenyRoutingUids {
+    fn check(
+        &self,
+        ctx: &daiya_model::RequestCtx,
+        _action: daiya_model::Action,
+        object: &daiya_model::ObjectTarget,
+    ) -> daiya_model::Decision {
+        match object {
+            daiya_model::ObjectTarget::Datasource { datasource_uid, .. }
+                if datasource_uid == "-- Mixed --" || datasource_uid == "__expr__" =>
+            {
+                daiya_model::Decision::deny_hidden("a routing uid")
+            }
+            _ if ctx.subject.is_member_of(object.org_id()) => {
+                daiya_model::Decision::allow("member")
+            }
+            _ => daiya_model::Decision::deny_hidden("outside"),
+        }
+    }
+
+    fn read_scope(
+        &self,
+        _ctx: &daiya_model::RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        daiya_model::ReadScope::All
+    }
+}
+
+#[tokio::test]
+async fn expression_and_mixed_targets_are_not_checked_as_datasources() {
+    let w = common::world_with(Arc::new(DenyRoutingUids), common::loopback());
+    w.state
+        .register_datasource_driver(ORG, "fixed", Arc::new(Fixed::default()));
+    let mut board = fixed_board();
+    // Panel 1: a mixed panel whose target names its source; panel 2: an expression target.
+    board["panels"][0]["datasource"] = json!({ "uid": "-- Mixed --" });
+    board["panels"][0]["targets"] = json!([{ "refId": "A", "datasource": { "uid": "fixed" } },
+        { "refId": "B", "datasource": { "uid": "-- Mixed --" }, "hide": true }]);
+    w.add_dashboard(board, None).await;
+    let who = Subject::authenticated("anyone", vec![ORG], vec![]);
+    for panel in [1, 2] {
+        let view = panel_view(&w.state, &who, ORG, "fx", panel, PanelTimeRange::default()).await;
+        let denied = view
+            .as_ref()
+            .ok()
+            .and_then(|v| v.access_denied_message.clone());
+        assert_eq!(denied, None, "panel {panel}");
+    }
+}
+
+/// `merge`, `joinByField` and `seriesToRows` combine the frames of every query of the panel, as
+/// Grafana runs a panel's transformations once over all its series (S9-20).
+#[tokio::test]
+async fn transformations_combine_the_frames_of_all_queries() {
+    let (w, _) = fixed_world().await;
+    let admin = Subject::authenticated("admin", vec![ORG], vec![]);
+    let view = |id| panel_view(&w.state, &admin, ORG, "fx", id, PanelTimeRange::default());
+
+    let merged = view(6).await.unwrap();
+    assert_eq!(merged.frame_sets.len(), 1, "{:?}", merged.frame_sets);
+    let frames = &merged.frame_sets[0].frames;
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    // Three rows of each query; the all-null row both share is one row, as Grafana merges it.
+    assert_eq!(frames[0].row_count(), 5, "{frames:?}");
+
+    let joined = view(7).await.unwrap();
+    assert_eq!(joined.frame_sets.len(), 1, "{:?}", joined.frame_sets);
+    let frame = &joined.frame_sets[0].frames[0];
+    assert_eq!(frame.row_count(), 3, "{frame:?}");
+    assert_eq!(
+        frame.fields.len(),
+        5,
+        "time once, name and value per query: {frame:?}"
+    );
+    let values: Vec<Value> = frame
+        .fields
+        .iter()
+        .filter_map(|f| f.values.first().cloned())
+        .collect();
+    assert!(
+        values.contains(&json!(2.0)) && values.contains(&json!(20.0)),
+        "{values:?}"
+    );
+
+    let rows = view(8).await.unwrap();
+    assert_eq!(rows.frame_sets.len(), 1, "{:?}", rows.frame_sets);
+    let frame = &rows.frame_sets[0].frames[0];
+    // One row per time and value field of each query: 2 queries x 3 times x 2 fields.
+    assert_eq!(frame.row_count(), 12, "{frame:?}");
+    let values = &frame.fields[2].values;
+    assert!(
+        values.contains(&json!(2.0)) && values.contains(&json!(20.0)),
+        "{values:?}"
+    );
+}
+
+/// A saved range nothing reads falls back to the default and says so on the answer; a caller's
+/// own unreadable range is a 400 naming the field (S9-21).
+#[tokio::test]
+async fn a_saved_unreadable_range_is_a_notice_and_a_callers_is_a_400() {
+    let (w, _) = fixed_world().await;
+    let mut board = fixed_board();
+    board["uid"] = json!("bad-time");
+    board["time"] = json!({ "from": "now-1q", "to": "now" });
+    w.add_dashboard(board, None).await;
+    let admin = Subject::authenticated("admin", vec![ORG], vec![]);
+    let saved = PanelTimeRange {
+        from: None,
+        to: None,
+        ..PanelTimeRange::default()
+    };
+    let view = panel_view(&w.state, &admin, ORG, "bad-time", 1, saved.clone())
+        .await
+        .unwrap();
+    let notices = &view.frame_sets[0].frames[0].meta.notices;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].text.contains("now-1q"), "{notices:?}");
+    // No frame at all still carries the notice.
+    let empty = panel_view(&w.state, &admin, ORG, "bad-time", 3, saved)
+        .await
+        .unwrap();
+    assert!(
+        empty.frame_sets[0].frames[0].meta.notices[0]
+            .text
+            .contains("from: ")
+    );
+
+    let err = panel_view(
+        &w.state,
+        &admin,
+        ORG,
+        "fx",
+        1,
+        PanelTimeRange {
+            to: Some("tomorrow-ish".into()),
+            ..PanelTimeRange::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.status_code(), 400);
+    assert!(err.to_string().starts_with("to: "), "{err}");
 }
 
 /// Allows every member everything except reading the datasource `named`.
@@ -596,7 +1054,9 @@ async fn query_requests_are_bounded_and_named() {
     let too_many: Vec<Value> = (0..=w.state.limits.max_targets_per_panel)
         .map(|i| json!({ "refId": format!("R{i}"), "datasource": { "uid": "fixed" } }))
         .collect();
+    let at_limit = too_many[1..].to_vec();
     for (queries, want) in [
+        (json!(at_limit), StatusCode::OK),
         (json!(too_many), StatusCode::BAD_REQUEST),
         (
             json!([{ "refId": "A", "datasource": "fixed" }, { "refId": "A", "datasource": "fixed" }]),

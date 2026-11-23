@@ -979,6 +979,7 @@ async fn build_drivers(
     pg: &PgSettings,
 ) -> Result<Drivers, Box<dyn std::error::Error>> {
     let built = build_store(store_name, false, pg).await?;
+    let docs_pool = built.maintenance.as_ref().map(|(pool, _)| pool.clone());
     // Every pg half gets the maintenance job: partitions, retention and the
     // 4.22 reap belong to whichever database holds the history.
     let mut maintenance = Vec::from_iter(built.maintenance);
@@ -1003,6 +1004,7 @@ async fn build_drivers(
         store: built.store,
         temporal,
         maintenance,
+        docs_pool,
         temporal_name,
     })
 }
@@ -1016,6 +1018,9 @@ struct Drivers {
         antares_sql::sqlx::PgPool,
         antares_sql::store::pg::maintenance::TemporalBackend,
     )>,
+    /// The maintenance pool of the current-state store when it is Postgres:
+    /// where the expiry sweep claims its period (S5-29).
+    docs_pool: Option<antares_sql::sqlx::PgPool>,
     /// What `/q/health` calls the history backend; `None` = history off.
     temporal_name: Option<String>,
 }
@@ -1377,6 +1382,7 @@ pub struct Broker {
         antares_sql::sqlx::PgPool,
         antares_sql::store::pg::maintenance::TemporalBackend,
     )>,
+    docs_pool: Option<antares_sql::sqlx::PgPool>,
     sweep_secs: u64,
     metrics_port: Option<u16>,
     /// `ANTARES_POLICY_SUBJECT_FROM`, read once by [`build_state`].
@@ -1658,6 +1664,7 @@ pub async fn build_state(
         roles,
         bus_mode,
         maintenance: drivers.maintenance,
+        docs_pool: drivers.docs_pool,
         sweep_secs: cfg.sweep_secs,
         metrics_port: cfg.metrics_port,
         subject_from,
@@ -1674,6 +1681,11 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
     let roles = broker.roles;
     let sweep_secs = broker.sweep_secs;
     let maintenance = std::mem::take(&mut broker.maintenance);
+    let docs_pool = broker.docs_pool.take();
+    // The instances of one installation tick on their own timers; a claim
+    // period a fifth short of the tick lets the next tick of any of them win
+    // the next period instead of skipping it on jitter (S5-29).
+    let period = std::time::Duration::from_millis(sweep_secs.saturating_mul(800));
     if bus_mode == "nats" {
         // Outbox producer + drain, KV/registry mirrors, durable
         // consumers per role, topology asserted before traffic.
@@ -1751,8 +1763,32 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
             }
             // Registrations, Snapshots and EntityMaps carry their own
             // expiry, and every read already refuses one that has passed;
-            // this is what frees the row behind it.
+            // this is what frees the row behind it. On Postgres the
+            // documents are the installation's, so one instance sweeps them
+            // per period; a memory or file store is this process's own.
+            let lease = match &docs_pool {
+                None => None,
+                Some(pool) => {
+                    match antares_sql::store::pg::maintenance::claim_period(
+                        pool,
+                        "expired_docs",
+                        period,
+                    )
+                    .await
+                    {
+                        Ok(Some(lease)) => Some(lease),
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!("expiry sweep not claimed: {e}");
+                            continue;
+                        }
+                    }
+                }
+            };
             let n = antares_api::sweep_expired_docs(&doc_sweeper).await;
+            if let Some(lease) = lease {
+                lease.release().await;
+            }
             if n > 0 {
                 tracing::debug!("expiry sweep reaped {n} expired documents");
             }
@@ -1782,13 +1818,12 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
         for (pool, backend) in maintenance {
             tokio::spawn(async move {
                 // Same ANTARES_SWEEP_SECS cadence as the Mem arm — the job's 4.22
-                // reap is the sweep here; the partition/retention steps riding on
-                // the same tick are idempotent and SKIP LOCKED single-winner.
+                // reap is the sweep here; one instance runs it per period.
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(sweep_secs));
                 loop {
                     tick.tick().await; // first tick is immediate: partitions at boot
                     match antares_sql::store::pg::maintenance::temporal_maintenance(
-                        &pool, backend, retention,
+                        &pool, backend, retention, period,
                     )
                     .await
                     {

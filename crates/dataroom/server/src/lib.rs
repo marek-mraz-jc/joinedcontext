@@ -434,9 +434,9 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             let listener = tokio::net::TcpListener::bind(&listen)
                 .await
                 .map_err(|e| DataroomError::Storage(format!("bind {listen}: {e}")))?;
-            axum::serve(listener, app)
-                .await
-                .map_err(|e| DataroomError::Storage(format!("serve: {e}")))?;
+            if let Err(e) = axum::serve(listener, app).await {
+                return Err(DataroomError::Storage(format!("serve: {e}")));
+            }
             Ok(serde_json::json!({ "served": listen }))
         }
         Command::Harvest { source } => {
@@ -451,10 +451,9 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
         Command::FeedCheck { profile } => {
-            let cat = store
-                .get_catalogue(org_id, catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let Some(cat) = store.get_catalogue(org_id, catalogue_id).await? else {
+                return Err(DataroomError::NotFound("catalogue not found".into()));
+            };
             let datasets = store.list_datasets(&ctx).await?;
             let publishers = store.list_publishers(&ctx).await?;
             let pub_map: BTreeMap<String, Publisher> = publishers
@@ -530,8 +529,10 @@ pub fn serve_state(
             ))
         }
     };
-    let verifier = jc_door::Verifier::new(issuer, jwks_url, &tokens.clients)
-        .map_err(|e| DataroomError::field_error("jwksUrl", e))?;
+    let verifier = match jc_door::Verifier::new(issuer, jwks_url, &tokens.clients) {
+        Ok(verifier) => verifier,
+        Err(e) => return Err(DataroomError::field_error("jwksUrl", e)),
+    };
     let (subject, grant) = dataroom_api::portal_publisher(org_id, catalogue_id);
     let authz = Arc::new(PolicyAuthorizer::new(vec![grant]));
     Ok(DataroomState::new(store, authz, org_id, catalogue_id)

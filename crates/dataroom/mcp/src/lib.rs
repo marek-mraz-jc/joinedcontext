@@ -23,7 +23,7 @@ pub struct McpTool {
 /// Wraps untrusted catalogue/dataset text inside the platform untrusted-data fence
 /// (`research-ckan.md` §9, `research-tenancy.md` §4.2).
 pub fn wrap_untrusted_fence(payload: &Value) -> String {
-    let serialized = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
+    let serialized = format!("{payload:#}");
     format!(
         "<untrusted-data>\n{}\n</untrusted-data>",
         // No closing tag of any case or spacing survives: no `</` is left at all.

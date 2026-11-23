@@ -169,13 +169,14 @@ impl Outbound {
     }
 }
 
-/// Why one delivery attempt did not land. `timed_out` is the only class the
-/// caller's circuit breaker counts: an endpoint that answers — with any
-/// status — is alive.
+/// Why one delivery attempt did not land. `unreachable` is the only class
+/// the caller's circuit breaker counts: an endpoint that answers, with any
+/// status, is alive.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliveryError {
-    /// The attempt ran out of time rather than being answered.
-    pub timed_out: bool,
+    /// Nothing answered: the deadline passed, or no connection could be
+    /// made (refused, reset, unresolvable).
+    pub unreachable: bool,
     /// Failure text for the log, the subscription status and the dead
     /// letter. Never carries endpoint credentials.
     pub message: String,
@@ -185,7 +186,7 @@ impl DeliveryError {
     /// The endpoint answered, or refused, within the deadline.
     pub fn failed(message: impl Into<String>) -> Self {
         Self {
-            timed_out: false,
+            unreachable: false,
             message: message.into(),
         }
     }
@@ -193,7 +194,7 @@ impl DeliveryError {
     /// The deadline passed with no answer.
     pub fn timeout(message: impl Into<String>) -> Self {
         Self {
-            timed_out: true,
+            unreachable: true,
             message: message.into(),
         }
     }

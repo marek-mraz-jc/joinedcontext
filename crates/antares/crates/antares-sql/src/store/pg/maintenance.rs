@@ -3,9 +3,11 @@
 //! job replaces TimescaleDB background workers in plain mode, and drives the
 //! retention knob in both modes.
 //!
-//! Single-winner rule: the run is claimed via
-//! `SELECT … FOR UPDATE SKIP LOCKED` on the `maintenance_jobs` row — N
-//! instances race, one wins, the rest skip. No coordinator.
+//! Single-winner rule (S5-29): a pass starts with [`claim_period`], which
+//! moves the job's `last_run` only when the period since it has passed, so
+//! of N instances ticking on their own timers one runs per period; the
+//! winner holds a session advisory lock for the whole pass, and a step that
+//! finds the lease gone stops the pass. No coordinator.
 //!
 //! Plain-mode partitioning: weekly partitions are pre-created for a window
 //! around now; everything else (historic backfill) lands in the DEFAULT
@@ -107,6 +109,93 @@ pub async fn detect_temporal_backend(pool: &PgPool) -> Result<TemporalBackend, S
 // ponytail: fixed window, an env knob if a deployment's matcher lag exceeds it
 const CLAIM_CHECK_HOURS: i64 = 24;
 
+/// One period of a maintenance job, held by this instance: a session
+/// advisory lock on one connection kept out of the pool for the pass. A pass
+/// checks [`Lease::alive`] before each step; dropping the lease closes the
+/// connection, which frees the lock even when the pass ended by an error.
+pub struct Lease {
+    conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    job: String,
+}
+
+impl Lease {
+    /// Whether the lock's session still answers. A session that is gone
+    /// took the lock with it, and another instance may run the job now.
+    pub async fn alive(&mut self) -> bool {
+        match self.conn.as_mut() {
+            Some(conn) => sqlx::query("SELECT 1").execute(&mut **conn).await.is_ok(),
+            None => false,
+        }
+    }
+
+    /// Gives the lock back and the connection to the pool; a connection that
+    /// cannot unlock is closed instead, never pooled with the lock held.
+    pub async fn release(mut self) {
+        let Some(mut conn) = self.conn.take() else {
+            return;
+        };
+        let unlocked: Result<bool, _> =
+            sqlx::query_scalar("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+                .bind(&self.job)
+                .fetch_one(&mut *conn)
+                .await;
+        if !matches!(unlocked, Ok(true)) {
+            drop(conn.detach());
+        }
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            // closing the session is what frees a session lock
+            drop(conn.detach());
+        }
+    }
+}
+
+/// The lease on `job` for this period, or `None` when another instance runs
+/// it now (its lock is held) or ran it less than `period` ago (`last_run`,
+/// on the database's clock, so the instances' clocks do not matter). A job
+/// row that does not exist yet is created by its first claim.
+pub async fn claim_period(
+    pool: &PgPool,
+    job: &str,
+    period: std::time::Duration,
+) -> Result<Option<Lease>, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1, 0))")
+        .bind(job)
+        .fetch_one(&mut *conn)
+        .await?;
+    if !locked {
+        return Ok(None);
+    }
+    let mut lease = Lease {
+        conn: Some(conn),
+        job: job.to_owned(),
+    };
+    let Some(conn) = lease.conn.as_mut() else {
+        return Ok(None);
+    };
+    let won = sqlx::query(
+        "INSERT INTO maintenance_jobs (name, last_run) VALUES ($1, now())
+         ON CONFLICT (name) DO UPDATE SET last_run = now()
+          WHERE maintenance_jobs.last_run IS NULL
+             OR maintenance_jobs.last_run <= now() - make_interval(secs => $2)
+         RETURNING name",
+    )
+    .bind(job)
+    .bind(period.as_secs_f64())
+    .fetch_optional(&mut **conn)
+    .await?;
+    if won.is_none() {
+        lease.release().await;
+        return Ok(None);
+    }
+    Ok(Some(lease))
+}
+
 /// One maintenance pass. Returns a short human-readable summary ("skipped"
 /// when another instance holds the claim). `retention_days = None` keeps
 /// history forever — retention is a deliberate deployment knob, never a
@@ -115,6 +204,22 @@ pub async fn temporal_maintenance(
     pool: &PgPool,
     backend: TemporalBackend,
     retention_days: Option<i64>,
+    period: std::time::Duration,
+) -> Result<String, sqlx::Error> {
+    let Some(mut lease) = claim_period(pool, "temporal_partitions", period).await? else {
+        return Ok("skipped: another instance runs this period".into());
+    };
+    let summary = temporal_pass(pool, backend, retention_days, &mut lease).await;
+    lease.release().await;
+    summary
+}
+
+/// The steps of one pass under `lease`: a lost lease stops it between steps.
+async fn temporal_pass(
+    pool: &PgPool,
+    backend: TemporalBackend,
+    retention_days: Option<i64>,
+    lease: &mut Lease,
 ) -> Result<String, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let claimed = sqlx::query(
@@ -231,9 +336,6 @@ pub async fn temporal_maintenance(
             }
         }
     }
-    sqlx::query("UPDATE maintenance_jobs SET last_run = now() WHERE name = 'temporal_partitions'")
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
     // Plain-mode retention runs AFTER the claim transaction commits, for the
     // same reason as the 4.22 reaps: DROP TABLE needs ACCESS EXCLUSIVE on the
@@ -242,6 +344,10 @@ pub async fn temporal_maintenance(
     // partition pre-creation that keeps ingest writable.
     // The superseded versions (T-4665) live in one plain table beside the
     // partitions or chunks, and go with the platform retention all the same.
+    if !lease.alive().await {
+        done.push("stopped: the lease was lost".into());
+        return Ok(done.join("; "));
+    }
     if let Some(days) = retention_days {
         match versions_retention(pool, days).await {
             Ok(0) => {}
@@ -277,6 +383,10 @@ pub async fn temporal_maintenance(
             Err(e) => done.push(format!("history index build deferred ({e})")),
         }
     }
+    if !lease.alive().await {
+        done.push("stopped: the lease was lost".into());
+        return Ok(done.join("; "));
+    }
     match mark_bare(pool, BARE_BUDGET).await {
         Ok(BareSweep { marked: 0, .. }) => {}
         Ok(b) => done.push(format!(
@@ -305,6 +415,10 @@ pub async fn temporal_maintenance(
     // expiresAt has passed "should be deleted from an NGSI-LD system". Each
     // DELETE contends with concurrent ingest on the same rows, and
     // a deadlock must cost only the reap (observed under ~1.2k msg/s ingest).
+    if !lease.alive().await {
+        done.push("stopped: the lease was lost".into());
+        return Ok(done.join("; "));
+    }
     match reap_expired_instances(pool, backend).await {
         Ok(None) => {}
         Ok(Some(reap)) => {

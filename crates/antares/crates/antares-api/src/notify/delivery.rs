@@ -425,8 +425,10 @@ pub(super) async fn deliver_as(
                 true
             }
         };
-    // (delivered, timed_out): only a TIMEOUT-class failure feeds the breaker
-    // — that protects against peers that eat the deadline. An endpoint
+    // (delivered, unreachable): only an unreachable peer feeds the breaker,
+    // one that ate the deadline or took no connection (S4-32: a refused
+    // connection fails fast, and counting it as alive kept the breaker
+    // closed while every group spawned a retry). An endpoint
     // that ANSWERS (any status) is alive, costs only its own response time,
     // and 6.3.8 says the notification shall be sent — suppressing sends to a
     // responding host:port starves unrelated subscriptions sharing it.
@@ -446,8 +448,8 @@ pub(super) async fn deliver_as(
         } else if timed_out {
             st.egress.record_failure(tenant.as_str(), uri);
         } else {
-            // the destination responded (or refused fast): alive — clear
-            // any stale consecutive-timeout state
+            // the destination answered, with any status: alive, clear any
+            // stale unreachable state
             st.egress.record_success(tenant.as_str(), uri);
         }
     }
@@ -491,13 +493,31 @@ pub(super) async fn deliver_as(
         #[cfg(not(target_arch = "wasm32"))]
         if !refused && st.delivery.attempts > 1 {
             let first_err = first.err().map(|(_, e)| e).unwrap_or_default();
-            let (st, tenant, uri) = (st.clone(), tenant.clone(), uri.to_owned());
-            crate::spawn(async move {
-                retry_and_settle(
-                    &st, &tenant, kind, &sub_id, &uri, timeout_ms, outbound, first_err,
-                )
-                .await;
-            });
+            match take_retry_slot(st, tenant, &sub_id, &outbound) {
+                Ok(slot) => {
+                    let (st, tenant, uri) = (st.clone(), tenant.clone(), uri.to_owned());
+                    crate::spawn(async move {
+                        let _slot = slot;
+                        retry_and_settle(
+                            &st, &tenant, kind, &sub_id, &uri, timeout_ms, outbound, first_err,
+                        )
+                        .await;
+                    });
+                }
+                Err(why) => {
+                    let letter = dead_letter(
+                        &sub_id,
+                        uri,
+                        timeout_ms,
+                        &outbound,
+                        1,
+                        &first_err,
+                        why,
+                        &now_iso(),
+                    );
+                    park_unretried(st, tenant, &sub_id, uri, letter, why).await;
+                }
+            }
         }
     }
 }
@@ -603,7 +623,7 @@ pub(super) async fn send_outbound(
         std::time::Duration::from_millis(u64::from(timeout_ms)),
     )
     .await
-    .map_err(|e| (e.timed_out, e.message))
+    .map_err(|e| (e.unreachable, e.message))
 }
 
 /// The matcher reads subscriptions from the
