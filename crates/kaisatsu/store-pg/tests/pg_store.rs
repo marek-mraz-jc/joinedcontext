@@ -1003,7 +1003,10 @@ async fn sweeper_and_change_notifications() {
         .await
         .expect("sso");
     let n = store.sweep_expired_batch(10).await.expect("sweep");
-    assert_eq!(n, 3, "the old revocation, the SSO session and its client session");
+    assert_eq!(
+        n, 3,
+        "the old revocation, the SSO session and its client session"
+    );
     let su = db.superuser_pool().await;
     let left: Vec<String> = sqlx::query_scalar("SELECT token_hash FROM kaisatsu.revoked_token")
         .fetch_all(&su)
