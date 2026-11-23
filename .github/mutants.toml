@@ -38,6 +38,21 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
+  'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
+  # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
+  # sets the watermark (or the newest time) to the value it already holds.
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in (QueryReader|TemporalReader)::read',
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in Watermark::settle',
+  'ekiben-io-ngsild/src/input\.rs:\d+:42: replace > with >= in newest_observed::walk',
+  # T-7632 ekiben-io-ngsild TokenSource::token: Instant::now() equal to refresh_at to the nanosecond is never
+  # observed.
+  'ekiben-io-ngsild/src/token\.rs:\d+:\d+: replace < with <= in TokenSource::token',
+  # T-7632 ekiben-io-ngsild Writer::write: a message with no entities has no whole_text (None either way),
+  # and adding zero local refusals to the counter changes nothing.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:(31|27): replace > with >= in Writer::write',
+  # T-7632 ekiben-io-ngsild request_body: the sum only sizes the Vec's capacity; the body is the same.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:\d+: replace \+ with (-|\*) in request_body',
   # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
