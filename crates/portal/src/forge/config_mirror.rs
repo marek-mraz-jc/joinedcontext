@@ -196,7 +196,10 @@ impl ConfigMirror {
     /// Nothing here fails the run; what failed is kept for [`Self::statuses`] and counted.
     pub async fn pass(&self, installation: &ShakoClient, projects: &[ShakoClient]) {
         {
-            let mut last = self.last_pass.lock().unwrap_or_else(|p| p.into_inner());
+            let mut last = self
+                .last_pass
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if last.is_some_and(|at| at.elapsed() < self.every) {
                 return;
             }
@@ -221,7 +224,9 @@ impl ConfigMirror {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, RepoState>> {
-        self.repos.lock().unwrap_or_else(|p| p.into_inner())
+        self.repos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// `Err`: what the set-up or the last push failed with.
@@ -516,6 +521,424 @@ mod tests {
             .await
             .expect("recorded")
             .is_empty());
+    }
+
+    const REPO: &str = "/odata/Repositories(Owner='joinedcontext',Name='configuration')";
+    const TARGET: &str = "https://github.com/acme/jc-configuration.git";
+
+    fn mirror_row(name: &str, address: &str, branch: &str, error: &str) -> serde_json::Value {
+        serde_json::json!({ "Name": name, "RemoteAddress": address, "Branch": branch, "LastError": error })
+    }
+
+    /// GitHub answering `private` for the remote, a forge listing `before` then `after` as its
+    /// push mirrors, and every action answered 204 and counted.
+    async fn stubs(
+        before: serde_json::Value,
+        after: serde_json::Value,
+    ) -> (MockServer, MockServer, ConfigMirror, ShakoClient) {
+        let (github, shako) = (MockServer::start().await, MockServer::start().await);
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/jc-configuration"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"private": true})),
+            )
+            .mount(&github)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": before })),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&shako)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": after })),
+            )
+            .mount(&shako)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&shako)
+            .await;
+        let mirror = ConfigMirror::new(
+            "https://github.com/acme/jc-{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_github("github.com", &github.uri())
+        .with_timing(Duration::ZERO, Duration::from_secs(60));
+        let forge = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "configuration",
+            "forge-token",
+        )
+        .expect("client");
+        (github, shako, mirror, forge)
+    }
+
+    /// The paths of the forge's POSTs, in order, with the body of each.
+    async fn actions(shako: &MockServer) -> Vec<(String, String)> {
+        shako
+            .received_requests()
+            .await
+            .expect("recorded")
+            .into_iter()
+            .filter(|r| r.method == wiremock::http::Method::POST)
+            .map(|r| {
+                let at = r
+                    .url
+                    .path()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
+                (at, String::from_utf8_lossy(&r.body).into_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_installation_keeps_only_the_scoped_mirror_and_a_failing_one_is_set_up_again() {
+        let (github, shako, mirror, forge) = stubs(
+            serde_json::json!([
+                mirror_row("ours", TARGET, "main", "authentication failed"),
+                mirror_row(
+                    "copy",
+                    "https://GitHub.com/acme/jc-configuration.git/",
+                    "",
+                    ""
+                ),
+                mirror_row("else", "https://elsewhere.example/x.git", "main", ""),
+            ]),
+            serde_json::json!([mirror_row("new", TARGET, "main", "")]),
+        )
+        .await;
+        mirror.pass(&forge, &[]).await;
+        assert_eq!(
+            mirror.statuses()[0].last_error,
+            "",
+            "{:?}",
+            mirror.statuses()
+        );
+        let done = actions(&shako).await;
+        let names: Vec<&str> = done.iter().map(|(at, _)| at.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Shako.RemovePushMirror",
+                "Shako.RemovePushMirror",
+                "Shako.RemovePushMirror",
+                "Shako.AddPushMirror",
+                "Shako.SyncPushMirrors"
+            ]
+        );
+        for (gone, (_, body)) in ["copy", "else", "ours"].iter().zip(&done) {
+            assert!(body.contains(&format!("\"Name\":\"{gone}\"")), "{body}");
+        }
+        let add = &done[3].1;
+        assert!(
+            add.contains(TARGET)
+                && add.contains("x-access-token")
+                && add.contains("\"Branch\":\"main\""),
+            "{add}"
+        );
+        // The privacy of the remote is asked once; the next pass reads it from what it kept. A
+        // project repository the forge does not know fails alone.
+        let project = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "nowhere",
+            "t",
+        )
+        .expect("client");
+        mirror.pass(&forge, &[project]).await;
+        assert_eq!(
+            github.received_requests().await.expect("recorded").len(),
+            2,
+            "one per repository"
+        );
+        let digest = mirror.digest(TimestampTz::now());
+        assert_eq!((digest.counts.pass, digest.counts.fail), (1, 1));
+        assert_eq!(digest.passed, ["configuration"]);
+        assert_eq!(digest.failures[0].key, "nowhere");
+    }
+
+    #[tokio::test]
+    async fn a_project_keeps_other_mirrors_a_healthy_one_is_left_and_a_failed_push_is_reported() {
+        // A project repository keeps a mirror that is not the operator's.
+        let (_github, shako, mirror, forge) = stubs(
+            serde_json::json!([
+                mirror_row("ours", TARGET, "main", ""),
+                mirror_row("theirs", "https://elsewhere.example/x.git", "main", ""),
+            ]),
+            serde_json::json!([]),
+        )
+        .await;
+        assert_eq!(mirror.keep(&forge, false).await, Ok(()));
+        assert!(actions(&shako).await.is_empty());
+
+        let (_github, _shako, mirror, forge) = stubs(
+            serde_json::json!([]),
+            serde_json::json!([mirror_row("new", TARGET, "main", "push rejected")]),
+        )
+        .await;
+        assert_eq!(
+            mirror.keep(&forge, false).await,
+            Err("push rejected".to_owned())
+        );
+
+        let (_github, _shako, mirror, forge) =
+            stubs(serde_json::json!([]), serde_json::json!([])).await;
+        assert_eq!(
+            mirror.keep(&forge, false).await,
+            Err("the forge did not keep the push mirror".to_owned())
+        );
+    }
+
+    /// Each forge call that fails stops the set-up with its error; the token file read last.
+    #[tokio::test]
+    async fn a_forge_or_token_failure_at_any_step_is_the_repositorys_error() {
+        let failing = TARGET.replace("github.com", "git.example");
+        let row = |error: &str| serde_json::json!([mirror_row("ours", &failing, "main", error)]);
+        // (the PushMirrors answers, the failing action or none, what the error names)
+        for (lists, fails, want) in [
+            (vec![ResponseTemplate::new(500)], None, "500"),
+            (
+                vec![ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"value": row("x")}))],
+                Some("Shako.RemovePushMirror"),
+                "500",
+            ),
+            (
+                vec![ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []}))],
+                Some("Shako.AddPushMirror"),
+                "500",
+            ),
+            (
+                vec![ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []}))],
+                Some("Shako.SyncPushMirrors"),
+                "500",
+            ),
+            (
+                vec![
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})),
+                    ResponseTemplate::new(500),
+                ],
+                None,
+                "500",
+            ),
+        ] {
+            let shako = MockServer::start().await;
+            let mut lists = lists.into_iter().peekable();
+            while let Some(answer) = lists.next() {
+                let mock = Mock::given(method("GET"))
+                    .and(path(format!("{REPO}/PushMirrors")))
+                    .respond_with(answer);
+                let mock = if lists.peek().is_some() {
+                    mock.up_to_n_times(1).with_priority(1)
+                } else {
+                    mock
+                };
+                mock.mount(&shako).await;
+            }
+            if let Some(action) = fails {
+                Mock::given(method("POST"))
+                    .and(path(format!("{REPO}/{action}")))
+                    .respond_with(ResponseTemplate::new(500))
+                    .with_priority(1)
+                    .mount(&shako)
+                    .await;
+            }
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&shako)
+                .await;
+            let mirror = ConfigMirror::new(
+                "https://git.example/acme/jc-{repo}.git",
+                token_file(TOKEN).into(),
+            )
+            .expect("mirror");
+            let forge = ShakoClient::new(
+                Url::parse(&shako.uri()).expect("url"),
+                "joinedcontext",
+                "configuration",
+                "t",
+            )
+            .expect("client");
+            let error = mirror.keep(&forge, false).await.expect_err("a failure");
+            assert!(error.contains(want), "{fails:?}: {error}");
+            assert!(!error.contains(TOKEN), "{error}");
+        }
+        // The token file gone since start-up: nothing is set up without one.
+        let shako = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})),
+            )
+            .mount(&shako)
+            .await;
+        let forge = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "configuration",
+            "t",
+        )
+        .expect("client");
+        let gone = ConfigMirror::new(
+            "https://git.example/acme/jc-{repo}.git",
+            "/nonexistent/jc-token".into(),
+        )
+        .expect("mirror");
+        let error = gone.keep(&forge, false).await.expect_err("no token");
+        assert!(error.contains("cannot be read"), "{error}");
+        assert!(shako
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .all(|r| r.method != wiremock::http::Method::POST));
+        // GitHub that does not answer at all: a bound socket that never listens.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let silent = ConfigMirror::new(
+            "https://github.com/acme/{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_github(
+            "github.com",
+            &format!("http://{}", socket.local_addr().expect("addr")),
+        );
+        let error = silent
+            .refuse_public("https://github.com/acme/x.git")
+            .await
+            .expect_err("no answer");
+        assert!(error.starts_with("GitHub did not answer"), "{error}");
+        assert!(!error.contains(TOKEN), "{error}");
+        drop(socket);
+    }
+
+    #[tokio::test]
+    async fn a_failure_backs_off_doubling_and_a_success_clears_it() {
+        let mirror = ConfigMirror::new(
+            "https://github.com/acme/jc-{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_timing(Duration::from_secs(3600), Duration::ZERO);
+        mirror.record("r", Err("first".to_owned()));
+        mirror.record("r", Err("second".to_owned()));
+        assert_eq!(mirror.lock()["r"].failures, 2);
+        assert_eq!(mirror.statuses()[0].last_error, "second");
+        mirror.record("r", Ok(()));
+        let state = mirror.lock()["r"].clone();
+        assert_eq!(
+            (
+                state.failures,
+                state.next_try.is_none(),
+                state.last_error.as_str()
+            ),
+            (0, true, "")
+        );
+        // Within its backoff a later failure keeps the one that started it.
+        let waiting = ConfigMirror::new(
+            "https://github.com/acme/jc-{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_timing(Duration::from_secs(3600), Duration::from_secs(60));
+        waiting.record("r", Err("first".to_owned()));
+        waiting.record("r", Err("second".to_owned()));
+        assert_eq!(waiting.statuses()[0].last_error, "first");
+        assert_eq!(waiting.lock()["r"].failures, 1);
+        // A run inside `every` of the last one does nothing.
+        let shako = MockServer::start().await;
+        let forge = ShakoClient::new(
+            Url::parse(&shako.uri()).expect("url"),
+            "joinedcontext",
+            "configuration",
+            "t",
+        )
+        .expect("client");
+        *waiting.last_pass.lock().unwrap() = Some(Instant::now());
+        waiting.pass(&forge, &[]).await;
+        assert!(shako
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn githubs_answers_decide_the_privacy_check_and_another_host_is_trusted() {
+        let github = MockServer::start().await;
+        for (repo, answer) in [
+            ("/repos/acme/gone", ResponseTemplate::new(404)),
+            ("/repos/acme/down", ResponseTemplate::new(503)),
+            (
+                "/repos/acme/garbled",
+                ResponseTemplate::new(200).set_body_string("not json"),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(repo))
+                .respond_with(answer)
+                .mount(&github)
+                .await;
+        }
+        let mirror = ConfigMirror::new(
+            "https://github.com/acme/{repo}.git",
+            token_file(TOKEN).into(),
+        )
+        .expect("mirror")
+        .with_github("github.com", &github.uri());
+        let refused = |target: &'static str| {
+            let mirror = &mirror;
+            async move { mirror.refuse_public(target).await.expect_err(target) }
+        };
+        assert!(refused("https://github.com/acme/gone.git")
+            .await
+            .contains("does not exist"));
+        assert!(refused("https://github.com/acme/down.git")
+            .await
+            .contains("GitHub answered 503"));
+        assert!(refused("https://github.com/acme/garbled.git")
+            .await
+            .contains("did not read"));
+        assert!(refused("https://github.com/only-owner")
+            .await
+            .contains("names no owner/repository"));
+        assert!(refused("not an address").await.contains("not an address"));
+        assert_eq!(
+            mirror.refuse_public("https://git.example/acme/x.git").await,
+            Ok(())
+        );
+        // A token file emptied since start-up is refused before anything is asked.
+        let empty = ConfigMirror::new(
+            "https://github.com/acme/{repo}.git",
+            token_file("  ").into(),
+        )
+        .expect("mirror")
+        .with_github("github.com", &github.uri());
+        assert!(empty
+            .refuse_public("https://github.com/acme/x.git")
+            .await
+            .expect_err("empty")
+            .contains("is empty"));
+        assert!(
+            ConfigMirror::new("not a url {repo}", token_file(TOKEN).into())
+                .expect_err("no address")
+                .to_string()
+                .contains("is not an address")
+        );
     }
 
     #[tokio::test]

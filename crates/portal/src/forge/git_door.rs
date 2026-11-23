@@ -285,6 +285,301 @@ mod tests {
         );
     }
 
+    mod door {
+        use super::super::*;
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        use p256::pkcs8::EncodePrivateKey;
+        use serde_json::json;
+        use std::sync::Arc;
+        use tower::ServiceExt;
+        use wiremock::matchers::{header as has_header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const ISSUER: &str = "https://idm.example.test/realms/dev";
+
+        /// A Portal whose forge is `forge` and whose bearer verifier trusts the returned key.
+        fn portal(forge: &str) -> (AppState, EncodingKey) {
+            let mut state = AppState::new(crate::config::Config::for_tests(), None);
+            state.shako = Some(Arc::new(
+                crate::forge::ShakoClient::new(
+                    url::Url::parse(forge).expect("url"),
+                    "joinedcontext",
+                    "configuration",
+                    "forge-token",
+                )
+                .expect("client"),
+            ));
+            let verifier = crate::auth::bearer::BearerVerifier::with_jwks_url(
+                &url::Url::parse(ISSUER).expect("url"),
+                "portal-api",
+                url::Url::parse("http://127.0.0.1:9/certs").expect("url"),
+            );
+            let secret = p256::SecretKey::random(&mut rand_core::OsRng);
+            let signer = EncodingKey::from_ec_der(secret.to_pkcs8_der().expect("der").as_bytes());
+            let mut jwk: serde_json::Value =
+                serde_json::from_str(&secret.public_key().to_jwk_string()).expect("jwk");
+            jwk["kid"] = json!("k1");
+            jwk["alg"] = json!("ES256");
+            jwk["use"] = json!("sig");
+            assert_eq!(
+                verifier.install(&serde_json::from_value(json!({ "keys": [jwk] })).expect("set")),
+                1
+            );
+            state.bearer = Some(Arc::new(verifier));
+            state
+                .mirror
+                .set_repositories([("helsinki".to_owned(), "helsinki_repo".to_owned())].into());
+            (state, signer)
+        }
+
+        /// A person's bearer: `sub`, with `roles` as realm roles.
+        fn token(signer: &EncodingKey, sub: &str, roles: &[&str]) -> String {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_secs();
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = Some("k1".into());
+            let claims = json!({
+                "iss": ISSUER, "typ": "Bearer", "aud": "portal-api", "sub": sub, "azp": "jcctl",
+                "exp": now + 300, "iat": now, "realm_access": { "roles": roles },
+            });
+            encode(&header, &claims, signer).expect("token")
+        }
+
+        async fn send(
+            state: &AppState,
+            request: axum::http::Request<Body>,
+        ) -> (StatusCode, HeaderMap, String) {
+            let response = router()
+                .with_state(state.clone())
+                .oneshot(request)
+                .await
+                .expect("a response");
+            let (status, headers) = (response.status(), response.headers().clone());
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            (status, headers, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        fn refs(uri: &str, bearer: Option<&str>) -> axum::http::Request<Body> {
+            let mut request = axum::http::Request::get(uri).header("git-protocol", "version=2");
+            if let Some(bearer) = bearer {
+                request = request.header(header::AUTHORIZATION, bearer);
+            }
+            request.body(Body::empty()).expect("request")
+        }
+
+        #[tokio::test]
+        async fn an_administrator_clones_the_installation_and_a_project_repository() {
+            let forge = MockServer::start().await;
+            for repo in ["configuration", "helsinki_repo"] {
+                Mock::given(method("GET"))
+                    .and(path(format!("/joinedcontext/{repo}.git/info/refs")))
+                    .and(query_param("service", "git-upload-pack"))
+                    .and(has_header("git-protocol", "version=2"))
+                    .and(has_header("authorization", "Bearer forge-token"))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_string(format!("refs of {repo}")),
+                    )
+                    .mount(&forge)
+                    .await;
+            }
+            Mock::given(method("POST"))
+                .and(path("/joinedcontext/configuration.git/git-upload-pack"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("PACK"))
+                .mount(&forge)
+                .await;
+            let (state, signer) = portal(&forge.uri());
+            let admin = format!(
+                "Bearer {}",
+                token(&signer, "f:1:admin-door", &["portal-approver"])
+            );
+            for repo in ["configuration", "helsinki_repo"] {
+                let (status, headers, body) = send(
+                    &state,
+                    refs(
+                        &format!("/git/joinedcontext/{repo}.git/info/refs?service=git-upload-pack"),
+                        Some(&admin),
+                    ),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{repo}: {body}");
+                assert_eq!(body, format!("refs of {repo}"));
+                assert_eq!(
+                    headers[header::CONTENT_TYPE],
+                    "application/x-git-upload-pack-advertisement"
+                );
+                assert_eq!(
+                    headers[header::CACHE_CONTROL],
+                    "no-cache, max-age=0, must-revalidate"
+                );
+            }
+            let pack =
+                axum::http::Request::post("/git/joinedcontext/configuration.git/git-upload-pack")
+                    .header(header::AUTHORIZATION, &admin)
+                    .body(Body::from("0009done\n"))
+                    .expect("request");
+            let (status, headers, body) = send(&state, pack).await;
+            assert_eq!((status, body.as_str()), (StatusCode::OK, "PACK"));
+            assert_eq!(
+                headers[header::CONTENT_TYPE],
+                "application/x-git-upload-pack-result"
+            );
+            // A body the door cannot read is refused before the forge is asked.
+            let garbled =
+                axum::http::Request::post("/git/joinedcontext/configuration.git/git-upload-pack")
+                    .header(header::AUTHORIZATION, &admin)
+                    .header(header::CONTENT_ENCODING, "gzip")
+                    .body(Body::from("not gzip"))
+                    .expect("request");
+            assert_eq!(send(&state, garbled).await.0, StatusCode::BAD_REQUEST);
+        }
+
+        #[tokio::test]
+        async fn every_refusal_is_the_same_404_and_never_reaches_the_forge() {
+            let forge = MockServer::start().await;
+            let (state, signer) = portal(&forge.uri());
+            let admin = format!(
+                "Bearer {}",
+                token(&signer, "f:1:admin-refused", &["portal-approver"])
+            );
+            let viewer = format!("Bearer {}", token(&signer, "f:1:viewer", &["viewer"]));
+            let at = "/git/joinedcontext/configuration.git/info/refs";
+            for (uri, bearer) in [
+                (format!("{at}?service=git-upload-pack"), None),
+                (format!("{at}?service=git-upload-pack"), Some("Basic abc")),
+                (format!("{at}?service=git-upload-pack"), Some("Bearer ")),
+                (
+                    format!("{at}?service=git-upload-pack"),
+                    Some("Bearer not-a-token"),
+                ),
+                (
+                    format!("{at}?service=git-upload-pack"),
+                    Some(viewer.as_str()),
+                ),
+                (
+                    format!("{at}?service=git-receive-pack"),
+                    Some(admin.as_str()),
+                ),
+                (
+                    format!("{at}?service=git-upload-pack&access_token=x"),
+                    Some(admin.as_str()),
+                ),
+                (at.to_owned(), Some(admin.as_str())),
+                (
+                    "/git/someone/configuration.git/info/refs?service=git-upload-pack".to_owned(),
+                    Some(admin.as_str()),
+                ),
+                (
+                    "/git/joinedcontext/configuration/info/refs?service=git-upload-pack".to_owned(),
+                    Some(admin.as_str()),
+                ),
+                (
+                    "/git/joinedcontext/unknown_repo.git/info/refs?service=git-upload-pack"
+                        .to_owned(),
+                    Some(admin.as_str()),
+                ),
+            ] {
+                assert_eq!(
+                    send(&state, refs(&uri, bearer)).await.0,
+                    StatusCode::NOT_FOUND,
+                    "{uri} {bearer:?}"
+                );
+            }
+            // A push, a query on the pack path and another method are refused alike.
+            for request in [
+                axum::http::Request::post("/git/joinedcontext/configuration.git/git-receive-pack"),
+                axum::http::Request::post(
+                    "/git/joinedcontext/configuration.git/git-upload-pack?x=1",
+                ),
+                axum::http::Request::put("/git/joinedcontext/configuration.git/info/refs"),
+            ] {
+                let request = request
+                    .header(header::AUTHORIZATION, &admin)
+                    .body(Body::empty())
+                    .expect("request");
+                assert_eq!(send(&state, request).await.0, StatusCode::NOT_FOUND);
+            }
+            assert!(forge
+                .received_requests()
+                .await
+                .expect("recorded")
+                .is_empty());
+            // A Portal without a forge reads no repository.
+            let mut bare = state.clone();
+            bare.shako = None;
+            assert_eq!(
+                send(
+                    &bare,
+                    refs(&format!("{at}?service=git-upload-pack"), Some(&admin))
+                )
+                .await
+                .0,
+                StatusCode::NOT_FOUND
+            );
+            let anyone: crate::auth::session::Identity =
+                serde_json::from_value(json!({ "subject": "f:1:x", "username": "x" }))
+                    .expect("identity");
+            assert!(!readable(&bare, &anyone, "configuration"));
+        }
+
+        #[tokio::test]
+        async fn a_forge_that_fails_or_refuses_is_502_or_404() {
+            let forge = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/joinedcontext/configuration.git/info/refs"))
+                .respond_with(ResponseTemplate::new(503))
+                .mount(&forge)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/joinedcontext/helsinki_repo.git/info/refs"))
+                .respond_with(ResponseTemplate::new(403))
+                .mount(&forge)
+                .await;
+            let (state, signer) = portal(&forge.uri());
+            let admin = format!(
+                "Bearer {}",
+                token(&signer, "f:1:admin-failing", &["portal-approver"])
+            );
+            let at = |repo: &str| {
+                format!("/git/joinedcontext/{repo}.git/info/refs?service=git-upload-pack")
+            };
+            let (status, _, body) = send(&state, refs(&at("configuration"), Some(&admin))).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (StatusCode::BAD_GATEWAY, "the forge failed; try again")
+            );
+            assert_eq!(
+                send(&state, refs(&at("helsinki_repo"), Some(&admin)))
+                    .await
+                    .0,
+                StatusCode::NOT_FOUND
+            );
+            // A forge that does not answer at all: a bound socket that never listens.
+            let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+            socket
+                .bind("127.0.0.1:0".parse().expect("addr"))
+                .expect("bind");
+            let (closed, signer) =
+                portal(&format!("http://{}", socket.local_addr().expect("addr")));
+            let admin = format!(
+                "Bearer {}",
+                token(&signer, "f:1:admin-closed", &["portal-approver"])
+            );
+            let (status, _, body) = send(&closed, refs(&at("configuration"), Some(&admin))).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "the forge did not answer; try again"
+                )
+            );
+            drop(socket);
+        }
+    }
+
     #[test]
     fn a_person_past_the_rate_is_refused_for_a_minute() {
         let now = Instant::now();

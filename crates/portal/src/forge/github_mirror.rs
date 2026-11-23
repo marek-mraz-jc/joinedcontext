@@ -602,6 +602,121 @@ mod tests {
         assert!(refused.to_string().contains("someone"), "{refused}");
     }
 
+    /// GitHub at `server` answering `get` for the repository, `org` for its creation in an
+    /// organization, `user` for the token's account and `mine` for a creation there.
+    async fn answering(
+        get: ResponseTemplate,
+        org: ResponseTemplate,
+        user: ResponseTemplate,
+        mine: ResponseTemplate,
+    ) -> MockServer {
+        let github = MockServer::start().await;
+        for (verb, at, answer) in [
+            ("GET", "/repos/hel-apps/r", get),
+            ("POST", "/orgs/hel-apps/repos", org),
+            ("GET", "/user", user),
+            ("POST", "/user/repos", mine),
+        ] {
+            Mock::given(method(verb))
+                .and(path(at))
+                .respond_with(answer)
+                .mount(&github)
+                .await;
+        }
+        github
+    }
+
+    #[tokio::test]
+    async fn a_creation_race_is_success_and_every_other_refusal_is_returned() {
+        let ok = || ResponseTemplate::new(201).set_body_json(serde_json::json!({}));
+        let me =
+            || ResponseTemplate::new(200).set_body_json(serde_json::json!({ "login": "Hel-Apps" }));
+        let ensure = |github: MockServer| async move {
+            mirror(&github, "hel-apps")
+                .ensure_repository("r", "Application r")
+                .await
+        };
+        // Another run created it in the organization, or in the account, meanwhile: GitHub's 422.
+        let race = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(422),
+            me(),
+            ok(),
+        )
+        .await;
+        assert!(ensure(race).await.is_ok());
+        let race = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(404),
+            me(),
+            ResponseTemplate::new(422),
+        )
+        .await;
+        assert!(ensure(race).await.is_ok());
+        // A failing read, organization creation or account creation is the caller's error.
+        for github in [
+            answering(ResponseTemplate::new(500), ok(), me(), ok()).await,
+            answering(
+                ResponseTemplate::new(404),
+                ResponseTemplate::new(500),
+                me(),
+                ok(),
+            )
+            .await,
+            answering(
+                ResponseTemplate::new(404),
+                ResponseTemplate::new(404),
+                me(),
+                ResponseTemplate::new(500),
+            )
+            .await,
+        ] {
+            assert!(
+                matches!(ensure(github).await, Err(GitError::Api { status: 500, .. })),
+                "a 500 is returned"
+            );
+        }
+        let garbled = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(200).set_body_string("not json"),
+            ok(),
+        )
+        .await;
+        assert!(matches!(
+            ensure(garbled).await,
+            Err(GitError::Transport(m)) if m.contains("failed to parse the GitHub user")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_github_that_does_not_answer_is_a_transport_error_without_the_token() {
+        // A bound socket that never listens refuses the connection; kept bound to the end, so no
+        // parallel test takes its port.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let at = socket.local_addr().expect("addr");
+        let closed = GithubMirror::new(
+            Url::parse(&format!("http://{at}")).expect("url"),
+            Url::parse("https://github.com").expect("url"),
+            "hel-apps".to_owned(),
+            TOKEN.to_owned(),
+        )
+        .expect("client");
+        match closed.ensure_repository("r", "x").await {
+            Err(GitError::Transport(m)) => assert!(!m.contains(TOKEN), "{m}"),
+            other => panic!("not a transport error: {other:?}"),
+        }
+        assert_eq!(
+            closed.web_url("r", ""),
+            "https://github.com/hel-apps/r",
+            "no branch: the repository's page"
+        );
+        drop(socket);
+    }
+
     #[tokio::test]
     async fn a_refusal_names_github_s_message_and_never_the_token() {
         let github = MockServer::start().await;
