@@ -2650,6 +2650,44 @@ mod tests {
         assert_eq!(loader.cache_stats()["merged"].as_u64().expect("count"), 2);
     }
 
+    /// The loader's nesting bound admits eight levels of @context arrays and
+    /// refuses the ninth, as the pinned-only resolver does.
+    #[tokio::test]
+    async fn the_loader_resolves_eight_nested_context_arrays_and_refuses_nine() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let nest = |n: usize| (0..n).fold(serde_json::json!({}), |v, _| serde_json::json!([v]));
+        loader.resolve(&nest(8)).await.expect("eight levels");
+        assert!(matches!(
+            loader.resolve(&nest(9)).await,
+            Err(NgsiError::BadRequestData(m)) if m.contains("too deep")
+        ));
+    }
+
+    /// Each merged-cache lookup of a cacheable @context is counted (T-5895).
+    /// The counters are process-wide and only grow, so the test reads a delta.
+    #[tokio::test]
+    async fn merged_lookups_of_a_cacheable_context_are_counted() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let total = || {
+            let m = &CACHE_STATS.snapshot()["merged"];
+            m["hits"].as_u64().unwrap_or(0) + m["misses"].as_u64().unwrap_or(0)
+        };
+        let before = total();
+        for _ in 0..3 {
+            loader
+                .resolve(&serde_json::json!({"counted": "https://ex.example/counted"}))
+                .await
+                .expect("resolve");
+        }
+        assert!(total() >= before + 3);
+    }
+
     /// The quiet resolutions (notification building, federation) resolve the
     /// same @context as a counted one.
     #[tokio::test]
