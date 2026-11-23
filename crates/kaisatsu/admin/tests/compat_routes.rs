@@ -2292,6 +2292,32 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
         &format!("{R}/partialImport"),
         a,
         Some(&import(
+            "FAIL",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    assert!(
+        ans.to_string().contains("group pi-g already exists"),
+        "{ans}"
+    );
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import("FAIL", json!({ "users": "pi.two" }))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{ans}");
+    assert!(ans.to_string().contains("partialImport:"), "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
             "SKIP",
             json!({ "groups": [group], "clients": [client] }),
         )),
@@ -2401,7 +2427,51 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
         assert_eq!(pia.realm_roles, expect);
     }
 
-    // OVERWRITE under a new fixed id moves the person's credentials, passkeys and grants.
+    // OVERWRITE under a new fixed id moves the person's credentials, passkeys and grants, and
+    // the groups, client role mappings and Organization memberships keyed by the old id.
+    let app = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    f.store
+        .set_user_grants(
+            "dev",
+            "pi-2",
+            &["auditor".into()],
+            &HashMap::from([("pi-app".to_string(), vec!["viewer".to_string()])]),
+        )
+        .await
+        .unwrap();
+    f.store
+        .add_role_mapping(RoleMappingRecord {
+            id: "pi-2-viewer".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: "pi-2".into(),
+            role_id: "pi-app-viewer".into(),
+            role_name: "viewer".into(),
+            client_uuid: Some(app.id.clone()),
+        })
+        .await
+        .unwrap();
+    f.store
+        .add_user_to_group("dev", "pi-2", "pi-g")
+        .await
+        .unwrap();
+    f.store
+        .upsert_membership(Membership {
+            id: "pi-2-org".into(),
+            realm_id: "dev".into(),
+            org_id: "org-pi".into(),
+            person_id: "pi-2".into(),
+            org_roles: vec!["member".into()],
+            created_at: TimestampTz::now(),
+        })
+        .await
+        .unwrap();
     let (st, _, ans) = call(
         &f.app,
         &Method::POST,
@@ -2443,6 +2513,36 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
             .unwrap()
             .len(),
         1
+    );
+    assert_eq!(moved.client_roles["pi-app"], ["viewer"]);
+    let groups = f.store.list_user_groups("dev", "pi-3").await.unwrap();
+    assert_eq!(
+        groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["pi-g"]
+    );
+    let mapped = f
+        .store
+        .list_role_mappings_for_principal("dev", "user", "pi-3", Some(&app.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        mapped
+            .iter()
+            .map(|m| m.role_name.as_str())
+            .collect::<Vec<_>>(),
+        ["viewer"]
+    );
+    let memberships = f
+        .store
+        .list_memberships_for_person("dev", "pi-3")
+        .await
+        .unwrap();
+    assert_eq!(
+        memberships
+            .iter()
+            .map(|m| (m.org_id.as_str(), m.org_roles.clone()))
+            .collect::<Vec<_>>(),
+        [("org-pi", vec!["member".to_string()])]
     );
 
     // An id that names another person than the username is refused before any write.
