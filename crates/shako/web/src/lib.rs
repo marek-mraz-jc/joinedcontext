@@ -100,9 +100,9 @@ fn is_safe_href(url: &str) -> bool {
         return true;
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("javascript:")
-        || lower.starts_with("data:")
-        || lower.starts_with("vbscript:")
+    if ["javascript:", "data:", "vbscript:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
     {
         return false;
     }
