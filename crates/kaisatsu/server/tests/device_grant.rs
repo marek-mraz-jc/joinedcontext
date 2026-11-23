@@ -383,8 +383,8 @@ async fn a_nameless_client_is_shown_by_id_and_an_unknown_decision_is_refused() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let html = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes())
-        .into_owned();
+    let html =
+        String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).into_owned();
     assert!(html.contains("lang=\"de\""), "{html}");
 
     let csrf = page_form(&app, &sso, &user_code).await;

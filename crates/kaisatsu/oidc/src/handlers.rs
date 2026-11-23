@@ -1557,11 +1557,10 @@ async fn verify_client_assertion(
         };
         if !names_kid(&jwks) {
             // A rotated signing key: read the set again (rate-limited in the guard).
-            jwks = state
-                .guard
-                .cluster_jwks(&jwks_url, true)
-                .await
-                .map_err(|_| KaisatsuError::invalid_client("cluster JWKS unavailable"))?;
+            let Ok(again) = state.guard.cluster_jwks(&jwks_url, true).await else {
+                return Err(KaisatsuError::invalid_client("cluster JWKS unavailable"));
+            };
+            jwks = again;
         }
         let keys = jwks
             .get("keys")
@@ -2586,12 +2585,14 @@ async fn handle_refresh_token_grant(
     }
 
     if !family.offline {
-        let sso = state
+        // Ending a session revokes its families, so a live family finds its session.
+        let Some(mut updated_sso) = state
             .store
             .get_sso_session(&realm.id, &family.sso_session_id)
             .await?
-            .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
-        let mut updated_sso = sso;
+        else {
+            return Err(KaisatsuError::invalid_grant("Session not active"));
+        };
         updated_sso.last_access = TimestampTz::now().as_millis();
         updated_sso.idle_expires_at = TimestampTz::now()
             + SignedDuration::from_secs(realm.sso_session_idle_timeout.max(3600));
@@ -3659,11 +3660,9 @@ async fn userinfo_inner(
                 .get("sid")
                 .and_then(Value::as_str)
                 .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
-            let sso = state
-                .store
-                .get_sso_session(&realm.id, sid)
-                .await?
-                .ok_or_else(|| KaisatsuError::Unauthorized("session not active".into()))?;
+            let Some(sso) = state.store.get_sso_session(&realm.id, sid).await? else {
+                return Err(KaisatsuError::Unauthorized("session not active".into()));
+            };
             state
                 .store
                 .get_user_by_id(&realm.id, None, &sso.user_id)
@@ -4394,6 +4393,71 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(&err, KaisatsuError::Crypto(m) if m.contains("no active signing key")));
+    }
+
+    #[test]
+    fn a_form_value_decodes_plus_and_escapes_and_refuses_broken_ones() {
+        assert_eq!(form_urldecode("a+b%20c%2B").as_deref(), Some("a b c+"));
+        for broken in ["%", "%2", "%zz", "%e9"] {
+            assert_eq!(form_urldecode(broken), None, "{broken}");
+        }
+    }
+
+    /// Membership of an organization counts by the person's own org, a group of the org, or a
+    /// group's `jc_org`; a disabled organization pins nobody.
+    #[tokio::test]
+    async fn an_organization_pin_needs_an_enabled_org_the_person_belongs_to() {
+        let state = state();
+        let mut org = Organization {
+            id: "org-1".into(),
+            realm_id: "dev".into(),
+            name: "City".into(),
+            alias: "city".into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: HashMap::new(),
+            managed_by: None,
+        };
+        state.store.upsert_organization(org.clone()).await.unwrap();
+        let mut user = UserRepresentation {
+            id: "u-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("org-1".into()),
+            ..Default::default()
+        };
+        let pin = |user: UserRepresentation, groups: Vec<GroupRepresentation>| {
+            let store = state.store.clone();
+            async move {
+                user_is_member_of_org(&store, "dev", &user, &groups, "city")
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(pin(user.clone(), vec![]).await.as_deref(), Some("city"));
+        user.org_id = None;
+        assert_eq!(pin(user.clone(), vec![]).await, None);
+        let of_org = GroupRepresentation {
+            id: "g-1".into(),
+            org_id: Some("org-1".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            pin(user.clone(), vec![of_org.clone()]).await.as_deref(),
+            Some("city")
+        );
+        let tagged = GroupRepresentation {
+            id: "g-2".into(),
+            attributes: HashMap::from([("jc_org".to_owned(), vec!["city".to_owned()])]),
+            ..Default::default()
+        };
+        assert_eq!(
+            pin(user.clone(), vec![tagged]).await.as_deref(),
+            Some("city")
+        );
+        org.enabled = false;
+        state.store.upsert_organization(org).await.unwrap();
+        assert_eq!(pin(user, vec![of_org]).await, None);
     }
 
     #[tokio::test]

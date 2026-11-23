@@ -219,7 +219,10 @@ async fn userinfo_asks_for_a_server_nonce_and_refuses_an_empty_jti_or_token() {
     let at = body["access_token"].as_str().unwrap().to_owned();
     let authz = format!("DPoP {at}");
 
-    assert_eq!(userinfo(&app, "DPoP   ", None).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        userinfo(&app, "DPoP   ", None).await,
+        StatusCode::UNAUTHORIZED
+    );
     let empty_jti = userinfo_proof(&h, "", "GET", Some(&at));
     assert_eq!(
         userinfo(&app, &authz, Some(&empty_jti)).await,
@@ -257,7 +260,15 @@ async fn userinfo_asks_for_a_server_nonce_and_refuses_an_empty_jti_or_token() {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&bytes[..], br#"{"error":"use_dpop_nonce"}"#);
 
-    let resp = ask(resource_proof(&h, "ui-n-2", "GET", htu, Some(&at), Some(&nonce))).await;
+    let resp = ask(resource_proof(
+        &h,
+        "ui-n-2",
+        "GET",
+        htu,
+        Some(&at),
+        Some(&nonce),
+    ))
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(resp.headers().contains_key("dpop-nonce"));
 }

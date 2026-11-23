@@ -185,8 +185,13 @@ async fn an_unknown_realm_is_404_at_token_introspection_and_revocation() {
 async fn introspection_dpop_count_and_kc_action_refusals() {
     let (app, store, kek) = app().await;
     let introspect = "/realms/dev/protocol/openid-connect/token/introspect";
-    let (st, _, body) =
-        post_form(&app, introspect, &[("client_id", "admin-cli"), ("token", "x")], None).await;
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[("client_id", "admin-cli"), ("token", "x")],
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(err(&body), "unauthorized_client", "{body}");
 
@@ -342,6 +347,64 @@ async fn a_missing_service_account_is_made_again_at_the_grant() {
     assert_ne!(again.id, sa.id);
     assert_eq!(again.service_account_client_id.as_deref(), Some("sa-app"));
     assert!(again.enabled);
+}
+
+/// Revoking an access token (RFC 7009) also ends the refresh tokens of its session for that
+/// client; a person without a password credential gets the same answer as a wrong password.
+#[tokio::test]
+async fn revoking_an_access_token_ends_its_session_refresh_and_no_password_is_refused() {
+    let (app, store, _) = app().await;
+    let tokens = password_grant(
+        &app,
+        "demo.orgmember@hel.fi",
+        "MemberPass123!Valid",
+        "openid",
+    )
+    .await;
+    let (st, body) = refresh(&app, tokens["refresh_token"].as_str().unwrap()).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let tokens = json_of(&body);
+    let (st, _, body) = post_form(
+        &app,
+        "/realms/dev/protocol/openid-connect/revoke",
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", tokens["access_token"].as_str().unwrap()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = refresh(&app, tokens["refresh_token"].as_str().unwrap()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+
+    store
+        .create_user(UserRepresentation {
+            id: "no-password-person".into(),
+            realm_id: "dev".into(),
+            username: "nopass@hel.fi".into(),
+            enabled: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("username", "nopass@hel.fi"),
+            ("password", "anything-at-all"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
 }
 
 fn jwt_alg(jwt: &str) -> Value {
@@ -938,7 +1001,12 @@ async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_ba
 
     let (st, h, html) = page(bad_redirect("named-app")).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{html}");
-    assert!(h[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html"));
+    assert!(
+        h[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
     assert!(html.contains("(redirect_uri)"), "{html}");
     assert!(html.contains("https://parking.example.test/"), "{html}");
     assert!(html.contains("Back to Parking"), "{html}");
