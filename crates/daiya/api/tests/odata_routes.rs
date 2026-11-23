@@ -323,6 +323,26 @@ async fn unbound_and_bound_functions() {
         let pv = w.ok("GET", uri, None).await;
         assert_eq!(pv["panelTitle"], "Edge", "{uri}: {pv}");
     }
+    // The range named in the call is the range the source is asked for.
+    let (url, seen) = prometheus().await;
+    let ranged = world();
+    ranged.add_prometheus("prom", &url).await;
+    ranged.add_dashboard(dashboard("edge", "prom"), None).await;
+    ranged
+        .ok(
+            "GET",
+            "/odata/v4/Dashboard.RenderPanel(uid='edge',panelId='1',from='1700000000000',to='1700000600000')",
+            None,
+        )
+        .await;
+    let asked = seen
+        .lock()
+        .iter()
+        .find(|head| head.contains("query_range"))
+        .cloned()
+        .unwrap_or_default();
+    // Aligned down to the 15 s step: 1700000600 s reads as 1700000595 s.
+    assert!(asked.contains("&end=1700000595.000&"), "{asked}");
     for uri in [
         "/odata/v4/Dashboard_Export(uid='edge')",
         "/odata/v4/Dashboards('edge')/Export",
