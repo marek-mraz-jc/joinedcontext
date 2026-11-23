@@ -4,6 +4,9 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # shako-store-memory claim_outbox: a retry due at exactly the Instant the claim reads; two reads of the monotonic
+  # clock in one test never tie, so `>` and `>=` cannot be told apart (T-7664).
+  'shako/store-memory/src/lib\.rs:\d+:\d+: replace > with >= in <impl Store for MemoryStore>::claim_outbox',
   # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
   # the same; the clamp only bounds the loop (T-7622).
   'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',

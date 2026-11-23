@@ -445,6 +445,19 @@ pub async fn run_contract_suite(store: &dyn Store) {
             .expect("claim"),
         None
     );
+    // A sync finished at the mark it claimed leaves nothing due.
+    let mark = store
+        .mark_mirror_due(inst, org, docs.id)
+        .await
+        .expect("due");
+    let claim = store.claim_mirror_sync(inst, org, Some(docs.id)).await;
+    assert_eq!(claim.expect("claim"), Some((docs.id, mark)));
+    store
+        .finish_mirror_sync(inst, org, docs.id, mark)
+        .await
+        .expect("finish");
+    let again = store.claim_mirror_sync(inst, org, Some(docs.id)).await;
+    assert_eq!(again.expect("claim again"), None);
 
     // Pull requests: newest update first, the number breaking a tie; the state filter ignores
     // case and "all" keeps every state.
@@ -806,4 +819,207 @@ pub async fn run_contract_suite(store: &dyn Store) {
             .expect("audit")
             .is_empty()
     );
+
+    // Quota: each count moves by its own delta and never below zero.
+    let before = store.get_quota_usage(inst, org).await.expect("quota");
+    let moved = store
+        .adjust_quota_usage(inst, org, 2, 30, 7)
+        .await
+        .expect("adjust");
+    assert_eq!(
+        (moved.repo_count, moved.git_bytes, moved.package_bytes),
+        (
+            before.repo_count + 2,
+            before.git_bytes + 30,
+            before.package_bytes + 7
+        )
+    );
+    let floored = store
+        .adjust_quota_usage(inst, org, -1_000_000, -1_000_000, -1_000_000)
+        .await
+        .expect("adjust");
+    assert_eq!(
+        (floored.repo_count, floored.git_bytes, floored.total_bytes()),
+        (0, 0, 0)
+    );
+
+    // Two repositories with a row of every kind: each list answers its own repository's rows,
+    // and deleting one repository takes its rows only.
+    store
+        .create_pull_request(PullRequestRecord {
+            repo_id: docs.id,
+            ..pr(1, "open", now)
+        })
+        .await
+        .expect("docs pr");
+    let sha = "1111111111111111111111111111111111111111";
+    let mut hooks = Vec::new();
+    for (repo_id, name) in [(site.id, "site"), (docs.id, "docs")] {
+        let rule = BranchProtectionRule {
+            rule_name: format!("{name}-main"),
+            ..BranchProtectionRule::default()
+        };
+        store
+            .upsert_protection_rule(ProtectionRuleRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id: inst,
+                org_id: org,
+                repo_id,
+                rule,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .expect("branch rule");
+        let rule = TagProtectionRule {
+            name_pattern: format!("{name}-v*"),
+            whitelist_usernames: Vec::new(),
+        };
+        store
+            .upsert_tag_protection(TagProtectionRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id: inst,
+                org_id: org,
+                repo_id,
+                rule,
+                created_at: now,
+            })
+            .await
+            .expect("tag rule");
+        store
+            .create_review(ReviewRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id: inst,
+                org_id: org,
+                repo_id,
+                pr_number: 1,
+                verdict: ReviewVerdict::Approved,
+                body: name.into(),
+                author_login: "bob".into(),
+                commit_id: sha.into(),
+                dismissed: false,
+                created_at: now,
+            })
+            .await
+            .expect("review");
+        store
+            .upsert_commit_status(CommitStatusRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id: inst,
+                org_id: org,
+                repo_id,
+                sha: sha.into(),
+                context: format!("{name}-ci"),
+                state: "success".into(),
+                description: String::new(),
+                target_url: String::new(),
+                updated_at: now,
+            })
+            .await
+            .expect("status");
+        let hook = store
+            .create_webhook(WebhookRecord {
+                id: WebhookId::new(),
+                instance_id: inst,
+                org_id: org,
+                repo_id,
+                url: format!("https://portal.city.example/hooks/{name}"),
+                events: vec!["push".into()],
+                active: true,
+                secret_ref: format!("hooks/{name}"),
+                previous_secret_ref: None,
+                format: WebhookFormat::Shako,
+                created_at: now,
+            })
+            .await
+            .expect("webhook");
+        store
+            .record_delivery(DeliveryRecord {
+                id: uuid::Uuid::now_v7(),
+                instance_id: inst,
+                org_id: org,
+                webhook_id: hook.id,
+                event: name.into(),
+                status: "delivered".into(),
+                response_code: Some(200),
+                delivered_at: now,
+            })
+            .await
+            .expect("delivery");
+        hooks.push(hook.id);
+    }
+    let held = |repo_id: RepoId| async move {
+        let rules = store.list_protection_rules(inst, org, repo_id).await;
+        let tags = store.list_tag_protections(inst, org, repo_id).await;
+        let reviews = store.list_reviews(inst, org, Some(repo_id), Some(1)).await;
+        let statuses = store.list_commit_statuses(inst, org, repo_id, sha).await;
+        let webhooks = store.list_webhooks(inst, org, Some(repo_id)).await;
+        let prs = store
+            .list_pull_requests(inst, org, Some(repo_id), None)
+            .await;
+        (
+            rules
+                .expect("rules")
+                .into_iter()
+                .map(|r| r.rule.rule_name)
+                .collect::<Vec<_>>(),
+            tags.expect("tags")
+                .into_iter()
+                .map(|r| r.rule.name_pattern)
+                .collect::<Vec<_>>(),
+            reviews
+                .expect("reviews")
+                .into_iter()
+                .map(|r| r.body)
+                .collect::<Vec<_>>(),
+            statuses
+                .expect("statuses")
+                .into_iter()
+                .map(|r| r.context)
+                .collect::<Vec<_>>(),
+            webhooks
+                .expect("hooks")
+                .into_iter()
+                .map(|r| r.secret_ref)
+                .collect::<Vec<_>>(),
+            prs.expect("prs").len(),
+        )
+    };
+    let site_rows = (
+        vec!["site-main".to_owned()],
+        vec!["site-v*".to_owned()],
+        vec!["site".to_owned()],
+        vec!["site-ci".to_owned()],
+        vec!["hooks/site".to_owned()],
+        3,
+    );
+    assert_eq!(held(site.id).await, site_rows);
+    assert_eq!(held(docs.id).await.4, ["hooks/docs"]);
+    let other_pr = store.list_reviews(inst, org, Some(site.id), Some(2)).await;
+    assert!(other_pr.expect("reviews").is_empty());
+    let other_sha = store.list_commit_statuses(inst, org, site.id, "2222").await;
+    assert!(other_sha.expect("statuses").is_empty());
+    let all_reviews = store.list_reviews(inst, org, None, None).await;
+    assert_eq!(all_reviews.expect("reviews").len(), 2);
+    let deliveries = store.list_deliveries(inst, org, Some(hooks[0])).await;
+    let events: Vec<String> = deliveries
+        .expect("deliveries")
+        .into_iter()
+        .map(|d| d.event)
+        .collect();
+    assert_eq!(events, ["site"]);
+    assert!(
+        store
+            .delete_repo(inst, org, docs.id)
+            .await
+            .expect("delete docs")
+    );
+    assert_eq!(held(site.id).await, site_rows);
+    assert_eq!(mirrors(Some(site.id)).await, up);
+    let gone = held(docs.id).await;
+    assert!(
+        gone.0.is_empty() && gone.1.is_empty() && gone.2.is_empty(),
+        "{gone:?}"
+    );
+    assert_eq!(gone.5, 0);
 }
