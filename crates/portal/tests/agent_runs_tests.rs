@@ -2546,6 +2546,37 @@ async fn expired_runs_are_reaped_and_ticket_invalidated_while_live_runs_remain()
     );
     assert!(run["finishedAt"].as_str().is_some());
 
+    // A run that waited past its lease for its change to be approved lost only itself: its
+    // error names the change, which stays open (T-2772).
+    let waited_id = mint_run_id();
+    state
+        .agents
+        .create_run(&AgentRun {
+            id: waited_id.clone(),
+            app_name: "waited-app".to_owned(),
+            status: "awaiting_approval".to_owned(),
+            merge_request: Some(7),
+            branch: format!("agent/app-waited-app/{waited_id}"),
+            ..expired_run.clone()
+        })
+        .await
+        .expect("create waiting run");
+    assert_eq!(reaper::reap_expired(&state).await, 1);
+    let waited = state
+        .agents
+        .get_run(&waited_id)
+        .await
+        .expect("read")
+        .expect("the run");
+    assert_eq!(waited.status, "expired");
+    assert_eq!(
+        waited.error.as_deref(),
+        Some(
+            "the run waited longer than its lease for its change #7 to be approved; the change \
+             stays open under Changes, and approving it still publishes the application"
+        )
+    );
+
     let (_, context) = internal_call(
         &internal,
         Some(proxy_bearer()),
