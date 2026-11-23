@@ -1057,6 +1057,99 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
+/// Through SCIM an Organization admin sees another Organization's groups and people as missing,
+/// and the groups it creates or renames sit under its own Organization.
+#[tokio::test]
+async fn scim_keeps_an_org_admin_inside_its_organization() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "g-esp".into(),
+            realm_id: "dev".into(),
+            org_id: Some("espoo".into()),
+            name: "g-esp".into(),
+            path: "/espoo/g-esp".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let scim = "/api/v1/realms/dev/scim/v2";
+    let rename = json!({ "displayName": "taken" });
+    let patch = json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{ "op": "replace", "path": "displayName", "value": "taken" }] });
+    for (method, uri, body) in [
+        (Method::GET, format!("{scim}/Groups/g-esp"), None),
+        (
+            Method::PUT,
+            format!("{scim}/Groups/g-esp"),
+            Some(rename.clone()),
+        ),
+        (
+            Method::PATCH,
+            format!("{scim}/Groups/g-esp"),
+            Some(patch.clone()),
+        ),
+        (Method::DELETE, format!("{scim}/Groups/g-esp"), None),
+        (
+            Method::PUT,
+            format!("{scim}/Users/esp-person"),
+            Some(json!({ "userName": "taken" })),
+        ),
+        (
+            Method::PATCH,
+            format!("{scim}/Users/esp-person"),
+            Some(patch.clone()),
+        ),
+    ] {
+        let st = f.send(method.clone(), &uri, &t, body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+    let kept = f
+        .store
+        .get_group("dev", None, "g-esp")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.name, "g-esp");
+    assert_eq!(f.user("esp-person").await.username, "esp-person");
+    // A group it creates, and renames, is a Helsinki group.
+    let st = f
+        .send(
+            Method::POST,
+            &format!("{scim}/Groups"),
+            &t,
+            Some(json!({ "displayName": "hel-made" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let made = f
+        .store
+        .get_group_by_path("dev", None, "/helsinki/hel-made")
+        .await
+        .unwrap()
+        .expect("created under helsinki");
+    let st = f
+        .send(
+            Method::PATCH,
+            &format!("{scim}/Groups/{}", made.id),
+            &t,
+            Some(json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                         "Operations": [{ "op": "replace", "path": "displayName", "value": "hel-renamed" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let renamed = f
+        .store
+        .get_group("dev", None, &made.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.path, "/helsinki/hel-renamed");
+}
+
 #[tokio::test]
 async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
     let f = Fixture::new().await;

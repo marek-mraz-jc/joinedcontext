@@ -551,6 +551,46 @@ async fn user_patch_paths_and_refusals() {
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{u}");
+    // A filter with `and` and `co` picks the entry; a valuePath without a sub-attribute replaces
+    // the whole entry.
+    let (st, u) = api
+        .patch(
+            &uri,
+            &admin,
+            json!([
+                { "op": "replace", "path": "emails[type eq \"work\" and value co \"MOVED\"].value",
+                  "value": "picked@hel.fi" },
+                { "op": "replace", "path": "emails[value sw \"picked\"]",
+                  "value": { "value": "whole@hel.fi", "type": "home" } },
+            ]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{u}");
+    assert_eq!(u["emails"][0]["value"], "whole@hel.fi", "{u}");
+    assert_eq!(u["emails"][0]["type"], "home", "{u}");
+    // A name with one part keeps the other; a nickName or externalId that is no string is ignored.
+    let (st, u) = api
+        .patch(
+            &uri,
+            &admin,
+            json!([
+                { "op": "replace", "path": "name", "value": { "givenName": "Given" } },
+                { "op": "replace", "path": "name", "value": { "familyName": "Family" } },
+                { "op": "add", "path": "nickName", "value": 5 },
+                { "op": "add", "path": "externalId", "value": 5 },
+            ]),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{u}");
+    assert_eq!(
+        (
+            u["name"]["givenName"].as_str(),
+            u["name"]["familyName"].as_str()
+        ),
+        (Some("Given"), Some("Family")),
+        "{u}"
+    );
+    assert!(u.get("externalId").is_none_or(Value::is_null), "{u}");
 
     // active=false ends the person's sessions.
     let (st, u) = api
