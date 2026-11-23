@@ -202,6 +202,66 @@ async fn a_bound_token_needs_its_key_at_userinfo() {
     );
 }
 
+/// UserInfo as a DPoP resource (RFC 9449 §9): a realm that requires a server nonce answers a
+/// proof without one with 401, `WWW-Authenticate: DPoP error="use_dpop_nonce"` and a fresh
+/// `DPoP-Nonce`, and the retry carrying it gets through; an empty `jti` or an empty DPoP token
+/// is refused.
+#[tokio::test]
+async fn userinfo_asks_for_a_server_nonce_and_refuses_an_empty_jti_or_token() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let app = router(
+        state,
+        Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap(),
+    );
+    let h = holder();
+    let (st, body) = token(&app, Some(&proof(&h, "tok-n", HTU))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let at = body["access_token"].as_str().unwrap().to_owned();
+    let authz = format!("DPoP {at}");
+
+    assert_eq!(userinfo(&app, "DPoP   ", None).await, StatusCode::UNAUTHORIZED);
+    let empty_jti = userinfo_proof(&h, "", "GET", Some(&at));
+    assert_eq!(
+        userinfo(&app, &authz, Some(&empty_jti)).await,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm
+        .attributes
+        .insert("dpop.require.nonce".into(), "true".into());
+    store.upsert_realm(realm).await.unwrap();
+    let htu = "https://idm.dev.example.test/realms/dev/protocol/openid-connect/userinfo";
+    let ask = |p: String| {
+        let app = app.clone();
+        let authz = authz.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .uri("/realms/dev/protocol/openid-connect/userinfo")
+                    .header(header::AUTHORIZATION, authz)
+                    .header("dpop", p)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let resp = ask(resource_proof(&h, "ui-n-1", "GET", htu, Some(&at), None)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let www = resp.headers()[header::WWW_AUTHENTICATE].to_str().unwrap();
+    assert!(www.starts_with(r#"DPoP error="use_dpop_nonce""#), "{www}");
+    assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+    let nonce = resp.headers()["dpop-nonce"].to_str().unwrap().to_owned();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], br#"{"error":"use_dpop_nonce"}"#);
+
+    let resp = ask(resource_proof(&h, "ui-n-2", "GET", htu, Some(&at), Some(&nonce))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key("dpop-nonce"));
+}
+
 fn resource_proof(
     h: &Holder,
     jti: &str,
