@@ -288,7 +288,11 @@ fn a_gallery_filters_by_publisher_theme_and_format_and_links_the_same_search() {
     ));
     f.datasets.push(with_dists(
         dataset("linky", json!({ "modified": "2026-11-16T00:00:00Z" })),
-        vec![dist("l1", &ep("linky/geojson"), json!({ "format": "geojson" }))],
+        vec![dist(
+            "l1",
+            &ep("linky/geojson"),
+            json!({ "format": "geojson" }),
+        )],
     ));
     let b = with_pages(json!([{ "slug": "home", "rows": [
         { "blocks": [{ "type": "dataset-gallery", "title": { "sk": "Mesto" }, "publisher": "mesto", "limit": 24, "layout": "table" }] },
@@ -303,13 +307,24 @@ fn a_gallery_filters_by_publisher_theme_and_format_and_links_the_same_search() {
         s[..s.find("</section>").expect("end")].to_owned()
     };
     let mesto = section("Mesto");
-    assert!(mesto.contains("/dataset/by-id\""), "matched through the publisher's name");
+    assert!(
+        mesto.contains("/dataset/by-id\""),
+        "matched through the publisher's name"
+    );
     assert!(mesto.contains("/m/dataset/?organization=mesto"), "{mesto}");
     let envi = section("Zivotne");
-    assert_eq!(envi.matches("<tr><td>").count(), 1, "only the ENVI one: {envi}");
+    assert_eq!(
+        envi.matches("<tr><td>").count(),
+        1,
+        "only the ENVI one: {envi}"
+    );
     assert!(envi.contains("/dataset/by-id\""));
     let geo = section("Geo");
-    assert_eq!(geo.matches("<tr><td>").count(), 1, "the limit of the two GEOJSON ones");
+    assert_eq!(
+        geo.matches("<tr><td>").count(),
+        1,
+        "the limit of the two GEOJSON ones"
+    );
     assert!(geo.contains("/dataset/linky\""), "the newer first: {geo}");
     assert!(geo.contains("res_format=geojson"), "{geo}");
     let tran = section("Doprava");
@@ -323,9 +338,23 @@ fn a_file_list_names_each_kind_and_size_it_knows() {
     let mut f = fixture();
     let kinds = [
         ("4", "data.csv", "text/csv", 500, "CSV", "500 B"),
-        ("5", "photo.jpg", "image/jpeg", 3 * 1024 * 1024 + 1, "JPEG", "3.0 MB"),
+        (
+            "5",
+            "photo.jpg",
+            "image/jpeg",
+            3 * 1024 * 1024 + 1,
+            "JPEG",
+            "3.0 MB",
+        ),
         ("6", "photo.webp", "image/webp", 1024, "WebP", "1 kB"),
-        ("7", "tab.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 1025, "XLSX", "2 kB"),
+        (
+            "7",
+            "tab.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            1025,
+            "XLSX",
+            "2 kB",
+        ),
         ("8", "notes.txt", "text/plain", 0, "", "0 B"),
     ];
     let mut paths = Vec::new();
@@ -346,7 +375,10 @@ fn a_file_list_names_each_kind_and_size_it_knows() {
         let row = &html[at..at + html[at..].find("</li>").expect("row end")];
         assert!(row.contains(size), "{name}: {size} in {row}");
         if !kind.is_empty() {
-            assert!(row.contains(&format!(">{kind}<")), "{name}: {kind} in {row}");
+            assert!(
+                row.contains(&format!(">{kind}<")),
+                "{name}: {kind} in {row}"
+            );
         }
     }
     assert!(html.contains(">PNG<") && html.contains(">SVG<"));
@@ -367,18 +399,28 @@ fn chart_datasets_lists_each_charted_dataset_once_sorted() {
 
 #[test]
 fn a_page_or_text_that_got_past_the_check_without_any_text_falls_back_or_is_left_out() {
-    let mut b = with_pages(json!([{ "slug": "bez-nazvu", "title": { "sk": "x" }, "rows": [{ "blocks": [
+    let mut b = with_pages(
+        json!([{ "slug": "bez-nazvu", "title": { "sk": "x" }, "rows": [{ "blocks": [
         { "type": "text", "markdown": { "sk": "Prázdny." } },
-        { "type": "text", "markdown": { "sk": "Po slovensky." } }] }] }]));
+        { "type": "text", "markdown": { "sk": "Po slovensky." } }] }] }]),
+    );
     // A stored manifest the check never saw: an empty title and an empty text.
     b.layout.pages[0].title.clear();
-    if let jc_core::kinds::portal_page::PortalBlock::Text(t) = &mut b.layout.pages[0].rows[0].blocks[0] {
+    if let jc_core::kinds::portal_page::PortalBlock::Text(t) =
+        &mut b.layout.pages[0].rows[0].blocks[0]
+    {
         t.markdown.clear();
     }
     let html = render(&b, &fixture(), "bez-nazvu", "sk").expect("page");
-    assert!(html.contains("<title>bez-nazvu - "), "the slug heads the page");
+    assert!(
+        html.contains("<title>bez-nazvu - "),
+        "the slug heads the page"
+    );
     assert!(html.contains("Po slovensky."));
-    assert!(!html.contains("Prázdny."), "a text with nothing to show is left out");
+    assert!(
+        !html.contains("Prázdny."),
+        "a text with nothing to show is left out"
+    );
 }
 
 #[test]

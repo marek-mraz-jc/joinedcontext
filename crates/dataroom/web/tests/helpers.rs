@@ -1996,6 +1996,110 @@ fn jc_entity_type_reads_the_query_the_path_or_nothing() {
 }
 
 #[test]
+fn an_endpoint_path_outside_the_typed_apis_names_no_type() {
+    let t = |u: &str| jc_entity_type(&dist("r", u, json!({})));
+    assert_eq!(t(&ep("ngsi-ld/v1/entities")), None);
+    assert_eq!(t(&ep("ogc/features/collections/")), None);
+}
+
+#[test]
+fn a_feed_address_the_builder_cannot_narrow_stays_a_card() {
+    let base = ep("").trim_end_matches('/').to_owned();
+    let ds = with_dists(
+        dataset("f", json!({ "endpointUrl": base })),
+        vec![
+            // A calendar whose address is a feed preset: the kinds differ, so it stays a card.
+            dist(
+                "cal",
+                &format!("{base}/feeds/stops.rss"),
+                json!({ "mediaType": "text/calendar" }),
+            ),
+            // /feed/v1/ with no document, and with a document that is no feed.
+            dist(
+                "bare",
+                &format!("{base}/feed/v1/stops"),
+                json!({ "mediaType": "application/atom+xml" }),
+            ),
+            dist(
+                "txt",
+                &format!("{base}/feed/v1/stops/notes.txt"),
+                json!({ "mediaType": "application/rss+xml" }),
+            ),
+            dist(
+                "good",
+                &format!("{base}/feed/v1/stops/rss.xml"),
+                json!({ "mediaType": "application/rss+xml" }),
+            ),
+        ],
+    );
+    let s = jc_subscriptions(&ds, "en", "sk");
+    assert_eq!(s.calendar_cards.len(), 1, "{:?}", s.calendar_cards);
+    let cards: Vec<&str> = s.news_cards.iter().map(|n| n.0.as_str()).collect();
+    assert_eq!(cards, ["Resource bare", "Resource txt"]);
+    let b = s.builder.expect("one preset");
+    assert_eq!(b.presets.len(), 1);
+    assert_eq!(b.presets[0].output, "stops");
+}
+
+#[test]
+fn frequency_dates_and_sources_edges() {
+    // A daily dataset shows its next date without a time.
+    let daily = dataset("d", json!({ "frequency": "DAILY" }));
+    let rows = jc_about(&daily, None, "en", "sk");
+    let next = rows
+        .iter()
+        .find(|r| r.label == jc_t("next_update", "en"))
+        .expect("next update row");
+    assert!(!next.text.contains("UTC"), "{}", next.text);
+    // A next date past the last representable instant is left out.
+    let far = dataset(
+        "z",
+        json!({ "frequency": "ANNUAL", "modified": "9999-06-01T00:00:00Z" }),
+    );
+    let (word, next) = jc_frequency(&far, "en").expect("frequency");
+    assert_eq!(word, "Every year");
+    assert!(next.is_none());
+    // A source object whose url is no web address is not listed.
+    let src = dataset(
+        "s",
+        json!({ "extras": { "source": "[{\"url\": \"ftp://x.example/a\"}, {\"url\": \"https://ok.example/\"}]" } }),
+    );
+    let sources: Vec<String> = jc_about(&src, None, "en", "sk")
+        .into_iter()
+        .filter(|r| r.label == jc_t("source", "en"))
+        .filter_map(|r| r.link)
+        .collect();
+    assert_eq!(sources, ["https://ok.example/"]);
+}
+
+#[test]
+fn schema_org_keeps_a_spatial_address_as_it_is() {
+    let ds = dataset("g", json!({ "spatial": ["https://example.org/area/1"] }));
+    let v = jc_schema_org_dict(&cat(), &ds, None, &branding(), "en");
+    assert_eq!(
+        v["spatialCoverage"]["sameAs"], "https://example.org/area/1",
+        "{v}"
+    );
+    let script = jc_schema_org_script(&cat(), &ds, None, &branding(), "en");
+    assert_eq!(
+        serde_json::from_str::<Value>(&script).expect("json")["spatialCoverage"]["sameAs"],
+        "https://example.org/area/1"
+    );
+}
+
+#[test]
+fn an_own_page_without_a_heading_takes_the_built_in_title() {
+    let mut b = branding();
+    b.pages
+        .insert(("support".into(), "en".into()), "Only a paragraph.".into());
+    let built_in = jc_page("support", &branding(), "en").expect("built-in");
+    let own = jc_page("support", &b, "en").expect("own");
+    assert_eq!(own.title, built_in.title);
+    assert!(own.html.contains("Only a paragraph."));
+    assert_ne!(own.html, built_in.html);
+}
+
+#[test]
 fn jc_about_publisher_without_a_title_shows_its_name_as_ckan_display_name() {
     // plugin.py: extras publisher_name, else organization title, else organization name.
     let p = publisher("mesto-x", json!({ "title": {} }));
