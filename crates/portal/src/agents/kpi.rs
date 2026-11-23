@@ -92,23 +92,18 @@ fn number_of(value: &Value) -> Option<f64> {
 
 /// The aggregate over the rows, and how many rows carried a number (every row for `count`).
 pub fn compute(rows: &[Value], attribute: &str, agg: Agg) -> (Option<f64>, usize) {
-    if agg == Agg::Count {
-        return (Some(rows.len() as f64), rows.len());
-    }
     let numbers: Vec<f64> = rows
         .iter()
         .filter_map(|row| row.get(attribute).and_then(number_of))
         .collect();
     let n = numbers.len();
-    if n == 0 {
-        return (None, 0);
-    }
     let value = match agg {
+        Agg::Count => return (Some(rows.len() as f64), rows.len()),
+        _ if n == 0 => return (None, 0),
         Agg::Sum => numbers.iter().sum(),
         Agg::Avg => numbers.iter().sum::<f64>() / n as f64,
         Agg::Min => numbers.iter().copied().fold(f64::INFINITY, f64::min),
         Agg::Max => numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-        Agg::Count => unreachable!("handled above"),
     };
     (Some(value), n)
 }
@@ -116,7 +111,7 @@ pub fn compute(rows: &[Value], attribute: &str, agg: Agg) -> (Option<f64>, usize
 /// `avg(pm10) over AirQualityObserved where pm10>0`: the formula as the entity records it.
 pub fn formula(params: &ComputeKpi) -> String {
     let mut text = match params.agg {
-        Agg::Count => format!("count({})", params.entity_type),
+        Agg::Count => format!("{}({})", Agg::Count.as_str(), params.entity_type),
         agg => format!(
             "{}({}) over {}",
             agg.as_str(),
@@ -294,5 +289,94 @@ mod tests {
         let mut bad = params(Agg::Avg);
         bad.name = "not a name".into();
         assert!(entity(&bad, 1.0, &provenance).is_err());
+    }
+
+    #[test]
+    fn min_and_max_name_their_aggregate_and_a_value_that_is_no_number_is_skipped() {
+        assert_eq!(
+            formula(&params(Agg::Min)),
+            "min(pm10) over AirQualityObserved"
+        );
+        assert_eq!(
+            formula(&params(Agg::Max)),
+            "max(pm10) over AirQualityObserved"
+        );
+        let rows = vec![
+            json!({ "pm10": true }),
+            json!({ "pm10": [1] }),
+            json!({ "pm10": 4 }),
+        ];
+        assert_eq!(compute(&rows, "pm10", Agg::Max), (Some(4.0), 1));
+        // A blank `q` narrows nothing and writes no clause.
+        let mut blank = params(Agg::Sum);
+        blank.q = Some("  ".into());
+        assert_eq!(formula(&blank), "sum(pm10) over AirQualityObserved");
+    }
+
+    #[test]
+    fn an_endpoint_or_run_that_makes_no_urn_is_refused_by_name() {
+        let provenance = |endpoint_name: &'static str, run_id: &'static str| Provenance {
+            org_domain: "hel.fi",
+            urn_owner: "hel.fi",
+            project: "helsinki",
+            endpoint_space: "helsinki",
+            endpoint_name,
+            run_id,
+            now: "2026-09-13T08:00:12Z",
+        };
+        let p = params(Agg::Avg);
+        let endpoint =
+            entity(&p, 1.0, &provenance("not an endpoint", "3f9c2a1e")).expect_err("no URN");
+        assert!(
+            endpoint.starts_with("the source endpoint has no URN"),
+            "{endpoint}"
+        );
+        let run = entity(&p, 1.0, &provenance("helsinki-all", "not a run")).expect_err("no URN");
+        assert!(run.starts_with("the run has no URN"), "{run}");
+        // A unit no UN/CEFACT common code can be is refused by the indicator's own rules.
+        let mut long = params(Agg::Avg);
+        long.unit = Some("NOT-A-UNIT-CODE".into());
+        let unit =
+            entity(&long, 1.0, &provenance("helsinki-all", "3f9c2a1e")).expect_err("no unit");
+        assert!(unit.contains("unitCode"), "{unit}");
+    }
+
+    fn endpoint(name: &str, space: &str, slug: Option<&str>) -> crate::resource::ResourceEnvelope {
+        let mut spec = json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": space } });
+        if let Some(slug) = slug {
+            spec["slug"] = json!(slug);
+        }
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, "helsinki"),
+            spec,
+            status: None,
+        }
+    }
+
+    #[test]
+    fn the_indicator_endpoint_is_the_one_on_the_projects_kpi_space() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert_eq!(kpi_endpoint(&state, "helsinki"), None);
+        state
+            .mirror
+            .upsert(endpoint("air", "helsinki", Some("air-slug")));
+        assert_eq!(kpi_endpoint(&state, "helsinki"), None);
+        state
+            .mirror
+            .upsert(endpoint("kpi-writer", "helsinki-kpi", Some("kpi-slug")));
+        assert_eq!(
+            kpi_endpoint(&state, "helsinki"),
+            Some(("kpi-slug".to_owned(), "kpi-writer".to_owned()))
+        );
+        // A project name that is no DNS label names no space to look in.
+        assert_eq!(kpi_endpoint(&state, "Helsinki City"), None);
+        // An Endpoint on the space without a slug has no address to write through.
+        let unslugged = AppState::new(crate::config::Config::for_tests(), None);
+        unslugged
+            .mirror
+            .upsert(endpoint("kpi-writer", "helsinki-kpi", None));
+        assert_eq!(kpi_endpoint(&unslugged, "helsinki"), None);
     }
 }

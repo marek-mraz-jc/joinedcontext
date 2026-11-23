@@ -3,7 +3,8 @@
  * Asserts projection from PipelineForm to flow nodes and edges, paint logic from trace,
  * stage mutators, and keyboard / palette interactions.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -416,6 +417,79 @@ describe("PipelineFlow component rendering & interactions", () => {
     expect(screen.getByTestId("flow-node-source")).toHaveAttribute("data-state", "ok");
     expect(screen.getByTestId("flow-node-compute")).toHaveAttribute("data-state", "error");
     expect(screen.getByTestId("flow-node-output")).toHaveAttribute("data-state", "skipped");
+  });
+
+  function Studio({ initial, onChange }: { initial: PipelineForm; onChange: (form: PipelineForm) => void }) {
+    const [draft, setDraft] = useState<PipelineForm>(initial);
+    return (
+      <PipelineStudio
+        project="helsinki"
+        draft={draft}
+        onChange={(form) => {
+          setDraft(form);
+          onChange(form);
+        }}
+        dataSources={[]}
+        endpoints={[]}
+        toManifest={vi.fn()}
+      />
+    );
+  }
+
+  function renderStudio(initial: PipelineForm) {
+    const onChange = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <Studio initial={initial} onChange={onChange} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    return onChange;
+  }
+
+  const last = (onChange: ReturnType<typeof vi.fn>) => onChange.mock.calls.at(-1)?.[0] as PipelineForm;
+
+  it("edits a module step's module and function, and removes the step", async () => {
+    const onChange = renderStudio({ source: { dataSourceRef: "feed" }, compute: { kind: "wasm" } });
+    await userEvent.click(screen.getByTestId("flow-node-compute"));
+    const editor = screen.getByTestId("flow-node-editor-compute");
+    await userEvent.type(within(editor).getByTestId("flow-module"), "oci://m");
+    await userEvent.type(within(editor).getByTestId("flow-function"), "run");
+    expect(last(onChange).compute).toMatchObject({ kind: "wasm", module: "oci://m", function: "run" });
+    await userEvent.click(within(editor).getByRole("button", { name: "Remove stage" }));
+    expect(last(onChange).compute?.kind).toBeUndefined();
+  });
+
+  it("picks the mapping a mapping step names", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ items: [{ apiVersion: "joinedcontext.com/v1alpha1", kind: "Mapping", metadata: { name: "air-map", namespace: "helsinki" }, spec: {} }] }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+    const onChange = renderStudio({ source: { dataSourceRef: "feed" }, compute: { kind: "mapping" } });
+    await userEvent.click(screen.getByTestId("flow-node-compute"));
+    const editor = screen.getByTestId("flow-node-editor-compute");
+    await userEvent.click(within(editor).getByRole("combobox"));
+    await userEvent.click(await screen.findByRole("option", { name: /air-map/ }));
+    expect(last(onChange).compute).toMatchObject({ kind: "mapping", mappingRef: "air-map" });
+  });
+
+  it("opens a node's form on a double click, and taps and untaps the wire into it", async () => {
+    renderStudio({ source: { dataSourceRef: "feed" }, compute: { kind: "bloblang", bloblang: "root = this" } });
+    fireEvent.doubleClick(screen.getByTestId("flow-node-compute"));
+    // The node's own editor takes the focus, its first control first.
+    await waitFor(() => expect(screen.getByTestId("flow-node-editor-compute")).toContainElement(document.activeElement as HTMLElement));
+    await userEvent.click(screen.getByTestId("palette-debug"));
+    const tap = await screen.findByTestId(/^flow-tap-/);
+    await userEvent.click(tap);
+    await waitFor(() => expect(screen.queryByTestId(/^flow-tap-/)).toBeNull());
   });
 
   it("switches between Flow and Form view in PipelineStudio", async () => {
