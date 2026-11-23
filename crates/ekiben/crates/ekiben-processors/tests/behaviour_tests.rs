@@ -548,6 +548,60 @@ async fn branch_reports_a_count_mismatch_as_bento_does() {
 }
 
 #[tokio::test]
+async fn branch_flags_what_its_children_and_result_map_refuse() {
+    let e = env();
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"mapping": "root = deleted()"}]}}),
+            parts(&["a", "b"]),
+        )
+        .await;
+    for p in &out[0] {
+        assert_eq!(err_of(p), "child processors resulted in zero messages");
+    }
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"mapping": "root = if this.bad { throw(\"boom\") } else { this }"}],
+                "result_map": "root.got = this"}}),
+            parts(&[r#"{"bad":true}"#, r#"{"bad":false}"#]),
+        )
+        .await;
+    assert!(
+        err_of(&out[0][0]).starts_with("processors failed: "),
+        "{}",
+        err_of(&out[0][0])
+    );
+    assert!(err_of(&out[0][0]).contains("boom"));
+    assert!(!out[0][1].is_errored());
+    assert_eq!(flat(&out)[1], r#"{"bad":false,"got":{"bad":false}}"#);
+    // A result_map that deletes keeps the payload; one that throws flags only its message.
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"noop": {}}],
+                "result_map": "root = if this.n == 1 { deleted() } else if this.n == 2 { throw(\"no\") } else { \"set\" }"}}),
+            parts(&[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]),
+        )
+        .await;
+    assert_eq!(flat(&out)[0], r#"{"n":1}"#);
+    assert!(!out[0][0].is_errored());
+    assert!(
+        err_of(&out[0][1]).starts_with("result mapping failed: "),
+        "{}",
+        err_of(&out[0][1])
+    );
+    assert_eq!(flat(&out)[2], "set");
+    // Without a result_map the children's output is dropped and the payload kept.
+    let out = e
+        .run(
+            json!({"branch": {"request_map": "root = this.n", "processors": [{"mapping": "root = 9"}]}}),
+            parts(&[r#"{"n":1}"#]),
+        )
+        .await;
+    assert_eq!(flat(&out), vec![r#"{"n":1}"#]);
+    assert!(!out[0][0].is_errored());
+}
+
+#[tokio::test]
 async fn switch_flags_a_failing_check_and_keeps_order() {
     let e = env();
     let out = e

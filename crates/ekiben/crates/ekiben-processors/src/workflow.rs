@@ -351,17 +351,8 @@ impl Processor for WorkflowProcessor {
                         for e in map_errs {
                             records[e.index].mark_failed(&b_id, e.message);
                         }
-                        match bp.overlay_result(&mut batch, &aligned) {
-                            Ok(overlay_errs) => {
-                                for e in overlay_errs {
-                                    records[e.index].mark_failed(&b_id, e.message);
-                                }
-                            }
-                            Err(err) => {
-                                for rec in &mut records {
-                                    rec.mark_failed(&b_id, err.clone());
-                                }
-                            }
+                        for e in bp.overlay_result(&mut batch, &aligned) {
+                            records[e.index].mark_failed(&b_id, e.message);
                         }
                     }
                     Err((general_err, map_errs)) => {
