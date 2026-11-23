@@ -616,14 +616,14 @@ mod tests {
     #[test]
     fn a_shards_key_reaches_exactly_the_prefixes_its_placement_names() {
         let id = |name: &str| app_id("helsinki", name);
-        let placement = json!({ "apps": [
+        let placed = json!({ "apps": [
             { "id": id("moved"), "prefix": "org/o/project/p/apps/moved/", "legacy": false },
             { "id": id("moving"), "prefix": "org/o/project/p/apps/moving/", "legacy": true },
             { "id": id("unkeyed") },
             { "name": "no-id", "prefix": "org/o/project/p/apps/x/" }
         ]});
         assert_eq!(
-            prefixes(3, &placement),
+            prefixes(3, &placed),
             [
                 "org/o/project/p/apps/moved/".to_owned(),
                 "org/o/project/p/apps/moving/".to_owned(),

@@ -546,7 +546,7 @@ mod tests {
         odd.offer_ref = Some(
             serde_json::from_value(json!({"kind": "DataOffer", "name": "odd-offer"})).unwrap(),
         );
-        let mut asked = Vec::new();
+        let asked = std::cell::RefCell::new(Vec::new());
         let granted = compile_all(
             &[
                 (
@@ -564,7 +564,7 @@ mod tests {
             ],
             &offers,
             |project, endpoint| {
-                asked.push(format!("{project}/{endpoint}"));
+                asked.borrow_mut().push(format!("{project}/{endpoint}"));
                 offered()
             },
         );
@@ -578,7 +578,7 @@ mod tests {
             "the Policy both Endpoints bind is granted once"
         );
         assert!(
-            !asked.iter().any(|e| e.contains("mine")),
+            !asked.borrow().iter().any(|e| e.contains("mine")),
             "a consumer agreement asks for no binding"
         );
     }
