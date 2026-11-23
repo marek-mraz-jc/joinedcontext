@@ -2031,14 +2031,11 @@ mod tests {
             .execute(&admin_pool)
             .await
             .expect("drop test table");
-        match refused {
-            Err(DataroomError::Storage(msg)) => assert!(
-                msg.contains("zz_a6_no_forced_rls"),
-                "refusal names the table: {msg}"
-            ),
-            Err(other) => panic!("expected a storage refusal, got {other:?}"),
-            Ok(_) => panic!("boot check must refuse a table without forced RLS"),
-        }
+        let refused = refused.err();
+        assert!(
+            matches!(&refused, Some(DataroomError::Storage(msg)) if msg.contains("zz_a6_no_forced_rls")),
+            "the boot check refuses and names the table: {refused:?}"
+        );
 
         let store = PgStore::from_pool_unchecked(admin_pool.clone());
         let org_a = OrgId::from_uuid(Uuid::now_v7());
