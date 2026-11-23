@@ -159,7 +159,6 @@ function useSignInNeeded(address: string) {
     clearTimeout(timer.current);
     if (answered.current) return;
     timer.current = setTimeout(() => {
-      if (answered.current) return;
       setCheckingOn(address);
       clearTimeout(checkTimer.current);
       checkTimer.current = setTimeout(() => setCheckingOn(null), SSO_CHECK_MS);

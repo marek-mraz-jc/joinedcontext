@@ -140,13 +140,12 @@ export function KpiCard({
   const [minutes, setMinutes] = useState("15");
   const [space, setSpace] = useState(kpi.space);
 
-  const write = async (): Promise<void> => {
-    if (!kpi.endpointSlug) {
-      return;
-    }
+  // The write button exists only while the space has an endpoint, so the write takes its slug.
+  const slug = kpi.endpointSlug;
+  const write = async (endpointSlug: string): Promise<void> => {
     setState({ kind: "writing" });
     try {
-      const response = await fetch(`/api/endpoint/${encodeURIComponent(kpi.endpointSlug)}/ngsi-ld/v1/entities`, {
+      const response = await fetch(`/api/endpoint/${encodeURIComponent(endpointSlug)}/ngsi-ld/v1/entities`, {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -200,7 +199,7 @@ export function KpiCard({
         </InlineError>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        {kpi.endpointSlug ? (
+        {slug ? (
           state.kind === "written" ? (
             <>
               <span className="text-xs text-success">{t("agentRun.kpi.written")}</span>
@@ -220,7 +219,7 @@ export function KpiCard({
               disabled={state.kind === "writing"}
               disabledReason={t("app.busyReason")}
               onClick={() => {
-                void write();
+                void write(slug);
               }}
             >
               {state.kind === "writing" ? t("agentRun.kpi.writing") : t("agentRun.kpi.write")}

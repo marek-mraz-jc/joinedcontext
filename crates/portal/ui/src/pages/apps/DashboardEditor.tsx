@@ -335,9 +335,13 @@ export function PreviewDiff({ path, before, after }: { path: string; before: str
   );
 }
 
-function refusals(error: unknown): string[] {
-  if (error instanceof ApiError) return error.problem?.errors ?? [error.message];
-  return [String(error)];
+/**
+ * What the door refused, by member. `doorAction` throws only an ApiError: a network failure is the
+ * transport's status 0, which the OData client raises as an ODataError and `toApiError` turns into
+ * one. Anything else that is an Error still reads as its message, as `problem` is then absent.
+ */
+function refusals(error: ApiError): string[] {
+  return error.problem?.errors ?? [error.message];
 }
 
 /** Each refused field in the person's words with its reason; a click moves to the field (T-6402). */
@@ -431,7 +435,7 @@ export function DashboardEditor({ project, name }: { project: string; name: stri
   const offer = loaded.data;
   if (!offer.edit.allowed || !file) return <EmptyState title={t("apps.dashboard.unavailable")} description={offer.edit.reason ?? t("apps.dashboard.noFile")} />;
   const attributes = offer.attributes.map((attr) => attr.name);
-  const errors = send.isError ? errorsByPath(refusals(send.error)) : new Map<string, string[]>();
+  const errors = send.isError ? errorsByPath(refusals(send.error as ApiError)) : new Map<string, string[]>();
   const props: SectionProps = { file, attributes, errors, onChange: (next) => (send.reset(), setFile(next)) };
   const proposed = send.data?.change;
 

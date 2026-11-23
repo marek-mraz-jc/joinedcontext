@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { inputOf } from "./QuestionData";
 import type { QuestionInput } from "./QuestionData";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -344,10 +344,5 @@ export function useAgentRun(project: string, runId: string | null) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
   });
 
-  const reset = useCallback(() => {
-    seen.current = new Set<number>();
-    setStream({ runId, events: [] });
-  }, [runId]);
-
-  return { run, events, streaming, answer, send, cancel, publish, reset };
+  return { run, events, streaming, answer, send, cancel, publish };
 }

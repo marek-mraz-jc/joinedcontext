@@ -137,12 +137,10 @@ export function textOf(value: unknown, language?: string): string {
   if (Array.isArray(plain)) {
     return plain.map((item) => textOf(item, language)).join(", ");
   }
-  if (isRecord(plain)) {
-    return Object.entries(plain)
-      .map(([key, inner]) => `${key}: ${textOf(inner, language)}`)
-      .join("; ");
-  }
-  return String(plain);
+  // What is left of a JSON value is an object: the answer comes from JSON, which has nothing else.
+  return Object.entries(plain as Record<string, unknown>)
+    .map(([key, inner]) => `${key}: ${textOf(inner, language)}`)
+    .join("; ");
 }
 
 /** The last segment of an NGSI-LD URN, which is what a person reads as the entity's name. */
