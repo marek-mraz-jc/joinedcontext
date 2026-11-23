@@ -2150,6 +2150,29 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
         1
     );
 
+    // OVERWRITE sets the roles the payload names: an empty list revokes, a list grants.
+    for (roles, expect) in [(json!([]), vec![]), (json!(["auditor"]), vec!["auditor"])] {
+        let (st, _, ans) = call(
+            &f.app,
+            &Method::POST,
+            &format!("{R}/partialImport"),
+            a,
+            Some(&import(
+                "OVERWRITE",
+                json!({ "users": [{ "id": "pi-2", "username": "pi.two", "realmRoles": roles }] }),
+            )),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{ans}");
+        let pia = f
+            .store
+            .get_user_by_id("dev", None, "pi-2")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pia.realm_roles, expect);
+    }
+
     // OVERWRITE under a new fixed id moves the person's credentials, passkeys and grants.
     let (st, _, ans) = call(
         &f.app,

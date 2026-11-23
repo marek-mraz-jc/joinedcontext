@@ -1251,29 +1251,39 @@ fn merged_user(
         user.email = prev.email.clone();
     }
     user.groups = Vec::new();
-    let (mut realm_roles, mut client_roles) = admin_grants;
-    for role in &parsed.realm_roles {
-        if !realm_roles.contains(role) {
-            realm_roles.push(role.clone());
+    (user.realm_roles, user.client_roles) =
+        grants_with(admin_grants, &parsed.realm_roles, &parsed.client_roles);
+    Ok(user)
+}
+
+/// The grants `given` names added to an administrator's (`admin_grants`): realm role names, and
+/// role names by `clientId`, each once.
+pub fn grants_with(
+    admin_grants: (Vec<String>, HashMap<String, Vec<String>>),
+    realm_roles: &[String],
+    client_roles: &HashMap<String, Vec<String>>,
+) -> (Vec<String>, HashMap<String, Vec<String>>) {
+    let (mut realm, mut clients) = admin_grants;
+    for role in realm_roles {
+        if !realm.contains(role) {
+            realm.push(role.clone());
         }
     }
-    for (client, roles) in &parsed.client_roles {
-        let held = client_roles.entry(client.clone()).or_default();
+    for (client, roles) in client_roles {
+        let held = clients.entry(client.clone()).or_default();
         for role in roles {
             if !held.contains(role) {
                 held.push(role.clone());
             }
         }
     }
-    client_roles.retain(|_, roles| !roles.is_empty());
-    user.realm_roles = realm_roles;
-    user.client_roles = client_roles;
-    Ok(user)
+    clients.retain(|_, roles| !roles.is_empty());
+    (realm, clients)
 }
 
 /// The roles an administrator mapped to a stored person (their `role_mappings` rows), in the
 /// shape of the person's grants: realm role names, and role names by `clientId`.
-async fn admin_grants(
+pub async fn admin_grants(
     store: &Arc<dyn Store>,
     realm_id: &str,
     user: &UserRepresentation,
@@ -1354,6 +1364,31 @@ fn file_organization(realm_id: &str, val: &Value) -> Result<Organization> {
         attributes,
         managed_by: Some("apply".into()),
     })
+}
+
+/// A stored Organization as an apply leaves it (as [`merged_user`] does for a person): the keys
+/// the file names replace the stored ones, `attributes` key by key; the enabled flag, the
+/// description and the attributes the file leaves out keep the Portal's values.
+fn merged_organization(prev: &Organization, file: &Value, org: Organization) -> Organization {
+    let named = |k: &str| file.get(k).is_some_and(|v| !v.is_null());
+    let mut attributes = prev.attributes.clone();
+    attributes.extend(org.attributes);
+    Organization {
+        id: prev.id.clone(),
+        enabled: if named("enabled") {
+            org.enabled
+        } else {
+            prev.enabled
+        },
+        description: if named("description") {
+            org.description
+        } else {
+            prev.description.clone()
+        },
+        domains: merged_domains(prev, org.domains),
+        attributes,
+        ..org
+    }
 }
 
 /// The stored domains with the file's new ones added: a domain already held keeps its
@@ -1848,11 +1883,7 @@ pub async fn apply_realm_files(
         let org = file_organization(&realm_id, o_val)?;
         let prev = store.get_organization(&realm_id, &org.alias).await?;
         let org = match &prev {
-            Some(p) => Organization {
-                id: p.id.clone(),
-                domains: merged_domains(p, org.domains),
-                ..org
-            },
+            Some(p) => merged_organization(p, o_val, org),
             None => org,
         };
         changes.push(object_change(

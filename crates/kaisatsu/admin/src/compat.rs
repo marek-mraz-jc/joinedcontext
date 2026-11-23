@@ -976,12 +976,14 @@ struct PartialImportPayload {
 
 /// Recreates `old` as `new` under another id (partialImport OVERWRITE, PF-126) and moves what is
 /// keyed by the person's id: credentials, passkeys, groups, role grants and their mapping rows,
-/// and Organization memberships. Deleting the old person ends their sessions.
+/// and Organization memberships. Deleting the old person ends their sessions. The grants are
+/// `grants` when the payload names roles, else the old person's.
 async fn move_person(
     store: &Arc<dyn Store>,
     realm: &str,
     old: UserRepresentation,
     mut new: UserRepresentation,
+    grants: Option<(Vec<String>, HashMap<String, Vec<String>>)>,
 ) -> Result<UserRepresentation> {
     let credentials = store.list_credentials(realm, &old.id).await?;
     let passkeys = store.list_webauthn_credentials(realm, &old.id).await?;
@@ -1000,8 +1002,7 @@ async fn move_person(
         }
     }
     store.delete_user(realm, None, &old.id).await?;
-    new.realm_roles = old.realm_roles;
-    new.client_roles = old.client_roles;
+    (new.realm_roles, new.client_roles) = grants.unwrap_or((old.realm_roles, old.client_roles));
     let written = store.create_user(new).await?;
     store
         .set_user_grants(
@@ -1062,8 +1063,19 @@ async fn compat_partial_import(
     Path(realm_name): Path<String>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    Json(payload): Json<PartialImportPayload>,
+    Json(raw): Json<Value>,
 ) -> Result<Json<Value>> {
+    // Whether each person names `realmRoles` / `clientRoles`: OVERWRITE sets the roles a person
+    // names and keeps the stored ones when the payload leaves them out.
+    let roles_named: Vec<bool> = raw
+        .get("users")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|u| u.get("realmRoles").is_some() || u.get("clientRoles").is_some())
+        .collect();
+    let payload: PartialImportPayload = serde_json::from_value(raw)
+        .map_err(|e| KaisatsuError::BadRequest(format!("partialImport: {e}")))?;
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm_name, &headers).await?;
     check_decision(state.authorizer.check(
@@ -1216,10 +1228,20 @@ async fn compat_partial_import(
         }
     }
 
-    for (mut u, held) in payload.users.into_iter().zip(users_held) {
+    for ((mut u, held), names_roles) in payload.users.into_iter().zip(users_held).zip(roles_named) {
         if !count(held.is_some()) {
             continue;
         }
+        // The roles an OVERWRITE leaves the person: the payload's when it names them, plus the
+        // ones an administrator mapped (their mapping rows), as a realm apply does.
+        let grants = match &held {
+            Some(old) if names_roles => Some(kaisatsu_import::grants_with(
+                kaisatsu_import::admin_grants(store, &realm_name, old).await?,
+                &u.realm_roles,
+                &u.client_roles,
+            )),
+            _ => None,
+        };
         u.realm_id = realm_name.clone();
         if u.org_id.is_none() {
             u.org_id = ctx.active_org_id.clone();
@@ -1230,10 +1252,23 @@ async fn compat_partial_import(
             Some(old) if u.id.is_empty() || u.id == old.id => {
                 u.id = old.id;
                 u.created_timestamp = old.created_timestamp;
-                store.update_user(u).await?
+                let written = store.update_user(u).await?;
+                match grants {
+                    Some((realm_roles, client_roles)) => {
+                        store
+                            .set_user_grants(&realm_name, &written.id, &realm_roles, &client_roles)
+                            .await?;
+                        UserRepresentation {
+                            realm_roles,
+                            client_roles,
+                            ..written
+                        }
+                    }
+                    None => written,
+                }
             }
             // The person under a new fixed id (PF-126): everything keyed by the old id moves.
-            Some(old) => move_person(store, &realm_name, old, u).await?,
+            Some(old) => move_person(store, &realm_name, old, u, grants).await?,
             None => store.create_user(u).await?,
         };
         for path in &paths {

@@ -341,6 +341,63 @@ async fn a_persons_runtime_changes_survive_an_apply() {
 }
 
 #[tokio::test]
+async fn an_organizations_runtime_state_survives_an_apply() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let mut doc = city();
+    doc["organizations"][0]["attributes"] = json!({"region": ["uusimaa"]});
+    apply_realm_files(&store, &files(&doc), &opts())
+        .await
+        .expect("first apply");
+
+    // At run time the Portal disables the Organization and tags it.
+    let mut live = store
+        .get_organization("city", "hel")
+        .await
+        .unwrap()
+        .expect("hel");
+    live.enabled = false;
+    live.description = "paused by the Portal".into();
+    live.attributes
+        .insert("contract".into(), vec!["C-17".into()]);
+    store.upsert_organization(live).await.unwrap();
+
+    // The file changes the name and the region and names neither enabled nor description.
+    doc["organizations"][0]["name"] = json!("Helsingfors");
+    doc["organizations"][0]["attributes"] = json!({"region": ["nyland"]});
+    let report = apply_realm_files(&store, &files(&doc), &opts())
+        .await
+        .expect("second apply");
+    let c = line(&report, "Organization", "hel");
+    assert_eq!(c.action, ChangeAction::Update);
+    assert_eq!(c.changed_fields, ["attributes", "name"]);
+
+    let after = store
+        .get_organization("city", "hel")
+        .await
+        .unwrap()
+        .expect("hel");
+    assert_eq!(after.name, "Helsingfors");
+    assert!(!after.enabled, "the file names no enabled flag");
+    assert_eq!(after.description, "paused by the Portal");
+    assert_eq!(after.attributes["region"], ["nyland"]);
+    assert_eq!(after.attributes["contract"], ["C-17"]);
+
+    // A file that names the flag and the description still sets them.
+    doc["organizations"][0]["enabled"] = json!(true);
+    doc["organizations"][0]["description"] = json!("capital");
+    apply_realm_files(&store, &files(&doc), &opts())
+        .await
+        .expect("third apply");
+    let after = store
+        .get_organization("city", "hel")
+        .await
+        .unwrap()
+        .expect("hel");
+    assert!(after.enabled);
+    assert_eq!(after.description, "capital");
+}
+
+#[tokio::test]
 async fn a_realm_is_keyed_by_its_name() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
     let mut doc = city();
