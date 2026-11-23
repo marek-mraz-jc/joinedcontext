@@ -1953,7 +1953,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"package_id": "open"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_create",
             Some("tok-editor"),
             json!({"package_id": "open", "url": "https://f.example/x"}),
@@ -1965,7 +1965,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_update",
             Some("tok-editor"),
             json!({"id": "res-open-0", "name": "x"}),
@@ -1977,7 +1977,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "res-open-0"}),
         ),
         (
-            &["upsert_dataset"],
+            &["save_dataset"],
             "resource_delete",
             Some("tok-editor"),
             json!({"id": "res-open-0"}),
@@ -2952,7 +2952,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
         ("list_datasets", "3.0.0"),
         ("list_publishers", "3.1.0"),
         ("upsert_profile", "3.2.0"),
-        ("upsert_catalogue", "3.3.0"),
+        ("save_catalogue", "3.3.0"),
     ] {
         w.store.fail(&[m]);
         let a = post(
@@ -2970,7 +2970,7 @@ async fn profiles_upload_dry_run_and_activation_need_their_rights() {
             a.body
         );
     }
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = post(
         app,
         "/api/v1/profiles/city/activate",
@@ -3142,7 +3142,7 @@ async fn branding_logo_and_static_assets() {
     );
     let a = get(app, "/robots.txt", None).await;
     assert_eq!(a.body, "User-agent: *\nDisallow: /\n");
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     assert_eq!(
         post(app, "/api/v1/branding", Some("tok-admin"), json!({}))
             .await
@@ -3192,7 +3192,7 @@ async fn branding_logo_and_static_assets() {
         get(app, "/assets/nothing.svg", None).await.status,
         StatusCode::NOT_FOUND
     );
-    w.store.fail(&["upsert_catalogue"]);
+    w.store.fail(&["save_catalogue"]);
     let a = send(
         app,
         Method::POST,
