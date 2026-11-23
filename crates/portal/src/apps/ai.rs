@@ -484,6 +484,14 @@ mod tests {
         for (body, why) in [
             (json!({ "messages": [] }), "1 to 50"),
             (
+                json!({ "messages": vec![json!({ "role": "user", "content": "x" }); 51] }),
+                "1 to 50",
+            ),
+            (
+                json!({ "messages": user, "schema": { "description": "x".repeat(MAX_SCHEMA_BYTES) } }),
+                "at most 16384 bytes",
+            ),
+            (
                 json!({ "messages": [{ "role": "tool", "content": "x" }] }),
                 "role 'tool'",
             ),
@@ -527,6 +535,11 @@ mod tests {
         assert!(body["system"]
             .as_str()
             .is_some_and(|s| s.starts_with("You sort defects.") && s.contains("JSON Schema")));
+        let plain = request(json!({ "messages": [{ "role": "user", "content": "A pothole." }] }));
+        let (_, body) = upstream(("claude-sonnet-5", "anthropic"), &plain, 100);
+        assert!(body.get("system").is_none(), "{body}");
+        let (_, body) = upstream(("m", "openai-compatible"), &plain, 100);
+        assert_eq!(body["messages"][0]["role"], "user");
         let (path, body) = upstream(("m", "openai-compatible"), &ask, 100);
         assert_eq!(path, "/v1/llm/chat/completions");
         assert_eq!(body["messages"][0]["role"], "system");

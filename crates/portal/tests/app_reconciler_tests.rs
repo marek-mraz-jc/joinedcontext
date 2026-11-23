@@ -451,6 +451,90 @@ fn a_declared_and_a_confining_scope_are_one_scope_query() {
     );
 }
 
+/// AP-05: a declared scope and a confinement whose product is longer than a scope query may be
+/// (4096 bytes) stay as written, a conjunction of the two groups that matches nothing wider than
+/// either.
+#[test]
+fn a_scope_product_too_long_to_write_stays_the_two_scopes_as_declared() {
+    let declared: Vec<String> = (0..300).map(|n| format!("/s/a{n:03}")).collect();
+    let declared = declared.join(",");
+    let rendered = render(
+        &app(json!({
+            "dataNeeds": [{
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" },
+                "types": ["AirQualityObserved"],
+                "operations": ["queryEntity"],
+                "scopeQ": declared,
+                "geoQ": { "within": { "scopeRef": "/geo/SK/BB" } },
+                "representations": ["ngsi-ld"]
+            }]
+        })),
+        Some(APP_IMAGE),
+        &generate_slug(),
+        &settings(),
+    )
+    .expect("the app renders");
+    assert_eq!(
+        rendered.policies[0].spec["scopeQ"],
+        format!("({declared});(/geo/SK/BB)")
+    );
+}
+
+/// T-2672: a windowed need that only reads history has no current-state policy, one that never
+/// reads history has no history policy, and an operation group is granted as its operations.
+#[test]
+fn a_windowed_need_splits_only_into_the_halves_it_reads() {
+    let need = |operations: Value| {
+        json!({
+            "dataNeeds": [{
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" },
+                "types": ["AirQualityObserved"],
+                "operations": operations,
+                "temporalQ": { "window": "P1D" },
+                "representations": ["ngsi-ld"]
+            }]
+        })
+    };
+    let names = |operations: Value| -> Vec<(String, Value)> {
+        render(
+            &app(need(operations)),
+            Some(APP_IMAGE),
+            &generate_slug(),
+            &settings(),
+        )
+        .expect("the app renders")
+        .policies
+        .into_iter()
+        .map(|policy| (policy.metadata.name, policy.spec["operations"].clone()))
+        .collect()
+    };
+    assert_eq!(
+        names(json!(["queryTemporal"])),
+        vec![(
+            "app-air-quality-today-1-history".to_owned(),
+            json!(["queryTemporal"])
+        )]
+    );
+    assert_eq!(
+        names(json!(["queryEntity"])),
+        vec![("app-air-quality-today-1".to_owned(), json!(["queryEntity"]))]
+    );
+    // A group is flattened into its operations before the split.
+    assert_eq!(
+        names(json!(["retrieveOps", "queryTemporal"])),
+        vec![
+            (
+                "app-air-quality-today-1".to_owned(),
+                json!(["retrieveEntity", "queryEntity"])
+            ),
+            (
+                "app-air-quality-today-1-history".to_owned(),
+                json!(["queryTemporal"])
+            ),
+        ]
+    );
+}
+
 #[test]
 fn every_data_need_becomes_one_policy_that_grants_no_more_than_it_asked() {
     let rendered = render(
@@ -835,6 +919,26 @@ fn needs_reaching_into_two_spaces_do_not_become_one_endpoint() {
     .expect_err("an app reads through exactly one endpoint (AP-04)");
     assert!(
         matches!(refused, RenderError::SeveralSpaces { .. }),
+        "got {refused:?}"
+    );
+}
+
+/// AP-13a: a pod App without the image its build published renders no pod, and a manifest of
+/// another kind renders nothing at all.
+#[test]
+fn a_pod_app_without_an_image_and_a_manifest_of_another_kind_are_refused() {
+    let refused = render(&app(json!({})), None, &generate_slug(), &settings())
+        .expect_err("a ui-rust pod needs its image");
+    assert!(
+        matches!(&refused, RenderError::NoImage { class } if class == "ui-rust"),
+        "got {refused:?}"
+    );
+    let mut endpoint = app(json!({}));
+    endpoint.kind = "Endpoint".into();
+    let refused = render(&endpoint, Some(APP_IMAGE), &generate_slug(), &settings())
+        .expect_err("only an App renders");
+    assert!(
+        matches!(&refused, RenderError::NotAnApp { kind } if kind == "Endpoint"),
         "got {refused:?}"
     );
 }
