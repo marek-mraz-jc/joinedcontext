@@ -81,6 +81,32 @@ describe("the Form tab's schema", () => {
   });
 });
 
+describe("a form preview over arrays, objects and definitions", () => {
+  const label = (type: string) => type;
+  it("readies the items of an array and each element of its example", () => {
+    const schema = { type: "array", items: { type: "array", description: "bare" } };
+    const { schema: out, data } = formReady(schema, [[1, 2], [3]], label, "JSON.");
+    expect(out.items).toEqual({ type: "string", description: "bare JSON." });
+    expect(data).toEqual(["[1,2]", "[3]"]);
+    // An example that is not a list stays as it is.
+    expect(formReady(schema, "x", label, "JSON.").data).toBe("x");
+  });
+
+  it("keeps a property that is not a schema, and a schema without definitions", () => {
+    const schema = { type: "object", properties: { flag: true, name: { type: "string" } } };
+    const { schema: out, data } = formReady(schema, { name: "a" }, label, "JSON.");
+    expect((out.properties as Record<string, unknown>).flag).toBe(true);
+    expect(data).toEqual({ name: "a" });
+    expect("definitions" in out).toBe(false);
+  });
+
+  it("readies each definition and keeps one that is not a schema", () => {
+    const schema = { type: "object", definitions: { Coordinates: { type: "array" }, Flag: true } };
+    const { schema: out } = formReady(schema, undefined, label, "JSON.");
+    expect(out.definitions).toEqual({ Coordinates: { type: "string", description: "JSON." }, Flag: true });
+  });
+});
+
 describe("help texts", () => {
   // A task id or a spec page means nothing to the person reading the form.
   const internal = /\bT-\d{4}\b|\b(?:Development|Architecture|Requirements|Deployment|Testing)\/\d+\b/;

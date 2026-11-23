@@ -165,6 +165,30 @@ mod tests {
         assert!(!held.verifies("ovzdusie", "gone", body, &signature("theirs", body)));
     }
 
+    /// A pass that panicked while it held the lock leaves the doors as they were, not shut
+    /// for good: every reader and the next pass take the lock back.
+    #[test]
+    fn a_poisoned_lock_is_taken_back_by_readers_and_the_next_pass() {
+        let held = std::sync::Arc::new(Accepted::new());
+        held.replace_all(BTreeMap::from([(
+            ("ovzdusie".to_owned(), "regional".to_owned()),
+            vec!["ours".to_owned()],
+        )]));
+        let poisoner = std::sync::Arc::clone(&held);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoner.secrets.write().expect("the lock");
+            panic!("a pass that failed while writing");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(held.secrets.is_poisoned());
+        let body = b"{}";
+        assert!(held.verifies("ovzdusie", "regional", body, &signature("ours", body)));
+        assert_eq!(held.len(), 1);
+        held.replace_all(BTreeMap::new());
+        assert!(held.is_empty());
+    }
+
     #[test]
     fn a_pass_that_resolves_nothing_closes_every_door_it_had_opened() {
         let held = Accepted::new();

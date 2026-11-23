@@ -82,8 +82,8 @@ describe("enum value operations", () => {
   });
 });
 
-function Harness() {
-  const [source, setSource] = useState(SOURCE);
+function Harness({ initial = SOURCE }: { initial?: string }) {
+  const [source, setSource] = useState(initial);
   return (
     <>
       <LinkmlVisualEditor source={source} onChange={setSource} locales={["sk", "en"]} />
@@ -133,6 +133,39 @@ describe("the editor's enums", () => {
     expect(values(source())[1].title).toEqual({ en: "Weather", sk: "Počasie" });
     await userEvent.click(screen.getByRole("button", { name: en.models.removeEnumValue.replace("{value}", "weather") }));
     expect(values(source()).map((value) => value.name)).toEqual(["traffic", "health"]);
+  });
+});
+
+describe("an enum a field uses, renamed and described in the editor", () => {
+  const USED = `${SOURCE}`.replace("classes: {}\nslots: {}", "classes:\n  Alert: { slots: [category, loose] }\nslots:\n  category: { range: AlertCategory }\n  loose: { range: AlertCategory }");
+  const text = (name: string) => (screen.getByLabelText(name) as HTMLTextAreaElement).value;
+
+  it("says which fields use it, renames it, a stored value and a description, each into the source", async () => {
+    await i18n.changeLanguage("en");
+    render(
+      <I18nextProvider i18n={i18n}>
+        <Harness initial={USED} />
+      </I18nextProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^AlertCategory/ }));
+    expect(
+      screen.getByText(en.models.enumValues.usedBy.replace("{fields}", "category (Alert), loose (Alert)")),
+    ).toBeInTheDocument();
+
+    const description = document.getElementById("enum-AlertCategory-weather-description") as HTMLInputElement;
+    await userEvent.type(description, "Storms");
+    expect(values(text("source"))[1].description).toBe("Storms");
+
+    const stored = screen.getByLabelText(en.models.enumValues.storedOf.replace("{value}", "weather"));
+    await userEvent.clear(stored);
+    await userEvent.type(stored, "storm{Enter}");
+    expect(values(text("source")).map((value) => value.name)).toEqual(["traffic", "storm", "health"]);
+
+    const name = screen.getByLabelText(new RegExp(`^${en.models.enumValues.name}`));
+    await userEvent.clear(name);
+    await userEvent.type(name, "Category{Enter}");
+    expect(parseModel(text("source")).enums.map((entry) => entry.name)).toContain("Category");
+    expect(parseModel(text("source")).slots.find((slot) => slot.name === "category")?.range).toBe("Category");
   });
 });
 

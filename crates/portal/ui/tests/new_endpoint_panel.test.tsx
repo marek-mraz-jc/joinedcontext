@@ -214,6 +214,24 @@ describe("New endpoint", () => {
     expect(onLive).toHaveBeenCalledTimes(1);
   }, 15000);
 
+  it("proposes on Enter in the name, as the button does, and names what is missing when it is not all there", async () => {
+    stubFetch(false);
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findAllByRole("radio");
+    const name = screen.getByRole("textbox", { name: new RegExp(t.name) });
+    await user.type(name, "{Enter}");
+    expect(await screen.findByText(t.nameInvalid)).toBeInTheDocument();
+    expect(screen.getByText(t.spaceMissing)).toBeInTheDocument();
+    expect(sent.filter((request) => request.method === "POST")).toEqual([]);
+
+    await user.click(screen.getByRole("combobox", { name: t.space }));
+    await user.click(await screen.findByRole("option", { name: /mobility/ }));
+    await user.type(name, "bikes-app{Enter}");
+    await screen.findByText(new RegExp(`bikes-app is proposed \\(yellow lane\\)`));
+    expect(sent.some((request) => request.path.endsWith("/assistant/propose-endpoint"))).toBe(true);
+  });
+
   // F-R2UI2-014: the wait polled the endpoint list for ever after a rejection.
   it("stops waiting for the endpoint once its Change is rejected", async () => {
     stubFetch(false);

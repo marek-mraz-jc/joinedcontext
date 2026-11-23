@@ -1,5 +1,5 @@
 /** T-0741, AG-78: the assistant prepares a change to entities; only the person's Apply sends it. */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,8 +19,8 @@ const STEP = {
   },
 };
 
-function card(live = true) {
-  const write = entityWriteOf(STEP);
+function card(live = true, step: Record<string, unknown> = STEP) {
+  const write = entityWriteOf(step);
   if (write === null) {
     throw new Error("the step is a preview");
   }
@@ -95,6 +95,76 @@ describe("the change to entities card", () => {
       expect(screen.getByText("kaivopuisto was not changed: No grant covers updateAttrs on BikeHireDockingStation")).toBeInTheDocument(),
     );
     expect(screen.queryByText(/Changed/)).not.toBeInTheDocument();
+  });
+
+  it("says for each entity why it was not changed: the endpoint's title, its status, or that it did not answer", async () => {
+    const entity = (name: string, after: string) => ({
+      id: `urn:ngsi-ld:BikeHireDockingStation:hel.fi:helsinki:${name}`,
+      changes: [{ attribute: "status", before: "working", after }],
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(String(input));
+      if (url.includes("titled")) {
+        return new Response(JSON.stringify({ title: "Conflict", status: 409 }), { status: 409, headers: { "content-type": "application/problem+json" } });
+      }
+      if (url.includes("plain")) return new Response("Bad gateway", { status: 502 });
+      if (url.includes("lost")) throw new TypeError("Failed to fetch");
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    card(true, {
+      ...STEP,
+      output: { ...STEP.output, entities: [entity("fine", "a"), entity("titled", "b"), entity("plain", "c"), entity("lost", "d")] },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: en.agentRun.write.apply }));
+    expect(await screen.findByText("Changed 1 entity.")).toBeInTheDocument();
+    const status = screen.getByText("Changed 1 entity.").parentElement as HTMLElement;
+    expect(within(status).getByText("titled was not changed: Conflict")).toBeInTheDocument();
+    expect(within(status).getByText("plain was not changed: The endpoint refused the change (502).")).toBeInTheDocument();
+    expect(within(status).getByText(`lost was not changed: ${en.agentRun.write.unreachable}`)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("sorts the changes by entity, by what is there now and by what it becomes", async () => {
+    const entity = (name: string, before: unknown, after: unknown) => ({
+      id: `urn:ngsi-ld:BikeHireDockingStation:hel.fi:helsinki:${name}`,
+      changes: [{ attribute: "status", before, after }],
+    });
+    card(true, {
+      ...STEP,
+      output: {
+        ...STEP.output,
+        entities: [entity("b-two", "working", "zeta"), entity("c-three", undefined, "alpha"), entity("a-one", "broken", "mid")],
+      },
+    });
+    const order = () => screen.getAllByTitle(/^urn:ngsi-ld:/).map((cell) => cell.textContent);
+    // A value that is not set reads as such, in the grid and in its order.
+    expect(screen.getByText(en.agentRun.write.empty)).toBeInTheDocument();
+    const sortBy = (column: string, name: string) => {
+      fireEvent.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${column}` }));
+      fireEvent.click(screen.getByRole("menuitemradio", { name }));
+    };
+    sortBy(en.agentRun.write.entity, en.entityGrid.sortAsc);
+    expect(order()).toEqual(["a-one", "b-two", "c-three"]);
+    sortBy(en.agentRun.write.before, en.entityGrid.sortAsc);
+    expect(order()).toEqual(["a-one", "c-three", "b-two"]);
+    sortBy(en.agentRun.write.after, en.entityGrid.sortAsc);
+    expect(order()).toEqual(["c-three", "a-one", "b-two"]);
+  });
+
+  it("draws no card for a step whose output lacks the endpoint, its address or the entities", () => {
+    for (const lacking of ["endpoint", "slug", "entities"]) {
+      const output = { ...STEP.output, [lacking]: undefined };
+      expect(entityWriteOf({ ...STEP, output }), lacking).toBeNull();
+    }
+    expect(entityWriteOf({ ...STEP, output: "not an object" })).toBeNull();
+    // An entity without a list of changes, and a change without an attribute, are left out.
+    const write = entityWriteOf({
+      ...STEP,
+      output: { ...STEP.output, entities: [{ id: STATION }, { id: STATION, changes: [{ before: 1 }, { attribute: "a", after: 2 }] }, "x"] },
+    });
+    expect(write?.entities).toEqual([{ id: STATION, changes: [{ attribute: "a", before: undefined, after: 2 }] }]);
   });
 
   it("offers nothing to apply on a conversation that is over, and draws no card for a refused step", () => {

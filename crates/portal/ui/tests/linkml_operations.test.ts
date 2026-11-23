@@ -1,6 +1,6 @@
 /** T-0575: the operations a person, a test and an assistant edit a model with (DM-13, DM-16, DM-31). */
 import { describe, expect, it } from "vitest";
-import { mergeModels, parseModel } from "../src/pages/models/linkml";
+import { diagnose, edit, graphData, mergeModels, parseModel } from "../src/pages/models/linkml";
 import { applyOperations } from "../src/pages/models/operations";
 import type { Operation } from "../src/pages/models/operations";
 
@@ -205,6 +205,55 @@ describe("LinkML operations", () => {
     ]);
   });
 
+  it("refuses each wrong value type, duplicate and unknown choice with its own reason", () => {
+    const base = applyOperations(SOURCE, [
+      { op: "addEnum", name: "Level" },
+      { op: "addEnumValue", enum: "Level", value: "low" },
+      { op: "addClass", name: "Station" },
+      { op: "addSlot", name: "pm25", class: "AirQualityObserved", range: "float" },
+      { op: "addSlot", name: "station", class: "AirQualityObserved", range: "Station", kind: "Relationship" },
+      { op: "addSlot", name: "twin", class: "Station", range: "Station", kind: "Relationship" },
+    ]);
+    expect(base.refused).toEqual([]);
+    const withTwoOwners = applyOperations(base.source, [{ op: "attachSlot", class: "Station", slot: "station" }]);
+    expect(withTwoOwners.refused).toEqual([]);
+    const cases: Array<[Operation, string]> = [
+      [{ op: "setSlot", name: "pm10", field: "required", value: "yes" }, "'required' of slot 'pm10' takes true or false"],
+      [{ op: "setSlot", name: "pm10", field: "description", value: 4 }, "'description' of slot 'pm10' takes text"],
+      [{ op: "setSlot", name: "pm10", field: "minimum_value", value: "0" }, "'minimum_value' of slot 'pm10' takes a number"],
+      [{ op: "setSlot", name: "pm10", field: "unit", value: 3 }, "'unit' of slot 'pm10' takes text"],
+      [{ op: "setSlot", name: "pm10", field: "kind", value: "Wrong" }, "kind 'Wrong' of slot 'pm10' is not one of "],
+      [{ op: "setSlot", name: "pm10", field: "bogus" as never, value: "x" }, "'bogus' is not a slot field the editor sets"],
+      [{ op: "addClass", name: "Station" }, "class 'Station' already exists"],
+      [{ op: "renameSlot", name: "pm10", to: "pm25" }, "slot 'pm25' already exists"],
+      [{ op: "detachSlot", class: "Station", slot: "pm10" }, "class 'Station' does not use slot 'pm10'"],
+      [{ op: "addEnum", name: "Level" }, "enum 'Level' already exists"],
+      [{ op: "addEnumValue", enum: "Level", value: "low" }, "enum 'Level' already has the value 'low'"],
+      [{ op: "setCardinality", name: "station", cardinality: "many" as never }, "'many' is not a cardinality: "],
+      [{ op: "setOnDelete", name: "station", onDelete: "explode" as never }, "'explode' is not a delete rule: "],
+      [{ op: "addInverse", name: "station", inverse: "seen" }, "slot 'station' is used by 2 classes; a relationship starts on one"],
+      [{ op: "nothing" } as unknown as Operation, "unknown operation 'nothing'"],
+    ];
+    for (const [operation, reason] of cases) {
+      const { source, refused } = applyOperations(withTwoOwners.source, [operation]);
+      expect(source).toBe(withTwoOwners.source);
+      expect(refused).toHaveLength(1);
+      expect(refused[0].reason.startsWith(reason)).toBe(true);
+    }
+    // A range may name an enum of the model.
+    const ranged = applyOperations(base.source, [{ op: "setSlot", name: "pm10", field: "range", value: "Level" }]);
+    expect(ranged.refused).toEqual([]);
+    expect(slotNamed(ranged.source, "pm10")?.range).toBe("Level");
+    // A slot used by no class cannot start a relationship.
+    const loose = applyOperations(base.source, [
+      { op: "addSlot", name: "orphan", range: "Station", kind: "Relationship" },
+      { op: "addInverse", name: "orphan", inverse: "back" },
+    ]);
+    expect(loose.refused.map((refusal) => refusal.reason)).toEqual([
+      "slot 'orphan' is used by 0 classes; a relationship starts on one",
+    ]);
+  });
+
   it("lets a slot cite an upstream term under a reserved namespace, and refuses a broken source", () => {
     const cited = SOURCE.replace(
       "  pm10:\n",
@@ -313,6 +362,48 @@ imports:
  * Vehicle and an AirQualityObserved can sit in one model and a slot can relate them. Importing
  * used to replace the source, which is why two imported models could never be connected.
  */
+describe("what the parser and the diagnostics say about odd slots", () => {
+  const HEAD = "id: https://x.test/m\nname: m\nprefixes:\n  x: https://x.test/\n  sdm: https://smartdatamodels.org/\n  schema: https://schema.org/\n";
+
+  it("reads what a class narrows in slot_usage, and a label given as plain text", () => {
+    const model = parseModel(
+      `${HEAD}classes:\n  A:\n    class_uri: x:A\n    slots: [s]\n    slot_usage:\n      s:\n        range: integer\n        multivalued: true\n        description: narrowed\n        annotations:\n          label: Plain label\n      t:\n        annotations:\n          label: "  "\nslots:\n  s: { slot_uri: x:s }\n`,
+    );
+    expect(model.classes[0].slot_usage?.s).toMatchObject({
+      range: "integer",
+      multivalued: true,
+      description: "narrowed",
+      label: { "": "Plain label" },
+    });
+    expect(model.classes[0].slot_usage?.t.label).toBeUndefined();
+  });
+
+  it("warns about a slot without a unit code and refuses a reserved IRI and an unknown kind", () => {
+    const source = `${HEAD}slots:\n  temperature:\n    range: float\n    slot_uri: x:temperature\n    unit: { symbol: "deg" }\n  borrowed:\n    range: string\n    slot_uri: sdm:name\n  odd:\n    range: string\n    slot_uri: x:odd\n    annotations:\n      ngsi_ld_kind: Wrong\n`;
+    const messages = diagnose(source).map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`);
+    expect(messages).toContain(
+      "warning: slot 'temperature' declares a unit without a UN/CEFACT common code, so exports and dashboards cannot label it",
+    );
+    expect(messages.some((message) => message.startsWith("error: slot 'borrowed' mints 'sdm:name' under https://smartdatamodels.org/"))).toBe(true);
+    expect(messages.some((message) => message.includes("slot 'odd' declares ngsi_ld_kind 'Wrong'"))).toBe(true);
+  });
+
+  it("leaves a source that does not parse exactly as it was", () => {
+    let called = false;
+    expect(edit("classes: [\n", () => { called = true; })).toBe("classes: [\n");
+    expect(called).toBe(false);
+  });
+
+  it("draws a listed slot nothing declares as a field of the model's default type, and refuses a slot that is its own inverse", () => {
+    const loose = parseModel(`${HEAD}default_range: string\nclasses:\n  A:\n    class_uri: x:A\n    slots: [ghost]\n`);
+    const rows = graphData(loose).nodes[0].rows ?? [];
+    expect(rows.map((row) => `${row.name}:${row.type}`)).toEqual(["id:URN", "ghost:string"]);
+
+    const own = `${HEAD}classes:\n  Person:\n    class_uri: x:Person\n    slots: [friend]\nslots:\n  friend:\n    range: Person\n    slot_uri: x:friend\n    inverse: friend\n    annotations:\n      ngsi_ld_kind: Relationship\n`;
+    expect(diagnose(own).some((diagnostic) => diagnostic.rule === "inverse-not-reciprocal" && diagnostic.message.includes("names itself as its inverse"))).toBe(true);
+  });
+});
+
 describe("a second imported model joined to the first", () => {
   const VEHICLE = `id: https://smartdatamodels.org/Vehicle
 name: Vehicle

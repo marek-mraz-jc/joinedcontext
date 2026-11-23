@@ -156,12 +156,8 @@ export function previewSrc(src: unknown): string | undefined {
   if (typeof src !== "string" || !PREVIEW.test(src)) {
     return undefined;
   }
-  let url: URL;
-  try {
-    url = new URL(src, BASE);
-  } catch {
-    return undefined;
-  }
+  // A string that starts with `/a` is a path-absolute reference, which parses against BASE.
+  const url = new URL(src, BASE);
   // `//evil.example/apps/` parses with an authority, and a backslash or an escape can put one
   // back after the prefix check: the round trip is what proves the string is only a path.
   return url.origin === BASE && `${url.pathname}${url.search}` === src ? src : undefined;

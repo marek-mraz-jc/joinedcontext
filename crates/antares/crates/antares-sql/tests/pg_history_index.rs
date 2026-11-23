@@ -97,7 +97,7 @@ async fn a_migrated_history_moves_onto_one_index_and_reads_the_same() {
         sqlx::query(ddl).execute(&pool).await.expect("legacy shape");
     }
     // Weekly partitions around now, and rows in them and in DEFAULT.
-    maintenance::temporal_maintenance(&pool, backend, None)
+    maintenance::temporal_maintenance(&pool, backend, None, std::time::Duration::ZERO)
         .await
         .expect("maintenance");
     let s = PgTemporalStore::new(pool.clone());

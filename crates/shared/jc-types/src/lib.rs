@@ -283,7 +283,7 @@ impl fmt::Display for InternalName {
 pub const INTERNAL_NAME_JOINER: &str = "__";
 
 /// Longest internal name: two path segments, two joiners and a label.
-pub const INTERNAL_NAME_MAX: usize = 2 * PATH_SEGMENT_LEN + 2 * INTERNAL_NAME_JOINER.len() + 63;
+pub const INTERNAL_NAME_MAX: usize = 2 * (PATH_SEGMENT_LEN + INTERNAL_NAME_JOINER.len()) + 63;
 
 /// The one builder of internal space, Tenant, queue and table-key names (ARCH/TEN-10):
 /// `{OrgId}__{ProjectId}__{label}`, ids in their path form. Two projects with the same label never
@@ -311,8 +311,7 @@ mod tests {
             assert_eq!(seg.len(), PATH_SEGMENT_LEN);
             assert_eq!(ProjectId::from_path_segment(&seg), Ok(p));
         }
-        let max =
-            ProjectId::try_from(Uuid::from_u128(u128::MAX)).unwrap_or_else(|_| ProjectId::mint());
+        let max = ProjectId::try_from(Uuid::from_u128(u128::MAX)).unwrap();
         assert_eq!(max.path_segment(), format!("h{}", "7".repeat(25)));
     }
 
@@ -345,6 +344,54 @@ mod tests {
     }
 
     #[test]
+    fn every_id_type_converts_and_prints_its_uuid() {
+        macro_rules! check {
+            ($t:ident, $kind:literal) => {
+                let u = Uuid::from_u128(0x1234);
+                let id = $t::try_from(u).unwrap();
+                assert_eq!(id.as_uuid(), u);
+                assert_eq!(Uuid::from(id), u);
+                assert_eq!(id.to_string(), u.to_string());
+                assert_eq!(format!("{id:?}"), format!("{}({u})", stringify!($t)));
+                let nil = $t::try_from(Uuid::nil()).unwrap_err();
+                assert_eq!(nil, KeyError::NotAnId($kind));
+                assert_eq!(nil.to_string(), format!("{} must be a non-nil UUID", $kind));
+                let seg = $t::from_path_segment("1").unwrap_err();
+                assert_eq!(
+                    seg.to_string(),
+                    format!("{} in a path must be 26 characters of a-z and 2-7", $kind)
+                );
+            };
+        }
+        check!(OrgId, "Organization id");
+        check!(ProjectId, "project id");
+        check!(SpaceId, "Context Space id");
+    }
+
+    #[test]
+    fn a_label_and_an_internal_name_read_back_as_text() {
+        let label = Label::try_from("bikes".to_owned()).unwrap();
+        assert_eq!(label.as_str(), "bikes");
+        assert_eq!(String::from(label.clone()), "bikes");
+        assert_eq!(
+            Label::try_from("Bikes".to_owned()),
+            Err(KeyError::NotALabel)
+        );
+        assert!(
+            KeyError::NotALabel
+                .to_string()
+                .contains("e.g. bikes-public")
+        );
+        assert!(
+            KeyError::NotAnInternalName
+                .to_string()
+                .contains("{OrgId}__{ProjectId}__bikes")
+        );
+        let name = internal_name(ProjectKey::new(OrgId::mint(), ProjectId::mint()), &label);
+        assert_eq!(name.to_string(), name.as_str());
+    }
+
+    #[test]
     fn label_grammar() {
         for ok in ["a", "bikes-public", "x1", &"a".repeat(63)] {
             assert!(Label::parse(ok).is_ok(), "{ok}");
@@ -370,12 +417,17 @@ mod tests {
         let org = OrgId::mint();
         let parent = ProjectKey::new(org, ProjectId::mint());
         let branch = ProjectKey::new(org, ProjectId::mint());
-        let space = Label::parse("bikes").unwrap_or_else(|e| panic!("{e}"));
+        let space = Label::parse("bikes").unwrap();
         let a = internal_name(parent, &space);
         let b = internal_name(branch, &space);
         assert_ne!(a, b);
         assert!(a.as_str().ends_with("__bikes"));
         assert!(a.as_str().len() <= INTERNAL_NAME_MAX);
+        let longest = Label::parse(&"a".repeat(63)).unwrap();
+        assert_eq!(
+            internal_name(parent, &longest).as_str().len(),
+            INTERNAL_NAME_MAX
+        );
         assert!(
             a.as_str()
                 .bytes()
@@ -389,8 +441,8 @@ mod tests {
     #[test]
     fn carriers_hold_both_ids() {
         let k = ProjectKey::new(OrgId::mint(), ProjectId::mint());
-        let m = Label::parse("shako").unwrap_or_else(|e| panic!("{e}"));
-        let e = Label::parse("applied").unwrap_or_else(|e| panic!("{e}"));
+        let m = Label::parse("shako").unwrap();
+        let e = Label::parse("applied").unwrap();
         let s = k.subject(&m, &e);
         assert_eq!(s.split('.').count(), 5);
         assert_eq!(s.split('.').nth(2), Some(k.project.path_segment().as_str()));
@@ -403,8 +455,8 @@ mod tests {
     fn every_carrier_spells_one_key_the_same_way() {
         let k = ProjectKey::new(OrgId::mint(), ProjectId::mint());
         let (o, p) = (k.org.path_segment(), k.project.path_segment());
-        let m = Label::parse("shako").unwrap_or_else(|e| panic!("{e}"));
-        let n = Label::parse("bikes").unwrap_or_else(|e| panic!("{e}"));
+        let m = Label::parse("shako").unwrap();
+        let n = Label::parse("bikes").unwrap();
         assert_eq!(k.object_prefix(), format!("org/{o}/project/{p}/"));
         assert_eq!(k.subject(&m, &m), format!("jc.{o}.{p}.shako.shako"));
         assert_eq!(internal_name(k, &n).as_str(), format!("{o}__{p}__bikes"));
@@ -424,7 +476,7 @@ mod tests {
     #[test]
     fn an_internal_name_parses_back_and_nothing_else_does() {
         let k = ProjectKey::new(OrgId::mint(), ProjectId::mint());
-        let n = Label::parse("air-quality").unwrap_or_else(|e| panic!("{e}"));
+        let n = Label::parse("air-quality").unwrap();
         let name = internal_name(k, &n);
         assert_eq!(InternalName::parse(name.as_str()), Ok((k, n.clone())));
         let (o, p) = (k.org.path_segment(), k.project.path_segment());

@@ -342,6 +342,13 @@ async fn insert_doc(
         .map(|r| r.get::<bool, _>(0)))
 }
 
+/// The `maintenance_jobs` mark of a finished plaintext seal walk (S5-27).
+const SEALED_JOB: &str = "plaintext_sealed";
+
+/// The `maintenance_jobs` mark of a plaintext seal walk under way, its
+/// `last_run` the walk's token.
+const SEAL_WALK_JOB: &str = "plaintext_seal_walk";
+
 /// The kinds whose rows hold a credential [`super::seal`] seals.
 const SEALED_KINDS: [DocKind; 4] = [
     DocKind::Subscription,
@@ -984,20 +991,57 @@ impl PgDocStore {
         tenant: &TenantId,
         kind: DocKind,
     ) -> Result<Vec<(String, u64)>, sqlx::Error> {
-        let select = match kind {
-            DocKind::View => "id, digest".to_owned(),
-            _ => format!("id, left(md5({}::text), 16)", kind.doc_column()),
+        // id-keyed pages without the row ceiling of `list` (S5-26): a reader
+        // that must see every view holds 16 bytes and an id per row, and a
+        // tenant past MAX_UNDECIDED_ROWS of them still reloads and boots
+        const PAGE: i64 = 5_000;
+        let digest = match kind {
+            DocKind::View => "digest".to_owned(),
+            _ => format!("left(md5({}::text), 16)", kind.doc_column()),
         };
-        self.every_row(tenant, kind, &select)
-            .await?
-            .into_iter()
-            .map(|r| {
+        let sql = format!(
+            "SELECT id, {digest} FROM {} WHERE tenant_id = $1 AND id > $2 ORDER BY id LIMIT $3",
+            kind.table()
+        );
+        let mut out: Vec<(String, u64)> = Vec::new();
+        let mut tx = super::begin(&self.pool).await?;
+        crate::store::pg::set_tenant(&mut tx, tenant).await?;
+        loop {
+            let after = out.last().map(|(id, _)| id.clone()).unwrap_or_default();
+            let rows = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .bind(tenant.as_str())
+                .bind(after)
+                .bind(PAGE)
+                .fetch_all(&mut *tx)
+                .await?;
+            let full = i64::try_from(rows.len()).unwrap_or(i64::MAX) >= PAGE;
+            for r in rows {
                 let hex: String = r.get(1);
-                u64::from_str_radix(&hex, 16)
-                    .map(|d| (r.get::<String, _>(0), d))
-                    .map_err(|e| sqlx::Error::Decode(Box::new(e)))
-            })
-            .collect()
+                let d =
+                    u64::from_str_radix(&hex, 16).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+                out.push((r.get::<String, _>(0), d));
+            }
+            if !full {
+                break;
+            }
+        }
+        tx.commit().await?;
+        Ok(out)
+    }
+
+    /// The revision of `tenant`'s view documents (0049): it moves with every
+    /// write or delete of one, so a reader that saw it unchanged holds what
+    /// the store holds. 0 before the first write.
+    pub async fn views_revision(&self, tenant: &TenantId) -> Result<u64, sqlx::Error> {
+        let mut tx = super::begin(&self.pool).await?;
+        crate::store::pg::set_tenant(&mut tx, tenant).await?;
+        let rev: Option<i64> =
+            sqlx::query_scalar("SELECT revision FROM views_revision WHERE tenant_id = $1")
+                .bind(tenant.as_str())
+                .fetch_optional(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(rev.map_or(0, |r| u64::try_from(r).unwrap_or(0)))
     }
 
     /// Every doc of one kind for one tenant, id-ordered.
@@ -1015,10 +1059,56 @@ impl PgDocStore {
     /// (`reseal_renamed`). Answers how many rows it sealed. It also clears
     /// the `contextSourceInfo` copy `csource_index.headers` held before the
     /// index stopped writing it.
+    ///
+    /// The walk visits every Tenant, so it runs once (S5-27): it marks
+    /// [`SEAL_WALK_JOB`] with a token in `maintenance_jobs` before it starts
+    /// and [`SEALED_JOB`] when it ends with the token still there; a boot
+    /// that finds [`SEALED_JOB`] walks no Tenant. A write that leaves a
+    /// credential in plaintext deletes both in its transaction (0049's
+    /// trigger, fenced by the advisory lock the start takes), so a walk
+    /// that died or raced such a write leaves no mark.
     pub async fn seal_plaintext(&self) -> Result<u64, sqlx::Error> {
         if self.key.is_none() {
             return Ok(0);
         }
+        let done: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM maintenance_jobs WHERE name = $1")
+                .bind(SEALED_JOB)
+                .fetch_optional(&self.maint)
+                .await?;
+        if done.is_some() {
+            return self.reseal_renamed().await;
+        }
+        let mut tx = self.maint.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('antares.seal'), 0)")
+            .execute(&mut *tx)
+            .await?;
+        let token: String = sqlx::query_scalar(
+            "INSERT INTO maintenance_jobs (name, last_run) VALUES ($1, clock_timestamp())
+             ON CONFLICT (name) DO UPDATE SET last_run = EXCLUDED.last_run
+             RETURNING last_run::text",
+        )
+        .bind(SEAL_WALK_JOB)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        let sealed = self.seal_every_tenant().await?;
+        sqlx::query(
+            "WITH walk AS (
+               DELETE FROM maintenance_jobs WHERE name = $1 AND last_run::text = $2 RETURNING 1)
+             INSERT INTO maintenance_jobs (name, last_run) SELECT $3, now() FROM walk
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(SEAL_WALK_JOB)
+        .bind(&token)
+        .bind(SEALED_JOB)
+        .execute(&self.maint)
+        .await?;
+        Ok(sealed.saturating_add(self.reseal_renamed().await?))
+    }
+
+    /// The walk of [`Self::seal_plaintext`]: every Tenant, every sealed kind.
+    async fn seal_every_tenant(&self) -> Result<u64, sqlx::Error> {
         // every tenant row, the broker's own included, and the default
         // Tenant, which exists without one (5.5.10)
         // the listing is the maintenance role's (0043)
@@ -1074,7 +1164,7 @@ impl PgDocStore {
                 }
             }
         }
-        Ok(sealed.saturating_add(self.reseal_renamed().await?))
+        Ok(sealed)
     }
 
     /// Reseal under its Tenant's own name every row that holds a sealed

@@ -121,6 +121,23 @@ async fn service_document_and_metadata() {
         .await;
     assert_eq!(st, StatusCode::OK);
     assert!(by_accept.is_object());
+    // JSON only when JSON is asked for and XML is not.
+    for accept in ["application/json, application/xml", "text/plain"] {
+        let (st, body) = w
+            .send(
+                Request::builder()
+                    .uri("/odata/v4/$metadata")
+                    .header("accept", accept)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(
+            body.as_str().is_some_and(|x| x.contains("<edmx:Edmx")),
+            "{accept}: {body}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -178,7 +195,17 @@ async fn entity_sets_answer_rows_with_query_options() {
             None,
         )
         .await;
-    assert!(allowed.is_object(), "{allowed}");
+    // Delete: the set is read only; read: the caller's organization rights hold it.
+    assert_eq!(allowed["allowed"], false, "{allowed}");
+    assert_eq!(allowed["reason"], "Dashboards is served read only");
+    let readable = w
+        .ok(
+            "GET",
+            "/odata/v4/Dashboards/$allowed?op=read&key=edge",
+            None,
+        )
+        .await;
+    assert_eq!(readable["allowed"], true, "{readable}");
     let (st, _) = w
         .call(
             "GET",
@@ -296,6 +323,26 @@ async fn unbound_and_bound_functions() {
         let pv = w.ok("GET", uri, None).await;
         assert_eq!(pv["panelTitle"], "Edge", "{uri}: {pv}");
     }
+    // The range named in the call is the range the source is asked for.
+    let (url, seen) = prometheus().await;
+    let ranged = world();
+    ranged.add_prometheus("prom", &url).await;
+    ranged.add_dashboard(dashboard("edge", "prom"), None).await;
+    ranged
+        .ok(
+            "GET",
+            "/odata/v4/Dashboard.RenderPanel(uid='edge',panelId='1',from='1700000000000',to='1700000600000')",
+            None,
+        )
+        .await;
+    let asked = seen
+        .lock()
+        .iter()
+        .find(|head| head.contains("query_range"))
+        .cloned()
+        .unwrap_or_default();
+    // Aligned down to the 15 s step: 1700000600 s reads as 1700000595 s.
+    assert!(asked.contains("&end=1700000595.000&"), "{asked}");
     for uri in [
         "/odata/v4/Dashboard_Export(uid='edge')",
         "/odata/v4/Dashboards('edge')/Export",
@@ -911,6 +958,76 @@ async fn batch_runs_reads_allowed_and_import_and_refuses_the_rest() {
         )
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, answer) = w
+        .call(
+            "POST",
+            "/odata/v4/$batch",
+            Some("admin"),
+            Some(json!({ "requests": &too_many[1..] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "exactly the limit is served");
+    assert_eq!(
+        answer["responses"].as_array().map(Vec::len),
+        Some(daiya_api::odata::MAX_BATCH_REQUESTS)
+    );
+
+    // Import is the one action a batch runs: a POST to a set is not an import.
+    let (st, answer) = w
+        .call(
+            "POST",
+            "/odata/v4/$batch",
+            Some("admin"),
+            Some(json!({ "requests": [
+                { "id": "1", "method": "POST", "url": "Dashboards", "body": { "dashboard": dashboard("p", "prom") } }
+            ]})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(answer["responses"][0]["status"], 501, "{answer}");
+}
+
+/// The page makes no caller a member of the Organization its link names; only the server
+/// administrator is one of every live organization.
+#[tokio::test]
+async fn the_page_names_no_outsider_a_member() {
+    let w = world_with(Arc::new(DenySome), loopback());
+    w.add_dashboard(dashboard("open", "prom"), None).await;
+    let (st, _) = w.call("GET", "/d/open?orgId=1", Some("viewer"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, body) = w
+        .call("GET", "/d/open?orgId=1", Some("outsider"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+}
+
+/// An installation act is decided in the main Organization: only the server administrator
+/// becomes a member of it there, never an outsider.
+#[tokio::test]
+async fn an_installation_act_names_no_outsider_a_member_of_the_main_organization() {
+    let w = world_with(Arc::new(DenySome), loopback());
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("admin"),
+            Some(json!({ "name": "doprava" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("outsider"),
+            Some(json!({ "name": "kosice" })),
+        )
+        .await;
+    assert!(st.is_client_error(), "{st} {body}");
+    let (st, _) = w
+        .call("GET", "/api/orgs/name/kosice", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "nothing was created");
 }
 
 /// Denies read on dashboard `secret` and folder `hidden` (and what lives in it); allows
@@ -957,6 +1074,64 @@ impl Authorizer for DenySome {
             column,
             values: [open.to_owned()].into(),
         }
+    }
+}
+
+/// Allows members everything in ORG except reading the Organization itself.
+struct NoOrganizationRead;
+
+impl Authorizer for NoOrganizationRead {
+    fn check(&self, ctx: &RequestCtx, _action: Action, object: &ObjectTarget) -> Decision {
+        if !ctx.subject.is_member_of(object.org_id()) || object.org_id() != ctx.org_id {
+            return Decision::deny_hidden("other organization");
+        }
+        if matches!(object, ObjectTarget::Organization { .. }) {
+            return Decision::deny_hidden("no read on the organization");
+        }
+        Decision::allow("member")
+    }
+
+    fn read_scope(
+        &self,
+        _ctx: &RequestCtx,
+        _kind: daiya_model::ReadKind,
+    ) -> daiya_model::ReadScope {
+        daiya_model::ReadScope::All
+    }
+}
+
+/// The cache statistics list an entry only to a caller who may read the Organization, even
+/// when the caller may read the entry's dashboard.
+#[tokio::test]
+async fn cache_statistics_need_a_read_on_the_organization() {
+    let deciders: [(Arc<dyn Authorizer>, usize); 2] =
+        [(Arc::new(DenySome), 1), (Arc::new(NoOrganizationRead), 0)];
+    for (authz, want) in deciders {
+        let w = world_with(authz, loopback());
+        let key = daiya_query::cache::PublicCacheKey::new(
+            ORG,
+            daiya_model::InstanceId::from_u128(1),
+            "dash",
+            1,
+            "r",
+            1,
+            0,
+            60_000,
+            1_000,
+            100,
+        );
+        w.state.query_cache.insert_public(
+            key.clone(),
+            Vec::new(),
+            std::time::Duration::from_secs(60),
+        );
+        assert!(w.state.query_cache.get_public(&key).is_some());
+        let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
+        assert_eq!(
+            stats["value"].as_array().map(Vec::len),
+            Some(want),
+            "{stats}"
+        );
     }
 }
 
@@ -1220,6 +1395,80 @@ async fn store_failures_are_errors_in_every_set_and_action() {
     assert_eq!(answer["responses"][0]["status"], 500);
 }
 
+/// A page ordered by a long title hands back a cursor of a few kilobytes; it is read back,
+/// well inside the 32 KiB a `$skiptoken` may hold.
+#[tokio::test]
+async fn a_cursor_after_a_long_title_is_read_back() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let long = "t".repeat(1_500);
+    let now = jc_time::TimestampTz::now();
+    for i in 0..501 {
+        w.store
+            .inner
+            .upsert_folder(daiya_model::FolderRecord {
+                installation_id: daiya_model::InstallationId::from_u128(1),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                project_id: None,
+                uid: format!("f{i:03}"),
+                parent_uid: None,
+                title: format!("{long}{i:03}"),
+                version: 1,
+                managed_by: None,
+                created_by: "t".into(),
+                updated_by: "t".into(),
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+    }
+    let first = w.ok("GET", "/odata/v4/Folders?$orderby=title", None).await;
+    let link = first["@odata.nextLink"].as_str().unwrap().to_owned();
+    assert!(link.len() > 2_000, "{}", link.len());
+    let (st, next) = w
+        .call("GET", &format!("/odata/v4/{link}"), Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{next}");
+    assert_eq!(next["value"][0]["uid"], "f500", "{next}");
+
+    // The same cursor grown to exactly 32 KiB is read; one character more (base64 of one more
+    // byte) is refused unread.
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let token = link.split_once("$skiptoken=").unwrap().1;
+    let decoded = b64.decode(token).unwrap();
+    let grown = |len: usize| {
+        let mut cursor: Value = serde_json::from_slice(&decoded).unwrap();
+        let title = cursor["after"][0].as_str().unwrap().to_owned();
+        cursor["after"][0] = json!(format!("{title}{}", "z".repeat(len - decoded.len())));
+        b64.encode(serde_json::to_vec(&cursor).unwrap())
+    };
+    let at_limit = grown(24_576);
+    assert_eq!(at_limit.len(), 32 * 1024);
+    let (st, body) = w
+        .call(
+            "GET",
+            &format!("/odata/v4/Folders?$orderby=title&$skiptoken={at_limit}"),
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let over = grown(24_577);
+    assert_eq!(over.len(), 32 * 1024 + 2);
+    let (st, _) = w
+        .call(
+            "GET",
+            &format!("/odata/v4/Folders?$orderby=title&$skiptoken={over}"),
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
 /// An export stops at 10 000 rows and says how to narrow it, rather than holding a set of any
 /// size in memory.
 #[tokio::test]
@@ -1264,6 +1513,15 @@ async fn an_export_over_ten_thousand_rows_is_refused_with_how_to_narrow_it() {
         )
         .await;
     assert_eq!(narrowed.as_array().unwrap().len(), 1);
+    // Exactly the limit is still one export.
+    let at_limit = w
+        .ok(
+            "GET",
+            "/odata/v4/Folders/$export?$filter=uid%20ne%20'f00007'",
+            None,
+        )
+        .await;
+    assert_eq!(at_limit.as_array().unwrap().len(), 10_000);
 }
 
 #[tokio::test]

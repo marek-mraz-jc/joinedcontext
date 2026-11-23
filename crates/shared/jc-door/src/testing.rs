@@ -26,4 +26,11 @@ impl Issuer {
     pub fn token(&self, client: &str, audience: &str, life: i64) -> String {
         self.inner.token(client, audience, life).expect("sign")
     }
+
+    /// `claims` signed with this issuer's key under its `kid`, for a token [`Issuer::token`]
+    /// does not shape (no `azp`, another claim set).
+    #[must_use]
+    pub fn sign(&self, claims: &serde_json::Value) -> String {
+        self.inner.sign(claims).expect("sign")
+    }
 }

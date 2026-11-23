@@ -34,6 +34,10 @@ const HOST: &str = "data.city.test";
 struct FailingStore {
     inner: MemoryStore,
     failing: Mutex<BTreeSet<&'static str>>,
+    /// Methods that answer a write conflict, as a concurrent writer would make them.
+    conflicting: Mutex<BTreeSet<&'static str>>,
+    /// How many conflicts were answered.
+    conflicts: std::sync::atomic::AtomicUsize,
 }
 
 impl FailingStore {
@@ -41,7 +45,16 @@ impl FailingStore {
         Self {
             inner: MemoryStore::new(),
             failing: Mutex::new(BTreeSet::new()),
+            conflicting: Mutex::new(BTreeSet::new()),
+            conflicts: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    fn conflict(&self, methods: &[&'static str]) {
+        self.conflicting
+            .lock()
+            .unwrap()
+            .extend(methods.iter().copied());
     }
 
     fn fail(&self, methods: &[&'static str]) {
@@ -50,6 +63,7 @@ impl FailingStore {
 
     fn heal(&self) {
         self.failing.lock().unwrap().clear();
+        self.conflicting.lock().unwrap().clear();
     }
 
     fn fails(&self, method: &str) -> bool {
@@ -61,6 +75,12 @@ macro_rules! forward {
     ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
         $(
             fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
+                if self.conflicting.lock().unwrap().contains(stringify!($name)) {
+                    self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Box::pin(async {
+                        Err(DataroomError::Conflict(concat!(stringify!($name), " conflicted").into()))
+                    });
+                }
                 if self.fails(stringify!($name)) {
                     return Box::pin(async {
                         Err(DataroomError::Storage(concat!(stringify!($name), " failed").into()))
@@ -1503,17 +1523,24 @@ async fn ckan_dataset_and_resource_writes() {
         .unwrap();
     assert_eq!(ds.title.get("sk").map(String::as_str), Some("Patched"));
     // A patch of `private` alone changes the visibility the stored record carried.
-    for (private, want) in [
-        (false, dataroom_core::Visibility::Public),
-        (true, dataroom_core::Visibility::Internal),
+    // One that agrees with it, or beside an explicit `visibility`, keeps what it names.
+    for (patch, want) in [
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (
+            json!({"private": true}),
+            dataroom_core::Visibility::Internal,
+        ),
+        (
+            json!({"private": true, "visibility": "public"}),
+            dataroom_core::Visibility::Public,
+        ),
+        (json!({"private": "yes"}), dataroom_core::Visibility::Public),
     ] {
-        let a = ckan(
-            app,
-            "package_patch",
-            Some("tok-editor"),
-            json!({"id": "fresh", "private": private}),
-        )
-        .await;
+        let private = patch.clone();
+        let mut body = patch;
+        body["id"] = json!("fresh");
+        let a = ckan(app, "package_patch", Some("tok-editor"), body).await;
         assert_eq!(a.status, StatusCode::OK, "{}", a.body);
         let ds = w
             .store
@@ -2812,6 +2839,11 @@ fn profile(id: &str, version: &str) -> Value {
 async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     let w = world().await;
     let app = &w.app;
+    // The catalogue's own uploads unreadable: an error, never a list without them.
+    w.store.fail(&["list_profiles"]);
+    let a = get(app, "/api/v1/profiles", None).await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     let a = get(app, "/api/v1/profiles", None).await;
     assert_eq!(a.status, StatusCode::OK);
     let v = a.json();
@@ -3213,6 +3245,31 @@ async fn branding_logo_and_static_assets() {
         "a logo the catalogue did not keep is not reported as saved: {}",
         a.body
     );
+    // A write that keeps conflicting is read again and tried three times, then answered 409; a
+    // catalogue that cannot be read again between tries is a storage error.
+    w.store.heal();
+    w.store.conflict(&["save_catalogue"]);
+    let logo = || {
+        send(
+            app,
+            Method::POST,
+            "/api/v1/assets/logo",
+            Some("tok-admin"),
+            &[],
+            Body::from(svg),
+        )
+    };
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    assert_eq!(
+        w.store.conflicts.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "three tries, no fourth"
+    );
+    w.store.fail(&["get_catalogue"]);
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     w.store.heal();
 
     for (uri, ct) in [
@@ -3636,6 +3693,11 @@ async fn pages_lists_publishers_static_pages_and_routing() {
     }
     let a = get(app, "/assistants/nope", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    assert!(
+        a.body.contains("assistant guide 'nope' not found"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         get(app, "/no/such/page/here", None).await.status,
         StatusCode::NOT_FOUND
@@ -4135,6 +4197,10 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     assert_eq!(a.status, StatusCode::OK);
     assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
+    // A language in the path outranks `?lang=`.
+    let a = get(app, "/sk/about?lang=en", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
@@ -4468,6 +4534,15 @@ async fn a_huge_page_number_answers_an_empty_page() {
 // ---------------------------------------------------------------------------------------------
 // Renamed datasets (evidence/jc-dev/RENAMES.md).
 // ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_aliases_leave_the_router_as_it_is() {
+    let w = world_with(|s| dataroom_api::with_dataset_aliases(router(s), Default::default())).await;
+    let a = get(&w.app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    let a = get(&w.app, "/api/3/action/package_show?id=before", None).await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
+}
 
 #[tokio::test]
 async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {

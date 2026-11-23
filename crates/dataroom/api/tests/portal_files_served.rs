@@ -147,5 +147,18 @@ async fn a_file_answers_on_its_own_organizations_hosts_only() {
             .status,
         StatusCode::NOT_FOUND
     );
+    // An index the server cannot read is a storage error, never another file or an empty answer.
+    let index = std::fs::read_dir(&root)
+        .unwrap()
+        .flat_map(|org| std::fs::read_dir(org.unwrap().path()).unwrap())
+        .map(|cat| cat.unwrap().path().join("index.json"))
+        .find(|index| {
+            index.exists() && std::fs::read_to_string(index).unwrap().contains("logo.png")
+        })
+        .expect("the logo's index");
+    std::fs::write(&index, b"not json").unwrap();
+    let broken = get(&state, "opendata.a.test", &logo.path()).await;
+    assert_eq!(broken.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!String::from_utf8_lossy(&broken.body).contains(&root.display().to_string()));
     let _ = std::fs::remove_dir_all(root);
 }

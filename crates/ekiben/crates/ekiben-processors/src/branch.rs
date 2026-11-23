@@ -204,22 +204,16 @@ impl BranchProcessor {
     }
 
     /// Overlays `results` onto `payload` using `result_map` (`Branch.overlayResult` in `processor_branch.go`).
+    /// Both callers pass `results` aligned to `payload` by `create_result` (one slot per part), so
+    /// Bento's "message count diverged" check has nothing to catch here.
     pub fn overlay_result(
         &self,
         payload: &mut Batch,
         results: &[Option<Part>],
-    ) -> Result<Vec<BranchMapError>, String> {
-        if payload.len() != results.len() {
-            return Err(format!(
-                "message count returned from branch has diverged from the request, started with {} messages, finished with {}",
-                results.len(),
-                payload.len()
-            ));
-        }
-
+    ) -> Vec<BranchMapError> {
         let mut failed = Vec::new();
         let Some(ref res_map) = self.result_map else {
-            return Ok(failed);
+            return failed;
         };
 
         // Build a reference batch of result parts (with empty part placeholders for skipped slots)
@@ -229,12 +223,12 @@ impl BranchProcessor {
             .collect();
         let results_view = PartsView(&results_batch);
 
-        for (i, res_opt) in results.iter().enumerate() {
+        for (i, (part, res_opt)) in payload.iter_mut().zip(results).enumerate() {
             if res_opt.is_none() {
                 continue;
             }
-            let initial_val = payload[i].as_structured_ref().unwrap_or(Value::Nothing);
-            let mut target_part = payload[i].shallow_copy();
+            let initial_val = part.as_structured_ref().unwrap_or(Value::Nothing);
+            let mut target_part = part.shallow_copy();
             let res = {
                 let mut meta_adapter = PartMetaAdapter(&mut target_part);
                 res_map.map_part(i, &results_view, &mut meta_adapter, Some(initial_val))
@@ -245,7 +239,7 @@ impl BranchProcessor {
                 }
                 Ok(Some(val)) => {
                     target_part.apply_mapped_value(val);
-                    payload[i] = target_part;
+                    *part = target_part;
                 }
                 Err(e) => {
                     failed.push(BranchMapError {
@@ -256,7 +250,7 @@ impl BranchProcessor {
             }
         }
 
-        Ok(failed)
+        failed
     }
 }
 
@@ -342,18 +336,9 @@ impl Processor for BranchProcessor {
             }
         }
 
-        match self.overlay_result(&mut batch, &aligned_results) {
-            Ok(overlay_errs) => {
-                for e in overlay_errs {
-                    if let Some(p) = batch.get_mut(e.index) {
-                        ctx.on_error(p, e.message);
-                    }
-                }
-            }
-            Err(general_err) => {
-                for p in &mut batch {
-                    ctx.on_error(p, general_err.clone());
-                }
+        for e in self.overlay_result(&mut batch, &aligned_results) {
+            if let Some(p) = batch.get_mut(e.index) {
+                ctx.on_error(p, e.message);
             }
         }
 
@@ -365,5 +350,68 @@ impl Processor for BranchProcessor {
             c.close().await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ekiben_core::{OrgContext, OrgId, OrgQuotas, ResourceManager, StreamMetrics};
+
+    fn branch(config: serde_json::Value) -> BranchProcessor {
+        let registry = Arc::new(Registry::new());
+        crate::register_all(&registry);
+        let ctx = ProcContext {
+            stream_id: "s".into(),
+            org: OrgContext::new(OrgId::default(), OrgQuotas::default()),
+            resources: ResourceManager::new(),
+            registry,
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: StreamMetrics::new("s", "o"),
+            label: String::new(),
+            component_type: "branch".into(),
+            path: "pipeline.processors.0".into(),
+            file_root: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        };
+        let conf = ComponentConfig {
+            label: String::new(),
+            component_type: "branch".into(),
+            config,
+            processors: Vec::new(),
+        };
+        BranchProcessor::from_config(&conf, &ctx).unwrap()
+    }
+
+    #[test]
+    fn targets_name_paths_and_metadata_and_skip_variables() {
+        let bare = branch(serde_json::json!({"processors": [{"noop": {}}]}));
+        assert!(bare.targets_used().is_empty());
+        assert!(bare.targets_provided().is_empty());
+        let mapped = branch(serde_json::json!({
+            "request_map": "let x = this.a\nroot.b = $x\nroot.c = @m",
+            "result_map": "let v = 1\nroot.out = this\nmeta k = this.x",
+            "processors": [{"noop": {}}]
+        }));
+        let used = mapped.targets_used();
+        assert!(
+            used.contains(&vec!["path".to_string(), "a".to_string()]),
+            "{used:?}"
+        );
+        assert!(
+            used.contains(&vec!["metadata".to_string(), "m".to_string()]),
+            "{used:?}"
+        );
+        assert!(
+            used.iter().all(|t| t[0] == "path" || t[0] == "metadata"),
+            "{used:?}"
+        );
+        assert_eq!(
+            mapped.targets_provided(),
+            vec![
+                vec!["path".to_string(), "out".to_string()],
+                vec!["metadata".to_string(), "k".to_string()],
+            ]
+        );
     }
 }

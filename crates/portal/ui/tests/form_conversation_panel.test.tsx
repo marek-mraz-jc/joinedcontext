@@ -14,6 +14,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
+import en from "../src/locales/en.json";
 import { checkForm, type FormSpec } from "./formContract";
 import { LOCALES, renderPage } from "./page_contract";
 import { ConversationPanel } from "../src/pages/apps/ConversationPanel";
@@ -81,6 +82,38 @@ describe("the composer (T-1761)", () => {
     expect((box as HTMLTextAreaElement).value, "the message was lost with the send").toBe(
       "Add the station names",
     );
+  });
+
+  it("says_why_try_again_did_not_leave_and_keeps_the_offer", async () => {
+    const user = userEvent.setup();
+    const events = [
+      { seq: 1, kind: "message", payload: { text: "how many bikes are free?", sentBy: "jana" } },
+      { seq: 2, kind: "thought", payload: { text: "The answer failed: no answer in time.", failed: true } },
+    ] as unknown as RunEvent[];
+    const onSend = vi
+      .fn<(text: string) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error("The run is not accepting messages."))
+      .mockRejectedValueOnce("offline");
+    renderPage(panel({ events, onSend }), { path: "/projects/helsinki", answer: () => undefined });
+    const again = await screen.findByRole("button", { name: en.agentRun.conversation.tryAgain });
+    await user.click(again);
+    expect(await screen.findByText(/The run is not accepting messages\./)).toBeInTheDocument();
+    expect(onSend).toHaveBeenLastCalledWith("how many bikes are free?");
+
+    // A refusal that is no Error says the Portal's own sentence instead of the reason.
+    await user.click(screen.getByRole("button", { name: en.agentRun.conversation.tryAgain }));
+    expect(await screen.findByText(new RegExp(en.app.error.generic.replace(/[.?]/g, "\\$&")))).toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends_nothing_while_the_last_message_is_still_leaving", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    renderPage(panel({ sending: true, onSend }), { path: "/projects/helsinki", answer: () => undefined });
+    const box = await screen.findByLabelText(/Tell the assistant/i);
+    await user.type(box, "Add the station names{Enter}");
+    expect(onSend).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe("Add the station names");
   });
 
   it("empties_the_box_once_the_message_has_left", async () => {

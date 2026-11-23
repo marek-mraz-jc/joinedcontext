@@ -13,1133 +13,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.p == m.pe {
                     lbl = 1153; continue;
                 }
-                match m.cs {
-                    1 => {
-                        lbl = 1; continue;
-                    }
-                    0 => {
-                        lbl = 8; continue;
-                    }
-                    2 => {
-                        lbl = 11; continue;
-                    }
-                    3 => {
-                        lbl = 14; continue;
-                    }
-                    4 => {
-                        lbl = 16; continue;
-                    }
-                    5 => {
-                        lbl = 19; continue;
-                    }
-                    6 => {
-                        lbl = 21; continue;
-                    }
-                    7 => {
-                        lbl = 23; continue;
-                    }
-                    8 => {
-                        lbl = 25; continue;
-                    }
-                    9 => {
-                        lbl = 27; continue;
-                    }
-                    10 => {
-                        lbl = 29; continue;
-                    }
-                    11 => {
-                        lbl = 31; continue;
-                    }
-                    12 => {
-                        lbl = 33; continue;
-                    }
-                    13 => {
-                        lbl = 35; continue;
-                    }
-                    14 => {
-                        lbl = 37; continue;
-                    }
-                    15 => {
-                        lbl = 39; continue;
-                    }
-                    16 => {
-                        lbl = 41; continue;
-                    }
-                    17 => {
-                        lbl = 43; continue;
-                    }
-                    18 => {
-                        lbl = 45; continue;
-                    }
-                    19 => {
-                        lbl = 47; continue;
-                    }
-                    20 => {
-                        lbl = 51; continue;
-                    }
-                    21 => {
-                        lbl = 54; continue;
-                    }
-                    22 => {
-                        lbl = 57; continue;
-                    }
-                    333 => {
-                        lbl = 60; continue;
-                    }
-                    334 => {
-                        lbl = 63; continue;
-                    }
-                    335 => {
-                        lbl = 65; continue;
-                    }
-                    336 => {
-                        lbl = 67; continue;
-                    }
-                    337 => {
-                        lbl = 69; continue;
-                    }
-                    338 => {
-                        lbl = 71; continue;
-                    }
-                    339 => {
-                        lbl = 73; continue;
-                    }
-                    340 => {
-                        lbl = 75; continue;
-                    }
-                    341 => {
-                        lbl = 77; continue;
-                    }
-                    342 => {
-                        lbl = 79; continue;
-                    }
-                    343 => {
-                        lbl = 81; continue;
-                    }
-                    344 => {
-                        lbl = 83; continue;
-                    }
-                    345 => {
-                        lbl = 85; continue;
-                    }
-                    346 => {
-                        lbl = 87; continue;
-                    }
-                    347 => {
-                        lbl = 89; continue;
-                    }
-                    348 => {
-                        lbl = 91; continue;
-                    }
-                    349 => {
-                        lbl = 93; continue;
-                    }
-                    350 => {
-                        lbl = 95; continue;
-                    }
-                    351 => {
-                        lbl = 97; continue;
-                    }
-                    352 => {
-                        lbl = 99; continue;
-                    }
-                    353 => {
-                        lbl = 101; continue;
-                    }
-                    354 => {
-                        lbl = 103; continue;
-                    }
-                    355 => {
-                        lbl = 105; continue;
-                    }
-                    356 => {
-                        lbl = 107; continue;
-                    }
-                    357 => {
-                        lbl = 109; continue;
-                    }
-                    358 => {
-                        lbl = 111; continue;
-                    }
-                    359 => {
-                        lbl = 113; continue;
-                    }
-                    360 => {
-                        lbl = 115; continue;
-                    }
-                    361 => {
-                        lbl = 117; continue;
-                    }
-                    362 => {
-                        lbl = 119; continue;
-                    }
-                    363 => {
-                        lbl = 121; continue;
-                    }
-                    364 => {
-                        lbl = 123; continue;
-                    }
-                    365 => {
-                        lbl = 125; continue;
-                    }
-                    366 => {
-                        lbl = 128; continue;
-                    }
-                    367 => {
-                        lbl = 130; continue;
-                    }
-                    368 => {
-                        lbl = 133; continue;
-                    }
-                    23 => {
-                        lbl = 136; continue;
-                    }
-                    24 => {
-                        lbl = 139; continue;
-                    }
-                    25 => {
-                        lbl = 141; continue;
-                    }
-                    26 => {
-                        lbl = 143; continue;
-                    }
-                    369 => {
-                        lbl = 146; continue;
-                    }
-                    370 => {
-                        lbl = 151; continue;
-                    }
-                    371 => {
-                        lbl = 153; continue;
-                    }
-                    372 => {
-                        lbl = 155; continue;
-                    }
-                    27 => {
-                        lbl = 157; continue;
-                    }
-                    28 => {
-                        lbl = 159; continue;
-                    }
-                    29 => {
-                        lbl = 161; continue;
-                    }
-                    30 => {
-                        lbl = 163; continue;
-                    }
-                    31 => {
-                        lbl = 165; continue;
-                    }
-                    32 => {
-                        lbl = 167; continue;
-                    }
-                    33 => {
-                        lbl = 169; continue;
-                    }
-                    34 => {
-                        lbl = 171; continue;
-                    }
-                    35 => {
-                        lbl = 173; continue;
-                    }
-                    36 => {
-                        lbl = 175; continue;
-                    }
-                    37 => {
-                        lbl = 177; continue;
-                    }
-                    38 => {
-                        lbl = 179; continue;
-                    }
-                    39 => {
-                        lbl = 181; continue;
-                    }
-                    40 => {
-                        lbl = 183; continue;
-                    }
-                    41 => {
-                        lbl = 185; continue;
-                    }
-                    42 => {
-                        lbl = 187; continue;
-                    }
-                    43 => {
-                        lbl = 189; continue;
-                    }
-                    44 => {
-                        lbl = 191; continue;
-                    }
-                    45 => {
-                        lbl = 193; continue;
-                    }
-                    46 => {
-                        lbl = 195; continue;
-                    }
-                    47 => {
-                        lbl = 197; continue;
-                    }
-                    48 => {
-                        lbl = 199; continue;
-                    }
-                    49 => {
-                        lbl = 201; continue;
-                    }
-                    50 => {
-                        lbl = 203; continue;
-                    }
-                    51 => {
-                        lbl = 205; continue;
-                    }
-                    52 => {
-                        lbl = 207; continue;
-                    }
-                    53 => {
-                        lbl = 209; continue;
-                    }
-                    54 => {
-                        lbl = 211; continue;
-                    }
-                    55 => {
-                        lbl = 213; continue;
-                    }
-                    56 => {
-                        lbl = 215; continue;
-                    }
-                    57 => {
-                        lbl = 217; continue;
-                    }
-                    58 => {
-                        lbl = 219; continue;
-                    }
-                    59 => {
-                        lbl = 221; continue;
-                    }
-                    60 => {
-                        lbl = 223; continue;
-                    }
-                    61 => {
-                        lbl = 225; continue;
-                    }
-                    62 => {
-                        lbl = 227; continue;
-                    }
-                    63 => {
-                        lbl = 229; continue;
-                    }
-                    64 => {
-                        lbl = 231; continue;
-                    }
-                    65 => {
-                        lbl = 233; continue;
-                    }
-                    66 => {
-                        lbl = 235; continue;
-                    }
-                    67 => {
-                        lbl = 237; continue;
-                    }
-                    68 => {
-                        lbl = 239; continue;
-                    }
-                    69 => {
-                        lbl = 241; continue;
-                    }
-                    70 => {
-                        lbl = 243; continue;
-                    }
-                    71 => {
-                        lbl = 245; continue;
-                    }
-                    72 => {
-                        lbl = 247; continue;
-                    }
-                    73 => {
-                        lbl = 249; continue;
-                    }
-                    74 => {
-                        lbl = 251; continue;
-                    }
-                    75 => {
-                        lbl = 253; continue;
-                    }
-                    76 => {
-                        lbl = 255; continue;
-                    }
-                    77 => {
-                        lbl = 257; continue;
-                    }
-                    78 => {
-                        lbl = 259; continue;
-                    }
-                    79 => {
-                        lbl = 261; continue;
-                    }
-                    80 => {
-                        lbl = 263; continue;
-                    }
-                    81 => {
-                        lbl = 265; continue;
-                    }
-                    82 => {
-                        lbl = 267; continue;
-                    }
-                    83 => {
-                        lbl = 269; continue;
-                    }
-                    84 => {
-                        lbl = 271; continue;
-                    }
-                    85 => {
-                        lbl = 273; continue;
-                    }
-                    86 => {
-                        lbl = 275; continue;
-                    }
-                    87 => {
-                        lbl = 277; continue;
-                    }
-                    88 => {
-                        lbl = 279; continue;
-                    }
-                    89 => {
-                        lbl = 281; continue;
-                    }
-                    90 => {
-                        lbl = 283; continue;
-                    }
-                    91 => {
-                        lbl = 285; continue;
-                    }
-                    92 => {
-                        lbl = 287; continue;
-                    }
-                    93 => {
-                        lbl = 289; continue;
-                    }
-                    94 => {
-                        lbl = 291; continue;
-                    }
-                    95 => {
-                        lbl = 293; continue;
-                    }
-                    96 => {
-                        lbl = 295; continue;
-                    }
-                    97 => {
-                        lbl = 297; continue;
-                    }
-                    98 => {
-                        lbl = 299; continue;
-                    }
-                    99 => {
-                        lbl = 301; continue;
-                    }
-                    100 => {
-                        lbl = 303; continue;
-                    }
-                    101 => {
-                        lbl = 305; continue;
-                    }
-                    102 => {
-                        lbl = 307; continue;
-                    }
-                    103 => {
-                        lbl = 309; continue;
-                    }
-                    104 => {
-                        lbl = 311; continue;
-                    }
-                    105 => {
-                        lbl = 313; continue;
-                    }
-                    106 => {
-                        lbl = 315; continue;
-                    }
-                    107 => {
-                        lbl = 317; continue;
-                    }
-                    108 => {
-                        lbl = 319; continue;
-                    }
-                    109 => {
-                        lbl = 321; continue;
-                    }
-                    110 => {
-                        lbl = 323; continue;
-                    }
-                    111 => {
-                        lbl = 325; continue;
-                    }
-                    112 => {
-                        lbl = 327; continue;
-                    }
-                    113 => {
-                        lbl = 329; continue;
-                    }
-                    114 => {
-                        lbl = 331; continue;
-                    }
-                    115 => {
-                        lbl = 333; continue;
-                    }
-                    116 => {
-                        lbl = 335; continue;
-                    }
-                    117 => {
-                        lbl = 337; continue;
-                    }
-                    118 => {
-                        lbl = 339; continue;
-                    }
-                    119 => {
-                        lbl = 341; continue;
-                    }
-                    120 => {
-                        lbl = 343; continue;
-                    }
-                    121 => {
-                        lbl = 345; continue;
-                    }
-                    122 => {
-                        lbl = 347; continue;
-                    }
-                    123 => {
-                        lbl = 349; continue;
-                    }
-                    124 => {
-                        lbl = 351; continue;
-                    }
-                    125 => {
-                        lbl = 353; continue;
-                    }
-                    126 => {
-                        lbl = 355; continue;
-                    }
-                    127 => {
-                        lbl = 357; continue;
-                    }
-                    128 => {
-                        lbl = 359; continue;
-                    }
-                    129 => {
-                        lbl = 361; continue;
-                    }
-                    130 => {
-                        lbl = 363; continue;
-                    }
-                    131 => {
-                        lbl = 365; continue;
-                    }
-                    132 => {
-                        lbl = 367; continue;
-                    }
-                    133 => {
-                        lbl = 369; continue;
-                    }
-                    134 => {
-                        lbl = 371; continue;
-                    }
-                    135 => {
-                        lbl = 373; continue;
-                    }
-                    136 => {
-                        lbl = 375; continue;
-                    }
-                    137 => {
-                        lbl = 377; continue;
-                    }
-                    138 => {
-                        lbl = 379; continue;
-                    }
-                    139 => {
-                        lbl = 381; continue;
-                    }
-                    140 => {
-                        lbl = 383; continue;
-                    }
-                    141 => {
-                        lbl = 385; continue;
-                    }
-                    142 => {
-                        lbl = 387; continue;
-                    }
-                    143 => {
-                        lbl = 389; continue;
-                    }
-                    144 => {
-                        lbl = 391; continue;
-                    }
-                    145 => {
-                        lbl = 393; continue;
-                    }
-                    146 => {
-                        lbl = 395; continue;
-                    }
-                    147 => {
-                        lbl = 397; continue;
-                    }
-                    148 => {
-                        lbl = 399; continue;
-                    }
-                    149 => {
-                        lbl = 401; continue;
-                    }
-                    150 => {
-                        lbl = 403; continue;
-                    }
-                    151 => {
-                        lbl = 405; continue;
-                    }
-                    152 => {
-                        lbl = 407; continue;
-                    }
-                    153 => {
-                        lbl = 409; continue;
-                    }
-                    154 => {
-                        lbl = 411; continue;
-                    }
-                    155 => {
-                        lbl = 413; continue;
-                    }
-                    156 => {
-                        lbl = 415; continue;
-                    }
-                    157 => {
-                        lbl = 417; continue;
-                    }
-                    158 => {
-                        lbl = 419; continue;
-                    }
-                    159 => {
-                        lbl = 421; continue;
-                    }
-                    160 => {
-                        lbl = 423; continue;
-                    }
-                    161 => {
-                        lbl = 425; continue;
-                    }
-                    162 => {
-                        lbl = 427; continue;
-                    }
-                    163 => {
-                        lbl = 429; continue;
-                    }
-                    164 => {
-                        lbl = 431; continue;
-                    }
-                    165 => {
-                        lbl = 433; continue;
-                    }
-                    166 => {
-                        lbl = 435; continue;
-                    }
-                    167 => {
-                        lbl = 437; continue;
-                    }
-                    168 => {
-                        lbl = 439; continue;
-                    }
-                    169 => {
-                        lbl = 441; continue;
-                    }
-                    170 => {
-                        lbl = 443; continue;
-                    }
-                    171 => {
-                        lbl = 445; continue;
-                    }
-                    172 => {
-                        lbl = 447; continue;
-                    }
-                    173 => {
-                        lbl = 449; continue;
-                    }
-                    174 => {
-                        lbl = 451; continue;
-                    }
-                    175 => {
-                        lbl = 453; continue;
-                    }
-                    176 => {
-                        lbl = 455; continue;
-                    }
-                    177 => {
-                        lbl = 457; continue;
-                    }
-                    178 => {
-                        lbl = 459; continue;
-                    }
-                    179 => {
-                        lbl = 461; continue;
-                    }
-                    180 => {
-                        lbl = 463; continue;
-                    }
-                    181 => {
-                        lbl = 465; continue;
-                    }
-                    182 => {
-                        lbl = 467; continue;
-                    }
-                    183 => {
-                        lbl = 469; continue;
-                    }
-                    184 => {
-                        lbl = 471; continue;
-                    }
-                    185 => {
-                        lbl = 473; continue;
-                    }
-                    186 => {
-                        lbl = 475; continue;
-                    }
-                    187 => {
-                        lbl = 477; continue;
-                    }
-                    188 => {
-                        lbl = 479; continue;
-                    }
-                    189 => {
-                        lbl = 481; continue;
-                    }
-                    190 => {
-                        lbl = 483; continue;
-                    }
-                    191 => {
-                        lbl = 485; continue;
-                    }
-                    192 => {
-                        lbl = 487; continue;
-                    }
-                    193 => {
-                        lbl = 489; continue;
-                    }
-                    194 => {
-                        lbl = 491; continue;
-                    }
-                    195 => {
-                        lbl = 493; continue;
-                    }
-                    196 => {
-                        lbl = 495; continue;
-                    }
-                    197 => {
-                        lbl = 497; continue;
-                    }
-                    198 => {
-                        lbl = 499; continue;
-                    }
-                    199 => {
-                        lbl = 501; continue;
-                    }
-                    200 => {
-                        lbl = 503; continue;
-                    }
-                    201 => {
-                        lbl = 505; continue;
-                    }
-                    202 => {
-                        lbl = 507; continue;
-                    }
-                    203 => {
-                        lbl = 509; continue;
-                    }
-                    204 => {
-                        lbl = 511; continue;
-                    }
-                    205 => {
-                        lbl = 513; continue;
-                    }
-                    206 => {
-                        lbl = 515; continue;
-                    }
-                    207 => {
-                        lbl = 517; continue;
-                    }
-                    208 => {
-                        lbl = 519; continue;
-                    }
-                    209 => {
-                        lbl = 521; continue;
-                    }
-                    210 => {
-                        lbl = 523; continue;
-                    }
-                    211 => {
-                        lbl = 525; continue;
-                    }
-                    212 => {
-                        lbl = 527; continue;
-                    }
-                    213 => {
-                        lbl = 529; continue;
-                    }
-                    214 => {
-                        lbl = 531; continue;
-                    }
-                    215 => {
-                        lbl = 533; continue;
-                    }
-                    216 => {
-                        lbl = 535; continue;
-                    }
-                    217 => {
-                        lbl = 537; continue;
-                    }
-                    218 => {
-                        lbl = 539; continue;
-                    }
-                    219 => {
-                        lbl = 541; continue;
-                    }
-                    220 => {
-                        lbl = 543; continue;
-                    }
-                    221 => {
-                        lbl = 545; continue;
-                    }
-                    222 => {
-                        lbl = 547; continue;
-                    }
-                    223 => {
-                        lbl = 549; continue;
-                    }
-                    224 => {
-                        lbl = 551; continue;
-                    }
-                    225 => {
-                        lbl = 553; continue;
-                    }
-                    226 => {
-                        lbl = 555; continue;
-                    }
-                    227 => {
-                        lbl = 557; continue;
-                    }
-                    228 => {
-                        lbl = 559; continue;
-                    }
-                    229 => {
-                        lbl = 561; continue;
-                    }
-                    230 => {
-                        lbl = 563; continue;
-                    }
-                    231 => {
-                        lbl = 565; continue;
-                    }
-                    232 => {
-                        lbl = 567; continue;
-                    }
-                    233 => {
-                        lbl = 569; continue;
-                    }
-                    234 => {
-                        lbl = 571; continue;
-                    }
-                    235 => {
-                        lbl = 573; continue;
-                    }
-                    236 => {
-                        lbl = 575; continue;
-                    }
-                    237 => {
-                        lbl = 577; continue;
-                    }
-                    238 => {
-                        lbl = 579; continue;
-                    }
-                    239 => {
-                        lbl = 581; continue;
-                    }
-                    240 => {
-                        lbl = 583; continue;
-                    }
-                    241 => {
-                        lbl = 585; continue;
-                    }
-                    242 => {
-                        lbl = 587; continue;
-                    }
-                    243 => {
-                        lbl = 589; continue;
-                    }
-                    244 => {
-                        lbl = 591; continue;
-                    }
-                    245 => {
-                        lbl = 593; continue;
-                    }
-                    246 => {
-                        lbl = 595; continue;
-                    }
-                    247 => {
-                        lbl = 597; continue;
-                    }
-                    248 => {
-                        lbl = 599; continue;
-                    }
-                    249 => {
-                        lbl = 601; continue;
-                    }
-                    250 => {
-                        lbl = 603; continue;
-                    }
-                    251 => {
-                        lbl = 605; continue;
-                    }
-                    252 => {
-                        lbl = 607; continue;
-                    }
-                    253 => {
-                        lbl = 609; continue;
-                    }
-                    254 => {
-                        lbl = 611; continue;
-                    }
-                    255 => {
-                        lbl = 613; continue;
-                    }
-                    256 => {
-                        lbl = 615; continue;
-                    }
-                    257 => {
-                        lbl = 617; continue;
-                    }
-                    258 => {
-                        lbl = 619; continue;
-                    }
-                    259 => {
-                        lbl = 621; continue;
-                    }
-                    260 => {
-                        lbl = 623; continue;
-                    }
-                    261 => {
-                        lbl = 625; continue;
-                    }
-                    262 => {
-                        lbl = 627; continue;
-                    }
-                    263 => {
-                        lbl = 629; continue;
-                    }
-                    264 => {
-                        lbl = 631; continue;
-                    }
-                    265 => {
-                        lbl = 633; continue;
-                    }
-                    266 => {
-                        lbl = 635; continue;
-                    }
-                    267 => {
-                        lbl = 637; continue;
-                    }
-                    268 => {
-                        lbl = 639; continue;
-                    }
-                    269 => {
-                        lbl = 641; continue;
-                    }
-                    270 => {
-                        lbl = 643; continue;
-                    }
-                    271 => {
-                        lbl = 645; continue;
-                    }
-                    272 => {
-                        lbl = 647; continue;
-                    }
-                    273 => {
-                        lbl = 649; continue;
-                    }
-                    274 => {
-                        lbl = 651; continue;
-                    }
-                    275 => {
-                        lbl = 653; continue;
-                    }
-                    276 => {
-                        lbl = 655; continue;
-                    }
-                    277 => {
-                        lbl = 657; continue;
-                    }
-                    278 => {
-                        lbl = 659; continue;
-                    }
-                    279 => {
-                        lbl = 661; continue;
-                    }
-                    280 => {
-                        lbl = 663; continue;
-                    }
-                    281 => {
-                        lbl = 665; continue;
-                    }
-                    282 => {
-                        lbl = 667; continue;
-                    }
-                    283 => {
-                        lbl = 669; continue;
-                    }
-                    284 => {
-                        lbl = 671; continue;
-                    }
-                    285 => {
-                        lbl = 674; continue;
-                    }
-                    286 => {
-                        lbl = 676; continue;
-                    }
-                    287 => {
-                        lbl = 679; continue;
-                    }
-                    288 => {
-                        lbl = 681; continue;
-                    }
-                    289 => {
-                        lbl = 684; continue;
-                    }
-                    290 => {
-                        lbl = 686; continue;
-                    }
-                    291 => {
-                        lbl = 688; continue;
-                    }
-                    292 => {
-                        lbl = 691; continue;
-                    }
-                    293 => {
-                        lbl = 693; continue;
-                    }
-                    294 => {
-                        lbl = 696; continue;
-                    }
-                    295 => {
-                        lbl = 698; continue;
-                    }
-                    296 => {
-                        lbl = 701; continue;
-                    }
-                    297 => {
-                        lbl = 703; continue;
-                    }
-                    298 => {
-                        lbl = 706; continue;
-                    }
-                    299 => {
-                        lbl = 708; continue;
-                    }
-                    300 => {
-                        lbl = 711; continue;
-                    }
-                    301 => {
-                        lbl = 713; continue;
-                    }
-                    302 => {
-                        lbl = 715; continue;
-                    }
-                    303 => {
-                        lbl = 717; continue;
-                    }
-                    304 => {
-                        lbl = 719; continue;
-                    }
-                    305 => {
-                        lbl = 721; continue;
-                    }
-                    306 => {
-                        lbl = 723; continue;
-                    }
-                    307 => {
-                        lbl = 725; continue;
-                    }
-                    308 => {
-                        lbl = 727; continue;
-                    }
-                    309 => {
-                        lbl = 729; continue;
-                    }
-                    310 => {
-                        lbl = 731; continue;
-                    }
-                    311 => {
-                        lbl = 733; continue;
-                    }
-                    312 => {
-                        lbl = 735; continue;
-                    }
-                    313 => {
-                        lbl = 737; continue;
-                    }
-                    314 => {
-                        lbl = 739; continue;
-                    }
-                    315 => {
-                        lbl = 741; continue;
-                    }
-                    316 => {
-                        lbl = 743; continue;
-                    }
-                    317 => {
-                        lbl = 745; continue;
-                    }
-                    318 => {
-                        lbl = 747; continue;
-                    }
-                    319 => {
-                        lbl = 749; continue;
-                    }
-                    320 => {
-                        lbl = 751; continue;
-                    }
-                    321 => {
-                        lbl = 753; continue;
-                    }
-                    322 => {
-                        lbl = 755; continue;
-                    }
-                    323 => {
-                        lbl = 757; continue;
-                    }
-                    324 => {
-                        lbl = 759; continue;
-                    }
-                    325 => {
-                        lbl = 761; continue;
-                    }
-                    326 => {
-                        lbl = 763; continue;
-                    }
-                    327 => {
-                        lbl = 765; continue;
-                    }
-                    328 => {
-                        lbl = 767; continue;
-                    }
-                    329 => {
-                        lbl = 769; continue;
-                    }
-                    330 => {
-                        lbl = 772; continue;
-                    }
-                    331 => {
-                        lbl = 775; continue;
-                    }
-                    332 => {
-                        lbl = 777; continue;
-                    }
-                    373 => {
-                        lbl = 779; continue;
-                    }
-                    _ => {
-                    }
-                }
-                lbl = 780; continue;
+                lbl = 1; continue;
             }
             1 => { // stCase1
                 if m.c() == 60 {
@@ -1188,9 +62,6 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 {
                     lbl = 778; continue;
                 }
-            }
-            8 => { // stCase0
-                lbl = 9;
             }
             9 => { // st0
                 m.cs = 0;
@@ -1249,9 +120,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     65 => {
@@ -7227,9 +6096,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 712; continue;
@@ -7247,9 +6114,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 714; continue;
@@ -7267,9 +6132,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 716; continue;
@@ -7287,9 +6150,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (45..=45).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 557 {
                     lbl = 718; continue;
@@ -7308,15 +6169,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 48 {
                     if (49..=49).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     560 => {
@@ -7341,9 +6198,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (49..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (561..=569).contains(&widec) {
                     lbl = 722; continue;
@@ -7361,9 +6216,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (45..=45).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 557 {
                     lbl = 724; continue;
@@ -7382,22 +6235,16 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() < 49 {
                     if (48..=48).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() > 50 {
                     if (51..=51).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     560 => {
@@ -7425,9 +6272,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (49..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (561..=569).contains(&widec) {
                     lbl = 728; continue;
@@ -7445,9 +6290,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (84..=84).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 596 {
                     lbl = 730; continue;
@@ -7466,15 +6309,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 49 {
                     if (50..=50).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 562 {
                     lbl = 762; continue;
@@ -7495,9 +6334,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 734; continue;
@@ -7515,9 +6352,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 736; continue;
@@ -7535,9 +6370,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 738; continue;
@@ -7555,9 +6388,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 740; continue;
@@ -7575,9 +6406,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 742; continue;
@@ -7595,9 +6424,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 744; continue;
@@ -7615,9 +6442,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 746; continue;
@@ -7636,22 +6461,16 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() < 45 {
                     if (43..=43).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() > 45 {
                     if (90..=90).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     555 => {
@@ -7680,15 +6499,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 49 {
                     if (50..=50).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 562 {
                     lbl = 760; continue;
@@ -7709,9 +6524,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 752; continue;
@@ -7729,9 +6542,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 754; continue;
@@ -7749,9 +6560,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 756; continue;
@@ -7769,9 +6578,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 758; continue;
@@ -7802,9 +6609,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=51).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=563).contains(&widec) {
                     lbl = 752; continue;
@@ -7822,9 +6627,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=51).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=563).contains(&widec) {
                     lbl = 734; continue;
@@ -7842,9 +6645,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 728; continue;
@@ -7862,9 +6663,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=49).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=561).contains(&widec) {
                     lbl = 728; continue;
@@ -7882,9 +6681,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=50).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=562).contains(&widec) {
                     lbl = 722; continue;
@@ -7979,9 +6776,6 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                     }
                 }
                 lbl = 778; continue;
-            }
-            780 => { // stOut
-                lbl = 781;
             }
             781 => { // _testEof2
                 m.cs = 2;
@@ -9525,10 +8319,9 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 lbl = 1154;
             }
-            1154 => { // _out
+            _ => { // _out
                 break;
             }
-            _ => break,
         }
     }
 }

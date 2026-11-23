@@ -2253,14 +2253,31 @@ impl Store for MemoryStore {
             let removed = st.sso_sessions.remove(pos);
             st.client_sessions
                 .retain(|cs| !(cs.realm_id == realm_id && cs.sso_session_id == session_id));
-            for rf in st
-                .refresh_families
-                .iter_mut()
-                .filter(|rf| rf.realm_id == realm_id && rf.sso_session_id == session_id)
-            {
+            // An offline family outlives the SSO session it began in (S3-22).
+            for rf in st.refresh_families.iter_mut().filter(|rf| {
+                rf.realm_id == realm_id && rf.sso_session_id == session_id && !rf.offline
+            }) {
                 rf.revoked = true;
             }
             Ok(Some(removed))
+        })
+    }
+
+    fn revoke_offline_families_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            for rf in st
+                .refresh_families
+                .iter_mut()
+                .filter(|rf| rf.realm_id == realm_id && rf.user_id == user_id && rf.offline)
+            {
+                rf.revoked = true;
+            }
+            Ok(())
         })
     }
 

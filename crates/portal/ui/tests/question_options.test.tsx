@@ -104,6 +104,13 @@ describe("a question of the assistant (UI-57)", () => {
         properties: { answer: { oneOf: [{ const: "yes" }, { const: "no" }] } },
       } as JsonSchema),
     ).toEqual(["yes", "no"]);
+    // An entry that names no const, or is not an object, is no option.
+    expect(
+      optionsOf({
+        type: "object",
+        properties: { answer: { oneOf: [{ const: "yes" }, { title: "No const" }, { const: 4 }, null, "plain"] } },
+      } as JsonSchema),
+    ).toEqual(["yes", "plain"]);
     expect(optionsOf(TEXT)).toBeNull();
     expect(optionsOf({ type: "object", properties: {} } as JsonSchema)).toBeNull();
   });
@@ -128,8 +135,13 @@ describe("a question of the assistant (UI-57)", () => {
     await userEvent.click(screen.getByRole("button", { name: /City bikes/ }));
     await userEvent.click(screen.getByRole("button", { name: /Air quality/ }));
     expect(screen.getByRole("button", { name: /City bikes/ })).toHaveAttribute("aria-pressed", "true");
+    // Pressing a chosen option again takes it back out.
+    await userEvent.click(screen.getByRole("button", { name: /City bikes/ }));
+    expect(screen.getByRole("button", { name: /City bikes/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Use these (1)" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /City bikes/ }));
     await userEvent.click(screen.getByRole("button", { name: "Use these (2)" }));
-    expect(onAnswer).toHaveBeenCalledWith({ answer: ["bikes", "air"] });
+    expect(onAnswer).toHaveBeenCalledWith({ answer: ["air", "bikes"] });
   });
 
   it("starts several answers from the suggested set and keeps them within max", async () => {

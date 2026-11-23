@@ -15,6 +15,7 @@ async fn health_answers_without_a_credential() {
     let (st, body) = w.call("GET", "/api/health", None, None).await;
     assert_eq!(st, StatusCode::OK);
     assert!(body.get("database").is_none(), "{body}");
+    assert_eq!(body, json!({"commit": "daiya", "version": "12.4.14"}));
 }
 
 #[tokio::test]
@@ -97,6 +98,23 @@ async fn organizations_are_created_by_the_installation_admin_and_seen_by_members
         .await
         .unwrap();
     assert_eq!(again.to_string(), created["uuid"].as_str().unwrap());
+    // Each refusal alone: number 1, the main organization's name, a name check_org_name refuses.
+    for (num, name) in [(1, "Espoo"), (5, "Main Org."), (5, "  ")] {
+        let err = daiya_api::compat::declare_organization(&w.state, num, name)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status_code(), 400, "{num} {name:?}: {err}");
+        assert!(err.to_string().contains("a number from 2"), "{err}");
+    }
+    // A name of exactly the longest length is accepted.
+    let longest = w
+        .ok(
+            "POST",
+            "/api/orgs",
+            Some(json!({ "name": "x".repeat(190) })),
+        )
+        .await;
+    assert_eq!(longest["message"], "Organization created");
 
     // Lookup by name: the installation admin sees it; a member of the main org sees its own.
     let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
@@ -182,6 +200,20 @@ async fn datasource_crud_answers_as_grafana() {
         )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // jsonData left out is stored as an empty object, as Grafana's.
+    let bare = w
+        .ok(
+            "POST",
+            "/api/datasources",
+            Some(json!({ "uid": "bare", "name": "Bare", "type": "prometheus" })),
+        )
+        .await;
+    assert_eq!(bare["datasource"]["jsonData"], json!({}), "{bare}");
+    let (st, _) = w
+        .call("DELETE", "/api/datasources/uid/bare", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
 
     let list = w.ok("GET", "/api/datasources", None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -645,6 +677,65 @@ async fn folders_list_read_and_delete_within_the_callers_folders() {
         .call("DELETE", "/api/folders/finance", Some("admin"), None)
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// A folder that still holds dashboards or subfolders is refused with 409 naming them; nothing
+/// in it is deleted. Emptied, it deletes (S9-36).
+#[tokio::test]
+async fn deleting_a_folder_with_content_is_refused_naming_it() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let (url, _) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    w.add_folder("ops", "Ops").await;
+    w.add_dashboard(dashboard("edge", "prom"), Some("ops"))
+        .await;
+    w.ok(
+        "POST",
+        "/api/folders",
+        Some(json!({ "uid": "ops-night", "title": "Night", "parentUid": "ops" })),
+    )
+    .await;
+
+    let (st, body) = w
+        .call("DELETE", "/api/folders/ops", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    let text = body.to_string();
+    assert!(
+        text.contains("edge") && text.contains("ops-night"),
+        "{text}"
+    );
+    w.ok("GET", "/api/dashboards/uid/edge", None).await;
+    w.ok("GET", "/api/folders/ops-night", None).await;
+
+    w.ok("DELETE", "/api/dashboards/uid/edge", None).await;
+    let (st, body) = w
+        .call("DELETE", "/api/folders/ops", Some("admin"), None)
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::CONFLICT,
+        "the subfolder still holds it: {body}"
+    );
+    w.ok("DELETE", "/api/folders/ops-night", None).await;
+    let deletes_of_ops = || async {
+        w.store
+            .list_audit(ORG)
+            .await
+            .expect("audit rows")
+            .into_iter()
+            .filter(|r| r.operation == "DeleteFolder" && r.target == "folders/ops")
+            .count()
+    };
+    assert_eq!(deletes_of_ops().await, 0, "a refusal leaves no audit row");
+    let del = w.ok("DELETE", "/api/folders/ops", None).await;
+    assert_eq!(del["message"], "Folder deleted");
+    assert_eq!(
+        deletes_of_ops().await,
+        1,
+        "the delete stands with its audit row"
+    );
 }
 
 #[tokio::test]
@@ -1122,6 +1213,37 @@ async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() 
             "{body}"
         );
     }
+}
+
+/// The page's `from` and `to` set the range its panels are queried for, on the slugged link
+/// Grafana writes as on the plain one.
+#[tokio::test]
+async fn the_dashboard_page_queries_the_range_its_link_names() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    w.add_dashboard(dashboard("ranged", "prom"), None).await;
+    let req = http::Request::builder()
+        .uri("/d/ranged/board-ranged?from=1600000000000&to=1600003600000")
+        .header("authorization", "Bearer viewer")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let (st, body) = w.send(req).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(
+        body.as_str().unwrap().contains("<h1>Board ranged</h1>"),
+        "{body}"
+    );
+    let seen = seen.lock().clone();
+    let query = seen
+        .iter()
+        .find(|q| q.contains("query_range"))
+        .expect("the panel is queried");
+    assert!(
+        // Both ends land on the 15 s step.
+        query.contains("start=1599999990.000&end=1600003590.000&"),
+        "{query}"
+    );
 }
 
 /// A caller with no credential reads no data even inside a named Organization, and an
