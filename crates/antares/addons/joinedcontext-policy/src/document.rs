@@ -241,12 +241,8 @@ impl Information {
     /// the entry grants nothing for `need` (deny by default). An entry
     /// without `attributes` is today's, whole.
     fn narrowed(&self, need: Need) -> Result<Option<Self>, String> {
-        if self.attributes.is_empty() || need == Need::Schema {
-            return Ok(Some(Self {
-                attributes: BTreeMap::new(),
-                ..self.clone()
-            }));
-        }
+        // without `attributes` (and for a schema read, which every capability gives) each
+        // Attribute is given below, so the entry comes back whole
         let every = self.attributes.get("*");
         let keep = |names: &[String]| -> Vec<String> {
             names
@@ -1002,6 +998,33 @@ mod tests {
         };
         assert_eq!(clauses, &["5.6.2"]);
         assert_eq!(names(rules), ["name"]);
+        // each kind alone admits the clauses of that kind and no other: an append creates, a
+        // delete removes, and a write the table does not name needs every kind
+        let writes = json!(["5.6.1", "5.6.2", "5.6.5", "5.6.18"]);
+        for (kind, admitted) in [
+            ("append", "5.6.1"),
+            ("update", "5.6.2"),
+            ("delete", "5.6.5"),
+        ] {
+            let got = split(&air(
+                &json!({"name": {"write": [kind]}, "*": {"write": []}}),
+                &writes,
+            ))?;
+            let [(clauses, rules)] = got.as_slice() else {
+                return Err(format!("{kind}: {} policies, not 1", got.len()));
+            };
+            assert_eq!(clauses, &[admitted], "{kind}");
+            assert_eq!(names(rules), ["name"], "{kind}");
+        }
+        let all = json!({"name": {"write": ["update", "append", "delete"], "read": false}, "*": {"write": []}});
+        let got = split(&air(&all, &json!(["5.6.18"])))?;
+        let [(clauses, rules)] = got.as_slice() else {
+            return Err(format!("{} policies, not 1", got.len()));
+        };
+        assert_eq!(
+            (clauses.as_slice(), names(rules)),
+            (&["5.6.18".to_owned()][..], vec!["name".to_owned()])
+        );
         Ok(())
     }
 

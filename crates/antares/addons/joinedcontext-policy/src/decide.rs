@@ -1367,6 +1367,32 @@ mod tests {
         Ok(())
     }
 
+    /// GW16: a write by id whose body carries a location outside the area is refused before
+    /// the stored Entity is asked; one inside is held to the area's rule on the stored Entity.
+    #[test]
+    fn a_write_by_id_that_moves_out_of_the_area_is_refused() -> Result<(), String> {
+        let t = table(&json!({"operations": ["5.6.3"], "geoQ": AREA}))?;
+        let at = |x: f64| {
+            json!({ context().expand_key("location"): [{"type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [x, 0.5]}}] })
+        };
+        let by_id = |body: &Value| {
+            let op = Operation {
+                ids: &["urn:ngsi-ld:Car:1"],
+                body: Some(body),
+                ..Operation::new("5.6.3")
+            };
+            decide(Some(&t), &caller(), &op, Timestamp::now())
+        };
+        assert_eq!(by_id(&at(5.0)), Decision::Deny(NOT_GRANTED.into()));
+        assert!(
+            matches!(by_id(&at(0.5)), Decision::AllowIf(_)),
+            "{:?}",
+            by_id(&at(0.5))
+        );
+        Ok(())
+    }
+
     /// The warning a read by `q` (or `attrs` alone) carries, over a grant
     /// showing `speed` of a Car and `name` of a Bus.
     fn left_out_by(
