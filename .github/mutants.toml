@@ -93,4 +93,13 @@ exclude_re = [
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
   # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
   'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
+  # T-7740 odata-json visit_unit: serde_json's Value::default() is Value::Null, the value it answers.
+  'crates/odata-json/src/json\.rs:\d+:\d+: replace <impl Visitor<.de> for Node<._, ._>>::visit_unit -> Result<Value, E> with Ok\(Default::default\(\)\)',
+  # T-7740 odata-json Reader::target: odata_url::parse refuses a link that starts with `/` and one with `://` in its
+  # path (People('a://b') stays refused under the mutant, binds_must_address_an_entity_of_the_target_type_here), and a
+  # query option is refused after it, so either half alone refuses what both refuse.
+  'crates/odata-json/src/read\.rs:\d+:\d+: replace \|\| with && in Reader<._, .m>::target',
+  # T-7740 odata-url strength: only `not` and `-` bind at 7; a parent offers its operands at most 7 (an arithmetic right
+  # operand) and `not` offers its own strength, so 7 and 8 parenthesise every expression the same.
+  'crates/odata-url/src/display\.rs:\d+:\d+: delete match arm Expr::Not\(_\) \| Expr::Neg\(_\) in strength',
 ]
