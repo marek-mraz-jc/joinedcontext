@@ -228,3 +228,9 @@ path = "tests/tenant_organization.rs"
 # own process: sets and removes ANTARES_PUBLIC_URL and ANTARES_HTTP_PORT
 name = "public_url_default_5_8_1"
 path = "tests/public_url_default_5_8_1.rs"
+
+[[test]]
+# own process: names the subject headers, read once per process
+name = "channels_subject_t7547"
+path = "tests/channels_subject_t7547.rs"
+required-features = ["channels"]

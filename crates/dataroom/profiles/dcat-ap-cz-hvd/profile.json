@@ -1,0 +1,19 @@
+{
+  "id": "dcat-ap-cz-hvd",
+  "version": "2026-09-23",
+  "uri": "https://ofn.gov.cz/dcat-ap-cz-hvd",
+  "source": "DCAT-AP-CZ 2026-09-23, https://ofn.gov.cz/dcat-ap-cz-hvd; shapes.ttl beside this file is derived from it",
+  "title": {
+    "en": "DCAT-AP-CZ: Datové sady s vysokou hodnotou (HVD)"
+  },
+  "country": "CZ",
+  "languages": [
+    "cs"
+  ],
+  "bases": [
+    "dcat-ap-cz"
+  ],
+  "shapes": [
+    "shapes.ttl"
+  ]
+}

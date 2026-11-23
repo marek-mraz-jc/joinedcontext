@@ -13306,7 +13306,7 @@
       "keepSlug": "Also keep the usual slug address",
       "instanceName": "Name in the header",
       "primary": "Main colour",
-      "profiles": "DCAT-AP profiles"
+      "profiles": "Catalogue profiles"
     },
     "hint": {
       "organization": "The Organization the portal belongs to; it never moves to another one. For example bratislava.",
@@ -13318,7 +13318,7 @@
       "keepSlug": "Off: the slug address redirects to the domain. On: both answer, and the domain is named as the canonical one.",
       "instanceName": "Replaces the Organization's name in this portal's header, for example Doprava Bratislava. Empty keeps the Organization's.",
       "primary": "A hex colour for this portal's buttons and links, for example #0b5394. Empty keeps the Organization's.",
-      "profiles": "The profiles the portal's DCAT-AP feeds are served in, for example dcat-ap-3.0.1."
+      "profiles": "EU DCAT-AP is always served. Tick a country’s or a theme’s profile to add its feed, for example DCAT-AP-FI for avoindata.fi. A dataset that lacks a field a profile requires stays out of that feed and is named in the Datasets tab."
     },
     "mode": {
       "slug": "Slug address under the Organization's open data portal",
@@ -13543,7 +13543,13 @@
       "unhideNamed": "List {name} again",
       "noCatalogue": "This installation serves no open data catalogue yet, so this portal lists no datasets here. Ask your operator to enable the catalogue.",
       "toSources": "Go to Sources",
-      "noCatalogueTitle": "No open data catalogue here yet"
+      "noCatalogueTitle": "No open data catalogue here yet",
+      "feeds": "Feeds",
+      "allFeeds": "In every chosen feed",
+      "notIn": "Not in {profile}",
+      "lacks": "Missing or not valid: {fields}",
+      "noPublisherTitle": "Missing publisher",
+      "noPublisher": "{profiles}: no feed until your Organization says who publishes its data."
     },
     "hosts": {
       "title": "Portal hosts",
@@ -13727,6 +13733,19 @@
       "edit": "Edit {type}",
       "fold": "Fold {type}",
       "hidePreview": "Hide the preview"
+    },
+    "profiles": {
+      "always": "Always served",
+      "none": "No other profile is installed here. Ask your operator for the one your national portal harvests.",
+      "notInstalled": "Not installed here: its feed is unavailable. Untick it or ask your operator.",
+      "unknown": "They cannot be changed until they are read, so that no feed is withdrawn by mistake.",
+      "declareLink": "Set it in the Organization’s settings",
+      "needsPublisher": "Needs your Organization's publisher address (IRI), for example https://www.helsinki.fi/.",
+      "needsRegistered": "Needs your Organization's publisher address (IRI) from the national register; it starts with {prefix}",
+      "unavailable": "Chosen, but its feed is paused. {reason} Set it, or untick the profile.",
+      "refused": "{profile} was not saved. {reason}",
+      "unknownTitle": "The served profiles could not be read",
+      "retry": "Read again"
     }
   },
   "assistantGuides": {

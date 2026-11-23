@@ -17,7 +17,7 @@ use jc_core::kinds::catalog_datasets::CatalogDataset;
 use jc_core::kinds::ckan::{CkanInstanceSpec, CkanPublication};
 use jc_core::kinds::space::{duration_seconds, RetentionRule, HISTORY_FOREVER, HISTORY_OFF};
 use jc_core::kinds::visualization::{Visualization, VisualizationData, MAX_VISUALIZATIONS};
-use jc_core::kinds::{Audience, EndpointSpec, Licence, Representation};
+use jc_core::kinds::{Audience, EndpointSpec, Licence, PersonalData, Representation};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -267,6 +267,21 @@ pub fn package_of(
         {
             extras.retain(|extra| extra["key"] != "source");
             extras.push(json!({ "key": "source", "value": value }));
+        }
+    }
+    // The default record carries neither: only the national profiles state them, and dataroom
+    // writes those from the declaration, never from a default (CMP-08, API/08 section 5).
+    if let Some(catalog) = &spec.catalog {
+        if let Some(stated) = catalog.personal_data {
+            let code = match stated {
+                PersonalData::Contains => "contains",
+                PersonalData::DoesNotContain => "does-not-contain",
+            };
+            push_extra(&mut payload, "personal_data", code);
+        }
+        if !catalog.applicable_legislation.is_empty() {
+            let laws = json!(catalog.applicable_legislation).to_string();
+            push_extra(&mut payload, "applicable_legislation", &laws);
         }
     }
     if let Some(notes) = text_in(record.get("dct:description"), language) {

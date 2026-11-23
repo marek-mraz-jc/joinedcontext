@@ -57,6 +57,22 @@ pub trait DatasetValidator: Send + Sync {
     ) {
     }
 
+    /// Refuses a profile upload that takes a built-in's id or whose shapes do not parse.
+    fn check_profile(&self, _profile: &crate::model::ProfileRecord) -> Result<()> {
+        Ok(())
+    }
+
+    /// Refuses profiles a catalogue may not take up: not installed, needing a publisher it does
+    /// not declare, or, where a Portal manages the choice (`managed`), a built-in one.
+    fn check_profile_choice(
+        &self,
+        _catalogue: &Catalogue,
+        _added: &[&str],
+        _managed: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -889,9 +905,10 @@ fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue
 
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
-/// changing who may edit a publisher (its editor grants), the publisher it is merged into or the
-/// instance that declared it (but a caller's claim of an undeclared one) needs Admin on it; and
-/// changing its state needs Delete, as `publisher.withdraw` does.
+/// changing who may edit a publisher (its editor grants), the publisher it is merged into, the
+/// instance that declared it (but a caller's claim of an undeclared one) or the IRI its datasets
+/// are attributed to needs Admin on it; and changing its state needs Delete, as
+/// `publisher.withdraw` does.
 pub fn authorize_publisher_write(
     authorizer: &dyn Authorizer,
     req_ctx: &RequestCtx,
@@ -918,10 +935,54 @@ pub fn authorize_publisher_write(
     if proposed.editor_grants != base.editor_grants
         || proposed.merged_into != base.merged_into
         || (proposed.declared_by_instance != base.declared_by_instance && !claims_own)
+        || proposed.uri != base.uri
     {
         enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
     }
     Ok(())
+}
+
+/// A dataset's declarations (CMP-08, SEC-17): personal data is one of the two statements, and
+/// the IRI of the body it is attributed to is set by an Admin or by the Portal's publisher,
+/// which carries the Endpoint's manifest. Anyone else would publish as another body.
+fn check_declarations(
+    authorizer: &dyn Authorizer,
+    req_ctx: &RequestCtx,
+    target: &ObjectTarget,
+    existing: Option<&Dataset>,
+    ds: &Dataset,
+) -> Result<()> {
+    if let Some(stated) = ds.extras.get(crate::model::PERSONAL_DATA) {
+        let allowed = [
+            crate::model::PERSONAL_DATA_CONTAINS,
+            crate::model::PERSONAL_DATA_NONE,
+        ];
+        if !allowed.contains(&stated.as_str()) {
+            return Err(DataroomError::field_error(
+                crate::model::PERSONAL_DATA,
+                format!("must be one of {}", allowed.join(", ")),
+            ));
+        }
+    }
+    let iri = |d: &Dataset| d.publisher.as_ref().and_then(|a| a.uri.clone());
+    let proposed = iri(ds);
+    if proposed.is_some()
+        && proposed != existing.and_then(iri)
+        && !is_portal_publisher(req_ctx)
+        && !authorizer.check(req_ctx, Action::Admin, target).allowed
+    {
+        return Err(DataroomError::Forbidden(
+            "publisher_uri: only an administrator declares the body a dataset is attributed to"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The Portal's publisher: the bare principal, or the one bound to this context's catalogue.
+fn is_portal_publisher(req_ctx: &RequestCtx) -> bool {
+    let (actor, portal) = (req_ctx.actor_name(), crate::auth::PORTAL_PUBLISHER);
+    actor == portal || actor == format!("{portal}:{}", req_ctx.catalogue_id)
 }
 
 /// The stored publisher a proposal addresses: by its id when it carries one, else by name,
@@ -941,8 +1002,8 @@ async fn proposed_publisher_record(
     }))
 }
 
-/// What `catalogue.propose` may change: its host and name, profiles, branding, hidden datasets
-/// and outbound rules only with Admin on the catalogue (each has its own Admin route); a
+/// What `catalogue.propose` may change: its host and name, profiles, publisher and contact,
+/// branding, hidden datasets and outbound rules only with Admin on the catalogue (each has its own Admin route); a
 /// Propose-only caller's values for them are replaced by the stored ones. A new host or name is
 /// validated, so `base_url` and robots.txt only ever carry a host name.
 fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Result<()> {
@@ -951,6 +1012,9 @@ fn keep_admin_fields(cat: &mut Catalogue, stored: Catalogue, admin: bool) -> Res
         cat.host = stored.host;
         cat.main_profile = stored.main_profile;
         cat.active_profiles = stored.active_profiles;
+        cat.publisher_uri = stored.publisher_uri;
+        cat.publisher_name = stored.publisher_name;
+        cat.contact_point = stored.contact_point;
         cat.theme = stored.theme;
         cat.branding = stored.branding;
         cat.hidden_datasets = stored.hidden_datasets;
@@ -1078,7 +1142,24 @@ async fn dispatch(
                 .authorizer
                 .check(req_ctx, Action::Admin, &target)
                 .allowed;
+            let held: Vec<String> = stored
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.clone())
+                .chain([stored.main_profile.clone()])
+                .collect();
             keep_admin_fields(&mut cat, stored, admin)?;
+            let added: Vec<&str> = cat
+                .active_profiles
+                .iter()
+                .map(|pin| pin.profile_id.as_str())
+                .chain([cat.main_profile.as_str()])
+                .filter(|id| !held.iter().any(|h| h == id))
+                .collect();
+            if let Some(validator) = op_ctx.validator.as_ref().filter(|_| !added.is_empty()) {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
+                validator.check_profile_choice(&cat, &added, op_ctx.sources_by_portal)?;
+            }
             let saved = op_ctx.store.upsert_catalogue(cat).await?;
             op_ctx
                 .store
@@ -1356,6 +1437,13 @@ async fn dispatch(
             if !decision.allowed {
                 return Err(DataroomError::Forbidden(decision.reason));
             }
+            check_declarations(
+                op_ctx.authorizer.as_ref(),
+                req_ctx,
+                &target,
+                existing.as_ref(),
+                &ds,
+            )?;
 
             let saved =
                 store_dataset(op_ctx, req_ctx, &cat, Some(&pub_rec), ds, "dataset.propose").await?;
@@ -2199,7 +2287,9 @@ async fn resource_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
                     }
                 }
             }
-            let dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
+            let mut dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
+            // CKAN's resource dict carries no terms of use: an update keeps the declared ones.
+            dist.terms_of_use = stored.terms_of_use.clone();
             ds.distributions[pos] = dist.clone();
             (pos, dist)
         }
@@ -2374,7 +2464,17 @@ async fn profile_propose(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value)
     if activate {
         enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Approve, &target))?;
     }
+    // An upload never becomes a built-in: those ship with the release (their ids are refused
+    // by the validator).
+    profile.built_in = false;
     let mut cat = own_catalogue(op_ctx, req_ctx).await?;
+    // An upload activated through a national base needs what that feed needs: the base's
+    // choice is checked as if the catalogue took it up (a Portal-managed choice aside).
+    if let (true, Some(base), Some(validator)) =
+        (activate, profile.base_profile.as_deref(), &op_ctx.validator)
+    {
+        validator.check_profile_choice(&cat, &[base], false)?;
+    }
     let stored = op_ctx.store.list_profiles(req_ctx).await?;
     if stored
         .iter()
@@ -2433,6 +2533,10 @@ async fn profile_activate(op_ctx: &OpContext, req_ctx: &RequestCtx, input: Value
     let (datasets, publishers) = dry_run_records(op_ctx, req_ctx).await?;
     let (dry_run, reports) =
         validator.dry_run_profile(&id, &version, &cat, &datasets, &publishers)?;
+    let held = cat.main_profile == id || cat.active_profiles.iter().any(|p| p.profile_id == id);
+    if !held {
+        validator.check_profile_choice(&cat, &[id.as_str()], op_ctx.sources_by_portal)?;
+    }
     cat.active_profiles.retain(|p| p.profile_id != id);
     cat.active_profiles.push(crate::model::ProfilePin {
         profile_id: id.clone(),

@@ -74,6 +74,8 @@ jsonschema = { version = "0.54", default-features = false }
 jc-embedder = { path = "../../../../crates/embedder" }
 # The release rule every pool of jc starts with (T-7499).
 jc-pool = { path = "../../../../crates/shared/jc-pool" }
+# The one table a history's period is picked by (T-7526).
+jc-time = { path = "../../../../crates/shared/jc-time", version = "0.1.0" }
 
 [dev-dependencies]
 wiremock = "0.6"

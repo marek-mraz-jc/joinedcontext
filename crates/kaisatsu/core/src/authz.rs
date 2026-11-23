@@ -92,6 +92,33 @@ impl Principal {
     }
 }
 
+/// A client whose roles administer the realm: `realm-management`, `broker`, `{realm}-realm`.
+pub fn is_admin_client(client_id: &str) -> bool {
+    let id = client_id.trim().to_ascii_lowercase();
+    matches!(id.as_str(), "realm-management" | "broker") || id.ends_with("-realm")
+}
+
+/// A client id that carries trust by name (S3-45): the admin clients and the realm's own
+/// clients. Only a realm admin writes one.
+pub fn is_reserved_client(client_id: &str) -> bool {
+    is_admin_client(client_id)
+        || matches!(
+            client_id.trim().to_ascii_lowercase().as_str(),
+            "account"
+                | "account-console"
+                | "admin-cli"
+                | "admin-permissions"
+                | "security-admin-console"
+        )
+}
+
+/// A prefix the platform names its own clients with (Apps, MCP): a realm-wide client manager
+/// registers one.
+fn has_platform_prefix(client_id: &str) -> bool {
+    let id = client_id.trim().to_ascii_lowercase();
+    id.starts_with("app-") || id.starts_with("mcp-")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestCtx {
@@ -115,6 +142,17 @@ impl RequestCtx {
     pub fn with_org(mut self, org_id: impl Into<String>) -> Self {
         self.active_org_id = Some(org_id.into());
         self
+    }
+
+    /// A realm administrator, or a realm-management service account (the Portal's) acting
+    /// without an Organization pinned.
+    pub fn manages_clients_realm_wide(&self) -> bool {
+        let p = &self.principal;
+        p.is_realm_admin()
+            || (self.active_org_id.is_none()
+                && ["manage-clients", "view-clients", "manage-users"]
+                    .iter()
+                    .any(|r| p.has_realm_mgmt_role(r)))
     }
 
     /// Allowed organizations for this request (`None` = realm-wide access).
@@ -437,7 +475,24 @@ impl Authorizer for LocalAuthorizer {
                     Decision::deny_hidden("insufficient role for role/scope")
                 }
             }
-            ObjectTarget::Application { managed_by, .. } => {
+            ObjectTarget::Application {
+                client_id,
+                managed_by,
+                ..
+            } => {
+                if action.is_write() && is_reserved_client(client_id) {
+                    return Decision::deny_visible(
+                        "this client id is reserved: a realm admin writes it",
+                    );
+                }
+                if action == Action::Create
+                    && has_platform_prefix(client_id)
+                    && !ctx.manages_clients_realm_wide()
+                {
+                    return Decision::deny_visible(
+                        "client ids starting app- or mcp- are the platform's: choose another id",
+                    );
+                }
                 // T-2725 compatibility: `portal-api` (`view-clients`) writes only clients marked
                 // `managed-by: joinedcontext`, the mark every Portal create carries; an unmarked
                 // client is nobody's to adopt.

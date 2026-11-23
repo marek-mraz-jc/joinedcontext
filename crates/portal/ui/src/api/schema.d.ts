@@ -2126,7 +2126,7 @@ export interface paths {
         };
         /**
          * List Portal Hosts
-         * @description Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals and its open data base address (ODP-08, ODP-15). A Portal naming another host is refused at propose with 422 on spec.host.
+         * @description Each Organization the caller may propose a Portal in (its administrators, the installation's for every one), with the hosts the operator listed for its portals, its open data base address (ODP-08, ODP-15) and the publication profiles its catalogues may choose. A Portal naming another host or a profile it may not choose is refused at propose with 422 on spec.host or spec.profiles.
          */
         get: operations["list_portal_hosts"];
         put?: never;
@@ -11775,6 +11775,13 @@ export interface components {
             /** @description Every object the federation touches, keyed by `kind/name`. */
             nodes: components["schemas"]["Node"][];
         };
+        /** @description A profile whose feed a dataset is absent from, and the fields that keep it out. */
+        FeedGap: {
+            /** @description What is missing or not valid, e.g. `personal_data`. */
+            fields: string[];
+            /** @description The profile, e.g. `dcat-ap-sk-2.0`. */
+            profile: string;
+        };
         /** @description One feedback as the administrators' list shows it. */
         Feedback: {
             /** @description RFC 3339. */
@@ -14031,6 +14038,8 @@ export interface components {
         PortalDataset: {
             /** @description Whether `spec.hidden` of the portal names it. */
             hidden: boolean;
+            /** @description The feeds it is absent from, with the fields that keep it out (T-7520). */
+            missing: components["schemas"]["FeedGap"][];
             /** @description Its name, e.g. `ovzdusie-kosice`. */
             name: string;
             /** @description The source that wrote it: a harvest source's name, or `endpoints`. */
@@ -14041,6 +14050,13 @@ export interface components {
         /** @description A page of a portal's datasets, by name. */
         PortalDatasets: {
             items: components["schemas"]["PortalDataset"][];
+            /** @description The chosen profiles with no feed until the Organization declares a publisher IRI. */
+            missingPublisher: string[];
+            /**
+             * @description The profiles the catalogue serves beside EU DCAT-AP: what a Portal that states no choice
+             *     keeps (T-7521).
+             */
+            profiles: string[];
             total: number;
         };
         /** @description One stored file of a portal. */
@@ -14090,10 +14106,29 @@ export interface components {
             opendata?: string | null;
             /** @description The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`. */
             organization: string;
+            /** @description The installed profiles its catalogues may publish in (T-7521). */
+            profiles: components["schemas"]["PortalProfile"][];
             /** @description Its own portal hosts in the host registry, with their state (T-7415). */
             sites: components["schemas"]["SiteHost"][];
             /** @description The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`. */
             verifiedDomain?: string | null;
+        };
+        /** @description A profile a portal's catalogue may publish in (T-7521). */
+        PortalProfile: {
+            /** @description Served whatever is chosen: EU DCAT-AP. */
+            always: boolean;
+            /** @description Why this Organization cannot choose it yet; absent when it can. */
+            blocked?: string | null;
+            /** @description Its country, e.g. `FI`; absent for a profile of no one country. */
+            country?: string | null;
+            /** @description What `spec.profiles` takes, e.g. `dcat-ap-fi-2.0`. */
+            id: string;
+            /** @description How the publisher's IRI begins in its national register; absent without one. */
+            publisherPrefix?: string | null;
+            /** @description Its name, by language. */
+            title: {
+                [key: string]: string;
+            };
         };
         Preferences: {
             /**

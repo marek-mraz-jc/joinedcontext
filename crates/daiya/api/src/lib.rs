@@ -31,9 +31,9 @@ pub use render::{
 };
 pub use sets::readable_rows;
 pub use state::{
-    DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PageReader, PersonTokenExchanger,
-    READ_AS_HEADER, READ_AS_PUBLIC, ServerAdminCheck, SubjectResolver, TokenBinding,
-    resolve_request_ctx,
+    AUDITED_WRITES, DaiyaState, MIN_SERVER_ADMIN_PASSWORD, PERSON_TOKEN_HEADER, PageReader,
+    PersonTokenExchanger, READ_AS_HEADER, READ_AS_PUBLIC, ServerAdminCheck, SubjectResolver,
+    TokenBinding, resolve_request_ctx,
 };
 
 use axum::Router;

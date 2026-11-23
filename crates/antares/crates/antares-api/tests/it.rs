@@ -131,6 +131,7 @@ mod temporal_fed_paging_5_7_4;
 mod temporal_id_pattern_pg;
 mod temporal_instance_patch_5_6_14;
 mod temporal_lang_5_7_4;
+mod temporal_long_history_pg;
 mod temporal_matrix;
 mod temporal_on_change;
 mod temporal_pagination_7_4_2_5;

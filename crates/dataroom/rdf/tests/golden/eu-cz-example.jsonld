@@ -1,0 +1,606 @@
+{
+  "@context": {
+    "adms": "http://www.w3.org/ns/adms#",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dcatap": "http://data.europa.eu/r5r/",
+    "dct": "http://purl.org/dc/terms/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "hydra": "http://www.w3.org/ns/hydra/core#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "spdx": "http://spdx.org/rdf/terms#",
+    "vcard": "http://www.w3.org/2006/vcard/ns#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "http://publications.europa.eu/resource/authority/continent/EUROPE",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN",
+      "@type": "http://www.w3.org/2004/02/skos/core#Concept",
+      "http://www.w3.org/2004/02/skos/core#prefLabel": {
+        "@language": "en",
+        "@value": "Transport"
+      }
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "@type": "http://purl.org/dc/terms/MediaTypeOrExtent"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+      "@type": "http://purl.org/dc/terms/Frequency"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0",
+      "@type": "http://purl.org/dc/terms/LicenseDocument"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/json",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/zip",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld",
+      "@type": "http://www.w3.org/ns/dcat#Dataset",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/accrualPeriodicity": {
+        "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://ofn.gov.cz/jízdní-řády/2020-05-01/"
+      },
+      "http://purl.org/dc/terms/description": [
+        {
+          "@language": "cs",
+          "@value": "Obsahem datové sady jsou schválené a aktuálně platné jízdní řády veřejné linkové dopravy postoupené do Celostátního informačního systému o jízdních řádech ve strojově zpracovatelném formátu."
+        },
+        {
+          "@language": "en",
+          "@value": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."
+        }
+      ],
+      "http://purl.org/dc/terms/identifier": "vld",
+      "http://purl.org/dc/terms/issued": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/modified": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/publisher": {
+        "@id": "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008"
+      },
+      "http://purl.org/dc/terms/spatial": [
+        {
+          "@id": "http://publications.europa.eu/resource/authority/continent/EUROPE"
+        },
+        {
+          "@id": "https://linked.cuzk.cz/resource/ruian/stat/1"
+        }
+      ],
+      "http://purl.org/dc/terms/temporal": {
+        "@id": "_:b2"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "cs",
+          "@value": "Jízdní řády veřejné linkové dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Public transport timetables"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#contactPoint": {
+        "@id": "_:b1"
+      },
+      "http://www.w3.org/ns/dcat#distribution": [
+        {
+          "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv"
+        },
+        {
+          "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#keyword": [
+        {
+          "@language": "cs",
+          "@value": "autobus"
+        },
+        {
+          "@language": "en",
+          "@value": "bus"
+        },
+        {
+          "@language": "cs",
+          "@value": "jízdní řády"
+        },
+        {
+          "@language": "en",
+          "@value": "public transport"
+        },
+        {
+          "@language": "en",
+          "@value": "timetable"
+        },
+        {
+          "@language": "cs",
+          "@value": "veřejná linková doprava"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#spatialResolutionInMeters": {
+        "@type": "http://www.w3.org/2001/XMLSchema#decimal",
+        "@value": "12.0"
+      },
+      "http://www.w3.org/ns/dcat#temporalResolution": {
+        "@type": "http://www.w3.org/2001/XMLSchema#duration",
+        "@value": "P1D"
+      },
+      "http://www.w3.org/ns/dcat#theme": [
+        {
+          "@id": "http://eurovoc.europa.eu/4512"
+        },
+        {
+          "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+        }
+      ],
+      "http://xmlns.com/foaf/0.1/page": {
+        "@id": "https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://portal.cisjr.cz/schemata/json-schema.json"
+      },
+      "http://purl.org/dc/terms/format": {
+        "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP"
+      },
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "cs",
+          "@value": "JSON distribuce v ZIP soubrou"
+        },
+        {
+          "@language": "en",
+          "@value": "JSON distribution in ZIP file"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://portal.cisjr.cz/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#compressFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      },
+      "http://www.w3.org/ns/dcat#downloadURL": {
+        "@id": "https://portal.cisjr.cz/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#mediaType": {
+        "@id": "http://www.iana.org/assignments/media-types/application/json"
+      },
+      "http://www.w3.org/ns/dcat#packageFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "SPARQL endpoint for timetables"
+        },
+        {
+          "@language": "cs",
+          "@value": "SPARQL endpoint pro jízdní řády"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessService": {
+        "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql"
+      },
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql",
+      "@type": "http://www.w3.org/ns/dcat#DataService",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://www.w3.org/TR/sparql11-protocol/"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "SPARQL endpoint for timetables"
+        },
+        {
+          "@language": "cs",
+          "@value": "SPARQL endpoint pro jízdní řády"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#endpointDescription": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      },
+      "http://www.w3.org/ns/dcat#endpointURL": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      }
+    },
+    {
+      "@id": "https://linked.cuzk.cz/resource/ruian/stat/1",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "https://ofn.gov.cz/jízdní-řády/2020-05-01/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://portal.cisjr.cz/schemata/json-schema.json",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008",
+      "@type": "http://xmlns.com/foaf/0.1/Agent"
+    },
+    {
+      "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19",
+      "@type": "http://data.europa.eu/eli/ontology#LegalResource"
+    },
+    {
+      "@id": "https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy",
+      "@type": "http://xmlns.com/foaf/0.1/Document"
+    },
+    {
+      "@id": "https://www.w3.org/TR/sparql11-protocol/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "_:b1",
+      "@type": [
+        "http://www.w3.org/2006/vcard/ns#Kind",
+        "http://www.w3.org/2006/vcard/ns#Organization"
+      ],
+      "http://www.w3.org/2006/vcard/ns#fn": [
+        {
+          "@language": "cs",
+          "@value": "Ministerstvo dopravy, Odbor veřejné dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Ministry of Transport"
+        }
+      ],
+      "http://www.w3.org/2006/vcard/ns#hasEmail": {
+        "@id": "mailto:sekretariat.190@mdcr.cz"
+      }
+    },
+    {
+      "@id": "_:b2",
+      "@type": "http://purl.org/dc/terms/PeriodOfTime",
+      "http://www.w3.org/ns/dcat#endDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2017-12-31"
+      },
+      "http://www.w3.org/ns/dcat#startDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2009-01-01"
+      }
+    }
+  ],
+  "@included": [
+    {
+      "@id": "http://publications.europa.eu/resource/authority/continent/EUROPE",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN",
+      "@type": "http://www.w3.org/2004/02/skos/core#Concept",
+      "http://www.w3.org/2004/02/skos/core#prefLabel": {
+        "@language": "en",
+        "@value": "Transport"
+      }
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+      "@type": "http://purl.org/dc/terms/MediaTypeOrExtent"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3",
+      "@type": "http://purl.org/dc/terms/Frequency"
+    },
+    {
+      "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0",
+      "@type": "http://purl.org/dc/terms/LicenseDocument"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/json",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "http://www.iana.org/assignments/media-types/application/zip",
+      "@type": "http://purl.org/dc/terms/MediaType"
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld",
+      "@type": "http://www.w3.org/ns/dcat#Dataset",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/accrualPeriodicity": {
+        "@id": "http://publications.europa.eu/resource/authority/frequency/WEEKLY_3"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://ofn.gov.cz/jízdní-řády/2020-05-01/"
+      },
+      "http://purl.org/dc/terms/description": [
+        {
+          "@language": "cs",
+          "@value": "Obsahem datové sady jsou schválené a aktuálně platné jízdní řády veřejné linkové dopravy postoupené do Celostátního informačního systému o jízdních řádech ve strojově zpracovatelném formátu."
+        },
+        {
+          "@language": "en",
+          "@value": "This dataset contains approved timetables and timetables in effect for public transport entered into the state-wide timetable information system."
+        }
+      ],
+      "http://purl.org/dc/terms/identifier": "vld",
+      "http://purl.org/dc/terms/issued": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/modified": {
+        "@type": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "@value": "2026-11-01T10:00:00Z"
+      },
+      "http://purl.org/dc/terms/publisher": {
+        "@id": "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008"
+      },
+      "http://purl.org/dc/terms/spatial": [
+        {
+          "@id": "http://publications.europa.eu/resource/authority/continent/EUROPE"
+        },
+        {
+          "@id": "https://linked.cuzk.cz/resource/ruian/stat/1"
+        }
+      ],
+      "http://purl.org/dc/terms/temporal": {
+        "@id": "_:b2"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "cs",
+          "@value": "Jízdní řády veřejné linkové dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Public transport timetables"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#contactPoint": {
+        "@id": "_:b1"
+      },
+      "http://www.w3.org/ns/dcat#distribution": [
+        {
+          "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv"
+        },
+        {
+          "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#keyword": [
+        {
+          "@language": "cs",
+          "@value": "autobus"
+        },
+        {
+          "@language": "en",
+          "@value": "bus"
+        },
+        {
+          "@language": "cs",
+          "@value": "jízdní řády"
+        },
+        {
+          "@language": "en",
+          "@value": "public transport"
+        },
+        {
+          "@language": "en",
+          "@value": "timetable"
+        },
+        {
+          "@language": "cs",
+          "@value": "veřejná linková doprava"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#spatialResolutionInMeters": {
+        "@type": "http://www.w3.org/2001/XMLSchema#decimal",
+        "@value": "12.0"
+      },
+      "http://www.w3.org/ns/dcat#temporalResolution": {
+        "@type": "http://www.w3.org/2001/XMLSchema#duration",
+        "@value": "P1D"
+      },
+      "http://www.w3.org/ns/dcat#theme": [
+        {
+          "@id": "http://eurovoc.europa.eu/4512"
+        },
+        {
+          "@id": "http://publications.europa.eu/resource/authority/data-theme/TRAN"
+        }
+      ],
+      "http://xmlns.com/foaf/0.1/page": {
+        "@id": "https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/csv",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://portal.cisjr.cz/schemata/json-schema.json"
+      },
+      "http://purl.org/dc/terms/format": {
+        "@id": "http://publications.europa.eu/resource/authority/file-type/ZIP"
+      },
+      "http://purl.org/dc/terms/license": {
+        "@id": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "cs",
+          "@value": "JSON distribuce v ZIP soubrou"
+        },
+        {
+          "@language": "en",
+          "@value": "JSON distribution in ZIP file"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://portal.cisjr.cz/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#compressFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      },
+      "http://www.w3.org/ns/dcat#downloadURL": {
+        "@id": "https://portal.cisjr.cz/pub/draha/mestske/JDF.zip"
+      },
+      "http://www.w3.org/ns/dcat#mediaType": {
+        "@id": "http://www.iana.org/assignments/media-types/application/json"
+      },
+      "http://www.w3.org/ns/dcat#packageFormat": {
+        "@id": "http://www.iana.org/assignments/media-types/application/zip"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/distribuce/sparql",
+      "@type": "http://www.w3.org/ns/dcat#Distribution",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "SPARQL endpoint for timetables"
+        },
+        {
+          "@language": "cs",
+          "@value": "SPARQL endpoint pro jízdní řády"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#accessService": {
+        "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql"
+      },
+      "http://www.w3.org/ns/dcat#accessURL": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      }
+    },
+    {
+      "@id": "https://data.gov.cz/lkod/mdcr/datové-sady/vld/služba/sparql",
+      "@type": "http://www.w3.org/ns/dcat#DataService",
+      "http://data.europa.eu/r5r/applicableLegislation": {
+        "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"
+      },
+      "http://purl.org/dc/terms/conformsTo": {
+        "@id": "https://www.w3.org/TR/sparql11-protocol/"
+      },
+      "http://purl.org/dc/terms/title": [
+        {
+          "@language": "en",
+          "@value": "SPARQL endpoint for timetables"
+        },
+        {
+          "@language": "cs",
+          "@value": "SPARQL endpoint pro jízdní řády"
+        }
+      ],
+      "http://www.w3.org/ns/dcat#endpointDescription": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      },
+      "http://www.w3.org/ns/dcat#endpointURL": {
+        "@id": "https://portal.cisjr.cz/sparql"
+      }
+    },
+    {
+      "@id": "https://linked.cuzk.cz/resource/ruian/stat/1",
+      "@type": "http://purl.org/dc/terms/Location"
+    },
+    {
+      "@id": "https://ofn.gov.cz/jízdní-řády/2020-05-01/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://portal.cisjr.cz/schemata/json-schema.json",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008",
+      "@type": "http://xmlns.com/foaf/0.1/Agent"
+    },
+    {
+      "@id": "https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19",
+      "@type": "http://data.europa.eu/eli/ontology#LegalResource"
+    },
+    {
+      "@id": "https://www.mdcr.cz/Dokumenty/Verejna-doprava/Jizdni-rady,-kalendare-pro-jizdni-rady,-metodi-(1)/Jizdni-rady-verejne-dopravy",
+      "@type": "http://xmlns.com/foaf/0.1/Document"
+    },
+    {
+      "@id": "https://www.w3.org/TR/sparql11-protocol/",
+      "@type": "http://purl.org/dc/terms/Standard"
+    },
+    {
+      "@id": "_:b1",
+      "@type": [
+        "http://www.w3.org/2006/vcard/ns#Kind",
+        "http://www.w3.org/2006/vcard/ns#Organization"
+      ],
+      "http://www.w3.org/2006/vcard/ns#fn": [
+        {
+          "@language": "cs",
+          "@value": "Ministerstvo dopravy, Odbor veřejné dopravy"
+        },
+        {
+          "@language": "en",
+          "@value": "Ministry of Transport"
+        }
+      ],
+      "http://www.w3.org/2006/vcard/ns#hasEmail": {
+        "@id": "mailto:sekretariat.190@mdcr.cz"
+      }
+    },
+    {
+      "@id": "_:b2",
+      "@type": "http://purl.org/dc/terms/PeriodOfTime",
+      "http://www.w3.org/ns/dcat#endDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2017-12-31"
+      },
+      "http://www.w3.org/ns/dcat#startDate": {
+        "@type": "http://www.w3.org/2001/XMLSchema#date",
+        "@value": "2009-01-01"
+      }
+    }
+  ]
+}

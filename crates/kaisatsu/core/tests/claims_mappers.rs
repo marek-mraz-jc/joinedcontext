@@ -97,6 +97,11 @@ impl Fixture {
                     ..Default::default()
                 },
                 GroupRepresentation {
+                    name: "top".into(),
+                    path: "/top".into(),
+                    ..Default::default()
+                },
+                GroupRepresentation {
                     name: "ops".into(),
                     path: "/ops".into(),
                     ..Default::default()
@@ -743,4 +748,25 @@ fn audience_resolve_follows_the_tokens_client_roles() {
     let at = f.eval(TokenKind::AccessToken);
     assert!(at.get("aud").is_none(), "{at:?}");
     assert!(at.get("resource_access").is_none(), "{at:?}");
+}
+
+#[test]
+fn a_group_path_in_the_user_document_is_no_membership() {
+    let mut f = Fixture::new(vec![mapper(
+        "oidc-group-membership-mapper",
+        &[
+            ("claim.name", "groups"),
+            ("full.path", "true"),
+            ("access.token.claim", "true"),
+        ],
+    )]);
+    f.groups.clear();
+    let access = f.eval(TokenKind::AccessToken);
+    assert!(
+        access
+            .get("groups")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty),
+        "{access:?}"
+    );
 }

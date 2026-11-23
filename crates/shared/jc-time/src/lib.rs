@@ -11,6 +11,8 @@
 //! - feature `sqlx`: Postgres `timestamptz` (sqlx 0.9 has no jiff feature), plus [`PgTimestamp`]
 //!   and [`PgDate`] for `timestamp` and `date`.
 
+pub mod granularity;
+
 use jiff::fmt::temporal::DateTimePrinter;
 use jiff::tz::Offset;
 use jiff::{SignedDuration, Timestamp, civil};

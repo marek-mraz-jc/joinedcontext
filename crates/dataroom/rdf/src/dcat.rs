@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
-//! Bidirectional DCAT-AP 3.0.1, DCAT-AP-CZ and DCAT-AP-SK 2.0 graph mapping, Hydra pagination,
-//! and W3C `Accept-Profile` / `Accept` content negotiation (C7, C17).
+//! Bidirectional DCAT-AP graph mapping under any installed profile ([`crate::profile`]), Hydra
+//! pagination, and W3C `Accept-Profile` / `Accept` content negotiation (C7, C17).
 
 use crate::graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term};
 use crate::jsonld::{
-    parse_jsonld_bytes, serialize_cz_catalogue_jsonld, serialize_cz_dataset_jsonld,
-    serialize_graph_jsonld, serialize_sk_catalogue_jsonld, serialize_sk_dataset_jsonld,
+    parse_jsonld_bytes, serialize_compact_catalogue, serialize_compact_dataset,
+    serialize_graph_jsonld,
 };
+use crate::profile::{DcatProfile, Subject, Terms, ValueKind};
 use crate::rdfxml::{parse_rdfxml_bytes, serialize_rdfxml};
 use crate::turtle::{
     parse_ntriples_bytes, parse_turtle_bytes, serialize_ntriples, serialize_turtle,
@@ -16,15 +17,17 @@ use dataroom_core::vocab::{
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
 };
 use dataroom_core::{
-    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService, Dataset,
-    Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
+    is_declared_iri, AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService,
+    Dataset, Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Texts,
+    Visibility, PERSONAL_DATA, PERSONAL_DATA_CONTAINS, PERSONAL_DATA_NONE,
 };
 use jc_time::{parse_date, parse_rfc3339, Date, TimestampTz};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Supported RDF serialization formats (C7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RdfFormat {
     Turtle,
     JsonLd,
@@ -39,6 +42,16 @@ impl RdfFormat {
             Self::JsonLd => "application/ld+json; charset=utf-8",
             Self::RdfXml => "application/rdf+xml; charset=utf-8",
             Self::NTriples => "application/n-triples; charset=utf-8",
+        }
+    }
+
+    /// The suffix of a feed in this format.
+    pub const fn suffix(self) -> &'static str {
+        match self {
+            Self::Turtle => "ttl",
+            Self::JsonLd => "jsonld",
+            Self::RdfXml => "rdf",
+            Self::NTriples => "nt",
         }
     }
 
@@ -95,78 +108,10 @@ pub fn negotiate_rdf_format(ext: Option<&str>, accept: Option<&str>) -> Option<R
     None
 }
 
-/// Built-in profile families for DCAT-AP rendering (C7, C17).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DcatProfileKind {
-    Eu301,
-    Cz,
-    Sk20,
-}
-
-impl DcatProfileKind {
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Eu301 => "dcat-ap-3.0.1",
-            Self::Cz => "dcat-ap-cz",
-            Self::Sk20 => "dcat-ap-sk-2.0",
-        }
-    }
-
-    pub const fn profile_uri(self) -> &'static str {
-        match self {
-            Self::Eu301 => "https://semiceu.github.io/DCAT-AP/releases/3.0.1",
-            Self::Cz => "https://ofn.gov.cz/dcat-ap-cz",
-            Self::Sk20 => "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/",
-        }
-    }
-
-    pub fn from_token(token: &str) -> Option<Self> {
-        let clean = token
-            .trim()
-            .trim_matches(|c| c == '<' || c == '>' || c == '"');
-        if clean.eq_ignore_ascii_case("dcat-ap-cz")
-            || clean.eq_ignore_ascii_case("cz")
-            || clean.contains("ofn.gov.cz/dcat-ap-cz")
-        {
-            Some(Self::Cz)
-        } else if clean.eq_ignore_ascii_case("dcat-ap-sk-2.0")
-            || clean.eq_ignore_ascii_case("dcat-ap-sk")
-            || clean.eq_ignore_ascii_case("sk")
-            || clean.contains("dcat-ap-sk")
-        {
-            Some(Self::Sk20)
-        } else if clean.eq_ignore_ascii_case("dcat-ap-3.0.1")
-            || clean.eq_ignore_ascii_case("eu")
-            || clean.eq_ignore_ascii_case("euro_dcat_ap_3")
-            || clean.contains("semiceu.github.io/DCAT-AP")
-        {
-            Some(Self::Eu301)
-        } else {
-            None
-        }
-    }
-}
-
-/// W3C Content Negotiation by Profile (`Accept-Profile` header or `?_profile=` query param, C17).
-pub fn negotiate_profile(
-    query_profile: Option<&str>,
-    accept_profile_header: Option<&str>,
-    catalogue_default: &str,
-) -> (DcatProfileKind, String) {
-    if let Some(qp) = query_profile {
-        if let Some(kind) = DcatProfileKind::from_token(qp) {
-            return (kind, kind.profile_uri().to_owned());
-        }
-    }
-    if let Some(hdr) = accept_profile_header {
-        for token in by_quality(hdr) {
-            if let Some(kind) = DcatProfileKind::from_token(token) {
-                return (kind, kind.profile_uri().to_owned());
-            }
-        }
-    }
-    let kind = DcatProfileKind::from_token(catalogue_default).unwrap_or(DcatProfileKind::Eu301);
-    (kind, kind.profile_uri().to_owned())
+/// The profiles an `Accept-Profile` header names, best first (W3C Content Negotiation by
+/// Profile, C17).
+pub fn accepted_profiles(header: &str) -> Vec<&str> {
+    by_quality(header)
 }
 
 /// Hydra pagination metadata for paged catalogue feeds (`hydra:PartialCollectionView` / `hydra:PagedCollection`, C7).
@@ -182,16 +127,35 @@ pub struct HydraPageInfo {
     pub prev_page_uri: Option<String>,
 }
 
-/// Converts a [`Dataset`] into an [`RdfGraph`] according to `profile` (`Eu301`, `Cz`, `Sk20`).
+/// Converts a [`Dataset`] into an [`RdfGraph`] according to `profile`.
 pub fn dataset_to_graph(
     dataset: &Dataset,
     catalogue: &Catalogue,
     publisher: Option<&Publisher>,
-    profile: DcatProfileKind,
+    profile: DcatProfile,
 ) -> RdfGraph {
     let mut g = RdfGraph::new();
     add_dataset_triples(&mut g, dataset, catalogue, publisher, profile);
+    type_values(&mut g, profile);
     g
+}
+
+/// States the classes the profile wants on the values of some predicates.
+fn type_values(g: &mut RdfGraph, profile: DcatProfile) {
+    let Some(classes) = &profile.render.value_classes else {
+        return;
+    };
+    let typed: Vec<(String, String)> = g
+        .triples
+        .iter()
+        .filter_map(|t| match (&t.object, classes.get(&t.predicate)) {
+            (Term::Iri(value), Some(class)) => Some((value.clone(), class.clone())),
+            _ => None,
+        })
+        .collect();
+    for (value, class) in typed {
+        g.insert(SubjectNode::Named(value), ns::RDF_TYPE, Term::Iri(class));
+    }
 }
 
 pub fn add_dataset_triples(
@@ -199,7 +163,7 @@ pub fn add_dataset_triples(
     dataset: &Dataset,
     catalogue: &Catalogue,
     publisher: Option<&Publisher>,
-    profile: DcatProfileKind,
+    profile: DcatProfile,
 ) -> SubjectNode {
     let base = catalogue.base_url();
     let ds_iri = dataset.canonical_uri(&base);
@@ -237,7 +201,8 @@ pub fn add_dataset_triples(
 
     // Identifier
     let ident = dataset.identifier.as_deref().unwrap_or(&dataset.name);
-    if profile == DcatProfileKind::Eu301 {
+    let rules = &profile.render;
+    if rules.identifier == Some(true) {
         g.insert(
             ds_subj.clone(),
             format!("{}identifier", ns::DCT),
@@ -246,43 +211,8 @@ pub fn add_dataset_triples(
     }
 
     // Publisher (`dct:publisher`)
-    let pub_iri = publisher
-        .map(|p| p.uri.clone())
-        .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/{}", dataset.publisher_id));
-    let pub_subj = SubjectNode::Named(pub_iri.clone());
-    g.insert(
-        ds_subj.clone(),
-        format!("{}publisher", ns::DCT),
-        Term::Iri(pub_iri),
-    );
-    g.insert(
-        pub_subj.clone(),
-        ns::RDF_TYPE,
-        Term::Iri(format!("{}Agent", ns::FOAF)),
-    );
-    let pub_names = publisher
-        .map(|p| &p.title)
-        .or_else(|| dataset.publisher.as_ref().map(|a| &a.name));
-    if let Some(names) = pub_names {
-        for (lang, name) in names {
-            if !name.is_empty() {
-                g.insert(
-                    pub_subj.clone(),
-                    format!("{}name", ns::FOAF),
-                    Term::Literal(LiteralValue::lang(name.clone(), lang.clone())),
-                );
-            }
-        }
-    } else {
-        g.insert(
-            pub_subj.clone(),
-            format!("{}name", ns::FOAF),
-            Term::Literal(LiteralValue::lang(
-                dataset.publisher_id.clone(),
-                catalogue.default_language.clone(),
-            )),
-        );
+    if let Some((iri, names)) = dataset_publisher(dataset, catalogue, publisher) {
+        insert_agent(g, &ds_subj, iri, &names);
     }
 
     // Contact point (`dcat:contactPoint`)
@@ -541,7 +471,7 @@ pub fn add_dataset_triples(
         );
     }
 
-    if profile != DcatProfileKind::Cz {
+    if rules.issued_modified == Some(true) {
         g.insert(
             ds_subj.clone(),
             format!("{}issued", ns::DCT),
@@ -675,7 +605,14 @@ pub fn add_dataset_triples(
                 )),
             );
         }
-        if let Some(hash) = &dist.hash {
+        // A checksum without its algorithm cannot be checked, and no shape admits the node.
+        let algorithm = checksum_algorithm(dist).filter(|algorithm| {
+            rules
+                .checksum_algorithms
+                .as_ref()
+                .is_none_or(|admitted| admitted.contains(algorithm))
+        });
+        if let (Some(hash), Some(algo_iri)) = (&dist.hash, algorithm) {
             if !hash.is_empty() {
                 let cs_node = g.fresh_blank_node();
                 g.insert(
@@ -693,14 +630,13 @@ pub fn add_dataset_triples(
                     format!("{}checksumValue", ns::SPDX),
                     Term::Literal(LiteralValue::typed(hash.clone(), ns::XSD_HEX_BINARY)),
                 );
-                let algo_iri = "http://spdx.org/rdf/terms#checksumAlgorithm_sha256";
                 g.insert(
                     cs_node,
                     format!("{}algorithm", ns::SPDX),
-                    Term::Iri(algo_iri.to_owned()),
+                    Term::Iri(algo_iri.clone()),
                 );
                 g.insert(
-                    SubjectNode::Named(algo_iri.to_owned()),
+                    SubjectNode::Named(algo_iri),
                     ns::RDF_TYPE,
                     Term::Iri(format!("{}ChecksumAlgorithm", ns::SPDX)),
                 );
@@ -718,7 +654,13 @@ pub fn add_dataset_triples(
                 Term::Iri(format!("{}Standard", ns::DCT)),
             );
         }
-        for law in &dist.applicable_legislation {
+        // A profile may repeat the dataset's legislation on each distribution and service.
+        let inherited_laws: &[String] = if rules.inherit_legislation == Some(true) {
+            &dataset.applicable_legislation
+        } else {
+            &[]
+        };
+        for law in dist.applicable_legislation.iter().chain(inherited_laws) {
             g.insert(
                 dist_subj.clone(),
                 format!("{}applicableLegislation", ns::DCATAP),
@@ -731,149 +673,32 @@ pub fn add_dataset_triples(
             );
         }
 
-        // Profile-specific licence / terms-of-use representation
-        let dist_lic = distribution_licence(dataset, dist);
-        let resolved_lic = dist_lic.and_then(find_licence);
-
-        match profile {
-            DcatProfileKind::Eu301 => {
-                if let Some(lic) = resolved_lic {
-                    g.insert(
-                        dist_subj.clone(),
-                        format!("{}license", ns::DCT),
-                        Term::Iri(lic.eu_iri.clone()),
-                    );
-                    g.insert(
-                        SubjectNode::Named(lic.eu_iri),
-                        ns::RDF_TYPE,
-                        Term::Iri(format!("{}LicenseDocument", ns::DCT)),
-                    );
-                } else if let Some(raw_lic) = dist_lic.filter(|s| s.contains("://")) {
-                    g.insert(
-                        dist_subj.clone(),
-                        format!("{}license", ns::DCT),
-                        Term::Iri(raw_lic.to_owned()),
-                    );
-                    g.insert(
-                        SubjectNode::Named(raw_lic.to_owned()),
-                        ns::RDF_TYPE,
-                        Term::Iri(format!("{}LicenseDocument", ns::DCT)),
-                    );
-                }
-            }
-            DcatProfileKind::Cz => {
-                let spec_node = g.fresh_blank_node();
+        // The licence, as the profile states it
+        if rules.licence == Some(true) {
+            let stated = distribution_licence(dataset, dist);
+            let iri = match stated.and_then(find_licence) {
+                Some(known) => Some(known.eu_iri),
+                None => stated.filter(|s| s.contains("://")).map(str::to_owned),
+            };
+            if let Some(iri) = iri {
                 g.insert(
                     dist_subj.clone(),
-                    format!("{}specifikace", ns::CZ_PU),
-                    spec_node.to_term(),
+                    format!("{}license", ns::DCT),
+                    Term::Iri(iri.clone()),
                 );
                 g.insert(
-                    spec_node.clone(),
+                    SubjectNode::Named(iri),
                     ns::RDF_TYPE,
-                    Term::Iri(format!("{}Specifikace", ns::CZ_PU)),
+                    Term::Iri(format!("{}LicenseDocument", ns::DCT)),
                 );
-                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Cz);
-                if let Some(aw) = &tou.authors_work {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autorské-dílo", ns::CZ_PU),
-                        Term::Iri(aw.clone()),
-                    );
-                }
-                for (lang, author) in &tou.author_name {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autor", ns::CZ_PU),
-                        Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(db) = &tou.database_as_work {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}databáze-jako-autorské-dílo", ns::CZ_PU),
-                        Term::Iri(db.clone()),
-                    );
-                }
-                for (lang, db_author) in &tou.database_author_name {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}autor-databáze", ns::CZ_PU),
-                        Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(sg) = &tou.sui_generis_database {
-                    g.insert(
-                        spec_node.clone(),
-                        format!("{}databáze-chráněná-zvláštními-právy", ns::CZ_PU),
-                        Term::Iri(sg.clone()),
-                    );
-                }
-                if let Some(pd) = &tou.personal_data {
-                    g.insert(
-                        spec_node,
-                        format!("{}osobní-údaje", ns::CZ_PU),
-                        Term::Iri(pd.clone()),
-                    );
-                }
-            }
-            DcatProfileKind::Sk20 => {
-                let tou_node = g.fresh_blank_node();
-                g.insert(
-                    dist_subj.clone(),
-                    format!("{}termsOfUse", ns::SK_LEG),
-                    tou_node.to_term(),
-                );
-                g.insert(
-                    tou_node.clone(),
-                    ns::RDF_TYPE,
-                    Term::Iri(format!("{}TermsOfUse", ns::SK_LEG)),
-                );
-                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Sk20);
-                if let Some(aw) = &tou.authors_work {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}authorsWorkType", ns::SK_LEG),
-                        Term::Iri(aw.clone()),
-                    );
-                }
-                for (lang, author) in &tou.author_name {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}authorName", ns::SK_LEG),
-                        Term::Literal(LiteralValue::lang(author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(db) = &tou.database_as_work {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}originalDatabaseType", ns::SK_LEG),
-                        Term::Iri(db.clone()),
-                    );
-                }
-                for (lang, db_author) in &tou.database_author_name {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}originalDatabaseAuthorName", ns::SK_LEG),
-                        Term::Literal(LiteralValue::lang(db_author.clone(), lang.clone())),
-                    );
-                }
-                if let Some(sg) = &tou.sui_generis_database {
-                    g.insert(
-                        tou_node.clone(),
-                        format!("{}databaseProtectedBySpecialRightsType", ns::SK_LEG),
-                        Term::Iri(sg.clone()),
-                    );
-                }
-                if let Some(pd) = &tou.personal_data {
-                    g.insert(
-                        tou_node,
-                        format!("{}personalDataContainmentType", ns::SK_LEG),
-                        Term::Iri(pd.clone()),
-                    );
-                }
             }
         }
+        if let Some(node) = &rules.terms {
+            if let Some(stated) = terms_of_use(dataset, dist, profile) {
+                insert_terms(g, &dist_subj, node, &stated);
+            }
+        }
+        insert_properties(g, &dist_subj, Subject::Distribution, dataset, profile);
 
         // DataServices (`dcat:accessService`)
         for svc in &dist.access_services {
@@ -927,7 +752,7 @@ pub fn add_dataset_triples(
                     Term::Iri(format!("{}Standard", ns::DCT)),
                 );
             }
-            for law in &svc.applicable_legislation {
+            for law in svc.applicable_legislation.iter().chain(inherited_laws) {
                 g.insert(
                     svc_subj.clone(),
                     format!("{}applicableLegislation", ns::DCATAP),
@@ -941,8 +766,82 @@ pub fn add_dataset_triples(
             }
         }
     }
+    insert_properties(g, &ds_subj, Subject::Dataset, dataset, profile);
 
     ds_subj
+}
+
+/// The profile's terms-of-use node, of the members the record states.
+fn insert_terms(g: &mut RdfGraph, subject: &SubjectNode, node: &Terms, stated: &TermsOfUse) {
+    let terms = g.fresh_blank_node();
+    g.insert(subject.clone(), node.link.clone(), terms.to_term());
+    g.insert(terms.clone(), ns::RDF_TYPE, Term::Iri(node.class.clone()));
+    let iri = |g: &mut RdfGraph, predicate: &String, value: &Option<String>| {
+        if let Some(value) = value {
+            g.insert(terms.clone(), predicate.clone(), Term::Iri(value.clone()));
+        }
+    };
+    let names = |g: &mut RdfGraph, predicate: &String, value: &Texts| {
+        for (lang, name) in value {
+            g.insert(
+                terms.clone(),
+                predicate.clone(),
+                Term::Literal(LiteralValue::lang(name.clone(), lang.clone())),
+            );
+        }
+    };
+    iri(g, &node.authors_work, &stated.authors_work);
+    names(g, &node.author_name, &stated.author_name);
+    iri(g, &node.database_as_work, &stated.database_as_work);
+    names(g, &node.database_author_name, &stated.database_author_name);
+    iri(g, &node.sui_generis_database, &stated.sui_generis_database);
+    iri(g, &node.personal_data, &stated.personal_data);
+}
+
+/// The profile's additional properties the record declares as extras: one value, or a JSON
+/// array of them.
+fn insert_properties(
+    g: &mut RdfGraph,
+    subject: &SubjectNode,
+    level: Subject,
+    dataset: &Dataset,
+    profile: DcatProfile,
+) {
+    for property in profile.properties.iter().filter(|p| p.subject == level) {
+        let Some(stated) = dataset.extras.get(&property.extra) else {
+            continue;
+        };
+        let values =
+            serde_json::from_str::<Vec<String>>(stated).unwrap_or_else(|_| vec![stated.to_owned()]);
+        for value in values.iter().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+            let object = match property.kind {
+                ValueKind::Literal => Term::Literal(LiteralValue::plain(value)),
+                ValueKind::Iri => {
+                    let labels = property.values.get(value);
+                    if !is_declared_iri(value) || (labels.is_none() && !property.values.is_empty())
+                    {
+                        continue;
+                    }
+                    for (lang, label) in labels.into_iter().flatten() {
+                        g.insert(
+                            SubjectNode::Named(value.to_owned()),
+                            format!("{}prefLabel", ns::SKOS),
+                            Term::Literal(LiteralValue::lang(label.clone(), lang.clone())),
+                        );
+                    }
+                    if let Some(class) = &property.class {
+                        g.insert(
+                            SubjectNode::Named(value.to_owned()),
+                            ns::RDF_TYPE,
+                            Term::Iri(class.clone()),
+                        );
+                    }
+                    Term::Iri(value.to_owned())
+                }
+            };
+            g.insert(subject.clone(), property.predicate.clone(), object);
+        }
+    }
 }
 
 /// Converts a [`Catalogue`], its [`Dataset`]s, [`Publisher`]s and optional [`HydraPageInfo`]
@@ -951,7 +850,7 @@ pub fn catalogue_to_graph(
     catalogue: &Catalogue,
     datasets: &[Dataset],
     publishers: &BTreeMap<String, Publisher>,
-    profile: DcatProfileKind,
+    profile: DcatProfile,
     hydra: Option<&HydraPageInfo>,
 ) -> RdfGraph {
     let mut g = RdfGraph::new();
@@ -983,41 +882,8 @@ pub fn catalogue_to_graph(
         }
     }
 
-    let pub_iri = catalogue
-        .publisher_uri
-        .clone()
-        .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| format!("{base}/publisher/default"));
-    let pub_subj = SubjectNode::Named(pub_iri.clone());
-    g.insert(
-        cat_subj.clone(),
-        format!("{}publisher", ns::DCT),
-        Term::Iri(pub_iri),
-    );
-    g.insert(
-        pub_subj.clone(),
-        ns::RDF_TYPE,
-        Term::Iri(format!("{}Agent", ns::FOAF)),
-    );
-    if let Some(names) = &catalogue.publisher_name {
-        for (lang, n) in names {
-            if !n.is_empty() {
-                g.insert(
-                    pub_subj.clone(),
-                    format!("{}name", ns::FOAF),
-                    Term::Literal(LiteralValue::lang(n.clone(), lang.clone())),
-                );
-            }
-        }
-    } else {
-        g.insert(
-            pub_subj,
-            format!("{}name", ns::FOAF),
-            Term::Literal(LiteralValue::lang(
-                catalogue.theme.organisation.clone(),
-                catalogue.default_language.clone(),
-            )),
-        );
+    if let Some((iri, names)) = catalogue_publisher(catalogue) {
+        insert_agent(&mut g, &cat_subj, iri, &names);
     }
 
     let homepage = catalogue.homepage.clone().unwrap_or_else(|| base.clone());
@@ -1150,72 +1016,173 @@ pub fn catalogue_to_graph(
         }
     }
 
+    type_values(&mut g, profile);
     g
 }
 
-/// The licence a distribution is published under: its own, else the dataset's.
+/// The licence a distribution is published under: its own, else the dataset's. CKAN's
+/// `notspecified` declares none.
 pub(crate) fn distribution_licence<'a>(
     dataset: &'a Dataset,
     dist: &'a Distribution,
 ) -> Option<&'a str> {
-    dist.licence
-        .as_deref()
-        .or(dataset.licence_id.as_deref())
-        .or(dataset.licence_url.as_deref())
+    [&dist.licence, &dataset.licence_id, &dataset.licence_url]
+        .into_iter()
+        .filter_map(|l| l.as_deref())
+        .find(|l| !l.trim().is_empty() && !l.eq_ignore_ascii_case("notspecified"))
 }
 
-/// The CZ or SK terms of use of a distribution: the ones it carries, each missing field filled
-/// with the profile's default (the resolved licence's URL for the copyright fields). Both
-/// profiles' shapes require all four fields, and the JSON-LD and graph renderings share this.
+/// Whether the record declares that the data holds personal data: the dataset's own statement,
+/// or the national code a harvested distribution carries. Another value is the record's own IRI.
+fn personal_data(dataset: &Dataset, dist: &Distribution, profile: DcatProfile) -> Option<String> {
+    let own = dist
+        .terms_of_use
+        .as_ref()
+        .and_then(|t| t.personal_data.as_deref());
+    let stated = own.or_else(|| dataset.extras.get(PERSONAL_DATA).map(String::as_str))?;
+    let holds = std::iter::once((PERSONAL_DATA_CONTAINS, PERSONAL_DATA_NONE))
+        // Every installed code list (API/08 section 5): a harvested record carries its country's.
+        .chain(DcatProfile::installed().filter_map(|installed| {
+            let codes = installed.personal_data_codes()?;
+            Some((codes.contains.as_str(), codes.does_not_contain.as_str()))
+        }))
+        .find_map(|(yes, no)| {
+            (stated == yes)
+                .then_some(true)
+                .or_else(|| (stated == no).then_some(false))
+        });
+    let codes = profile.render.personal_data.as_ref()?;
+    match holds {
+        Some(true) => Some(codes.contains.clone()),
+        Some(false) => Some(codes.does_not_contain.clone()),
+        None => stated.contains("://").then(|| stated.to_owned()),
+    }
+}
+
+/// The terms of use a distribution declares: its own, the three rights it leaves out
+/// from the declared licence (API/08 section 6), and personal data only as declared (CMP-08).
+/// `None` when nothing is known. Both the graph and the JSON-LD serializers state these.
 pub(crate) fn terms_of_use(
+    dataset: &Dataset,
     dist: &Distribution,
-    licence: Option<&dataroom_core::vocab::LicenceEntry>,
-    profile: DcatProfileKind,
-) -> TermsOfUse {
-    let licence_url = licence.map(|l| l.url.clone()).filter(|u| !u.is_empty());
-    let (authors, database, sui_generis, personal) = match profile {
-        DcatProfileKind::Sk20 => {
-            let cc = licence_url.unwrap_or_else(|| "https://creativecommons.org/licenses/by/4.0/".into());
-            (
-                cc.clone(),
-                cc,
-                "https://creativecommons.org/publicdomain/zero/1.0/".to_owned(),
-                "https://data.gov.sk/def/personal-data-occurence-type/2".to_owned(),
-            )
-        }
-        _ => (
-            licence_url.unwrap_or_else(|| "https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/".into()),
-            "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/".to_owned(),
-            "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/".to_owned(),
-            "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/".to_owned(),
-        ),
-    };
+    profile: DcatProfile,
+) -> Option<TermsOfUse> {
     let mut tou = dist.terms_of_use.clone().unwrap_or_default();
-    tou.authors_work.get_or_insert(authors);
-    tou.database_as_work.get_or_insert(database);
-    tou.sui_generis_database.get_or_insert(sui_generis);
-    tou.personal_data.get_or_insert(personal);
-    tou
+    let licence = distribution_licence(dataset, dist).and_then(|l| match find_licence(l) {
+        Some(known) => (!known.url.is_empty()).then_some(known.url),
+        None => l.contains("://").then(|| l.to_owned()),
+    });
+    for right in [
+        &mut tou.authors_work,
+        &mut tou.database_as_work,
+        &mut tou.sui_generis_database,
+    ] {
+        if right.is_none() {
+            right.clone_from(&licence);
+        }
+    }
+    tou.personal_data = personal_data(dataset, dist, profile);
+    (tou != TermsOfUse::default()).then_some(tou)
 }
 
-/// Serializes one [`Dataset`] in the requested [`RdfFormat`] and [`DcatProfileKind`] (C7, C17).
+/// Every installed profile's terms vocabulary, each once.
+fn known_terms() -> Vec<&'static Terms> {
+    let mut known: Vec<&'static Terms> = Vec::new();
+    for terms in DcatProfile::installed().filter_map(DcatProfile::terms) {
+        if !known.iter().any(|held| held.link == terms.link) {
+            known.push(terms);
+        }
+    }
+    known
+}
+
+/// The SPDX IRI of the checksum algorithm the record names.
+fn checksum_algorithm(dist: &Distribution) -> Option<String> {
+    let named = dist.hash_algorithm.as_deref()?.trim();
+    if named.contains("://") {
+        return Some(named.to_owned());
+    }
+    let name = named.to_ascii_lowercase().replace('-', "");
+    ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"]
+        .contains(&name.as_str())
+        .then(|| format!("http://spdx.org/rdf/terms#checksumAlgorithm_{name}"))
+}
+
+/// A dataset's publisher as declared, `(IRI, names)`: the Publisher record's own IRI, else the
+/// IRI the dataset names, else the record's page in this catalogue, else the dataset's name of
+/// it alone. A bare `publisher_id` is no declaration.
+pub(crate) fn dataset_publisher(
+    dataset: &Dataset,
+    catalogue: &Catalogue,
+    publisher: Option<&Publisher>,
+) -> Option<(Option<String>, Texts)> {
+    let named = dataset.publisher.as_ref();
+    let names = named.map(|a| a.name.clone()).unwrap_or_default();
+    if let Some(record) = publisher.filter(|p| p.has_own_iri(catalogue)) {
+        return Some((Some(record.uri.clone()), record.title.clone()));
+    }
+    if let Some(uri) = named
+        .and_then(|a| a.uri.as_deref())
+        .filter(|uri| is_declared_iri(uri))
+    {
+        let names = match publisher {
+            Some(record) if names.is_empty() => record.title.clone(),
+            _ => names,
+        };
+        return Some((Some(uri.to_owned()), names));
+    }
+    match publisher {
+        Some(record) if is_declared_iri(&record.uri) => {
+            Some((Some(record.uri.clone()), record.title.clone()))
+        }
+        _ => (!names.is_empty()).then_some((None, names)),
+    }
+}
+
+/// The catalogue's publisher as declared: its IRI, or its name alone.
+fn catalogue_publisher(catalogue: &Catalogue) -> Option<(Option<String>, Texts)> {
+    let iri = catalogue.declared_publisher_uri().map(str::to_owned);
+    let names = catalogue.publisher_name.clone().unwrap_or_default();
+    (iri.is_some() || !names.is_empty()).then_some((iri, names))
+}
+
+/// `dct:publisher`: the agent's IRI, or a blank node carrying the declared names.
+fn insert_agent(g: &mut RdfGraph, subject: &SubjectNode, iri: Option<String>, names: &Texts) {
+    let agent = match iri {
+        Some(iri) => SubjectNode::Named(iri),
+        None => g.fresh_blank_node(),
+    };
+    g.insert(
+        subject.clone(),
+        format!("{}publisher", ns::DCT),
+        agent.to_term(),
+    );
+    g.insert(
+        agent.clone(),
+        ns::RDF_TYPE,
+        Term::Iri(format!("{}Agent", ns::FOAF)),
+    );
+    for (lang, name) in names {
+        if !name.is_empty() {
+            g.insert(
+                agent.clone(),
+                format!("{}name", ns::FOAF),
+                Term::Literal(LiteralValue::lang(name.clone(), lang.clone())),
+            );
+        }
+    }
+}
+
+/// Serializes one [`Dataset`] in the requested [`RdfFormat`] and [`DcatProfile`] (C7, C17).
 pub fn serialize_dataset(
     dataset: &Dataset,
     catalogue: &Catalogue,
     publisher: Option<&Publisher>,
     format: RdfFormat,
-    profile: DcatProfileKind,
+    profile: DcatProfile,
 ) -> String {
-    if format == RdfFormat::JsonLd {
-        match profile {
-            DcatProfileKind::Cz => {
-                return serialize_cz_dataset_jsonld(dataset, catalogue, publisher)
-            }
-            DcatProfileKind::Sk20 => {
-                return serialize_sk_dataset_jsonld(dataset, catalogue, publisher)
-            }
-            DcatProfileKind::Eu301 => {}
-        }
+    if let (RdfFormat::JsonLd, Some(keys)) = (format, &profile.render.json_ld) {
+        return serialize_compact_dataset(dataset, catalogue, publisher, profile, keys);
     }
     let g = dataset_to_graph(dataset, catalogue, publisher, profile);
     match format {
@@ -1226,25 +1193,17 @@ pub fn serialize_dataset(
     }
 }
 
-/// Serializes a [`Catalogue`] in the requested [`RdfFormat`] and [`DcatProfileKind`] (C7, C17).
+/// Serializes a [`Catalogue`] in the requested [`RdfFormat`] and [`DcatProfile`] (C7, C17).
 pub fn serialize_catalogue(
     catalogue: &Catalogue,
     datasets: &[Dataset],
     publishers: &BTreeMap<String, Publisher>,
     format: RdfFormat,
-    profile: DcatProfileKind,
+    profile: DcatProfile,
     hydra: Option<&HydraPageInfo>,
 ) -> String {
-    if format == RdfFormat::JsonLd && hydra.is_none() {
-        match profile {
-            DcatProfileKind::Cz => {
-                return serialize_cz_catalogue_jsonld(catalogue, datasets, publishers)
-            }
-            DcatProfileKind::Sk20 => {
-                return serialize_sk_catalogue_jsonld(catalogue, datasets, publishers)
-            }
-            DcatProfileKind::Eu301 => {}
-        }
+    if let (RdfFormat::JsonLd, Some(keys), None) = (format, &profile.render.json_ld, hydra) {
+        return serialize_compact_catalogue(catalogue, datasets, keys);
     }
     let g = catalogue_to_graph(catalogue, datasets, publishers, profile, hydra);
     match format {
@@ -1474,8 +1433,7 @@ pub fn graph_to_datasets(
             .map(|t| t.string_value().to_owned());
 
         let mut distributions = Vec::new();
-        let mut derived_licence_id = None;
-        let mut derived_licence_url = None;
+        let mut stated_licences: Vec<Option<String>> = Vec::new();
 
         for (idx, dist_term) in graph
             .objects_of(&ds_subj, "http://www.w3.org/ns/dcat#distribution")
@@ -1546,120 +1504,40 @@ pub fn graph_to_datasets(
             let dist_licence = graph
                 .first_object(&dist_subj, "http://purl.org/dc/terms/license")
                 .map(|t| t.string_value().to_owned());
-            if let Some(ref dl) = dist_licence {
-                if let Some(lic_entry) = find_licence(dl) {
-                    derived_licence_id = Some(lic_entry.id);
-                    derived_licence_url = Some(lic_entry.url);
-                } else {
-                    derived_licence_url = Some(dl.clone());
-                }
-            }
+            stated_licences.push(dist_licence.clone());
 
-            // Terms of use (`pu:specifikace` in CZ or `leg:termsOfUse` in SK)
-            let terms_of_use = graph
-                .first_object(
-                    &dist_subj,
-                    "https://data.gov.cz/slovník/podmínky-užití/specifikace",
-                )
-                .or_else(|| {
-                    graph.first_object(
-                        &dist_subj,
-                        "https://data.gov.sk/def/ontology/legislation/termsOfUse",
-                    )
-                })
+            // Terms of use, under any installed profile's predicates
+            let first = |subject: &SubjectNode, member: fn(&Terms) -> &String| {
+                known_terms()
+                    .into_iter()
+                    .find_map(|node| graph.first_object(subject, member(node)))
+            };
+            let names = |subject: &SubjectNode, member: fn(&Terms) -> &String| {
+                let mut all = Texts::new();
+                for node in known_terms() {
+                    all.extend(extract_lang_map(graph, subject, member(node), default_lang));
+                }
+                all
+            };
+            let terms_of_use = first(&dist_subj, |t| &t.link)
                 .and_then(|t| t.as_subject())
                 .map(|tou_subj| {
-                    let authors_work = graph
-                        .first_object(
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/autorské-dílo",
-                        )
-                        .or_else(|| {
-                            graph.first_object(
-                                &tou_subj,
-                                "https://data.gov.sk/def/ontology/legislation/authorsWorkType",
-                            )
-                        })
-                        .map(|t| t.string_value().to_owned());
-                    if let Some(ref aw) = authors_work {
-                        if let Some(lic_entry) = find_licence(aw) {
-                            derived_licence_id.get_or_insert(lic_entry.id);
-                            derived_licence_url.get_or_insert(lic_entry.url);
+                    let value = |member: fn(&Terms) -> &String| {
+                        first(&tou_subj, member).map(|t| t.string_value().to_owned())
+                    };
+                    let authors_work = value(|t| &t.authors_work);
+                    if let (Some(aw), Some(stated)) = (&authors_work, stated_licences.last_mut()) {
+                        if stated.is_none() && find_licence(aw).is_some() {
+                            *stated = Some(aw.clone());
                         }
                     }
-                    let author_name = {
-                        let mut m = extract_lang_map(
-                            graph,
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/autor",
-                            default_lang,
-                        );
-                        m.extend(extract_lang_map(
-                            graph,
-                            &tou_subj,
-                            "https://data.gov.sk/def/ontology/legislation/authorName",
-                            default_lang,
-                        ));
-                        m
-                    };
-                    let database_as_work = graph
-                        .first_object(
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo",
-                        )
-                        .or_else(|| {
-                            graph.first_object(
-                                &tou_subj,
-                                "https://data.gov.sk/def/ontology/legislation/originalDatabaseType",
-                            )
-                        })
-                        .map(|t| t.string_value().to_owned());
-                    let database_author_name = {
-                        let mut m = extract_lang_map(
-                            graph,
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/autor-databáze",
-                            default_lang,
-                        );
-                        m.extend(extract_lang_map(
-                            graph,
-                            &tou_subj,
-                            "https://data.gov.sk/def/ontology/legislation/originalDatabaseAuthorName",
-                            default_lang,
-                        ));
-                        m
-                    };
-                    let sui_generis_database = graph
-                        .first_object(
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy",
-                        )
-                        .or_else(|| {
-                            graph.first_object(
-                                &tou_subj,
-                                "https://data.gov.sk/def/ontology/legislation/databaseProtectedBySpecialRightsType",
-                            )
-                        })
-                        .map(|t| t.string_value().to_owned());
-                    let personal_data = graph
-                        .first_object(
-                            &tou_subj,
-                            "https://data.gov.cz/slovník/podmínky-užití/osobní-údaje",
-                        )
-                        .or_else(|| {
-                            graph.first_object(
-                                &tou_subj,
-                                "https://data.gov.sk/def/ontology/legislation/personalDataContainmentType",
-                            )
-                        })
-                        .map(|t| t.string_value().to_owned());
                     TermsOfUse {
                         authors_work,
-                        author_name,
-                        database_as_work,
-                        database_author_name,
-                        sui_generis_database,
-                        personal_data,
+                        author_name: names(&tou_subj, |t| &t.author_name),
+                        database_as_work: value(|t| &t.database_as_work),
+                        database_author_name: names(&tou_subj, |t| &t.database_author_name),
+                        sui_generis_database: value(|t| &t.sui_generis_database),
+                        personal_data: value(|t| &t.personal_data),
                     }
                 });
 
@@ -1739,7 +1617,7 @@ pub fn graph_to_datasets(
                 byte_size,
                 hash,
                 hash_algorithm,
-                licence: dist_licence,
+                licence: stated_licences.last().cloned().flatten(),
                 rights: BTreeMap::new(),
                 status: None,
                 availability: None,
@@ -1756,6 +1634,21 @@ pub fn graph_to_datasets(
                 modified: None,
                 extras: BTreeMap::new(),
             });
+        }
+
+        // The dataset is under a licence only when all its distributions state that one; a
+        // sibling's licence is no statement about a distribution without one.
+        let (mut derived_licence_id, mut derived_licence_url) = (None, None);
+        if let Some(Some(first)) = stated_licences.first() {
+            if stated_licences.iter().all(|l| l.as_ref() == Some(first)) {
+                match find_licence(first) {
+                    Some(entry) => {
+                        derived_licence_id = Some(entry.id);
+                        derived_licence_url = Some(entry.url);
+                    }
+                    None => derived_licence_url = Some(first.clone()),
+                }
+            }
         }
 
         let now = TimestampTz::now();
@@ -1991,9 +1884,9 @@ mod tests {
         assert_eq!(ds_cz.distributions.len(), 2);
 
         for profile in [
-            DcatProfileKind::Eu301,
-            DcatProfileKind::Cz,
-            DcatProfileKind::Sk20,
+            DcatProfile::eu(),
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
             let emitted_ttl = serialize_dataset(ds_cz, &cat, None, RdfFormat::Turtle, profile);
             let reparsed = parse_datasets_from_rdf(
@@ -2035,8 +1928,13 @@ mod tests {
             ds_sk.title.get("sk").map(String::as_str),
             Some("Cestovné poriadky")
         );
-        let sk_emitted =
-            serialize_dataset(ds_sk, &cat, None, RdfFormat::Turtle, DcatProfileKind::Sk20);
+        let sk_emitted = serialize_dataset(
+            ds_sk,
+            &cat,
+            None,
+            RdfFormat::Turtle,
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+        );
         let sk_reparsed = parse_datasets_from_rdf(
             &sk_emitted,
             RdfFormat::Turtle,
@@ -2214,14 +2112,14 @@ mod tests {
         let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
         let cat = sample_catalogue(org, cid);
         let ds = hostile_dataset();
-        let expected = dataset_to_graph(&ds, &cat, None, DcatProfileKind::Eu301).len();
+        let expected = dataset_to_graph(&ds, &cat, None, DcatProfile::eu()).len();
         for format in [
             RdfFormat::Turtle,
             RdfFormat::NTriples,
             RdfFormat::RdfXml,
             RdfFormat::JsonLd,
         ] {
-            let text = serialize_dataset(&ds, &cat, None, format, DcatProfileKind::Eu301);
+            let text = serialize_dataset(&ds, &cat, None, format, DcatProfile::eu());
             let g = parse(text.as_bytes(), format, RdfLimits::default())
                 .unwrap_or_else(|e| panic!("{format:?} output must parse: {e}\n{text}"));
             assert_eq!(
@@ -2238,7 +2136,10 @@ mod tests {
             );
         }
         // The CZ and SK JSON-LD documents carry the same URLs as plain JSON strings.
-        for profile in [DcatProfileKind::Cz, DcatProfileKind::Sk20] {
+        for profile in [
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+        ] {
             let text = serialize_dataset(&ds, &cat, None, RdfFormat::JsonLd, profile);
             let g = parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default())
                 .unwrap_or_else(|e| panic!("{profile:?} JSON-LD must parse: {e}\n{text}"));
@@ -2334,9 +2235,9 @@ mod tests {
         let cat = sample_catalogue(org, cid);
         let src = full_dataset();
         for profile in [
-            DcatProfileKind::Eu301,
-            DcatProfileKind::Cz,
-            DcatProfileKind::Sk20,
+            DcatProfile::eu(),
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
             for format in [
                 RdfFormat::Turtle,
@@ -2372,7 +2273,7 @@ mod tests {
                     Some("https://files.example.org/air.csv"),
                     "{ctx}"
                 );
-                if format == RdfFormat::JsonLd && profile != DcatProfileKind::Eu301 {
+                if format == RdfFormat::JsonLd && profile != DcatProfile::eu() {
                     continue; // the CZ and SK JSON-LD documents carry the profile's core fields only
                 }
                 assert_eq!(ds.description, src.description, "{ctx}");
@@ -2399,7 +2300,7 @@ mod tests {
                     "{ctx}"
                 );
                 assert_eq!(ds.in_series, src.in_series, "{ctx}");
-                if profile == DcatProfileKind::Eu301 {
+                if profile == DcatProfile::eu() {
                     assert_eq!(
                         ds.identifier, src.identifier,
                         "only DCAT-AP writes dct:identifier"
@@ -2418,7 +2319,7 @@ mod tests {
                 assert_eq!(csv.byte_size, Some(1234), "{ctx}");
                 assert_eq!(csv.title, src.distributions[0].title, "{ctx}");
                 assert!(
-                    csv.terms_of_use.is_some() || profile == DcatProfileKind::Eu301,
+                    csv.terms_of_use.is_some() || profile == DcatProfile::eu(),
                     "{ctx}"
                 );
                 let api = ds
@@ -2458,9 +2359,9 @@ mod tests {
         };
         let pubs = BTreeMap::new();
         for profile in [
-            DcatProfileKind::Eu301,
-            DcatProfileKind::Cz,
-            DcatProfileKind::Sk20,
+            DcatProfile::eu(),
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
             for format in [
                 RdfFormat::Turtle,
@@ -2504,7 +2405,7 @@ mod tests {
             next_page_uri: None,
             ..hydra
         };
-        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, Some(&first));
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfile::eu(), Some(&first));
         let page = SubjectNode::Named(first.current_page_uri.clone());
         assert!(g
             .first_object(&page, &format!("{}next", ns::HYDRA))
@@ -2564,48 +2465,17 @@ mod tests {
             Some(RdfFormat::Turtle)
         );
 
-        for k in [
-            DcatProfileKind::Eu301,
-            DcatProfileKind::Cz,
-            DcatProfileKind::Sk20,
-        ] {
-            assert_eq!(DcatProfileKind::from_token(k.id()), Some(k));
+        for k in DcatProfile::installed() {
+            assert_eq!(DcatProfile::from_token(k.id()), Some(k));
             assert_eq!(
-                DcatProfileKind::from_token(&format!("<{}>", k.profile_uri())),
+                DcatProfile::from_token(&format!("<{}>", k.profile_uri())),
                 Some(k)
             );
         }
-        assert_eq!(DcatProfileKind::from_token("dcat-ap-de"), None);
-        let cz = DcatProfileKind::Cz;
+        assert_eq!(DcatProfile::from_token("dcat-ap-de"), None);
         assert_eq!(
-            negotiate_profile(
-                Some("cz"),
-                Some("<https://datova-kancelaria.github.io/dcat-ap-sk-2.0/>"),
-                "eu"
-            )
-            .0,
-            cz,
-            "the query wins"
-        );
-        assert_eq!(
-            negotiate_profile(Some("de"), Some("unknown, sk"), "eu").0,
-            DcatProfileKind::Sk20
-        );
-        assert_eq!(
-            negotiate_profile(None, Some("cz;q=0.1, sk;q=0.8"), "eu").0,
-            DcatProfileKind::Sk20
-        );
-        assert_eq!(
-            negotiate_profile(None, Some("cz;q=0"), "eu").0,
-            DcatProfileKind::Eu301
-        );
-        assert_eq!(
-            negotiate_profile(None, None, "dcat-ap-cz"),
-            (cz, cz.profile_uri().to_owned())
-        );
-        assert_eq!(
-            negotiate_profile(None, None, "custom").0,
-            DcatProfileKind::Eu301
+            accepted_profiles("cz;q=0.1, sk;q=0.8, eu;q=0"),
+            ["sk", "cz"]
         );
     }
 
@@ -2659,7 +2529,7 @@ mod tests {
         let ds: Dataset = serde_json::from_value(v).expect("dataset");
         let cid = ds.catalogue_id;
         let cat = sample_catalogue(ds.org_id, cid);
-        let ttl = serialize_dataset(&ds, &cat, None, RdfFormat::NTriples, DcatProfileKind::Eu301);
+        let ttl = serialize_dataset(&ds, &cat, None, RdfFormat::NTriples, DcatProfile::eu());
         let lines: Vec<&str> = ttl
             .lines()
             .filter(|l| l.contains("issued") || l.contains("modified") || l.contains("Date>"))
@@ -2711,7 +2581,7 @@ mod tests {
             "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
         }))
         .unwrap();
-        let g = dataset_to_graph(&ds, &cat, Some(&publisher), DcatProfileKind::Eu301);
+        let g = dataset_to_graph(&ds, &cat, Some(&publisher), DcatProfile::eu());
         let ds_subj = SubjectNode::Named("https://data.example.org/ds/full".into());
         assert_eq!(
             g.first_object(&ds_subj, &format!("{}publisher", ns::DCT)),
@@ -2735,32 +2605,42 @@ mod tests {
             &cat,
             Some(&publisher),
             RdfFormat::JsonLd,
-            DcatProfileKind::Cz,
+            DcatProfile::from_token("dcat-ap-cz").expect("installed"),
         );
         assert!(text.contains("https://e.org/publisher/city"));
 
-        // A catalogue without publisher IRI or homepage takes the first publisher, then a default.
+        // A catalogue's publisher is the one it declares, never the first of its datasets'.
         cat.publisher_uri = None;
+        cat.publisher_name = None;
         cat.homepage = None;
         let pubs = BTreeMap::from([("city".to_owned(), publisher)]);
         let cat_subj = SubjectNode::Named("https://opendata.example.org/catalog".into());
-        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, None);
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfile::eu(), None);
         assert_eq!(
             g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
-            Some(Term::Iri("https://e.org/publisher/city".into()))
+            None
         );
         assert_eq!(
             g.first_object(&cat_subj, &format!("{}homepage", ns::FOAF)),
             Some(Term::Iri("https://opendata.example.org".into()))
         );
-        let g = catalogue_to_graph(&cat, &[], &BTreeMap::new(), DcatProfileKind::Eu301, None);
-        assert_eq!(
-            g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
-            Some(Term::Iri(
-                "https://opendata.example.org/publisher/default".into()
-            ))
+        let sk = serialize_catalogue(
+            &cat,
+            &[],
+            &BTreeMap::new(),
+            RdfFormat::JsonLd,
+            DcatProfile::from_token("sk").expect("installed"),
+            None,
         );
-        let sk = crate::jsonld::serialize_sk_catalogue_jsonld(&cat, &[], &pubs);
-        assert!(sk.contains("https://e.org/publisher/city"));
+        assert!(!sk.contains("poskytovateľ"));
+
+        cat.publisher_uri = Some("https://data.gov.sk/id/legal-subject/00000000".into());
+        cat.publisher_name = Some(BTreeMap::from([("sk".into(), "Mesto".into())]));
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfile::eu(), None);
+        let agent = g.first_object(&cat_subj, &format!("{}publisher", ns::DCT));
+        assert!(
+            matches!(&agent, Some(term) if term.as_iri().is_none()),
+            "a placeholder is no IRI, the declared name stays: {agent:?}"
+        );
     }
 }
