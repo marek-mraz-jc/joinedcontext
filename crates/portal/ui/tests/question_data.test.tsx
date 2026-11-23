@@ -3,7 +3,7 @@
  * for data: a file of theirs or a feed's address. The browser refuses what the Portal would, so a
  * wrong file is said here and nothing is sent; the answer is one of the three shapes of API/04 §5.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
@@ -150,6 +150,19 @@ describe("data a question asks for", () => {
     expect(results.violations.map((violation) => violation.id)).toEqual([]);
   });
 
+  it("says so when a workbook has no rows or its first row alone is over the question's size, and sends nothing", async () => {
+    const onAnswer = data(vi.fn(), EXCEL);
+    const person = userEvent.setup();
+    await person.upload(fileInput(), xlsxFile("headers.xlsx", { Sheet1: [["station", "bikes"]] }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.agentRun.question.file.empty);
+
+    await person.upload(fileInput(), xlsxFile("wide.xlsx", { Sheet1: [["w".repeat(2000)], ["kamppi"]] }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(i18n.t("agentRun.question.file.tooLarge", { kilobytes: 1 })),
+    );
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
   it("says a damaged workbook cannot be read and sends nothing", async () => {
     const onAnswer = data(vi.fn(), EXCEL);
     await userEvent.setup().upload(fileInput(), new File(["not a zip"], "broken.xlsx"));
@@ -171,6 +184,16 @@ describe("data a question asks for", () => {
     await person.clear(box);
     await person.type(box, "https://api.citybik.es/v2/networks/citybikes-helsinki{Enter}");
     expect(onAnswer).toHaveBeenCalledWith({ url: "https://api.citybik.es/v2/networks/citybikes-helsinki" });
+  });
+
+  it("refuses an address the browser's own check let through unread, such as a form submitted by script", async () => {
+    const onAnswer = data();
+    const box = screen.getByLabelText(en.agentRun.question.url.label);
+    expect(box).not.toHaveAccessibleDescription(expect.stringContaining(en.agentRun.question.url.invalid));
+    fireEvent.change(box, { target: { value: "not an address" } });
+    fireEvent.submit(box.closest("form") as HTMLFormElement);
+    expect(box).toHaveAccessibleDescription(expect.stringContaining(en.agentRun.question.url.invalid));
+    expect(onAnswer).not.toHaveBeenCalled();
   });
 
   it("shows only what the question asks for, and has no accessibility violations", async () => {

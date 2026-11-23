@@ -188,6 +188,81 @@ slots:
     }
 
     #[test]
+    fn each_linkml_range_maps_to_its_json_schema_type_and_format() {
+        let enums = Map::new();
+        for (range, want) in [
+            ("integer", json!({ "type": "integer" })),
+            ("float", json!({ "type": "number" })),
+            ("double", json!({ "type": "number" })),
+            ("decimal", json!({ "type": "number" })),
+            ("boolean", json!({ "type": "boolean" })),
+            ("date", json!({ "type": "string", "format": "date" })),
+            (
+                "datetime",
+                json!({ "type": "string", "format": "date-time" }),
+            ),
+            ("uri", json!({ "type": "string", "format": "uri" })),
+            ("uriorcurie", json!({ "type": "string", "format": "uri" })),
+            ("string", json!({ "type": "string" })),
+            ("UnknownEnum", json!({ "type": "string" })),
+        ] {
+            assert_eq!(property_of(range, &enums), want, "{range}");
+        }
+    }
+
+    fn envelope(kind: &str, name: &str, spec: Value) -> crate::resource::ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": kind,
+            "metadata": { "name": name, "namespace": "p" }, "spec": spec,
+        }))
+        .expect("an envelope")
+    }
+
+    /// Each link of endpoint, space and model missing answers `None`; with all three present and
+    /// no forge to read the LinkML source from, `None` too: never a guessed schema.
+    #[tokio::test]
+    async fn a_missing_endpoint_space_model_or_forge_gives_no_schema() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let types = ["Bike".to_owned()];
+        assert!(for_endpoint(&state, "p", "bikes", &types).await.is_none());
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "bikes",
+            json!({ "slug": "bikes", "contextSpaceRef": "mobility" }),
+        ));
+        assert!(
+            for_endpoint(&state, "p", "bikes", &types).await.is_none(),
+            "no space"
+        );
+        assert!(
+            of_endpoint(&state, "p", &json!({}), &types).await.is_none(),
+            "no space named"
+        );
+        state.mirror.upsert(envelope(
+            "ContextSpace",
+            "mobility",
+            json!({ "dataModelRef": "bikes" }),
+        ));
+        assert!(
+            for_endpoint(&state, "p", "bikes", &types).await.is_none(),
+            "no model"
+        );
+        state.mirror.upsert(envelope(
+            "DataModel",
+            "bikes",
+            json!({ "linkml": "models/bikes.yaml" }),
+        ));
+        assert!(
+            for_endpoint(&state, "p", "bikes", &types).await.is_none(),
+            "no forge"
+        );
+        assert!(
+            for_endpoint(&state, "p", "other", &types).await.is_none(),
+            "another slug"
+        );
+    }
+
+    #[test]
     fn what_the_model_does_not_declare_is_absent_and_bad_yaml_is_empty() {
         let schema = field_schema(MODEL, &["Ghost".to_owned()]);
         assert_eq!(schema, json!({}));

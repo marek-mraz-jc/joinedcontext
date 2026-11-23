@@ -20,6 +20,8 @@ use uuid::Uuid;
 const ORG: u128 = 0x0A;
 const DEFAULT: u128 = 0xD0;
 const OTHER: u128 = 0xE0;
+/// A catalogue the deployment names whose row no longer exists.
+const GAMMA: u128 = 0xF0;
 
 async fn state() -> DataroomState {
     let org = OrgId::from_uuid(Uuid::from_u128(ORG));
@@ -207,10 +209,43 @@ async fn two_organizations() -> DataroomState {
             [
                 ("com_alpha".to_owned(), (org, a)),
                 ("com_beta".to_owned(), (org, b)),
+                // An Organization whose catalogue row is gone is never a new home.
+                (
+                    "com_gamma".to_owned(),
+                    (org, CatalogueId::from_uuid(Uuid::from_u128(GAMMA))),
+                ),
+                // Nor one whose catalogue has no configured base.
+                (
+                    "com_delta".to_owned(),
+                    (org, CatalogueId::from_uuid(Uuid::from_u128(0xF1))),
+                ),
             ]
             .into(),
         )
-        .with_catalogue_bases([(b, "http://other.city.test".to_owned())].into())
+        .with_catalogue_bases(
+            [
+                (b, "http://other.city.test".to_owned()),
+                (
+                    CatalogueId::from_uuid(Uuid::from_u128(GAMMA)),
+                    "http://gamma.city.test".to_owned(),
+                ),
+            ]
+            .into(),
+        )
+}
+
+/// The installation's public base names the default catalogue only: another catalogue of the
+/// same Organization, with no base of its own, keeps the host it is read on.
+#[tokio::test]
+async fn the_public_base_is_the_default_catalogues_alone() {
+    let state = state()
+        .await
+        .with_public_base("https://data.city.test/opendata");
+    let (_, body) = get(state.clone(), "other.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://other.city.test"), "{body}");
+    assert!(!body.contains("data.city.test/opendata"), "{body}");
+    let (_, body) = get(state, "data.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://data.city.test/opendata"), "{body}");
 }
 
 /// `name` from the Endpoint `slug`, `visibility`, in `catalogue` of `state`'s store; withdrawn
@@ -300,6 +335,73 @@ async fn an_old_dataset_address_redirects() {
         let (status, location) = on_alpha(state.clone(), &format!("/dataset/{kept}")).await;
         assert_eq!((status, location), (StatusCode::NOT_FOUND, None), "{kept}");
     }
+    // A copy withdrawn there too is no new home.
+    seed(&state, DEFAULT, ("tram", "tramslug", "public"), true).await;
+    seed(&state, OTHER, ("tram", "tramslug", "public"), true).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/tram").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    // Moved the other way, into the default catalogue: its base is the installation's public base.
+    seed(&state, OTHER, ("bus", "busslug", "public"), true).await;
+    seed(&state, DEFAULT, ("bus", "busslug", "public"), false).await;
+    let mut req = Request::get("/dataset/bus").body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(mount("https", "city.test", "/com_beta/opendata"));
+    req.extensions_mut()
+        .insert(jc_router::Organization("com_beta".to_owned()));
+    let resp = router(state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
+    assert_eq!(
+        resp.headers()[header::LOCATION],
+        "https://data.city.test/opendata/dataset/bus"
+    );
+    // A new home that hides the dataset, or whose publisher is withdrawn, is no new home.
+    let beta = CatalogueId::from_uuid(Uuid::from_u128(OTHER));
+    let mut cat = state
+        .store
+        .get_catalogue(state.default_org_id, beta)
+        .await
+        .unwrap()
+        .unwrap();
+    // A catalogue with no base of its own is no new home, though the installation has one.
+    let mut delta = cat.clone();
+    delta.id = CatalogueId::from_uuid(Uuid::from_u128(0xF1));
+    delta.name = "delta".into();
+    delta.host = "delta.city.test".into();
+    state.store.upsert_catalogue(delta).await.unwrap();
+    seed(&state, DEFAULT, ("van", "vanslug", "public"), true).await;
+    seed(&state, 0xF1, ("van", "vanslug", "public"), false).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/van").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    seed(&state, GAMMA, ("air", "airslug", "public"), false).await;
+    cat.hidden_datasets.insert("air".into(), "kept out".into());
+    state.store.upsert_catalogue(cat.clone()).await.unwrap();
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    cat.hidden_datasets.clear();
+    state.store.upsert_catalogue(cat).await.unwrap();
+    let ctx = RequestCtx::new(
+        state.default_org_id,
+        beta,
+        dataroom_core::Subject::authenticated("seed", vec![state.default_org_id], Vec::new()),
+    );
+    let publisher = serde_json::from_value(serde_json::json!({
+        "orgId": state.default_org_id, "catalogueId": beta, "id": "city", "name": "city",
+        "title": {"en": "City"}, "description": {}, "uri": "https://city.test/publisher",
+        "state": "withdrawn", "editorGrants": [],
+        "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z",
+    }))
+    .expect("publisher");
+    state.store.upsert_publisher(&ctx, publisher).await.unwrap();
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await,
+        (StatusCode::NOT_FOUND, None)
+    );
 }
 
 /// T-6797: every absolute id and link names the catalogue's canonical base, whichever

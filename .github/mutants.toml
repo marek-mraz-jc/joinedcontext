@@ -4,6 +4,22 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
+  # the same; the clamp only bounds the loop (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',
+  # jc-chart Canvas::line: on an axis the line does not move along, the step's sign is never used
+  # (dx or dy is 0 and Bresenham never steps that way), so < and <= draw alike (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace < with <= in Canvas::line',
+  # jc-chart Canvas::disc: the offsets run -r..=r, so cx - x covers the same pixels as cx + x (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace \+ with - in Canvas::disc',
+  # jc-chart check: Instant::now() equal to the deadline to the nanosecond is never observed (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in check',
+  # jc-chart canvas: with no legend (0 px) the swatch loop runs for at most one colour and draws it
+  # past the right edge, which set() drops (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in canvas',
+  # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
+  # skipping them by name or not is alike; the @context half is held by a test (T-7622).
+  'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
@@ -28,6 +44,9 @@ exclude_re = [
   # odata-axum read `/$count` (T-7597): `top: Some(0)` only spares fetching rows nobody reads; the
   # count is computed apart from the page, so the answer is the same number with or without it.
   'odata-axum/src/table\.rs:\d+:\d+: delete field top from struct QueryOptions expression in read',
+  # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
+  # carries; without it the count is the same, the page is built and dropped (T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
@@ -53,6 +72,16 @@ exclude_re = [
   # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
   # way, so the guard `if class` changes nothing observable (T-7599).
   'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
+  # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
+  # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace == with != in push_email_match',
+  # kaisatsu-store-pg: list_groups' search query keeps only the matches and their ancestors (keep CTE), so the
+  # Rust prune after it finds no node to drop; kept as a second check on the search result.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace matches_or_has_matching_child -> bool with true',
+  # kaisatsu-store-pg: lock_grants orders a grant write against a cascading delete in another transaction
+  # (advisory lock); a single-connection test commits one after the other, so no test observes the lock.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace lock_grants -> Result<\(\)> with Ok\(\(\)\)',
   # kaisatsu-crypto: Kek's Drop zeroizes the key bytes on drop; no safe code can read freed memory, so no
   # test tells a zeroizing drop from an empty one (the zeroize crate's own tests hold it).
   'crates/kaisatsu/crypto/src/keys\.rs:.*replace <impl Drop for Kek>::drop with \(\)',

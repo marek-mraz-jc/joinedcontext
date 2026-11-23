@@ -91,6 +91,106 @@ fn bad_wkt_and_bad_geojson_are_errors() {
 }
 
 #[test]
+fn every_wkt_and_geojson_fault_is_named() {
+    // WKT: the M and ZM tags, an empty collection, and a keyword with an unknown tag.
+    assert_eq!(
+        parse_wkt("POINT M (1 2 9)").map(|g| format_wkt(&g)),
+        Ok(Ok("POINT (1 2)".to_string()))
+    );
+    assert_eq!(
+        parse_wkt("POINTZM (1 2 3 4)").map(|g| format_wkt(&g)),
+        Ok(Ok("POINT Z (1 2 3)".to_string()))
+    );
+    assert_eq!(
+        parse_wkt("GEOMETRYCOLLECTION EMPTY").map(|g| format_wkt(&g)),
+        Ok(Ok("GEOMETRYCOLLECTION EMPTY".to_string()))
+    );
+    assert_eq!(
+        parse_wkt("POINTM (1 2 9)").map(|g| format_wkt(&g)),
+        Ok(Ok("POINT (1 2)".to_string()))
+    );
+    assert!(parse_wkt("POINTS (1 2)").is_err());
+    // GeoJSON to WKT: each malformed shape answers its own message.
+    let wkt = |g: serde_json::Value| format_wkt(&Value::from_json_value(g));
+    for (g, msg) in [
+        (json!(5), "a GeoJSON geometry is an object, got number"),
+        (
+            json!({"coordinates": [1, 2]}),
+            "a GeoJSON geometry needs a type",
+        ),
+        (json!({"type": 7}), "a GeoJSON geometry needs a type"),
+        (
+            json!({"type": "Circle", "coordinates": [1, 2]}),
+            "\"Circle\" is not a GeoJSON geometry type",
+        ),
+        (
+            json!({"type": "Point"}),
+            "a GeoJSON Point needs coordinates",
+        ),
+        (
+            json!({"type": "GeometryCollection"}),
+            "a GeoJSON geometry needs geometries",
+        ),
+        (
+            json!({"type": "GeometryCollection", "geometries": {}}),
+            "GeoJSON geometries must be an array, got object",
+        ),
+        (
+            json!({"type": "LineString", "coordinates": "x"}),
+            "GeoJSON coordinates must be an array, got string",
+        ),
+        (
+            json!({"type": "Polygon", "coordinates": [[]]}),
+            "a nested GeoJSON coordinate array is empty",
+        ),
+        (
+            json!({"type": "LineString", "coordinates": [[0, 0], [1, 1, 1]]}),
+            "GeoJSON positions mix 2 and 3 dimensions",
+        ),
+    ] {
+        assert_eq!(wkt(g.clone()), Err(msg.to_string()), "{g}");
+    }
+    assert_eq!(
+        wkt(json!({"type": "GeometryCollection", "geometries": []})),
+        Ok("GEOMETRYCOLLECTION EMPTY".to_string())
+    );
+    let mut deep = json!({"type": "Point", "coordinates": [1, 2]});
+    for _ in 0..=ekiben_bloblang::ngsild::MAX_GEO_DEPTH {
+        deep = json!({"type": "GeometryCollection", "geometries": [deep]});
+    }
+    assert_eq!(
+        wkt(deep.clone()),
+        Err(format!(
+            "the GeometryCollection nests deeper than {}",
+            ekiben_bloblang::ngsild::MAX_GEO_DEPTH
+        ))
+    );
+    // geo_transform walks a collection and refuses one without geometries or nested past the bound.
+    let t = |p: serde_json::Value| {
+        run(
+            "root = this.geo_transform(from: \"EPSG:4326\", to: \"EPSG:3857\")",
+            p,
+        )
+    };
+    let gc = t(json!({"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [0, 0, 7]}]}))
+        .expect("a collection reprojects");
+    assert_eq!(
+        gc.to_json_value()["geometries"][0]["coordinates"],
+        json!([0, 0, 7])
+    );
+    assert!(t(json!({"type": "GeometryCollection"}))
+        .unwrap_err()
+        .contains("a GeometryCollection needs geometries"));
+    let mut nested = json!([0, 0]);
+    for _ in 0..20 {
+        nested = json!([nested]);
+    }
+    assert!(t(nested)
+        .unwrap_err()
+        .contains("the geometry nests deeper than"));
+}
+
+#[test]
 fn fuzzed_wkt_never_panics_and_what_parses_round_trips() {
     const ALPHABET: &[u8] = b"POINTLINESTRGYCMZEPMULTI (),,..-+e0123456789  ";
     let mut x: u64 = 0x9E37_79B9_7F4A_7C15;

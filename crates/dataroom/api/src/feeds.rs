@@ -873,6 +873,7 @@ mod tests {
     use super::{escape_xml, paging_first, FeedConformance};
     use dataroom_core::{Catalogue, Dataset};
     use dataroom_rdf::{DcatProfile, RdfLimits};
+    use std::sync::Arc;
 
     /// A dataset title or description lands in the Atom feed as XML 1.0 text: a character
     /// XML cannot carry becomes U+FFFD, so one record never makes the whole feed unreadable.
@@ -959,6 +960,39 @@ mod tests {
             .missing(&held, &moved, pk(&held, &moved), &full, None)
             .is_empty());
         assert_eq!(seen.verdicts.lock().unwrap().len(), 5);
+        // Without a page key nothing is kept; a full table starts over rather than grow.
+        assert_eq!(
+            &*seen.missing(&held, &cat, None, &bare, None),
+            ["notes".to_owned()]
+        );
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 5);
+        seen.verdicts
+            .lock()
+            .unwrap()
+            .extend((0..super::CONFORMANCE_CAP as u64).map(|k| (k, Arc::from([]))));
+        let village = Catalogue {
+            name: "village".into(),
+            ..cat.clone()
+        };
+        assert!(seen
+            .missing(&held, &village, pk(&held, &village), &full, None)
+            .is_empty());
+        assert_eq!(seen.verdicts.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_record_hashes_the_same_through_the_writer_as_its_bytes() {
+        use std::hash::Hasher;
+        use std::io::Write;
+        let (mut through, mut direct) = (
+            std::hash::DefaultHasher::new(),
+            std::hash::DefaultHasher::new(),
+        );
+        let mut w = super::HashWriter(&mut through);
+        assert_eq!(w.write(b"{\"a\":1}").unwrap(), 7);
+        w.flush().unwrap();
+        direct.write(b"{\"a\":1}");
+        assert_eq!(through.finish(), direct.finish());
     }
 
     #[test]
@@ -975,5 +1009,10 @@ mod tests {
             "@prefix a: <x#> .\n\n<P> a a:Page .\n\n<s1> a:p <o> .\n"
         );
         assert_eq!(paging_first(body.into(), "Q"), body);
+        // A paging block that never ends, or one above the prefixes' blank line, stays put.
+        let open = "@prefix a: <x#> .\n\n<s1> a:p <o> .\n\n<P> a a:Page ;";
+        assert_eq!(paging_first(open.into(), "P"), open);
+        let first = "@prefix a: <x#> .\n<P> a a:Page .\n\n<s1> a:p <o> .\n";
+        assert_eq!(paging_first(first.into(), "P"), first);
     }
 }

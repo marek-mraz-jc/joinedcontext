@@ -33,6 +33,6 @@ uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
 kaisatsu-store-memory = { path = "../store-memory" }
-tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "test-util"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

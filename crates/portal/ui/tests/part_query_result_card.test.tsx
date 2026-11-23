@@ -330,6 +330,13 @@ describe("a wide value in the card (T-2460)", () => {
     expect(view.rows[1].cells[near]).toBe("Polygon [24.9, 60.1 … 25, 60.2]");
   });
 
+  it("names a geometry that holds no position by its type alone, and a type with no coordinates as the object it is", () => {
+    expect(textOf({ type: "LineString", coordinates: [] })).toBe("LineString");
+    expect(textOf({ type: "GeometryCollection", geometries: [] })).toBe("GeometryCollection");
+    expect(textOf({ type: "Point" })).toBe("type: Point");
+    expect(textOf({ type: "Feature", coordinates: [1, 2] })).toBe("type: Feature; coordinates: 1, 2");
+  });
+
   it("folds a very long value inside its cell instead of widening the column", () => {
     const long = "x".repeat(4000);
     renderPart(<QueryResultCard result={card([alert(0, { description: { type: "Property", value: long } })])} />);

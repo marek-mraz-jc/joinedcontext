@@ -391,6 +391,111 @@ describe("LinkML visual editor", () => {
  * pointer can hit. These tests hold that: axe over the class and the slot open, every control
  * reachable in DOM order, and the four locales on the labels.
  */
+describe("the LinkML visual editor, the parts of a type and of a field", () => {
+  const SIX = `id: https://x.sk/m
+name: m
+prefixes:
+  bb: https://x.sk/t/
+classes:
+  Alpha:
+    class_uri: bb:Alpha
+    slots:
+      - pm10
+      - shape
+    attributes:
+      inlineOne:
+        range: string
+  Bravo: {class_uri: "bb:Bravo"}
+  Charlie: {class_uri: "bb:Charlie"}
+  Delta: {class_uri: "bb:Delta"}
+  Echo: {class_uri: "bb:Echo"}
+  Foxtrot: {class_uri: "bb:Foxtrot"}
+  Reading:
+    class_uri: bb:Reading
+slots:
+  pm10:
+    range: float
+    slot_uri: bb:pm10
+  shape:
+    range: Reading
+    inlined: true
+enums:
+  Level:
+    permissible_values:
+      low: {}
+`;
+
+  it("finds a type by its name once the model has more than five", async () => {
+    const { user } = renderEditor(SIX);
+    await user.type(screen.getByRole("searchbox", { name: en.models.findType }), "ech");
+    expect(screen.getByRole("button", { name: "Echo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bravo" })).toBeNull();
+  });
+
+  it("opens the shape of a structured value from the structures list", async () => {
+    const { user } = renderEditor(SIX);
+    await user.click(screen.getByText(/structure/i, { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Reading" }));
+    expect(screen.getByRole("button", { name: "Reading" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("lists an inline part read-only, without a kind, and says so with a dash", async () => {
+    renderEditor(SIX);
+    const row = screen.getByRole("button", { name: "inlineOne" }).closest("tr")!;
+    expect(within(row).getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("renames, re-parents and describes a class, and sets its IRI", async () => {
+    const { source, user } = renderEditor(SIX);
+    await user.click(screen.getByRole("button", { name: "Bravo" }));
+    await user.selectOptions(screen.getByLabelText(en.models.classParent), "Charlie");
+    await user.type(screen.getByLabelText(en.models.description), "air");
+    await user.click(screen.getByText(en.models.advanced));
+    const iri = screen.getByLabelText(en.models.classUri);
+    await user.clear(iri);
+    await user.type(iri, "bb:B2");
+    const name = screen.getByLabelText(en.models.className);
+    await user.clear(name);
+    await user.type(name, "Bee{Enter}");
+    const klass = parseModel(source()).classes.find((one) => one.name === "Bee");
+    expect(klass?.is_a).toBe("Charlie");
+    expect(klass?.description).toBe("air");
+    expect(klass?.class_uri).toBe("bb:B2");
+    expect(screen.getByRole("button", { name: "Bee" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("renames a field, ticks multivalued and deprecated, and picks an enum as its range", async () => {
+    const { source, user } = renderEditor(SIX);
+    await user.click(screen.getByRole("button", { name: "pm10" }));
+    await user.selectOptions(screen.getByLabelText(en.models.range), "Level");
+    await user.click(screen.getByRole("checkbox", { name: en.models.multivalued }));
+    await user.click(screen.getByRole("checkbox", { name: en.models.deprecatedKeep }));
+    const name = screen.getByLabelText(en.models.slotName);
+    await user.clear(name);
+    await user.type(name, "pm25{Enter}");
+    const slot = parseModel(source()).slots.find((one) => one.name === "pm25");
+    expect(slot?.range).toBe("Level");
+    expect(slot?.multivalued).toBe(true);
+    expect(slot?.deprecated).toBe(true);
+    expect(screen.getByRole("dialog", { name: "pm25" })).toBeInTheDocument();
+  });
+
+  it("closes the field dialog with Escape, and adds a place field by its kind", async () => {
+    const { source, user } = renderEditor(SIX);
+    await user.click(screen.getByRole("button", { name: "pm10" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: en.models.addSlot }));
+    const kinds = screen.getAllByRole("radio");
+    await user.click(kinds[2]);
+    expect(kinds[2]).toBeChecked();
+    await user.type(screen.getByRole("textbox", { name: en.models.slotName }), "where");
+    await user.click(screen.getByRole("button", { name: en.models.add }));
+    expect(parseModel(source()).slots.some((one) => one.name === "where")).toBe(true);
+  });
+});
+
 describe("the LinkML visual editor against the UI contract", () => {
   /** The editor alone, over the one document it edits: no test widget beside it for axe to read. */
   function Alone({ initial }: { initial: string }) {

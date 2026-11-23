@@ -129,6 +129,65 @@ describe("breaking change detector", () => {
     expect(laneOf(additive, "published", true)).toBe("red");
   });
 
+  it("names every other slot, class and enum change with its severity", () => {
+    const lines = (mutate: (source: string) => string) =>
+      classifyChanges(published, edited(mutate)).map((change) => `${change.severity} ${change.subject}: ${change.reason}`);
+    const PM10 = "  pm10:\n    range: float\n    slot_uri: bb:pm10\n    minimum_value: 0";
+
+    // A slot that gains a profile is only wider; one that loses it breaks the projections.
+    expect(lines((source) => source.replace(PM10, `${PM10}\n    subsets: [core]`))).toEqual([
+      "additive pm10: the profile core now takes this slot",
+    ]);
+    const profiled = parseModel(PUBLISHED.replace(PM10, `${PM10}\n    subsets: [core]`));
+    expect(classifyChanges(profiled, published).map((change) => `${change.severity} ${change.reason}`)).toEqual([
+      "breaking the profile core no longer takes this slot",
+    ]);
+
+    // A range that appears where there was none narrows the slot, one that goes widens it.
+    expect(lines((source) => source.replace("  station:\n    range: string\n", "  station:\n"))).toEqual([
+      "additive station: the range widened from string to none",
+    ]);
+    const none = parseModel(PUBLISHED.replace("  station:\n    range: string\n", "  station:\n"));
+    expect(classifyChanges(none, published).map((change) => change.reason)).toEqual([
+      "the range narrowed from none to string",
+    ]);
+
+    // An integer becomes a float: wider, never narrower.
+    const integer = parseModel(PUBLISHED.replace("range: float", "range: integer"));
+    expect(classifyChanges(integer, published).map((change) => `${change.severity} ${change.reason}`)).toEqual([
+      "additive the range widened from integer to float",
+    ]);
+
+    expect(lines((source) => source.replace(PM10, `${PM10}\n    deprecated: true\n    pattern: "^[0-9]+$"\n    maximum_value: 9`))).toEqual([
+      "additive pm10: the slot is marked deprecated, which keeps it valid and warns consumers",
+      "breaking pm10: a pattern was added or tightened, so values that validated before may not",
+      "breaking pm10: the maximum value was lowered",
+    ]);
+    expect(lines((source) => source.replace(PM10, `${PM10}\n    annotations:\n      ngsi_ld_kind: GeoProperty`))).toEqual([
+      "breaking pm10: the NGSI-LD kind changed from Property to GeoProperty",
+    ]);
+
+    const required = parseModel(PUBLISHED.replace(PM10, `${PM10}\n    required: true`));
+    expect(classifyChanges(required, published).map((change) => `${change.severity} ${change.reason}`)).toEqual([
+      "additive the slot is no longer required",
+    ]);
+
+    expect(lines((source) => source.replace("    slots: [pm10, station]", "    slots: [pm10, station]\n  Station:\n    class_uri: bb:Station\n    slots: []"))).toEqual([
+      "additive Station: a new class was added",
+    ]);
+    expect(lines((source) => source.replace("class_uri: bb:AirQualityObserved", "class_uri: bb:Air"))).toEqual([
+      "breaking AirQualityObserved: the class IRI changed from bb:AirQualityObserved to bb:Air",
+    ]);
+    const bigger = parseModel(PUBLISHED.replace("    slots: [pm10, station]", "    slots: [pm10, station]\n  Station:\n    class_uri: bb:Station\n    slots: []"));
+    expect(classifyChanges(bigger, published).map((change) => `${change.severity} ${change.subject}`)).toEqual([
+      "breaking Station",
+    ]);
+    expect(lines((source) => source.replace(/enums:[\s\S]*$/, "enums:\n  Other:\n    permissible_values:\n      a: {}\n"))).toEqual([
+      "breaking QualityBand: the enum was removed",
+      "additive Other: a new enum was added",
+    ]);
+  });
+
   it("sees no change where nothing changed", () => {
     const changes = classifyChanges(published, parseModel(PUBLISHED));
     expect(changes).toEqual([]);

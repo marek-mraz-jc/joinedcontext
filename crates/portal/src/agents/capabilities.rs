@@ -180,6 +180,20 @@ mod tests {
         // A write on an endpoint needs more than its name: the preset has to prepare changes.
         assert!(!read.writes("bikes"));
         assert!(read.refusal("call change_resource").contains("'read'"));
+        let last = *Path::ALL.last().expect("a path");
+        for (preset, word) in [
+            (Preset::Read, "read"),
+            (Preset::Propose, "propose"),
+            (Preset::Build, "build"),
+        ] {
+            assert_eq!(
+                chosen(preset, &[]).path_refusal(last),
+                format!(
+                    "the capabilities '{word}' do not include the path '{}'",
+                    last.id()
+                )
+            );
+        }
     }
 
     #[test]

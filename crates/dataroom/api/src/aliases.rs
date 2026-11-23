@@ -173,6 +173,8 @@ mod tests {
             "/catalog.ttl",
             "/organization/catalog",
             "/xyz/dataset/catalog",
+            // The catalogue read takes a name, never a name with an export extension.
+            "/api/v1/catalogue/datasets/catalog.ttl",
         ] {
             assert_eq!(at(uri), None, "{uri}");
         }

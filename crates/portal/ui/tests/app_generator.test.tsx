@@ -120,6 +120,10 @@ interface Options {
   grantStatus?: number;
   grant?: unknown;
   entities?: { body: unknown; status: number };
+  /** How many reads of the blueprints fail before one answers. */
+  blueprintFailures?: number;
+  /** Answers first what the file's own case needs beyond the generator's reads. */
+  hook?: (url: URL, request: Request) => Response | undefined;
 }
 
 function renderGenerator(options: Options = {}) {
@@ -132,7 +136,10 @@ function renderGenerator(options: Options = {}) {
     grantStatus = 200,
     grant = GRANT,
     entities = { body: ENTITIES, status: 200 },
+    blueprintFailures = 0,
+    hook,
   } = options;
+  let blueprintReads = 0;
 
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const request = input as Request;
@@ -147,10 +154,17 @@ function renderGenerator(options: Options = {}) {
         }),
       );
 
+    const hooked = hook?.(url, request);
+    if (hooked) {
+      return Promise.resolve(hooked);
+    }
     if (url.pathname.endsWith("/auth/me")) {
       return json(IDENTITY);
     }
     if (url.pathname.endsWith("/api/v1/blueprints")) {
+      if (blueprintReads++ < blueprintFailures) {
+        return json({ title: "Internal Server Error", status: 500, detail: "the blueprint store is restarting" }, 500);
+      }
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: blueprints });
     }
     if (url.pathname.endsWith("/endpoints") && request.method === "GET") {
@@ -204,9 +218,9 @@ async function openGenerator(user: ReturnType<typeof userEvent.setup>) {
 async function runBody(fetchMock: ReturnType<typeof vi.fn>): Promise<Record<string, unknown>> {
   const request = fetchMock.mock.calls
     .map((call) => call[0] as Request)
-    .find((candidate) => candidate.method === "POST");
+    .find((candidate) => candidate.method === "POST" && candidate.url.endsWith("/agent-runs"));
   expect(request).toBeDefined();
-  return (await request!.json()) as Record<string, unknown>;
+  return (await request!.clone().json()) as Record<string, unknown>;
 }
 
 /** Fills the form the way a user would, and waits for the derived needs to arrive. */
@@ -219,6 +233,78 @@ async function fill(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByLabelText(en.apps.generate.endpoint, { exact: false }), "ovzdusie-public");
   await screen.findByRole("group", { name: "AirQualityObserved" });
 }
+
+
+/**
+ * What "New endpoint" asks of the Portal beside the generator's own reads: the project's spaces and
+ * the models it may change, the rendering of the endpoint, its checked proposal and the Change
+ * followed afterwards. The new endpoint is on the project's list as soon as it is proposed.
+ */
+function newEndpointDoors(write: boolean, held: unknown[] = [ENDPOINT]): (url: URL, request: Request) => Response | undefined {
+  const created = { ...ENDPOINT, metadata: { ...ENDPOINT.metadata, name: "bikes-app", title: undefined } };
+  let proposed = false;
+  const list = (items: unknown[]) => Response.json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
+  return (url, request) => {
+    const path = url.pathname;
+    if (path === `/api/v1/projects/${PROJECT}/spaces`) {
+      return list([{ apiVersion: "joinedcontext.com/v1alpha1", kind: "ContextSpace", metadata: { name: "mobility", namespace: PROJECT }, spec: {} }]);
+    }
+    if (path === "/api/v1/organization/datamodels") {
+      return Response.json({
+        apiVersion: "joinedcontext.com/v1alpha1",
+        kind: "List",
+        items: [{ name: "mobility", project: PROJECT, space: "mobility", version: "0.3.0", lifecycle: "draft", classes: ["BikeHireDockingStation"] }],
+        smartDataModels: [],
+      });
+    }
+    if (path.endsWith("/datamodels/mobility/source")) {
+      return new Response("classes: {}\n", { headers: { "Content-Type": "text/yaml" } });
+    }
+    if (path.endsWith("/assistant/propose-endpoint")) {
+      return Response.json({
+        lane: write ? "red" : "yellow",
+        slug: SLUG,
+        endpoint: created,
+        policies: write
+          ? [{ apiVersion: "joinedcontext.com/v1alpha1", kind: "Policy", metadata: { name: "bikes-app-read-write", namespace: PROJECT }, spec: { operations: ["updateAttrs"] } }]
+          : [],
+        prefill: {},
+      });
+    }
+    if (path === `/api/v1/projects/${PROJECT}/changes/${CHANGE.metadata.name}`) {
+      return Response.json({ ...CHANGE, status: { ...CHANGE.status, phase: "PendingApproval" } });
+    }
+    if (url.searchParams.get("dryRun") === "All" && request.method !== "GET") {
+      return Response.json({ valid: true, verdict: { ok: true } });
+    }
+    if (request.method === "POST" && (path.endsWith("/endpoints") || path.endsWith("/import"))) {
+      proposed = true;
+      return Response.json(CHANGE, { status: 202 });
+    }
+    if (path === `/api/v1/projects/${PROJECT}/endpoints` && request.method === "GET") {
+      return list(proposed ? [...held, created] : held);
+    }
+    return undefined;
+  };
+}
+
+/** Opens "New endpoint", names it, picks the space and, for a write, a type, and proposes it. */
+async function proposeNewEndpoint(user: ReturnType<typeof userEvent.setup>, preset: "read" | "update") {
+  await user.click(screen.getByRole("button", { name: en.apps.generate.newEndpoint.open }));
+  const panel = await screen.findByRole("region", { name: en.apps.generate.newEndpoint.title });
+  await user.type(within(panel).getByRole("textbox", { name: new RegExp(en.apps.generate.newEndpoint.name) }), "bikes-app");
+  await user.click(within(panel).getByRole("combobox", { name: en.apps.generate.newEndpoint.space }));
+  await user.click(await screen.findByRole("option", { name: /mobility/ }));
+  if (preset === "update") {
+    await user.click(within(panel).getByRole("radio", { name: en.apps.generate.needs.presets.update }));
+    await user.click(within(panel).getByRole("combobox", { name: en.apps.generate.newEndpoint.types }));
+    await user.click(await screen.findByRole("option", { name: /BikeHireDockingStation/ }));
+  }
+  await user.click(within(panel).getByRole("button", { name: en.apps.generate.newEndpoint.propose }));
+}
+
+const endpointSelect = () =>
+  screen.getAllByLabelText(en.apps.generate.endpoint, { exact: false }).filter((element) => element.tagName === "SELECT")[0];
 
 describe("the app generator", () => {
   beforeEach(async () => {
@@ -358,6 +444,168 @@ describe("the app generator", () => {
       expect(needs[1].operations).toEqual(["queryEntity", "retrieveEntity"]);
     });
   });
+
+  it("says the blueprints could not be read and reads them again on Retry", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ blueprintFailures: 1 });
+    await openGenerator(user);
+
+    expect(await screen.findByText(new RegExp("the blueprint store is restarting"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(en.apps.generate.prompt, { exact: false })).not.toBeInTheDocument();
+    const reads = () =>
+      fetchMock.mock.calls.filter((call) => (call[0] as Request).url.endsWith("/api/v1/blueprints")).length;
+    expect(reads()).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: en.form.listRetry }));
+    expect(await screen.findByLabelText(en.apps.generate.prompt, { exact: false })).toBeInTheDocument();
+    expect(reads()).toBe(2);
+    expect(screen.queryByText(new RegExp("the blueprint store is restarting"))).not.toBeInTheDocument();
+  });
+
+  it("starts nothing when Enter submits a form that is not ready", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator();
+    await openGenerator(user);
+    await user.type(await screen.findByLabelText(en.apps.generate.name, { exact: false }), "ovzdusie-dnes{Enter}");
+
+    expectDenied(screen.getByRole("button", { name: en.apps.generate.submit }), en.apps.generate.missing.endpoint);
+    expect(fetchMock.mock.calls.map((call) => call[0] as Request).some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("ticks an attribute back after unticking it, and sends it again", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator();
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await fill(user);
+
+    await user.click(screen.getByLabelText("pm25"));
+    expect(screen.getByLabelText("pm25")).not.toBeChecked();
+    await user.click(screen.getByLabelText("pm25"));
+    expect(screen.getByLabelText("pm25")).toBeChecked();
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+
+    await waitFor(async () => {
+      const needs = (await runBody(fetchMock)).dataNeeds as { attrs: string[] }[];
+      expect(needs[0].attrs).toEqual(["location", "name", "pm10", "pm25"]);
+    });
+  });
+
+  it("drops an endpoint the person unticks, and one that becomes the primary, from the endpoints it reads beside", async () => {
+    const beside = (name: string, slug: string) => ({
+      ...ENDPOINT,
+      metadata: { ...ENDPOINT.metadata, name, title: { en: name } },
+      spec: { ...ENDPOINT.spec, contextSpaceRef: name, slug },
+    });
+    const kpis = beside("ovzdusie-kpi", "q3mzkq2v7w5ayxcbn4ltdj6hof");
+    const noise = beside("ovzdusie-noise", "r4nzlr3w8x6bzydco5mueka7pg");
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ endpoints: [ENDPOINT, kpis, noise] });
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await fill(user);
+
+    await user.click(screen.getByRole("button", { name: en.apps.generate.addEndpoint }));
+    const group = screen.getByRole("group", { name: en.apps.generate.moreEndpoints });
+    await user.click(within(group).getByLabelText("ovzdusie-kpi"));
+    await user.click(within(group).getByLabelText("ovzdusie-noise"));
+    expect(within(group).getByLabelText("ovzdusie-kpi")).toBeChecked();
+    await user.click(within(group).getByLabelText("ovzdusie-kpi"));
+    expect(within(group).getByLabelText("ovzdusie-kpi")).not.toBeChecked();
+    expect(within(group).getByLabelText("ovzdusie-noise")).toBeChecked();
+
+    // The noise endpoint becomes the primary: reading it beside itself would name it twice.
+    await user.selectOptions(screen.getByRole("combobox", { name: new RegExp(`^${en.apps.generate.endpoint}`) }), "ovzdusie-noise");
+    await screen.findByRole("group", { name: "AirQualityObserved" });
+    expect(within(screen.getByRole("group", { name: en.apps.generate.moreEndpoints })).queryByLabelText("ovzdusie-noise")).toBeNull();
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+
+    await waitFor(async () => {
+      const body = await runBody(fetchMock);
+      expect(body.endpointName).toBe("ovzdusie-noise");
+      expect(body).not.toHaveProperty("endpointNames");
+    });
+  });
+
+  it("opens and closes New endpoint without proposing anything", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ hook: newEndpointDoors(false) });
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+
+    await user.click(screen.getByRole("button", { name: en.apps.generate.newEndpoint.open }));
+    const panel = await screen.findByRole("region", { name: en.apps.generate.newEndpoint.title });
+    await user.click(within(panel).getByRole("button", { name: en.apps.generate.newEndpoint.cancel }));
+
+    expect(screen.queryByRole("region", { name: en.apps.generate.newEndpoint.title })).toBeNull();
+    expect(screen.getByRole("button", { name: en.apps.generate.newEndpoint.open })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map((call) => call[0] as Request).some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("builds on a new read endpoint when none was chosen yet", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ hook: newEndpointDoors(false) });
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await user.type(screen.getByLabelText(en.apps.generate.name, { exact: false }), "bikes-dnes");
+    await user.type(screen.getByLabelText(en.apps.generate.prompt, { exact: false }), "Bikes near me");
+
+    await proposeNewEndpoint(user, "read");
+
+    await waitFor(() => expect(endpointSelect()).toHaveValue("bikes-app"), { timeout: 8000 });
+    expect(screen.queryByRole("region", { name: en.apps.generate.newEndpoint.title })).toBeNull();
+    await screen.findByRole("group", { name: "AirQualityObserved" });
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+    await waitFor(async () => {
+      const body = await runBody(fetchMock);
+      expect(body.endpointName).toBe("bikes-app");
+    });
+  }, 15000);
+
+  it("reads a new read endpoint beside the one already chosen", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ hook: newEndpointDoors(false) });
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await fill(user);
+
+    await proposeNewEndpoint(user, "read");
+
+    const group = await screen.findByRole("group", { name: en.apps.generate.moreEndpoints }, { timeout: 8000 });
+    expect(within(group).getByLabelText("bikes-app")).toBeChecked();
+    expect(endpointSelect()).toHaveValue("ovzdusie-public");
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+    await waitFor(async () => {
+      expect((await runBody(fetchMock)).endpointNames).toEqual(["ovzdusie-public", "bikes-app"]);
+    });
+  }, 15000);
+
+  it("makes a new endpoint that writes the primary one and keeps the ones read before it beside, the old primary first", async () => {
+    const kpis = {
+      ...ENDPOINT,
+      metadata: { ...ENDPOINT.metadata, name: "ovzdusie-kpi", title: { en: "Air quality indicators" } },
+      spec: { ...ENDPOINT.spec, contextSpaceRef: "ovzdusie-kpi", slug: "q3mzkq2v7w5ayxcbn4ltdj6hof" },
+    };
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator({ endpoints: [ENDPOINT, kpis], hook: newEndpointDoors(true, [ENDPOINT, kpis]) });
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: en.apps.generate.addEndpoint }));
+    await user.click(within(screen.getByRole("group", { name: en.apps.generate.moreEndpoints })).getByLabelText("Air quality indicators"));
+
+    await proposeNewEndpoint(user, "update");
+
+    await waitFor(() => expect(endpointSelect()).toHaveValue("bikes-app"), { timeout: 8000 });
+    const group = await screen.findByRole("group", { name: en.apps.generate.moreEndpoints });
+    expect(within(group).getByLabelText("Air quality open data")).toBeChecked();
+    expect(within(group).getByLabelText("Air quality indicators")).toBeChecked();
+    await screen.findByRole("group", { name: "AirQualityObserved" });
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+    await waitFor(async () => {
+      expect((await runBody(fetchMock)).endpointNames).toEqual(["bikes-app", "ovzdusie-public", "ovzdusie-kpi"]);
+    });
+  }, 15000);
 
   it("opens on the endpoints the assistant's Build an app path handed over (T-2696)", async () => {
     const kpis = {
@@ -509,6 +757,27 @@ describe("the app generator", () => {
         name: new RegExp(`ovzdusie-dnes|${draftOpenLabel}|open|instead`, "i"),
       });
     expect(link).toHaveAttribute("href", `/projects/${PROJECT}/apps/ovzdusie-dnes`);
+  });
+
+  it("says the Portal did not answer when the run cannot be started, and lets the person press the button again", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderGenerator();
+    await openGenerator(user);
+    await screen.findByLabelText(en.apps.generate.endpoint, { exact: false });
+    await fill(user);
+    const answered = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input) => {
+      if ((input as Request).method === "POST") throw new TypeError("Failed to fetch");
+      return answered(input);
+    });
+
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
+    expect(window.location.pathname).toBe(`/projects/${PROJECT}/apps`);
+
+    fetchMock.mockImplementation(answered);
+    await user.click(screen.getByRole("button", { name: en.apps.generate.submit }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/projects/${PROJECT}/apps/ovzdusie-dnes`));
   });
 
   it("says a generated app is reachable only to a signed-in user (ADR-N-019)", async () => {

@@ -122,6 +122,15 @@ mod tests {
     use std::io::{Cursor, Read};
 
     #[test]
+    fn flushing_the_shared_buffer_keeps_its_bytes() {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let mut shared = Shared(bytes.clone());
+        assert_eq!(shared.write(b"zip").ok(), Some(3));
+        assert!(shared.flush().is_ok());
+        assert_eq!(bytes.lock().map(|b| b.clone()).ok(), Some(b"zip".to_vec()));
+    }
+
+    #[test]
     fn every_member_reads_back() -> Result<(), Box<dyn std::error::Error>> {
         let mut bundle = Bundle::new(1 << 20);
         bundle.add("Car.csv", b"id\r\nurn:a\r\n")?;

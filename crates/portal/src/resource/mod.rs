@@ -474,6 +474,120 @@ mod tests {
     }
 
     #[test]
+    fn a_kind_lives_in_the_organization_its_project_or_by_its_namespace() {
+        let scoped = |want: fn(&Scope) -> bool| {
+            kinds()
+                .find(|info| want(&info.scope))
+                .expect("a kind of that scope")
+        };
+        let org_only = scoped(|s| matches!(s, Scope::Organization));
+        let project_only = scoped(|s| matches!(s, Scope::Project));
+        let either = by_kind("Role").expect("Role");
+        assert!(matches!(either.scope, Scope::OrganizationOrProject));
+
+        assert!(belongs_to_the_organization(org_only.kind, Some("doprava")));
+        assert!(!belongs_to_the_organization(project_only.kind, None));
+        assert!(belongs_to_the_organization("Role", None));
+        assert!(belongs_to_the_organization("Role", Some("")));
+        assert!(belongs_to_the_organization(
+            "Role",
+            Some(crate::permissions::ORG_NAMESPACE)
+        ));
+        assert!(!belongs_to_the_organization("Role", Some("doprava")));
+        assert!(!belongs_to_the_organization("NoSuchKind", None));
+
+        let org = crate::permissions::ORG_NAMESPACE;
+        assert_eq!(homes(org_only, "doprava"), [org]);
+        assert_eq!(homes(project_only, "doprava"), ["doprava"]);
+        assert_eq!(homes(either, "doprava"), ["doprava", org]);
+        assert_eq!(homes(either, org), [org]);
+        assert_eq!(home(either, "doprava"), "doprava");
+        assert_eq!(home(org_only, "doprava"), org);
+    }
+
+    #[test]
+    fn the_etag_is_a_quoted_sha256_that_ignores_status_only() {
+        let mut env = ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Policy".to_owned(),
+            metadata: ObjectMeta {
+                name: "citizens".to_owned(),
+                namespace: Some("doprava".to_owned()),
+                ..Default::default()
+            },
+            spec: serde_json::json!({"rules": []}),
+            status: None,
+        };
+        let tag = env.etag();
+        assert_eq!(tag.len(), 66, "{tag}");
+        assert!(tag.starts_with('"') && tag.ends_with('"'));
+        assert!(tag[1..65]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        env.status = Some(serde_json::from_value(serde_json::json!({})).expect("status"));
+        assert_eq!(env.etag(), tag, "status is not part of the manifest");
+        env.strip_status();
+        assert!(env.status.is_none());
+        env.spec = serde_json::json!({"rules": [{"allow": "read"}]});
+        assert_ne!(env.etag(), tag, "a changed spec changes the tag");
+    }
+
+    #[test]
+    fn every_phase_has_its_wire_name() {
+        for (phase, name) in [
+            (Phase::Draft, "Draft"),
+            (Phase::Pending, "Pending"),
+            (Phase::Deploying, "Deploying"),
+            (Phase::Live, "Live"),
+            (Phase::Error, "Error"),
+            (Phase::Drifted, "Drifted"),
+        ] {
+            assert_eq!(phase_str(phase), name);
+        }
+    }
+
+    #[test]
+    fn a_pipeline_names_its_targets_in_either_shape() {
+        use serde_json::json;
+        assert_eq!(
+            pipeline_targets(&json!({"targetEndpoint": "urn:a"})),
+            ["urn:a"]
+        );
+        assert_eq!(
+            pipeline_targets(&json!({"outputs": [
+                {"targetEndpoint": "urn:b"}, {"other": 1}, {"targetEndpoint": "urn:c"}
+            ]})),
+            ["urn:b", "urn:c"]
+        );
+        assert!(pipeline_targets(&json!({"outputs": "none"})).is_empty());
+        assert!(pipeline_targets(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_reference_is_a_name_or_an_object_with_one() {
+        use serde_json::json;
+        assert_eq!(reference_name(&json!("transport")), Some("transport"));
+        assert_eq!(
+            reference_name(&json!({"kind": "ContextSpace", "name": "transport"})),
+            Some("transport")
+        );
+        assert_eq!(reference_name(&json!({"kind": "ContextSpace"})), None);
+        assert_eq!(reference_name(&json!(7)), None);
+        assert_eq!(
+            model_reference(&json!({"name": "air", "namespace": "org"}), "doprava"),
+            Some(("org", "air"))
+        );
+        assert_eq!(
+            model_reference(&json!("air"), "doprava"),
+            Some(("doprava", "air"))
+        );
+        assert_eq!(
+            model_reference(&json!({"namespace": "org"}), "doprava"),
+            None
+        );
+    }
+
+    #[test]
     fn dns1123_validation_rules() {
         assert!(is_dns1123("public-air"));
         assert!(is_dns1123("a"));

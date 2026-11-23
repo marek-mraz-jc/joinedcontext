@@ -34,6 +34,10 @@ const HOST: &str = "data.city.test";
 struct FailingStore {
     inner: MemoryStore,
     failing: Mutex<BTreeSet<&'static str>>,
+    /// Methods that answer a write conflict, as a concurrent writer would make them.
+    conflicting: Mutex<BTreeSet<&'static str>>,
+    /// How many conflicts were answered.
+    conflicts: std::sync::atomic::AtomicUsize,
 }
 
 impl FailingStore {
@@ -41,7 +45,16 @@ impl FailingStore {
         Self {
             inner: MemoryStore::new(),
             failing: Mutex::new(BTreeSet::new()),
+            conflicting: Mutex::new(BTreeSet::new()),
+            conflicts: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    fn conflict(&self, methods: &[&'static str]) {
+        self.conflicting
+            .lock()
+            .unwrap()
+            .extend(methods.iter().copied());
     }
 
     fn fail(&self, methods: &[&'static str]) {
@@ -50,6 +63,7 @@ impl FailingStore {
 
     fn heal(&self) {
         self.failing.lock().unwrap().clear();
+        self.conflicting.lock().unwrap().clear();
     }
 
     fn fails(&self, method: &str) -> bool {
@@ -61,6 +75,12 @@ macro_rules! forward {
     ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
         $(
             fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
+                if self.conflicting.lock().unwrap().contains(stringify!($name)) {
+                    self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Box::pin(async {
+                        Err(DataroomError::Conflict(concat!(stringify!($name), " conflicted").into()))
+                    });
+                }
                 if self.fails(stringify!($name)) {
                     return Box::pin(async {
                         Err(DataroomError::Storage(concat!(stringify!($name), " failed").into()))
@@ -884,6 +904,15 @@ async fn ckan_site_and_listing_actions() {
     // An authenticated GET is not publicly cacheable.
     let a = get(app, "/api/3/action/site_read", Some("tok-member")).await;
     assert_eq!(a.header("cache-control"), "private, no-store");
+    // A public dataset is publicly cacheable for anonymous callers alone.
+    for (token, cache) in [
+        (None, "public, max-age=60"),
+        (Some("tok-member"), "private, no-store"),
+    ] {
+        let a = get(app, "/api/3/action/package_show?id=open", token).await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.header("cache-control"), cache, "{token:?}");
+    }
 
     // tag_list: tags of public active datasets only.
     let tags = get(app, "/api/3/action/tag_list", None).await.json()["result"].clone();
@@ -1344,10 +1373,12 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["organization"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["organization"].is_object()
+            && v["result"]["search_facets"]["license_id"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = ckan(
         app,
         "package_search",
@@ -1367,10 +1398,19 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["tags"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["tags"].is_object()
+            && v["result"]["search_facets"]["organization"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    // An anonymous search is publicly cacheable unless it asks for private records.
+    for (flags, cache) in [
+        ("", "public, max-age=60"),
+        ("?include_private=true", "private, no-store"),
+    ] {
+        let a = get(app, &format!("/api/3/action/package_search{flags}"), None).await;
+        assert_eq!(a.header("cache-control"), cache, "{flags}");
+    }
     assert_eq!(v["result"]["sort"], "score desc, metadata_modified desc");
     let a = get(
         app,
@@ -1403,6 +1443,15 @@ async fn ckan_dataset_and_resource_writes() {
         "package_create",
         Some("tok-editor"),
         json!({"name": "open"}),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
+    // A caller who sees the dataset learns the name is taken, though it may not propose one.
+    let a = ckan(
+        app,
+        "package_create",
+        Some("tok-member"),
+        json!({"name": "open", "owner_org": "city"}),
     )
     .await;
     assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
@@ -1503,17 +1552,24 @@ async fn ckan_dataset_and_resource_writes() {
         .unwrap();
     assert_eq!(ds.title.get("sk").map(String::as_str), Some("Patched"));
     // A patch of `private` alone changes the visibility the stored record carried.
-    for (private, want) in [
-        (false, dataroom_core::Visibility::Public),
-        (true, dataroom_core::Visibility::Internal),
+    // One that agrees with it, or beside an explicit `visibility`, keeps what it names.
+    for (patch, want) in [
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (
+            json!({"private": true}),
+            dataroom_core::Visibility::Internal,
+        ),
+        (
+            json!({"private": true, "visibility": "public"}),
+            dataroom_core::Visibility::Public,
+        ),
+        (json!({"private": "yes"}), dataroom_core::Visibility::Public),
     ] {
-        let a = ckan(
-            app,
-            "package_patch",
-            Some("tok-editor"),
-            json!({"id": "fresh", "private": private}),
-        )
-        .await;
+        let private = patch.clone();
+        let mut body = patch;
+        body["id"] = json!("fresh");
+        let a = ckan(app, "package_patch", Some("tok-editor"), body).await;
         assert_eq!(a.status, StatusCode::OK, "{}", a.body);
         let ds = w
             .store
@@ -2606,6 +2662,21 @@ async fn odata_rows_follow_package_show() {
     assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
     let a = get(app, "/odata/v4/Datasets('pkg-open')", None).await;
     assert_eq!(a.json()["name"], "open", "{}", a.body);
+    // The count keeps the filter and its aliases.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20'open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "the filter counts one");
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20@n&@n='open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "an alias fills the filter");
     let a = get(app, "/odata/v4/Distributions/$count", None).await;
     assert_eq!(a.body, "4", "two datasets with two distributions each");
     let a = get(app, "/odata/v4/Datasets?$count=true&$top=1", None).await;
@@ -2812,6 +2883,11 @@ fn profile(id: &str, version: &str) -> Value {
 async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     let w = world().await;
     let app = &w.app;
+    // The catalogue's own uploads unreadable: an error, never a list without them.
+    w.store.fail(&["list_profiles"]);
+    let a = get(app, "/api/v1/profiles", None).await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     let a = get(app, "/api/v1/profiles", None).await;
     assert_eq!(a.status, StatusCode::OK);
     let v = a.json();
@@ -3213,6 +3289,31 @@ async fn branding_logo_and_static_assets() {
         "a logo the catalogue did not keep is not reported as saved: {}",
         a.body
     );
+    // A write that keeps conflicting is read again and tried three times, then answered 409; a
+    // catalogue that cannot be read again between tries is a storage error.
+    w.store.heal();
+    w.store.conflict(&["save_catalogue"]);
+    let logo = || {
+        send(
+            app,
+            Method::POST,
+            "/api/v1/assets/logo",
+            Some("tok-admin"),
+            &[],
+            Body::from(svg),
+        )
+    };
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    assert_eq!(
+        w.store.conflicts.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "three tries, no fourth"
+    );
+    w.store.fail(&["get_catalogue"]);
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     w.store.heal();
 
     for (uri, ct) in [
@@ -3636,6 +3737,11 @@ async fn pages_lists_publishers_static_pages_and_routing() {
     }
     let a = get(app, "/assistants/nope", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    assert!(
+        a.body.contains("assistant guide 'nope' not found"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         get(app, "/no/such/page/here", None).await.status,
         StatusCode::NOT_FOUND
@@ -4127,14 +4233,18 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     // `?lang=` picks an offered language; any other value leaves the default in place.
     let a = get(app, "/about?lang=en", None).await;
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
+    // A language in the path outranks `?lang=`.
+    let a = get(app, "/sk/about?lang=en", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
@@ -4372,6 +4482,33 @@ async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
         }
     }
 
+    // The flags widen an admin's search, one each: a draft, a withdrawn publisher's dataset.
+    for (flags, draft, orphan) in [
+        ("", false, false),
+        ("&include_drafts=true", true, false),
+        ("&include_private=true", false, true),
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50{flags}"),
+            Some("tok-admin"),
+        )
+        .await;
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            (
+                names.iter().any(|n| n == "draft-one"),
+                names.iter().any(|n| n == "orphan")
+            ),
+            (draft, orphan),
+            "{flags}: {names:?}"
+        );
+    }
     let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     assert!(!a.body.contains("veiled"), "{}", a.body);
@@ -4468,6 +4605,15 @@ async fn a_huge_page_number_answers_an_empty_page() {
 // ---------------------------------------------------------------------------------------------
 // Renamed datasets (evidence/jc-dev/RENAMES.md).
 // ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_aliases_leave_the_router_as_it_is() {
+    let w = world_with(|s| dataroom_api::with_dataset_aliases(router(s), Default::default())).await;
+    let a = get(&w.app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    let a = get(&w.app, "/api/3/action/package_show?id=before", None).await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
+}
 
 #[tokio::test]
 async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {

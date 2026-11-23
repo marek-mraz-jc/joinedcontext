@@ -115,7 +115,11 @@ mod tests {
     /// T-5895: the share a process sets is the capacity the cache takes.
     #[test]
     fn a_set_share_is_the_capacity() {
+        // Below the default, so a cache another test sizes meanwhile stays under its cap.
+        set_max_bytes(MAX_BYTES - 1);
+        let set = CAPACITY.load(Ordering::Relaxed);
         set_max_bytes(MAX_BYTES);
+        assert_eq!(set, MAX_BYTES - 1);
         assert_eq!(CAPACITY.load(Ordering::Relaxed), MAX_BYTES);
     }
 
@@ -189,6 +193,8 @@ mod tests {
             let (read, _) = read(2_000 + n, &bytes, &BIG);
             assert!(read.is_ok());
         }
-        assert!(held_bytes() <= MAX_BYTES, "{} > {MAX_BYTES}", held_bytes());
+        let held = held_bytes();
+        assert!(held <= MAX_BYTES, "{held} > {MAX_BYTES}");
+        assert!(held >= 1 << 20, "{held}: not one of them held");
     }
 }

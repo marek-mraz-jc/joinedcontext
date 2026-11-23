@@ -60,7 +60,7 @@ function renderPanel(answer: Reply, rebuild: Reply = { status: 202, body: {} }, 
       </I18nextProvider>
     </QueryClientProvider>,
   );
-  return { fetchMock, view };
+  return { fetchMock, view, client };
 }
 
 async function panel(): Promise<HTMLElement> {
@@ -100,6 +100,21 @@ describe("the build of an application on the forge", () => {
     const section = await panel();
     expect(within(section).getByText(en.apps.build.run.failed.replace("{commit}", "3f1c0e2"))).toBeInTheDocument();
     expect(within(section).queryByRole("link", { name: new RegExp(en.apps.build.package) })).toBeNull();
+  });
+
+  // A cancelled or skipped run is neither a build nor a failure: it has its own line.
+  it.each(["cancelled", "skipped"])("reads a %s run as cancelled", async (conclusion) => {
+    renderPanel({ status: 200, body: built({ run: { ...built().run, conclusion } }) });
+    const section = await panel();
+    expect(within(section).getByText(en.apps.build.run.cancelled.replace("{commit}", "3f1c0e2"))).toBeInTheDocument();
+    expect(within(section).queryByText(en.apps.build.run.failed.replace("{commit}", "3f1c0e2"))).toBeNull();
+  });
+
+  // A forge that cannot be read is one warning, not a blank: only a 404 draws nothing.
+  it("warns that the build cannot be read when the API fails", async () => {
+    renderPanel({ status: 500, body: { title: "Internal Server Error", status: 500 } });
+    expect(await screen.findByText(en.apps.build.unreadable)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.apps.build.rebuild })).toBeNull();
   });
 
   // AP-103: Rebuild asks the forge once, and says it did.
@@ -211,8 +226,10 @@ describe("the build of an application on the forge", () => {
 
   // PF-59, AP-100: nothing for an App the person may not read; one line for an App without a repository.
   it("draws nothing for an unreadable App and one line for an App not built on the forge", async () => {
-    const { view } = renderPanel({ status: 404, body: { title: "Not Found", status: 404, detail: "app 'bikes' not found" } });
-    await vi.waitFor(() => expect(view.container.innerHTML).toBe(""));
+    const { view, client } = renderPanel({ status: 404, body: { title: "Not Found", status: 404, detail: "app 'bikes' not found" } });
+    // Empty while the read is on its way too, so wait until the answer is the 404 itself.
+    await vi.waitFor(() => expect(client.getQueryCache().getAll().map((query) => query.state.status)).toEqual(["error"]));
+    expect(view.container.innerHTML).toBe("");
     view.unmount();
     vi.unstubAllGlobals();
 

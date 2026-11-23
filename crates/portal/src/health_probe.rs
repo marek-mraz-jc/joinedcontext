@@ -444,6 +444,14 @@ mod tests {
             judge_surface("p", "e", "websocket", true, &answer(101, 30)).status,
             Status::Ok
         );
+        let moved = judge_surface("p", "e", "odata", true, &answer(302, 30));
+        assert_eq!(moved.status, Status::Warn, "a redirect is not the surface");
+        let plain = judge_surface("p", "e", "odata", true, &answer(102, 30));
+        assert_eq!(
+            plain.status,
+            Status::Warn,
+            "only a websocket answers 101 as up"
+        );
         let down = judge_surface(
             "p",
             "e",

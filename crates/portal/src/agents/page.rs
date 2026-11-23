@@ -166,7 +166,10 @@ mod tests {
         );
         assert!(list.section().contains("jc_resource_list"));
         let new = parse("/projects/helsinki/pipelines/new", "helsinki").expect("a form");
-        assert_eq!((new.name, new.sub.as_deref()), (None, Some("new")));
+        assert_eq!(
+            (new.name.as_deref(), new.sub.as_deref()),
+            (None, Some("new"))
+        );
         let models = parse("/projects/helsinki/models", "helsinki").expect("models");
         assert_eq!(models.kind.as_deref(), Some("DataModel"));
         let approvals =
@@ -180,6 +183,18 @@ mod tests {
             .contains("approvals page, open on `chg-00000253`"));
         let edit = parse("/projects/helsinki/endpoints/bikes/edit", "helsinki").expect("edit");
         assert_eq!(edit.sub.as_deref(), Some("edit"));
+        assert!(
+            edit.section()
+                .contains("the Endpoint `bikes` of this project, its edit view."),
+            "{}",
+            edit.section()
+        );
+        assert!(
+            new.section()
+                .contains(", with the form for a new one open."),
+            "{}",
+            new.section()
+        );
     }
 
     #[test]

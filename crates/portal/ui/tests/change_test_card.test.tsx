@@ -74,6 +74,30 @@ describe("the change's test", () => {
     expect(within(card).queryByRole("table")).not.toBeInTheDocument();
   });
 
+  it("lists each finding of a failed verdict on its member and drops the ones that say nothing", () => {
+    const card = renderCard(
+      step("failed", {
+        source: { endpoint: "helsinki-all" },
+        verdict: {
+          ok: false,
+          findings: [
+            { path: "spec.mapping", message: "needs a target type" },
+            { message: "no source is named" },
+            { path: "spec.empty" },
+            {},
+            "not a finding",
+          ],
+        },
+        records: 0,
+      }),
+    );
+    expect(within(card).getByText(en.agentRun.changeTest.failed)).toBeInTheDocument();
+    expect(within(card).getByText("spec.mapping needs a target type")).toBeInTheDocument();
+    expect(within(card).getByText("no source is named")).toBeInTheDocument();
+    expect(within(card).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(card).queryByRole("table")).not.toBeInTheDocument();
+  });
+
   it("says why a pipeline could not be tested and shows no records", () => {
     const card = renderCard(step("ok", { untested: "this conversation does not read its endpoint 'helsinki-all'" }));
     expect(within(card).getByText(en.agentRun.changeTest.untested)).toBeInTheDocument();
