@@ -408,8 +408,16 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
             .error_get()
             .unwrap()
             .to_string();
-        assert!(err.ends_with("€..."), "{pad}: {}", err.len());
+        assert!(
+            err.ends_with("€...") && err.len() <= 4096 + 3,
+            "{pad}: {}",
+            err.len()
+        );
     }
+    // An error of exactly 4096 bytes is whole.
+    let out = run("jq:\n  query: 'error(\"a\" * 4094)'\n", &["{}"]).await;
+    let err = out[0][0].error_get().unwrap().to_string();
+    assert_eq!(err, format!("\"{}\"", "a".repeat(4094)));
     let err = build_yaml("jq: {}\n").err().unwrap().to_string();
     assert!(err.contains("field 'query' is required"), "{err}");
     let err = build_yaml("jq:\n  query: no_such_fn(1)\n")
