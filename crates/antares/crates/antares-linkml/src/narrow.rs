@@ -632,8 +632,8 @@ mod tests {
     fn an_authored_iri_is_kept_only_when_absolute_and_not_the_core_one() {
         let core = "https://uri.etsi.org/ngsi-ld/default-context/speed";
         let written = "city:speed".to_owned();
-        assert!(authored(core, None, core).is_empty());
-        assert!(authored("nope:speed", None, core).is_empty());
+        assert_eq!(authored(core, None, core), Vec::<String>::new());
+        assert_eq!(authored("nope:speed", None, core), Vec::<String>::new());
         assert_eq!(
             authored("https://e.org/city/speed", Some(&written), core),
             ["city:speed"]
