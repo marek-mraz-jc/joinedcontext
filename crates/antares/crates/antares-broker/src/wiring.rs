@@ -193,17 +193,12 @@ pub async fn wire_nats(
         let kv = bus.subs_kv().await?;
         let kv_for_hook = kv.clone();
         let bus_for_subs = bus.clone();
-        state.sub_sync = Some(Arc::new(
-            move |tenant: &TenantId, kind: Kind, id: &str, doc: Option<&serde_json::Value>| {
+        let sub_queue = ordered_sync(
+            "subscription",
+            move |key: String, (value, present): (serde_json::Value, bool)| {
                 let kv = kv_for_hook.clone();
                 let bus = bus_for_subs.clone();
-                let present = doc.is_some();
-                let key = kv_key(tenant.as_str(), kind, id);
-                let value = serde_json::json!({
-                    "tenant": tenant.as_str(), "id": id, "present": present,
-                    "csub": kind == Kind::CSourceSubscription,
-                });
-                tokio::spawn(async move {
+                async move {
                     let bytes = serde_json::to_vec(&value).unwrap_or_default();
                     // The store row is already committed. A lost put leaves this
                     // subscription invisible to every matcher pod — silently, and
@@ -218,10 +213,16 @@ pub async fn wire_nats(
                                 // A delete: once the watchers had it, drop the
                                 // entry so the bucket stays O(live) (T-7449).
                                 // A failed purge leaves it to SUBS_MAX_AGE.
-                                tokio::time::sleep(nats::SUBS_TOMBSTONE_GRACE).await;
-                                if let Err(e) = bus.retire_subscription_key(&key, revision).await {
-                                    tracing::warn!("sub KV retire of {key} failed: {e}");
-                                }
+                                // Off the ordered queue: the grace must not
+                                // hold the writes behind it.
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(nats::SUBS_TOMBSTONE_GRACE).await;
+                                    if let Err(e) =
+                                        bus.retire_subscription_key(&key, revision).await
+                                    {
+                                        tracing::warn!("sub KV retire of {key} failed: {e}");
+                                    }
+                                });
                                 return;
                             }
                             Err(e) => {
@@ -234,7 +235,18 @@ pub async fn wire_nats(
                         "sub KV sync gave up for {key} — this subscription is not mirrored \
                      until the next restart"
                     );
+                }
+            },
+        );
+        state.sub_sync = Some(Arc::new(
+            move |tenant: &TenantId, kind: Kind, id: &str, doc: Option<&serde_json::Value>| {
+                let present = doc.is_some();
+                let key = kv_key(tenant.as_str(), kind, id);
+                let value = serde_json::json!({
+                    "tenant": tenant.as_str(), "id": id, "present": present,
+                    "csub": kind == Kind::CSourceSubscription,
                 });
+                sub_queue(key, (value, present));
             },
         ));
 
@@ -242,15 +254,11 @@ pub async fn wire_nats(
         // ids only like the subscription mirror (contextSourceInfo stays in
         // the sealed row).
         let bus_for_reg = bus.clone();
-        state.reg_sync = Some(Arc::new(
-            move |tenant: &TenantId, id: &str, doc: Option<&serde_json::Value>| {
+        let reg_queue = ordered_sync(
+            "registration",
+            move |(tenant, id): (String, String), delta: serde_json::Value| {
                 let bus = bus_for_reg.clone();
-                let delta = serde_json::json!({
-                    "tenant": tenant.as_str(), "id": id, "present": doc.is_some(),
-                });
-                let tenant = tenant.as_str().to_owned();
-                let id = id.to_owned();
-                tokio::spawn(async move {
+                async move {
                     // Same contract as the subscription mirror: the row is
                     // committed, so a lost delta makes the registration invisible
                     // to every federation path until a restart re-hydrates.
@@ -270,7 +278,15 @@ pub async fn wire_nats(
                         "registry delta publish gave up for {id} — this registration is not \
                      mirrored until the next restart"
                     );
+                }
+            },
+        );
+        state.reg_sync = Some(Arc::new(
+            move |tenant: &TenantId, id: &str, doc: Option<&serde_json::Value>| {
+                let delta = serde_json::json!({
+                    "tenant": tenant.as_str(), "id": id, "present": doc.is_some(),
                 });
+                reg_queue((tenant.as_str().to_owned(), id.to_owned()), delta);
             },
         ));
 
@@ -613,6 +629,82 @@ pub async fn wire_nats(
 /// Attempts a mirror write gets before the divergence is logged as an error.
 const MIRROR_SYNC_ATTEMPTS: u32 = 5;
 
+/// Mirror writes one process holds while the bus is away (S5-13); past it a
+/// write is dropped and logged, the divergence a give-up already names.
+const MIRROR_SYNC_QUEUE: usize = 4096;
+
+/// One worker per mirror hook, fed through a bounded queue of keys (S5-13):
+/// the writes of one row reach the bus in the order they committed, retries
+/// included, so an older put can no longer land after a newer one or a
+/// delete. A row written again while it waits keeps its place and sends only
+/// its newest state, so a bus outage holds at most [`MIRROR_SYNC_QUEUE`]
+/// rows, not one task per write. Across pods the consumer side converges
+/// anyway: every delta makes it read the row from the store
+/// ([`apply_delta`]).
+fn ordered_sync<K, V, F, Fut>(what: &'static str, run: F) -> impl Fn(K, V) + Send + Sync + 'static
+where
+    K: Eq + std::hash::Hash + Clone + Send + 'static,
+    V: Send + 'static,
+    F: Fn(K, V) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send,
+{
+    type Queue<K, V> = (
+        std::collections::VecDeque<K>,
+        std::collections::HashMap<K, V>,
+    );
+    let queue: Arc<std::sync::Mutex<Queue<K, V>>> = Arc::default();
+    let wake = Arc::new(tokio::sync::Notify::new());
+    {
+        let (queue, wake) = (queue.clone(), wake.clone());
+        tokio::spawn(async move {
+            loop {
+                let next = {
+                    let mut q = queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let (order, latest) = &mut *q;
+                    order
+                        .pop_front()
+                        .and_then(|k| latest.remove(&k).map(|v| (k, v)))
+                };
+                match next {
+                    Some((k, v)) => run(k, v).await,
+                    None => wake.notified().await,
+                }
+            }
+        });
+    }
+    move |key, value| {
+        {
+            let mut q = queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (order, latest) = &mut *q;
+            match latest.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    e.insert(value);
+                }
+                std::collections::hash_map::Entry::Vacant(_)
+                    if order.len() >= MIRROR_SYNC_QUEUE =>
+                {
+                    metrics::counter!("antares_mirror_sync_dropped_total", "mirror" => what)
+                        .increment(1);
+                    tracing::error!(
+                        "{what} mirror sync queue is full: a write is not mirrored until the \
+                         next restart"
+                    );
+                    return;
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    order.push_back(e.key().clone());
+                    e.insert(value);
+                }
+            }
+        }
+        wake.notify_one();
+    }
+}
+
 /// Exponential backoff between mirror-sync attempts: 0.2 s doubling to 3.2 s,
 /// so the whole ladder outlives a bus reconnect without holding a task for
 /// minutes.
@@ -689,26 +781,29 @@ async fn reopen_sub_watch(
     Ok(watch)
 }
 
-/// Apply one delta to a mirror of `kind`: a written row is read from the
-/// store, which opens its sealed credentials, so the bus never carries
-/// them. A row the store no longer has is a delete. A store that keeps
-/// failing leaves the entry as it was and logs it, the divergence the
-/// write side's retry ladder names.
+/// Apply one delta to a mirror of `kind`: the row is read from the store,
+/// which opens its sealed credentials, so the bus never carries them. A row
+/// the store no longer has is a delete. A tombstone is read too (S5-13): a
+/// delete's delta that arrives after the row was written again must not drop
+/// the live row, so whatever order the deltas arrive in, the mirror ends at
+/// what the store holds. A store that keeps failing leaves a written entry
+/// as it was and logs it, the divergence the write side's retry ladder
+/// names; a tombstone then still removes the entry (a removed entry stops
+/// forwards and notifications, the safe side).
 async fn apply_delta(
     mirror: &dyn antares_api::mirror::Mirror,
     store: &dyn antares_store::CurrentStateDriver,
     kind: Kind,
     delta: &serde_json::Value,
 ) {
-    let (tenant, id) = match decode_delta(delta) {
+    let (tenant, id, present) = match decode_delta(delta) {
         None => return,
         Some(Delta::Csub) => return mirror.csub_written(),
         Some(Delta::Row {
             tenant,
             id,
-            present: false,
-        }) => return mirror.apply(tenant, id, None),
-        Some(Delta::Row { tenant, id, .. }) => (tenant, id),
+            present,
+        }) => (tenant, id, present),
     };
     let Ok(t) = TenantId::new_internal(tenant) else {
         return;
@@ -724,6 +819,10 @@ async fn apply_delta(
                 tokio::time::sleep(mirror_sync_backoff(attempt)).await;
             }
         }
+    }
+    if !present {
+        tracing::error!("mirror read of {kind:?} {id} gave up: the tombstone removes it");
+        return mirror.apply(tenant, id, None);
     }
     tracing::error!("mirror read of {kind:?} {id} gave up: its entry is stale until a restart");
 }
@@ -928,6 +1027,89 @@ mod tests {
         assert!(m.docs("default").is_empty(), "a row gone from the store");
     }
 
+    /// S5-13: a registration deleted and written again, its two deltas
+    /// arriving in the other order: the late tombstone does not drop the
+    /// row the store holds, and a late write of a deleted row does not bring
+    /// it back.
+    #[tokio::test]
+    async fn deltas_in_any_order_leave_the_mirror_at_the_store() {
+        let st = AppState::new("antares".into());
+        let t = TenantId::default();
+        let m = DocMirror::default();
+        let row = json!({"id": "urn:x:2", "type": "ContextSourceRegistration",
+                         "endpoint": "http://cs.example"});
+        st.store
+            .create(&t, Kind::Registration, "urn:x:2", row)
+            .await
+            .expect("written again");
+        for present in [true, false] {
+            apply_delta(
+                &m,
+                &*st.store,
+                Kind::Registration,
+                &json!({"tenant": "default", "id": "urn:x:2", "present": present}),
+            )
+            .await;
+        }
+        assert_eq!(m.docs("default").len(), 1, "the live row stays");
+        st.store
+            .delete(&t, Kind::Registration, "urn:x:2")
+            .await
+            .expect("delete");
+        for present in [false, true] {
+            apply_delta(
+                &m,
+                &*st.store,
+                Kind::Registration,
+                &json!({"tenant": "default", "id": "urn:x:2", "present": present}),
+            )
+            .await;
+        }
+        assert!(m.docs("default").is_empty(), "the deleted row stays gone");
+    }
+
+    /// S5-13: the sync worker sends rows in the order they were handed
+    /// over, a slow first write included; a row written again while it
+    /// waits sends only its newest state and takes no second place; a full
+    /// queue refuses a new row instead of growing.
+    #[tokio::test]
+    async fn mirror_sync_keeps_order_coalesces_and_bounds_its_queue() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let sync = {
+            let (seen, gate) = (seen.clone(), gate.clone());
+            ordered_sync("test", move |k: usize, v: usize| {
+                let (seen, gate) = (seen.clone(), gate.clone());
+                async move {
+                    if k == 0 {
+                        let _ = gate.acquire().await;
+                    }
+                    seen.lock().expect("seen").push((k, v));
+                }
+            })
+        };
+        sync(0, 0);
+        // the worker takes the first row and holds it; the queue fills behind
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        for k in 1..=MIRROR_SYNC_QUEUE + 1 {
+            sync(k, k);
+        }
+        sync(1, 999);
+        gate.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while seen.lock().expect("seen").len() < MIRROR_SYNC_QUEUE + 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("drained");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let seen = seen.lock().expect("seen").clone();
+        let mut want: Vec<(usize, usize)> = (0..=MIRROR_SYNC_QUEUE).map(|k| (k, k)).collect();
+        want[1] = (1, 999);
+        assert_eq!(seen, want, "in order, coalesced, the overflow refused");
+    }
+
     /// The KV/registry mirrors are fed from the bus. A malformed or hostile
     /// delta must be dropped — never panic a consumer task, and never grow
     /// the mirror under a key no request can ever address (the tenant is
@@ -952,7 +1134,11 @@ mod tests {
         apply(json!({"tenant": "default", "id": "urn:x:1", "present": true})).await;
         assert_eq!(m.docs("default").len(), 1, "a good delta must apply");
 
-        // tombstone
+        // tombstone, sent once the row is gone
+        st.store
+            .delete(&TenantId::default(), Kind::Registration, "urn:x:1")
+            .await
+            .expect("delete");
         apply(json!({"tenant": "default", "id": "urn:x:1", "present": false})).await;
         assert!(m.docs("default").is_empty(), "a tombstone must delete");
         assert!(m.tenants().is_empty(), "an emptied tenant must not linger");

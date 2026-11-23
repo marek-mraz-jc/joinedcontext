@@ -19,17 +19,32 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 /// Forwards to the fused store, counting drain calls and the events they
-/// carried.
+/// carried; the next `fails` history writes (drain, delete, mutate) fail
+/// first, a driver hiccup injected.
 struct Counting {
     inner: Arc<AnyStore>,
     calls: AtomicUsize,
     events: AtomicUsize,
+    fails: AtomicUsize,
+}
+
+impl Counting {
+    fn hiccup(&self) -> Result<(), NgsiError> {
+        match self
+            .fails
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        {
+            Ok(_) => Err(NgsiError::InternalError("history store hiccup".into())),
+            Err(_) => Ok(()),
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl TemporalDriver for Counting {
     async fn event_list(&self, evs: &[TemporalEvent]) -> Result<(), NgsiError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.hiccup()?;
         self.events.fetch_add(evs.len(), Ordering::SeqCst);
         TemporalDriver::event_list(&*self.inner, evs).await
     }
@@ -67,6 +82,7 @@ impl TemporalDriver for Counting {
         TemporalDriver::upsert(&*self.inner, t, id, doc).await
     }
     async fn delete(&self, t: &TenantId, id: &str) -> Result<bool, NgsiError> {
+        self.hiccup()?;
         TemporalDriver::delete(&*self.inner, t, id).await
     }
     async fn list(&self, t: &TenantId) -> Result<Vec<Value>, NgsiError> {
@@ -78,6 +94,7 @@ impl TemporalDriver for Counting {
         id: &str,
         f: MutateFn<'a>,
     ) -> Result<Option<Result<(), ()>>, NgsiError> {
+        self.hiccup()?;
         TemporalDriver::mutate_boxed(&*self.inner, t, id, f).await
     }
 }
@@ -145,6 +162,7 @@ async fn counting_state() -> (AppState, Arc<Counting>) {
         inner: store.clone(),
         calls: AtomicUsize::new(0),
         events: AtomicUsize::new(0),
+        fails: AtomicUsize::new(0),
     });
     let mut st = AppState::with_drivers("me".into(), store, counting.clone(), "memory");
     antares_api::wire(&mut st).await;
@@ -250,6 +268,75 @@ async fn reads_never_drain() {
     let (status, _) = req(&st, "GET", "/ngsi-ld/v1/entities?type=D", None).await;
     assert_eq!(status, 200);
     assert_eq!(c.calls.load(Ordering::SeqCst), 0);
+}
+
+/// S4-23: a driver that fails twice and then answers still gets the
+/// committed write's history: the drain retries instead of dropping it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_driver_hiccup_in_the_drain_keeps_the_history() {
+    let (st, c) = counting_state().await;
+    c.fails.store(2, Ordering::SeqCst);
+    let (status, body) = req(&st, "POST", "/ngsi-ld/v1/entities", Some(entity(21))).await;
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(
+        c.calls.load(Ordering::SeqCst),
+        3,
+        "two failures, one success"
+    );
+    let (status, body) = req(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:D:21",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["speed"][0]["value"], 21, "{body}");
+}
+
+/// S4-23: a hiccup while an Entity's history follows its deletion, and
+/// while an Attribute's deletion is recorded, is retried: no history
+/// outlives its Entity, and the tombstone instance is recorded once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_driver_hiccup_on_a_delete_is_retried() {
+    let (st, c) = counting_state().await;
+    for n in [22, 23] {
+        let (status, body) = req(&st, "POST", "/ngsi-ld/v1/entities", Some(entity(n))).await;
+        assert_eq!(status, 201, "{body}");
+    }
+    c.fails.store(1, Ordering::SeqCst);
+    let (status, _) = req(
+        &st,
+        "DELETE",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:D:22/attrs/heading",
+        None,
+    )
+    .await;
+    assert_eq!(status, 204);
+    let (_, body) = req(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:D:22",
+        None,
+    )
+    .await;
+    let heading = body["heading"].as_array().cloned().unwrap_or_default();
+    assert_eq!(heading.len(), 2, "the value and one tombstone: {body}");
+    assert!(
+        heading.iter().any(|i| i["deletedAt"].is_string()),
+        "the tombstone is recorded: {body}"
+    );
+    c.fails.store(1, Ordering::SeqCst);
+    let (status, _) = req(&st, "DELETE", "/ngsi-ld/v1/entities/urn:ngsi-ld:D:23", None).await;
+    assert_eq!(status, 204);
+    let (status, body) = req(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:D:23",
+        None,
+    )
+    .await;
+    assert_eq!(status, 404, "the history went with the Entity: {body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
