@@ -369,6 +369,23 @@ mod tests {
             name("A scrollytelling story about the air for the press").as_deref(),
             Some("data-story")
         );
+        // one keyword each: the tie goes to the first by name
+        assert_eq!(name("A public page").as_deref(), Some("citizen-map"));
+        assert_eq!(name("Our alerts").as_deref(), Some("operations-desk"));
+    }
+
+    #[test]
+    fn an_overlay_carries_the_samples_source_with_its_tests() {
+        let files = overlay("kpi-dashboard");
+        for path in ["src/App.tsx", "src/App.test.tsx", "src/fixtures.ts"] {
+            assert!(files.contains_key(path), "{path}: {:?}", files.keys());
+        }
+        assert!(
+            files.keys().all(|path| path.starts_with("src/")),
+            "{files:?}"
+        );
+        assert!(overlay("nope").is_empty());
+        assert!(overlay("kpi").is_empty(), "a prefix of a name is no name");
     }
 
     #[test]

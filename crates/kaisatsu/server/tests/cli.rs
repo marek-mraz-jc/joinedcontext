@@ -108,6 +108,29 @@ fn check_reads_json_and_yaml_and_refuses_bad_files() {
         ])),
         0
     );
+    // apply refuses it the same way unless allowed; a plan (a preview) takes it.
+    assert_eq!(code(&kaisatsu(&["apply", "-f", p(&literal)])), 1);
+    let out = kaisatsu(&["apply", "-f", p(&literal), "--allow-literal-secrets"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let preview = dir.0.join("literal-plan.json");
+    let out = kaisatsu(&["plan", "-f", p(&literal), "-o", p(&preview)]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    assert_eq!(
+        code(&kaisatsu(&["diff", "-f", p(&literal)])),
+        2,
+        "diff previews it too"
+    );
+    // A `$(file:...)` secret reads only under `--secrets-dir`.
+    let secrets = dir.0.join("secrets");
+    std::fs::create_dir(&secrets).expect("secrets dir");
+    std::fs::write(secrets.join("cli-app"), "file-secret-123\n").expect("secret file");
+    let from_file = dir.file(
+        "from-file.json",
+        r#"{"realm":"cli","clients":[{"clientId":"x","publicClient":false,"secret":"$(file:cli-app)"}]}"#,
+    );
+    assert_eq!(code(&kaisatsu(&["apply", "-f", p(&from_file)])), 1);
+    let out = kaisatsu(&["apply", "-f", p(&from_file), "--secrets-dir", p(&secrets)]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
 
     // Broken YAML names the file; a YAML list is not a realm; a missing path fails.
     let broken = dir.file("broken.yaml", "realm: [unclosed\n");
@@ -169,6 +192,10 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
     assert_eq!(code(&out), 2, "{}", stderr(&out));
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
     assert_eq!(report["realm"], "cli");
+    assert_eq!(report["dryRun"], false);
+    let out = kaisatsu(&["apply", "-f", p(&realm.0), "--dry-run"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert_eq!(report["dryRun"], true);
     let out = kaisatsu(&[
         "apply",
         "-f",
@@ -179,6 +206,34 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
     ]);
     assert_eq!(code(&out), 2);
     assert_eq!(code(&kaisatsu(&["diff", "-f", p(&realm.0)])), 2);
+    // `--prune` plans a full apply: what the files no longer name is deleted.
+    let prune_plan = dir.0.join("prune-plan.json");
+    let out = kaisatsu(&["plan", "-f", p(&realm.0), "-o", p(&prune_plan), "--prune"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&prune_plan).expect("plan written"))
+            .expect("plan json");
+    assert_eq!(saved["mode"], "full");
+    // The saved plan's base state still holds, but the client secret's variable is unset here:
+    // refused as invalid input (exit 1), not as a stale plan (exit 3).
+    let out = Command::new(BIN)
+        .args(["apply", "-f", p(&prune_plan)])
+        .env_remove("KAISATSU_CLI_TEST_CLIENT_SECRET")
+        .env_remove("KAISATSU_CLI_TEST_ALICE_PASSWORD")
+        .output()
+        .expect("run kaisatsu");
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("$.clients[0].secret: secret variable is not set"),
+        "{}",
+        stderr(&out)
+    );
+    // With the variable set it applies onto the same (empty) state and reports in markdown.
+    let out = kaisatsu(&["apply", "-f", p(&prune_plan), "--output", "markdown"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("### kaisatsu plan for realm `cli`"), "{md}");
+    assert!(md.contains("| Delete | 0 |"), "{md}");
     let out = kaisatsu(&["export", "--realm", "cli"]);
     assert_eq!(code(&out), 1, "nothing to export from an empty store");
     // `--database-url` needs the KEK that encrypts the stored secrets.
@@ -242,6 +297,154 @@ fn serve_refuses_bad_flags_before_listening() {
     ]);
     assert_eq!(code(&out), 1);
     assert!(!stderr(&out).contains("hunter2"));
+}
+
+/// GETs `path` until it answers `want`, for at most 20 s; returns the last status.
+fn wait_for(addr: &str, path: &str, want: u16) -> u16 {
+    let mut st = 0;
+    for _ in 0..80 {
+        st = http(addr, "GET", path, None).0;
+        if st == want {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    st
+}
+
+#[test]
+fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
+    let dir = TempDir::new();
+    let kek = dir.file("kek", [5u8; 32]);
+    let smtp_pw = dir.file("smtp-password", "smtp-word-for-tests\n");
+    let import = TempDir::new();
+    import.file("realm.yaml", REALM_YAML);
+    let mut child = Command::new(BIN)
+        .args([
+            "serve",
+            "--kek-file",
+            p(&kek),
+            "--listen",
+            "127.0.0.1:0",
+            "--host",
+            "idm.cli.example.test",
+            "--path-prefix",
+            "/auth",
+            "--import-dir",
+            p(&import.0),
+            "--import-watch",
+            "1",
+            "--trusted-proxy",
+            "10.0.0.0/8",
+            "--smtp-password-file",
+            p(&smtp_pw),
+            "--smtp-host",
+            "smtp.invalid",
+            "--outbox-interval-secs",
+            "1",
+            "--second-factor",
+            "required",
+        ])
+        .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
+        .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let addr = loop {
+        let line = lines
+            .next()
+            .expect("serve exited before listening")
+            .expect("stderr line");
+        if let Some(a) = line.strip_prefix("kaisatsu: listening on ") {
+            break a.to_owned();
+        }
+    };
+    let cli = "/auth/realms/cli/.well-known/openid-configuration";
+    let added = "/auth/realms/added/.well-known/openid-configuration";
+    let (st, body) = http(&addr, "GET", cli, None);
+    assert_eq!(st, 200, "{body}");
+    assert!(
+        body.contains("\"issuer\":\"https://idm.cli.example.test/auth/realms/cli\""),
+        "{body}"
+    );
+    assert_eq!(http(&addr, "GET", added, None).0, 404);
+
+    // A realm file written while it runs is applied at the next poll.
+    import.file("realm2.yaml", "realm: added\ndisplayName: Added realm\n");
+    assert_eq!(
+        wait_for(&addr, added, 200),
+        200,
+        "the watch applies a new file"
+    );
+
+    // A broken file fails the poll: both realms keep answering, the server stays up.
+    import.file("realm3.json", "{");
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert_eq!(http(&addr, "GET", cli, None).0, 200);
+    assert_eq!(http(&addr, "GET", added, None).0, 200);
+
+    // Ctrl-C (SIGINT) stops it as cleanly as SIGTERM.
+    let int = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT");
+    assert!(int.success());
+    let status = child.wait().expect("serve exits");
+    assert_eq!(status.code(), Some(0), "a clean stop on SIGINT");
+    let rest: Vec<String> = lines.map_while(std::result::Result::ok).collect();
+    assert!(rest.iter().any(|l| l == "kaisatsu: stopped"), "{rest:?}");
+    assert!(
+        !rest.iter().any(|l| l.contains("smtp-word-for-tests")),
+        "{rest:?}"
+    );
+
+    // `--import-watch 0` watches nothing: a file written while it runs stays unapplied.
+    let quiet = TempDir::new();
+    quiet.file("realm.yaml", REALM_YAML);
+    let mut child = Command::new(BIN)
+        .args([
+            "serve",
+            "--kek-file",
+            p(&kek),
+            "--listen",
+            "127.0.0.1:0",
+            "--host",
+            "idm.cli.example.test",
+            "--import-dir",
+            p(&quiet.0),
+            "--import-watch",
+            "0",
+        ])
+        .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
+        .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let mut seen = Vec::new();
+    let addr = loop {
+        let line = lines
+            .next()
+            .expect("serve exited before listening")
+            .expect("stderr line");
+        if let Some(a) = line.strip_prefix("kaisatsu: listening on ") {
+            break a.to_owned();
+        }
+        seen.push(line);
+    };
+    quiet.file("realm2.yaml", "realm: added\n");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let unwatched = "/realms/added/.well-known/openid-configuration";
+    assert_eq!(http(&addr, "GET", unwatched, None).0, 404);
+    let term = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("send SIGTERM");
+    assert!(term.success());
+    assert_eq!(child.wait().expect("serve exits").code(), Some(0));
+    seen.extend(lines.map_while(std::result::Result::ok));
+    assert!(!seen.iter().any(|l| l.contains("panicked")), "{seen:?}");
 }
 
 // ---------------------------------------------------------------- PostgreSQL
@@ -481,6 +684,46 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
         "the plan's base state is gone: {}",
         stderr(&out)
     );
+    let bare = dir.file("bare.yaml", "realm: cli\ndisplayName: CLI realm 2\n");
+    // `diff` only compares: run twice on a changed file, it reports the change both times.
+    let renamed = dir.file("renamed.yaml", "realm: cli\ndisplayName: CLI realm 3\n");
+    let diff_changed = [
+        &["diff", "-f", p(&renamed), "--kek-file", p(&kek)][..],
+        &db[..],
+    ]
+    .concat();
+    assert_eq!(code(&kaisatsu(&diff_changed)), 2);
+    assert_eq!(
+        code(&kaisatsu(&diff_changed)),
+        2,
+        "the first diff wrote nothing"
+    );
+    // `--prune` deletes what the file stopped naming; a plain apply brings it back.
+    let out = kaisatsu(
+        &[
+            &["apply", "-f", p(&bare), "--prune", "--kek-file", p(&kek)][..],
+            &db[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert!(
+        report["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .any(|c| c["kind"] == "Client" && c["id"] == "cli-app" && c["action"] == "delete"),
+        "{report}"
+    );
+    let out = kaisatsu(
+        &[
+            &["apply", "-f", p(&changed), "--kek-file", p(&kek)][..],
+            &db[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
 
     // A KEK other than the one that encrypted the secrets cannot read them.
     let other_kek = dir.file("other-kek", [1u8; 32]);

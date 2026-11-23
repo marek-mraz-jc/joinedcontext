@@ -289,6 +289,9 @@ fn resource_path_errors() {
     // After `$count` nothing follows; `$value` only after a single primitive.
     syntax("Buildings/$count/x", 16);
     syntax("Buildings('b1')/address/$value", 24);
+    // `$count` only after a collection, `$ref` only after entities or one entity
+    syntax("Buildings('b1')/$count", 16);
+    syntax("Buildings('b1')/name/$ref", 21);
     syntax("Buildings('b1')/name/x", 22);
     syntax("Buildings('b1')/tags/x", 22);
     syntax("Buildings('b1')/rooms/area", 26);
@@ -1226,6 +1229,8 @@ fn the_rest_of_the_grammar() {
     assert_eq!(filter("height\tgt 1"), filter("height gt 1"));
     syntax("Buildings?%zz", 10);
     syntax("Buildings?ab#", 12);
+    // an escape at the refused byte is that byte, not one before it
+    syntax("Buildings?$top=%41", 15);
     let rings = ok("Buildings?$filter=geo.intersects(location,geography'SRID=0;Polygon((0 0,1 0,0 0),(0 0,2 0,0 0))')");
     assert_eq!(ok(&rings.to_string()), rings);
     let punctuated = ok("Buildings?$filter=name eq 'a-b.c_d~e!f(g)h*i,j;k$l&m=n:o@p+q'");

@@ -377,8 +377,20 @@ impl Store for MemoryStore {
         let mut guard = self.write_inner();
         let source = publisher_key(&guard, ctx, source_id_or_name)
             .and_then(|k| guard.publishers.get(&k).cloned());
-        let target = publisher_key(&guard, ctx, target_id_or_name)
-            .and_then(|k| guard.publishers.get(&k).cloned());
+        let find = |key: &str| {
+            publisher_key(&guard, ctx, key).and_then(|k| guard.publishers.get(&k).cloned())
+        };
+        // The target as published: its merge redirects followed, as PgStore follows them (C16).
+        let mut target = find(target_id_or_name);
+        for _ in 0..4 {
+            let Some(next) = target.as_ref().and_then(|t| t.merged_into.clone()) else {
+                break;
+            };
+            match find(&next) {
+                Some(found) => target = Some(found),
+                None => break,
+            }
+        }
 
         let (Some(mut source), Some(target)) = (source, target) else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(
@@ -1040,5 +1052,31 @@ impl Store for MemoryStore {
             .map(|t| Arc::new(t) as Arc<dyn Table>)
             .map_err(DataroomError::from);
         Box::pin(std::future::ready(res))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A writer that panicked holding the lock leaves the maps as it found them between two
+    // statements, so the store keeps serving instead of failing every later request.
+    #[test]
+    fn a_poisoned_lock_still_serves_reads_and_writes() {
+        let store = MemoryStore::new();
+        let writer = store.clone();
+        let crashed = std::thread::spawn(move || {
+            let _held = writer.inner.write();
+            panic!("a writer panics holding the lock");
+        })
+        .join();
+        assert!(crashed.is_err());
+        assert!(store.inner.is_poisoned());
+        let (org, cat) = (
+            OrgId::from_uuid(uuid::Uuid::now_v7()),
+            CatalogueId::from_uuid(uuid::Uuid::now_v7()),
+        );
+        store.write_inner().plugins.clear();
+        assert!(!store.read_inner().catalogues.contains_key(&(org, cat)));
     }
 }

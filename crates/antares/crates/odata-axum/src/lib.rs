@@ -326,6 +326,9 @@ impl IntoResponse for ODataErrorResponse {
 /// assert!(url_error(&refused, 9).error.message.starts_with("$index: no NGSI-LD equivalent"));
 /// let unknown = UrlError { kind: UrlErrorKind::Unresolved, offset: 0 };
 /// assert_eq!(url_error(&unknown, 6).status, StatusCode::NOT_FOUND);
+/// // offset 6 of `Things?$filter=nope eq 1` is the `?`: past the path, a query option
+/// let past = UrlError { kind: UrlErrorKind::Unresolved, offset: 6 };
+/// assert_eq!(url_error(&past, 6).status, StatusCode::BAD_REQUEST);
 /// ```
 #[must_use]
 pub fn url_error(error: &UrlError, path_len: usize) -> ODataErrorResponse {
@@ -633,7 +636,7 @@ fn unwritable() -> ODataErrorResponse {
     ODataErrorResponse::new(
         StatusCode::INTERNAL_SERVER_ERROR,
         "InternalError",
-        "the service model could not be written",
+        "the answer could not be written",
     )
 }
 

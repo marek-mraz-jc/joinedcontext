@@ -265,6 +265,77 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_realm_is_refused_everywhere_and_a_second_pin_keeps_the_first() {
+        let m = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
+        assert!(RealmHosts::default().is_empty());
+        let h = hosts()
+            .pin("bbsk", m("idm.other.sk"))
+            .pin("other", m("idm.bbsk.sk"))
+            .close("gone")
+            .close("bbsk");
+        assert!(!h.is_empty());
+        assert!(matches!(
+            h.decide("idm.bbsk.sk", "/realms/bbsk"),
+            Pin::Own(m) if m.host == "idm.bbsk.sk"
+        ));
+        assert_eq!(h.decide("idm.other.sk", "/realms/other"), Pin::Free);
+        for host in ["login.city.sk", "idm.bbsk.sk", "localhost:8080"] {
+            assert_eq!(
+                h.decide(host, "/realms/GONE/protocol/openid-connect/token"),
+                Pin::Refused
+            );
+        }
+        assert_eq!(h.decide("login.city.sk", "/realms/dev"), Pin::Free);
+    }
+
+    #[test]
+    fn the_swap_serves_the_last_pins_even_after_a_holder_panicked() {
+        let m = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
+        let swap = RealmHostsSwap::default();
+        assert!(swap.current().is_empty());
+        let poisoner = swap.clone();
+        let panicked = std::thread::spawn(move || {
+            let _held = poisoner.0.write().unwrap();
+            panic!("a holder panics with the pins locked");
+        })
+        .join();
+        assert!(panicked.is_err() && swap.0.is_poisoned());
+        assert!(swap.current().is_empty());
+        swap.replace(RealmHosts::default().pin("bbsk", m("idm.bbsk.sk")));
+        let state = crate::KaisatsuState::in_memory_for_tests()
+            .with_realm_hosts(RealmHosts::default().pin("hel", m("idm.hel.fi")));
+        assert!(!state.realm_hosts().current().is_empty());
+        assert!(matches!(
+            swap.current().decide("idm.bbsk.sk", "/realms/bbsk"),
+            Pin::Own(_)
+        ));
+    }
+
+    #[test]
+    fn the_state_hands_out_the_guard_it_was_built_with() {
+        let kek = kaisatsu_crypto::Kek::generate_for_tests();
+        let store = Arc::new(kaisatsu_store_memory::MemoryStore::new(kek.clone()));
+        let guard = kaisatsu_oidc::OutboundGuard::new(kaisatsu_oidc::OutboundPolicy {
+            allowed_hosts: Some(vec!["idp.city.example".into()]),
+            ..kaisatsu_oidc::OutboundPolicy::default()
+        });
+        let state =
+            crate::KaisatsuState::new(store, kek, guard, Arc::new(kaisatsu_core::LocalAuthorizer));
+        assert_eq!(
+            state.guard().policy.allowed_hosts.as_deref(),
+            Some(&["idp.city.example".to_owned()][..])
+        );
+    }
+
+    #[test]
+    fn bare_drops_a_numeric_port_and_the_trailing_dot_only() {
+        assert_eq!(bare("IDM.City.sk."), "idm.city.sk");
+        assert_eq!(bare("idm.city.sk:8443"), "idm.city.sk");
+        assert_eq!(bare("[::1]"), "[::1]");
+        assert_eq!(bare("idm.city.sk:http"), "idm.city.sk:http");
+    }
+
+    #[test]
     fn realm_of_reads_the_three_realm_path_forms() {
         assert_eq!(realm_of("/realms/a/x/y"), Some(("a", "x/y")));
         assert_eq!(realm_of("/realms/a"), Some(("a", "")));
@@ -277,6 +348,7 @@ mod tests {
         );
         assert_eq!(realm_of("/api/v2/realms/a"), None);
         assert_eq!(realm_of("/admin/realmsx"), None);
+        assert_eq!(realm_of("/admin/users"), None);
         assert_eq!(realm_of("/resources/kaisatsu/x"), None);
     }
 }

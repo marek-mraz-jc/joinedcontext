@@ -13,8 +13,8 @@ use dataroom_core::{
     DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, RequestCtx, Result, Store,
 };
 use dataroom_harvest::{
-    harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher, OutboundFetcher,
-    ValidatedTarget, RETRIES,
+    cron_matches, harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher,
+    OutboundFetcher, ValidatedTarget, RETRIES,
 };
 use dataroom_store_memory::MemoryStore;
 use jc_time::TimestampTz;
@@ -120,6 +120,23 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
         .await
         .unwrap();
     assert_eq!(runs.len(), 1, "{runs:?}");
+}
+
+#[tokio::test]
+async fn the_scheduler_does_not_retry_a_source_another_run_holds() {
+    let (w, store, f) = scheduled_world(0).await;
+    let held = running(&w, "run-held", TimestampTz::now());
+    let since = TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range");
+    assert!(store.claim_harvest_run(&w.ctx, held, since).await.unwrap());
+    let out = scheduler(&w, store, f.clone(), true)
+        .run_due(at(3, 23))
+        .await;
+    assert!(
+        matches!(out[0].1, Err(DataroomError::Conflict(_))),
+        "{:?}",
+        out[0].1
+    );
+    assert_eq!(f.calls.load(Ordering::SeqCst), 0, "no fetch and no retry");
 }
 
 #[tokio::test]
@@ -272,6 +289,71 @@ async fn a_start_runs_every_enabled_source_off_schedule() {
 }
 
 #[tokio::test]
+async fn a_catalogue_added_while_the_scheduler_runs_is_read_on_its_next_check() {
+    let (w, store, f) = scheduled_world(0).await;
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(f.clone())),
+        store.clone(),
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        Vec::new(),
+    );
+    assert!(s.run_all().await.is_empty(), "no catalogue yet");
+    s.catalogues()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((w.org, w.cat));
+    assert_eq!(s.run_all().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_source_whose_schedule_does_not_read_is_skipped_and_the_others_run() {
+    let (w, store, f) = scheduled_world(0).await;
+    let mut bad = source("arc-gis-hub", "bad", HUB, &["hub.city.example"]);
+    bad.schedule = "61 * * * *".into();
+    store.upsert_harvest_source(&w.ctx, bad).await.unwrap();
+    let out = scheduler(&w, store, f, true).run_due(at(3, 23)).await;
+    let names: Vec<&str> = out.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["hub"]);
+}
+
+#[test]
+fn sunday_reads_as_seven_and_a_range_end_that_is_no_number_is_refused() {
+    // 2026-11-08 is a Sunday.
+    let sunday = TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::date(2026, 11, 8).at(3, 23, 0, 0))
+            .expect("in range"),
+    );
+    assert!(cron_matches("23 3 * * 7", sunday).unwrap());
+    assert!(cron_matches("23 3 * * 6-7", sunday).unwrap());
+    assert!(!cron_matches("23 3 * * 7", at(3, 23)).unwrap(), "a Monday");
+    assert!(cron_matches("23 3 * * 1-x", sunday).is_err());
+}
+
+/// The spawned loop runs every enabled source in its first minute (paused time: the sleeps pass
+/// at once while the wall clock stays in one minute, so later checks run nothing).
+#[tokio::test(start_paused = true)]
+async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
+    let (w, store, f) = scheduled_world(0).await;
+    let handle = scheduler(&w, store, f.clone(), true).spawn();
+    // A virtual second per look: the runtime idles, so paused time moves to the next timer.
+    for _ in 0..600 {
+        if !active_names(&w).await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    handle.abort();
+    assert_eq!(active_names(&w).await, vec!["city-cesty-aaa111".to_owned()]);
+    assert_eq!(
+        f.calls.load(Ordering::SeqCst),
+        1,
+        "one run, no second in the same minute"
+    );
+}
+
+#[tokio::test]
 async fn a_failed_run_is_retried_three_times_then_logged_and_the_next_cycle_runs() {
     // Fails three times, the fourth attempt (third retry) succeeds.
     let (w, store, f) = scheduled_world(RETRIES as usize).await;
@@ -376,6 +458,67 @@ async fn run_state(w: &World, run_id: &str) -> HarvestRun {
         .await
         .unwrap()
         .expect("run row")
+}
+
+/// A fetcher whose read panics, as a bug in a parser or a store would end a run's task.
+struct Panicky;
+
+impl OutboundFetcher for Panicky {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        Box::pin(async { panic!("the read broke") })
+    }
+}
+
+/// A started run whose task panics is recorded failed at once and frees its source, without
+/// waiting for the deadline.
+#[tokio::test]
+async fn a_run_whose_task_panics_is_recorded_failed_and_frees_the_source() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let (subject, grant) = harvest_principal(w.org, w.cat);
+    let ctx = RequestCtx::new(w.org, w.cat, subject);
+    let op_ctx = OpContext {
+        store: Arc::new(w.store.clone()),
+        authorizer: Arc::new(PolicyAuthorizer::new(vec![grant])),
+        validator: None,
+        harvester: Some(Arc::new(engine_on(Arc::new(Panicky)))),
+        sources_by_portal: false,
+        branding: None,
+    };
+    let answer = execute_operation(&op_ctx, &ctx, "harvest_run.start", json!({"source": "hub"}))
+        .await
+        .expect("started");
+    let run_id = answer["id"].as_str().expect("run id").to_owned();
+    let done = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let run = run_state(&w, &run_id).await;
+            if run.state != HarvestRunState::Running {
+                break run;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the lost run is released");
+    assert_eq!(done.state, HarvestRunState::Failed);
+    assert_eq!(done.error.as_deref(), Some("the run stopped unexpectedly"));
+    assert_eq!(
+        done.logs.last().map(|l| l.fingerprint.as_str()),
+        Some("harvest.lost")
+    );
+    assert!(done.finished_at.is_some());
 }
 
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the

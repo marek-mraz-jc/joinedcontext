@@ -280,11 +280,10 @@ pub async fn apply_manifest_bundle(
                 let inst_id = state.default_instance_id;
                 let def_b = r.default_branch.clone();
                 let desc = r.description.clone();
-                tokio::task::spawn_blocking(move || {
+                shako_api::service::blocking(move || {
                     init_bare_repo(&root, inst_id, repo_id, &def_b, true, &desc)
                 })
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
+                .await?;
                 state
                     .store()
                     .create_repo(RepoRecord {
@@ -400,9 +399,7 @@ pub async fn fsck_all_repositories(state: &ShakoState, org_id: OrgId) -> ShakoRe
     let mut checked = 0usize;
     for r in repos {
         let path = shako_core::repo_disk_path(state.repo_root(), r.instance_id, r.id)?;
-        tokio::task::spawn_blocking(move || fsck_repository(&path))
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
+        shako_api::service::blocking(move || fsck_repository(&path)).await?;
         checked += 1;
     }
     Ok(checked)

@@ -154,6 +154,12 @@ mod headers {
                 prefer(Some(3), false),
             ),
             ("x=\"a\\\"b,c\", maxpagesize=4", prefer(Some(4), false)),
+            // a delimiter inside quotes splits nothing; a backslash outside them escapes nothing
+            (
+                "x=\"a, maxpagesize=9,\", maxpagesize=3",
+                prefer(Some(3), false),
+            ),
+            ("a\\, maxpagesize=2", prefer(Some(2), false)),
             ("maxpagesize=\"\\9\"", prefer(Some(9), false)),
             ("a\\b, x=\"\\\\\", maxpagesize=2", prefer(Some(2), false)),
             ("maxpagesize=\"", prefer(None, false)),
@@ -167,5 +173,6 @@ mod headers {
             assert_eq!(parse_prefer(header, 64), Ok(expected), "{header}");
         }
         assert_eq!(parse_prefer(&"a".repeat(65), 64), Err(HeaderError::TooLong));
+        assert_eq!(parse_prefer(&"a".repeat(64), 64), Ok(prefer(None, false)));
     }
 }
