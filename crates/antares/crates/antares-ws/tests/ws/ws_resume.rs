@@ -73,6 +73,41 @@ async fn ws_resume_replays_after_the_last_seq() -> Result<(), String> {
     Ok(())
 }
 
+/// The grace of a socket that a resume replaced ends nothing: the Subscription
+/// lives until the grace of the last socket to detach runs out.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_only_the_last_detached_socket_s_grace_deletes() -> Result<(), String> {
+    let b = broker(Limits {
+        resume_grace: Duration::from_millis(1500),
+        ..Limits::default()
+    })
+    .await?;
+    let mut first = connect(b.addr, ROOT, &[]).await?;
+    let made = first.subscribe(cars()).await?;
+    assert_eq!(status(&made), 201, "{made}");
+    let sub = made
+        .pointer("/body/id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let ids = (first.connection.clone(), first.token.clone());
+    first.close().await;
+    until(&b.hub, |h| h.attached() == 0).await?;
+    let start = std::time::Instant::now();
+    let mut second = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(status(&second.resume(&ids.0, &ids.1, 0).await?), 200);
+    // the second socket detaches 1 s in, so its grace runs to about 2.5 s
+    tokio::time::sleep(Duration::from_secs(1).saturating_sub(start.elapsed())).await;
+    second.close().await;
+    until(&b.hub, |h| h.attached() == 0).await?;
+    // past the first grace (1.5 s), well before the second's end
+    tokio::time::sleep(Duration::from_millis(1900).saturating_sub(start.elapsed())).await;
+    let path = format!("/ngsi-ld/v1/subscriptions/{sub}");
+    let (code, body) = b.http.call("GET", &path, &[], None).await?;
+    assert_eq!(code, 200, "{body}");
+    Ok(())
+}
+
 /// A resume from another socket while the first is still open takes the
 /// connection over: the first socket is ended, not left open beside it.
 #[tokio::test(flavor = "multi_thread")]

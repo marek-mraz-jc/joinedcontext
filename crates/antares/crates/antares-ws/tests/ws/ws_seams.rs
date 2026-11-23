@@ -140,6 +140,12 @@ async fn ws_an_idle_socket_closes_and_a_silent_one_is_dropped() -> Result<(), St
             .any(|m| m.pointer("/metadata/x-reason") == Some(&json!("idle"))),
         "{seen:?}"
     );
+    // a socket holding a Subscription is never idle
+    let mut busy = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(status(&busy.subscribe(cars()).await?), 201);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let again = busy.subscribe(cars()).await?;
+    assert_eq!(status(&again), 201, "still open past idle: {again}");
 
     let b = broker(Limits {
         ping_every: Duration::from_millis(100),

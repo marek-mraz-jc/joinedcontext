@@ -156,6 +156,8 @@ exclude_re = [
   # antares-ws leased: a wish equal to now + lease to the millisecond is never observed; both arms then answer the
   # same instant (T-7675).
   'crates/antares-ws/src/socket\.rs:\d+:\d+: replace < with <= in leased',
+  # antares-ws Session::tick: a pong exactly `pong_within` old to the nanosecond is never observed (T-7675).
+  'crates/antares-ws/src/socket\.rs:552:44: replace > with >= in Session::tick',
   # antares-ws show_changes: a showChanges Subscription's update notifications carry previousValue, which already
   # keeps them out of coalescing (Forwarded::changes); the recorded flag only differs for two queued notifications
   # of one Entity that both lack a previous value, an order the notifier gives no test a way to force (T-7675).
