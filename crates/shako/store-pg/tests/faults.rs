@@ -7,8 +7,8 @@
 //! print `SKIP`; the configuration tests run anyway.
 
 use serde_json::json;
-use shako_core::model::{AuditRecord, InstanceRecord};
-use shako_core::{InstanceId, OrgId, SecretStore, ShakoError, Store, sha256_hex};
+use shako_core::model::{AuditRecord, InstanceRecord, OutboxEvent, PackageRecord};
+use shako_core::{InstanceId, OrgId, PackageId, SecretStore, ShakoError, Store, sha256_hex};
 use shako_store_pg::{PgSecretStore, PgStore, PgStoreConfig};
 use sqlx::AssertSqlSafe;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -289,7 +289,7 @@ async fn a_revoked_privilege_fails_the_step_that_needs_it() {
                 .expect("privilege change");
         }
     };
-    let cases: [(&str, &str, &str); 8] = [
+    let cases: [(&str, &str, &str); 10] = [
         ("SELECT ON shako.secret", "shako_app", "secret read failed"),
         (
             "INSERT, UPDATE ON shako.secret",
@@ -301,6 +301,16 @@ async fn a_revoked_privilege_fails_the_step_that_needs_it() {
             "INSERT ON shako.store_log",
             "shako_app",
             "store log write failed",
+        ),
+        (
+            "DELETE ON shako.store_log",
+            "shako_app",
+            "store log trim failed",
+        ),
+        (
+            "SELECT ON shako.store_log",
+            "shako_app",
+            "store log read failed",
         ),
         (
             "SELECT ON pg_catalog.pg_class",
@@ -323,13 +333,16 @@ async fn a_revoked_privilege_fails_the_step_that_needs_it() {
             "inspect shako_app failed",
         ),
     ];
-    for (i, (privilege, grantee, step)) in cases.into_iter().enumerate() {
+    for (privilege, grantee, step) in cases {
         sql(format!("REVOKE {privilege} FROM {grantee}")).await;
-        let err = match i {
-            0 => secrets.get_secret(org, "hook").await.map(|_| ()),
-            1 => secrets.put_secret(org, "hook", "v2").await,
-            2 => store.append_audit(audit()).await,
-            3 => store.upsert_instance(instance()).await.map(|_| ()),
+        let err = match step {
+            "secret read failed" => secrets.get_secret(org, "hook").await.map(|_| ()),
+            "secret write failed" => secrets.put_secret(org, "hook", "v2").await,
+            "audit write failed" => store.append_audit(audit()).await,
+            "store log trim failed" => store.trim_log(inst, org).await.map(|_| ()),
+            "store log write failed" | "store log read failed" => {
+                store.upsert_instance(instance()).await.map(|_| ())
+            }
             _ => store.verify_rls_enforced().await,
         }
         .expect_err(step);
@@ -348,6 +361,94 @@ async fn a_revoked_privilege_fails_the_step_that_needs_it() {
     );
     store.append_audit(audit()).await.expect("audit");
     store.upsert_instance(instance()).await.expect("instance");
+    db.drop_it().await;
+}
+
+/// What the log and the tables refuse: an entry no release wrote, a package id another
+/// package holds, an event key another Organization of the installation holds, and a secret
+/// sealed under another installation's key.
+#[tokio::test]
+async fn the_store_refuses_what_it_cannot_read_or_hold() {
+    let Some(db) = Db::create().await else {
+        return;
+    };
+    let store = PgStore::connect_with(db.member.clone(), 2)
+        .await
+        .expect("store");
+    let (inst, org, other) = (InstanceId::new(), OrgId::new(), OrgId::new());
+    let now = jc_time::TimestampTz::now();
+
+    let package = |name: &str| PackageRecord {
+        id: PackageId::new(),
+        instance_id: inst,
+        org_id: org,
+        owner: "city".into(),
+        package_type: "generic".into(),
+        name: name.into(),
+        created_at: now,
+    };
+    let first = store.upsert_package(package("a")).await.expect("package");
+    let taken = store
+        .upsert_package(PackageRecord {
+            id: first.id,
+            ..package("b")
+        })
+        .await
+        .expect_err("the id is taken");
+    assert!(
+        matches!(&taken, ShakoError::Conflict(m) if m == "package id already taken"),
+        "{taken:?}"
+    );
+
+    let event = |org_id| OutboxEvent {
+        id: uuid::Uuid::now_v7(),
+        instance_id: inst,
+        org_id,
+        repo_id: None,
+        event_kind: "push".into(),
+        idempotency_key: "push:1".into(),
+        payload: json!({}),
+        dispatched: false,
+        created_at: now,
+        dispatched_at: None,
+    };
+    store.append_outbox(event(org)).await.expect("event");
+    let taken = store
+        .append_outbox(event(other))
+        .await
+        .expect_err("the key is taken in the installation");
+    assert!(
+        matches!(&taken, ShakoError::Conflict(m) if m == "the event's key is taken"),
+        "{taken:?}"
+    );
+
+    let sealed = PgSecretStore::new(&store, inst, &kaisatsu_crypto::Kek::from_bytes([1; 32]))
+        .expect("secret store");
+    sealed.put_secret(org, "hook", "v1").await.expect("put");
+    let other_key = PgSecretStore::new(&store, inst, &kaisatsu_crypto::Kek::from_bytes([2; 32]))
+        .expect("secret store");
+    let err = other_key
+        .get_secret(org, "hook")
+        .await
+        .expect_err("another key");
+    assert_eq!(
+        storage_message(&err),
+        "a stored secret does not open with this installation's key"
+    );
+
+    let (unknown, logged) = (OrgId::new(), json!({"op": "no_such_operation", "args": {}}));
+    sqlx::query("INSERT INTO shako.store_log (instance_id, org_id, op) VALUES ($1, $2, $3)")
+        .bind(inst.as_uuid())
+        .bind(unknown.as_uuid())
+        .bind(logged)
+        .execute(&db.admin)
+        .await
+        .expect("log entry");
+    let err = store.hydrate(inst, unknown).await.expect_err("unreadable");
+    assert!(
+        storage_message(&err).starts_with("store log entry unreadable"),
+        "{err:?}"
+    );
     db.drop_it().await;
 }
 
