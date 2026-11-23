@@ -61771,6 +61771,101 @@
         "title": "OrganizationAppearance",
         "description": "`spec.appearance` (UIX-16).",
         "properties": {
+          "bodyFont": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "The platform's interface font.",
+                    "enum": [
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A humanist sans serif.",
+                    "enum": [
+                      "humanist"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A book serif.",
+                    "enum": [
+                      "serif"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A monospace font.",
+                    "enum": [
+                      "mono"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.font`: a system font stack, never a web font (T-7410)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The body text's typeface over `font`, from the same fixed set, e.g. `system`."
+          },
+          "buttonStyle": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "The primary colour filled in.",
+                    "enum": [
+                      "filled"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "The primary colour as border and text.",
+                    "enum": [
+                      "outline"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.buttonStyle` (T-7744)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How buttons look: `filled` (the default) or `outline`."
+          },
+          "cardShadow": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "Flat cards with a border only.",
+                    "enum": [
+                      "none"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A soft shadow under each card.",
+                    "enum": [
+                      "soft"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.cardShadow` (T-7744)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether cards carry a shadow: `soft` (the default) or `none`."
+          },
           "city": {
             "type": [
               "string",
@@ -61795,6 +61890,41 @@
                   "null"
                 ],
                 "description": "Page background, e.g. `#ffffff`."
+              },
+              "footerBackground": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The page footer, e.g. `#0f172a`."
+              },
+              "footerText": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`."
+              },
+              "headerBackground": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The open data portal's header bar, e.g. `#0b5394`."
+              },
+              "headerText": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`."
+              },
+              "link": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744)."
               },
               "primary": {
                 "type": [
@@ -61854,6 +61984,66 @@
             ],
             "description": "How the open data portal lists datasets: `cards` (the default) or a compact `table`."
           },
+          "display": {
+            "type": "object",
+            "description": "Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's.",
+            "properties": {
+              "dataset": {
+                "type": "object",
+                "description": "The dataset page.",
+                "properties": {
+                  "about": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`."
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "`spec.appearance.display.dataset.sections[]`.",
+                      "required": [
+                        "name"
+                      ],
+                      "properties": {
+                        "heading": {
+                          "type": "object",
+                          "description": "Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`.",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "The section, e.g. `about`."
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "description": "The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`."
+                  }
+                },
+                "additionalProperties": false
+              },
+              "datasetList": {
+                "type": "object",
+                "description": "The dataset list.",
+                "properties": {
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
           "faviconSvg": {
             "type": [
               "string",
@@ -61902,6 +62092,15 @@
             ],
             "description": "The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410)."
           },
+          "fontSize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "description": "The base text size in pixels, 14 to 18, e.g. `16`.",
+            "minimum": 0
+          },
           "footerLinks": {
             "type": "array",
             "items": {
@@ -61924,6 +62123,47 @@
               "additionalProperties": false
             },
             "description": "Links the open data portal's footer adds after its own, under the same rules."
+          },
+          "headingFont": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "The platform's interface font.",
+                    "enum": [
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A humanist sans serif.",
+                    "enum": [
+                      "humanist"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A book serif.",
+                    "enum": [
+                      "serif"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A monospace font.",
+                    "enum": [
+                      "mono"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.font`: a system font stack, never a web font (T-7410)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744)."
           },
           "hero": {
             "type": "object",
@@ -62054,6 +62294,40 @@
               "null"
             ],
             "description": "Short name on sidebars and tabs, e.g. `BB`."
+          },
+          "width": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "About 60 rem, for reading.",
+                    "enum": [
+                      "narrow"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "About 76 rem, the built-in width.",
+                    "enum": [
+                      "normal"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "About 90 rem, for wide tables.",
+                    "enum": [
+                      "wide"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.width`: how wide the open data portal's content runs (T-7744)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How wide the content runs: `narrow`, `normal` (the default) or `wide`."
           }
         },
         "additionalProperties": false

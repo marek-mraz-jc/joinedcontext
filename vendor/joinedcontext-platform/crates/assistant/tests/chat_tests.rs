@@ -3111,7 +3111,8 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     );
     assert_eq!(answering["model"], "test/answer");
     assert_eq!(answering["stream"], true);
-    assert_eq!(answering["max_tokens"], 700);
+    // T-7758: the answer keeps its 700 and medium thinking gets its own 4,096 on top.
+    assert_eq!(answering["max_tokens"], 700 + 4_096);
     assert!(answering.get("tools").is_none());
     let passages: Value = serde_json::from_str(
         answering["messages"][2]["content"]

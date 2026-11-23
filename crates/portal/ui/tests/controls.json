@@ -2887,8 +2887,7 @@
     },
     "src/pages/portals/PortalAppearance.tsx": {
       "controls": {
-        "Button": 4,
-        "input": 1
+        "Button": 4
       },
       "tests": [
         "portal_appearance.test.tsx"

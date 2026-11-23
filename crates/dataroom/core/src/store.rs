@@ -57,6 +57,19 @@ pub struct DatasetFilter {
     pub limit: usize,
 }
 
+impl SearchQuery {
+    /// Whether the state and public-only part of the query keeps `ds` (the terms aside).
+    #[must_use]
+    pub fn keeps(&self, ds: &Dataset) -> bool {
+        let state_kept = match ds.state {
+            crate::model::RecordState::Active => true,
+            crate::model::RecordState::Draft => self.include_drafts,
+            crate::model::RecordState::Withdrawn => self.include_withdrawn,
+        };
+        state_kept && (!self.public_only || ds.visibility == Visibility::Public)
+    }
+}
+
 impl DatasetFilter {
     pub fn public_default() -> Self {
         Self {
@@ -65,6 +78,40 @@ impl DatasetFilter {
         }
     }
 }
+
+/// The text and state part of a catalogue search a store answers (S11-38): the store narrows
+/// and ranks, the search crate authorizes, facets and pages.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchQuery {
+    /// Per query word, the folded prefixes any of which matches it (`word_stem_candidates`);
+    /// a dataset matches when every word does. Empty: every dataset matches.
+    pub terms: Vec<Vec<String>>,
+    pub include_drafts: bool,
+    pub include_withdrawn: bool,
+    /// Only `public` datasets: an anonymous search without `include_private`.
+    pub public_only: bool,
+}
+
+/// One dataset a store found for a [`SearchQuery`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchCandidate {
+    /// With `rank` set, a slim record: no description, distributions holding only id and
+    /// format. With `rank` unset, the full record, which the caller still has to match.
+    pub dataset: Dataset,
+    pub rank: Option<usize>,
+}
+
+/// The answer of [`Store::search_page`]: the catalogue's publishers and the full records of
+/// the page `pick` chose, in its order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SearchPage {
+    pub publishers: Vec<Publisher>,
+    pub datasets: Vec<Dataset>,
+}
+
+/// Chooses a page from the candidates of a [`Store::search_page`] and returns its dataset ids.
+pub type PickPage<'a> =
+    dyn FnMut(&[Publisher], Vec<SearchCandidate>) -> Result<Vec<String>> + Send + 'a;
 
 /// The storage contract for `dataroom`.
 ///
@@ -142,23 +189,86 @@ pub trait Store: Send + Sync {
         publisher: Publisher,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
-    /// Merges publisher `source_id` into `target_id` (moves datasets, sets `merged_into`, C16).
+    /// [`Store::save_dataset`] for a publisher: the write and its activity row in one
+    /// transaction, guarded on the stored `modified` when `expected` is given (S11-13, S11-25).
+    fn save_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        publisher: Publisher,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>>;
+
+    /// Merges publisher `source_id` into `target_id` (moves datasets, sets `merged_into`, C16),
+    /// with `activity` in the same transaction; an activity row with no `object_id` names the
+    /// target.
     fn merge_publishers<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         source_id_or_name: &'a str,
         target_id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
-    /// Withdraws a publisher (its datasets leave public feeds, C16).
+    /// Withdraws a publisher (its datasets leave public feeds, C16), read and written in one
+    /// transaction with `activity`.
     fn withdraw_publisher<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>>;
 
     /// Lists all datasets in `ctx`'s catalogue (including drafts/withdrawn for internal callers).
     fn list_datasets<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Dataset>>>;
+
+    /// One search page in one read (S11-38): the publishers, the datasets `query` keeps
+    /// (state, public-only, every term matched), `pick` choosing the page from them, and the
+    /// page's full records. This default reads whole records and leaves the match to the
+    /// caller (every rank unset); the Postgres store matches and ranks in SQL.
+    fn search_page<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        query: &'a SearchQuery,
+        pick: &'a mut PickPage<'_>,
+    ) -> BoxFuture<'a, Result<SearchPage>> {
+        Box::pin(async move {
+            let publishers = self.list_publishers(ctx).await?;
+            let candidates: Vec<SearchCandidate> = self
+                .list_datasets(ctx)
+                .await?
+                .into_iter()
+                .filter(|ds| query.keeps(ds))
+                .map(|dataset| SearchCandidate {
+                    dataset,
+                    rank: None,
+                })
+                .collect();
+            let mut by_id: std::collections::HashMap<String, Dataset> = candidates
+                .iter()
+                .map(|c| (c.dataset.id.clone(), c.dataset.clone()))
+                .collect();
+            let ids = pick(&publishers, candidates)?;
+            let datasets = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            Ok(SearchPage {
+                publishers,
+                datasets,
+            })
+        })
+    }
+
+    /// The datasets of one `dataset_type` (`dashboard`), in name order.
+    fn list_datasets_of_type<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset_type: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Dataset>>> {
+        Box::pin(async move {
+            let mut all = self.list_datasets(ctx).await?;
+            all.retain(|d| d.dataset_type == dataset_type);
+            Ok(all)
+        })
+    }
 
     /// Gets a dataset by `id` or `name` slug.
     fn get_dataset<'a>(
@@ -194,11 +304,12 @@ pub trait Store: Send + Sync {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Dataset>>;
 
-    /// Permanently purges a dataset (`dataset_purge`).
+    /// Permanently purges a dataset (`dataset_purge`), with `activity` in the same transaction.
     fn purge_dataset<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Gets a distribution and its parent dataset by distribution `id`.
@@ -215,6 +326,22 @@ pub trait Store: Send + Sync {
         resource_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ResourceView>>>;
 
+    /// The views of several distributions (one dataset's) in one read: grouped in the order of
+    /// `distribution_ids`, each group as [`Store::list_resource_views`] orders it.
+    fn list_views_of<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        distribution_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<ResourceView>>> {
+        Box::pin(async move {
+            let mut out = Vec::new();
+            for id in distribution_ids {
+                out.extend(self.list_resource_views(ctx, id).await?);
+            }
+            Ok(out)
+        })
+    }
+
     /// Gets a resource view by `id`.
     fn get_resource_view<'a>(
         &'a self,
@@ -229,11 +356,21 @@ pub trait Store: Send + Sync {
         view: ResourceView,
     ) -> BoxFuture<'a, Result<ResourceView>>;
 
-    /// Deletes a resource view by `id`.
+    /// Writes a resource view and its activity row in one transaction (S11-13); an activity row
+    /// with no `object_id` names the saved view.
+    fn save_resource_view<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        view: ResourceView,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ResourceView>>;
+
+    /// Deletes a resource view by `id`, with `activity` in the same transaction.
     fn delete_resource_view<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         view_id: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Lists harvest sources in `ctx`'s catalogue.
@@ -254,6 +391,14 @@ pub trait Store: Send + Sync {
         &'a self,
         ctx: &'a RequestCtx,
         source: HarvestSource,
+    ) -> BoxFuture<'a, Result<HarvestSource>>;
+
+    /// Writes a harvest source and its activity row in one transaction (S11-13).
+    fn save_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        source: HarvestSource,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<HarvestSource>>;
 
     /// Deletes the harvest source `id_or_name` of `ctx`'s catalogue and its runs; `false` when
@@ -343,6 +488,15 @@ pub trait Store: Send + Sync {
         profile: ProfileRecord,
     ) -> BoxFuture<'a, Result<ProfileRecord>>;
 
+    /// Stores a new profile version and its activity row in one transaction (S11-13). A
+    /// version is never rewritten: a stored `(id, version)` is a conflict and nothing is written.
+    fn save_profile<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        profile: ProfileRecord,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ProfileRecord>>;
+
     /// Lists static pages for `ctx`'s catalogue.
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>>;
 
@@ -364,6 +518,14 @@ pub trait Store: Send + Sync {
         &'a self,
         ctx: &'a RequestCtx,
         plugin: CataloguePlugin,
+    ) -> BoxFuture<'a, Result<CataloguePlugin>>;
+
+    /// Writes a plugin and its activity row in one transaction (S11-13).
+    fn save_plugin<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        plugin: CataloguePlugin,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<CataloguePlugin>>;
 
     /// Returns an `odata_table::Table` for the named entity set (`Catalogues`, `Datasets`,

@@ -13841,7 +13841,6 @@
       "fixHint": "Opravte označená pole ({count}) a zveřejněte znovu.",
       "reset": "Obnovit",
       "resetField": "Obnovit {field} na zděděné",
-      "pick": "Vybrat barvu pro {field}",
       "inheritOption": "Zděděno ({value})",
       "default": "výchozí",
       "why": "Zatím se nic nezměnilo.",

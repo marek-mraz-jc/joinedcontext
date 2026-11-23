@@ -13268,6 +13268,12 @@ export interface components {
          * @description `spec.appearance` (UIX-16).
          */
         OrganizationAppearance: {
+            /** @description The body text's typeface over `font`, from the same fixed set, e.g. `system`. */
+            bodyFont?: ("system" | "humanist" | "serif" | "mono") | null;
+            /** @description How buttons look: `filled` (the default) or `outline`. */
+            buttonStyle?: ("filled" | "outline") | null;
+            /** @description Whether cards carry a shadow: `soft` (the default) or `none`. */
+            cardShadow?: ("none" | "soft") | null;
             /** @description The city or region the Organization serves, e.g. `Banská Bystrica`. */
             city?: string | null;
             /** @description The colour tokens, each a hex colour such as `#0b5394`. */
@@ -13276,6 +13282,16 @@ export interface components {
                 accent?: string | null;
                 /** @description Page background, e.g. `#ffffff`. */
                 background?: string | null;
+                /** @description The page footer, e.g. `#0f172a`. */
+                footerBackground?: string | null;
+                /** @description Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`. */
+                footerText?: string | null;
+                /** @description The open data portal's header bar, e.g. `#0b5394`. */
+                headerBackground?: string | null;
+                /** @description Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`. */
+                headerText?: string | null;
+                /** @description Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744). */
+                link?: string | null;
                 /** @description Primary action colour, e.g. `#0b5394`. */
                 primary?: string | null;
                 /** @description Secondary colour for links and focus, e.g. `#0f766e`. */
@@ -13287,10 +13303,37 @@ export interface components {
             contactEmail?: string | null;
             /** @description How the open data portal lists datasets: `cards` (the default) or a compact `table`. */
             datasetList?: ("cards" | "table") | null;
+            /** @description Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's. */
+            display?: {
+                /** @description The dataset page. */
+                dataset?: {
+                    /** @description The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`. */
+                    about?: string[];
+                    /** @description The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`. */
+                    sections?: {
+                        /** @description Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`. */
+                        heading?: {
+                            [key: string]: string;
+                        };
+                        /** @description The section, e.g. `about`. */
+                        name: string;
+                    }[];
+                };
+                /** @description The dataset list. */
+                datasetList?: {
+                    /** @description What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's. */
+                    fields?: string[];
+                };
+            };
             /** @description The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. */
             faviconSvg?: string | null;
             /** @description The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410). */
             font?: ("system" | "humanist" | "serif" | "mono") | null;
+            /**
+             * Format: uint8
+             * @description The base text size in pixels, 14 to 18, e.g. `16`.
+             */
+            fontSize?: number | null;
             /** @description Links the open data portal's footer adds after its own, under the same rules. */
             footerLinks?: {
                 /** @description The text of the link, e.g. `Mesto`. */
@@ -13298,6 +13341,8 @@ export interface components {
                 /** @description An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`. */
                 url: string;
             }[];
+            /** @description The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744). */
+            headingFont?: ("system" | "humanist" | "serif" | "mono") | null;
             /** @description The open data portal's home hero: its title and an introduction in Markdown. */
             hero?: {
                 /** @description The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text. */
@@ -13340,6 +13385,8 @@ export interface components {
             radius?: number | null;
             /** @description Short name on sidebars and tabs, e.g. `BB`. */
             shortName?: string | null;
+            /** @description How wide the content runs: `narrow`, `normal` (the default) or `wide`. */
+            width?: ("narrow" | "normal" | "wide") | null;
         };
         /**
          * @description Where the forge mirror's Organizations and the registry's active ones disagree (T-7319): jc-prod
