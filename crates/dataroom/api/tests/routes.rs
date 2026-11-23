@@ -2444,15 +2444,29 @@ async fn a_catalogue_serves_the_profiles_it_chose_and_no_other() {
     for n in 0..99 {
         let more = dataset(&format!("more-{n}"), "city", "public", 3);
         w.store.upsert_dataset(&ctx, more).await.unwrap();
+        // Exactly one page of 100 is no paged collection.
+        if n == 97 {
+            let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
+            assert!(
+                !a.body.contains("hydra:totalItems"),
+                "{}",
+                a.body.matches("a dcat:Dataset").count()
+            );
+        }
     }
     let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
     assert!(
-        a.body.contains("?page=2&_profile=dcat-ap-sk-2.0"),
+        a.body.contains("?page=2&_profile=dcat-ap-sk-2.0") && a.body.contains("hydra:next"),
         "{}",
         &a.body[..900]
     );
     let a = get(&w.app, "/catalog.ttl?page=2&_profile=dcat-ap-sk-2.0", None).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        a.body.contains("hydra:previous") && !a.body.contains("hydra:next"),
+        "the last page has no next: {}",
+        &a.body[..900]
+    );
     assert!(a.header("content-profile").contains("dcat-ap-sk-2.0"));
     let a = get(&w.app, "/catalog.ttl", None).await;
     assert!(!a.body.contains("_profile="), "the default needs no name");
