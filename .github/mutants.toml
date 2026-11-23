@@ -145,6 +145,9 @@ exclude_re = [
   # antares-icsr SelfUrls::matching: an URL with a user or a password serialises with its userinfo, and no self URL
   # holds one, so no prefix matches either way; the explicit refusal stays (T-7673).
   'crates/antares-icsr/src/self_url\.rs:\d+:\d+: replace \|\| with && in SelfUrls::matching',
+  # antares-ws mqtt packet: the length byte is `n & 0x7f`, its top bit zero, so `| 0x80` and `^ 0x80` set the
+  # same continuation bit (T-7675).
+  'crates/antares-ws/src/mqtt\.rs:\d+:\d+: replace \| with \^ in packet',
   'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
