@@ -54,6 +54,50 @@ async fn organizations_are_created_by_the_installation_admin_and_seen_by_members
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "{body}");
 
+    // The main organization's name is taken; a blank, overlong or control-character name is
+    // refused before the store is asked.
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("admin"),
+            Some(json!({ "name": "Main Org." })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    for name in ["  ".to_owned(), "x".repeat(191), "a\u{7}b".to_owned()] {
+        let (st, body) = w
+            .call(
+                "POST",
+                "/api/orgs",
+                Some("admin"),
+                Some(json!({ "name": name })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{name:?}: {body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("e.g. helsinki"),
+            "{body}"
+        );
+    }
+    // A declared organization whose number or name the store holds for another one is refused
+    // with what to do, never renumbered; the same declaration again is the same row.
+    let err = daiya_api::compat::declare_organization(&w.state, 7, "Helsinki")
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 400, "{err}");
+    assert!(
+        err.to_string().contains("declare the number it holds"),
+        "{err}"
+    );
+    let again = daiya_api::compat::declare_organization(&w.state, 2, "Helsinki")
+        .await
+        .unwrap();
+    assert_eq!(again.to_string(), created["uuid"].as_str().unwrap());
+
     // Lookup by name: the installation admin sees it; a member of the main org sees its own.
     let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
     assert_eq!(found["id"], 2);
@@ -259,6 +303,43 @@ async fn an_organization_header_naming_no_organization_is_404() {
         json!([]),
         "nothing was saved in the caller's Organization"
     );
+    // The installation routes, the dashboard page and a path daiya does not serve read the
+    // header too; a value that is no text names no Organization either.
+    let unreadable = http::HeaderValue::from_bytes(b"\xff").unwrap();
+    for (method, uri, value) in [
+        ("POST", "/api/orgs", http::HeaderValue::from_static("99")),
+        (
+            "DELETE",
+            "/api/orgs/2",
+            http::HeaderValue::from_static("99"),
+        ),
+        (
+            "GET",
+            "/api/orgs/name/Helsinki",
+            http::HeaderValue::from_static("99"),
+        ),
+        ("GET", "/d/edge", http::HeaderValue::from_static("99")),
+        (
+            "GET",
+            "/api/nothing-here",
+            http::HeaderValue::from_static("99"),
+        ),
+        ("POST", "/api/datasources", unreadable),
+    ] {
+        let req = http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", value)
+            .body(axum::body::Body::from(
+                json!({ "name": "Helsinki" }).to_string(),
+            ))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}: {answer}");
+        assert_eq!(answer["error"]["code"], "cr.not_found", "{answer}");
+    }
 }
 
 #[tokio::test]
@@ -880,6 +961,49 @@ async fn store_failures_surface_as_errors() {
         assert_eq!(answer["error"]["code"], "cr.internal_error", "{answer}");
     }
 
+    // The organization routes: create, retire, lookup by name and the caller's current one (an
+    // organization other than the main one, which the store alone knows).
+    let created = w
+        .ok("POST", "/api/orgs", Some(json!({ "name": "Helsinki" })))
+        .await;
+    let number = created["orgId"].as_i64().unwrap();
+    for (method_name, method, uri, token, body) in [
+        (
+            "create_org",
+            "POST",
+            "/api/orgs".to_owned(),
+            "admin",
+            Some(json!({ "name": "Tampere" })),
+        ),
+        (
+            "retire_org",
+            "DELETE",
+            format!("/api/orgs/{number}"),
+            "admin",
+            None,
+        ),
+        (
+            "find_org",
+            "GET",
+            "/api/orgs/name/Helsinki".to_owned(),
+            "admin",
+            None,
+        ),
+        ("find_org", "GET", "/api/org".to_owned(), "outsider", None),
+    ] {
+        w.store.fail(method_name);
+        let (st, answer) = w.call(method, &uri, Some(token), body).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method_name}: {method} {uri}: {answer}"
+        );
+        assert_eq!(answer["error"]["code"], "cr.internal_error", "{answer}");
+    }
+    let found = w.ok("GET", "/api/orgs/name/Helsinki", None).await;
+    assert_eq!(found["id"], number, "a failed retire retired nothing");
+
     // Search degrades to what the store could list, never to an error page.
     w.store.fail("list_folders");
     let hits = w.ok("GET", "/api/search", None).await;
@@ -919,7 +1043,7 @@ async fn render_takes_template_variables_from_the_address() {
         .await;
     w.ok(
         "GET",
-        "/api/dashboards/vars/render?panel=1&var-job=edge%22%7D&maxDataPoints=50",
+        "/api/dashboards/vars/render?panel=1&var-job=edge%22%7D&maxDataPoints=50&intervalMs=30000&theme=dark",
         None,
     )
     .await;
