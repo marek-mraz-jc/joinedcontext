@@ -103,10 +103,9 @@ async fn vectors_through_the_service_equal_the_in_process_ones() {
     assert_ne!(q, p);
 }
 
-/// The pinned model's own vector for one question: unit length, and its first numbers as this
-/// model and tokenizer gave them when they were pinned (mean pooling over every token, then
-/// normalized). Service and in-process run the same code, so only a reference catches a changed
-/// pooling or norm; thread count and ONNX Runtime builds move the fifth decimal at most.
+/// The pinned model's own vector for one question: unit length, and pointing where this model and
+/// tokenizer pointed when they were pinned (mean pooling over every token, then normalized).
+/// Service and in-process run the same code, so only a reference catches a changed pooling or norm.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_pinned_model_gives_its_reference_vector() {
     // The int8 model's kernels differ by CPU (VNNI or not: 0.0628 against 0.0729 on one CI runner, run
