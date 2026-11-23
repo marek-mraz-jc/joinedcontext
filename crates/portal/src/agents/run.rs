@@ -264,3 +264,119 @@ pub fn digest_prompt(prompt: &str) -> String {
     let hash = Sha256::digest(prompt.as_bytes());
     format!("sha256:{:x}", hash)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+
+    const ALL: [AgentRunStatus; 11] = [
+        AgentRunStatus::Queued,
+        AgentRunStatus::Starting,
+        AgentRunStatus::Interviewing,
+        AgentRunStatus::Building,
+        AgentRunStatus::Testing,
+        AgentRunStatus::Previewing,
+        AgentRunStatus::AwaitingApproval,
+        AgentRunStatus::Published,
+        AgentRunStatus::Failed,
+        AgentRunStatus::Cancelled,
+        AgentRunStatus::Expired,
+    ];
+
+    #[test]
+    fn every_status_reads_back_from_its_name_and_nothing_else_does() {
+        for status in ALL {
+            assert_eq!(AgentRunStatus::parse(status.as_str()), Some(status));
+        }
+        assert_eq!(AgentRunStatus::parse("Building"), None);
+        assert_eq!(AgentRunStatus::parse(""), None);
+        assert_eq!(
+            AgentRunStatus::AwaitingApproval.as_str(),
+            "awaiting_approval"
+        );
+    }
+
+    #[test]
+    fn a_run_moves_forward_or_ends_and_never_leaves_an_end() {
+        use AgentRunStatus::*;
+        assert!(Queued.allows_transition_to(Starting));
+        assert!(Starting.allows_transition_to(Interviewing));
+        assert!(Starting.allows_transition_to(Building));
+        assert!(Previewing.allows_transition_to(AwaitingApproval));
+        assert!(AwaitingApproval.allows_transition_to(Published));
+        // The workspace reports where it is, so the same live state twice is allowed.
+        assert!(Building.allows_transition_to(Building));
+        assert!(Testing.allows_transition_to(Expired));
+        assert!(!Queued.allows_transition_to(Building));
+        assert!(!Testing.allows_transition_to(Building));
+        for end in [Published, Failed, Cancelled, Expired] {
+            assert!(end.is_terminal());
+            assert!(!end.allows_transition_to(end));
+            assert!(!end.allows_transition_to(Failed));
+        }
+        assert!(!Queued.is_terminal());
+    }
+
+    #[test]
+    fn origins_have_their_stored_names() {
+        assert_eq!(RunOrigin::Person.as_str(), "person");
+        assert_eq!(RunOrigin::Journey.as_str(), "journey");
+    }
+
+    #[test]
+    fn a_run_id_is_a_fresh_version_4_uuid() {
+        let id = mint_run_id();
+        let parsed = uuid::Uuid::parse_str(&id).expect("a UUID");
+        assert_eq!(parsed.get_version_num(), 4);
+        assert_eq!(parsed.get_variant(), uuid::Variant::RFC4122);
+        assert_eq!(id, id.to_lowercase());
+        assert_ne!(id, mint_run_id());
+    }
+
+    #[test]
+    fn a_ticket_is_32_slug_characters_and_only_its_own_hash_verifies_it() {
+        let (ticket, hash) = mint_ticket();
+        assert_eq!(ticket.len(), 32);
+        assert!(ticket.bytes().all(|byte| SLUG_ALPHABET.contains(&byte)));
+        let parsed = PasswordHash::new(&hash).expect("a PHC string");
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+        assert!(Argon2::default()
+            .verify_password(ticket.as_bytes(), &parsed)
+            .is_ok());
+        let (other, _) = mint_ticket();
+        assert_ne!(other, ticket);
+        assert!(Argon2::default()
+            .verify_password(other.as_bytes(), &parsed)
+            .is_err());
+    }
+
+    #[test]
+    fn a_prompt_digest_is_its_sha256_in_hex() {
+        assert_eq!(
+            digest_prompt("abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn a_stored_run_without_endpoints_files_or_origin_reads_with_their_defaults() {
+        let run: AgentRun = serde_json::from_value(serde_json::json!({
+            "id": "r1", "project": "helsinki", "appName": "parking", "endpointName": "e",
+            "endpointSlug": "e", "profile": "small", "kind": "application", "unattended": false,
+            "appClass": "static", "visibility": "project", "prompt": "p", "promptDigest": "d",
+            "dataNeeds": [], "allowsWrite": false, "branch": "b", "pathPrefix": "/apps/parking",
+            "status": "queued", "ticketHash": "h", "steps": 0, "tokensUsed": 0, "createdBy": "u",
+            "createdAt": "2026-11-23T00:00:00Z", "expiresAt": "2026-11-23T01:00:00Z"
+        }))
+        .expect("a run");
+        assert_eq!(run.endpoints, serde_json::json!([]));
+        assert_eq!(run.files, serde_json::json!({}));
+        assert_eq!(run.origin, "person");
+        let shown = serde_json::to_value(&run).expect("serialises");
+        // The ticket's hash, the files and the starter never leave the Portal.
+        assert!(shown.get("ticketHash").is_none());
+        assert!(shown.get("files").is_none());
+        assert!(shown.get("starter").is_none());
+    }
+}

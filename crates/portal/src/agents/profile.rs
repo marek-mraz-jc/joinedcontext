@@ -299,12 +299,21 @@ mod tests {
         let mut spec = profile_spec();
         spec["model"]["maxTokensPerRun"] = serde_json::json!(0);
         let err = Profile::load(&mirror_with(spec), "app-builder").expect_err("no budget");
-        match err {
-            ApiError::Unavailable(message) => {
-                assert!(message.contains("spec.model.maxTokensPerRun"), "{message}")
-            }
-            other => panic!("expected 503, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::Unavailable(message) if message.contains("spec.model.maxTokensPerRun")),
+            "expected 503, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_profile_with_a_blank_image_is_unavailable_rather_than_unpinned() {
+        let mut spec = profile_spec();
+        spec["runtime"]["image"] = serde_json::json!("  ");
+        let err = Profile::load(&mirror_with(spec), "app-builder").expect_err("no image");
+        assert!(
+            matches!(&err, ApiError::Unavailable(message) if message.contains("spec.runtime.image")),
+            "expected 503, got {err:?}"
+        );
     }
 
     #[test]
