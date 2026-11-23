@@ -4375,6 +4375,27 @@ mod tests {
         }
     }
 
+    /// Without a pinned algorithm the realm's default signs, else any active key; a realm with
+    /// no active key signs nothing.
+    #[tokio::test]
+    async fn an_unpinned_client_takes_the_realm_default_or_any_active_key() {
+        let state = state();
+        let realm = RealmConfig {
+            default_signature_algorithm: "RS256".into(),
+            ..RealmConfig::default()
+        };
+        let client = ClientRepresentation::default();
+        let es = KeyManager::generate_es256("dev", &state.kek, 100, "ACTIVE").unwrap();
+        let key = select_signing_key(&state, std::slice::from_ref(&es), &realm, &client, false)
+            .await
+            .unwrap();
+        assert_eq!(key.kid, es.kid);
+        let err = select_signing_key(&state, &[], &realm, &client, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(&err, KaisatsuError::Crypto(m) if m.contains("no active signing key")));
+    }
+
     #[tokio::test]
     async fn a_realm_deleted_after_the_active_realm_check_answers_404() {
         let state = state();

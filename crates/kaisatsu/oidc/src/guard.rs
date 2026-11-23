@@ -694,6 +694,20 @@ mod tests {
     /// No suffix rule: an in-cluster name is reachable over `http` or on a private address only
     /// when `outbound_private_hosts` lists it exactly (and its port, when the entry names one).
     #[test]
+    fn a_saved_url_is_checked_and_an_empty_one_skipped() {
+        let guard = listing(&[]);
+        assert!(guard.check_saved([("logo", ""), ("site", "https://example.org/")]).is_ok());
+        let err = guard
+            .check_saved([("logo", ""), ("jwks", "http://169.254.169.254/latest")])
+            .unwrap_err();
+        assert!(
+            matches!(&err, KaisatsuError::Validation { message, fields }
+                if message.starts_with("jwks: ") && fields.keys().eq(["jwks"].iter())),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn only_a_listed_exact_host_skips_the_public_address_rule() {
         let none = OutboundGuard::default();
         let listed = listing(&["portal.jc.svc.cluster.local:8080", "Idp.Corp.Example."]);
