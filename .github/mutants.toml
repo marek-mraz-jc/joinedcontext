@@ -109,6 +109,12 @@ exclude_re = [
   # ekiben-text go_regex push_range (T-7676): a one-character range `a-a` is the class of `a`, so `l < h` and `l <= h`
   # write the same class.
   'ekiben-text/src/go_regex\.rs:\d+:\d+: replace < with <= in push_range',
+  # ekiben-text grok atoi and parse_float (T-7676): ParseTyped's caller drops a cast's error and only its Err counts;
+  # atoi's syntax check picks Go's "invalid syntax" text over parse's "out of range", and parse_float's character check
+  # refuses nothing Rust's f64 parser accepts (decimal text, inf, infinity, nan in any case), so either way is Err alike.
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace \|\| with && in atoi',
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace && with \|\| in parse_float',
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace match guard ok with true in parse_float',
   # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
   # way, since order() has no ordering between a Boolean and any other kind (T-7599).
   'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',

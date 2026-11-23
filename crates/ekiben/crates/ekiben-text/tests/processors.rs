@@ -720,6 +720,23 @@ async fn grok_names_each_refusal_and_types_its_captures() {
     );
     let err = refused(&chain(deepest + 1));
     assert!(err.contains("nests more than 64 references deep"), "{err}");
+    // An expansion of exactly MAX_EXPRESSION_BYTES passes the bound: `%{A:a}` becomes `(?P<a>` + 16 bytes + `)`
+    let max = ekiben_text::processor_grok::MAX_EXPRESSION_BYTES;
+    let pad = |n: usize| {
+        format!(
+            "grok:\n  expressions: ['%{{A:a}}{}']\n  pattern_definitions: {{A: xxxxxxxxxxxxxxxx}}\n",
+            "y".repeat(n)
+        )
+    };
+    // (the regex crate then refuses a program that large, past the expansion bound)
+    let err = refused(&pad(max - "(?P<a>)".len() - 16));
+    assert!(
+        err.contains("exceeds size limit") && !err.contains("expanded"),
+        "{}",
+        &err[err.len() - 80..]
+    );
+    let err = refused(&pad(max - "(?P<a>)".len() - 15));
+    assert!(err.contains("the expanded expression is over"), "{err}");
     // A pattern whose cast fails is passed over for the next one.
     let out = run(
         "grok:\n  expressions: ['%{WORD:a:int}', '%{WORD:b}']\n",
