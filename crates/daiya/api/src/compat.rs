@@ -654,6 +654,7 @@ async fn compat_delete_datasource_by_uid(
     match unit(async {
         let deleted = state.store.delete_datasource(ctx.org_id, &uid).await?;
         if deleted {
+            state.forget_built_driver(ctx.org_id, &uid);
             audit(
                 &state,
                 &ctx,

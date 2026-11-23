@@ -324,6 +324,102 @@ async fn registered_drivers_come_first_and_built_ones_are_cached_per_revision() 
     assert_eq!(c.kind(), "fixed");
 }
 
+/// Built drivers are bounded per process (S9-33): ten times the Organizations hold no more
+/// drivers or bytes, and a deleted datasource gives its driver back at once.
+#[tokio::test]
+async fn built_drivers_stay_bounded_across_ten_times_the_organizations() {
+    use daiya_api::state::BUILT_DRIVERS_KEPT;
+    let w = world();
+    let (url, _) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let record = w
+        .store
+        .inner
+        .get_datasource(ORG, "prom")
+        .await
+        .unwrap()
+        .unwrap();
+    w.state.driver_for_record(&record).await.unwrap();
+    assert_eq!(w.state.built_drivers.len(), 1);
+    w.ok("DELETE", "/api/datasources/uid/prom", None).await;
+    assert!(
+        w.state.built_drivers.is_empty(),
+        "the deleted source's driver goes"
+    );
+
+    let mut held = Vec::new();
+    for orgs in [BUILT_DRIVERS_KEPT, 10 * BUILT_DRIVERS_KEPT] {
+        for n in 0..orgs {
+            let mut other = record.clone();
+            other.org_id = OrgId::from_u128(10_000 + n as u128);
+            w.state.driver_for_record(&other).await.unwrap();
+        }
+        held.push((w.state.built_drivers.len(), w.state.built_drivers.bytes()));
+    }
+    assert!(held[0].0 <= BUILT_DRIVERS_KEPT, "{held:?}");
+    assert_eq!(held[0], held[1], "flat across 10x Organizations");
+}
+
+/// A dashboard page loads and authorises its dashboard once, not once per panel (S9-34).
+#[tokio::test]
+async fn a_twenty_panel_page_authorises_its_dashboard_once() {
+    struct Counting {
+        inner: daiya_model::PolicyAuthorizer,
+        dashboard_reads: AtomicUsize,
+    }
+    impl daiya_model::Authorizer for Counting {
+        fn check(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            action: daiya_model::Action,
+            object: &daiya_model::ObjectTarget,
+        ) -> daiya_model::Decision {
+            if matches!(object, daiya_model::ObjectTarget::Dashboard { .. }) {
+                self.dashboard_reads.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner.check(ctx, action, object)
+        }
+        fn read_scope(
+            &self,
+            ctx: &daiya_model::RequestCtx,
+            kind: daiya_model::ReadKind,
+        ) -> daiya_model::ReadScope {
+            self.inner.read_scope(ctx, kind)
+        }
+    }
+    let authz = Arc::new(Counting {
+        inner: daiya_model::PolicyAuthorizer::new(common::bindings()),
+        dashboard_reads: AtomicUsize::new(0),
+    });
+    let w = common::world_with(authz.clone(), common::loopback());
+    let panels: Vec<Value> = (1..=20)
+        .map(|id| {
+            json!({
+                "id": id, "type": "text", "title": format!("Note {id}"),
+                "gridPos": { "x": 0, "y": id, "w": 12, "h": 2 },
+                "options": { "mode": "markdown", "content": format!("panel {id}") }
+            })
+        })
+        .collect();
+    let mut board = dashboard("many", "prom");
+    board["panels"] = Value::Array(panels);
+    w.add_dashboard(board, None).await;
+    authz.dashboard_reads.store(0, Ordering::SeqCst);
+
+    let (st, page) = w.call("GET", "/d/many", Some("viewer"), None).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    let page = page.as_str().unwrap();
+    assert_eq!(page.matches("<section>").count(), 20);
+    let order: Vec<usize> = (1..=20)
+        .map(|id| page.find(&format!("<h2>Note {id}</h2>")).unwrap())
+        .collect();
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "panels in dashboard order"
+    );
+    assert_eq!(authz.dashboard_reads.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn time_strings_parse_as_grafana_writes_them() {
     use TimeEdge::{From, To};

@@ -8,11 +8,11 @@
 //!   `cr_quota` during write transactions (§5.3).
 
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
-    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
-    InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, ShareType, folder_content_refusal, org_state_etag,
-    store::StoreFuture,
+    ApplyBundle, AuditRecord, CrError, CrResult, DASHBOARD_VERSIONS_KEPT, DaiyaStore,
+    DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT,
+    ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
+    OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage, RowQuery, ShareType,
+    folder_content_refusal, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
@@ -640,6 +640,17 @@ impl PgStore {
         })
         .bind(&dashboard.data)
         .bind(&dashboard.updated_by)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+
+        // Retention (STO-12): the version just written is the newest, so it always stays.
+        sqlx::query(
+            "DELETE FROM cr_dashboard_version WHERE org_id = $1 AND dashboard_uid = $2 AND version <= $3",
+        )
+        .bind(dashboard.org_id.as_uuid())
+        .bind(&dashboard.uid)
+        .bind(i64::from(dashboard.version).saturating_sub(DASHBOARD_VERSIONS_KEPT))
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
@@ -1654,6 +1665,16 @@ impl DaiyaStore for PgStore {
             .bind(report.mapped_count)
             .bind(&report.summary)
             .bind(report.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            // Retention (STO-13): the newest reports of the organization stay.
+            sqlx::query(
+                "DELETE FROM cr_import_report WHERE org_id = $1 AND id NOT IN \
+                 (SELECT id FROM cr_import_report WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2)",
+            )
+            .bind(report.org_id.as_uuid())
+            .bind(IMPORT_REPORTS_KEPT)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;

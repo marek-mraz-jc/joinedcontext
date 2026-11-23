@@ -4,11 +4,11 @@
 //! verification (R8, §5.3).
 
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
-    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
-    InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, RowSet, constant_time_eq, folder_content_refusal,
-    org_state_etag, store::StoreFuture,
+    ApplyBundle, AuditRecord, CrError, CrResult, DASHBOARD_VERSIONS_KEPT, DaiyaStore,
+    DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT,
+    ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
+    OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage, RowQuery, RowSet,
+    constant_time_eq, folder_content_refusal, org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
@@ -113,6 +113,13 @@ fn upsert_folder_in(org: &mut OrgState, mut folder: FolderRecord) -> CrResult<Fo
     Ok(folder)
 }
 
+/// Keeps the newest `kept` of `rows`, which are in insertion order.
+fn trim_oldest<T>(rows: &mut Vec<T>, kept: i64) {
+    let kept = usize::try_from(kept).unwrap_or(usize::MAX);
+    let excess = rows.len().saturating_sub(kept);
+    rows.drain(..excess);
+}
+
 fn upsert_dashboard_in(
     org: &mut OrgState,
     mut dashboard: DashboardRecord,
@@ -190,10 +197,9 @@ fn upsert_dashboard_in(
         created_at: now,
     };
 
-    org.versions
-        .entry(dashboard.uid.clone())
-        .or_default()
-        .push(ver_record);
+    let versions = org.versions.entry(dashboard.uid.clone()).or_default();
+    versions.push(ver_record);
+    trim_oldest(versions, DASHBOARD_VERSIONS_KEPT);
     org.dashboards
         .insert(dashboard.uid.clone(), dashboard.clone());
     Ok(dashboard)
@@ -794,12 +800,9 @@ impl DaiyaStore for MemoryStore {
     ) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let mut guard = self.inner.write();
-            guard
-                .orgs
-                .entry(report.org_id)
-                .or_default()
-                .import_reports
-                .push(report);
+            let reports = &mut guard.orgs.entry(report.org_id).or_default().import_reports;
+            reports.push(report);
+            trim_oldest(reports, IMPORT_REPORTS_KEPT);
             Ok(())
         })
     }

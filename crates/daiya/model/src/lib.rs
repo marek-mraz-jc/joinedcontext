@@ -30,9 +30,10 @@ pub use dashboard::{
     VariableOption,
 };
 pub use entities::{
-    ApplyBundle, AuditRecord, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
-    FolderRecord, ImportReportRecord, LibraryPanelRecord, MAX_LIVE_PLANS, PlanRecord,
-    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag,
+    ApplyBundle, AuditRecord, DASHBOARD_VERSIONS_KEPT, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT, ImportReportRecord, LibraryPanelRecord,
+    MAX_LIVE_PLANS, PlanRecord, PublicDashboardRecord, QueryCacheStatRecord, ShareType,
+    org_state_etag,
 };
 pub use error::{CrError, CrResult, ProblemDetails};
 pub use frames::{
