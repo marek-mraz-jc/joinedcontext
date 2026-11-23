@@ -411,15 +411,19 @@ def runs_recorded(snap: dict) -> tuple[str, str]:
 def refused_writes(snap: dict) -> tuple[str, str]:
     """(pass, fail or skip, the actual) of pipelines.refused. The gateway's counter over 30 min decides
     (T-7467); the jc-server log, which rotates in minutes at jc-prod's volume, can only fail the row
-    or leave it skipped, never pass it."""
-    rows = [r for r in snap.get("refusedWrites") or [] if isinstance(r, dict)]
+    or leave it skipped, never pass it. A refusal under account `-` named no verified workload: a
+    person's or an anonymous write, the smoke's own open-data probes among them (T-7704), so no
+    Pipeline's and not counted."""
+    def workload(r: object) -> bool:
+        return isinstance(r, dict) and r.get("account") != "-"
+    rows = [r for r in snap.get("refusedWrites") or [] if workload(r)]
     # a jc before T-7458 logs no account: its refusals count by slug, the caller unknown
     rows += [{**r, "project": "?", "account": f"slug {r.get('slug')}"}
              for r in snap.get("unattributedRefusals") or [] if isinstance(r, dict)]
     total = sum(int(r.get("count") or 0) for r in rows)
     counter = snap.get("refusedCounter") if isinstance(snap.get("refusedCounter"), dict) else {}
     if isinstance(counter.get("rows"), list):
-        crows = [r for r in counter["rows"] if isinstance(r, dict)]
+        crows = [r for r in counter["rows"] if workload(r)]
         if ctotal := sum(int(r.get("count") or 0) for r in crows):
             return FAIL, f"{ctotal} refused in the last {counter.get('window')} (gateway counter): {named_refusals(crows)}"
         if total:

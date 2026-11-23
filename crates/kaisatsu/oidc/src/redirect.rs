@@ -157,4 +157,70 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn unusable_candidates_and_patterns_are_skipped_never_matched() {
+        let registered = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        // An empty, unparseable or control-character candidate.
+        let any = registered(&["https://a.example.test/cb"]);
+        for bad in ["", "   ", "not a url", "https://a.example.test/cb\u{7}"] {
+            assert!(!validate_redirect_uri(&any, bad), "{bad:?}");
+        }
+        // Empty, `*`, unparseable and explicit-default-port patterns never match, and do not stop
+        // the search: the last, exact pattern still does.
+        let mixed = registered(&[
+            "",
+            "*",
+            "not a url/*",
+            "not a url",
+            "https://a.example.test:443/apps/*",
+            "https://a.example.test/cb",
+        ]);
+        assert!(!validate_redirect_uri(
+            &mixed,
+            "https://a.example.test/apps/x"
+        ));
+        assert!(validate_redirect_uri(&mixed, "https://a.example.test/cb"));
+        // An origin-wide wildcard accepts any path on that origin.
+        assert!(validate_redirect_uri(
+            &registered(&["https://a.example.test/*"]),
+            "https://a.example.test/any/where"
+        ));
+    }
+
+    #[test]
+    fn post_logout_uris_default_to_the_redirect_uris_and_take_a_hash_list() {
+        let mut client = ClientRepresentation {
+            redirect_uris: vec!["https://a.example.test/cb".into()],
+            ..Default::default()
+        };
+        assert!(validate_post_logout_redirect_uri(
+            &client,
+            "https://a.example.test/cb"
+        ));
+        assert!(!validate_post_logout_redirect_uri(
+            &client,
+            "https://a.example.test/bye"
+        ));
+        client.attributes.insert(
+            "post.logout.redirect.uris".into(),
+            "https://a.example.test/bye## + ##".into(),
+        );
+        assert!(validate_post_logout_redirect_uri(
+            &client,
+            "https://a.example.test/bye"
+        ));
+        assert!(validate_post_logout_redirect_uri(
+            &client,
+            "https://a.example.test/cb"
+        ));
+        client.attributes.insert(
+            "post.logout.redirect.uris".into(),
+            "https://a.example.test/bye".into(),
+        );
+        assert!(!validate_post_logout_redirect_uri(
+            &client,
+            "https://a.example.test/cb"
+        ));
+    }
 }

@@ -482,10 +482,11 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.7"));
         let jana = Subject {
+            id: Some("0f5a".to_owned()),
             user: Some("jana".to_owned()),
             ..Subject::default()
         };
-        assert_eq!(create_key(&jana, &headers), "principal:user:jana");
+        assert_eq!(create_key(&jana, &headers), "principal:user:0f5a");
         assert_eq!(
             create_key(&Subject::anonymous(), &headers),
             "address:10.0.0.7"

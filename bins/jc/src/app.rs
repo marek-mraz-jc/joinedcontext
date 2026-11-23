@@ -1059,6 +1059,8 @@ async fn remote_forwarders(
     let remote = Arc::new(
         crate::door::Remote::new(section, secret.secret.clone()).map_err(StartError::Setup)?,
     );
+    // The Portal takes its publisher tokens for a remote dataroom from it (S11-23).
+    let _ = crate::door::REMOTE.set(Arc::clone(&remote));
     let mut out = Vec::new();
     for (module, base) in &cfg.remote_modules {
         // The gateway takes no service credential: the Portal only learns where it is and which
@@ -1070,8 +1072,17 @@ async fn remote_forwarders(
             );
             continue;
         }
-        let local = crate::setup::Secret::service_credential(*module)
-            .and_then(|s| setup.get(s))
+        // A module the Portal holds no credential for (dataroom, which names the Portal by its
+        // own service token, S11-23) is called at its public base, like the gateway.
+        let Some(credential) = crate::setup::Secret::service_credential(*module) else {
+            siblings.insert_remote(
+                *module,
+                crate::siblings::Sibling::direct(base.clone(), base.clone()),
+            );
+            continue;
+        };
+        let local = setup
+            .get(credential)
             .map(|held| held.value.clone())
             .ok_or_else(|| StartError::Setup(format!("no credential held for {module}")))?;
         let (listener, router) = remote
@@ -1421,7 +1432,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         } else {
             std::collections::BTreeMap::new()
         };
-        vars.extend(modules::portal::organization_vars(cfg, siblings.listener));
+        vars.extend(modules::portal::organization_vars(cfg));
         vars.extend(modules::portal::apps_vars(cfg));
         vars.extend(modules::portal::ingest_vars(cfg));
         vars.extend(modules::portal::limits_vars(cfg));
@@ -1593,7 +1604,7 @@ async fn portal_attempt(
                 ctx,
                 cfg.portal_siblings,
                 &cfg.organizations,
-                modules::portal::organization_vars(&cfg, shared.siblings.listener)
+                modules::portal::organization_vars(&cfg)
                     .into_iter()
                     .chain(modules::portal::apps_vars(&cfg))
                     .chain(modules::portal::ingest_vars(&cfg))
@@ -1607,6 +1618,11 @@ async fn portal_attempt(
                     roles: cfg.roles.clone(),
                     hosts: shared.hosts.clone(),
                     project_addresses: cfg.portal.project_addresses,
+                    catalogues: modules::portal::organization_catalogues(
+                        &cfg,
+                        shared.siblings.listener,
+                    ),
+                    publisher: modules::portal::publisher_token(&cfg),
                 },
                 mount,
                 &shutdown,

@@ -376,6 +376,57 @@ mod tests {
         assert_eq!(back, synth);
     }
 
+    /// ARCH/TEN-01: the organization is the first key id of `org__project__space`, or the
+    /// part before `__` of a legacy `org_x__space`; anything else names no organization.
+    #[test]
+    fn organization_of_reads_key_id_and_legacy_tenants_only() {
+        let key = |first: char, rest: &str| format!("{first}{rest}");
+        let tail = "a27".repeat(8) + "z";
+        let (org, project) = (key('a', &tail), key('h', &tail));
+        let tenant = format!("{org}__{project}__mobility");
+        assert_eq!(TenantId::organization_of(&tenant), Some(org.as_str()));
+        for bad in [
+            key('i', &tail),                 // first character past `h`
+            key('a', &tail[1..]),            // 25 characters
+            key('a', &(tail.clone() + "a")), // 27 characters
+            key('a', &tail.replace('2', "1")),
+            key('a', &tail.replace('7', "8")),
+            key('a', &tail.replace('z', "Z")),
+        ] {
+            assert_eq!(
+                TenantId::organization_of(&format!("{bad}__{project}__mobility")),
+                None,
+                "organization {bad}"
+            );
+            assert_eq!(
+                TenantId::organization_of(&format!("{org}__{bad}__mobility")),
+                None,
+                "project {bad}"
+            );
+        }
+        assert_eq!(
+            TenantId::organization_of(&format!("{org}__{project}__")),
+            None
+        );
+        assert_eq!(
+            TenantId::organization_of(&format!("{org}__{project}__a_b")),
+            None
+        );
+        assert_eq!(
+            TenantId::organization_of("sk_bbsk__mobility"),
+            Some("sk_bbsk")
+        );
+        for bad in [
+            "mobility",
+            "sk__mobility",
+            "__mobility",
+            "sk_b__",
+            "sk_b__mo_b",
+        ] {
+            assert_eq!(TenantId::organization_of(bad), None, "{bad}");
+        }
+    }
+
     #[test]
     fn entity_id_requires_uri() {
         assert!(EntityId::new("urn:ngsi-ld:Vehicle:A123").is_ok());

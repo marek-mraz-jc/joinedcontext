@@ -769,8 +769,8 @@ pub(crate) async fn access_simulate(
             slug = %endpoint.slug,
             simulated_user = who.user.as_deref().unwrap_or_default(),
             simulated_service_account = who.service_account.as_deref().unwrap_or_default(),
-            simulated_groups = ?who.groups,
-            simulated_roles = ?who.roles,
+            simulated_groups = who.groups.len(),
+            simulated_roles = who.roles.len(),
             admitted = %answer["admitted"],
             "access grants simulated"
         );
@@ -826,8 +826,8 @@ pub(crate) async fn access_simulate(
         slug = %endpoint.slug,
         simulated_user = who.user.as_deref().unwrap_or_default(),
         simulated_service_account = who.service_account.as_deref().unwrap_or_default(),
-        simulated_groups = ?who.groups,
-        simulated_roles = ?who.roles,
+        simulated_groups = who.groups.len(),
+        simulated_roles = who.roles.len(),
         action,
         entity_type = entity_type.unwrap_or_default(),
         attribute = attribute.unwrap_or_default(),

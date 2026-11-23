@@ -23,10 +23,15 @@ on:
     branches: [main, "jc-*", "agent/**", "ship-proof/**"]
   workflow_dispatch:
 permissions: { contents: read }
-# A superseded branch run is cancelled; a main, jc-portal-1 (the merge branch) or ship-proof run never
-# is: each merged head gets its own verdict and writes the cache.
+# A superseded branch run is cancelled; a main or ship-proof run never is: each head gets its own
+# verdict. jc-portal-1 (the merge branch) shares one group and never cancels the running run, so
+# GitHub keeps the running run and only the newest pending one (T-7691): a per-sha group queued a
+# full run (~33 jobs) per train, and with the account's ~20 job slots the oldest pending trunk run
+# sat 75 min without a job while newer runs took the free runners. A merge whose pending run was
+# replaced takes the verdict of the nearest descendant with a completed run (ff-main.sh, tasks/ci);
+# the run that finishes writes the cache.
 concurrency:
-  group: "ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
+  group: "ci-${{ github.ref == 'refs/heads/jc-portal-1' && 'jc-portal-1' || ((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref) }}"
   cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
 env:
   CARGO_TERM_COLOR: always
@@ -95,7 +100,7 @@ jobs:
       - run: python3 .github/scripts/security-review-tests.py --selftest && python3 .github/scripts/security-review-tests.py
       - run: python3 crates/antares/dev/threat-tests.py --self-test && python3 crates/antares/dev/threat-tests.py
       # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
-      - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py
+      - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py && python3 .github/scripts/coverage-ratchet.py --selftest && python3 .github/scripts/coverage-ratchet.py floors
       - if: steps.paths.outputs.workflows == 'true'
         run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/watched.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'

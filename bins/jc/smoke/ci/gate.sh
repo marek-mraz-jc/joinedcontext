@@ -141,17 +141,13 @@ python3 -I "$repo/bins/jc/smoke/multiorg/compose.py" --base "$mo_src/bcn" "${mo_
 rm -rf "${mo_src:?}"
 python3 -I "$here/redate.py" "$mo_export"
 python3 -I "$repo/deploy/rehearsal/rehearsal.py" digest --export "$mo_export" >/dev/null
-# Each Organization's catalogue takes the Portal's datasets only with a token of its own
-# (portal_token_file, bins/jc/CUTOVER.md 4a): random per run, in a 0700 dir, never printed.
-mo_tokens=$REHEARSAL_HOME/multiorg-tokens
-rm -rf "$mo_tokens" && mkdir -m 700 "$mo_tokens"
+# Each Organization's catalogue takes the Portal's datasets with a service token jc's Portal mints
+# per publication (bins/jc/CUTOVER.md 4a, S11-23): no token file.
 : > "$mo_hosts"
 i=0
 for org in "${mo_orgs[@]}"; do
   o=${org%%=*}; i=$((i + 1))
-  (umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$mo_tokens/$o")
   printf '[[organizations]]\nname = "%s"\ncatalogue_id = "00000000-0000-7000-8000-0000000000%02x"\n' "$o" "$((0xa0 + i))"
-  printf 'portal_token_file = "%s"\n' "$mo_tokens/$o"
   printf 'hosts = { portal = "portal.%s.localhost:%s", opendata = "opendata.%s.localhost:%s", api = "api.%s.localhost:%s", mcp = "mcp.%s.localhost:%s" }\n\n' \
     "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port" "$o" "$mo_port"
 done >> "$mo_hosts"

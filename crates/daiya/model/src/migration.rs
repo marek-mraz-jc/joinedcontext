@@ -257,17 +257,11 @@ fn migrate_panel_datasources_internal(
         }
     }
 
-    let targets_len = panel_map
-        .get("targets")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-
+    // Here the panel has targets: a top-level panel without any got the default one above.
     match panel_map.get("datasource") {
         None | Some(Value::Null) => {
-            if targets_len > 0 {
-                panel_map.insert("datasource".to_owned(), get_datasource_ref(default_ds));
-                panel_ds_was_default = true;
-            }
+            panel_map.insert("datasource".to_owned(), get_datasource_ref(default_ds));
+            panel_ds_was_default = true;
         }
         Some(ds) => {
             let is_empty_obj = ds.as_object().is_some_and(Map::is_empty);

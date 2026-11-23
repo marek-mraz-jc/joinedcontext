@@ -137,6 +137,10 @@ pipeline:
         let street = [this.street.or("").trim(), this.num.or("").trim()].filter(s -> s != "" && s != "9999").join(" ")
         let town = this.town.or("").trim()
         let phone = this.phone.or("").trim()
+        # Who runs the activity, as the agenda names it (`institution_name`, T-7567): the same
+        # `organizer` every events space writes. The Ajuntament publishes the agenda; it is no
+        # activity's organizer, so a row without one keeps none.
+        let org = this.org.or("").string().trim()
         root = {
           "id": $urn.format("Event", env("JC_ORG_DOMAIN"), env("JC_SPACE"), this.id),
           "type": "Event",
@@ -162,6 +166,9 @@ pipeline:
             "district": this.district.or("").trim(),
             "addressCountry": "ES"
           }.filter(entry -> entry.value != "") },
+          "organizer": if $org == "" { null } else {
+            { "type": "Property", "value": { "name": $org.slice(0, [$org.length(), 300].min()) } }
+          },
           "contactPoint": if $phone == "" || !$phone.re_match("^[0-9 .+()/-]{6,40}$") { null } else {
             { "type": "Property", "value": { "telephone": $phone } }
           },

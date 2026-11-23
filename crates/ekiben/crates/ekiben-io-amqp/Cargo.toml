@@ -18,4 +18,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 ekiben-bloblang = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

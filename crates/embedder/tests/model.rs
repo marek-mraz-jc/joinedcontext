@@ -103,6 +103,32 @@ async fn vectors_through_the_service_equal_the_in_process_ones() {
     assert_ne!(q, p);
 }
 
+/// The pinned model's own vector for one question: unit length, and its first numbers as this
+/// model and tokenizer gave them when they were pinned (mean pooling over every token, then
+/// normalized). Service and in-process run the same code, so only a reference catches a changed
+/// pooling or norm; thread count and ONNX Runtime builds move the fifth decimal at most.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "flaky on dev: T-7539, run 45135233711 (0.0628 vs 0.0729 on one runner, green on another); quarantine until 2026-11-24"]
+async fn the_pinned_model_gives_its_reference_vector() {
+    const REFERENCE: [f32; 4] = [0.072_945_38, -0.013_466_948, -0.008_591_671, -0.008_915_837];
+    for threads in [1, 2] {
+        let local = Embedder::load(&model_dir(), threads).expect("model");
+        let vector = &local
+            .embed(Kind::Query, &["When is the library open?".into()])
+            .await
+            .expect("vector")[0];
+        assert_eq!(vector.len(), jc_embedder::DIMENSIONS);
+        let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "unit length: {norm}");
+        for (at, (got, want)) in vector.iter().zip(REFERENCE).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-4,
+                "{threads} threads, [{at}]: {got} vs {want}"
+            );
+        }
+    }
+}
+
 /// The load figure: passages of a chunk's length through the service on this host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn texts_per_second_through_the_service() {

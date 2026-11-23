@@ -413,10 +413,10 @@ async fn record_rule(
     rule: Option<&str>,
 ) {
     let summary = match rule {
-        Some(rule) => format!("{} {action} person {id} ({rule})", identity.username),
-        None => format!("{} {action} person {id}", identity.username),
+        Some(rule) => format!("{} {action} person {id} ({rule})", identity.subject),
+        None => format!("{} {action} person {id}", identity.subject),
     };
-    let mut details = json!({ "action": action, "person": id, "actor": identity.username });
+    let mut details = json!({ "action": action, "person": id, "actor": identity.subject });
     if let Some(rule) = rule {
         details["rule"] = json!(rule);
     }

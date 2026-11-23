@@ -127,6 +127,7 @@ async fn get_with_ck(app: &Router, uri: &str, cookie: &str) -> (StatusCode, Head
             Request::builder()
                 .uri(uri)
                 .header(header::COOKIE, cookie)
+                .header(header::ACCEPT_LANGUAGE, "en")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -322,7 +323,8 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_conf, StatusCode::OK);
     assert!(
         html_conf.contains("login-broker-link-confirm")
-            && html_conf.contains("demo.orgmember@hel.fi"),
+            && html_conf.contains("demo.orgmember@hel.fi")
+            && html_conf.contains("lang=\"en\""),
         "{html_conf}"
     );
     let conf_csrf = extract_hidden_input(&html_conf, "csrf_token");

@@ -8,7 +8,7 @@ import i18n, { SUPPORTED_LOCALES } from "../src/i18n";
 import en from "../src/locales/en.json";
 import sk from "../src/locales/sk.json";
 import { ConnectPage } from "../src/pages/connect/ConnectPage";
-import { clientName, serverUrl, setups } from "../src/pages/connect/connect";
+import { clientName, readServer, serverUrl, setups } from "../src/pages/connect/connect";
 import { expectNoRawKeys, expectNoViolations } from "./checks";
 
 const TITLE = "Banská Bystrica Region, open data";
@@ -161,6 +161,31 @@ describe("the public MCP connect page (T-4169)", () => {
     expect(JSON.parse(String(window.getSelection()))).toEqual({
       mcpServers: { "bbsk-otvorene-data": { type: "http", url: expect.stringMatching(/\/api\/mcp\/bbsk\/otvorene-data$/) } },
     });
+  });
+
+  it("selects the block when the browser's copy command throws (T-4762)", async () => {
+    serve({ initialize: { status: 200, body: HELLO }, "tools/list": { status: 200, body: TOOLS } });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => {
+        throw new Error("not allowed");
+      }),
+    });
+    show();
+    fireEvent.click((await screen.findAllByRole("button", { name: en.connect.generic.copy })).at(-1)!);
+    expect(await screen.findByText(en.connect.selected)).toHaveAttribute("role", "status");
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("words a network failure, keeps an unknown throw generic and lets an abort through", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    expect(await readServer("bbsk", "otvorene-data")).toEqual({ state: "failed", reason: "Failed to fetch" });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject("socket closed")));
+    expect(await readServer("bbsk", "otvorene-data")).toEqual({ state: "failed", reason: "unreachable" });
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(abort)));
+    await expect(readServer("bbsk", "otvorene-data")).rejects.toBe(abort);
   });
 
   it("tells a visitor an unknown or private connector apart from a busy one", async () => {

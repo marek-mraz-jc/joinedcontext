@@ -97,4 +97,72 @@ mod tests {
             Err(ApiError::BadRequest(_))
         ));
     }
+
+    /// On a manifest the caller reads: its current ETag, `*` or a list naming it passes, a stale
+    /// one is 412 carrying the current ETag; a workspace the caller cannot open is that error.
+    #[tokio::test]
+    async fn a_stale_etag_is_412_with_the_current_one() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = crate::auth::session::Identity {
+            client: None,
+            subject: "f:1:ana".into(),
+            username: "ana".into(),
+            email: None,
+            name: None,
+            roles: Vec::new(),
+            groups: vec![state.config.bootstrap_admins.clone()],
+            second_factor: false,
+        };
+        let pipeline = crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: "air".into(),
+                namespace: Some("ovzdusie".into()),
+                ..Default::default()
+            },
+            spec: serde_json::json!({}),
+            status: None,
+        };
+        let etag = pipeline.etag();
+        state.mirror.upsert(pipeline);
+        let call = |sent: String, workspace: Option<&'static str>| {
+            let (state, admin) = (state.clone(), admin.clone());
+            async move {
+                let mut headers = HeaderMap::new();
+                headers.insert(header::IF_MATCH, sent.parse().expect("header"));
+                check_if_match(
+                    &state,
+                    &admin,
+                    "ovzdusie",
+                    "pipelines",
+                    "air",
+                    workspace,
+                    &headers,
+                )
+                .await
+            }
+        };
+        for sent in [etag.clone(), " * ".to_owned(), format!("\"old\", {etag}")] {
+            assert!(call(sent.clone(), None).await.is_ok(), "{sent}");
+        }
+        match call("\"stale\"".into(), None).await {
+            Err(ApiError::PreconditionFailed {
+                detail,
+                etag: current,
+            }) => {
+                assert_eq!(current, etag);
+                assert!(
+                    detail.contains("Pipeline 'air' changed since it was read")
+                        && detail.contains(&etag),
+                    "{detail}"
+                );
+            }
+            other => panic!("expected 412, got {other:?}"),
+        }
+        assert!(
+            call("\"stale\"".into(), Some("draft-1")).await.is_err(),
+            "no workspace store in this state"
+        );
+    }
 }

@@ -65,17 +65,19 @@ pub async fn ensure(
         .iter()
         .map(|_| ProjectId::mint().to_string())
         .collect();
-    sqlx::query(
+    let live = live(pool).await?;
+    // `live` is one of two constants, so the formatted SQL binds the rest.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO project_ids (id, name) SELECT id::uuid, name FROM unnest($1::text[], $2::text[]) AS m(id, name) \
-         ON CONFLICT (name) WHERE parent IS NULL AND NOT reserved DO NOTHING",
-    )
+         ON CONFLICT (name) WHERE parent IS NULL AND NOT reserved {live} DO NOTHING"
+    )))
     .bind(&minted)
     .bind(names)
     .execute(pool)
     .await?;
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT name, id::text FROM project_ids WHERE parent IS NULL AND NOT reserved AND name = ANY($1)",
-    )
+    let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT name, id::text FROM project_ids WHERE parent IS NULL AND NOT reserved {live} AND name = ANY($1)"
+    )))
     .bind(names)
     .fetch_all(pool)
     .await?;
@@ -83,6 +85,66 @@ pub async fn ensure(
         .into_iter()
         .filter_map(|(name, id)| ProjectId::parse_verified(&id).ok().map(|id| (name, id)))
         .collect())
+}
+
+/// The registry's live-row condition for [`ensure`] and [`key`], the two that run between
+/// migrations ([`crate::db::connect_with`] keys rows after 0079 and after 0087): with 0096 a live
+/// row is one not retired; before it no row is retired and the column is not there yet. A
+/// database seen with the column skips the catalog read after, since a column 0096 added is
+/// never dropped.
+async fn live(pool: &PgPool) -> Result<&'static str, sqlx::Error> {
+    const RETIRING: &str = "AND deleted_at IS NULL";
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    let options = pool.connect_options();
+    let database = format!(
+        "{}:{}/{}",
+        options.get_host(),
+        options.get_port(),
+        options.get_database().unwrap_or_default()
+    );
+    if seen.lock().is_ok_and(|seen| seen.contains(&database)) {
+        return Ok(RETIRING);
+    }
+    let retiring: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'project_ids'::regclass \
+         AND attname = 'deleted_at' AND NOT attisdropped)",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !retiring {
+        return Ok("");
+    }
+    if let Ok(mut seen) = seen.lock() {
+        seen.insert(database);
+    }
+    Ok(RETIRING)
+}
+
+/// Records the live projects `live` a complete leader run found and retires the id of every
+/// project it saw before and no longer finds (TEN-16, T-7557): the retired row keeps its id for
+/// what names it and leaves the live index, so [`ensure`] mints a fresh id for the next project of
+/// that name. Answers the retired names. An empty `live` retires nothing: a repository with no
+/// project at all is a load to distrust, not the deletion of every project.
+pub async fn retire_deleted(pool: &PgPool, live: &[String]) -> Result<Vec<String>, sqlx::Error> {
+    if live.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query(
+        "UPDATE project_ids SET seen_at = now() WHERE parent IS NULL AND NOT reserved \
+         AND deleted_at IS NULL AND seen_at IS NULL AND name = ANY($1)",
+    )
+    .bind(live)
+    .execute(pool)
+    .await?;
+    sqlx::query_scalar(
+        "UPDATE project_ids SET deleted_at = now() WHERE parent IS NULL AND NOT reserved \
+         AND deleted_at IS NULL AND seen_at IS NOT NULL AND NOT (name = ANY($1)) RETURNING name",
+    )
+    .bind(live)
+    .fetch_all(pool)
+    .await
 }
 
 /// The tenancy key of `project` in `organization` (ARCH/TEN-04, T-7191 PK-1a): the Organization's
@@ -96,19 +158,20 @@ pub async fn key(
     project: &str,
 ) -> Result<Option<ProjectKey>, sqlx::Error> {
     ensure(pool, &[project.to_owned()]).await?;
-    sqlx::query(
+    let live = live(pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE project_ids SET organization = $1 \
-         WHERE parent IS NULL AND NOT reserved AND name = $2 AND organization IS NULL \
-         AND EXISTS (SELECT 1 FROM organizations WHERE name = $1 AND state = 'active')",
-    )
+         WHERE parent IS NULL AND NOT reserved {live} AND name = $2 AND organization IS NULL \
+         AND EXISTS (SELECT 1 FROM organizations WHERE name = $1 AND state = 'active')"
+    )))
     .bind(organization)
     .bind(project)
     .execute(pool)
     .await?;
-    let row: Option<(String, String)> = sqlx::query_as(
+    let row: Option<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT o.key::text, p.id::text FROM project_ids p JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $2 AND o.name = $1 AND o.state = 'active'",
-    )
+         WHERE p.parent IS NULL AND NOT p.reserved {live} AND p.name = $2 AND o.name = $1 AND o.state = 'active'"
+    )))
     .bind(organization)
     .bind(project)
     .fetch_optional(pool)
@@ -350,7 +413,7 @@ pub(crate) async fn required(
 pub async fn recorded(pool: &PgPool, project: &str) -> Result<Option<ProjectKey>, sqlx::Error> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT o.key::text, p.id::text FROM project_ids p JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL AND p.name = $1",
     )
     .bind(project)
     .fetch_optional(pool)
@@ -367,7 +430,7 @@ pub async fn owned(
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT p.organization, o.key::text, p.id::text FROM project_ids p \
          JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL AND p.name = $1",
     )
     .bind(project)
     .fetch_optional(pool)
@@ -382,7 +445,7 @@ pub async fn owned(
 pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT p.name, o.key::text, p.id::text FROM project_ids p JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.name",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL ORDER BY p.name",
     )
     .fetch_all(pool)
     .await?;
@@ -400,7 +463,7 @@ pub async fn every_recorded_owned(
     let rows: Vec<(String, String, String, String)> = sqlx::query_as(
         "SELECT p.organization, p.name, o.key::text, p.id::text FROM project_ids p \
          JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.organization, p.name",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL ORDER BY p.organization, p.name",
     )
     .fetch_all(pool)
     .await?;
@@ -458,7 +521,7 @@ pub async fn open_branch(
 ) -> Result<Result<BranchRow, NoBranch>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let organization: Option<(String, String)> = sqlx::query_as(
-        "SELECT organization, name FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
+        "SELECT organization, name FROM project_ids WHERE id = $1::uuid AND parent IS NULL AND deleted_at IS NULL \
          AND NOT reserved AND organization IS NOT NULL FOR UPDATE",
     )
     .bind(parent.project.to_string())

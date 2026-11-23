@@ -583,6 +583,14 @@ mod tests {
             None
         );
         assert_eq!(DateTime::from_unix_micros(i64::MIN), None);
+        assert_eq!(
+            DateTime::from_unix_micros(1_500_000),
+            DateTime::parse("1970-01-01T00:00:01.5Z")
+        );
+        assert_eq!(
+            DateTime::from_unix_micros(DateTime::MAX.unix_micros()),
+            Some(DateTime::MAX)
+        );
     }
 
     #[test]

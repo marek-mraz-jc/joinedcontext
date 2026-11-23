@@ -3,7 +3,7 @@
  * the page sends it once to the secrets door and clears it; a refusal names the field; a secret
  * that exists asks for every key it keeps.
  */
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -13,6 +13,7 @@ import {
   expectNoAxeViolations,
   inEveryLocale,
   json,
+  problem,
   renderPage,
 } from "./page_contract";
 
@@ -108,6 +109,10 @@ describe("the secret form", () => {
     ]) {
       expect(screen.getByText(hint)).toBeInTheDocument();
     }
+    const nameBox = screen.getByRole("combobox", { name: new RegExp(en.secrets.name) });
+    await userEvent.clear(nameBox);
+    await userEvent.type(nameBox, "counters-key");
+    expect(nameBox).toHaveValue("counters-key");
     const value = screen.getByLabelText(new RegExp(`^${en.secrets.value}`));
     expect(value).toHaveAttribute("type", "password");
     await userEvent.type(value, TYPED);
@@ -116,7 +121,7 @@ describe("the secret form", () => {
     );
 
     expect(await screen.findByText("pr-7")).toBeInTheDocument();
-    expect(sent).toEqual([{ name: "counters-api", values: { apiKey: TYPED } }]);
+    expect(sent).toEqual([{ name: "counters-key", values: { apiKey: TYPED } }]);
     expect(value).toHaveValue("");
     expect(container.textContent).not.toContain(TYPED);
     await expectNoAxeViolations(container);
@@ -194,6 +199,19 @@ describe("the secret form", () => {
       screen.queryByRole("button", { name: en.secrets.submit }),
     ).toBeNull();
     await expectNoAxeViolations(container);
+  });
+
+  it("reads the secrets again on Retry after the store failed", async () => {
+    let asked = 0;
+    mount((url) => {
+      if (!url.pathname.endsWith("/projects/helsinki/secrets")) return undefined;
+      asked += 1;
+      return asked === 1 ? problem(503, "the secret store is not answering") : json({ items: [] });
+    });
+    expect(await screen.findByText(/the secret store is not answering/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByText(en.secrets.empty)).toBeInTheDocument();
+    expect(asked).toBe(2);
   });
 
   it("has its words in every language", async () => {

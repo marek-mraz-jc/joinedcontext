@@ -343,6 +343,108 @@ async fn a_save_of_preferences_never_drops_old_connectors_and_refuses_the_old_fi
     assert_eq!(old.status, StatusCode::BAD_REQUEST, "{}", old.text);
 }
 
+/// One message to the Portal MCP as `who`, with a token of the realm.
+async fn mcp(state: &AppState, who: &str, message: Value) -> StatusCode {
+    let token = common::REALM.person_token_of("portal-api", "portal-api", who, &[]);
+    server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/mcp")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(message.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer")
+        .status()
+}
+
+/// T-7542 (S1-17): every method of the Portal MCP leaves its audit row, reads included.
+#[tokio::test]
+async fn every_mcp_method_leaves_an_audit_row() {
+    let Some(url) = database_url() else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let state = state(&url).await;
+    let who = fresh("mcp");
+    for (method, params) in [
+        ("tools/list", json!({ "project": "mesto" })),
+        ("resources/list", json!({ "project": "mesto" })),
+        (
+            "resources/read",
+            json!({ "uri": "jc://mesto/endpoints/air" }),
+        ),
+        ("prompts/get", json!({ "name": "no-such-prompt" })),
+        ("tasks/list", json!({})),
+        (
+            "tools/call",
+            json!({ "name": "no_such_tool", "arguments": {} }),
+        ),
+    ] {
+        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        assert_eq!(mcp(&state, &who, message).await, StatusCode::OK, "{method}");
+        let tool = match method {
+            "tools/call" => "no_such_tool",
+            other => other,
+        };
+        let mut tx = person_tx(&state).await;
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM connector_calls \
+             WHERE tool = $1 AND subject LIKE '%' || $2 || '%' AND verdict <> 'started'",
+        )
+        .bind(tool)
+        .bind(&who)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the audit");
+        assert_eq!(rows, 1, "{method} left no audit row");
+    }
+}
+
+/// T-7542 (S1-18): a call whose audit row cannot be written does not answer as if it had been.
+#[tokio::test]
+async fn a_failed_audit_write_fails_the_call() {
+    let Some(url) = database_url() else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let state = state(&url).await;
+    let who = fresh("unaudited");
+    let refusing = format!("refuse_{}", uuid::Uuid::new_v4().simple());
+    let pool = sqlx::PgPool::connect(&url).await.expect("a pool");
+    // The trigger matches this test's person alone: the other tests share the table.
+    for statement in [
+        format!(
+            "CREATE FUNCTION {refusing}() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'the audit is down'; END $$"
+        ),
+        format!(
+            "CREATE TRIGGER {refusing} BEFORE INSERT ON connector_calls FOR EACH ROW \
+             WHEN (NEW.subject LIKE '%{who}%') EXECUTE FUNCTION {refusing}()"
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&pool)
+            .await
+            .expect("the refusal");
+    }
+    let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} });
+    let answered = mcp(&state, &who, message).await;
+    for statement in [
+        format!("DROP TRIGGER {refusing} ON connector_calls"),
+        format!("DROP FUNCTION {refusing}()"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&pool)
+            .await
+            .expect("the cleanup");
+    }
+    assert_eq!(answered, StatusCode::SERVICE_UNAVAILABLE);
+}
+
 #[tokio::test]
 async fn only_live_data_reading_connectors_reach_the_gateway() {
     let Some(url) = database_url() else {
@@ -363,17 +465,17 @@ async fn only_live_data_reading_connectors_reach_the_gateway() {
     let base = "https://portal.test";
     state
         .connectors
-        .create(&sub, new("reads", "data-read"), Vec::new(), base)
+        .create(&sub, new("reads", "data-read"), Default::default(), base)
         .await
         .expect("created");
     state
         .connectors
-        .create(&sub, new("models", "context"), Vec::new(), base)
+        .create(&sub, new("models", "context"), Default::default(), base)
         .await
         .expect("created");
     let gone = state
         .connectors
-        .create(&sub, new("gone", "data-read"), Vec::new(), base)
+        .create(&sub, new("gone", "data-read"), Default::default(), base)
         .await
         .expect("created");
     assert!(state

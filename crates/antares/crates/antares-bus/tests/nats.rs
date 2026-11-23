@@ -414,6 +414,264 @@ async fn a_ready_replier_hears_the_first_request() {
     }
 }
 
+/// A replier skips a message nobody waits on (no reply subject) and still
+/// answers the next request; a subject the server refuses is refused at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replier_skips_unanswerable_messages_and_bad_subjects_are_refused() {
+    let url = require_nats!();
+    let holder = NatsBus::connect(&url).await.expect("holder");
+    let subject = format!("antares.mcp.skip{}", nonce());
+    let task = holder
+        .reply_ready(subject.clone(), |p| Some(p.to_vec()))
+        .await
+        .expect("ready");
+    let raw = async_nats::connect(&url).await.expect("raw client");
+    raw.publish(subject.clone(), "no one waits".into())
+        .await
+        .expect("publish");
+    raw.flush().await.expect("flush");
+    let heard = holder
+        .request(subject, b"asked".to_vec(), Duration::from_secs(2))
+        .await;
+    assert_eq!(heard.as_deref(), Some(b"asked".as_slice()));
+    task.abort();
+
+    let bad = "antares.mcp.bad subject".to_string();
+    let e = holder
+        .reply_ready(bad.clone(), |p| Some(p.to_vec()))
+        .await
+        .expect_err("a subject with a space is refused");
+    assert!(e.to_string().starts_with("bus error: "), "{e}");
+    // The fire-and-forget form logs the refusal and its task ends.
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        holder.reply(bad, |p| Some(p.to_vec())),
+    )
+    .await
+    .expect("the reply task ends")
+    .expect("joins");
+}
+
+/// The startup topology check accepts a shared durable and refuses a missing
+/// or non-durable consumer by name; an event whose subject names another
+/// tenant than its body is dropped by `decode`.
+#[tokio::test(flavor = "multi_thread")]
+async fn topology_and_tenant_checks_refuse_what_does_not_match() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    assert!(bus.connected());
+    assert_eq!(bus.reconnects(), 0, "the first connect is no reconnect");
+    let n = nonce();
+    let durable = format!("topo-{n}");
+    let consumer = bus.consume_balanced(&durable).await.expect("durable");
+    let config = &consumer.cached_info().config;
+    assert_eq!(
+        config.ack_policy,
+        async_nats::jetstream::consumer::AckPolicy::Explicit
+    );
+    assert_eq!(config.max_ack_pending, antares_bus::nats::MAX_ACK_PENDING);
+    bus.assert_topology(&[durable.as_str()])
+        .await
+        .expect("present");
+    let missing = format!("topo-missing-{n}");
+    let e = bus
+        .assert_topology(&[durable.as_str(), missing.as_str()])
+        .await
+        .expect_err("missing");
+    assert!(
+        e.to_string().contains(&format!(
+            "balanced durable '{missing}' missing on ANTARES_CHANGES"
+        )),
+        "{e}"
+    );
+    let js = async_nats::jetstream::new(async_nats::connect(&url).await.expect("raw client"));
+    let stream = js.get_stream("ANTARES_CHANGES").await.expect("stream");
+    let named = format!("topo-eph-{n}");
+    stream
+        .create_consumer(async_nats::jetstream::consumer::pull::Config {
+            name: Some(named.clone()),
+            durable_name: None,
+            inactive_threshold: Duration::from_secs(30),
+            ..Default::default()
+        })
+        .await
+        .expect("named ephemeral");
+    let e = bus
+        .assert_topology(&[named.as_str()])
+        .await
+        .expect_err("not durable");
+    assert!(e.to_string().contains("is not durable"), "{e}");
+
+    let a = TenantId::new(&format!("topa{n}")).expect("tenant");
+    let b = TenantId::new(&format!("topb{n}")).expect("tenant");
+    let id = format!("urn:topo:{n}");
+    let body = serde_json::to_vec(&event(&b, &id, 1)).expect("json");
+    let subject = antares_bus::subjects::change_subject(&a, "https://x/T", &id);
+    js.publish(subject, body.into())
+        .await
+        .expect("publish")
+        .await
+        .expect("stored");
+    let mut msgs = consumer.messages().await.expect("messages");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut dropped = false;
+    while !dropped && tokio::time::Instant::now() < deadline {
+        let Ok(Some(Ok(m))) = tokio::time::timeout(Duration::from_secs(1), msgs.next()).await
+        else {
+            continue;
+        };
+        if std::str::from_utf8(&m.payload).is_ok_and(|p| p.contains(&id)) {
+            // A subscriber, so the drop's log line is written as in production.
+            let log = tracing_subscriber::fmt().with_test_writer().finish();
+            let _log = tracing::subscriber::set_default(log);
+            assert!(
+                antares_bus::nats::decode(&m).is_none(),
+                "a mismatched tenant is dropped"
+            );
+            dropped = true;
+        }
+        m.ack().await.expect("ack");
+    }
+    assert!(dropped, "the mismatched event was delivered to the durable");
+}
+
+/// `next_delta` acks and skips a registry message that is not JSON and
+/// returns the next one that is (other tests' deltas on the broadcast are passed over).
+#[tokio::test(flavor = "multi_thread")]
+async fn next_delta_skips_a_message_that_is_not_json() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let consumer = bus.consume_registry_broadcast().await.expect("consumer");
+    let config = &consumer.cached_info().config;
+    assert_eq!(
+        config.durable_name, None,
+        "ephemeral: every instance sees every delta"
+    );
+    assert_eq!(
+        config.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::New
+    );
+    assert_eq!(
+        config.ack_policy,
+        async_nats::jetstream::consumer::AckPolicy::Explicit
+    );
+    assert_eq!(config.max_ack_pending, antares_bus::nats::MAX_ACK_PENDING);
+    let mut stream = consumer.messages().await.expect("messages");
+    let n = nonce();
+    let tenant = TenantId::new(&format!("nd{n}")).expect("tenant");
+    let subject = antares_bus::subjects::registry_subject(&tenant);
+    let js = async_nats::jetstream::new(async_nats::connect(&url).await.expect("raw client"));
+    let want = serde_json::json!({ "delta": n.to_string() });
+    for body in ["not json".to_string(), want.to_string()] {
+        js.publish(subject.clone(), body.into())
+            .await
+            .expect("publish")
+            .await
+            .expect("stored");
+    }
+    let found = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match antares_bus::nats::next_delta(&mut stream).await {
+                Some(v) if v == want => break true,
+                Some(_) => continue,
+                None => break false,
+            }
+        }
+    })
+    .await
+    .expect("a delta within 10 s");
+    assert!(found, "the stream ended before the JSON delta");
+}
+
+/// A TCP hop between the bus and NATS that the test can cut and hold shut.
+struct Hop {
+    port: u16,
+    open: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    links: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Hop {
+    async fn to(url: &str) -> Hop {
+        let upstream = url.trim_start_matches("nats://").to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let open = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let links = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (o, l) = (open.clone(), links.clone());
+        tokio::spawn(async move {
+            while let Ok((mut down, _)) = listener.accept().await {
+                if !o.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue; // dropped: the client sees a refused connect
+                }
+                let Ok(mut up) = tokio::net::TcpStream::connect(&upstream).await else {
+                    continue;
+                };
+                l.lock().expect("links").push(tokio::spawn(async move {
+                    let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
+                }));
+            }
+        });
+        Hop { port, open, links }
+    }
+
+    /// Drops every live connection; new ones are refused until `reopen`.
+    fn cut(&self) {
+        self.open.store(false, std::sync::atomic::Ordering::SeqCst);
+        for link in self.links.lock().expect("links").drain(..) {
+            link.abort();
+        }
+    }
+
+    fn reopen(&self) {
+        self.open.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A lost connection is reconnected and counted once; a page published while
+/// the server is unreachable reports its first unacknowledged event.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_connection_is_counted_and_unacked_publishes_are_reported() {
+    let url = require_nats!();
+    let hop = Hop::to(&url).await;
+    let bus = NatsBus::connect(&format!("nats://127.0.0.1:{}", hop.port))
+        .await
+        .expect("connect through the hop");
+    assert_eq!(bus.reconnects(), 0);
+    hop.cut();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while bus.connected() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!bus.connected(), "the bus sees the cut");
+    let e = bus
+        .reply_ready(format!("antares.mcp.hop{}", nonce()), |p| Some(p.to_vec()))
+        .await
+        .expect_err("no server confirms the subscription");
+    assert!(e.to_string().starts_with("bus error: "), "{e}");
+    let tenant = TenantId::new(&format!("hop{}", nonce())).expect("tenant");
+    let (sent, failed) = bus
+        .publish_all(&[
+            event(&tenant, "urn:hop:1", 1),
+            event(&tenant, "urn:hop:2", 2),
+        ])
+        .await;
+    assert_eq!(sent, 0, "no event was acknowledged");
+    assert!(failed.is_some_and(|e| e.to_string().starts_with("bus error: ")));
+    hop.reopen();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while bus.reconnects() == 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        bus.reconnects(),
+        1,
+        "one reconnect, the first connect not counted"
+    );
+    assert!(bus.connected());
+}
+
 /// A page written whole before its acks are awaited (T-6608) reaches the
 /// stream complete and in page order, so the matcher still sees an entity's
 /// changes in the order the outbox holds them. The run prints the drain's
