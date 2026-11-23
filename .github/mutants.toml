@@ -6,6 +6,11 @@
 exclude_re = [
   # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
   'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-http carried_v4 (T-7623): `high << 16` has its low 16 bits zero and `low` fits in them, so `|` and `^` add the same bits.
+  'jc-http/src/lib\.rs:\d+:\d+: replace \| with \^ in carried_v4',
+  # jc-time from_system_time (T-7623): the comparison picks the clamp only when jiff refuses the instant; at exactly
+  # UNIX_EPOCH jiff never refuses, so `<` and `<=` cannot be told apart.
+  'jc-time/src/lib\.rs:\d+:\d+: replace < with <= in from_system_time',
   # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
   'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',

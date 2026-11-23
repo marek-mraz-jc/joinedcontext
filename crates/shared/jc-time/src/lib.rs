@@ -668,6 +668,87 @@ mod tests {
     }
 
     #[test]
+    fn constructors_conversions_and_the_parse_error() {
+        use super::*;
+        assert!(TimestampTz::now() > TimestampTz::from_second(1_767_225_600).unwrap());
+        assert_eq!(
+            TimestampTz::from_millis(1500).map(TimestampTz::as_millis),
+            Some(1500)
+        );
+        assert_eq!(
+            TimestampTz::from_second(-1).map(TimestampTz::as_second),
+            Some(-1)
+        );
+        assert_eq!(TimestampTz::from_millis(i64::MAX), None);
+        assert_eq!(TimestampTz::from_second(i64::MAX), None);
+        let ts = Timestamp::from_second(86_400).unwrap();
+        assert_eq!(Timestamp::from(TimestampTz::from(ts)), ts);
+        assert_eq!(
+            ParseError.to_string(),
+            "not an RFC 3339 date and time or a YYYY-MM-DD date"
+        );
+        // A JSON value that is no string names what it expected.
+        let wrong = serde_json::from_value::<TimestampTz>(serde_json::json!(5)).unwrap_err();
+        assert!(
+            wrong
+                .to_string()
+                .contains("an RFC 3339 formatted date and time string")
+        );
+        let wrong = serde_json::from_value::<Date>(serde_json::json!(5)).unwrap_err();
+        assert!(wrong.to_string().contains("a formatted date string"));
+        // Year 0 prints in four digits, the year before it in five with its sign.
+        assert_eq!(Date::new(0, 1, 1).unwrap().to_string(), "0000-01-01");
+        assert_eq!(Date::new(-1, 1, 1).unwrap().to_string(), "-0001-01-01");
+    }
+
+    #[test]
+    fn offsets_signed_years_and_a_leap_second_read_as_chrono_read_them() {
+        use super::*;
+        let at = |s: &str| parse_rfc3339(s).map(Timestamp::as_second);
+        assert_eq!(
+            at("2026-01-01T00:00:00+23:59"),
+            Some(1_767_225_600 - 86_340)
+        );
+        assert_eq!(at("2026-01-01T00:00:00+24:00"), None);
+        assert_eq!(at("2026-01-01T00:00:00+01:60"), None);
+        let relaxed = |s: &str| parse_rfc3339_relaxed(s).map(Timestamp::as_second);
+        assert_eq!(relaxed("-0001-01-01T00:00:00Z"), Some(-62_198_755_200));
+        assert_eq!(relaxed("2026-01-01T00:00:00-01:00"), Some(1_767_229_200));
+        assert_eq!(relaxed("2025-12-31T23:59:60Z"), Some(1_767_225_600));
+        assert_eq!(
+            relaxed("9999-12-31T23:59:59-23:59"),
+            None,
+            "past jiff's range"
+        );
+        assert_eq!(relaxed("2026-01-01T00:00:00*01:00"), None);
+        // Each separator counts on its own.
+        for one_wrong in [
+            "2026x01-01T00:00:00Z",
+            "2026-01x01T00:00:00Z",
+            "2026-01-01x00:00:00Z",
+            "2026-01-01T00x00:00Z",
+            "2026-01-01T00:00x00Z",
+        ] {
+            assert_eq!(at(one_wrong), None, "{one_wrong}");
+        }
+    }
+
+    #[cfg(feature = "sqlx")]
+    #[test]
+    fn array_types_name_postgres_array_oids() {
+        use super::{PgDate, PgTimestamp, TimestampTz};
+        use sqlx::postgres::types::Oid;
+        use sqlx::postgres::{PgHasArrayType, PgTypeInfo};
+        for (info, oid) in [
+            (TimestampTz::array_type_info(), 1185),
+            (PgTimestamp::array_type_info(), 1115),
+            (PgDate::array_type_info(), 1182),
+        ] {
+            assert_eq!(info, PgTypeInfo::with_oid(Oid(oid)));
+        }
+    }
+
+    #[test]
     fn a_system_time_round_trips_and_clamps_past_jiffs_range() {
         use std::time::{Duration, SystemTime};
         let ts =
@@ -1015,5 +1096,22 @@ mod tests {
             schema,
             r#"{"$schema":"http://json-schema.org/draft-07/schema#","title":"DateTime","type":"string","format":"date-time"}"#
         );
+        let schema = serde_json::to_string(&schemars::schema_for!(Date)).expect("schema");
+        assert_eq!(
+            schema,
+            r#"{"$schema":"http://json-schema.org/draft-07/schema#","title":"Date","type":"string","format":"date"}"#
+        );
+        // Inside another type each is written in place, never as a reference.
+        let mut generator = schemars::r#gen::SchemaGenerator::default();
+        for (inline, want) in [
+            (generator.subschema_for::<TimestampTz>(), "date-time"),
+            (generator.subschema_for::<Date>(), "date"),
+        ] {
+            let inline = serde_json::to_value(inline).expect("schema");
+            assert_eq!(
+                inline,
+                serde_json::json!({"type": "string", "format": want})
+            );
+        }
     }
 }

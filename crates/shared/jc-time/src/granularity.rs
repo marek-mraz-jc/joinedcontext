@@ -136,6 +136,8 @@ mod tests {
         assert_eq!(bounded(days(3_653), "P1Y"), "P1Y");
         assert_eq!(bounded(days(365), "PT10M"), "P1D");
         assert_eq!(bounded(days(30), "P1W"), "P1W");
+        // As fine as the floor, written another way, is kept as asked.
+        assert_eq!(bounded(days(365), "PT24H"), "PT24H");
         // not a period: the broker refuses it in its own words
         assert_eq!(bounded(days(3_653), "monthly"), "monthly");
     }
@@ -145,6 +147,10 @@ mod tests {
         assert_eq!(seconds("P1Y2M3W4DT5H6M7S"), Some(38_898_367));
         assert_eq!(seconds("P1M"), Some(30 * DAY));
         assert_eq!(seconds("PT1M"), Some(60));
+        // A unit twice, or a `T` with no time after it, is no period.
+        for bad in ["P1D1D", "PT1H1H", "P1DT"] {
+            assert_eq!(seconds(bad), None, "{bad}");
+        }
         for bad in ["P", "PT", "PT0S", "P1D1Y", "P1.5D", "1D", "P1X"] {
             assert_eq!(seconds(bad), None, "{bad}");
         }

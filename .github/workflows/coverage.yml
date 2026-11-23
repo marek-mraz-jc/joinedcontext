@@ -26,6 +26,7 @@ env:
   DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
   SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
   JC_TIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  JC_AUDIT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
   # jc-pool's release rule (T-7538) ends a session on the same server.
   JC_POOL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
   ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/antares
