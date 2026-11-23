@@ -1167,6 +1167,19 @@ mod tests {
             SWATCH,
             "only the legend swatch"
         );
+        // A slice of nothing takes no pixel, not even the one at twelve o'clock.
+        let zero_first = Chart {
+            colors: 2,
+            points: vec![slice(0.0, Some(1)), slice(1.0, Some(0))],
+            ..pie.clone()
+        };
+        let c = canvas(&zero_first, later()).expect("zero first");
+        assert_eq!(pixel(&c, cx, cy - r / 2), color_of(Some(0)));
+        assert_eq!(
+            count(&c, color_of(Some(1))),
+            SWATCH,
+            "only the legend swatch"
+        );
         let late = render(&pie, Instant::now() - Duration::from_millis(1));
         assert_eq!(late, Err(Limited));
     }
@@ -1186,6 +1199,34 @@ mod tests {
         let c = canvas(&tiny, later()).expect("tiny");
         assert_eq!(count(&c, axis()), 0, "no axis drawn");
         assert_eq!(count(&c, paper()), 60 * 60);
+        // The y labels "0", "0.2" ... "1" make the plot start at x 64 and y 42: a plot at most
+        // ten pixels wide or tall is left blank, each side alone.
+        let unit = || {
+            chart(
+                Mark::Line,
+                Some(Scale::Quantitative),
+                Some(Scale::Quantitative),
+                vec![at(0.0, 0.0, None), at(1.0, 1.0, None)],
+            )
+        };
+        for (width, height, drawn) in [
+            (85, 240, false),
+            (86, 240, false),
+            (91, 240, true),
+            (300, 109, false),
+            (300, 115, true),
+        ] {
+            let c = canvas(
+                &Chart {
+                    width,
+                    height,
+                    ..unit()
+                },
+                later(),
+            )
+            .expect("sized");
+            assert_eq!(count(&c, axis()) > 0, drawn, "{width}x{height}");
+        }
         let bare = chart(Mark::Point, None, None, vec![Point::default()]);
         let c = canvas(&bare, later()).expect("no channels");
         assert!(count(&c, axis()) > 0, "the axes still frame the plot");
@@ -1582,11 +1623,37 @@ mod tests {
             Some(Scale::Quantitative),
             (0..5)
                 .map(|i| Point {
-                    size: Some(f64::from(i)),
+                    size: Some(f64::from(i) + 2.0),
                     ..at(f64::from(i) * 1e6, f64::from(i) * 0.25, Some(0))
                 })
                 .collect(),
         );
+        let wide = Chart {
+            width: 1000,
+            ..line.clone()
+        };
+        let quantitative_bars = chart(
+            Mark::Bar,
+            Some(Scale::Quantitative),
+            Some(Scale::Quantitative),
+            vec![at(1.0, 2.0, None), at(2.0, 3.0, None), at(4.0, 1.0, None)],
+        );
+        let mut named_rows = chart(
+            Mark::Point,
+            Some(Scale::Quantitative),
+            Some(Scale::Nominal),
+            (0..40)
+                .map(|i| Point {
+                    y: Some(Cell::Category(i)),
+                    ..at(i as f64, 0.0, None)
+                })
+                .collect(),
+        );
+        named_rows.y = Some(Channel {
+            scale: Scale::Nominal,
+            title: "Station".into(),
+            categories: 40,
+        });
         let rules = chart(
             Mark::Rule,
             Some(Scale::Quantitative),
@@ -1622,7 +1689,17 @@ mod tests {
                 .collect(),
         };
         let mut got = Vec::new();
-        for c in [&line, &area, &bars, &points, &rules, &arc] {
+        for c in [
+            &line,
+            &area,
+            &bars,
+            &points,
+            &rules,
+            &arc,
+            &wide,
+            &quantitative_bars,
+            &named_rows,
+        ] {
             got.push(digest(&canvas(c, later()).expect("drawn").pixels));
         }
         let tiles = [
@@ -1651,6 +1728,9 @@ mod tests {
             "95ebec0cf90f21ea06fc6144c71ece59aad984cfc9972fd8bcd6044b95ad114e",
             "591f720c1f39e59520089d2cc8260e67577d71a49b007d1daaa95fe1a43873a4",
             "e9825373ca3c6382a21c29d74fc6befb85320b23746208c1d028166dc69ca256",
+            "7222814cc9ac2c109acbbb916af6e5252faf81fa6c071a56ecca0a00b3e30298",
+            "ddc57b2c2d2ad0b3c8333af82dc4dd623048d69d98acdee6c45b3ec911c99143",
+            "6a4e627770df543b0b5bb7adfeb964de658fefbf840199aef52b7868ce824a9a",
             "ed6f55af21f3f3e72ceabc1548db7d31695f7d0680877ea5d832716498c8eb5c",
         ];
         assert_eq!(got, want);

@@ -683,7 +683,9 @@ mod tests {
         }
         let mut image = line.clone();
         image["mark"] = json!("image");
-        assert_eq!(look(image).expect_err("image").0, "/spec/mark");
+        let (path, why) = look(image).expect_err("image");
+        assert_eq!(path, "/spec/mark");
+        assert!(why.contains("loads a URL"), "{why}");
         let mut wide = line;
         wide["width"] = json!(1201);
         assert!(look(wide).expect_err("wide").1.contains("50 to 1200"));
@@ -938,6 +940,11 @@ mod tests {
         assert_eq!(rows[2]["pm10"], json!(2.5));
         assert_eq!(rows[3]["pm10"], json!(9));
         assert_eq!(rows[3]["name"], json!("B"));
+        // An inline @context is the entity's vocabulary, never a series of it.
+        let inline =
+            rows_of(&[json!({ "id": "urn:c", "@context": { "terms": ["a", "b"] }, "pm10": 4 })]);
+        assert_eq!(inline.len(), 1, "{inline:?}");
+        assert_eq!(inline[0]["pm10"], json!(4));
         assert!(!rows[3].contains_key("type"));
     }
 
@@ -1033,6 +1040,18 @@ mod tests {
         assert_eq!(view["joinedcontext.com/chartSpec"]["x"], json!(null));
         assert_eq!(view["joinedcontext.com/chartSpec"]["mark"], json!("arc"));
         assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(false));
+        let line = look(json!({ "mark": "line", "encoding": {
+            "x": { "field": "k", "type": "nominal" }, "y": { "field": "v", "type": "quantitative" } } })).expect("a line");
+        let charted = chart_of(
+            &line,
+            &rows_of(&[
+                json!({ "k": "a", "v": 1 }),
+                json!({ "k": "b" }),
+                json!({ "v": 2 }),
+            ]),
+            &DOOR,
+        );
+        assert_eq!(charted.chart.points.len(), 1, "a line point needs x and y");
         let rule = look(
             json!({ "mark": "rule", "encoding": { "x": { "field": "k", "type": "nominal" } } }),
         )
