@@ -6,9 +6,13 @@ name: mutants-diff
 # then a required check once its measured time fits beside ci.yml. Only the mutated crates' own
 # tests run (cargo mutants' default). A push mutates the root, antares and platform workspaces;
 # portal and ekiben need the swap and services of their ci.yml jobs, so they run on dispatch only.
+# Where it runs (supervisor 2026-11-22, T-7529): a push to jc-portal-1 mutates that push's range (one
+# run per merge train, the runner pool is the swarm's bottleneck); a worker dispatches it on its own
+# agent/** branch, mutated against the merge base. ponytail: a trunk run cancelled by the next push
+# leaves its range unmutated; the nightly coverage.yml mutants job covers whole workspaces anyway.
 on:
   push:
-    branches: ["agent/**"]
+    branches: ["jc-portal-1"]
     paths: ["**/*.rs"]
   workflow_dispatch:
 permissions: { contents: read }
@@ -36,8 +40,13 @@ jobs:
         with: { fetch-depth: 0 }
       # One diff per workspace, its paths relative to that workspace (cargo mutants reads them so).
       - id: split
+        env: { BEFORE: "${{ github.event.before }}", EVENT: "${{ github.event_name }}" }
         run: |
-          base=$(git merge-base origin/jc-portal-1 HEAD)
+          if [ "$EVENT" = push ] && git cat-file -e "${BEFORE:-0}^{commit}" 2>/dev/null; then
+            base=$BEFORE
+          else
+            base=$(git merge-base origin/jc-portal-1 HEAD)
+          fi
           mkdir -p "$RUNNER_TEMP/diffs"; list=""
           pairs="root:. antares:crates/antares platform:vendor/joinedcontext-platform"
           [ "${{ github.event_name }}" = workflow_dispatch ] && pairs="$pairs ekiben:crates/ekiben portal:crates/portal"
