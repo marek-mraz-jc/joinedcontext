@@ -644,6 +644,14 @@ async fn workflow_skips_applied_branches_and_flags_failures() {
     flow.sort();
     assert_eq!(flow, vec!["a", "b"]);
     assert_eq!(w.processor_type(), "workflow");
+    let mut ordered = cfg.clone();
+    ordered["order"] = json!([["b"], ["a"]]);
+    let c =
+        ComponentConfig::from_json_value(&json!({ "workflow": ordered }), "noop", None).unwrap();
+    assert_eq!(
+        WorkflowProcessor::from_config(&c, &e.ctx).unwrap().flow(),
+        [vec!["b".to_string()], vec!["a".to_string()]]
+    );
 
     let p = e.proc(json!({"workflow": cfg})).unwrap();
     // `b` fails its request map; `apply` limits the second message to `b`, `succeeded` skips `a`.
@@ -655,10 +663,29 @@ async fn workflow_skips_applied_branches_and_flags_failures() {
                 r#"{"n":1,"meta":{"workflow":{"apply":["b"]}}}"#,
                 r#"{"n":2,"meta":{"workflow":{"succeeded":["a"]}}}"#,
                 "not json",
+                r#"{"n":3,"meta":{"workflow":{"apply":["zzz",5],"succeeded":[1,"a","zzz"]}}}"#,
+                r#"{"n":4,"meta":{"workflow":{"apply":[]}}}"#,
             ]),
         )
         .await
         .unwrap();
+    // Unknown names and non-text items in apply and succeeded are ignored; an empty apply runs all.
+    let late: Vec<serde_json::Value> = out[0][4..]
+        .iter()
+        .map(|p| p.as_structured_ref().unwrap().to_json_value())
+        .collect();
+    assert!(
+        late[0].get("a").is_none() && late[0].get("b").is_none(),
+        "{}",
+        late[0]
+    );
+    assert!(
+        late[0]["meta"]["workflow"].get("succeeded").is_none(),
+        "{}",
+        late[0]
+    );
+    assert_eq!(late[1]["a"], "A");
+    assert_eq!(late[1]["b"], 4);
     let docs: Vec<serde_json::Value> = out[0][..3]
         .iter()
         .map(|p| p.as_structured_ref().unwrap().to_json_value())
@@ -1104,6 +1131,41 @@ async fn archive_and_unarchive_every_format() {
         .await
         .iter()
         .all(|b| b.is_empty()));
+    let out = e
+        .run(
+            json!({"unarchive": {"format": "csv"}}),
+            vec![Part::new(b"a\n\xff\n".to_vec())],
+        )
+        .await;
+    assert!(
+        err_of(&out[0][0]).starts_with("failed to parse message as csv: "),
+        "{}",
+        err_of(&out[0][0])
+    );
+    // A tar member cut short and a zip member whose local header is damaged are flagged.
+    let mut tw = tar::Builder::new(Vec::new());
+    let mut h = tar::Header::new_gnu();
+    h.set_size(600);
+    h.set_cksum();
+    tw.append_data(&mut h, "big", &[7u8; 600][..]).unwrap();
+    let mut cut = tw.into_inner().unwrap();
+    cut.truncate(512 + 100);
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zw.start_file("a", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut zw, b"x").unwrap();
+    let mut damaged = zw.finish().unwrap().into_inner();
+    damaged[2..4].copy_from_slice(b"\0\0");
+    for (fmt, bytes) in [("tar", cut), ("zip", damaged)] {
+        let out = e
+            .run(
+                json!({"unarchive": {"format": fmt}}),
+                vec![Part::new(bytes)],
+            )
+            .await;
+        assert_eq!(out[0].len(), 1, "{fmt}");
+        assert!(!err_of(&out[0][0]).is_empty(), "{fmt}");
+    }
     let out = e
         .run(
             json!({"unarchive": {"format": "json_documents"}}),

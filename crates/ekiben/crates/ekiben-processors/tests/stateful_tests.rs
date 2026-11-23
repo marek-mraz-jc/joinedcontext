@@ -366,9 +366,15 @@ cached:
     )
     .expect("built");
     assert_eq!(proc.processor_type(), "cached");
-    foo.set("bad", bytes::Bytes::from_static(b"not a batch"), None)
-        .await
-        .unwrap();
+    for (key, stored) in [
+        ("bad", &b"not a batch"[..]),
+        ("bad2", b"\0\0\0\x01"),
+        ("bad3", b"\0\0\0\x01\0\0\0\x01"),
+    ] {
+        foo.set(key, bytes::Bytes::from_static(stored), None)
+            .await
+            .unwrap();
+    }
     let out = run(
         &ctx,
         &proc,
@@ -378,6 +384,8 @@ cached:
             r#"{"k":"a","ttl":"5x"}"#,
             r#"{"k":"a","ttl":"soon"}"#,
             r#"{"k":"bad","ttl":"1s"}"#,
+            r#"{"k":"bad2","ttl":"1s"}"#,
+            r#"{"k":"bad3","ttl":"1s"}"#,
             r#"{"k":"skip","ttl":"1s","n":"x"}"#,
             r#"{"k":"skip2","ttl":"1s","n":5}"#,
         ],
@@ -412,8 +420,19 @@ cached:
         "{}",
         errs[4]
     );
+    assert!(
+        errs[5].ends_with("failed to extract batch size: message is too small to extract number"),
+        "{}",
+        errs[5]
+    );
+    assert!(
+        errs[6]
+            .ends_with("failed to extract message 0 size: message is too small to extract number"),
+        "{}",
+        errs[6]
+    );
     // A skip_on that fails or answers true passes the result on uncached.
-    assert_eq!(&errs[5..], ["", ""]);
+    assert_eq!(&errs[7..], ["", ""]);
     assert!(foo.get("skip").await.is_err());
     assert!(foo.get("skip2").await.is_err());
 
@@ -467,6 +486,10 @@ fn cached_refuses_a_config_it_cannot_build() {
         (
             "cached:\n  cache: foo\n  key: k\n",
             "field processors is required",
+        ),
+        (
+            "group_by_value:\n  value: ${! ( }\n",
+            "failed to parse value expression",
         ),
     ] {
         let err = build(&ctx, yaml)

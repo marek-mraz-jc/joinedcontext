@@ -59,11 +59,12 @@ impl JsonSchemaProcessor {
 /// The message as JSON: a structured value (a mapping's result) is converted as it is, without
 /// serialising it and parsing it back; bytes are parsed once.
 fn document(part: &Part) -> Result<Value, String> {
-    if part.holds_structured() {
-        return part
-            .as_structured_ref()
-            .map(|v| v.to_json_value())
-            .map_err(|e| format!("failed to parse message as JSON: {e}"));
+    if let Some(v) = part
+        .holds_structured()
+        .then(|| part.as_structured_ref().ok())
+        .flatten()
+    {
+        return Ok(v.to_json_value());
     }
     serde_json::from_slice::<Value>(&part.as_bytes_ref())
         .map_err(|e| format!("failed to parse message as JSON: {e}"))

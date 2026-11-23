@@ -55,7 +55,10 @@ pub struct SystemWindowBuffer {
 }
 
 fn fire(ack: &SharedAck, err: Option<BatchError>) {
-    let taken = ack.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let taken = ack
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
     if let Some(a) = taken {
         a.respond(err);
     }
@@ -251,7 +254,9 @@ impl SystemWindowBuffer {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|p| p.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// `(prevStart, prevEnd, start, end)` of the window the clock is in, as Bento's `nextSystemWindow`.
