@@ -342,8 +342,16 @@ async fn contract_dashboards(store: &dyn DaiyaStore) {
         .unwrap();
     let mut wide = dashboard(org, "d1", None);
     wide.panel_count = 6;
-    let err = store.upsert_dashboard(wide, "", true).await.unwrap_err();
+    let err = store
+        .upsert_dashboard(wide.clone(), "", true)
+        .await
+        .unwrap_err();
     assert_eq!(err.slug(), "cr.quota_exceeded");
+    wide.panel_count = 5;
+    store
+        .upsert_dashboard(wide, "", true)
+        .await
+        .expect("exactly the panel quota is allowed");
     let err = store
         .upsert_dashboard(dashboard(org, "third", None), "", true)
         .await

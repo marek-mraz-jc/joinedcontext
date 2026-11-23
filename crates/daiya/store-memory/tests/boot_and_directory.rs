@@ -101,3 +101,68 @@ async fn a_name_or_number_is_held_by_one_live_organization() {
     assert_ne!(reborn.org_id, first);
     assert!(!reborn.retired);
 }
+
+#[tokio::test]
+async fn the_directory_finds_by_number_id_or_name_and_prefers_the_live_row() {
+    use daiya_model::OrgKey;
+    let store = MemoryStore::new();
+    let (a, b, c) = (
+        OrgId::from_u128(1),
+        OrgId::from_u128(2),
+        OrgId::from_u128(3),
+    );
+    let first = store
+        .create_org(INSTALLATION, "zilina", Some(2), a)
+        .await
+        .unwrap();
+    store
+        .create_org(INSTALLATION, "kosice", Some(3), b)
+        .await
+        .unwrap();
+    let find = |key| store.find_org(INSTALLATION, key);
+    assert_eq!(
+        find(OrgKey::Number(3)).await.unwrap().unwrap().name,
+        "kosice"
+    );
+    assert_eq!(find(OrgKey::Id(a)).await.unwrap().unwrap().number, 2);
+    assert_eq!(
+        find(OrgKey::Name("kosice".into()))
+            .await
+            .unwrap()
+            .unwrap()
+            .org_id,
+        b
+    );
+    assert!(find(OrgKey::Number(9)).await.unwrap().is_none());
+    assert!(find(OrgKey::Name("nitra".into())).await.unwrap().is_none());
+    assert!(
+        store
+            .find_org(InstallationId::from_u128(9), OrgKey::Number(2))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Retired and reborn under the same name: the name finds the live row, the old number the retired.
+    assert!(store.retire_org(INSTALLATION, 2).await.unwrap());
+    let reborn = store
+        .create_org(INSTALLATION, "zilina", Some(5), c)
+        .await
+        .unwrap();
+    let by_name = find(OrgKey::Name("zilina".into())).await.unwrap().unwrap();
+    assert_eq!((by_name.number, by_name.retired), (reborn.number, false));
+    let old = find(OrgKey::Number(2)).await.unwrap().unwrap();
+    assert_eq!((old.org_id, old.retired), (first.org_id, true));
+    let live: Vec<i64> = store
+        .list_orgs(INSTALLATION)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.number)
+        .collect();
+    assert_eq!(
+        live,
+        [3, 5],
+        "retired rows are not listed, live ones by number"
+    );
+}

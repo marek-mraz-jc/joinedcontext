@@ -18,4 +18,7 @@ exclude_re = [
   # kaisatsu-crypto: decode_cbor refuses an input over 64 KiB before decoding, so no byte or text string of
   # exactly 64 KiB (head included) reaches the per-string cap, where `>` and `>=` differ only at that length.
   'crates/kaisatsu/crypto/src/webauthn\.rs:(200|212):.*replace > with >= in CborReader',
+  # daiya-store-memory: insert_plan drops plans whose expires_at is before `now`, read inside the call; a
+  # plan expiring at that exact microsecond is the only one `>` and `>=` treat apart, and no test can pin it.
+  'crates/daiya/store-memory/src/lib\.rs:.*replace > with >= in <impl DaiyaStore for MemoryStore>::insert_plan',
 ]
