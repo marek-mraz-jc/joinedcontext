@@ -2688,6 +2688,35 @@ mod tests {
         assert!(total() >= before + 3);
     }
 
+    /// 5.5.7: a document the loader fetches from a URL that is not a pinned
+    /// core is the user's, so a scoped context inside it is refused.
+    #[tokio::test]
+    async fn a_fetched_user_document_with_a_scoped_context_is_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let b = r#"{"@context":{"Vehicle":{"@id":"https://a.example/Vehicle","@context":{"speed":"https://a.example/hidden"}}}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{b}",
+                    b.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let got = loader
+            .resolve(&Value::String(format!("http://{addr}/scoped.jsonld")))
+            .await;
+        assert!(matches!(got, Err(NgsiError::BadRequestData(_))), "{got:?}");
+    }
+
     /// The quiet resolutions (notification building, federation) resolve the
     /// same @context as a counted one.
     #[tokio::test]
