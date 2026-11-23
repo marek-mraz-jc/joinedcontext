@@ -114,7 +114,9 @@ async fn ws_open_and_close_are_logged_without_the_subject() -> Result<(), String
         .map(str::to_owned)
         .collect();
     assert!(
-        closes.get(1).is_some_and(|l| l.contains("reason=\"gone\"") || l.contains("reason=gone")),
+        closes
+            .get(1)
+            .is_some_and(|l| l.contains("reason=\"gone\"") || l.contains("reason=gone")),
         "{closes:?}"
     );
     let text = lines.text();

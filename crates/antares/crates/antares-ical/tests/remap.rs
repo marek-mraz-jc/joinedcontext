@@ -108,8 +108,12 @@ fn a_language_a_sub_attribute_and_a_constant_category_are_read() {
         "title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh", "en": "Market"}},
         "venue": {"type": "Property", "value": "Hala"}}));
     let l = render(&located, &e);
-    assert!(has(&l, "LOCATION:Market") && has(&l, "DESCRIPTION:Hala"), "{l:?}");
-    let first = json!({"preset": "sdm-event", "mapping": {"LOCATION": {"firstOf": ["place", "venue"]}}});
+    assert!(
+        has(&l, "LOCATION:Market") && has(&l, "DESCRIPTION:Hala"),
+        "{l:?}"
+    );
+    let first =
+        json!({"preset": "sdm-event", "mapping": {"LOCATION": {"firstOf": ["place", "venue"]}}});
     assert!(has(&render(&first, &e), "LOCATION:Hala"));
     // a language the entity lacks falls back to @none, then to the first tag
     let e = entity(&json!({"title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh"}}}));

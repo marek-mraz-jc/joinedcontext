@@ -83,7 +83,10 @@ async fn ws_a_refused_unsubscribe_keeps_the_subscription() -> Result<(), String>
         "rules": [{"types": ["Car"], "attributes": ["speed"]}],
         "operations": ["query_entities", "create_subscription", "retrieve_subscription"]
     });
-    let (code, answer) = b.http.call("PUT", "/q/views/keep", &[], Some(&view)).await?;
+    let (code, answer) = b
+        .http
+        .call("PUT", "/q/views/keep", &[], Some(&view))
+        .await?;
     assert!(code == 201 || code == 204, "view: {code} {answer}");
     let mut c = connect(b.addr, "/x/views/keep/ws", &[]).await?;
     let made = c.subscribe(cars()).await?;
@@ -91,8 +94,11 @@ async fn ws_a_refused_unsubscribe_keeps_the_subscription() -> Result<(), String>
     let id = made.pointer("/body/id").cloned().unwrap_or_default();
     let mut refusals = Vec::new();
     for _ in 0..2 {
-        c.send(json!({"x-op": "x-unsubscribe", "x-id": "u", "x-subscription": id}), None)
-            .await?;
+        c.send(
+            json!({"x-op": "x-unsubscribe", "x-id": "u", "x-subscription": id}),
+            None,
+        )
+        .await?;
         refusals.push(status(&c.result().await?));
     }
     assert_ne!(refusals[0], 204, "{refusals:?}");

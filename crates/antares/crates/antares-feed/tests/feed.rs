@@ -238,7 +238,10 @@ async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_
     let items = &feed["items"];
     assert_eq!(items[1]["authors"], json!([{"name": "Divadlo"}]), "{json}");
     assert_eq!(items[1]["tags"], json!(["kultúra"]), "{json}");
-    assert!(items[2].get("authors").is_none() && items[2].get("tags").is_none(), "{json}");
+    assert!(
+        items[2].get("authors").is_none() && items[2].get("tags").is_none(),
+        "{json}"
+    );
     let (status, body) = send(&app, "HEAD", &format!("{ALL}/atom.xml"), "").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
     let info = antares_feed::Feed.version_info();
@@ -562,7 +565,11 @@ async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
         "{body}"
     );
     let (status, body) = send(&app, "GET", "/x/views/twenty/feed/v1/o19/atom.xml", "").await;
-    assert_eq!(status, StatusCode::OK, "twenty outputs is the limit, not over it: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "twenty outputs is the limit, not over it: {body}"
+    );
 }
 
 /// F-ANT5-010: a view of every type pushes the output's types, so a Tenant

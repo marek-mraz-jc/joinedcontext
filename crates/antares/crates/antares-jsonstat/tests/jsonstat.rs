@@ -328,7 +328,11 @@ async fn a_view_hiding_the_type_is_404_before_the_policy_is_asked() {
     let app = fixture_with(broker).await;
     engine.0.store(true, Ordering::SeqCst);
     let (status, body) = send(&app, "GET", "/x/views/secret/jsonstat/v1/om7014rr", "").await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "a denial would tell the view exists: {body}");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a denial would tell the view exists: {body}"
+    );
 }
 
 #[tokio::test]

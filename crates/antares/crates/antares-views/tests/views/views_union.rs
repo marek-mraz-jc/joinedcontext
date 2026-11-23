@@ -164,7 +164,9 @@ async fn the_order_and_the_cursor_are_stable_across_views() -> Result<(), String
     // one view holding more than a page: a full page is not its end
     let first = union(&f.app, "views=cars&type=Car&limit=1").await;
     assert_eq!(first.ids().len(), 1, "{}", first.text);
-    let next = first.link("next").ok_or("a full page of one view links the next")?;
+    let next = first
+        .link("next")
+        .ok_or("a full page of one view links the next")?;
     let second = send(&f.app, Method::GET, &next, &[LD], None).await;
     assert_eq!(second.ids().len(), 1, "{}", second.text);
     assert_ne!(second.ids(), first.ids());

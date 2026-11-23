@@ -286,7 +286,14 @@ async fn the_read_fetches_only_the_counted_attribute() -> Result<(), String> {
     for n in 0..4 {
         let e = json!({"id": format!("urn:ngsi-ld:Event:big{n}"), "type": "Event",
                        "category": prop(&json!("music")), "name": prop(&json!(blob))});
-        let a = send(&app, Method::POST, "/ngsi-ld/v1/entities", &[("NGSILD-Tenant", "city")], Some(&e)).await;
+        let a = send(
+            &app,
+            Method::POST,
+            "/ngsi-ld/v1/entities",
+            &[("NGSILD-Tenant", "city")],
+            Some(&e),
+        )
+        .await;
         assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
     }
     put_view(

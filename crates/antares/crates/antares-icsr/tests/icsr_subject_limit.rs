@@ -9,7 +9,9 @@ fn grant(headers: usize) -> Vec<u8> {
     let subject: Map<String, Value> = (0..headers)
         .map(|i| (format!("x-s{i}"), json!("alice")))
         .collect();
-    json!({"target": "b", "source": "a", "subject": subject}).to_string().into_bytes()
+    json!({"target": "b", "source": "a", "subject": subject})
+        .to_string()
+        .into_bytes()
 }
 
 #[test]
