@@ -154,8 +154,12 @@ pub async fn complete_passkey_registration(
     }
 
     let user_handle = ensure_user_handle(store, &realm.id, user).await?;
-    let cose_json = serde_json::to_string(&verified.public_key)
-        .map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+    // A tagged enum of integers and strings: serde_json writes it without failing.
+    let Ok(cose_json) = serde_json::to_string(&verified.public_key) else {
+        return Err(KaisatsuError::Crypto(
+            "the passkey's key cannot be stored".into(),
+        ));
+    };
 
     let rec = WebAuthnCredentialRecord {
         id: uuid::Uuid::now_v7().to_string(),

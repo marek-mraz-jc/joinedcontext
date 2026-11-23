@@ -186,6 +186,18 @@ async fn realms_orgs_and_memberships(store: &dyn Store) {
         store.ensure_signing_key(R, "HS256").await,
         Err(KaisatsuError::BadRequest(_))
     ));
+    // ES256 and EdDSA active without an active RS256: listing mints the RS256 again (another
+    // algorithm's key does not stand in for the missing one).
+    for mut k in keys.into_iter().filter(|k| k.algorithm == "RS256") {
+        k.status = "PASSIVE".into();
+        store.upsert_signing_key(k).await.expect("passive RS256");
+    }
+    let keys = store.list_signing_keys(R).await.expect("keys");
+    assert!(
+        keys.iter()
+            .any(|k| k.algorithm == "RS256" && k.status == "ACTIVE"),
+        "the missing RS256 is minted"
+    );
 
     store
         .upsert_organization(org("hel", "Hel.FI", true, true))

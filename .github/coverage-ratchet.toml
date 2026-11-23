@@ -43,6 +43,7 @@
 "jc-types" = { lines = 99.20, functions = 100.00 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
+"kaisatsu-login" = { lines = 99.09, functions = 99.54 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
