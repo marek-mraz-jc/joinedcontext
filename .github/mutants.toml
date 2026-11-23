@@ -53,6 +53,9 @@ exclude_re = [
   # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
   # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
   'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
+  # kaisatsu-server poll_import_dir_once: the watch's ApplyOptions name NoDelete, no dry run and no literal secrets
+  # explicitly (the watch never prunes); each restates ApplyOptions::default(), so deleting one changes nothing.
+  'crates/kaisatsu/server/src/lib\.rs:.*delete field (mode|dry_run|allow_literal_secrets) from struct kaisatsu_import::ApplyOptions expression in poll_import_dir_once',
   # kaisatsu-crypto: Kek's Drop zeroizes the key bytes on drop; no safe code can read freed memory, so no
   # test tells a zeroizing drop from an empty one (the zeroize crate's own tests hold it).
   'crates/kaisatsu/crypto/src/keys\.rs:.*replace <impl Drop for Kek>::drop with \(\)',

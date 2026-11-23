@@ -78,6 +78,34 @@ async fn an_unsafe_logo_or_a_path_out_of_the_folder_is_never_read() {
     assert!(b.logo_svg.is_empty() && b.logo.is_empty());
 }
 
+/// The file cannot name the block's id or an Organization (each realm's installation block is
+/// keyed by the realm), and a logo of exactly the cap is still read.
+#[tokio::test]
+async fn the_file_names_neither_id_nor_organization_and_a_logo_at_the_cap_is_read() {
+    let (_, store, _) = setup_dev_realm_state().await;
+    let store: Arc<dyn Store> = store;
+    let open = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#0000bf"/>"##;
+    let close = "</svg>";
+    let logo = format!(
+        "{open}{}{close}",
+        " ".repeat(512 * 1024 - open.len() - close.len())
+    );
+    assert_eq!(logo.len(), 512 * 1024);
+    let yaml = format!("{SMARTCITY}id: forged-block\norgId: helsinki\n");
+    let path = folder("cap", &yaml, &[("logo.svg", &logo)]);
+    kaisatsu_server::apply_branding_file(&store, &path)
+        .await
+        .expect("a logo at the cap");
+    let b = store
+        .get_branding("dev", None)
+        .await
+        .unwrap()
+        .expect("installation block");
+    assert_eq!(b.id, "dev:installation");
+    assert_eq!(b.org_id, None);
+    assert!(b.logo_svg.contains("#0000bf"), "{}", b.logo_svg.len());
+}
+
 #[tokio::test]
 async fn a_missing_file_or_an_oversized_or_non_text_logo_is_an_error_naming_the_file() {
     let (_, store, _) = setup_dev_realm_state().await;

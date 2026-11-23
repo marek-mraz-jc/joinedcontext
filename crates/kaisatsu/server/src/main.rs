@@ -264,9 +264,9 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
         } => {
             let store = offline_store(&store).await?;
             let files = load_realm_files_from_path(&file).map_err(fail(EXIT_INVALID_INPUT))?;
+            // create_plan runs the apply as a dry run itself.
             let opts = ApplyOptions {
                 mode: mode(prune),
-                dry_run: true,
                 allow_literal_secrets: true,
                 ..Default::default()
             }

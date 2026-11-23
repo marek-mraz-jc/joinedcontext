@@ -108,6 +108,24 @@ fn check_reads_json_and_yaml_and_refuses_bad_files() {
         ])),
         0
     );
+    // apply refuses it the same way unless allowed; a plan (a preview) takes it.
+    assert_eq!(code(&kaisatsu(&["apply", "-f", p(&literal)])), 1);
+    let out = kaisatsu(&["apply", "-f", p(&literal), "--allow-literal-secrets"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let preview = dir.0.join("literal-plan.json");
+    let out = kaisatsu(&["plan", "-f", p(&literal), "-o", p(&preview)]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    // A `$(file:...)` secret reads only under `--secrets-dir`.
+    let secrets = dir.0.join("secrets");
+    std::fs::create_dir(&secrets).expect("secrets dir");
+    std::fs::write(secrets.join("cli-app"), "file-secret-123\n").expect("secret file");
+    let from_file = dir.file(
+        "from-file.json",
+        r#"{"realm":"cli","clients":[{"clientId":"x","publicClient":false,"secret":"$(file:cli-app)"}]}"#,
+    );
+    assert_eq!(code(&kaisatsu(&["apply", "-f", p(&from_file)])), 1);
+    let out = kaisatsu(&["apply", "-f", p(&from_file), "--secrets-dir", p(&secrets)]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
 
     // Broken YAML names the file; a YAML list is not a realm; a missing path fails.
     let broken = dir.file("broken.yaml", "realm: [unclosed\n");
@@ -169,6 +187,10 @@ fn a_directory_merges_json_and_yaml_in_file_name_order() {
     assert_eq!(code(&out), 2, "{}", stderr(&out));
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
     assert_eq!(report["realm"], "cli");
+    assert_eq!(report["dryRun"], false);
+    let out = kaisatsu(&["apply", "-f", p(&realm.0), "--dry-run"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert_eq!(report["dryRun"], true);
     let out = kaisatsu(&[
         "apply",
         "-f",
@@ -603,6 +625,33 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
         "the plan's base state is gone: {}",
         stderr(&out)
     );
+    // `--prune` deletes what the file stopped naming; a plain apply brings it back.
+    let bare = dir.file("bare.yaml", "realm: cli\ndisplayName: CLI realm 2\n");
+    let out = kaisatsu(
+        &[
+            &["apply", "-f", p(&bare), "--prune", "--kek-file", p(&kek)][..],
+            &db[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert!(
+        report["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .any(|c| c["kind"] == "Client" && c["id"] == "cli-app" && c["action"] == "delete"),
+        "{report}"
+    );
+    let out = kaisatsu(
+        &[
+            &["apply", "-f", p(&changed), "--kek-file", p(&kek)][..],
+            &db[..],
+        ]
+        .concat(),
+    );
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
 
     // A KEK other than the one that encrypted the secrets cannot read them.
     let other_kek = dir.file("other-kek", [1u8; 32]);
