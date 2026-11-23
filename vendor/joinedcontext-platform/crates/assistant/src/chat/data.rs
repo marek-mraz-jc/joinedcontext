@@ -128,6 +128,32 @@ fn stage_of(tool: &str, endpoint: &str, arguments: &Value) -> (&'static str, Opt
     }
 }
 
+/// The stage event of a checked call: the step, its type and what it reads in the catalogue's
+/// words, the dataset's title and the call's own `q` (T-7753); a history read names its window.
+fn stage_event(c: &Checked<'_>) -> Event {
+    let (stage, topic) = stage_of(&c.tool.name, &c.connector.endpoint, &c.arguments);
+    let mut detail =
+        super::agent::Detail::read(c.connector, c.arguments.get("q").and_then(Value::as_str));
+    if stage == "history" {
+        let at = |k: &str| {
+            c.arguments
+                .get(k)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        detail.filter = match (at("timeAt"), at("endTimeAt")) {
+            (Some(from), Some(to)) => Some(format!("{from}..{to}")),
+            (Some(from), None) => Some(from),
+            _ => detail.filter,
+        };
+    }
+    Event::Stage {
+        stage,
+        topic,
+        detail,
+    }
+}
+
 /// Whether the loop may still call a tool: steps left of `most` and time left of `time`.
 pub fn may_call(steps: usize, elapsed: Duration, most: usize, time: Duration) -> bool {
     steps < most && elapsed < time
@@ -233,6 +259,7 @@ pub async fn answer(
                 Event::Stage {
                     stage: "answering",
                     topic: None,
+                    detail: super::agent::Detail::counted(citations.len()),
                 },
             )
             .await;
@@ -507,8 +534,7 @@ fn tool_event(c: &Checked<'_>, status: &'static str) -> Event {
 
 /// A call about to be sent, shown as a stage and a started `tool` event.
 async fn started(c: &Checked<'_>, events: &Sender<Event>) {
-    let (stage, topic) = stage_of(&c.tool.name, &c.connector.endpoint, &c.arguments);
-    send(events, Event::Stage { stage, topic }).await;
+    send(events, stage_event(c)).await;
     send(events, tool_event(c, "started")).await;
 }
 
@@ -666,6 +692,7 @@ async fn recorded(
                 super::agent::Step::of(c.connector, &c.arguments, &text, dataset.clone());
             // Ranked among all, though the read kept those with the attribute.
             step.count = ranked.or(step.count);
+            step.ms = Some(ms);
             send(events, Event::Step(step)).await;
             // What a step did, never what it read (T-4294's per-step record).
             tracing::info!(deployment = %ask.deployment, tool = %tool, endpoint = %endpoint, status = "done", rows, ms, "data step");
@@ -1263,6 +1290,63 @@ mod tests {
             ("reading", None)
         );
         assert_eq!(type_of(&json!({"type": []})), None);
+    }
+
+    /// T-7753: a call's stage says what it reads in the catalogue's words: the dataset's public
+    /// title, the call's own `q`, a history read's window, never the Endpoint's slug.
+    #[test]
+    fn each_tool_stage_names_the_dataset_its_filter_and_its_window() {
+        let mut titled = connector(
+            "mosty-bbsk",
+            &["query_entities", "query_temporal", "describe_schema"],
+        );
+        titled.title = Some("BBSK bridge register".into());
+        let stage = |tool: usize, arguments: Value| {
+            stage_event(&Checked {
+                connector: &titled,
+                tool: &titled.tools[tool],
+                arguments,
+                counts: false,
+            })
+        };
+        let Event::Stage {
+            stage: read,
+            topic,
+            detail,
+        } = stage(0, json!({"type": "Bridge", "q": " yearBuilt<1950 "}))
+        else {
+            panic!("a read's stage")
+        };
+        assert_eq!((read, topic.as_deref()), ("reading", Some("Bridge")));
+        assert_eq!(detail.source.as_deref(), Some("BBSK bridge register"));
+        assert_eq!(detail.filter.as_deref(), Some("yearBuilt<1950"));
+        let Event::Stage {
+            stage: history,
+            detail,
+            ..
+        } = stage(
+            1,
+            json!({"type": "Bridge", "timeAt": "2026-10-01T00:00:00Z", "endTimeAt": "2026-10-08T00:00:00Z"}),
+        )
+        else {
+            panic!("a history read's stage")
+        };
+        assert_eq!(history, "history");
+        assert_eq!(
+            detail.filter.as_deref(),
+            Some("2026-10-01T00:00:00Z..2026-10-08T00:00:00Z")
+        );
+        let Event::Stage {
+            stage: schema,
+            detail,
+            ..
+        } = stage(2, json!({}))
+        else {
+            panic!("a schema step's stage")
+        };
+        assert_eq!(schema, "schema");
+        assert_eq!(detail.source.as_deref(), Some("BBSK bridge register"));
+        assert_eq!(detail.filter, None);
     }
 
     /// T-4761: `limit: 1, count: true` on 47 bridges showed "first 1 of 47" and one row; the
