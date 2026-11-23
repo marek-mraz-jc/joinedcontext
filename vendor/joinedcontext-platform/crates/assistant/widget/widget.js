@@ -965,12 +965,33 @@
     // The chat's own scheme, so the chart draws in the theme's light or dark (T-6886).
     var dark = document.documentElement.getAttribute("data-scheme") !== "light" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     var message = { type: "jc-viz-show", spec: JCRender.vizSpec(payload.spec, lang, payload.labels), rows: JCRender.vizRows(payload.rows, lang, payload.enums), lang: lang, theme: dark ? "dark" : "light" };
-    frame.addEventListener("load", function () {
+    var loaded = new Promise(function (done) { frame.addEventListener("load", done); });
+    // A map of part of a read draws every located entity of it (T-7755), loaded beside the frame.
+    var source = JCRender.mapSource(payload.source);
+    var map = source ? mapPages(source, payload.spec) : Promise.resolve(null);
+    Promise.all([loaded, map]).then(function (both) {
+      var all = both[1];
+      if (all) {
+        message.spec = JCRender.vizSpec(all.spec, lang, payload.labels);
+        if (payload.onDrawn) payload.onDrawn(all);
+      }
       frame.contentWindow.postMessage(message, VIZ);
     });
     frame.src = VIZ + "/#show";
     vizFrames.push({ frame: frame, broken: broken });
     return frame;
+  }
+  // A map source's pages (T-7755) with the visitor's token, each read again under the Endpoint's
+  // Policy by the server; null when the token or every page failed, and the drawn rows stay.
+  function mapPages(source, spec) {
+    return visitorToken().then(function (held) {
+      return JCRender.loadMap(spec, function (cursor) {
+        return fetch(api + source + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""), {
+          headers: { Accept: "application/json", "X-JC-Visitor": held.token },
+          credentials: "omit"
+        }).then(function (response) { return response.ok ? response.json() : null; });
+      });
+    }).catch(function () { return null; });
   }
   window.addEventListener("message", function (event) {
     if (!VIZ || event.origin !== VIZ) return;
@@ -1003,7 +1024,7 @@
 
   // "Table | Map" over a data card whose rows have places; the map loads when it is first shown,
   // so it never holds up the answer, and a map that fails leaves the table (T-4657).
-  function mapTabs(figure, scroll, drawn, data, onPick) {
+  function mapTabs(figure, scroll, drawn, data, onPick, onDrawn) {
     var tabs = el("div", "jc-tabs");
     tabs.setAttribute("role", "tablist");
     var box = el("div", "jc-viz-box");
@@ -1023,7 +1044,12 @@
       box.hidden = !map;
       onPick(map);
       if (map && !box.firstChild) {
-        box.appendChild(vizFrame({ spec: data.map }, w.tabMap, function () {
+        var drawnAll = function (all) {
+          onDrawn(all);
+          // Over the map, under its caption: where the rest of a capped map is.
+          if (all.capped) box.insertBefore(el("p", "jc-viz-note", JCRender.mapCap(all.drawn, lang)), box.firstChild);
+        };
+        box.appendChild(vizFrame({ spec: data.map, source: data.mapSource, onDrawn: drawnAll }, w.tabMap, function () {
           tabs.remove();
           box.remove();
           pick(false);
@@ -1128,11 +1154,16 @@
       back.addEventListener("click", function () { if (shown.page > 0) turn(shown.page - 1); });
       next.addEventListener("click", function () { if (shown.page < shown.pages - 1) turn(shown.page + 1); });
     }
+    var mapCaption = "";
     if (VIZ && data.map && typeof data.map === "object") {
       if (answers) mapUnder(figure, scroll, data);
       else mapTabs(figure, scroll, drawn, data, function (map) {
-        summary.textContent = (map ? shown.mapCaption : shown.caption) || w.table;
+        summary.textContent = (map ? mapCaption || shown.mapCaption : shown.caption) || w.table;
         if (pager) pager.hidden = map;
+      }, function (all) {
+        // The caption over the map counts what it draws once every page came (T-7755).
+        mapCaption = JCRender.drawnCaption(data, all.drawn, lang);
+        if (scroll.hidden && mapCaption) summary.textContent = mapCaption;
       });
     }
     // Over the rows and under the tabs: below twenty cards nobody on a phone found it.

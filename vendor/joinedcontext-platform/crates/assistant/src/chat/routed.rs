@@ -2234,7 +2234,33 @@ async fn read(ask: &Ask<'_>, connector: &Connected, wanted: &Read) -> Result<Tab
             super::view::finish(ask, connector, schema, &mut table, read, top).await;
         }
     }
+    table.map_read = map_read(connector, wanted, &table, schema);
     Ok(table)
+}
+
+/// The read a visitor's map source answers again (T-7755): a public Endpoint's plain list whose
+/// map draws fewer entities than match. A person's read keeps the rows it drew: no token is held.
+fn map_read(
+    connector: &Connected,
+    wanted: &Read,
+    table: &Table,
+    schema: &Value,
+) -> Option<super::map_source::Read> {
+    let more = table
+        .total
+        .is_some_and(|total| total > table.rows.len() as u64);
+    if connector.surface.token.is_some() || !matches!(wanted.view, View::List) || !more {
+        return None;
+    }
+    let spec = table.map.as_ref()?;
+    super::map_source::Read::of(
+        &connector.surface.slug,
+        &wanted.kind,
+        wanted.q.as_deref(),
+        connector.surface.timeout,
+        spec,
+        schema,
+    )
 }
 
 /// The broker's profile of a broad read's type (`summarize`, T-4680), read beside its rows; `None`
@@ -7410,6 +7436,89 @@ classes:
                 "refSchool"
             ]
         );
+    }
+
+    /// T-7755: a public Endpoint's plain list with more matches than rows gets a map source of
+    /// its own filter; a person's read, a ranked read, a whole read or a read without a map not.
+    #[test]
+    fn only_a_public_list_with_more_than_its_rows_gets_a_map_source() {
+        let connector = |token: Option<&str>| Connected {
+            titles: Default::default(),
+            endpoint: "bbsk/bbsk-registre".into(),
+            title: None,
+            surface: super::super::mcp::Surface {
+                gateway: "http://gateway".into(),
+                slug: "bbsk-registre".into(),
+                timeout: Duration::from_secs(3),
+                token: token.map(|t| super::super::mcp::PersonToken(t.into())),
+            },
+            tools: Vec::new(),
+            label: None,
+            siblings: Vec::new(),
+            dataset: None,
+        };
+        let wanted = |view| Read {
+            endpoint: "bbsk/bbsk-registre".into(),
+            kind: "Bridge".into(),
+            q: Some("yearBuilt<1900".into()),
+            order: None,
+            view,
+        };
+        let schema = json!({"properties": {"type": {}, "q": {}, "pick": {}, "format": {}, "cursor": {}, "limit": {}}});
+        let table = Table {
+            rows: vec![vec![json!("Most 1")]; READ_ROWS],
+            total: Some(1651),
+            map: Some(json!({"label": "name", "popup": []})),
+            ..Table::default()
+        };
+        let read =
+            map_read(&connector(None), &wanted(View::List), &table, &schema).expect("a source");
+        assert_eq!(
+            (read.slug.as_str(), read.kind.as_str()),
+            ("bbsk-registre", "Bridge")
+        );
+        assert_eq!(
+            read.q.as_deref(),
+            Some("yearBuilt<1900"),
+            "the read's own filter"
+        );
+        assert_eq!(read.fields, vec!["name".to_owned()]);
+        assert_eq!(read.timeout, Duration::from_secs(3));
+        assert_eq!(
+            map_read(
+                &connector(Some("person")),
+                &wanted(View::List),
+                &table,
+                &schema
+            ),
+            None
+        );
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::Top(5)), &table, &schema),
+            None
+        );
+        let whole = Table {
+            total: Some(READ_ROWS as u64),
+            ..table.clone()
+        };
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::List), &whole, &schema),
+            None
+        );
+        let unmapped = Table {
+            map: None,
+            ..table.clone()
+        };
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::List), &unmapped, &schema),
+            None
+        );
+        // Nothing of the source reaches the event or the model.
+        let sent = json!(Table {
+            map_read: Some(read),
+            ..table
+        });
+        assert!(sent.get("map_read").is_none() && sent.get("mapRead").is_none());
     }
 
     /// T-4803: prod's oldest-bridge rows (bbsk-registre, read by yearBuilt) as the answer reads

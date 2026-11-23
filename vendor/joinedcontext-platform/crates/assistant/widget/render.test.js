@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, mapSource, loadMap, drawnCaption, mapCap, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
 
@@ -1279,4 +1279,51 @@ test("an aggregation names its method and says when it is part of the data (T-75
   const years = { ...made, aggregation: { ...made.aggregation, per: "year" } };
   assert.equal(table(years, "sk").rows[0][1], "2026");
   assert.equal(table({ ...made, aggregation: { ...made.aggregation, per: "month" } }, "en").rows[0][1], "October 2026");
+});
+
+test("a map source loads every page, then the map draws them all and says so (T-7755)", async () => {
+  const pt = (i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [19, 48 + i / 10000] }, properties: { name: "Most " + i } });
+  const spec = { label: "name", popup: [], data: { type: "FeatureCollection", features: [pt(0), pt(1)] }, count: { total: 1651, unlocated: 0 } };
+  const asked = [];
+  const pages = { "": { features: Array.from({ length: 500 }, (_, i) => pt(i)), next: "c1" }, c1: { features: Array.from({ length: 500 }, (_, i) => pt(500 + i)), next: "c2" },
+    c2: { features: Array.from({ length: 500 }, (_, i) => pt(1000 + i)), next: "c3" }, c3: { features: Array.from({ length: 151 }, (_, i) => pt(1500 + i)) } };
+  const all = await loadMap(spec, async (cursor) => { asked.push(cursor); return pages[cursor || ""]; });
+  assert.deepEqual(asked, [null, "c1", "c2", "c3"]);
+  assert.equal(all.drawn, 1651);
+  assert.equal(all.capped, false);
+  assert.equal(all.spec.data.features.length, 1651);
+  assert.deepEqual(all.spec.count, { total: 1651, unlocated: 0 });
+  assert.equal(all.spec.label, "name");
+  assert.equal(spec.data.features.length, 2, "the answer's own spec is left as it was");
+  assert.equal(drawnCaption({ type: "Bridge", total: 1651 }, all.drawn, "en"), "Bridges — 1,651 of 1,651");
+});
+
+test("a capped map keeps no unlocated count and says where the rest is; a failed load keeps the drawn rows (T-7755)", async () => {
+  const pt = { type: "Feature", geometry: { type: "Point", coordinates: [19, 48] }, properties: {} };
+  const spec = { data: { type: "FeatureCollection", features: [pt] }, count: { total: 45000, unlocated: 3 } };
+  let n = 0;
+  const capped = await loadMap(spec, async () => (++n < 40 ? { features: Array(500).fill(pt), next: "c" + n } : { features: Array(500).fill(pt), capped: true }));
+  assert.equal(n, 40);
+  assert.equal(capped.drawn, 20000);
+  assert.equal(capped.capped, true);
+  assert.deepEqual(capped.spec.count, { total: 45000 });
+  assert.equal(mapCap(20000, "sk"), "Na mape je prvých " + new Intl.NumberFormat("sk").format(20000) + "; ostatné sú v datasete.");
+  assert.equal(mapCap(20000, "xx"), "The map draws the first 20,000; the dataset has the rest.");
+  const failed = await loadMap(spec, async () => null);
+  assert.equal(failed.spec, spec);
+  assert.equal(failed.drawn, 1);
+  const thrown = await loadMap(spec, () => { throw new Error("offline"); });
+  assert.equal(thrown.spec, spec);
+  const half = await loadMap(spec, async (c) => (c ? null : { features: [pt, pt, pt], next: "x" }));
+  assert.equal(half.drawn, 3);
+  assert.deepEqual(half.spec.count, { total: 45000 }, "a load cut short claims no unlocated count");
+});
+
+test("only a map source this service names is read (T-7755)", () => {
+  const id = "0123456789abcdef0123456789abcdef";
+  assert.equal(mapSource("/api/v1/d/bbsk-chat/map/" + id), "/api/v1/d/bbsk-chat/map/" + id);
+  assert.equal(mapSource("https://evil.example/api/v1/d/x/map/" + id), null);
+  assert.equal(mapSource("/api/v1/d/x/map/" + id + "?x=1"), null);
+  assert.equal(mapSource("/api/v1/d/../map/" + id), null);
+  assert.equal(mapSource(undefined), null);
 });

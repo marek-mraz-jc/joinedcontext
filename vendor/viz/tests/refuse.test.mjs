@@ -117,7 +117,7 @@ test("a map spec is refused for a foreign link, a member of its own, a property 
   assert.deepEqual(mapRules(mapSpec({ popup: [{ field: "pm10", label: "PM10", html: "<b>" }] })), ["/popup/0 a field, its label and its unit, nothing else",
     "/data/features/0/properties/pm10 only the label, the popup fields and the time, as plain values"]);
   assert.deepEqual(mapRules(mapSpec({ $schema: VL })), ["/$schema the map schema " + MAP]);
-  assert.deepEqual(mapRules(mapSpec({ data: { type: "FeatureCollection", features: Array(1001).fill(station([19.1, 48.7])) } })),
-    ["/data/features at most 1000 features"]);
+  assert.deepEqual(mapRules(mapSpec({ data: { type: "FeatureCollection", features: Array(20001).fill(station([19.1, 48.7])) } })),
+    ["/data/features at most 20000 features"]);
   assert.deepEqual(mapRules([]), ["/ a spec is a JSON object"]);
 });
