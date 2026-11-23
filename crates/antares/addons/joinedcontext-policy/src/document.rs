@@ -241,8 +241,12 @@ impl Information {
     /// the entry grants nothing for `need` (deny by default). An entry
     /// without `attributes` is today's, whole.
     fn narrowed(&self, need: Need) -> Result<Option<Self>, String> {
-        // without `attributes` (and for a schema read, which every capability gives) each
-        // Attribute is given below, so the entry comes back whole
+        if self.attributes.is_empty() || need == Need::Schema {
+            return Ok(Some(Self {
+                attributes: BTreeMap::new(),
+                ..self.clone()
+            }));
+        }
         let every = self.attributes.get("*");
         let keep = |names: &[String]| -> Vec<String> {
             names
