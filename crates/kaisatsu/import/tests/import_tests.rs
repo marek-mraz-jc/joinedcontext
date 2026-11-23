@@ -643,6 +643,69 @@ async fn a_changed_secret_variable_is_applied_and_reported_once() {
 /// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
 /// start re-applies the unchanged file and gives the group its roles back; a role added since
 /// leaves the fast path alone.
+#[test]
+fn the_markdown_report_counts_each_action_and_lists_warnings_only_when_there_are_some() {
+    let change = |action: ChangeAction| ObjectChange {
+        kind: "Client".into(),
+        id: "c".into(),
+        action,
+        changed_fields: Vec::new(),
+    };
+    let mut report = ApplyReport {
+        realm: "md".into(),
+        dry_run: true,
+        checksum: String::new(),
+        base_state_checksum: String::new(),
+        changes: [
+            vec![change(ChangeAction::Create); 1],
+            vec![change(ChangeAction::Update); 2],
+            vec![change(ChangeAction::Delete); 3],
+            vec![change(ChangeAction::Unchanged); 4],
+        ]
+        .concat(),
+        warnings: Vec::new(),
+    };
+    let md = report.to_markdown();
+    assert_eq!(
+        md,
+        "### kaisatsu plan for realm `md` (dry-run)\n\n| Action | Count |\n|---|---:|\n\
+         | Create | 1 |\n| Update | 2 |\n| Delete | 3 |\n| Unchanged | 4 |\n"
+    );
+    report.warnings.push("$.defaultGroups is stored".into());
+    assert!(
+        report
+            .to_markdown()
+            .ends_with("\n#### Warnings\n- $.defaultGroups is stored\n"),
+        "{}",
+        report.to_markdown()
+    );
+}
+
+/// Only `$(...)` references enter the fast path's checksum: a plain value with parentheses
+/// reads the same whether or not literal secrets are allowed, so the second apply is the fast
+/// path's single unchanged realm.
+#[tokio::test]
+async fn plain_text_with_parentheses_is_no_secret_reference_in_the_checksum() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let files = [(
+        "r.json".to_owned(),
+        json!({"realm": "ck", "displayName": "Roads (north)", "displayNameHtml": "$(not closed"}),
+    )];
+    apply_realm_files(&store, &files, &ApplyOptions::default())
+        .await
+        .expect("first apply");
+    let literal = ApplyOptions {
+        allow_literal_secrets: true,
+        ..ApplyOptions::default()
+    };
+    let again = apply_realm_files(&store, &files, &literal)
+        .await
+        .expect("second apply");
+    assert_eq!(again.changes.len(), 1, "{:?}", again.changes);
+    assert_eq!(again.changes[0].kind, "Realm");
+    assert_eq!(again.changes[0].action, ChangeAction::Unchanged);
+}
+
 /// `--prune` also deletes the client scopes, realm roles, clients and client roles a file
 /// stopped naming; a dry run of a client the file adds plans its roles without writing them.
 #[tokio::test]
