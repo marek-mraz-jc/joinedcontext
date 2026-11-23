@@ -69946,5 +69946,161 @@
   "expected": {
    "text": "ERROR: expecting chars `]`, `\"`, and `\\` to be escaped within param value [col 21]\n"
   }
+ },
+ {
+  "name": "parse_log rfc5424 hand a duplicated element id before a param",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][a x=\"1\"]",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a duplicated element id at the end",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][a",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a duplicated element id with params before it",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [ab x=\"1\"][ab y=\"2\"]",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 28]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand an empty element id after an element",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"1\"][]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand an element id starting with a quote after an element",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"1\"][\"]",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a quote in a param name after a param",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"1\" y\"z\"]",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a bracket in a param name after a param",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"1\" yy]",
+  "expected": {
+   "text": "ERROR: expecting a structured data parameter (`key=\"value\"`, both part from 1 to max 32 US-ASCII characters; key cannot contain `=`, ` `, `]`, and `\"`, while value cannot contain `]`, backslash, and `\"` unless escaped) [col 26]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand February 30 with an offset and no fraction",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15-07:00 - - - - -",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15-07:00\": day out of range [col 30]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand February 30 with a short fraction",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15.1Z - - - - -",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15.1Z\": day out of range [col 27]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand February 30 with an offset at the end",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15+07:00",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15+07:00\": day out of range [col 30]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand an empty value after an escape",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"\\\"\" y=\"\"]",
+  "expected": {
+   "text": "{\"facility\":0,\"priority\":1,\"severity\":1,\"structureddata\":{\"a\":{\"x\":\"\\\"\",\"y\":\"\"}},\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a plain value after an escape",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"\\\"\" y=\"z\"] m",
+  "expected": {
+   "text": "{\"facility\":0,\"message\":\"m\",\"priority\":1,\"severity\":1,\"structureddata\":{\"a\":{\"x\":\"\\\"\",\"y\":\"z\"}},\"version\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand an escape in a second element",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a x=\"\\]\"][b y=\"\\\\\" z=\"\"]",
+  "expected": {
+   "text": "{\"facility\":0,\"priority\":1,\"severity\":1,\"structureddata\":{\"a\":{\"x\":\"]\"},\"b\":{\"y\":\"\\\\\",\"z\":\"\"}},\"version\":1}\n"
+  }
  }
 ]

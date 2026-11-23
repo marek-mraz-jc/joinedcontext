@@ -234,6 +234,10 @@ class E:
             if parse:
                 return ([p + f"match {parse} {{", p + "    Err(e) => {"] + self.seq(then, ind + 2)
                         + [p + "    }", p + "    Ok(t) => {"] + self.seq(els or [], ind + 2) + [p + "    }", p + "}"])
+            if cond == "m.rfc3339" and then == [("raw", "widec += 256;")] and not els:
+                # Ragel's condition on a flag fixed for the whole run, in states only that flag
+                # value reaches: as an expression it has no branch whose other side is dead.
+                return [p + "widec += 256 * i16::from(m.rfc3339);"]
             o = [p + f"if {cond} {{"] + self.seq(then, ind + 1)
             if els:
                 o += [p + "} else {"] + self.seq(els, ind + 1)
@@ -334,7 +338,12 @@ def main():
                 out.append(f"                lbl = {n + 1};")
         out.append("            }")
     out = reachable(out)
-    out += ["            _ => break,", "        }", "    }", "}"]
+    # `_out` is the last arm and every other label is matched above it, so it takes the
+    # catch-all the match needs instead of an arm of its own.
+    last = max(i for i, l in enumerate(out) if re.match(r"            \d+ => \{ // ", l))
+    assert out[last].endswith("// _out"), out[last]
+    out[last] = "            _ => { // _out"
+    out += ["        }", "    }", "}"]
     if any("widec" in l for l in out):
         out.insert(out.index("    let mut lbl: u16 = 0;"), "    let mut widec: i16;")
     open(sys.argv[2], "w").write("\n".join(out) + "\n")

@@ -120,9 +120,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     65 => {
@@ -6098,9 +6096,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 712; continue;
@@ -6118,9 +6114,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 714; continue;
@@ -6138,9 +6132,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 716; continue;
@@ -6158,9 +6150,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (45..=45).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 557 {
                     lbl = 718; continue;
@@ -6179,15 +6169,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 48 {
                     if (49..=49).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     560 => {
@@ -6212,9 +6198,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (49..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (561..=569).contains(&widec) {
                     lbl = 722; continue;
@@ -6232,9 +6216,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (45..=45).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 557 {
                     lbl = 724; continue;
@@ -6253,22 +6235,16 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() < 49 {
                     if (48..=48).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() > 50 {
                     if (51..=51).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     560 => {
@@ -6296,9 +6272,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (49..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (561..=569).contains(&widec) {
                     lbl = 728; continue;
@@ -6316,9 +6290,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (84..=84).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 596 {
                     lbl = 730; continue;
@@ -6337,15 +6309,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 49 {
                     if (50..=50).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 562 {
                     lbl = 762; continue;
@@ -6366,9 +6334,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 734; continue;
@@ -6386,9 +6352,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 736; continue;
@@ -6406,9 +6370,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 738; continue;
@@ -6426,9 +6388,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 740; continue;
@@ -6446,9 +6406,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 742; continue;
@@ -6466,9 +6424,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 744; continue;
@@ -6486,9 +6442,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 746; continue;
@@ -6507,22 +6461,16 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() < 45 {
                     if (43..=43).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() > 45 {
                     if (90..=90).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 match widec {
                     555 => {
@@ -6551,15 +6499,11 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 if m.c() > 49 {
                     if (50..=50).contains(&m.c()) {
                         widec = 256 + (i16::from(m.c()));
-                        if m.rfc3339 {
-                            widec += 256;
-                        }
+                        widec += 256 * i16::from(m.rfc3339);
                     }
                 } else if m.c() >= 48 {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 562 {
                     lbl = 760; continue;
@@ -6580,9 +6524,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 752; continue;
@@ -6600,9 +6542,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (58..=58).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if widec == 570 {
                     lbl = 754; continue;
@@ -6620,9 +6560,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=53).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=565).contains(&widec) {
                     lbl = 756; continue;
@@ -6640,9 +6578,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 758; continue;
@@ -6673,9 +6609,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=51).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=563).contains(&widec) {
                     lbl = 752; continue;
@@ -6693,9 +6627,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=51).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=563).contains(&widec) {
                     lbl = 734; continue;
@@ -6713,9 +6645,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=57).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=569).contains(&widec) {
                     lbl = 728; continue;
@@ -6733,9 +6663,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=49).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=561).contains(&widec) {
                     lbl = 728; continue;
@@ -6753,9 +6681,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 widec = i16::from(m.c());
                 if (48..=50).contains(&m.c()) {
                     widec = 256 + (i16::from(m.c()));
-                    if m.rfc3339 {
-                        widec += 256;
-                    }
+                    widec += 256 * i16::from(m.rfc3339);
                 }
                 if (560..=562).contains(&widec) {
                     lbl = 722; continue;
@@ -8393,10 +8319,9 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 lbl = 1154;
             }
-            1154 => { // _out
+            _ => { // _out
                 break;
             }
-            _ => break,
         }
     }
 }

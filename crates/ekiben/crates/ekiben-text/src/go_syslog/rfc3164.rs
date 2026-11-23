@@ -172,7 +172,12 @@ mod chart_tests {
                 "format": "syslog_rfc3164", "default_year": "2025", "allow_rfc3339": rfc3339
             }});
             let label = format!("parse_log rfc3164 rfc3339 {rfc3339}");
-            missing.extend(chart::missing(&|i| step(i, rfc3339), &processor, &label));
+            missing.extend(chart::missing(
+                &|i| step(i, rfc3339),
+                &chart::corpus(&processor),
+                &processor,
+                &label,
+            ));
         }
         assert!(
             missing.is_empty(),

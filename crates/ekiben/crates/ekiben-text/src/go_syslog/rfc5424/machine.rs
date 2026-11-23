@@ -13599,10 +13599,9 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 lbl = 1882;
             }
-            1882 => { // _out
+            _ => { // _out
                 break;
             }
-            _ => break,
         }
     }
 }

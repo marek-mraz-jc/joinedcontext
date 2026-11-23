@@ -101,11 +101,13 @@ pub(super) fn corpus(processor: &Value) -> Vec<Vec<u8>> {
 /// Cases for the chart's transitions no corpus input of `processor` takes, to record with
 /// scripts/record-text-parity.py (one JSON object per line, named `<label> chart <first edge>`):
 /// the longest inputs first, each kept only when it takes a transition no kept one takes.
-pub(super) fn missing(step: Step, processor: &Value, label: &str) -> Vec<String> {
-    let taken: BTreeSet<Edge> = corpus(processor)
-        .iter()
-        .flat_map(|i| walk(step, i))
-        .collect();
+pub(super) fn missing(
+    step: Step,
+    corpus: &[Vec<u8>],
+    processor: &Value,
+    label: &str,
+) -> Vec<String> {
+    let taken: BTreeSet<Edge> = corpus.iter().flat_map(|i| walk(step, i)).collect();
     let mut needed: BTreeMap<Edge, Vec<u8>> = explore(step)
         .into_iter()
         .filter(|(edge, _)| !taken.contains(edge))
@@ -179,6 +181,39 @@ mod tests {
                 (2, None, "", &b"a"[..]),
                 (2, Some(0), "bad", &b"a\x00"[..]),
             ]
+        );
+    }
+
+    #[test]
+    fn missing_keeps_the_longest_inputs_that_take_something_new() {
+        let processor = json!({"toy": {}});
+        // "a" alone takes 1->2 and the end in 2. "\0\0" then takes 1->0, 0->0 and the end in 0,
+        // "a\0" takes 2->0, "\0" nothing new, and "" the end in 1.
+        let cases = missing(&toy, &[b"a".to_vec()], &processor, "toy");
+        assert_eq!(
+            cases,
+            vec![
+                r#"{"name":"toy chart 1 0 bad","processor":{"toy":{}},"input":"\u0000\u0000"}"#,
+                r#"{"name":"toy chart 2 0 bad","processor":{"toy":{}},"input":"a\u0000"}"#,
+                r#"{"name":"toy chart 1 end ok","processor":{"toy":{}},"input":""}"#,
+            ]
+        );
+        assert!(missing(
+            &toy,
+            &[b"a".to_vec(), b"a\0".to_vec(), b"\0\0".to_vec(), Vec::new()],
+            &processor,
+            "toy"
+        )
+        .is_empty());
+        let bytes = missing(
+            &|i: &[u8]| (i.first().map_or(1, |b| 2 + i32::from(*b >= 0x80)), None),
+            &[],
+            &processor,
+            "hex",
+        );
+        assert!(
+            bytes.iter().any(|c| c.contains(r#""input_hex":"8000""#)),
+            "{bytes:?}"
         );
     }
 

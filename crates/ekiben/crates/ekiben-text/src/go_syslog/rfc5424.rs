@@ -188,7 +188,12 @@ mod chart_tests {
     #[test]
     fn the_parity_corpus_takes_every_transition_of_the_chart() {
         let processor = serde_json::json!({"parse_log": {"format": "syslog_rfc5424"}});
-        let missing = chart::missing(&step, &processor, "parse_log rfc5424");
+        let missing = chart::missing(
+            &step,
+            &chart::corpus(&processor),
+            &processor,
+            "parse_log rfc5424",
+        );
         assert!(
             missing.is_empty(),
             "{} transitions no parity case takes; add these to tests/parity/cases.json and record them \
