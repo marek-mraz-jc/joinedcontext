@@ -234,6 +234,20 @@ async fn two_organizations() -> DataroomState {
         )
 }
 
+/// The installation's public base names the default catalogue only: another catalogue of the
+/// same Organization, with no base of its own, keeps the host it is read on.
+#[tokio::test]
+async fn the_public_base_is_the_default_catalogues_alone() {
+    let state = state()
+        .await
+        .with_public_base("https://data.city.test/opendata");
+    let (_, body) = get(state.clone(), "other.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://other.city.test"), "{body}");
+    assert!(!body.contains("data.city.test/opendata"), "{body}");
+    let (_, body) = get(state, "data.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://data.city.test/opendata"), "{body}");
+}
+
 /// `name` from the Endpoint `slug`, `visibility`, in `catalogue` of `state`'s store; withdrawn
 /// when `withdrawn`.
 async fn seed(
@@ -321,6 +335,27 @@ async fn an_old_dataset_address_redirects() {
         let (status, location) = on_alpha(state.clone(), &format!("/dataset/{kept}")).await;
         assert_eq!((status, location), (StatusCode::NOT_FOUND, None), "{kept}");
     }
+    // A copy withdrawn there too is no new home.
+    seed(&state, DEFAULT, ("tram", "tramslug", "public"), true).await;
+    seed(&state, OTHER, ("tram", "tramslug", "public"), true).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/tram").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    // Moved the other way, into the default catalogue: its base is the installation's public base.
+    seed(&state, OTHER, ("bus", "busslug", "public"), true).await;
+    seed(&state, DEFAULT, ("bus", "busslug", "public"), false).await;
+    let mut req = Request::get("/dataset/bus").body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(mount("https", "city.test", "/com_beta/opendata"));
+    req.extensions_mut()
+        .insert(jc_router::Organization("com_beta".to_owned()));
+    let resp = router(state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
+    assert_eq!(
+        resp.headers()[header::LOCATION],
+        "https://data.city.test/opendata/dataset/bus"
+    );
     // A new home that hides the dataset, or whose publisher is withdrawn, is no new home.
     let beta = CatalogueId::from_uuid(Uuid::from_u128(OTHER));
     let mut cat = state

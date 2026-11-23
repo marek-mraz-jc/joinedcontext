@@ -1556,6 +1556,16 @@ async fn a_dataset_outside_a_profiles_feed_and_a_deleted_catalogue_are_refused()
     assert_eq!(status, StatusCode::GONE, "{body}");
 }
 
+#[test]
+fn the_registry_dataroom_answers_is_every_operation() {
+    let names = |ops: Vec<dataroom_core::ops::OperationDef>| -> Vec<String> {
+        ops.into_iter().map(|op| op.name.to_string()).collect()
+    };
+    let listed = names(dataroom_api::operations());
+    assert!(listed.iter().any(|n| n == "dataset.propose"), "{listed:?}");
+    assert_eq!(listed, names(all_operations()));
+}
+
 #[tokio::test]
 async fn profile_operations_refuse_a_built_in_id_bad_shapes_and_an_uninstalled_choice() {
     let (org, id) = (

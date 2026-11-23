@@ -94,6 +94,22 @@ async fn paged(files: bool) -> (DataroomState, Option<std::path::PathBuf>, Strin
     let store = Arc::new(MemoryStore::new());
     catalogue(store.as_ref(), a, own, "default", "opendata.a.test").await;
     dataset(store.as_ref(), a, own, "rozpocet").await;
+    // A Dashboard is no dataset a block lists.
+    let ctx = RequestCtx::new(a, own, Subject::authenticated("seed", vec![a], Vec::new()));
+    let board = serde_json::from_value(json!({
+        "orgId": a, "catalogueId": own, "id": "id-board", "name": "board",
+        "title": {"en": "Dataset board"}, "description": {"en": "About"},
+        "publisherId": "city", "visibility": "public", "state": "active", "datasetType": "dashboard",
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dashboard");
+    store.upsert_dataset(&ctx, board).await.expect("dashboard");
+    let chart = serde_json::from_value(json!({
+        "id": "view-rozpocet", "resourceId": "dist-rozpocet", "viewType": "jc_visualization",
+        "title": "Budget chart", "config": {}
+    }))
+    .expect("view");
+    store.upsert_resource_view(&ctx, chart).await.expect("view");
     let mut state = DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), a, own)
         .with_organization_catalogues(BTreeMap::from([("a".to_owned(), (a, own))]));
     let (mut root, mut file_path) = (None, format!("/files/{}/plan.pdf", "0".repeat(64)));
@@ -108,7 +124,8 @@ async fn paged(files: bool) -> (DataroomState, Option<std::path::PathBuf>, Strin
         { "slug": "home", "rows": [
             { "blocks": [{ "type": "hero", "title": { "en": "Blocks home" } }] },
             { "blocks": [{ "type": "chart", "dataset": "rozpocet" }, { "type": "chart", "dataset": "missing" }] },
-            { "blocks": [{ "type": "file-list", "title": { "en": "Plans" }, "files": [file_path.clone()] }] }] },
+            { "blocks": [{ "type": "file-list", "title": { "en": "Plans" }, "files": [file_path.clone()] }] },
+            { "blocks": [{ "type": "featured-datasets", "title": { "en": "Picks" }, "datasets": ["rozpocet", "board"] }] }] },
         { "slug": "budget", "title": { "en": "Budget" }, "rows": [
             { "blocks": [{ "type": "text", "markdown": { "en": "The city budget." } }] }] },
     ]))
@@ -116,6 +133,7 @@ async fn paged(files: bool) -> (DataroomState, Option<std::path::PathBuf>, Strin
     jc_core::kinds::portal_page::validate_pages(&pages).expect("valid pages");
     let mut look = dataroom_core::branding::BrandingBlock::default();
     look.layout.pages = pages;
+    look.domain = "a.test".into();
     let state = state.with_catalogue_branding(BTreeMap::from([(own, look)]));
     (state, root, file_path)
 }
@@ -133,6 +151,18 @@ async fn a_portal_built_from_blocks_shows_its_home_its_pages_and_its_files() {
     assert!(
         home.contains("plan.pdf"),
         "the file-list block names its file: {home}"
+    );
+    assert!(
+        home.contains("Dataset rozpocet"),
+        "the featured dataset: {home}"
+    );
+    assert!(
+        !home.contains("Dataset board"),
+        "a Dashboard is no featured dataset"
+    );
+    assert!(
+        home.contains("https://viz.a.test/#view-rozpocet"),
+        "the chart block draws its dataset's visualization: {home}"
     );
     let (status, _, page) = get(app.clone(), "opendata.a.test", "/page/budget", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -154,6 +184,83 @@ async fn a_portal_built_from_blocks_shows_its_home_its_pages_and_its_files() {
     let _ = std::fs::remove_dir_all(root.expect("a file root"));
 }
 
+/// The portal's catalogue answers 20 datasets a page, the second page the rest.
+#[tokio::test]
+async fn the_portal_catalogue_pages_by_twenty() {
+    let (a, own) = (org(0xA), cat(0xA0));
+    let store = Arc::new(MemoryStore::new());
+    catalogue(store.as_ref(), a, own, "default", "opendata.a.test").await;
+    for i in 0..25 {
+        dataset(store.as_ref(), a, own, &format!("set-{i:02}")).await;
+    }
+    let app = router(DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::default()),
+        a,
+        own,
+    ));
+    let page = |n: u32| {
+        let app = app.clone();
+        async move {
+            let (status, _, body) = get(
+                app,
+                "opendata.a.test",
+                &format!("/api/v1/catalogue?page={n}"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            serde_json::from_str::<serde_json::Value>(&body).expect("json")
+        }
+    };
+    let (first, second) = (page(1).await, page(2).await);
+    assert_eq!(first["total"], 25);
+    assert_eq!(first["datasets"].as_array().map(Vec::len), Some(20));
+    assert_eq!(
+        (
+            second["page"].as_u64(),
+            second["datasets"].as_array().map(Vec::len)
+        ),
+        (Some(2), Some(5))
+    );
+    let names = |v: &serde_json::Value| -> Vec<String> {
+        v["datasets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["name"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    assert!(
+        names(&second).iter().all(|n| !names(&first).contains(n)),
+        "no dataset on both pages"
+    );
+    // The search page keeps the asked order across its pages of twenty.
+    let html = |n: u32| {
+        let app = app.clone();
+        async move {
+            let path = format!("/dataset/?sort=name%20desc&page={n}");
+            let (status, _, body) = get(app, "opendata.a.test", &path, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let (first, second) = (html(1).await, html(2).await);
+    assert!(
+        first.contains("set-24") && !first.contains("set-00"),
+        "name desc starts at the last name"
+    );
+    assert!(
+        second.contains("set-00") && !second.contains("set-24"),
+        "page two goes on where page one stopped"
+    );
+    // A dataset address ends in an RDF extension or is a name: `.csv` is neither.
+    let (status, _, _) = get(app.clone(), "opendata.a.test", "/dataset/set-01.csv", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = get(app, "opendata.a.test", "/dataset/set-01.ttl", None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn without_a_file_store_a_block_lists_no_file_and_a_file_address_is_not_found() {
     let (state, _, file) = paged(false).await;
@@ -167,6 +274,73 @@ async fn without_a_file_store_a_block_lists_no_file_and_a_file_address_is_not_fo
     );
     let (status, _, _) = get(app, "opendata.a.test", &file, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A Dashboard reads as its publisher, named by id or by name: a withdrawn one hides it from the
+/// list and from its own address.
+#[tokio::test]
+async fn a_dashboard_of_a_withdrawn_publisher_is_hidden_whether_named_by_id_or_by_name() {
+    let (a, own) = (org(0xA), cat(0xA0));
+    let store = Arc::new(MemoryStore::new());
+    catalogue(store.as_ref(), a, own, "default", "opendata.a.test").await;
+    let ctx = RequestCtx::new(a, own, Subject::authenticated("seed", vec![a], Vec::new()));
+    for (id, name, state) in [("p1", "first", "active"), ("p2", "second", "withdrawn")] {
+        let publisher = serde_json::from_value(json!({
+            "orgId": a, "catalogueId": own, "id": id, "name": name,
+            "title": {"en": name}, "description": {}, "uri": format!("https://a.test/{id}"),
+            "state": state, "editorGrants": [],
+            "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z",
+        }))
+        .expect("publisher");
+        store
+            .upsert_publisher(&ctx, publisher)
+            .await
+            .expect("publisher");
+    }
+    for (name, publisher) in [
+        ("by-id-gone", "p2"),
+        ("by-name-gone", "second"),
+        ("by-id-kept", "p1"),
+        ("by-name-kept", "first"),
+    ] {
+        let ds = serde_json::from_value(json!({
+            "orgId": a, "catalogueId": own, "id": format!("id-{name}"), "name": name,
+            "title": {"en": format!("Board {name}")}, "description": {"en": "About"},
+            "publisherId": publisher, "visibility": "public", "state": "active",
+            "datasetType": "dashboard",
+            "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+        }))
+        .expect("dashboard");
+        store.upsert_dataset(&ctx, ds).await.expect("dashboard");
+    }
+    let app = router(DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::default()),
+        a,
+        own,
+    ));
+    let (status, _, list) = get(app.clone(), "opendata.a.test", "/dashboards", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    for (name, shown) in [
+        ("by-id-gone", false),
+        ("by-name-gone", false),
+        ("by-id-kept", true),
+        ("by-name-kept", true),
+    ] {
+        assert_eq!(
+            list.contains(&format!("Board {name}")),
+            shown,
+            "{name} listed: {list}"
+        );
+        let (status, _, _) = get(
+            app.clone(),
+            "opendata.a.test",
+            &format!("/dashboards/{name}"),
+            None,
+        )
+        .await;
+        assert_eq!(status == StatusCode::OK, shown, "{name}: {status}");
+    }
 }
 
 #[tokio::test]

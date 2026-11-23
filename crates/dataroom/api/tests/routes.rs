@@ -36,6 +36,8 @@ struct FailingStore {
     failing: Mutex<BTreeSet<&'static str>>,
     /// Methods that answer a write conflict, as a concurrent writer would make them.
     conflicting: Mutex<BTreeSet<&'static str>>,
+    /// How many conflicts were answered.
+    conflicts: std::sync::atomic::AtomicUsize,
 }
 
 impl FailingStore {
@@ -44,6 +46,7 @@ impl FailingStore {
             inner: MemoryStore::new(),
             failing: Mutex::new(BTreeSet::new()),
             conflicting: Mutex::new(BTreeSet::new()),
+            conflicts: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -73,6 +76,7 @@ macro_rules! forward {
         $(
             fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
                 if self.conflicting.lock().unwrap().contains(stringify!($name)) {
+                    self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     return Box::pin(async {
                         Err(DataroomError::Conflict(concat!(stringify!($name), " conflicted").into()))
                     });
@@ -3257,6 +3261,11 @@ async fn branding_logo_and_static_assets() {
     };
     let a = logo().await;
     assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    assert_eq!(
+        w.store.conflicts.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "three tries, no fourth"
+    );
     w.store.fail(&["get_catalogue"]);
     let a = logo().await;
     assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
@@ -3684,6 +3693,11 @@ async fn pages_lists_publishers_static_pages_and_routing() {
     }
     let a = get(app, "/assistants/nope", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    assert!(
+        a.body.contains("assistant guide 'nope' not found"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         get(app, "/no/such/page/here", None).await.status,
         StatusCode::NOT_FOUND
@@ -4183,6 +4197,10 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     assert_eq!(a.status, StatusCode::OK);
     assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
+    // A language in the path outranks `?lang=`.
+    let a = get(app, "/sk/about?lang=en", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
