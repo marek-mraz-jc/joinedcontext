@@ -1199,7 +1199,7 @@ fn changed_fields<T: Serialize>(
             let (a, b) = (prev.get(*k), next.get(*k));
             !(a == b || is_blank(a) && is_blank(b))
         })
-        .map(|k| k.clone())
+        .cloned()
         .collect()
 }
 
