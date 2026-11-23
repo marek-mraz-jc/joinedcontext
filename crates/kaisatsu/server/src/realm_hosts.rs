@@ -312,6 +312,22 @@ mod tests {
     }
 
     #[test]
+    fn the_state_hands_out_the_guard_it_was_built_with() {
+        let kek = kaisatsu_crypto::Kek::generate_for_tests();
+        let store = Arc::new(kaisatsu_store_memory::MemoryStore::new(kek.clone()));
+        let guard = kaisatsu_oidc::OutboundGuard::new(kaisatsu_oidc::OutboundPolicy {
+            allowed_hosts: Some(vec!["idp.city.example".into()]),
+            ..kaisatsu_oidc::OutboundPolicy::default()
+        });
+        let state =
+            crate::KaisatsuState::new(store, kek, guard, Arc::new(kaisatsu_core::LocalAuthorizer));
+        assert_eq!(
+            state.guard().policy.allowed_hosts.as_deref(),
+            Some(&["idp.city.example".to_owned()][..])
+        );
+    }
+
+    #[test]
     fn realm_of_reads_the_three_realm_path_forms() {
         assert_eq!(realm_of("/realms/a/x/y"), Some(("a", "x/y")));
         assert_eq!(realm_of("/realms/a"), Some(("a", "")));

@@ -397,6 +397,38 @@ async fn a_rotated_idp_or_smtp_secret_variable_replaces_the_stored_secret() {
     assert_eq!(held().await, ("smtp-two".to_owned(), "idp-two".to_owned()));
 }
 
+/// The apply records one admin event per object it changed, none for an unchanged one.
+#[tokio::test]
+async fn admin_events_name_the_changed_objects_only() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let doc = |b: &str| {
+        json!({"realm": "events", "clients": [
+            {"clientId": "a", "publicClient": true},
+            {"clientId": "b", "publicClient": true, "name": b}
+        ]})
+    };
+    let opts = ApplyOptions::default();
+    apply_realm_files(&store, &[("r.json".into(), doc("first"))], &opts)
+        .await
+        .expect("first");
+    let before = store.list_admin_events("events", None).await.unwrap().len();
+    let report = apply_realm_files(&store, &[("r.json".into(), doc("second"))], &opts)
+        .await
+        .expect("second");
+    let changed = report
+        .changes
+        .iter()
+        .filter(|c| c.action != ChangeAction::Unchanged)
+        .count();
+    assert_eq!(changed, 1, "{:?}", report.changes);
+    let events = store.list_admin_events("events", None).await.unwrap();
+    assert_eq!(events.len(), before + 1);
+    assert!(
+        events.iter().any(|e| e.resource_path.ends_with('b')),
+        "{events:?}"
+    );
+}
+
 /// A re-applied person keeps the stored id and creation time whatever the file names; an
 /// Organization the Portal made under another id keeps that id, and its new domains point at it.
 #[tokio::test]
