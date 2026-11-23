@@ -701,6 +701,147 @@ async fn every_odata_set_answers_a_reader_and_refuses_the_anonymous() {
             "{set}: {page}"
         );
     }
+    let text = |app: &Router, uri: String| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .uri(uri)
+                .header("authorization", format!("token {READER}"))
+                .body(Body::empty())
+                .expect("request");
+            let resp = app.oneshot(req).await.expect("answer");
+            let st = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .expect("body");
+            (st, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+    assert_eq!(
+        text(
+            &app,
+            format!("/odata/Branches/$count?$filter=RepoId%20eq%20'{rid}'")
+        )
+        .await,
+        (StatusCode::OK, "2".to_owned())
+    );
+    let (st, _) = text(
+        &app,
+        "/odata/Repositories/$count?$filter=Nope%20eq%201".to_owned(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "an unknown property");
+    let (st, rows) = send(&app, "GET", "/odata/Repositories/$export", READER, None).await;
+    assert_eq!(
+        (st, rows.as_array().map(Vec::len)),
+        (StatusCode::OK, Some(1)),
+        "{rows}"
+    );
+    let (st, _) = send(
+        &app,
+        "GET",
+        "/odata/Repositories/$export?$filter=Nope%20eq%201",
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, dec) = send(
+        &app,
+        "GET",
+        "/odata/Repositories/$allowed(op='read')",
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{dec}");
+    let (st, _) = send(
+        &app,
+        "GET",
+        "/odata/Repositories/$allowed(op='juggle')",
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = send(&app, "GET", "/odata/Repositories/$nothing", READER, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = send(&app, "GET", "/odata/Nope/$count", READER, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, pulls) = send(
+        &app,
+        "GET",
+        &format!("/odata/PullRequests?$filter=RepoId%20eq%20'{rid}'"),
+        READER,
+        None,
+    )
+    .await;
+    let pid = pulls["value"][0]["Id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{pulls}"))
+        .to_owned();
+    let (st, merge) = send(
+        &app,
+        "GET",
+        &format!("/odata/PullRequests('{pid}')/Mergeable"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{merge}");
+    for (part, n) in [("Reviews", 1), ("Files", 1)] {
+        let (st, page) = send(
+            &app,
+            "GET",
+            &format!("/odata/PullRequests('{pid}')/{part}"),
+            READER,
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, page["value"].as_array().map(Vec::len)),
+            (StatusCode::OK, Some(n)),
+            "{part}: {page}"
+        );
+    }
+    // A pull request's key is `<repository id>:<number>`.
+    let (st, e) = send(
+        &app,
+        "GET",
+        &format!("/odata/PullRequests('{rid}:9')/Files"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{e}");
+    let (st, e) = send(
+        &app,
+        "GET",
+        &format!("/odata/PullRequests('{rid}')/Files"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{e}");
+    let (st, file) = text(
+        &app,
+        format!("/odata/Repositories('{rid}')/File(path='a.txt',ref='feature')"),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{file}");
+    let (st, _) = send(
+        &app,
+        "GET",
+        "/odata/PackageFiles(Owner='joinedcontext')/$value",
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::BAD_REQUEST,
+        "a file key names all four parts"
+    );
     let (st, err) = send(&app, "GET", "/odata/NoSuchSet", READER, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND, "{err}");
 }
