@@ -61,6 +61,30 @@ pub(crate) async fn projected(
     Ok(())
 }
 
+/// Entries `trim` takes per transaction.
+const TRIM_BATCH: i64 = 1000;
+
+/// Deletes the oldest `TRIM_BATCH` log entries of the tenant that the `trim_projected` policy
+/// lets go; answers how many it picked and how many went.
+pub(crate) async fn trim(tx: &mut Tx, tenant: (InstanceId, OrgId)) -> ShakoResult<(u64, u64)> {
+    let (picked, gone): (i64, i64) = sqlx::query_as(
+        "WITH batch AS (
+             SELECT seq FROM shako.store_log
+             WHERE instance_id = $1 AND org_id = $2 AND op ->> 'op' <> 'create_repo'
+             ORDER BY seq LIMIT $3),
+         gone AS (
+             DELETE FROM shako.store_log l USING batch WHERE l.seq = batch.seq RETURNING 1)
+         SELECT (SELECT count(*) FROM batch), (SELECT count(*) FROM gone)",
+    )
+    .bind(tenant.0.as_uuid())
+    .bind(tenant.1.as_uuid())
+    .bind(TRIM_BATCH)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| ShakoError::Storage(format!("store log trim failed: {e}")))?;
+    Ok((picked.unsigned_abs(), gone.unsigned_abs()))
+}
+
 impl At {
     pub(crate) const fn seq(&self) -> i64 {
         self.seq
