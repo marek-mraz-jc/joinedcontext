@@ -43,5 +43,6 @@ both_stores!(
     odata,
     isolation,
     deleted_catalogues,
-    guarded_writes
+    guarded_writes,
+    edges
 );

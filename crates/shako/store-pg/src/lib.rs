@@ -239,54 +239,56 @@ impl PgStore {
                 false,
             )
         };
-        let mut migrator = Migrator::with_migrations(vec![
-            migration(1, "init", MIGRATION_0001_SQL),
-            migration(2, "store_log", MIGRATION_0002_SQL),
-            migration(3, "secrets", MIGRATION_0003_SQL),
-        ]);
-        migrator.create_schema("shako_migrations");
-        migrator.dangerous_set_table_name("shako_migrations._sqlx_migrations");
-        migrator
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("migration failed: {e}")))?;
-        let mut projection =
-            Migrator::with_migrations(vec![migration(1, "projection", PROJECTION_0001_SQL)]);
-        projection.create_schema("shako_projection_migrations");
-        projection.dangerous_set_table_name("shako_projection_migrations._sqlx_migrations");
-        projection
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("projection migration failed: {e}")))?;
-        let mut jobs = Migrator::with_migrations(vec![
-            migration(1, "mirror_sync", JOBS_0001_SQL),
-            migration(2, "outbox_retry", JOBS_0002_SQL),
-        ]);
-        jobs.create_schema("shako_jobs_migrations");
-        jobs.dangerous_set_table_name("shako_jobs_migrations._sqlx_migrations");
-        jobs.run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("jobs migration failed: {e}")))?;
-        let mut keys = Migrator::with_migrations(vec![migration(1, "org_keys", KEYS_0001_SQL)]);
-        keys.create_schema("shako_key_migrations");
-        keys.dangerous_set_table_name("shako_key_migrations._sqlx_migrations");
-        keys.run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("key migration failed: {e}")))?;
-        let mut audit = Migrator::with_migrations(vec![migration(1, "audit", AUDIT_0001_SQL)]);
-        audit.create_schema("shako_audit_migrations");
-        audit.dangerous_set_table_name("shako_audit_migrations._sqlx_migrations");
-        audit
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("audit migration failed: {e}")))?;
-        let mut trim =
-            Migrator::with_migrations(vec![migration(1, "store_log_trim", TRIM_0001_SQL)]);
-        trim.create_schema("shako_trim_migrations");
-        trim.dangerous_set_table_name("shako_trim_migrations._sqlx_migrations");
-        trim.run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("trim migration failed: {e}")))?;
+        // Each set keeps its applied versions in a schema of its own; a release adds a set,
+        // never a version to a set a release before it ran.
+        let sets = [
+            (
+                "shako_migrations",
+                "migration",
+                vec![
+                    migration(1, "init", MIGRATION_0001_SQL),
+                    migration(2, "store_log", MIGRATION_0002_SQL),
+                    migration(3, "secrets", MIGRATION_0003_SQL),
+                ],
+            ),
+            (
+                "shako_projection_migrations",
+                "projection migration",
+                vec![migration(1, "projection", PROJECTION_0001_SQL)],
+            ),
+            (
+                "shako_jobs_migrations",
+                "jobs migration",
+                vec![
+                    migration(1, "mirror_sync", JOBS_0001_SQL),
+                    migration(2, "outbox_retry", JOBS_0002_SQL),
+                ],
+            ),
+            (
+                "shako_key_migrations",
+                "key migration",
+                vec![migration(1, "org_keys", KEYS_0001_SQL)],
+            ),
+            (
+                "shako_audit_migrations",
+                "audit migration",
+                vec![migration(1, "audit", AUDIT_0001_SQL)],
+            ),
+            (
+                "shako_trim_migrations",
+                "trim migration",
+                vec![migration(1, "store_log_trim", TRIM_0001_SQL)],
+            ),
+        ];
+        for (schema, what, migrations) in sets {
+            let mut migrator = Migrator::with_migrations(migrations);
+            migrator.create_schema(schema);
+            migrator.dangerous_set_table_name(format!("{schema}._sqlx_migrations"));
+            migrator
+                .run(migrate_pool)
+                .await
+                .map_err(|e| ShakoError::Storage(format!("{what} failed: {e}")))?;
+        }
         Ok(())
     }
 

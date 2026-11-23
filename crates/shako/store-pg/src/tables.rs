@@ -270,3 +270,63 @@ pub(crate) async fn select<T: DeserializeOwned>(
         .map(|row| serde_json::from_value(to_record(table, row)?).map_err(unreadable))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_table_reads_its_whole_row_by_id() {
+        let blob = table("blob", &["digest"]);
+        assert_eq!(
+            (blob.name, blob.key, blob.has_id),
+            ("blob", &["digest"][..], true)
+        );
+        assert_eq!(blob.read, "row_to_json(t)");
+    }
+
+    #[test]
+    fn an_error_without_a_unique_violation_is_a_storage_error() {
+        let err = failed(sqlx::Error::RowNotFound);
+        assert!(
+            matches!(&err, ShakoError::Storage(m) if m.contains("no rows")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_row_and_a_record_are_json_objects() {
+        for err in [
+            to_row(&BLOB, json!([1])).expect_err("an array"),
+            to_record(&BLOB, json!("text")).expect_err("a string"),
+        ] {
+            assert!(matches!(&err, ShakoError::Storage(m) if m.contains("JSON object")));
+        }
+    }
+
+    #[test]
+    fn the_renamed_columns_round_trip_and_manifest_bytes_go_in_as_hex() {
+        let mirror = to_row(&PUSH_MIRROR, json!({"remoteName": "up", "interval": "8h"}))
+            .expect("mirror row");
+        assert_eq!(
+            Value::Object(mirror.clone()),
+            json!({"remote_name": "up", "interval_str": "8h"})
+        );
+        let back = to_record(&PUSH_MIRROR, Value::Object(mirror)).expect("mirror record");
+        assert_eq!(back, json!({"remoteName": "up", "interval": "8h"}));
+
+        let rule = to_row(&PROTECTION_RULE, json!({"rule": {"a": 1}})).expect("rule row");
+        assert_eq!(Value::Object(rule.clone()), json!({"doc": {"a": 1}}));
+        let back = to_record(&PROTECTION_RULE, Value::Object(rule)).expect("rule record");
+        assert_eq!(back, json!({"rule": {"a": 1}}));
+
+        let ver = to_row(&PACKAGE_VERSION, json!({"manifestBytes": [123, 125]})).expect("version");
+        assert_eq!(Value::Object(ver), json!({"manifest_bytes": "\\x7b7d"}));
+        let err = to_row(&PACKAGE_VERSION, json!({"manifestBytes": "not bytes"}))
+            .expect_err("bytes are numbers");
+        assert!(
+            matches!(&err, ShakoError::Storage(m) if m.starts_with("stored record unreadable"))
+        );
+    }
+}

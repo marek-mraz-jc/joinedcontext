@@ -13,7 +13,7 @@
 //! test process and never written anywhere.
 
 use shako_core::Store;
-use shako_core::testkit::run_isolation_suite;
+use shako_core::testkit::{run_contract_suite, run_isolation_suite};
 use shako_store_pg::{
     PgStore, PgStoreConfig, REQUIRED_RLS_TABLES, TableRlsStatus, validate_rls_catalog_rows,
 };
@@ -251,6 +251,7 @@ async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
     assert!(admin_err.to_string().contains(&admin_role), "{admin_err}");
 
     run_isolation_suite(&store).await;
+    run_contract_suite(&store).await;
 }
 
 fn repo(

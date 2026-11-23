@@ -518,6 +518,127 @@ pub async fn harvest_lock(store: &dyn Store) {
     assert!(c.error.unwrap().contains("abandoned"));
 }
 
+/// The answers no other case reaches: an unknown catalogue or source, a refused save that
+/// records no activity, a stale save of a dataset named only by its slug, a merge redirect to
+/// a publisher that is not there, and a report keeping the id it came with.
+pub async fn edges(store: &dyn Store) {
+    let (org, cat) = tenant();
+    assert!(!store.delete_catalogue(org, cat).await.unwrap());
+    let host = unique_host("edges");
+    store
+        .upsert_catalogue(catalogue(org, cat, "edges", &host))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+
+    // Another catalogue's host: refused, and no activity row is left behind.
+    let (org2, cat2) = tenant();
+    let taken = store
+        .save_catalogue(
+            catalogue(org2, cat2, "thief", &host),
+            None,
+            activity("act-cat", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(
+        matches!(taken, Err(DataroomError::Conflict(_))),
+        "{taken:?}"
+    );
+    assert!(store
+        .list_activity(&member_ctx(org2, cat2), None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    // A dataset named only by its slug and read at another time: changed since read.
+    let mut stale = dataset("air", "city", "public");
+    stale.id.clear();
+    let refused = store
+        .save_dataset(
+            &ctx,
+            stale,
+            Some(ts("2020-01-01T00:00:00Z")),
+            activity("act-1", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(DataroomError::Conflict(m)) if m.contains("'air' was changed")),
+        "{refused:?}"
+    );
+    // A second dataset under a slug in use: refused, no activity row.
+    let mut twin = dataset("air", "city", "public");
+    twin.id = "pkg-twin".into();
+    let refused = store
+        .save_dataset(
+            &ctx,
+            twin,
+            None,
+            activity("act-2", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(store
+        .list_activity(&ctx, None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // A redirect to a publisher that is not there answers the publisher itself.
+    let mut moved = publisher("moved");
+    moved.merged_into = Some("pub-ghost".into());
+    store.upsert_publisher(&ctx, moved).await.unwrap();
+    let got = store.get_publisher(&ctx, "moved").await.unwrap().unwrap();
+    assert_eq!(
+        (got.name.as_str(), got.merged_into.as_deref()),
+        ("moved", Some("pub-ghost"))
+    );
+
+    let mut report = shacl_report("pkg-air", "dcat-ap-3.0.1", true);
+    report.id = "report-kept".into();
+    let stored = store.upsert_shacl_report(&ctx, report).await.unwrap();
+    assert_eq!(stored.id, "report-kept");
+
+    // A harvest source goes with its runs; another source's runs stay; a second delete finds
+    // nothing.
+    store
+        .upsert_harvest_source(&ctx, harvest_source("nkod"))
+        .await
+        .unwrap();
+    store
+        .upsert_harvest_source(&ctx, harvest_source("arcgis"))
+        .await
+        .unwrap();
+    for (id, source) in [("run-n", "hs-nkod"), ("run-a", "hs-arcgis")] {
+        store
+            .upsert_harvest_run(&ctx, harvest_run(id, source, "2026-11-09T03:00:00Z"))
+            .await
+            .unwrap();
+    }
+    assert!(!store.delete_harvest_source(&ctx, "nobody").await.unwrap());
+    assert!(store.delete_harvest_source(&ctx, "nkod").await.unwrap());
+    assert!(store
+        .get_harvest_source(&ctx, "hs-nkod")
+        .await
+        .unwrap()
+        .is_none());
+    let runs = store.list_harvest_runs(&ctx, None).await.unwrap();
+    assert_eq!(names(&runs, |r| r.id.clone()), ["run-a"]);
+    assert!(!store.delete_harvest_source(&ctx, "hs-nkod").await.unwrap());
+    assert!(store
+        .get_harvest_source(&ctx, "arcgis")
+        .await
+        .unwrap()
+        .is_some());
+}
+
 pub async fn records(store: &dyn Store) {
     let (org, cat) = tenant();
     store
