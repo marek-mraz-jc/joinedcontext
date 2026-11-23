@@ -11,7 +11,7 @@ ekiben-core = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
-parquet = { version = "=60.1.0", default-features = false, features = ["snap", "flate2-rust_backend", "lz4", "zstd", "brotli"] }
+parquet = { version = "=60.2.0", default-features = false, features = ["snap", "flate2-rust_backend", "lz4", "zstd", "brotli"] }
 
 [dev-dependencies]
 sha2 = { workspace = true }
