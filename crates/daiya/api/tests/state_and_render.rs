@@ -391,16 +391,17 @@ fn date_math_reads_months_years_and_rounding() {
         jiff::civil::Weekday::Monday
     );
     // A month back from a month's last day lands on the shorter month's last day.
+    // The parser reads its own now after this test's, so both bounds allow 5 s.
     let one_month = p("now-1M", From);
     let span = now.as_millis() - one_month;
     assert!(
-        (28 * 86_400_000..=31 * 86_400_000 + 5_000).contains(&span),
+        (28 * 86_400_000 - 5_000..=31 * 86_400_000 + 5_000).contains(&span),
         "{span}"
     );
     let one_year = p("now-1y", From);
     let span = now.as_millis() - one_year;
     assert!(
-        (365 * 86_400_000..=366 * 86_400_000 + 5_000).contains(&span),
+        (365 * 86_400_000 - 5_000..=366 * 86_400_000 + 5_000).contains(&span),
         "{span}"
     );
     assert_eq!(p("now-h/h", From) % 3_600_000, 0);
