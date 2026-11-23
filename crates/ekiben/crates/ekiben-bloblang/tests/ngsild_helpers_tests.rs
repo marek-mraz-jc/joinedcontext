@@ -75,7 +75,7 @@ fn multi_wraps_instances_with_their_dataset_ids() {
 #[test]
 fn language_map_drops_empty_texts() {
     assert_eq!(
-        run(r#"root.name = ngsild_language_map({"fi": "Kaivopuisto", "sv": "", "en": null, "sk": ["a", "", null]})"#)
+        run(r#"root.name = ngsild_language_map({"fi": "Kaivopuisto", "sv": "", "en": null, "sk": ["a", "", null], "cs": ["", null]})"#)
             .expect("map"),
         json!({"name": {"type": "LanguageProperty", "languageMap": {"fi": "Kaivopuisto", "sk": ["a"]}}})
     );

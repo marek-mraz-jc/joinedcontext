@@ -263,6 +263,8 @@ fn every_gml_shape_and_fault_reads_as_named() {
         // CDATA, a character reference, a comment and a declaration are text and trivia.
         ("<?xml version=\"1.0\"?><!-- c --><gml:Point><gml:pos><![CDATA[1 2]]></gml:pos></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
         ("<gml:Point><gml:pos>1&#32;2</gml:pos></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
+        // Text, CDATA and references before the geometry hold nothing of it.
+        ("&#32;<![CDATA[ ]]><gml:Point><gml:pos>1 2</gml:pos></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
         // GML 2 coordinates with their own separators, and a coord with X and Y.
         (r#"<gml:LineString><gml:coordinates cs=";" ts="|" decimal=",">0,5;1|2;3</gml:coordinates></gml:LineString>"#, json!({"type": "LineString", "coordinates": [[0.5, 1], [2, 3]]})),
         ("<gml:Point><gml:coord><gml:X>1</gml:X><gml:Y>2</gml:Y></gml:coord></gml:Point>", json!({"type": "Point", "coordinates": [1, 2]})),
@@ -288,6 +290,10 @@ fn every_gml_shape_and_fault_reads_as_named() {
     assert_eq!(pts.last(), Some(&json!([2, 0, 10])));
     let cases: &[(&str, &str)] = &[
         ("<gml:Point/>", "gml:Point holds no position"),
+        // The text check wants the upper-case keyword; the reader refuses any other spelling.
+        ("<!doctype gml><gml:Point><gml:pos>1 2</gml:pos></gml:Point>", "DOCTYPE is forbidden"),
+        ("<gml:LineString><gml:coordinates>a,b 1,2</gml:coordinates></gml:LineString>", "parse_gml"),
+        ("<gml:MultiCurve><gml:curveMember><gml:Point><gml:pos>1 2</gml:pos></gml:Point></gml:curveMember></gml:MultiCurve>", "gml:Point is not a curve"),
         (r#"<gml:LineString><gml:coordinates cs="," ts=",">0,0</gml:coordinates></gml:LineString>"#, "needs distinct cs, ts and decimal"),
         ("<gml:Point><gml:coord><gml:Y>2</gml:Y></gml:coord></gml:Point>", "gml:coord needs X"),
         ("<gml:Point><gml:coord><gml:X>2</gml:X></gml:coord></gml:Point>", "gml:coord needs Y"),

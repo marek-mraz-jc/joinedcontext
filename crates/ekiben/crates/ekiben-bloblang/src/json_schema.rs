@@ -255,17 +255,22 @@ impl<'s> Validator<'s> {
             }
         }
         let props = s.get("properties").and_then(Json::as_object);
-        let patterns = s.get("patternProperties").and_then(Json::as_object);
+        let patterns = s
+            .get("patternProperties")
+            .and_then(Json::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(p, sub)| {
+                regex::Regex::new(p)
+                    .map(|re| (re, sub))
+                    .map_err(|e| format!("failed to parse json schema definition: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         // gojsonschema reports unknown keys before it walks the property schemas.
         let mut extra = Vec::new();
         for key in obj.keys() {
             let named = props.is_some_and(|p| p.contains_key(key));
-            let mut patterned = false;
-            for pattern in patterns.into_iter().flatten().map(|(p, _)| p) {
-                let re = regex::Regex::new(pattern)
-                    .map_err(|e| format!("failed to parse json schema definition: {e}"))?;
-                patterned |= re.is_match(key);
-            }
+            let patterned = patterns.iter().any(|(re, _)| re.is_match(key));
             if !named && !patterned {
                 extra.push(key);
             }
@@ -283,9 +288,7 @@ impl<'s> Validator<'s> {
             if let Some(sub) = props.and_then(|p| p.get(key)) {
                 self.validate(sub, val, &child(field, key), depth + 1)?;
             }
-            for (pattern, sub) in patterns.into_iter().flatten() {
-                let re = regex::Regex::new(pattern)
-                    .map_err(|e| format!("failed to parse json schema definition: {e}"))?;
+            for (re, sub) in &patterns {
                 if re.is_match(key) {
                     self.validate(sub, val, &child(field, key), depth + 1)?;
                 }
@@ -502,6 +505,10 @@ mod tests {
         assert_eq!(
             err(r#"{"type":"array"}"#, serde_json::json!({})),
             "(root) invalid type. expected: array, given: object"
+        );
+        assert_eq!(
+            err(r#"{"type":"object"}"#, serde_json::json!([1])),
+            "(root) invalid type. expected: object, given: array"
         );
         // A type keyword that names no type constrains nothing.
         assert_eq!(run(r#"{"type":5}"#, serde_json::json!("x")), Ok(()));

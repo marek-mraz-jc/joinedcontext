@@ -338,10 +338,9 @@ mod tests {
     use regex::Regex;
 
     fn s(name: &str) -> String {
-        match fake(name) {
-            Ok(Value::String(s)) => s,
-            other => panic!("{name}: {other:?}"),
-        }
+        let v = fake(name);
+        assert!(matches!(v, Ok(Value::String(_))), "{name}: {v:?}");
+        v.map(|v| v.to_string_coerced()).unwrap_or_default()
     }
 
     /// The shape of each go-faker field, read from Bento 1.22's own output
@@ -433,14 +432,23 @@ mod tests {
             }
         }
         for _ in 0..50 {
-            match (fake("latitude"), fake("longitude"), fake("unix_time")) {
-                (Ok(Value::Float(lat)), Ok(Value::Float(lon)), Ok(Value::Int(t))) => {
-                    assert!((-90.0..90.0).contains(&lat), "{lat}");
-                    assert!((-180.0..180.0).contains(&lon), "{lon}");
-                    assert!((0..Timestamp::now().as_second()).contains(&t), "{t}");
-                }
-                other => panic!("{other:?}"),
-            }
+            let drawn = (fake("latitude"), fake("longitude"), fake("unix_time"));
+            assert!(
+                matches!(
+                    drawn,
+                    (Ok(Value::Float(_)), Ok(Value::Float(_)), Ok(Value::Int(_)))
+                ),
+                "{drawn:?}"
+            );
+            let num =
+                |v: Result<Value, String>| v.ok().and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+            let (lat, lon, t) = (num(drawn.0), num(drawn.1), num(drawn.2));
+            assert!((-90.0..90.0).contains(&lat), "{lat}");
+            assert!((-180.0..180.0).contains(&lon), "{lon}");
+            assert!(
+                (0.0..Timestamp::now().as_second() as f64).contains(&t),
+                "{t}"
+            );
         }
     }
 

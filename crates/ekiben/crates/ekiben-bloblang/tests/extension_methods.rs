@@ -105,6 +105,10 @@ fn every_wkt_and_geojson_fault_is_named() {
         parse_wkt("GEOMETRYCOLLECTION EMPTY").map(|g| format_wkt(&g)),
         Ok(Ok("GEOMETRYCOLLECTION EMPTY".to_string()))
     );
+    assert_eq!(
+        parse_wkt("POINTM (1 2 9)").map(|g| format_wkt(&g)),
+        Ok(Ok("POINT (1 2)".to_string()))
+    );
     assert!(parse_wkt("POINTS (1 2)").is_err());
     // GeoJSON to WKT: each malformed shape answers its own message.
     let wkt = |g: serde_json::Value| format_wkt(&Value::from_json_value(g));

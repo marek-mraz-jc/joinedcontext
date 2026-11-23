@@ -319,9 +319,11 @@ fn every_attribute_kind_converts_both_ways() {
             json!({"id": "urn:a", "type": "T",
                    "lr": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:P:1"]},
                    "lp": {"type": "ListProperty", "valueList": [3]},
+                   "w": {"type": "Weird", "x": 1},
                    "m": [{"type": "Property", "value": 1, "datasetId": "urn:ds:1"}, 5]})
         ),
         json!({"id": "urn:a", "type": "T", "lr": ["urn:ngsi-ld:P:1"], "lp": [3],
+               "w": {"type": "Weird", "x": 1},
                "m": [{"type": "Property", "value": 1, "datasetId": "urn:ds:1"}, 5]})
     );
     // normalized: an attribute stays as written, json and vocab get their types, a ref list of
