@@ -276,7 +276,8 @@ impl PgStore {
             .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("audit migration failed: {e}")))?;
-        let mut trim = Migrator::with_migrations(vec![migration(1, "store_log_trim", TRIM_0001_SQL)]);
+        let mut trim =
+            Migrator::with_migrations(vec![migration(1, "store_log_trim", TRIM_0001_SQL)]);
         trim.create_schema("shako_trim_migrations");
         trim.dangerous_set_table_name("shako_trim_migrations._sqlx_migrations");
         trim.run(migrate_pool)

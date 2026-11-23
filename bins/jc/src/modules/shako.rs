@@ -52,8 +52,8 @@ pub(crate) const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from
 pub(crate) const ORG: OrgId = OrgId::from_u128(1);
 
 /// The configured stores: Postgres (migrated first when a migration role is set, boot RLS
-/// check, log projected for `(INSTANCE, org_id)` and trimmed beside the start, the manifests a release before T-7523 left in
-/// the rows copied to the blobs under `root`), its hook and mirror secrets sealed in
+/// check, log projected for `(INSTANCE, org_id)` and trimmed beside the start, the manifests a
+/// release before T-7523 left in the rows copied to the blobs under `root`), its hook and mirror secrets sealed in
 /// `shako.secret` with the installation's KEK (T-7280); or memory for both without a database
 /// section.
 async fn open_store(
@@ -95,7 +95,9 @@ async fn open_store(
     tokio::spawn(async move {
         match trimmer.trim_log(INSTANCE, org_id).await {
             Ok(trimmed) => tracing::info!(trimmed, "shako: store log trimmed"),
-            Err(e) => tracing::warn!(error = %e, "shako: store log not trimmed; the next start tries again"),
+            Err(e) => {
+                tracing::warn!(error = %e, "shako: store log not trimmed; the next start tries again")
+            }
         }
     });
     // Before anything listens, so no pull meets a half-copied registry.

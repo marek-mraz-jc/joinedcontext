@@ -26,11 +26,11 @@ use shako_core::{
     validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    CommitAuthor, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
-    DEFAULT_PRUNE_GRACE, check_mergeability, commit_file_changes, compact_repository,
-    compaction_due, compute_repo_size_bytes, copy_bare_repo,
-    create_branch as git_create_branch, delete_branch as git_delete_branch, diff_refs_files,
-    execute_pr_merge, init_bare_repo, open_isolated, set_ref_direct, update_pr_branch,
+    CommitAuthor, DEFAULT_PRUNE_GRACE, DiffFileEntry, FileChangeOp, FileOpKind, MergeOptions,
+    MergeStyle, check_mergeability, commit_file_changes, compact_repository, compaction_due,
+    compute_repo_size_bytes, copy_bare_repo, create_branch as git_create_branch,
+    delete_branch as git_delete_branch, diff_refs_files, execute_pr_merge, init_bare_repo,
+    open_isolated, set_ref_direct, update_pr_branch,
 };
 use std::path::PathBuf;
 

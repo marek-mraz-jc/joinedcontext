@@ -450,14 +450,25 @@ mod tests {
         )
         .expect("init");
         let old = orphan(&repo, b"pushed away 13 days ago\n", 13 * DAY);
-        let new = orphan(&repo, b"pushed away an hour ago\n", Duration::from_secs(3600));
+        let new = orphan(
+            &repo,
+            b"pushed away an hour ago\n",
+            Duration::from_secs(3600),
+        );
         let gone = orphan(&repo, b"pushed away 15 days ago\n", 15 * DAY);
         let compact = |grace| compact_repository(&repo, grace, &mut |_| Ok(())).expect("compact");
 
         compact(14 * DAY);
-        assert!(held(&repo, old) && held(&repo, new), "within the grace: kept");
+        assert!(
+            held(&repo, old) && held(&repo, new),
+            "within the grace: kept"
+        );
         assert!(!held(&repo, gone), "past the grace: pruned");
-        assert_eq!(compact(14 * DAY).packs_after, 2, "one reachable pack, one cruft pack");
+        assert_eq!(
+            compact(14 * DAY).packs_after,
+            2,
+            "one reachable pack, one cruft pack"
+        );
         // Seen 13 days ago, so a 12-day grace prunes it although its pack was written just now.
         compact(12 * DAY);
         assert!(!held(&repo, old), "compaction renewed the grace");
@@ -536,7 +547,10 @@ mod tests {
         let orphan_idx = pack_dir.join("pack-crashed.idx");
         std::fs::write(&orphan_idx, b"x").expect("orphan idx");
         compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
-        assert!(superseded.iter().all(|p| p.exists()), "removed within the hour");
+        assert!(
+            superseded.iter().all(|p| p.exists()),
+            "removed within the hour"
+        );
         assert!(!orphan_idx.exists());
         for pack in &superseded {
             std::fs::File::options()

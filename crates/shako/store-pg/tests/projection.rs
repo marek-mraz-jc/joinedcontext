@@ -494,7 +494,11 @@ async fn the_log_is_trimmed_to_what_a_rollback_can_still_need() {
         .execute(&mut *tx)
         .await
         .unwrap();
-    assert_eq!(deleted.rows_affected(), 0, "deleted inside the rollback window");
+    assert_eq!(
+        deleted.rows_affected(),
+        0,
+        "deleted inside the rollback window"
+    );
     let moved = sqlx::query("UPDATE shako.projection SET since = now() - interval '40 days'")
         .execute(&mut *tx)
         .await;
@@ -514,13 +518,26 @@ async fn the_log_is_trimmed_to_what_a_rollback_can_still_need() {
         .unwrap();
     }
     // Written after the backdating: inside the window, so it stays.
-    store.allocate_pr_number(ids.inst, ids.org, ids.repo).await.unwrap();
+    store
+        .allocate_pr_number(ids.inst, ids.org, ids.repo)
+        .await
+        .unwrap();
     let expected = answers(&store, &ids).await;
-    let (all, creates) = (logged(&db, &ids, None).await, logged(&db, &ids, Some("create_repo")).await);
+    let (all, creates) = (
+        logged(&db, &ids, None).await,
+        logged(&db, &ids, Some("create_repo")).await,
+    );
     let trimmed = store.trim_log(ids.inst, ids.org).await.unwrap();
     assert_eq!(i64::try_from(trimmed).unwrap(), all - creates - 1);
-    assert_eq!(logged(&db, &ids, None).await, creates + 1, "create_repo and the new entry stay");
-    assert!(logged(&db, &other, None).await > creates, "another tenant's log is its own");
+    assert_eq!(
+        logged(&db, &ids, None).await,
+        creates + 1,
+        "create_repo and the new entry stay"
+    );
+    assert!(
+        logged(&db, &other, None).await > creates,
+        "another tenant's log is its own"
+    );
 
     let restarted = db.store().await;
     assert_eq!(restarted.hydrate(ids.inst, ids.org).await.unwrap(), 0);
@@ -581,9 +598,17 @@ async fn a_start_reads_a_bounded_log_as_the_log_grows() {
         .unwrap();
         let fresh = db.store().await;
         let started = std::time::Instant::now();
-        assert_eq!(fresh.hydrate(ids.inst, ids.org).await.unwrap(), 0, "read past the projection");
+        assert_eq!(
+            fresh.hydrate(ids.inst, ids.org).await.unwrap(),
+            0,
+            "read past the projection"
+        );
         took.push(started.elapsed());
-        println!("log of {} entries: the start read 0 in {:?}", logged(&db, &ids, None).await, took[took.len() - 1]);
+        println!(
+            "log of {} entries: the start read 0 in {:?}",
+            logged(&db, &ids, None).await,
+            took[took.len() - 1]
+        );
         fresh.pool().close().await;
     }
     assert!(

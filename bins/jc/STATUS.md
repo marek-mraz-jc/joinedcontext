@@ -438,6 +438,8 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
 - shako keeps every record (repos, PRs, issues, counters...) through an op log `shako.store_log` (forced RLS)
   beside the typed tables every read answers from, which a log an earlier release left is projected into
   before serving (T-7508; no mirror, replace rather than roll that update); its repositories live under `<state_dir>/shako`, no longer a temp dir.
+  The log keeps what a rollback can need: an entry the tables hold goes once the tenant has been projected for
+  30 days and the entry is 30 days old (T-7564, trimmed beside each start; create_repo entries stay).
 - ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
   stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
   save refuses the create; a refused delete keeps the stream.

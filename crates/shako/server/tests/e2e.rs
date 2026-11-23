@@ -1471,12 +1471,19 @@ async fn api_commits_are_compacted_once_the_packs_reach_the_threshold() {
         .expect("pack dir")
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        // A superseded pack stays an hour without its index, for readers that loaded it.
+        .filter(|e| e.path().with_extension("idx").is_file())
         .count();
     assert!(
         packs < shako_git::AUTO_COMPACT_PACK_THRESHOLD / 2,
         "{packs} packs after {commits} commits"
     );
-    assert!(shako_git::fsck_repository(&disk).expect("fsck").verified_refs >= 1);
+    assert!(
+        shako_git::fsck_repository(&disk)
+            .expect("fsck")
+            .verified_refs
+            >= 1
+    );
     for n in [0, commits - 1] {
         let (st, file) = send_json(
             &world.app,
@@ -1487,7 +1494,10 @@ async fn api_commits_are_compacted_once_the_packs_reach_the_threshold() {
         )
         .await;
         assert_eq!(st, StatusCode::OK, "file-{n} after compaction");
-        assert_eq!(file["content"].as_str().map(|c| c.replace('\n', "")), Some(STANDARD.encode(format!("{n}\n"))));
+        assert_eq!(
+            file["content"].as_str().map(|c| c.replace('\n', "")),
+            Some(STANDARD.encode(format!("{n}\n")))
+        );
     }
 }
 
