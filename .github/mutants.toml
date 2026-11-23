@@ -89,6 +89,9 @@ exclude_re = [
   'daiya/expr/src/math\.rs:\d+:\d+: replace \|\| with && in union_values',
   # daiya-expr reduce_slice Sum: a NaN added to the sum makes it NaN, which the guard answers too (T-7633).
   'daiya/expr/src/reduce\.rs:\d+:\d+: replace match guard !x\.is_nan\(\) with true in reduce_slice',
+  # daiya-expr tx_calculate_field row index: with no rows the 0..row_cnt map never runs, so the
+  # `row_cnt > 0` guard of the percentile division decides nothing (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_calculate_field',
   # ngsild-residual decode_base64 and base64url: `acc << 6`, `b0 << 4` and `low << 2` have their low
   # bits zero and the other operand fits in them, so `|` and `^` add the same bits (T-7693).
   'antares-residual/src/binary\.rs:\d+:\d+: replace \| with \^ in (decode_base64|base64url)',

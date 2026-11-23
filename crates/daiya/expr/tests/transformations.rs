@@ -287,6 +287,7 @@ fn filter_by_value_matchers_include_and_exclude_rows() {
         rows(one("greater", json!({ "value": 15 }))),
         [Some(30.0), Some(20.0)]
     );
+    assert_eq!(rows(one("greater", json!({ "value": 20 }))), [Some(30.0)]);
     assert_eq!(
         rows(one("greaterOrEqual", json!({ "value": 20 }))),
         [Some(30.0), Some(20.0)]
@@ -958,6 +959,15 @@ fn edge_cases_of_names_replacements_and_join_keys() {
         calc(json!({ "mode": "binary", "binary": { "left": "a", "operator": "?", "right": {} } }));
     assert_eq!(f.fields.last().unwrap().name, "a ? ");
     assert_eq!(floats(f.fields.last().unwrap())[0], Some(6.0));
+    let f = calc(
+        json!({ "mode": "binary", "binary": { "left": "a", "operator": "?", "right": { "fixed": 2 } } }),
+    );
+    assert_eq!(
+        f.fields.last().unwrap().name,
+        "a ? 2",
+        "a fixed number names itself"
+    );
+    assert_eq!(floats(f.fields.last().unwrap())[0], Some(8.0));
 
     // $10 reads group 10 when it exists; a group that does not exist and a lone $ stay text.
     let g = frame("g", vec![nums("abcdefghij", &[Some(1.0)])]);
