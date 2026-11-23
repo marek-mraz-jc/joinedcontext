@@ -148,6 +148,12 @@ exclude_re = [
   # antares-ws mqtt packet: the length byte is `n & 0x7f`, its top bit zero, so `| 0x80` and `^ 0x80` set the
   # same continuation bit (T-7675).
   'crates/antares-ws/src/mqtt\.rs:\d+:\d+: replace \| with \^ in packet',
+  # antares-views union run: `live` only sizes the chunk each view is asked for per refill (ROWS_HELD shared out);
+  # the merged page, its order and its cursor are the same for any chunk of at least one row (T-7673).
+  'crates/antares-views/src/union\.rs:319:40: delete ! in run',
+  # antares-views union run: without count, the first refill and the loop's first refill ask the same parts for the
+  # same chunk, so skipping the first one when limit > 0 answers alike (T-7673).
+  'crates/antares-views/src/union\.rs:326:18: replace > with < in run',
   'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
