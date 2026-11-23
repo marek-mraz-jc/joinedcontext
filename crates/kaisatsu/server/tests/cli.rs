@@ -422,6 +422,7 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
         .spawn()
         .expect("spawn serve");
     let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let mut seen = Vec::new();
     let addr = loop {
         let line = lines
             .next()
@@ -430,6 +431,7 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
         if let Some(a) = line.strip_prefix("kaisatsu: listening on ") {
             break a.to_owned();
         }
+        seen.push(line);
     };
     quiet.file("realm2.yaml", "realm: added\n");
     std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -441,8 +443,8 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
         .expect("send SIGTERM");
     assert!(term.success());
     assert_eq!(child.wait().expect("serve exits").code(), Some(0));
-    let rest: Vec<String> = lines.map_while(std::result::Result::ok).collect();
-    assert!(!rest.iter().any(|l| l.contains("panicked")), "{rest:?}");
+    seen.extend(lines.map_while(std::result::Result::ok));
+    assert!(!seen.iter().any(|l| l.contains("panicked")), "{seen:?}");
 }
 
 // ---------------------------------------------------------------- PostgreSQL
