@@ -142,6 +142,9 @@ exclude_re = [
   # antares-icsr Internal::deliver: Grant::allows(false) is `!false || ...`, true for every grant, so the guard
   # replaced with true reads alike; the guard stays as the read-access statement of the delivery (T-7673).
   'crates/antares-icsr/src/lib\.rs:\d+:\d+: replace match guard g\.allows\(false\) with true in Internal::deliver',
+  # antares-icsr SelfUrls::matching: an URL with a user or a password serialises with its userinfo, and no self URL
+  # holds one, so no prefix matches either way; the explicit refusal stays (T-7673).
+  'crates/antares-icsr/src/self_url\.rs:\d+:\d+: replace \|\| with && in SelfUrls::matching',
   'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection

@@ -307,6 +307,9 @@ async fn icsr_a_stored_document_that_is_no_grant_of_its_pair_grants_nothing() {
         assert_eq!(ops.put_grant_doc(&format!("{target}~{source}"), doc).await, Ok(false));
         let held = antares_icsr::held(&ops, target, source).await;
         assert_eq!(held.map(|g| g.is_some()), Ok(false), "{target}~{source}");
+        let path = format!("/q/grants/{target}/{source}");
+        let gone = send(&app, "DELETE", &path, None, None, None).await;
+        assert_eq!(gone.status, 404, "{path}: {}", gone.body);
     }
     for path in ["/q/grants/b/a", "/q/grants/b/c", "/q/grants/b/d"] {
         let a = send(&app, "GET", path, None, None, None).await;
