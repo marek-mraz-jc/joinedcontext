@@ -70102,5 +70102,29 @@
   "expected": {
    "text": "{\"facility\":0,\"priority\":1,\"severity\":1,\"structureddata\":{\"a\":{\"x\":\"]\"},\"b\":{\"y\":\"\\\\\",\"z\":\"\"}},\"version\":1}\n"
   }
+ },
+ {
+  "name": "parse_log rfc5424 hand a duplicated element id cut by a bad byte",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][a=",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 20]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 hand a longer duplicated element id cut by a bad byte",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [abc][abc\"",
+  "expected": {
+   "text": "ERROR: duplicate structured data element id [col 24]\n"
+  }
  }
 ]
