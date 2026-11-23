@@ -1757,6 +1757,180 @@ fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
     }
 }
 
+/// The standalone binary refuses a token file it cannot use and a repository root it cannot
+/// create, naming each; `check -f` reads a manifest without a repository root of its own.
+#[test]
+fn standalone_refuses_a_bad_token_file_or_root_and_checks_a_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_shako"))
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let path = |name: &str| dir.path().join(name).to_str().unwrap().to_owned();
+    let (code, err) = run(&["serve", "--token-file", &path("missing-token")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("cannot read token file"), "{err}");
+    std::fs::write(path("empty-token"), "  \n").unwrap();
+    let (code, err) = run(&["serve", "--token-file", &path("empty-token")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("token file is empty"), "{err}");
+    // A usable token file gets as far as the mount, which refuses a prefix escaping its root.
+    std::fs::write(path("token"), "standalone-admin-token\n").unwrap();
+    let (code, err) = run(&[
+        "serve",
+        "--token-file",
+        &path("token"),
+        "--path-prefix",
+        "/git/../admin",
+    ]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("invalid mount"), "{err}");
+    assert!(!err.contains("standalone-admin-token"), "{err}");
+
+    std::fs::write(path("not-a-dir"), "x").unwrap();
+    let (code, err) = run(&["compact", "--repo-root", &path("not-a-dir")]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("create repo root"), "{err}");
+
+    let manifest = json!({"apiVersion": "joinedcontext.com/v1alpha1", "kind": "ForgeManifest",
+        "repositories": [{"owner": "city", "name": "roads"}]});
+    std::fs::write(path("ok.json"), manifest.to_string()).unwrap();
+    let (code, err) = run(&["check", "-f", &path("ok.json")]);
+    assert_eq!(code, Some(0), "{err}");
+    let mut wrong = manifest.clone();
+    wrong["kind"] = json!("Other");
+    std::fs::write(path("wrong.json"), wrong.to_string()).unwrap();
+    let (code, err) = run(&["check", "-f", &path("wrong.json")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("kind 'ForgeManifest'"), "{err}");
+}
+
+/// A manifest sets the instance's limits, a repository's default branch defaults to `main`, and
+/// its mirrors and webhooks are written once however often it is applied; compact and fsck then
+/// visit every repository of the organization.
+#[tokio::test]
+async fn a_manifest_writes_instance_mirrors_and_webhooks_once_and_maintenance_visits_each_repo() {
+    let world = setup_world().await;
+    let manifest: ShakoManifestBundle = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "ForgeManifest",
+        "instance": {"host": "git.city.example", "maxRepos": 7, "maxStorageBytes": 1048576},
+        "repositories": [{
+            "owner": "joinedcontext", "name": "mirrored",
+            "mirrors": [{"remoteName": "github", "remoteAddress": "https://github.com/joinedcontext-apps/mirrored.git",
+                         "credentialSecretRef": "github-push-token"}],
+            "webhooks": [{"url": "https://portal.city.example/api/v1/webhooks/shako", "secretRef": "portal-webhook-secret"}]
+        }]
+    }))
+    .expect("manifest");
+    assert_eq!(manifest.repositories[0].default_branch, "main");
+    for _ in 0..2 {
+        let res = apply_manifest_bundle(&world.state, world.org_a, &manifest)
+            .await
+            .expect("apply");
+        assert_eq!(res, json!({"status": "applied", "repositories": 1}));
+    }
+    let store = world.state.store();
+    let inst = store
+        .get_instance(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .expect("instance");
+    assert_eq!((inst.max_repos, inst.max_storage_bytes), (7, 1_048_576));
+    let repo = store
+        .get_repo_by_name(
+            world.state.default_instance_id,
+            world.org_a,
+            "joinedcontext",
+            "mirrored",
+        )
+        .await
+        .unwrap()
+        .expect("repo");
+    assert_eq!(repo.default_branch, "main");
+    let hooks = store
+        .list_webhooks(world.state.default_instance_id, world.org_a, Some(repo.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        hooks.len(),
+        1,
+        "a webhook already there is not written twice"
+    );
+    let mirrors = store
+        .list_push_mirrors(world.state.default_instance_id, world.org_a, Some(repo.id))
+        .await
+        .unwrap();
+    assert!(
+        mirrors
+            .iter()
+            .all(|m| m.credential_secret_ref == "github-push-token")
+    );
+    assert!(!mirrors.is_empty());
+
+    let mut wrong = manifest.clone();
+    wrong.api_version = "v1".into();
+    let err = apply_manifest_bundle(&world.state, world.org_a, &wrong)
+        .await
+        .expect_err("wrong apiVersion");
+    assert!(err.to_string().contains("apiVersion"), "{err}");
+
+    let repos = store
+        .list_repos(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        shako_server::compact_all_repositories(&world.state, world.org_a)
+            .await
+            .unwrap(),
+        repos
+    );
+    assert_eq!(
+        shako_server::fsck_all_repositories(&world.state, world.org_a)
+            .await
+            .unwrap(),
+        repos
+    );
+}
+
+/// The MCP doors over HTTP: both refuse a request without a token, a tool answers its result,
+/// and an unknown tool is an error, never a 200.
+#[tokio::test]
+async fn the_mcp_http_doors_need_a_token_and_name_unknown_tools() {
+    let world = setup_world().await;
+    let (st, _) = send_json(&world.app, "GET", "/mcp/tools", None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let call = json!({"name": "jc_forge_repositories_list", "arguments": {}});
+    let (st, _) = send_json(&world.app, "POST", "/mcp/call", None, Some(call.clone())).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, body) = send_json(
+        &world.app,
+        "POST",
+        "/mcp/call",
+        Some("portal-token"),
+        Some(call),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.get("result").is_some(), "{body}");
+    let (st, body) = send_json(
+        &world.app,
+        "POST",
+        "/mcp/call",
+        Some("portal-token"),
+        Some(json!({"name": "jc_forge_no_such_tool"})),
+    )
+    .await;
+    assert!(st.is_client_error(), "{st} {body}");
+}
+
 /// Contract S8, S9, S13, S18, S19, S21: OData 4.01 service, OCI registry + cosign signing,
 /// generic packages, MCP tools, read-only web views, and security threats T1, T4, T6, T13, T14.
 #[tokio::test]

@@ -344,6 +344,120 @@ async fn an_identity_provider_secret_resolves_exports_as_a_placeholder_and_survi
     assert_eq!(secret(store.clone()).await, "upstream-secret-1");
 }
 
+/// A rotated variable behind an identity provider's or the realm's SMTP secret replaces the
+/// stored one on the next apply; only an unset variable keeps it.
+#[tokio::test]
+async fn a_rotated_idp_or_smtp_secret_variable_replaces_the_stored_secret() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let doc = json!({
+        "realm": "rotate",
+        "smtpServer": {"host": "smtp.city.example", "from": "idm@city.example", "password": "$(env:SMTP_PASSWORD)"},
+        "identityProviders": [{
+            "alias": "entra-id", "providerId": "oidc", "enabled": true,
+            "config": {"clientId": "kaisatsu", "clientSecret": "$(env:IDP_SECRET_ENTRA_ID)"}
+        }]
+    });
+    let files = [("rotate.json".to_owned(), doc)];
+    let opts = |v: &str| ApplyOptions {
+        env_vars: BTreeMap::from([
+            ("SMTP_PASSWORD".to_owned(), format!("smtp-{v}")),
+            ("IDP_SECRET_ENTRA_ID".to_owned(), format!("idp-{v}")),
+        ]),
+        ..ApplyOptions::default()
+    };
+    let held = || async {
+        let smtp = store
+            .get_realm("rotate")
+            .await
+            .unwrap()
+            .unwrap()
+            .smtp_server
+            .unwrap()
+            .password;
+        let idp = store
+            .get_idp("rotate", "entra-id")
+            .await
+            .unwrap()
+            .unwrap()
+            .config["clientSecret"]
+            .clone();
+        (smtp, idp)
+    };
+    apply_realm_files(&store, &files, &opts("one"))
+        .await
+        .expect("first");
+    assert_eq!(held().await, ("smtp-one".to_owned(), "idp-one".to_owned()));
+    apply_realm_files(&store, &files, &opts("two"))
+        .await
+        .expect("rotated");
+    assert_eq!(held().await, ("smtp-two".to_owned(), "idp-two".to_owned()));
+    apply_realm_files(&store, &files, &ApplyOptions::default())
+        .await
+        .expect("unset");
+    assert_eq!(held().await, ("smtp-two".to_owned(), "idp-two".to_owned()));
+}
+
+/// A re-applied person keeps the stored id and creation time whatever the file names; an
+/// Organization the Portal made under another id keeps that id, and its new domains point at it.
+#[tokio::test]
+async fn a_reapply_keeps_stored_ids_of_people_and_portal_made_organizations() {
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let opts = ApplyOptions::default();
+    let doc = |user: Value| json!({"realm": "ids", "users": [user]});
+    apply_realm_files(
+        &store,
+        &[("r.json".into(), doc(json!({"username": "eva"})))],
+        &opts,
+    )
+    .await
+    .expect("first");
+    let eva = store
+        .get_user_by_username_or_email("ids", None, "eva")
+        .await
+        .unwrap()
+        .unwrap();
+    let forged =
+        json!({"username": "eva", "id": "forged-id", "createdTimestamp": 1, "firstName": "Eva"});
+    apply_realm_files(&store, &[("r.json".into(), doc(forged))], &opts)
+        .await
+        .expect("second");
+    let again = store
+        .get_user_by_username_or_email("ids", None, "eva")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.id, eva.id);
+    assert_eq!(again.created_timestamp, eva.created_timestamp);
+    assert_eq!(again.first_name.as_deref(), Some("Eva"));
+
+    store
+        .upsert_organization(kaisatsu_core::Organization {
+            id: "org-made-in-portal".into(),
+            realm_id: "ids".into(),
+            name: "Espoo".into(),
+            alias: "espoo".into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: std::collections::HashMap::new(),
+            managed_by: None,
+        })
+        .await
+        .unwrap();
+    let org = json!({"realm": "ids", "organizations": [{"name": "Espoo", "alias": "espoo", "domains": [{"name": "espoo.fi"}]}]});
+    apply_realm_files(&store, &[("r.json".into(), org)], &opts)
+        .await
+        .expect("organization");
+    let held = store
+        .get_organization("ids", "espoo")
+        .await
+        .unwrap()
+        .expect("espoo");
+    assert_eq!(held.id, "org-made-in-portal");
+    assert_eq!(held.domains.len(), 1);
+    assert_eq!(held.domains[0].org_id, "org-made-in-portal");
+}
+
 #[tokio::test]
 async fn unset_secret_variables_never_become_guessable_secrets() {
     let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
@@ -639,10 +753,6 @@ async fn a_changed_secret_variable_is_applied_and_reported_once() {
     assert_eq!(stored().await, hash("derived-secret-b"));
 }
 
-/// The Portal deletes a `managed-by: joinedcontext` group while its repository is still empty and
-/// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
-/// start re-applies the unchanged file and gives the group its roles back; a role added since
-/// leaves the fast path alone.
 #[test]
 fn the_markdown_report_counts_each_action_and_lists_warnings_only_when_there_are_some() {
     let change = |action: ChangeAction| ObjectChange {
@@ -1182,6 +1292,10 @@ async fn the_export_names_a_pairwise_salt_by_variable() {
     );
 }
 
+/// The Portal deletes a `managed-by: joinedcontext` group while its repository is still empty and
+/// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
+/// start re-applies the unchanged file and gives the group its roles back; a role added since
+/// leaves the fast path alone.
 #[tokio::test]
 async fn a_group_that_lost_its_roles_behind_an_unchanged_file_gets_them_back() {
     let doc = json!({
@@ -1242,6 +1356,42 @@ async fn a_group_that_lost_its_roles_behind_an_unchanged_file_gets_them_back() {
         .await
         .expect("third apply");
     assert!(!quiet.has_changes(), "nothing the file declares is missing");
+}
+
+/// A group that lost only a realm role behind an unchanged file is applied again too.
+#[tokio::test]
+async fn a_group_that_lost_a_realm_role_alone_gets_it_back() {
+    let doc = json!({
+        "realm": "lost",
+        "groups": [{"name": "readers", "path": "/readers", "realmRoles": ["reader"]}],
+        "roles": {"realm": [{"name": "reader"}]}
+    });
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let files = [("realm.json".to_owned(), doc)];
+    let opts = ApplyOptions::default();
+    apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("apply");
+    let mut held = store
+        .get_group_by_path("lost", None, "/readers")
+        .await
+        .unwrap()
+        .unwrap();
+    held.realm_roles.clear();
+    store.upsert_group(held).await.unwrap();
+    let again = apply_realm_files(&store, &files, &opts)
+        .await
+        .expect("re-apply");
+    assert!(
+        again.has_changes(),
+        "the lost realm role forces a real apply"
+    );
+    let held = store
+        .get_group_by_path("lost", None, "/readers")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.realm_roles, ["reader"]);
 }
 
 /// A password the file seeds is set once, when the user has none: `jc` applies its realm files on
