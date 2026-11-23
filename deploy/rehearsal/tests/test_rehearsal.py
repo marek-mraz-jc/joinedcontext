@@ -2172,7 +2172,10 @@ def test_an_export_without_service_accounts_gets_the_portals_from_jcs_shipped_re
     out, added = rh.add_service_accounts(realm, shipped)
     assert added == ["portal-reconciler"]
     rec = [u for u in out["users"] if u.get("serviceAccountClientId") == "portal-reconciler"][0]
-    assert rec["clientRoles"]["realm-management"] == ["manage-users", "query-groups"]
+    # The shipped realm's own grant, copied whole (manage-smtp joined it with T-7152).
+    want = [u for u in shipped["users"] if u.get("serviceAccountClientId") == "portal-reconciler"][0]
+    assert rec["clientRoles"] == want["clientRoles"]
+    assert "manage-users" in rec["clientRoles"]["realm-management"]
     assert [u["clientRoles"] for u in out["users"] if u["serviceAccountClientId"] == "portal-api"] == [{"x": ["y"]}]
     assert rh.add_service_accounts({"clients": []}, shipped)[1] == []
 
