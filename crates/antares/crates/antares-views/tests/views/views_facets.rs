@@ -216,6 +216,63 @@ async fn without_attr_the_answer_is_the_closed_list() -> Result<(), String> {
     Ok(())
 }
 
+/// A Tenant that holds nothing yet has no values (its 404 is no error); a view of every type
+/// needs the caller's `type`; a selection past the residual scan bound is 413, never a count of
+/// part of it.
+#[tokio::test]
+async fn an_empty_tenant_has_no_values_and_a_wide_selection_is_413() -> Result<(), String> {
+    let (_broker, app) = fixture(None).await?;
+    let facets = json!({"facets": ["category"]});
+    for (id, tenant, selector, attr) in [
+        ("quiet", "quiet", "Event", "category"),
+        ("all", "city", "*", "*"),
+    ] {
+        put_view(
+            &app,
+            &json!({"id": id, "tenant": tenant, "selector": [selector],
+                "operations": ["query_entities"],
+                "rules": [{"types": [selector], "attributes": [attr]}],
+                "representations": facets}),
+        )
+        .await?;
+    }
+    let a = get(&app, "/x/views/quiet/facets?attr=category").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    let body: Value = serde_json::from_str(&a.text).map_err(|e| e.to_string())?;
+    assert_eq!(
+        body,
+        json!({"attr": "category", "values": [], "truncated": false})
+    );
+
+    let a = get(&app, "/x/views/all/facets?attr=category").await;
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text);
+    assert!(a.text.contains("type is required"), "{}", a.text);
+    let a = get(&app, "/x/views/all/facets?attr=category&type=Event").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+
+    let many: Vec<Value> = (0..=antares_ops::RESIDUAL_SCAN)
+        .map(|n| {
+            json!({"id": format!("urn:ngsi-ld:Event:n{n}"), "type": "Event",
+                        "category": prop(&json!("bulk"))})
+        })
+        .collect();
+    for chunk in many.chunks(1000) {
+        let a = send(
+            &app,
+            Method::POST,
+            "/ngsi-ld/v1/entityOperations/create",
+            &[("NGSILD-Tenant", "quiet")],
+            Some(&Value::Array(chunk.to_vec())),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    }
+    let a = get(&app, "/x/views/quiet/facets?attr=category").await;
+    assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", a.text);
+    assert!(a.text.contains("narrow it with q or type"), "{}", a.text);
+    Ok(())
+}
+
 #[tokio::test]
 async fn only_an_anonymous_answer_is_shared_and_a_write_is_refused() -> Result<(), String> {
     let (_broker, app) = fixture(None).await?;
