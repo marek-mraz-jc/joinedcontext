@@ -293,6 +293,93 @@ mod tests {
         assert!(!confirmed("Risk: destructive"));
     }
 
+    fn envelope(kind: &str, name: &str, status: bool) -> crate::resource::ResourceEnvelope {
+        use crate::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
+        let namespace = if kind == "Organization" { "org" } else { name };
+        let applied =
+            super::super::streams::make_condition("RemovalsApplied", "True", "Applied", "old");
+        ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, namespace),
+            spec: serde_json::json!({}),
+            status: status.then(|| Status {
+                phase: Phase::Pending,
+                observed_revision: None,
+                source_url: None,
+                conditions: vec![applied],
+                build: None,
+                shard: None,
+                domain_verification: None,
+                jobs: Vec::new(),
+                notifications: None,
+            }),
+        }
+    }
+
+    /// A held project (the Organization for `org`) says why its removal waits, once; a project
+    /// the mirror lacks or one without a status is left alone.
+    #[test]
+    fn a_held_project_is_marked_with_what_to_do() {
+        let mirror = Mirror::new();
+        mirror.upsert(envelope("Project", "p", true));
+        mirror.upsert(envelope("Project", "bare", false));
+        mirror.upsert(envelope("Organization", "city", true));
+        let shrink = |project: &str, spaces: &[&str]| Shrink {
+            project: project.into(),
+            removed: 3,
+            total: 4,
+            spaces: spaces.iter().map(|s| (*s).to_owned()).collect(),
+        };
+        let held = [
+            shrink("p", &["air"]),
+            shrink("bare", &[]),
+            shrink("gone", &[]),
+            shrink(crate::api::blueprints::ORG_NAMESPACE, &[]),
+        ];
+        mark(&mirror, &held, 25);
+        let conditions = |ns: &str, kind: &str, name: &str| {
+            mirror
+                .get(ns, kind, name)
+                .and_then(|e| e.status)
+                .map(|s| s.conditions)
+        };
+        let p = conditions("p", "Project", "p").expect("status");
+        assert_eq!(p.len(), 1, "the old RemovalsApplied is replaced: {p:?}");
+        assert_eq!(
+            (p[0].status.as_str(), p[0].reason.as_deref()),
+            ("False", Some("HeldRemoval"))
+        );
+        let message = p[0].message.clone().unwrap_or_default();
+        assert!(
+            message.contains("removes 3 of 4 objects, ContextSpace air")
+                && message.contains("(25 %"),
+            "{message}"
+        );
+        let org = conditions("org", "Organization", "city").expect("status");
+        assert_eq!(org[0].reason.as_deref(), Some("HeldRemoval"));
+        assert_eq!(conditions("bare", "Project", "bare"), None);
+        assert!(mirror.get("gone", "Project", "gone").is_none());
+    }
+
+    /// An applied file that does not parse, cannot be read or cannot be written leaves the next
+    /// run comparing with what memory holds: the Portal starts either way.
+    #[test]
+    fn an_unreadable_or_unwritable_applied_file_costs_no_sync() {
+        let dir = std::env::temp_dir().join(format!("jc-applied-broken-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let garbled = dir.join("garbled.json");
+        std::fs::write(&garbled, b"[").expect("write");
+        assert_eq!(Applied::new(Some(garbled)).get(), None);
+        assert_eq!(Applied::new(Some(dir.clone())).get(), None, "a directory");
+        let nowhere = Applied::new(Some(dir.join("missing/applied.json")));
+        let objects = one("b", project(1, 0));
+        nowhere.set(objects.clone());
+        assert_eq!(nowhere.get(), Some(objects), "kept in memory");
+        assert!(!dir.join("missing").exists());
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
     #[test]
     fn the_applied_set_survives_a_restart() {
         let dir = std::env::temp_dir().join(format!("jc-applied-test-{}", std::process::id()));

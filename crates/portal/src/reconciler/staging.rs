@@ -374,11 +374,16 @@ pub(crate) struct Scratch(PathBuf);
 
 impl Scratch {
     pub(crate) fn new(revision: &str) -> Result<Self, SyncError> {
+        Self::under(&std::env::temp_dir(), revision)
+    }
+
+    /// [`Scratch::new`] under `base` instead of the process's temporary directory.
+    fn under(base: &Path, revision: &str) -> Result<Self, SyncError> {
         // One directory per run, never per revision: two runs staging into one directory would
         // read each other's files, and the first to finish would delete the other's.
         static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let path = base.join(format!(
             "jc-portal-sync-{}-{}-{run}",
             std::process::id(),
             revision.get(..12).unwrap_or(revision)
@@ -414,12 +419,12 @@ impl Scratch {
                 }
             }
         }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| SyncError::Scratch {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
+        // The target lies under the run's directory, so it always has a parent.
+        let parent = target.parent().unwrap_or(&self.0);
+        std::fs::create_dir_all(parent).map_err(|source| SyncError::Scratch {
+            path: parent.to_path_buf(),
+            source,
+        })?;
         std::fs::write(&target, content).map_err(|source| SyncError::Scratch {
             path: target,
             source,
@@ -438,5 +443,261 @@ impl Drop for Scratch {
                 tracing::warn!(path = %path.display(), error = %err, "could not remove the sync staging directory");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: helsinki\nspec:\n  isSandbox: true\n";
+    const TREE: &str =
+        "/odata/Repositories(Owner='o',Name='r')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)";
+    const FILE: &str = "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)";
+
+    /// A forge listing `files` (path, blob sha, content; `None` is listed and not served) at
+    /// `rev`, each content served at most `reads` times.
+    async fn forge(
+        rev: &str,
+        files: &[(&str, &str, Option<&str>)],
+        reads: u64,
+    ) -> (MockServer, ShakoClient) {
+        let server = MockServer::start().await;
+        let tree: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(p, sha, _)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
+            .chain([json!({ "Path": "projects/helsinki", "Type": "tree" })])
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(TREE))
+            .and(query_param("@r", format!("'{rev}'")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": "tree-1", "Truncated": false, "Tree": tree })),
+            )
+            .mount(&server)
+            .await;
+        for (file, sha, content) in files {
+            let answer = match content {
+                Some(content) => ResponseTemplate::new(200).set_body_json(json!({
+                    "Sha": sha,
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
+                })),
+                None => ResponseTemplate::new(404),
+            };
+            Mock::given(method("GET"))
+                .and(path(FILE))
+                .and(query_param("@p", format!("'{file}'")))
+                .respond_with(answer)
+                .up_to_n_times(reads)
+                .mount(&server)
+                .await;
+        }
+        let shako =
+            ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t").expect("client");
+        (server, shako)
+    }
+
+    fn read(scratch: &Scratch, file: &str) -> Option<String> {
+        std::fs::read_to_string(scratch.path().join(file)).ok()
+    }
+
+    /// CC-08: what a run stages beside the manifests as written (a Bento mapping), what it
+    /// sanitises (a committed `status`), and what it leaves out: a listed file the forge does
+    /// not serve, a document of no kind the Portal serves, a YAML list.
+    #[tokio::test]
+    async fn a_stage_writes_the_manifests_and_the_files_beside_them_and_skips_the_rest() {
+        let with_status =
+            format!("{SPACE}status:\n  phase: Ready\n---\n- a list\n---\nkind: Unknown\n");
+        let note = "kind: NotAKind\nmetadata:\n  name: x\n";
+        let files = [
+            (
+                "projects/helsinki/spaces/mobility/space.yaml",
+                "s1",
+                Some(with_status.as_str()),
+            ),
+            (
+                "projects/helsinki/pipelines/feed/bento.yaml",
+                "s2",
+                Some("input: {}\n"),
+            ),
+            ("projects/helsinki/pipelines/gone.yaml", "s3", None),
+            ("projects/helsinki/notes/note.yaml", "s4", Some(note)),
+            ("README.md", "s5", Some("# not listed")),
+        ];
+        let (_server, shako) = forge("rev-stage", &files, 1).await;
+        let scratch = stage(&shako, "rev-stage").await.expect("the run stages");
+        let space = read(&scratch, "projects/helsinki/spaces/mobility/space.yaml").expect("space");
+        assert!(space.contains("kind: ContextSpace"), "{space}");
+        assert!(
+            !space.contains("status"),
+            "the committed status is dropped: {space}"
+        );
+        assert!(!space.contains("Unknown"), "{space}");
+        assert_eq!(
+            read(&scratch, "projects/helsinki/pipelines/feed/bento.yaml").as_deref(),
+            Some("input: {}\n")
+        );
+        for skipped in [
+            "projects/helsinki/pipelines/gone.yaml",
+            "projects/helsinki/notes/note.yaml",
+            "README.md",
+        ] {
+            assert_eq!(read(&scratch, skipped), None, "{skipped}");
+        }
+    }
+
+    /// PL-61: a blob read once is not read again by the next stage, so a second run of the same
+    /// tree asks the forge for no contents; the forge's one answer per file proves it.
+    #[tokio::test]
+    async fn a_blob_read_once_is_served_from_the_process_cache() {
+        let files = [(
+            "projects/helsinki/spaces/mobility/space.yaml",
+            "blob-cached-t7651",
+            Some(SPACE),
+        )];
+        let (server, shako) = forge("rev-cache", &files, 1).await;
+        let first = stage(&shako, "rev-cache")
+            .await
+            .expect("the first run stages");
+        let second = stage(&shako, "rev-cache")
+            .await
+            .expect("the second run stages from the cache");
+        for scratch in [&first, &second] {
+            let staged = read(scratch, "projects/helsinki/spaces/mobility/space.yaml");
+            assert!(staged.is_some_and(|s| s.contains("ContextSpace")));
+        }
+        let reads = server.received_requests().await.unwrap_or_default();
+        assert_eq!(reads.iter().filter(|r| r.url.path() == FILE).count(), 1);
+        assert_ne!(first.path(), second.path(), "one directory per run");
+    }
+
+    /// A tree with no candidate is an empty repository, a tree whose candidates hold no manifest
+    /// is one too, and a forge that does not answer the tree names the tree and the repository.
+    #[tokio::test]
+    async fn a_repository_without_manifests_or_a_tree_is_refused_by_name() {
+        let (_server, shako) = forge("rev-none", &[("README.md", "x", Some("# hi"))], 1).await;
+        let none = stage(&shako, "rev-none").await.err().expect("no candidate");
+        assert!(
+            matches!(&none, SyncError::Empty(m) if m.contains("no manifests")),
+            "{none}"
+        );
+
+        let note = [(
+            "projects/helsinki/notes/note.yaml",
+            "n1",
+            Some("just: text\n"),
+        )];
+        let (_server, shako) = forge("rev-notes", &note, 1).await;
+        let empty = stage(&shako, "rev-notes").await.err().expect("no manifest");
+        assert!(
+            matches!(&empty, SyncError::Empty(m) if m.contains("none of the 1 candidate")),
+            "{empty}"
+        );
+
+        let (_server, shako) = forge("rev-other", &[], 1).await;
+        let missing = stage(&shako, "rev-unknown").await.err().expect("no tree");
+        assert!(
+            missing.to_string().contains("tree at rev-unknown in o/r"),
+            "{missing}"
+        );
+    }
+
+    /// CC-85: a project repository is listed as its own root, its non-manifest files left out.
+    #[tokio::test]
+    async fn a_project_repository_lists_its_own_root() {
+        let files = [
+            ("spaces/mobility/space.yaml", "p1", Some(SPACE)),
+            ("docs/readme.md", "p2", Some("# no")),
+        ];
+        let (_server, shako) = forge("rev-project", &files, 1).await;
+        let listed = listing(&shako, "rev-project", true).await.expect("listed");
+        assert_eq!(
+            listed,
+            vec![("spaces/mobility/space.yaml".to_owned(), "p1".to_owned())]
+        );
+        let scratch = stage_project(&shako, "rev-project").await.expect("staged");
+        assert!(read(&scratch, "spaces/mobility/space.yaml").is_some());
+    }
+
+    #[test]
+    fn a_manifest_without_a_namespace_belongs_to_where_it_lies() {
+        assert_eq!(namespace_of("/projects/helsinki/spaces/a.yaml"), "helsinki");
+        assert_eq!(namespace_of("projects//a.yaml"), "org");
+        assert_eq!(namespace_of("org.yaml"), "org");
+    }
+
+    /// A committed status that is not a mapping keeps nothing; one that is keeps `build` and
+    /// `shard` alone.
+    #[test]
+    fn a_committed_status_keeps_only_what_a_publish_writes() {
+        let plain = stageable(&format!("{SPACE}status: Ready\n"))
+            .expect("yaml")
+            .expect("kept");
+        assert!(!plain.contains("status"), "{plain}");
+        let built = stageable(&format!(
+            "{SPACE}status:\n  phase: Ready\n  build: b1\n  shard: s1\n"
+        ))
+        .expect("yaml")
+        .expect("kept");
+        assert!(
+            built.contains("build: b1") && built.contains("shard: s1") && !built.contains("phase"),
+            "{built}"
+        );
+    }
+
+    /// T-4039 and the disk: a directory that cannot be made, a file where a directory must go
+    /// and a directory where a file must go each refuse the sync and name the path.
+    #[test]
+    fn a_scratch_that_cannot_be_written_refuses_with_the_path() {
+        let base = Scratch::new("rev-disk").expect("scratch");
+        base.write("file", "x").expect("a file");
+        let blocked = Scratch::under(&base.path().join("file"), "rev-disk")
+            .err()
+            .expect("not a directory");
+        assert!(
+            matches!(&blocked, SyncError::Scratch { path, .. } if path.starts_with(base.path().join("file"))),
+            "{blocked}"
+        );
+        let parent = base
+            .write("file/inner.yaml", "x")
+            .err()
+            .expect("a file is no parent");
+        assert!(
+            matches!(&parent, SyncError::Scratch { path, .. } if path.ends_with("file")),
+            "{parent}"
+        );
+        base.write("dir/inner.yaml", "x").expect("nested");
+        let onto = base
+            .write("dir", "x")
+            .err()
+            .expect("a directory is no file");
+        assert!(
+            matches!(&onto, SyncError::Scratch { path, .. } if path.ends_with("dir")),
+            "{onto}"
+        );
+        let out = base.write("../escape", "x").err().expect("climbs out");
+        assert!(
+            matches!(&out, SyncError::Scratch { path, .. } if path == Path::new("../escape")),
+            "{out}"
+        );
+    }
+
+    /// A poisoned blob cache still answers: a panic elsewhere in the process costs no sync.
+    #[test]
+    fn a_poisoned_blob_cache_still_answers() {
+        let _ = std::thread::spawn(|| {
+            let _held = BLOBS.lock();
+            panic!("poison the cache");
+        })
+        .join();
+        keep_blob("poisoned-t7651".into(), Arc::from("content"));
+        assert_eq!(known_blob("poisoned-t7651").as_deref(), Some("content"));
+        keep_blob(String::new(), Arc::from("unnamed"));
+        assert_eq!(known_blob(""), None, "a blob without an id is never kept");
     }
 }
