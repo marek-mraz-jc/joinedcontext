@@ -10,6 +10,9 @@ import { timeSeriesSpec } from "../src/components/panels/specs";
 import { chartTheme } from "../src/components/panels/VegaChart";
 import { TableCellValue, TablePanel, tableOf } from "../src/components/panels/TablePanel";
 import { markersOf } from "../src/components/panels/GeomapPanel";
+import { DashboardGrid } from "../src/components/panels/DashboardGrid";
+import userEvent from "@testing-library/user-event";
+import i18n from "../src/i18n";
 import * as frames from "./fixtures/panel_frames";
 
 describe("frames", () => {
@@ -47,6 +50,9 @@ describe("reducers in the null-as-zero mode", () => {
     expect(calcValueOf("+Inf")).toBe(Number.POSITIVE_INFINITY);
     expect(calcValueOf(" Inf ")).toBe(Number.POSITIVE_INFINITY);
     expect(calcValueOf("-Inf")).toBe(Number.NEGATIVE_INFINITY);
+    expect(calcValueOf(" 4 ")).toBe(4);
+    expect(calcValueOf("")).toBeNull();
+    expect(calcValueOf("four")).toBeNull();
   });
 });
 
@@ -108,5 +114,27 @@ describe("geomap locator", () => {
     const plain = [{ name: "", fields: [{ name: "lat", type: "number" as const, values: [60.1] }, { name: "lon", type: "number" as const, values: [24.9] }] }];
     expect(markersOf(plain, { layers: [{ location: { mode: "geojson" } }] }).features.features).toHaveLength(0);
     expect(markersOf(plain, { layers: [{ location: { mode: "auto" } }] }).features.features).toHaveLength(1);
+  });
+});
+
+describe("dashboard rows", () => {
+  it("folds a row open and shut, a collapsed row starts shut and an untitled one is named", async () => {
+    await i18n.changeLanguage("en");
+    const panels = [
+      { id: 1, type: "row", title: "Traffic", gridPos: { x: 0, y: 0, w: 24, h: 1 } },
+      { id: 2, type: "stat", title: "Requests", gridPos: { x: 0, y: 1, w: 12, h: 4 } },
+      { id: 3, type: "row", title: "", collapsed: true, gridPos: { x: 0, y: 5, w: 24, h: 1 }, panels: [{ id: 4, type: "stat", title: "Errors", gridPos: { x: 0, y: 6, w: 12, h: 4 } }] },
+    ];
+    render(<DashboardGrid panels={panels} render={(panel) => <p>{`panel ${panel.title ?? ""}`}</p>} />);
+    const traffic = screen.getByRole("button", { name: "Traffic" });
+    expect(traffic).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("panel Requests")).toBeInTheDocument();
+    expect(screen.queryByText("panel Errors")).toBeNull();
+    await userEvent.click(traffic);
+    expect(screen.queryByText("panel Requests")).toBeNull();
+    const untitled = screen.getByRole("button", { name: i18n.t("dashboardView.untitled") });
+    expect(untitled).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(untitled);
+    expect(screen.getByText("panel Errors")).toBeInTheDocument();
   });
 });
