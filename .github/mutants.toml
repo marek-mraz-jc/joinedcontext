@@ -135,6 +135,11 @@ exclude_re = [
   # antares-notifier: page_sink is cfg(target_arch = "wasm32"); the native test run does not compile it, so its mutants
   # change nothing the native tests build (the browser build of antares-wasm registers and calls it).
   'crates/antares-notifier/src/http\.rs:\d+:\d+: replace .*page_sink::',
+  # antares-wasm browser.rs and opfs.rs are cfg(target_arch = "wasm32"), as are the globalThis reads in
+  # Broker::with_store_alias (ANTARES_PUBLIC_URL, ANTARES_TEMPORAL_INSTANCE_LIMIT, ANTARES_SWEEP_SECS): the native
+  # test run does not compile them, so their mutants change nothing it builds (the browser build runs them; T-7673).
+  'crates/antares-wasm/src/(browser|opfs)\.rs:',
+  'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
   # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.

@@ -296,6 +296,8 @@ async fn a_hidden_type_an_unknown_view_or_table_and_a_view_without_reads_are_404
         let (status, body) = send(&app, "GET", uri, "").await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {body}");
         assert!(!body.contains("hidden-secret"), "{body}");
+        // one fixed title for every 404, the scan's own included (the void tenant holds nothing)
+        assert!(body.contains("no such dataset"), "{uri}: {body}");
     }
 }
 
@@ -314,6 +316,19 @@ async fn the_policy_decides_every_read() {
         !body.contains("IN010049"),
         "a denied read served data: {body}"
     );
+}
+
+#[tokio::test]
+async fn a_view_hiding_the_type_is_404_before_the_policy_is_asked() {
+    let engine = Arc::new(NoReads::default());
+    let broker = TestBroker::new()
+        .await
+        .expect("broker")
+        .with_policy(engine.clone());
+    let app = fixture_with(broker).await;
+    engine.0.store(true, Ordering::SeqCst);
+    let (status, body) = send(&app, "GET", "/x/views/secret/jsonstat/v1/om7014rr", "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a denial would tell the view exists: {body}");
 }
 
 #[tokio::test]
