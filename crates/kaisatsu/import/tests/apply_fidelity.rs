@@ -455,16 +455,19 @@ async fn the_shipped_jc_realm_plans_as_the_golden() {
     let shipped: Value =
         serde_json::from_str(include_str!("../realms/jc-portal.json")).expect("jc-portal.json");
     let report = plan(&store, &shipped, ApplyMode::NoDelete).await;
-    let got = serde_json::to_string_pretty(&json!({
+    let got = json!({
         "changes": report.changes,
         "warnings": report.warnings,
-    }))
-    .unwrap()
-        + "\n";
+    });
+    // Compared as values: serde_json's key order depends on whether another workspace crate
+    // turns on `preserve_order`, so a string compare passes alone and fails in the CI build.
+    let golden: Value =
+        serde_json::from_str(include_str!("fixtures/jc-portal.plan.json")).expect("golden");
     assert_eq!(
         got,
-        include_str!("fixtures/jc-portal.plan.json"),
-        "plan:\n{got}"
+        golden,
+        "plan:\n{}",
+        serde_json::to_string_pretty(&got).unwrap()
     );
 
     // Applied, then planned again past the fast path, the shipped file changes nothing.
