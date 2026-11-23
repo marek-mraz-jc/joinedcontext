@@ -9,6 +9,8 @@ answers each further page itself. Without a container runtime the Bento cases sk
 """
 
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -32,26 +34,50 @@ HOLDS_ALL = ('meta held = this.map_each(e -> [e.superEvent.object.or(null), e.re
              '.flatten().filter(t -> t != null).join(" ")')
 
 
-def processors(first: str, page: str, held: list[str] | None = None) -> list[dict]:
+#: The register's answer for the one publisher of the recorded page, read on 2026-11-23.
+ORGANIZATION = Path(__file__).resolve().parent / "fixtures/helsinki/linked-events/organization-ahjo-u4804001010.json"
+#: The organisation list answered as the register does: the recorded organisation, else a 404.
+ORGANIZATIONS = ('root = if content().string() == "ahjo:u4804001010" { %s } else { throw("404 Not Found") }'
+                 % json.dumps(json.loads(ORGANIZATION.read_text())))
+
+
+def first_try(step: dict) -> dict:
+    return step.get("branch", {}).get("processors", [{}])[0].get("try", [{}])[0]
+
+
+def processors(first: str, page: str, held: list[str] | None = None, organizations: str = ORGANIZATIONS) -> list[dict]:
     """The mapping with its mode fixed by `first` (the step that reads the clock), every request
-    to the register answered by the mapping `page`, and the ask of the space which link targets
-    it holds answered by `held` (every target when None; an empty list is also a failed ask)."""
+    to the register answered by the mapping `page`, the ask of the space which link targets
+    it holds answered by `held` (every target when None; an empty list is also a failed ask), and
+    each organisation the runner's cache misses answered by `organizations`, logged as `asked`."""
     steps = yaml.safe_load(MAPPING.read_text())["pipeline"]["processors"]
     assert "now()" in steps[1]["mapping"], "the second step chooses the sweep by the clock"
     steps[1] = {"mapping": first}
-    asks = [i for i, step in enumerate(steps) if "try" in step.get("branch", {}).get("processors", [{}])[0]]
+    asks = [i for i, step in enumerate(steps) if "http" in first_try(step)]
     assert len(asks) == 1, "one ask of the space for the link targets"
     steps[asks[0]] = {"mapping": HOLDS_ALL if held is None else f"meta held = {json.dumps(' '.join(held))}"}
+    lookups = [step for step in steps if "cached" in first_try(step)]
+    assert len(lookups) == 1, "one lookup of the publisher's name"
+    cached = first_try(lookups[0])["cached"]
+    http = cached["processors"][0]["http"]
+    assert http["url"] == "https://api.hel.fi/linkedevents/v1/organization/${! content() }/", http["url"]
+    assert cached["cache"] == "linked_events_orgs" and cached["ttl"] == "24h"
+    cached["processors"][0:1] = [{"log": {"level": "INFO", "message": "asked ${! content() }"}}, {"mapping": organizations}]
     for step in steps:
-        if "branch" in step:
+        if "branch" in step and step not in lookups:
             assert step["branch"]["processors"][-1]["http"]["url"].startswith("https://api.hel.fi/linkedevents/v1/event/?")
             step["branch"]["processors"] = [{"mapping": page}]
     return steps
 
 
-def run(document: bytes, first: str, page: str = "root = {}", held: list[str] | None = None) -> tuple[list[dict], str]:
+def run(document: bytes, first: str, page: str = "root = {}", held: list[str] | None = None,
+        organizations: str = ORGANIZATIONS) -> tuple[list[dict], str]:
+    # The runner's cache under the name the mapping writes (the Portal prefixes it with the project).
+    caches = [{**cache, "label": cache["label"].split("__", 1)[1]}
+              for cache in yaml.safe_load(open_data.RESOURCES.read_text())["cache_resources"]]
     config = {"input": {"stdin": {"scanner": {"to_the_end": {}}}},
-              "pipeline": {"processors": processors(first, page, held)},
+              "pipeline": {"processors": processors(first, page, held, organizations)},
+              "cache_resources": caches,
               "output": {"stdout": {"codec": "lines"}}, "logger": {"level": "info", "format": "logfmt"}}
     result = subprocess.run(
         ["docker", "run", "--rm", "-i", "-e", "JC_ORG_DOMAIN=hel.fi", "-e", "JC_SPACE=helsinki",
@@ -93,6 +119,69 @@ def test_the_recorded_page_maps_to_valid_events_and_drops_each_bad_row_by_reason
     assert museum["thematic"]["value"][0] == "everyday"
     # The publisher is the source a per-source count reads back (T-5666).
     assert museum["dataProvider"] == {"type": "Property", "value": "ahjo:u4804001010"}
+    # The record names no provider, so its publisher runs it: the id resolved to its name (T-7567).
+    assert museum["organizer"] == {"type": "Property", "value": {"name": "Kaupunginkirjasto"}}
+    assert "organizer" not in dance, "a publisher that is no organization id names no organizer"
+
+
+def with_rows(*rows: dict) -> bytes:
+    """The recorded page with its rows replaced by the recorded museum event changed by `rows`."""
+    page = json.loads(FIXTURE.read_text())
+    museum = page["data"][1]
+    page["data"] = [{**museum, **row} for row in rows]
+    return json.dumps(page).encode()
+
+
+@requires_docker
+def test_the_organizer_is_the_events_provider_else_its_publishers_name_and_never_a_contact():
+    """T-7567: Linked Events names a `provider` only when it is not the publisher, so the provider
+    wins, in Finnish, else English or Swedish; an e-mail or a phone typed into it is cut; an event
+    without one is its publisher's, by the name the register gives that id; an id the register
+    does not answer leaves the event without an organizer, and the event is written all the same."""
+    document = with_rows(
+        {"id": "hkm:p1", "provider": {"fi": "  Tekniikan   museo ", "en": "Museum of Technology"}},
+        {"id": "hkm:p2", "provider": {"fi": "", "sv": "Amos Rex"}},
+        {"id": "hkm:p3", "provider": {"fi": "Kerho Ry, info@kerho.fi, 040 123 4567"}},
+        {"id": "hkm:p4", "provider": None},
+        {"id": "hkm:p5", "provider": {"fi": None}, "publisher": "ytj:0586977-6"},
+    )
+    events, log = run(document, FULL)
+    names = {e["id"].rsplit(":", 1)[1]: e.get("organizer", {}).get("value", {}).get("name") for e in events}
+    assert names == {"hkm-p1": "Tekniikan museo", "hkm-p2": "Amos Rex", "hkm-p3": "Kerho Ry",
+                     "hkm-p4": "Kaupunginkirjasto", "hkm-p5": None}, names
+    for entity in events:
+        assert not open_data.schema_errors(HELSINKI / "helsinki.v1.schema.json", entity), entity
+    # Only the events without a provider ask for their publisher.
+    assert sorted(re.findall(r"asked ([^ \"]+)", log)) == ["ahjo:u4804001010", "ytj:0586977-6"], log
+
+
+@requires_docker
+def test_the_runner_asks_the_register_once_a_day_per_publisher_and_again_after_a_failure():
+    """T-7567: the name of a publisher id comes from the runner's cache after the first ask, so a
+    sweep of thousands of events asks once per publisher; a failed ask is not kept, so the next
+    event (and the next run) asks again instead of losing the name for a day."""
+    rows = [{"id": f"hkm:c{i}", "provider": None} for i in range(4)]
+    events, log = run(with_rows(*rows), FULL)
+    assert {e["organizer"]["value"]["name"] for e in events} == {"Kaupunginkirjasto"}
+    assert re.findall(r"asked ([^ \"]+)", log) == ["ahjo:u4804001010"], log
+    events, log = run(with_rows(*rows), FULL, organizations='root = throw("503 Service Unavailable")')
+    assert len(events) == 4 and not any("organizer" in e for e in events)
+    assert re.findall(r"asked ([^ \"]+)", log) == ["ahjo:u4804001010"] * 4, log
+
+
+#: What the mapping writes for the recorded page, organizer included (T-7567). Regenerate after a
+#: deliberate mapping change with `UPDATE_GOLDEN=1 pytest tests/test_helsinki_events.py` and read
+#: the diff.
+GOLDEN = Path(__file__).resolve().parent / "fixtures/helsinki/linked-events/upcoming-page.events.json"
+
+
+@requires_docker
+def test_the_recorded_page_writes_the_golden_events():
+    events, _ = run(FIXTURE.read_bytes(), FULL)
+    written = json.dumps(sorted(events, key=lambda e: e["id"]), indent=1, ensure_ascii=False, sort_keys=True) + "\n"
+    if os.environ.get("UPDATE_GOLDEN") == "1":
+        GOLDEN.write_text(written)
+    assert written == GOLDEN.read_text(), "the mapping's output changed: rerun with UPDATE_GOLDEN=1 and read the diff"
 
 
 @requires_docker

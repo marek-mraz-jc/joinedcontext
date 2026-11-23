@@ -80,6 +80,12 @@ jobs:
             -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
             && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
             && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+      # JetStream for the live-NATS tests of antares-bus and the broker (a service cannot pass -js);
+      # nats 2.15.3 of 2026-11-11.
+      - if: matrix.ws == 'antares'
+        run: |
+          docker run -d --name nats -p 4222:4222 nats@sha256:4b83414183aa5fb87cd164962c47eaffd214e84668dc4fa4f1d4c44a3e765ee8 -js
+          echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
       # The Portal's instrumented lib test binary outgrows the runner's memory without swap (ci.yml portal-test).
       - if: matrix.ws == 'portal'
         run: |
@@ -269,6 +275,12 @@ jobs:
             -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
             && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
             && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+      # JetStream for the live-NATS tests of antares-bus and the broker (a service cannot pass -js);
+      # nats 2.15.3 of 2026-11-11.
+      - if: needs.mutants-plan.outputs.ws == 'antares'
+        run: |
+          docker run -d --name nats -p 4222:4222 nats@sha256:4b83414183aa5fb87cd164962c47eaffd214e84668dc4fa4f1d4c44a3e765ee8 -js
+          echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
       - if: needs.mutants-plan.outputs.ws == 'portal'
         run: |
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal

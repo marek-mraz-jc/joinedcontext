@@ -129,6 +129,11 @@ fn storage(e: sqlx::Error) -> KaisatsuError {
     KaisatsuError::Storage(format!("postgres: {e}"))
 }
 
+/// A boot check whose catalog query failed, naming the check.
+fn boot_query_failed(check: &'static str) -> impl FnOnce(sqlx::Error) -> KaisatsuError {
+    move |e| KaisatsuError::Storage(format!("boot check {check} query failed: {e}"))
+}
+
 fn encode_err(e: serde_json::Error) -> KaisatsuError {
     KaisatsuError::Storage(format!("cannot encode record: {e}"))
 }
@@ -1568,7 +1573,8 @@ impl Store for PgStore {
                 }
             }
             jc_audit::commit(tx).await.map_err(storage)?;
-            first.ok_or_else(|| KaisatsuError::Storage("group upsert wrote nothing".into()))
+            // the stack starts with the group itself, so `first` is always set here
+            first.ok_or(KaisatsuError::Storage("group upsert wrote nothing".into()))
         })
     }
 
@@ -4098,22 +4104,42 @@ impl Store for PgStore {
         &'a self,
         realm_id: &'a str,
         limit: usize,
+        lease: Duration,
+        max_attempts: u32,
     ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
         Box::pin(async move {
             let cap = i64::try_from(limit.clamp(1, 50)).unwrap_or(50);
+            let max = i32::try_from(max_attempts).unwrap_or(i32::MAX);
             let mut tx = self.begin(realm_id, None).await?;
+            // A claim whose lease lapsed at its last attempt is not sent a further time.
+            sqlx::query(
+                "UPDATE kaisatsu.email_outbox
+                 SET status = 'failed', last_error = $3,
+                     doc = doc || jsonb_build_object('status', 'failed', 'lastError', $3::text)
+                 WHERE realm_id = $1 AND status = 'sending' AND next_attempt_at <= now()
+                   AND attempts >= $2",
+            )
+            .bind(realm_id)
+            .bind(max)
+            .bind(OUTBOX_LEASE_LAPSED)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            // `sending` rows past `next_attempt_at` are claims whose lease lapsed.
             let docs: Vec<Value> = sqlx::query_scalar(
                 "UPDATE kaisatsu.email_outbox
                  SET status = 'sending',
                      attempts = attempts + 1,
-                     doc = jsonb_set(
-                         jsonb_set(doc, '{status}', '\"sending\"'::jsonb),
-                         '{attempts}',
-                         to_jsonb(attempts + 1)
+                     next_attempt_at = now() + make_interval(secs => $3),
+                     doc = doc || jsonb_build_object(
+                         'status', 'sending',
+                         'attempts', attempts + 1,
+                         'nextAttemptAt', now() + make_interval(secs => $3)
                      )
                  WHERE (realm_id, id) IN (
                      SELECT realm_id, id FROM kaisatsu.email_outbox
-                     WHERE realm_id = $1 AND status = 'pending' AND next_attempt_at <= now()
+                     WHERE realm_id = $1 AND status IN ('pending', 'sending')
+                       AND next_attempt_at <= now()
                      ORDER BY seq
                      LIMIT $2
                      FOR UPDATE SKIP LOCKED
@@ -4122,6 +4148,7 @@ impl Store for PgStore {
             )
             .bind(realm_id)
             .bind(cap)
+            .bind(lease.as_secs_f64())
             .fetch_all(&mut *tx)
             .await
             .map_err(storage)?;
@@ -4132,57 +4159,62 @@ impl Store for PgStore {
 
     fn complete_outbox_row<'a>(
         &'a self,
-        realm_id: &'a str,
-        id: &'a str,
+        claimed: &'a EmailOutboxRecord,
         sent: bool,
         error: Option<String>,
         next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
-    ) -> StoreFuture<'a, ()> {
+    ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
+            let (realm_id, id) = (claimed.realm_id.as_str(), claimed.id.as_str());
             let mut tx = self.begin(realm_id, None).await?;
+            // Only the claim that is still current: a lapsed one was claimed again, and the
+            // later claimer's outcome stands.
             let doc: Option<Value> = sqlx::query_scalar(
-                "SELECT doc FROM kaisatsu.email_outbox WHERE realm_id = $1 AND id = $2 FOR UPDATE",
+                "SELECT doc FROM kaisatsu.email_outbox
+                 WHERE realm_id = $1 AND id = $2 AND status = 'sending' AND attempts = $3
+                 FOR UPDATE",
             )
             .bind(realm_id)
             .bind(id)
+            .bind(i32::try_from(claimed.attempts).unwrap_or(i32::MAX))
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
-            if let Some(doc) = doc {
-                let mut rec: EmailOutboxRecord = from_doc(doc)?;
-                if sent {
-                    rec.status = "sent".into();
-                    rec.sent_at = Some(TimestampTz::now());
-                    rec.last_error = None;
+            let Some(doc) = doc else {
+                return Ok(false);
+            };
+            let mut rec: EmailOutboxRecord = from_doc(doc)?;
+            if sent {
+                rec.status = "sent".into();
+                rec.sent_at = Some(TimestampTz::now());
+                rec.last_error = None;
+            } else {
+                rec.last_error = error;
+                if rec.attempts >= max_attempts {
+                    rec.status = "failed".into();
                 } else {
-                    rec.last_error = error.clone();
-                    if rec.attempts >= max_attempts {
-                        rec.status = "failed".into();
-                    } else {
-                        rec.status = "pending".into();
-                        rec.next_attempt_at = next_attempt_at.unwrap_or_else(|| {
-                            TimestampTz::now() + jiff::SignedDuration::from_secs(5)
-                        });
-                    }
+                    rec.status = "pending".into();
+                    rec.next_attempt_at = next_attempt_at
+                        .unwrap_or_else(|| TimestampTz::now() + jiff::SignedDuration::from_secs(5));
                 }
-                sqlx::query(
-                    "UPDATE kaisatsu.email_outbox
-                     SET status = $3, last_error = $4, next_attempt_at = $5, doc = $6
-                     WHERE realm_id = $1 AND id = $2",
-                )
-                .bind(realm_id)
-                .bind(id)
-                .bind(&rec.status)
-                .bind(&rec.last_error)
-                .bind(rec.next_attempt_at)
-                .bind(to_doc(&rec)?)
-                .execute(&mut *tx)
-                .await
-                .map_err(storage)?;
             }
+            sqlx::query(
+                "UPDATE kaisatsu.email_outbox
+                 SET status = $3, last_error = $4, next_attempt_at = $5, doc = $6
+                 WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(realm_id)
+            .bind(id)
+            .bind(&rec.status)
+            .bind(&rec.last_error)
+            .bind(rec.next_attempt_at)
+            .bind(to_doc(&rec)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
             jc_audit::commit(tx).await.map_err(storage)?;
-            Ok(())
+            Ok(true)
         })
     }
 
@@ -4441,7 +4473,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check ownership query failed: {e}")))?;
+    .map_err(boot_query_failed("ownership"))?;
 
     if owned_tables > 0 {
         return Err(KaisatsuError::Storage(format!(
@@ -4456,7 +4488,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check grant query failed: {e}")))?;
+    .map_err(boot_query_failed("grant"))?;
 
     if external_grants > 0 {
         return Err(KaisatsuError::Storage(format!(
@@ -4470,7 +4502,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check schema query failed: {e}")))?;
+    .map_err(boot_query_failed("schema"))?;
     if tables == 0 {
         return Err(KaisatsuError::Storage(
             "boot check refused: schema kaisatsu has no tables; run `kaisatsu migrate` first (W2)"
@@ -4489,7 +4521,7 @@ pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| KaisatsuError::Storage(format!("boot check RLS query failed: {e}")))?;
+    .map_err(boot_query_failed("RLS"))?;
 
     if !unforced.is_empty() {
         return Err(KaisatsuError::Storage(format!(

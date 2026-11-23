@@ -189,7 +189,60 @@ async fn an_autonomous_connector_merges_its_owners_change() {
     );
 }
 
-/// The audit row on the activity feed names the person and the connector.
+#[derive(Clone, Default)]
+struct Log(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Log {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("log").extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// T-7542 (S2-28): what the Portal logs and puts on the feed of a merge and of a refusal carries
+/// the person's id, and no username, address or group name.
+#[tokio::test]
+async fn logs_and_activity_carry_ids_and_no_name() {
+    let log = Log::default();
+    let writer = log.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish(),
+    );
+    let mut written = String::new();
+    for kind in ["DataModel", "Policy"] {
+        let (_server, state) = forge(kind).await;
+        let mut who = through_connector();
+        who.groups = vec!["ovzdusie-stewards".into()];
+        let by = ApprovedBy::Connector(CONNECTOR.into());
+        let done = approve_change_for(&state, &who, PROJECT, "chg-00000001", None, by).await;
+        assert_eq!(done.is_ok(), kind == "DataModel", "{kind}");
+        let filter = joinedcontext_portal::activity::ActivityFilter {
+            limit: 10,
+            ..Default::default()
+        };
+        let feed = state
+            .activity
+            .list(PROJECT, &filter)
+            .await
+            .expect("activity");
+        written += &serde_json::to_string(&feed.items).expect("the feed");
+    }
+    written += &String::from_utf8(log.0.lock().expect("log").clone()).expect("utf-8");
+    assert!(written.contains("sub-jana"), "{written}");
+    for name in ["jana.kovacova", "ovzdusie-stewards"] {
+        assert!(!written.contains(name), "{name} in {written}");
+    }
+}
+
+/// The audit row on the activity feed names the person by id and the connector.
 #[tokio::test]
 async fn the_activity_row_names_the_connector() {
     let (_server, state) = forge("DataModel").await;
@@ -213,7 +266,7 @@ async fn the_activity_row_names_the_connector() {
     assert_eq!(row.details["viaConnector"], CONNECTOR);
     assert!(row
         .summary
-        .contains(&format!("{PROPOSER} via connector {CONNECTOR}")));
+        .contains(&format!("sub-jana via connector {CONNECTOR}")));
 }
 
 /// A change granting access waits for a person's click, autonomous or not.

@@ -217,7 +217,7 @@ pub(crate) async fn delete_captured(
         .purge(&project, &name)
         .await
         .map_err(unavailable)?;
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let event = crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),
         project: project.clone(),

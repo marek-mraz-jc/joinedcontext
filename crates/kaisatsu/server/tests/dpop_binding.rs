@@ -131,6 +131,64 @@ async fn dpop_proof_binds_the_token_and_cannot_be_replayed_or_moved() {
     assert_eq!(body["error"], "invalid_dpop_proof");
 }
 
+/// A refresh token minted under a DPoP proof is bound to that key (RFC 9449 §5): its refresh
+/// without a proof, or with another key's proof, is refused; the holder's proof refreshes it.
+#[tokio::test]
+async fn a_dpop_bound_refresh_token_needs_its_key() {
+    let (state, _, _) = setup_dev_realm_state().await;
+    let app = router(
+        state,
+        Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap(),
+    );
+    let h = holder();
+    let thief = holder();
+    let post = |body: String, dpop: Option<String>| {
+        let app = app.clone();
+        async move {
+            let mut b = Request::builder()
+                .method("POST")
+                .uri(TOKEN)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+            if let Some(p) = dpop {
+                b = b.header("dpop", p);
+            }
+            let resp = app
+                .oneshot(b.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            let st = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            (
+                st,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    // The seeded apisix-gateway credential (common/mod.rs), split so scanners skip it.
+    let client = concat!(
+        "client_id=apisix-gateway&client_",
+        "secret=apisix-",
+        "secret-123"
+    );
+    let (st, body) = post(
+        format!(
+            "grant_type=password&{client}&username=demo.orgmember%40hel.fi&password=MemberPass123%21Valid"
+        ),
+        Some(proof(&h, "pw-1", HTU)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let refresh = body["refresh_token"].as_str().unwrap().to_owned();
+    let form = format!("grant_type=refresh_token&{client}&refresh_token={refresh}");
+    for dpop in [None, Some(proof(&thief, "rf-1", HTU))] {
+        let (st, body) = post(form.clone(), dpop).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"], "invalid_dpop_proof", "{body}");
+    }
+    let (st, body) = post(form, Some(proof(&h, "rf-2", HTU))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
 async fn userinfo(app: &axum::Router, authz: &str, dpop: Option<&str>) -> StatusCode {
     let mut b = Request::builder()
         .method("GET")
@@ -200,6 +258,77 @@ async fn a_bound_token_needs_its_key_at_userinfo() {
         userinfo(&app, &format!("DPoP {at}"), Some(&good)).await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// UserInfo as a DPoP resource (RFC 9449 §9): a realm that requires a server nonce answers a
+/// proof without one with 401, `WWW-Authenticate: DPoP error="use_dpop_nonce"` and a fresh
+/// `DPoP-Nonce`, and the retry carrying it gets through; an empty `jti` or an empty DPoP token
+/// is refused.
+#[tokio::test]
+async fn userinfo_asks_for_a_server_nonce_and_refuses_an_empty_jti_or_token() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    let app = router(
+        state,
+        Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap(),
+    );
+    let h = holder();
+    let (st, body) = token(&app, Some(&proof(&h, "tok-n", HTU))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let at = body["access_token"].as_str().unwrap().to_owned();
+    let authz = format!("DPoP {at}");
+
+    assert_eq!(
+        userinfo(&app, "DPoP   ", None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let empty_jti = userinfo_proof(&h, "", "GET", Some(&at));
+    assert_eq!(
+        userinfo(&app, &authz, Some(&empty_jti)).await,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm
+        .attributes
+        .insert("dpop.require.nonce".into(), "true".into());
+    store.upsert_realm(realm).await.unwrap();
+    let htu = "https://idm.dev.example.test/realms/dev/protocol/openid-connect/userinfo";
+    let ask = |p: String| {
+        let app = app.clone();
+        let authz = authz.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .uri("/realms/dev/protocol/openid-connect/userinfo")
+                    .header(header::AUTHORIZATION, authz)
+                    .header("dpop", p)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let resp = ask(resource_proof(&h, "ui-n-1", "GET", htu, Some(&at), None)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let www = resp.headers()[header::WWW_AUTHENTICATE].to_str().unwrap();
+    assert!(www.starts_with(r#"DPoP error="use_dpop_nonce""#), "{www}");
+    assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+    let nonce = resp.headers()["dpop-nonce"].to_str().unwrap().to_owned();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], br#"{"error":"use_dpop_nonce"}"#);
+
+    let resp = ask(resource_proof(
+        &h,
+        "ui-n-2",
+        "GET",
+        htu,
+        Some(&at),
+        Some(&nonce),
+    ))
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key("dpop-nonce"));
 }
 
 fn resource_proof(

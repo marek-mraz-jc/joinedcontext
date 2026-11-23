@@ -195,7 +195,7 @@ export function PageFailed({
       {kind === "forbidden" ? <span className="mt-1 block">{t("app.error.forbiddenHint")}</span> : null}
       {hint ? <span className="mt-1 block">{hint}</span> : null}
       {slug && !anonymous ? (
-        <a className="mt-1 block underline" href={problemPage(slug)} target="_blank" rel="noreferrer">
+        <a className="mt-1 block touch-target underline" href={problemPage(slug)} target="_blank" rel="noreferrer">
           {t("app.error.problemPage")}
         </a>
       ) : null}

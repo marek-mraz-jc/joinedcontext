@@ -23,10 +23,15 @@ on:
     branches: [main, "jc-*", "agent/**", "ship-proof/**"]
   workflow_dispatch:
 permissions: { contents: read }
-# A superseded branch run is cancelled; a main, jc-portal-1 (the merge branch) or ship-proof run never
-# is: each merged head gets its own verdict and writes the cache.
+# A superseded branch run is cancelled; a main or ship-proof run never is: each head gets its own
+# verdict. jc-portal-1 (the merge branch) shares one group and never cancels the running run, so
+# GitHub keeps the running run and only the newest pending one (T-7691): a per-sha group queued a
+# full run (~33 jobs) per train, and with the account's ~20 job slots the oldest pending trunk run
+# sat 75 min without a job while newer runs took the free runners. A merge whose pending run was
+# replaced takes the verdict of the nearest descendant with a completed run (ff-main.sh, tasks/ci);
+# the run that finishes writes the cache.
 concurrency:
-  group: "ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref }}"
+  group: "ci-${{ github.ref == 'refs/heads/jc-portal-1' && 'jc-portal-1' || ((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) && github.sha || github.ref) }}"
   cancel-in-progress: ${{ !(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jc-portal-1' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}
 env:
   CARGO_TERM_COLOR: always

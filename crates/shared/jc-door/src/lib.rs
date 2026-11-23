@@ -252,5 +252,7 @@ pub async fn fetch_token(
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "issuer")]
+pub mod issuer;
 #[cfg(feature = "testing")]
 pub mod testing;

@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * My Connector's Calls
-         * @description Every call through the connector, newest first, at most 200 of the last 30 days: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
+         * @description Every call through the connector, newest first, the latest 200 the installation still keeps: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
          */
         get: operations["connector_activity"];
         put?: never;
@@ -10760,7 +10760,7 @@ export interface components {
             target?: string | null;
             /** @description The tool, or the MCP method of a call that names none. */
             tool: string;
-            /** @description `allowed`, `refused: <why>` or `error`. */
+            /** @description `allowed`, `refused: <why>`, `error`, or `started` where the outcome was not recorded. */
             verdict: string;
         };
         ConnectorCalls: {
@@ -15781,7 +15781,7 @@ export interface components {
             /** Format: int32 */
             keepDays: number;
             kind: string;
-            /** @description RFC 3339; the start of the last scheduled or manual run. */
+            /** @description RFC 3339; the end of the last scheduled or manual run that succeeded. */
             lastRunAt?: string | null;
             organization: string;
             /** @description The folder of the bucket every object of this backup lands under, e.g. `jc/`. */
@@ -19609,7 +19609,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No target, or its bucket's versioning is off */
+            /** @description No target, its bucket's versioning is off, or another run of this backup is in progress */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20073,7 +20073,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No target or recipients, or its bucket's versioning is off */
+            /** @description No target or recipients, its bucket's versioning is off, or another run of this backup is in progress */
             409: {
                 headers: {
                     [name: string]: unknown;

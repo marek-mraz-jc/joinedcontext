@@ -4,7 +4,7 @@
 
 use crate::{constant_time_str_eq, sha256_hex};
 use hmac::{Hmac, KeyInit, Mac};
-use kaisatsu_core::{CredentialRecord, KaisatsuError, Result};
+use kaisatsu_core::{CredentialRecord, Result};
 use rand::Rng as _;
 use serde::Deserialize;
 use sha1::Sha1;
@@ -43,19 +43,19 @@ fn compute_hotp_at(secret_bytes: &[u8], counter: u64, digits: u32, alg: &str) ->
     let hash_bytes: Vec<u8> = match alg {
         "HmacSHA1" | "SHA1" => {
             let mut mac = Hmac::<Sha1>::new_from_slice(secret_bytes)
-                .map_err(|_| KaisatsuError::Crypto("invalid TOTP key".into()))?;
+                .map_err(crate::crypto_err("invalid TOTP key"))?;
             mac.update(&msg);
             mac.finalize().into_bytes().to_vec()
         }
         "HmacSHA512" | "SHA512" => {
             let mut mac = Hmac::<Sha512>::new_from_slice(secret_bytes)
-                .map_err(|_| KaisatsuError::Crypto("invalid TOTP key".into()))?;
+                .map_err(crate::crypto_err("invalid TOTP key"))?;
             mac.update(&msg);
             mac.finalize().into_bytes().to_vec()
         }
         _ => {
             let mut mac = Hmac::<Sha256>::new_from_slice(secret_bytes)
-                .map_err(|_| KaisatsuError::Crypto("invalid TOTP key".into()))?;
+                .map_err(crate::crypto_err("invalid TOTP key"))?;
             mac.update(&msg);
             mac.finalize().into_bytes().to_vec()
         }
@@ -74,7 +74,7 @@ fn extract_secret_and_meta(cred: &CredentialRecord) -> Result<(Vec<u8>, OtpCrede
     let raw_secret = if cred.secret_data.trim_start().starts_with('{') {
         serde_json::from_str::<OtpSecretData>(&cred.secret_data)
             .map(|s| s.value)
-            .map_err(|_| KaisatsuError::Crypto("invalid OTP secretData JSON".into()))?
+            .map_err(crate::crypto_err("invalid OTP secretData JSON"))?
     } else {
         cred.secret_data.clone()
     };
@@ -87,12 +87,12 @@ fn extract_secret_and_meta(cred: &CredentialRecord) -> Result<(Vec<u8>, OtpCrede
         }
     } else {
         serde_json::from_str(&cred.credential_data)
-            .map_err(|_| KaisatsuError::Crypto("invalid OTP credentialData JSON".into()))?
+            .map_err(crate::crypto_err("invalid OTP credentialData JSON"))?
     };
     // RI note: "Keycloak keeps an OTP secret as the text itself and hashes its UTF-8 bytes"
     let bytes = if meta.secret_encoding.as_deref() == Some("BASE32") {
         let secret = totp_rs::Secret::try_from_base32(raw_secret.trim())
-            .map_err(|_| KaisatsuError::Crypto("invalid BASE32 OTP secret".into()))?;
+            .map_err(crate::crypto_err("invalid BASE32 OTP secret"))?;
         AsRef::<[u8]>::as_ref(&secret).to_vec()
     } else {
         raw_secret.into_bytes()

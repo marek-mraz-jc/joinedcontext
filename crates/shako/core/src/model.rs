@@ -500,3 +500,11 @@ pub struct OutboxEvent {
     pub created_at: TimestampTz,
     pub dispatched_at: Option<TimestampTz>,
 }
+
+/// An outbox event a dispatcher holds ([`crate::Store::claim_outbox`]), with how many earlier
+/// passes failed to deliver it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboxClaim {
+    pub event: OutboxEvent,
+    pub attempts: u32,
+}

@@ -17,9 +17,16 @@ use kaisatsu_core::{EmailOutboxRecord, KaisatsuError, Result, Store};
 use kaisatsu_crypto::{Kek, sign_jwt};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 pub const DEFAULT_OUTBOX_MAX_ATTEMPTS: u32 = 5;
 pub const MAX_OUTBOX_BATCH: usize = 50;
+/// The longest one row's link minting and send may take before it counts as failed.
+pub const OUTBOX_SEND_DEADLINE: Duration = Duration::from_secs(60);
+/// How long a claimed row is this dispatcher's: one send's deadline and a margin to record the
+/// outcome. After it another replica claims the row again, so a mail whose sender died goes out
+/// within this time (at least once: the same `action_jti`, so the links of both mails are one).
+pub const OUTBOX_CLAIM_LEASE: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedMail {
@@ -145,6 +152,12 @@ pub struct OutboxDispatcher {
     max_attempts: u32,
 }
 
+/// Why one row was not sent, and when to try it again.
+struct Failure {
+    detail: String,
+    retry_in: SignedDuration,
+}
+
 impl OutboxDispatcher {
     #[must_use]
     pub fn new(store: Arc<dyn Store>, kek: Kek, sender: Arc<dyn MailSender>) -> Self {
@@ -203,90 +216,107 @@ impl OutboxDispatcher {
         ))
     }
 
-    /// Processes up to `batch_size` (capped at 50) due outbox rows for `realm_id`.
+    /// Processes up to `batch_size` (capped at 50) due outbox rows for `realm_id`, one claim at a
+    /// time, so each row's lease covers its own send only.
     pub async fn dispatch_realm_batch(
         &self,
         mount: &Mount,
         realm_id: &str,
         batch_size: usize,
     ) -> Result<usize> {
-        let claimed = self
-            .store
-            .claim_outbox_batch(realm_id, batch_size.clamp(1, MAX_OUTBOX_BATCH))
-            .await?;
         let mut sent_count = 0usize;
-        // Keycloak's `{2}`: the realm's display name, else its name.
-        let realm_name = if claimed.is_empty() {
-            String::new()
-        } else {
-            self.store
-                .list_realms()
+        let mut realm_name = None;
+        for _ in 0..batch_size.clamp(1, MAX_OUTBOX_BATCH) {
+            let Some(row) = self
+                .store
+                .claim_outbox_batch(realm_id, 1, OUTBOX_CLAIM_LEASE, self.max_attempts)
                 .await?
-                .into_iter()
-                .find(|r| r.id == realm_id)
-                .map(|r| {
-                    if r.display_name.trim().is_empty() {
-                        r.realm
-                    } else {
-                        r.display_name
-                    }
-                })
-                .unwrap_or_default()
-        };
-        for row in claimed {
-            let link = match self.mint_link_for_row(mount, &row).await {
-                Ok(l) => l,
-                Err(e) => {
-                    let _ = self
-                        .store
-                        .complete_outbox_row(
-                            &row.realm_id,
-                            &row.id,
-                            false,
-                            Some(e.public_detail()),
-                            Some(TimestampTz::now() + SignedDuration::from_secs(10)),
-                            self.max_attempts,
-                        )
-                        .await;
-                    continue;
-                }
+                .pop()
+            else {
+                break;
             };
-            let (subject, body) =
-                action_mail(&Bundle::for_locale(&row.locale), &row, &realm_name, &link);
-            match self
-                .sender
-                .send_mail(&row.realm_id, &row.to_address, &subject, &body, &link)
-                .await
-            {
+            let delivery = tokio::time::timeout(
+                OUTBOX_SEND_DEADLINE,
+                self.deliver(mount, &row, &mut realm_name),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(Failure {
+                    detail: "the mail server did not answer in time".into(),
+                    retry_in: SignedDuration::from_secs(10),
+                })
+            });
+            let completed = match delivery {
                 Ok(()) => {
-                    self.store
-                        .complete_outbox_row(
-                            &row.realm_id,
-                            &row.id,
-                            true,
-                            None,
-                            None,
-                            self.max_attempts,
-                        )
+                    let done = self
+                        .store
+                        .complete_outbox_row(&row, true, None, None, self.max_attempts)
                         .await?;
                     sent_count += 1;
+                    done
                 }
-                Err(e) => {
-                    let backoff_secs = i64::from(row.attempts.min(6)) * 5;
+                Err(f) => {
                     self.store
                         .complete_outbox_row(
-                            &row.realm_id,
-                            &row.id,
+                            &row,
                             false,
-                            Some(e.public_detail()),
-                            Some(TimestampTz::now() + SignedDuration::from_secs(backoff_secs)),
+                            Some(f.detail),
+                            Some(TimestampTz::now() + f.retry_in),
                             self.max_attempts,
                         )
-                        .await?;
+                        .await?
                 }
+            };
+            if !completed {
+                tracing::warn!(row = %row.id, "kaisatsu outbox: the claim lapsed before the send was recorded; another dispatcher holds the row");
             }
         }
         Ok(sent_count)
+    }
+
+    /// Keycloak's `{2}`: the realm's display name, else its name.
+    async fn realm_display_name(&self, realm_id: &str) -> Result<String> {
+        Ok(self
+            .store
+            .list_realms()
+            .await?
+            .into_iter()
+            .find(|r| r.id == realm_id)
+            .map(|r| {
+                if r.display_name.trim().is_empty() {
+                    r.realm
+                } else {
+                    r.display_name
+                }
+            })
+            .unwrap_or_default())
+    }
+
+    /// Mints `row`'s link and sends its mail; a failure says when to try again. `realm_name` is
+    /// looked up once per batch, by the first row that needs it.
+    async fn deliver(
+        &self,
+        mount: &Mount,
+        row: &EmailOutboxRecord,
+        realm_name: &mut Option<String>,
+    ) -> std::result::Result<(), Failure> {
+        let soon = |e: KaisatsuError| Failure {
+            detail: e.public_detail(),
+            retry_in: SignedDuration::from_secs(10),
+        };
+        let realm_name = match realm_name {
+            Some(name) => name,
+            None => realm_name.insert(self.realm_display_name(&row.realm_id).await.map_err(soon)?),
+        };
+        let link = self.mint_link_for_row(mount, row).await.map_err(soon)?;
+        let (subject, body) = action_mail(&Bundle::for_locale(&row.locale), row, realm_name, &link);
+        self.sender
+            .send_mail(&row.realm_id, &row.to_address, &subject, &body, &link)
+            .await
+            .map_err(|e| Failure {
+                detail: e.public_detail(),
+                retry_in: SignedDuration::from_secs(i64::from(row.attempts.min(6)) * 5),
+            })
     }
 
     /// One dispatch pass over every realm: up to [`MAX_OUTBOX_BATCH`] due rows each (K9). A

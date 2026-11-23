@@ -173,8 +173,10 @@ impl S3Conn {
         }
         let mut map = HeaderMap::new();
         for (k, v) in headers {
-            let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|_| CoreError::config(format!("aws_s3: '{k}' is not a header name")))?;
+            // The names are fixed or checked by the output: the else arm is never taken.
+            let Ok(name) = HeaderName::from_bytes(k.as_bytes()) else {
+                return Err(CoreError::config(format!("aws_s3: bad header '{k}'")));
+            };
             let value = HeaderValue::from_str(&v).map_err(|_| {
                 CoreError::config(format!("aws_s3: header {k} has a value HTTP cannot carry"))
             })?;

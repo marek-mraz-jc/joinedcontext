@@ -4,7 +4,7 @@
 //! spooling bodies and packs to disk, running `gix` on `spawn_blocking` under a memory permit
 //! and streaming 64 KiB chunks to the response body (Contract S3, S4, S22, `crate::work`).
 
-use crate::outbox::{build_push_webhook_payload, emit_and_dispatch_event};
+use crate::outbox::{build_push_webhook_payload, dispatch_logged, record_event};
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, resolve_and_authorize_repo,
 };
@@ -303,6 +303,7 @@ async fn receive_push(
     if !outcome.updated_refs.is_empty() {
         crate::service::record_repo_size(state, &mut repo, &disk_path).await;
 
+        let mut unrecorded = None;
         for cmd in &outcome.updated_refs {
             let payload = build_push_webhook_payload(
                 &repo,
@@ -319,11 +320,19 @@ async fn receive_push(
                 cmd.new_oid,
                 uuid::Uuid::now_v7()
             );
-            let _ =
-                emit_and_dispatch_event(state, repo.org_id, Some(repo.id), "push", idem, payload)
-                    .await;
+            // Recorded under the repository's lock; a ref whose event could not be recorded
+            // fails the push's answer after the others are recorded.
+            if let Err(e) =
+                record_event(state, repo.org_id, Some(repo.id), "push", idem, payload).await
+            {
+                unrecorded.get_or_insert(e);
+            }
         }
         drop(repo_guard);
+        dispatch_logged(state, repo.org_id).await;
+        if let Some(e) = unrecorded {
+            return Err(e);
+        }
 
         // Any push mirrors with `sync_on_commit = true` follow as a job (S15). Marked again: a
         // drain may have answered the first mark before the refs moved.

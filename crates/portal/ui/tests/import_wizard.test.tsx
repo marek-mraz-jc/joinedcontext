@@ -15,6 +15,8 @@ import en from "../src/locales/en.json";
 import { ImportPage, importForm } from "../src/pages/import/ImportPage";
 import { pastedSecrets } from "../src/api/pastedSecrets";
 import { expectNoRawKeys, expectNoViolations, expectTabOrder } from "./checks";
+import { OTHER_BRAND } from "./page_contract";
+import { BrandingProvider } from "../src/branding";
 
 const REPORT = {
   created: ["ContextSpace/ovzdusie", "Endpoint/public-air"],
@@ -63,7 +65,7 @@ function bundle(text = BUNDLE, name = "export.yaml"): File {
   return new File([text], name, { type: "application/yaml" });
 }
 
-function renderPage(options: { refusal?: string; status?: number; grants?: unknown[] } = {}) {
+function renderPage(options: { refusal?: string; proposeRefusal?: string; status?: number; grants?: unknown[]; orgDomain?: string } = {}) {
   const posts: { url: string; body: FormData }[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
@@ -71,16 +73,23 @@ function renderPage(options: { refusal?: string; status?: number; grants?: unkno
     if (url.includes("/import") && method === "POST") {
       // Through the typed client (UI-07) the form travels on the Request itself.
       posts.push({ url, body: (init?.body as FormData | undefined) ?? (await (input as Request).clone().formData()) });
-      if (options.refusal) {
+      const refusal = options.refusal ?? (url.includes("dryRun=All") ? undefined : options.proposeRefusal);
+      if (refusal) {
         const status = options.status ?? 400;
         return new Response(
-          JSON.stringify({ status, title: status === 400 ? "Bad Request" : "Service Unavailable", detail: options.refusal }),
+          JSON.stringify({ status, title: status === 400 ? "Bad Request" : "Service Unavailable", detail: refusal }),
           { status, headers: { "Content-Type": "application/problem+json" } },
         );
       }
       const dry = url.includes("dryRun=All");
       return new Response(JSON.stringify(dry ? REPORT : CHANGE), {
         status: dry ? 200 : 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.endsWith("/branding") && options.orgDomain) {
+      return new Response(JSON.stringify({ ...OTHER_BRAND, orgDomain: options.orgDomain }), {
+        status: 200,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -105,7 +114,9 @@ function renderPage(options: { refusal?: string; status?: number; grants?: unkno
     path: "/",
     component: () => (
       <QueryClientProvider client={client}>
-        <ImportPage project="banskabystrica" />
+        <BrandingProvider>
+          <ImportPage project="banskabystrica" />
+        </BrandingProvider>
       </QueryClientProvider>
     ),
   });
@@ -242,6 +253,30 @@ describe("the import wizard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("public-air: literal secret in field 'apiKey'");
     expect(screen.queryByRole("heading", { name: en.import.report.title })).toBeNull();
+  });
+
+  it("shows the Portal's reason when the proposal is refused after a clean check", async () => {
+    const { user, posts } = renderPage({ proposeRefusal: "the forge refused the branch" });
+
+    await user.upload(await screen.findByLabelText(en.import.file), bundle());
+    await user.click(screen.getByRole("button", { name: en.import.check }));
+    expect(await screen.findByRole("heading", { name: en.import.report.title })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: en.import.propose }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("the forge refused the branch");
+    expect(posts.map((post) => post.url.includes("dryRun=All"))).toEqual([true, false]);
+  });
+
+  it("offers this organization's domain and sends the one picked", async () => {
+    const { user, posts } = renderPage({ orgDomain: "banskabystrica.sk" });
+
+    await user.upload(await screen.findByLabelText(en.import.file), bundle());
+    await user.click(screen.getByLabelText(en.import.orgDomain));
+    await user.click(await screen.findByRole("option", { name: /banskabystrica\.sk/ }));
+    await user.click(screen.getByRole("button", { name: en.import.check }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body.get("orgDomain")).toBe("banskabystrica.sk");
   });
 
   // MF-20, T-1503: a server that fails the check is an answer on the page, not a report and not a

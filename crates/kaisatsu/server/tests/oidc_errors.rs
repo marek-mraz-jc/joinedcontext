@@ -178,6 +178,109 @@ async fn an_unknown_realm_is_404_at_token_introspection_and_revocation() {
     }
 }
 
+/// Introspection is for confidential clients (W1) and names the person of a token that carries
+/// only `sub`; the token endpoint takes one DPoP proof at most (RFC 9449 §4.3); `kc_action`
+/// needs an interactive login.
+#[tokio::test]
+async fn introspection_dpop_count_and_kc_action_refusals() {
+    let (app, store, kek) = app().await;
+    let introspect = "/realms/dev/protocol/openid-connect/token/introspect";
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[("client_id", "admin-cli"), ("token", "x")],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "unauthorized_client", "{body}");
+
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let now = jc_time::TimestampTz::now().as_second();
+    let token = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "azp": "apisix-gateway",
+            "jti": "introspect-sub", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", token.as_str()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert_eq!(v["username"], "demo.orgmember@hel.fi", "{body}");
+    // A token naming no person (no sub, no preferred_username) gets no username.
+    let anonymous = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "typ": "Bearer", "azp": "apisix-gateway",
+            "jti": "introspect-nosub", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        introspect,
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", anonymous.as_str()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert!(v.get("username").is_none(), "{body}");
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(TOKEN)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("dpop", "a.b.c")
+        .header("dpop", "d.e.f")
+        .body(Body::from(format!(
+            "grant_type=client_credentials&client_id=apisix-gateway&client_secret={APISIX_CLIENT_WORD}"
+        )))
+        .unwrap();
+    let (st, _, body) = send(&app, req).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_dpop_proof", "{body}");
+    assert!(body.contains("multiple DPoP headers"), "{body}");
+
+    client(&store, "kc-app", |c| {
+        c.public_client = true;
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    let (st, _, body) = get(
+        &app,
+        &format!(
+            "/realms/dev/protocol/openid-connect/auth?client_id=kc-app&response_type=code\
+             &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256\
+             &redirect_uri={}&kc_action=UPDATE_PASSWORD&prompt=none",
+            url::form_urlencoded::byte_serialize(CALLBACK.as_bytes()).collect::<String>()
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.contains("kc_action needs an interactive login"),
+        "{body}"
+    );
+}
+
 /// Behind a host that injects its own `Mount` (jc-router), revocation still authenticates the
 /// client and answers 200 for an unknown token (RFC 7009 §2.2).
 #[tokio::test]
@@ -243,6 +346,240 @@ async fn scope_refusals_and_client_token_settings() {
     let v = json_of(&body);
     assert_eq!(v["expires_in"], 123, "{v}");
     assert!(v["scope"].as_str().unwrap().contains("fam:abc"), "{v}");
+}
+
+/// A client whose service account user is gone gets it made again at its next
+/// client_credentials grant (W3), owned by that client.
+#[tokio::test]
+async fn a_missing_service_account_is_made_again_at_the_grant() {
+    let (app, store, _) = app().await;
+    client(&store, "sa-app", |_| {}).await;
+    let sa = store
+        .get_user_by_username_or_email("dev", None, "service-account-sa-app")
+        .await
+        .unwrap()
+        .unwrap();
+    store.delete_user("dev", None, &sa.id).await.unwrap();
+    let (st, body) = cc(&app, "sa-app", None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let again = store
+        .get_user_by_username_or_email("dev", None, "service-account-sa-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(again.id, sa.id);
+    assert_eq!(again.service_account_client_id.as_deref(), Some("sa-app"));
+    assert!(again.enabled);
+}
+
+/// Revoking an access token (RFC 7009) also ends the refresh tokens of its session for that
+/// client; a person without a password credential gets the same answer as a wrong password.
+#[tokio::test]
+async fn revoking_an_access_token_ends_its_session_refresh_and_no_password_is_refused() {
+    let (app, store, _) = app().await;
+    let tokens = password_grant(
+        &app,
+        "demo.orgmember@hel.fi",
+        "MemberPass123!Valid",
+        "openid",
+    )
+    .await;
+    let (st, body) = refresh(&app, tokens["refresh_token"].as_str().unwrap()).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let tokens = json_of(&body);
+    let (st, _, body) = post_form(
+        &app,
+        "/realms/dev/protocol/openid-connect/revoke",
+        &[
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("token", tokens["access_token"].as_str().unwrap()),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = refresh(&app, tokens["refresh_token"].as_str().unwrap()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+
+    store
+        .create_user(UserRepresentation {
+            id: "no-password-person".into(),
+            realm_id: "dev".into(),
+            username: "nopass@hel.fi".into(),
+            enabled: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("username", "nopass@hel.fi"),
+            ("password", "anything-at-all"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+}
+
+/// `offline_access` is granted only to a person holding its role (directly, through a
+/// composite, or the realm's default roles).
+#[tokio::test]
+async fn offline_access_needs_its_role() {
+    let (app, store, _) = app().await;
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .set_user_grants("dev", &member.id, &[], &member.client_roles)
+        .await
+        .unwrap();
+    client(&store, "offline-app", |c| {
+        c.direct_access_grants_enabled = true;
+        c.optional_client_scopes = vec!["offline_access".into()];
+    })
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "offline-app"),
+            ("client_secret", "offline-app-secret"),
+            ("username", "demo.orgmember@hel.fi"),
+            ("password", "MemberPass123!Valid"),
+            ("scope", "openid offline_access"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_scope", "{body}");
+    assert!(body.contains("offline_access role"), "{body}");
+}
+
+/// A person with a TOTP credential needs a valid code at the password grant; a wrong one is
+/// refused and counted as a failure.
+#[tokio::test]
+async fn the_password_grant_refuses_a_wrong_totp_code() {
+    let (app, _, _) = app().await;
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("username", "demo.steward@hel.fi"),
+            ("password", "StewardPass123!Valid"),
+            ("totp", "000000"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+    assert!(body.contains("Invalid totp code"), "{body}");
+}
+
+/// A Keycloak pbkdf2 password signs in at the password grant and is stored again as argon2id
+/// (W3 import, rehash on first use).
+#[tokio::test]
+async fn the_password_grant_rehashes_a_legacy_password() {
+    let (app, store, _) = app().await;
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let mut pw = store
+        .list_credentials("dev", &member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "password")
+        .unwrap();
+    let salt = b"0123456789abcdef";
+    let mut out = [0u8; 32];
+    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(b"MemberPass123!Valid", salt, 1000, &mut out)
+        .unwrap();
+    pw.secret_data = json!({ "value": base64::engine::general_purpose::STANDARD.encode(out),
+        "salt": base64::engine::general_purpose::STANDARD.encode(salt) })
+    .to_string();
+    pw.credential_data = r#"{"hashIterations":1000,"algorithm":"pbkdf2-sha256"}"#.into();
+    store.upsert_credential(pw).await.unwrap();
+    password_grant(
+        &app,
+        "demo.orgmember@hel.fi",
+        "MemberPass123!Valid",
+        "openid",
+    )
+    .await;
+    let pw = store
+        .list_credentials("dev", &member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.credential_type == "password")
+        .unwrap();
+    assert!(
+        pw.secret_data.starts_with("$argon2id$"),
+        "{}",
+        pw.secret_data
+    );
+    assert!(pw.credential_data.is_empty());
+}
+
+/// An authorization code past its lifetime is refused at the exchange (RFC 6749 §4.1.2).
+#[tokio::test]
+async fn an_expired_code_is_refused() {
+    let (app, store, _) = app().await;
+    let now = jc_time::TimestampTz::now();
+    store
+        .put_auth_code(AuthorizationCodeRecord {
+            code_hash: sha256_hex("expired-code"),
+            realm_id: "dev".into(),
+            org_id: None,
+            client_id: "apisix-gateway".into(),
+            user_id: user_id(&store, "demo.orgmember@hel.fi").await,
+            sso_session_id: "no-session".into(),
+            redirect_uri: CALLBACK.into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            code_challenge: String::new(),
+            code_challenge_method: String::new(),
+            nonce: None,
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            dpop_jkt: None,
+            auth_time: now.as_second(),
+            consumed: false,
+            created_at: now - jiff::SignedDuration::from_mins(10),
+            expires_at: now - jiff::SignedDuration::from_mins(9),
+        })
+        .await
+        .unwrap();
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", APISIX_CLIENT_WORD),
+            ("code", "expired-code"),
+            ("redirect_uri", CALLBACK),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("Code is expired"), "{body}");
 }
 
 fn jwt_alg(jwt: &str) -> Value {
@@ -796,6 +1133,82 @@ async fn userinfo_refusals() {
         userinfo(format!("DPoP {t}"), Some(raw)).await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// `GET .../auth` from a browser: an error met before the flow can go back to the app is the
+/// realm's error page (status of the error, the parameter it is about, the way back to the app
+/// when the client names an http(s) base URL, else the next step); other callers keep JSON.
+#[tokio::test]
+async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_back() {
+    let (app, store, _) = app().await;
+    client(&store, "named-app", |c| {
+        c.name = Some("Parking".into());
+        c.base_url = Some("https://parking.example.test/".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    client(&store, "plain-app", |c| {
+        c.base_url = Some("https://plain.example.test/".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    client(&store, "script-app", |c| {
+        c.base_url = Some("javascript:alert(1)".into());
+        c.redirect_uris = vec![CALLBACK.into()];
+    })
+    .await;
+    let auth = "/realms/dev/protocol/openid-connect/auth";
+    let page = |query: String| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .uri(format!("{auth}?{query}"))
+                .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .header(header::ACCEPT_LANGUAGE, "en-GB, sk;q=0.5")
+                .body(Body::empty())
+                .unwrap();
+            send(&app, req).await
+        }
+    };
+    let bad_redirect = |id: &str| {
+        format!("client_id={id}&response_type=code&redirect_uri=https%3A%2F%2Fevil.example.test%2F")
+    };
+
+    let (st, h, html) = page(bad_redirect("named-app")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{html}");
+    assert!(
+        h[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert!(html.contains("(redirect_uri)"), "{html}");
+    assert!(html.contains("https://parking.example.test/"), "{html}");
+    assert!(html.contains("Back to Parking"), "{html}");
+
+    let (st, _, html) = page(bad_redirect("plain-app")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(html.contains("Back to the application"), "{html}");
+
+    let (_, _, html) = page(bad_redirect("script-app")).await;
+    assert!(!html.contains("javascript:alert"), "{html}");
+    assert!(html.contains("open the app again from its link"), "{html}");
+
+    // No client_id: the page names it and, in the language asked for, the next step.
+    let (st, _, html) = page("response_type=code&kc_locale=sk".into()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(html.contains("(client_id)"), "{html}");
+    assert!(html.contains("lang=\"sk\""), "{html}");
+    assert!(html.contains("otvorte aplikáciu znova"), "{html}");
+
+    // An unknown client: the error names client_id, and there is no client to go back to.
+    let (_, _, html) = page(bad_redirect("nobody")).await;
+    assert!(html.contains("(client_id)"), "{html}");
+
+    // A caller that does not ask for HTML keeps the OAuth JSON error.
+    let (st, _, body) = get(&app, &format!("{auth}?{}", bad_redirect("named-app")), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(!err(&body).is_empty(), "{body}");
 }
 
 #[tokio::test]

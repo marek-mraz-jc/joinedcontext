@@ -2686,9 +2686,12 @@ mod tests {
             json!({"type": "Polygon", "coordinates": []}),
         ];
         for geom in &good {
-            ent(json!({"type": "GeoProperty", "value": geom}))
-                .unwrap_or_else(|e| panic!("{geom} rejected: {e:?}"));
-            ent(geom.clone()).unwrap_or_else(|e| panic!("{geom} concise rejected: {e:?}"));
+            if let Err(e) = ent(json!({"type": "GeoProperty", "value": geom})) {
+                panic!("{geom} rejected: {e:?}");
+            }
+            if let Err(e) = ent(geom.clone()) {
+                panic!("{geom} concise rejected: {e:?}");
+            }
         }
     }
 
@@ -4358,7 +4361,10 @@ mod edges {
     }
 
     fn ok(doc: Value, opts: ExpandOpts) -> Value {
-        run(doc.clone(), opts).unwrap_or_else(|e| panic!("{doc} refused: {e:?}"))
+        match run(doc.clone(), opts) {
+            Ok(out) => out,
+            Err(e) => panic!("{doc} refused: {e:?}"),
+        }
     }
 
     fn refused(doc: Value, opts: ExpandOpts) {

@@ -246,7 +246,7 @@ pub async fn approves_alone(
             "single-person approvals are off for '{organization}': {n} other people hold a role there, so a second person approves this change (PF-58, T-7388)"
         ))),
         Err(Refusal::NotFresh) => {
-            tracing::info!(organization, approver = %identity.username, "single-person approval asks for a fresh second factor");
+            tracing::info!(organization, approver = %identity.subject, "single-person approval asks for a fresh second factor");
             Err(ApiError::SecondFactorRequired)
         }
     }

@@ -14,7 +14,7 @@ Paths: `portal/` is `crates/portal/src/`, `jcctl/` is
 |---|---|---|
 | `JC_PORTAL_CKAN_URL` | `portal/config.rs:888` | Public URL a CkanInstance `spec.url` names; the Portal reads the catalogue anonymously there. |
 | `JC_PORTAL_CKAN_API_URL` | `portal/config.rs:888` | In-cluster address the publisher writes to when `spec.url` equals `JC_PORTAL_CKAN_URL` (`portal/reconciler/ckan.rs:140` `reaching`, `:150` `api_url`). In `jc`: the dataroom mount, e.g. `http://127.0.0.1:8080/opendata`. |
-| CkanInstance `apiTokenRef` | `portal/reconciler/ckan.rs:389` `publisher::token` | The token the publisher sends. It must equal the content of the file dataroom reads with `portal_publisher_from_file` (`DATAROOM_PORTAL_TOKEN_FILE` in `dataroom serve`). |
+| CkanInstance `apiTokenRef` | `portal/reconciler/ckan.rs` `CkanSync::client` | The token an external CKAN takes. A catalogue jc names (an Organization's, or the installation's own at `JC_PORTAL_CKAN_URL`) gets a short-lived service token instead (S11-23): dataroom verifies it against its issuer (`with_verifier`; `--issuer`, `--jwks-url`, `--client` in `dataroom serve`) and refuses a static bearer. |
 
 ## 2. Writes (publisher, token in `Authorization`)
 
@@ -59,18 +59,17 @@ host name that reaches the dataroom mount, never `127.0.0.1`.
 
 ## 5. The Portal's binding in dataroom
 
-`dataroom_api::portal_publisher(_from_file)` binds the token (at least 32 printable characters,
-never printed: `TokenBinding`'s `Debug` redacts it) to principal `portal-ckan` with one grant:
-`Read` and `Propose` on the catalogue. That is all W1 to W10 need: `package_delete` is a
+`dataroom_api::portal_publisher` names the caller of a verified service token (S11-23: the
+issuer's signature, `iss`, `aud` `dataroom`, `exp` and an admitted `azp`) principal `portal-ckan`
+with one grant: `Read` and `Propose` on the catalogue (`portal_publisher_on`: `portal-ckan:{id}`,
+scoped to the Organization's CKAN organisation). A static bearer is refused. That is all W1 to W10 need: `package_delete` is a
 withdrawal (`dataset.withdraw`), not a purge, so `Delete` and `Admin` stay out. Red proofs: the
 contract test fails with `Read` alone.
 
 ## 6. Gaps for the `jc` wiring (not in these paths)
 
-- `bins/jc/src/modules/dataroom.rs` builds `PolicyAuthorizer::default()` with no token, so every
-  Portal write is refused 401. Wire it as `dataroom serve` does (`dataroom_server::serve_state`):
-  `portal_publisher_from_file(<secret file>, org, catalogue)`, the grant into `PolicyAuthorizer::new`,
-  the binding into `with_tokens`.
-- The same secret has to reach the Portal as the CkanInstance `apiTokenRef` (forge SOPS secret).
+- jc wires the publisher since S11-23 (`bins/jc/src/modules/dataroom.rs` `publisher_verifier`):
+  `[door]`'s issuer in a role split, jc's in-process issuer beside the Portal; the Portal mints a
+  token per publication (`organization_host::PublisherToken`), so no secret reaches a manifest.
 - `jc` serves dataroom from a memory store: published datasets are lost on restart until the
   Postgres store is wired (bins/jc/STATUS.md).

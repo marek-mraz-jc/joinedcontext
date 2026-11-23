@@ -16,6 +16,10 @@ pub type StoreFuture<'a, T> = BoxFuture<'a, Result<T>>;
 pub type LoginFailureUpdate<'f> =
     dyn Fn(Option<LoginFailureRecord>) -> LoginFailureRecord + Send + Sync + 'f;
 
+/// `last_error` of an outbox row whose last claim lapsed at its final attempt: the claimer died
+/// or hung mid-send, so whether the mail went out is unknown.
+pub const OUTBOX_LEASE_LAPSED: &str = "the send did not finish within its lease";
+
 /// Storage interface for kaisatsu (W2, W4).
 pub trait Store: Send + Sync {
     /// Queries any of the 23 OData entity sets using `odata-table` with tenant `Scope` applied before `$filter` (W4).
@@ -538,20 +542,28 @@ pub trait Store: Send + Sync {
         outbox: EmailOutboxRecord,
     ) -> StoreFuture<'a, UserRepresentation>;
     fn enqueue_outbox<'a>(&'a self, outbox: EmailOutboxRecord) -> StoreFuture<'a, ()>;
+    /// Claims up to `limit` due rows for `lease`: pending rows whose `next_attempt_at` passed,
+    /// and `sending` rows whose claimer did not complete them within its lease (it died or
+    /// hung). A claim adds one attempt and moves `next_attempt_at` to the end of the lease; an
+    /// expired claim already at `max_attempts` is marked `failed` instead of sent again.
     fn claim_outbox_batch<'a>(
         &'a self,
         realm_id: &'a str,
         limit: usize,
+        lease: std::time::Duration,
+        max_attempts: u32,
     ) -> StoreFuture<'a, Vec<EmailOutboxRecord>>;
+    /// Records the outcome of the claim `claimed` (as [`Store::claim_outbox_batch`] returned it).
+    /// Answers `false` and changes nothing when the claim was lost: the row was claimed again
+    /// after the lease, completed, or retried by an operator since.
     fn complete_outbox_row<'a>(
         &'a self,
-        realm_id: &'a str,
-        id: &'a str,
+        claimed: &'a EmailOutboxRecord,
         sent: bool,
         error: Option<String>,
         next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
-    ) -> StoreFuture<'a, ()>;
+    ) -> StoreFuture<'a, bool>;
     fn retry_outbox_row<'a>(
         &'a self,
         realm_id: &'a str,

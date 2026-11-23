@@ -194,7 +194,9 @@ mod tests {
                 !OPERATION_NAMES.contains(g),
                 "{g} is both a group and an operation"
             );
-            let members = group_members(g).unwrap_or_else(|| panic!("{g} has no members"));
+            let Some(members) = group_members(g) else {
+                panic!("{g} has no members")
+            };
             assert!(!members.is_empty());
             for m in members {
                 assert!(OPERATION_NAMES.contains(m), "{g} expands to unknown {m}");

@@ -4,11 +4,12 @@
 // src/pages/repositories/BranchesView.tsx, src/pages/repositories/PullsView.tsx,
 // src/pages/repositories/SettingsView.tsx, src/pages/repositories/links.tsx and
 // src/pages/repositories/api.ts through the routes they belong to.
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import i18n from "../src/i18n";
+import en from "../src/locales/en.json";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { crumbsOf, diffLines, shortSha } from "../src/pages/repositories/api";
@@ -273,6 +274,94 @@ describe("one repository", () => {
   });
 });
 
+describe("a repository read that failed", () => {
+  it.each([
+    ["jc_repository_list", P, VIEWER],
+    ["jc_repository_get", `${P}/helsinki-config`, VIEWER],
+    ["jc_repository_tree", `${P}/helsinki-config`, VIEWER],
+    ["jc_repository_file", `${P}/helsinki-config?tab=files&file=README.md`, VIEWER],
+    ["jc_repository_commits", `${P}/helsinki-config?tab=commits`, VIEWER],
+    ["jc_repository_commit", `${P}/helsinki-config?tab=commits&commit=${SHA}`, VIEWER],
+    ["jc_repository_refs", `${P}/helsinki-config?tab=branches`, VIEWER],
+    ["jc_repository_pulls", `${P}/helsinki-config?tab=pulls`, VIEWER],
+    ["jc_repository_pull", `${P}/helsinki-config?tab=pulls&pull=7`, VIEWER],
+    ["jc_repository_settings", `${P}/helsinki-config?tab=settings`, STEWARD],
+  ])("%s is asked again on Retry and drawn once it answers", async (op, path, permissions) => {
+    let asked = 0;
+    await renderRoute({
+      path,
+      permissions,
+      answer: answering({
+        [op]: () => {
+          asked += 1;
+          return asked === 1 ? problem(503, "the forge is not answering") : jsonResponse(ANSWERS[op]);
+        },
+      }),
+    });
+    const alert = (await screen.findByText("the forge is not answering")).closest('[role="alert"]') as HTMLElement;
+    await userEvent.click(within(alert).getByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(screen.queryByText("the forge is not answering")).toBeNull());
+    expect(asked).toBe(2);
+  });
+});
+
+describe("a repository's other states", () => {
+  it.each(["files", "commits"])("says an empty repository holds nothing on its %s tab", async (tab) => {
+    await renderRoute({
+      path: `${P}/helsinki-config?tab=${tab}`,
+      permissions: VIEWER,
+      answer: answering({ jc_repository_get: () => jsonResponse({ ...REPOSITORY, empty: true, readme: undefined, lastCommit: undefined }) }),
+    });
+    expect(await screen.findByText(en.repositories.files.emptyRepository)).toBeInTheDocument();
+  });
+
+  it("lists a tag that opens its files", async () => {
+    await renderRoute({
+      path: `${P}/helsinki-config?tab=branches`,
+      permissions: VIEWER,
+      answer: answering({ jc_repository_refs: () => jsonResponse({ ...(ANSWERS.jc_repository_refs as object), tags: [{ name: "v1.2.0", sha: SHA }] }) }),
+    });
+    expect(await screen.findByRole("link", { name: "v1.2.0" })).toHaveAttribute("href", `${P}/helsinki-config?tab=files&ref=v1.2.0`);
+  });
+
+  it("asks for the state chosen, from the first page, and offers every state when one holds none", async () => {
+    const seen: Record<string, unknown>[] = [];
+    await renderRoute({
+      path: `${P}/helsinki-config?tab=pulls`,
+      permissions: VIEWER,
+      answer: answering({ jc_repository_pulls: (input) => jsonResponse(input.state === "closed" ? { items: [], total: 0 } : ANSWERS.jc_repository_pulls) }, seen),
+    });
+    await userEvent.selectOptions(await screen.findByLabelText(en.repositories.pulls.filter.label), "closed");
+    await userEvent.click(await screen.findByRole("button", { name: en.repositories.pulls.showAll }));
+    expect(await screen.findByRole("link", { name: "Add c" })).toBeInTheDocument();
+    expect(seen.filter((input) => input.op === "jc_repository_pulls").map((input) => [input.state, input.cursor])).toEqual([
+      ["open", 0],
+      ["closed", 0],
+      ["all", 0],
+    ]);
+  });
+
+  it("opens another tab at its own address", async () => {
+    await renderRoute({ path: `${P}/helsinki-config`, permissions: VIEWER, answer: answering() });
+    await userEvent.click(await screen.findByRole("tab", { name: en.repositories.tab.commits }));
+    await waitFor(() => expect(window.location.search).toContain("tab=commits"));
+  });
+
+  it("sorts the list by name, role and branch", async () => {
+    await renderRoute({ path: P, permissions: VIEWER, answer: answering() });
+    const table = await screen.findByRole("table");
+    for (const label of [en.repositories.column.role, en.repositories.column.branch, en.repositories.column.name]) {
+      const sort = within(table).getByRole("button", { name: (name) => name.startsWith(label) });
+      await userEvent.click(sort);
+      expect(sort.closest("th")).toHaveAttribute("aria-sort", "ascending");
+    }
+    const names = () => within(table).getAllByRole("row").slice(1).map((row) => (row.textContent ?? "").includes("helsinki-config"));
+    const ascending = names();
+    await userEvent.click(within(table).getByRole("button", { name: (name) => name.startsWith(en.repositories.column.name) }));
+    expect(names()).toEqual([...ascending].reverse());
+  });
+});
+
 describe("the helpers", () => {
   it("numbers a unified patch from its hunk headers", () => {
     expect(diffLines("@@ -3,2 +3,3 @@\n a\n-b\n+c\n+d\n")).toEqual([
@@ -350,6 +439,8 @@ describe("the parts, drawn alone", () => {
     alone(<Pager total={70} cursor={60} size={30} onCursor={onCursor} />);
     expect(screen.getByRole("button", { name: /Next/ })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("This is the last page.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Previous/ }));
+    expect(onCursor).toHaveBeenLastCalledWith(30);
   });
 
   it("CloneAddress copies the address", async () => {

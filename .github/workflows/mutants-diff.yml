@@ -105,7 +105,9 @@ jobs:
         timeout-minutes: 50
         run: |
           start=$(date +%s); status=0
-          timeout 45m cargo mutants --workspace --in-diff "$RUNNER_TEMP/diffs/${{ matrix.ws }}.diff" \
+          # --in-place: a copied tree loses the path dependencies outside the workspace (antares reads
+          # ../../shared/jc-time), so the baseline build failed; the checkout is throwaway.
+          timeout 45m cargo mutants --workspace --in-place --in-diff "$RUNNER_TEMP/diffs/${{ matrix.ws }}.diff" \
             --config "$GITHUB_WORKSPACE/.github/mutants.toml" --output "$RUNNER_TEMP" || status=$?
           echo "${{ matrix.ws }}: $(( $(date +%s) - start )) s, exit $status" >> "$GITHUB_STEP_SUMMARY"
           [ -f "$RUNNER_TEMP/mutants.out/missed.txt" ] && { echo "Missed:"; cat "$RUNNER_TEMP/mutants.out/missed.txt"; } >> "$GITHUB_STEP_SUMMARY"

@@ -7,7 +7,8 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { App } from "../src/App";
-import { actionOf, runTabAction } from "../src/connectors/pairedTab";
+import { actionOf, pairing, runTabAction } from "../src/connectors/pairedTab";
+import en from "../src/locales/en.json";
 import { PairedTabBar } from "../src/connectors/PairedTabBar";
 import { takePrefill } from "../src/assistant/state";
 
@@ -164,7 +165,18 @@ describe("Connect this tab (T-5967)", () => {
     });
     expect(await screen.findByText(/This tab is no longer connected/)).toBeInTheDocument();
     expect(sessionStorage.getItem("jc.pairedTab")).toBeNull();
+    // Read and put away: the bar is gone.
+    await userEvent.click(screen.getByRole("button", { name: en.pairedTab.dismiss }));
+    await waitFor(() => expect(screen.queryByText(/This tab is no longer connected/)).toBeNull());
   }, 20_000);
+
+  it("holds no pairing it cannot read and runs nothing that is no action", async () => {
+    sessionStorage.setItem("jc.pairedTab", "{not json");
+    expect(pairing()).toBeNull();
+    const go = vi.fn();
+    expect(await runTabAction({ frame: "navigate", tool: "jc_unknown", payload: {} }, go)).toBeNull();
+    expect(go).not.toHaveBeenCalled();
+  });
 
   it("reads the open page again when the connector's client made a call, and runs no action for it", async () => {
     sessionStorage.setItem("jc.pairedTab", JSON.stringify({ connector: ID, name: CONNECTOR.name, tab: TAB }));

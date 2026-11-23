@@ -9,8 +9,8 @@
 //! these functions answer.
 
 use crate::outbox::{
-    build_pr_webhook_payload, build_push_webhook_payload, deliver_webhook_with_retries,
-    emit_and_dispatch_event,
+    build_pr_webhook_payload, build_push_webhook_payload, deliver_webhook_now, dispatch_logged,
+    emit_and_dispatch_event, record_event,
 };
 use crate::state::{ShakoState, resolve_and_authorize_repo};
 use base64::Engine as _;
@@ -896,8 +896,8 @@ pub async fn commit_files(
     })
     .await?;
     record_repo_size(state, &mut repo, &disk_path).await;
-    drop(guard);
 
+    // Recorded under the repository's lock, so the next write to it comes after its event.
     let payload = build_push_webhook_payload(
         &repo,
         &format!("refs/heads/{branch}"),
@@ -905,7 +905,7 @@ pub async fn commit_files(
         &commit_sha,
         ctx.subject.login(),
     );
-    let _ = emit_and_dispatch_event(
+    record_event(
         state,
         repo.org_id,
         Some(repo.id),
@@ -913,7 +913,9 @@ pub async fn commit_files(
         format!("push:{}:{branch}:{commit_sha}", repo.id),
         payload,
     )
-    .await;
+    .await?;
+    drop(guard);
+    dispatch_logged(state, repo.org_id).await;
     crate::mirror::follow_write(state, &repo).await;
     Ok(commit_sha)
 }
@@ -1049,7 +1051,7 @@ pub async fn open_pull_request(
     )
     .await?;
     let payload = build_pr_webhook_payload(&repo, &saved, "opened", ctx.subject.login());
-    let _ = emit_and_dispatch_event(
+    emit_and_dispatch_event(
         state,
         repo.org_id,
         Some(repo.id),
@@ -1057,7 +1059,7 @@ pub async fn open_pull_request(
         format!("pr_open:{}:{}", repo.id, saved.number),
         payload,
     )
-    .await;
+    .await?;
     Ok((repo, saved))
 }
 
@@ -1455,7 +1457,7 @@ pub async fn merge_pull_request(
     let saved = state.store().update_pull_request(pr).await?;
     record_repo_size(state, &mut repo, &disk_path).await;
     let payload = build_pr_webhook_payload(&repo, &saved, "closed", ctx.subject.login());
-    let _ = emit_and_dispatch_event(
+    emit_and_dispatch_event(
         state,
         repo.org_id,
         Some(repo.id),
@@ -1463,7 +1465,7 @@ pub async fn merge_pull_request(
         format!("pr_merge:{}:{}", repo.id, saved.number),
         payload,
     )
-    .await;
+    .await?;
     crate::mirror::follow_write(state, &repo).await;
     Ok(merge_sha)
 }
@@ -2047,5 +2049,5 @@ pub async fn redeliver_webhook(
         format!("repos/{}/hooks/{hook_id}", repo.id),
     )
     .await?;
-    deliver_webhook_with_retries(state, &hook, "push", &payload).await
+    deliver_webhook_now(state, &hook, "push", &payload).await
 }

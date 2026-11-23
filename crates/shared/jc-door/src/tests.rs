@@ -391,3 +391,38 @@ async fn fetch_token_reuses_a_token_until_30_s_before_it_expires() {
     );
     assert!(!err.contains("s3cret"), "{err}");
 }
+
+/// The in-process issuer serves its keys on a thread of its own: a token it signs verifies in a
+/// runtime started after the one that created it ended, and only for the client it names.
+#[test]
+fn a_local_issuer_outlives_the_runtime_that_started_it() {
+    let issuer = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async { crate::issuer::LocalIssuer::start("", "k1").expect("issuer") });
+    assert!(issuer.issuer().starts_with("http://127.0.0.1:"));
+    tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            let verifier = Verifier::new(
+                issuer.issuer(),
+                issuer.jwks_url(),
+                &["portal-publisher".to_owned()],
+            )
+            .expect("verifier");
+            let token = issuer
+                .token("portal-publisher", "dataroom", 60)
+                .expect("token");
+            verifier.prepare(&token).await;
+            assert_eq!(
+                verifier.client(&token, "dataroom").as_deref(),
+                Some("portal-publisher")
+            );
+            assert!(!verifier.verify(&token, "shako"), "another audience");
+            let other = issuer.token("other", "dataroom", 60).expect("token");
+            assert!(!verifier.verify(&other, "dataroom"), "another client");
+            let expired = issuer
+                .token("portal-publisher", "dataroom", -120)
+                .expect("token");
+            assert!(!verifier.verify(&expired, "dataroom"), "expired");
+        });
+}

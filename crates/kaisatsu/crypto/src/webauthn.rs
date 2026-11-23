@@ -123,11 +123,11 @@ impl<'a> CborReader<'a> {
         let end = self
             .pos
             .checked_add(n)
-            .ok_or_else(|| KaisatsuError::BadRequest("CBOR length overflow".into()))?;
+            .ok_or_else(crate::missing("CBOR length overflow"))?;
         let slice = self
             .buf
             .get(self.pos..end)
-            .ok_or_else(|| KaisatsuError::BadRequest("unexpected EOF in CBOR input".into()))?;
+            .ok_or_else(crate::missing("unexpected EOF in CBOR input"))?;
         self.pos = end;
         Ok(slice)
     }
@@ -180,25 +180,23 @@ impl<'a> CborReader<'a> {
         match major {
             0 => {
                 let v = self.read_uint(ai)?;
-                let i = i64::try_from(v).map_err(|_| {
-                    KaisatsuError::BadRequest("CBOR unsigned int out of i64 range".into())
-                })?;
+                let i = i64::try_from(v)
+                    .map_err(crate::bad_request("CBOR unsigned int out of i64 range"))?;
                 Ok(CborValue::Int(i))
             }
             1 => {
                 let v = self.read_uint(ai)?;
-                let i = i64::try_from(v).map_err(|_| {
-                    KaisatsuError::BadRequest("CBOR negative int out of i64 range".into())
-                })?;
-                let neg = (-1i64).checked_sub(i).ok_or_else(|| {
-                    KaisatsuError::BadRequest("CBOR negative int overflow".into())
-                })?;
+                let i = i64::try_from(v)
+                    .map_err(crate::bad_request("CBOR negative int out of i64 range"))?;
+                let neg = (-1i64)
+                    .checked_sub(i)
+                    .ok_or_else(crate::missing("CBOR negative int overflow"))?;
                 Ok(CborValue::Int(neg))
             }
             2 => {
                 let len_u64 = self.read_uint(ai)?;
                 let len = usize::try_from(len_u64)
-                    .map_err(|_| KaisatsuError::BadRequest("CBOR byte string too large".into()))?;
+                    .map_err(crate::bad_request("CBOR byte string too large"))?;
                 if len > MAX_CBOR_BYTES {
                     return Err(KaisatsuError::BadRequest(
                         "CBOR byte string exceeds 64 KiB".into(),
@@ -210,7 +208,7 @@ impl<'a> CborReader<'a> {
             3 => {
                 let len_u64 = self.read_uint(ai)?;
                 let len = usize::try_from(len_u64)
-                    .map_err(|_| KaisatsuError::BadRequest("CBOR text string too large".into()))?;
+                    .map_err(crate::bad_request("CBOR text string too large"))?;
                 if len > MAX_CBOR_BYTES {
                     return Err(KaisatsuError::BadRequest(
                         "CBOR text string exceeds 64 KiB".into(),
@@ -218,14 +216,14 @@ impl<'a> CborReader<'a> {
                 }
                 let bytes = self.take(len)?;
                 let s = std::str::from_utf8(bytes)
-                    .map_err(|_| KaisatsuError::BadRequest("CBOR text is not valid UTF-8".into()))?
+                    .map_err(crate::bad_request("CBOR text is not valid UTF-8"))?
                     .to_owned();
                 Ok(CborValue::Text(s))
             }
             4 => {
                 let len_u64 = self.read_uint(ai)?;
-                let len = usize::try_from(len_u64)
-                    .map_err(|_| KaisatsuError::BadRequest("CBOR array too large".into()))?;
+                let len =
+                    usize::try_from(len_u64).map_err(crate::bad_request("CBOR array too large"))?;
                 if len > MAX_CBOR_ITEMS {
                     return Err(KaisatsuError::BadRequest(
                         "CBOR array length exceeds maximum".into(),
@@ -239,8 +237,8 @@ impl<'a> CborReader<'a> {
             }
             5 => {
                 let len_u64 = self.read_uint(ai)?;
-                let len = usize::try_from(len_u64)
-                    .map_err(|_| KaisatsuError::BadRequest("CBOR map too large".into()))?;
+                let len =
+                    usize::try_from(len_u64).map_err(crate::bad_request("CBOR map too large"))?;
                 if len > MAX_CBOR_ITEMS {
                     return Err(KaisatsuError::BadRequest(
                         "CBOR map length exceeds maximum".into(),
@@ -319,20 +317,18 @@ impl CosePublicKey {
         let kty = map
             .map_get_int(1)
             .and_then(CborValue::as_i64)
-            .ok_or_else(|| KaisatsuError::BadRequest("COSE_Key missing kty (1)".into()))?;
+            .ok_or_else(crate::missing("COSE_Key missing kty (1)"))?;
         let alg = map
             .map_get_int(3)
             .and_then(CborValue::as_i64)
-            .ok_or_else(|| KaisatsuError::BadRequest("COSE_Key missing alg (3)".into()))?;
+            .ok_or_else(crate::missing("COSE_Key missing alg (3)"))?;
 
         match (kty, alg) {
             (2, COSE_ALG_ES256) => {
                 let crv = map
                     .map_get_int(-1)
                     .and_then(CborValue::as_i64)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("EC2 COSE_Key missing crv (-1)".into())
-                    })?;
+                    .ok_or_else(crate::missing("EC2 COSE_Key missing crv (-1)"))?;
                 if crv != 1 {
                     return Err(KaisatsuError::BadRequest(
                         "EC2 COSE_Key must use P-256 curve (crv=1)".into(),
@@ -342,16 +338,12 @@ impl CosePublicKey {
                     .map_get_int(-2)
                     .and_then(CborValue::as_bytes)
                     .filter(|b| b.len() == 32)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("EC2 COSE_Key x (-2) must be 32 bytes".into())
-                    })?;
+                    .ok_or_else(crate::missing("EC2 COSE_Key x (-2) must be 32 bytes"))?;
                 let y = map
                     .map_get_int(-3)
                     .and_then(CborValue::as_bytes)
                     .filter(|b| b.len() == 32)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("EC2 COSE_Key y (-3) must be 32 bytes".into())
-                    })?;
+                    .ok_or_else(crate::missing("EC2 COSE_Key y (-3) must be 32 bytes"))?;
                 Ok(Self::Ec2 {
                     alg,
                     crv,
@@ -363,9 +355,7 @@ impl CosePublicKey {
                 let crv = map
                     .map_get_int(-1)
                     .and_then(CborValue::as_i64)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("OKP COSE_Key missing crv (-1)".into())
-                    })?;
+                    .ok_or_else(crate::missing("OKP COSE_Key missing crv (-1)"))?;
                 if crv != 6 {
                     return Err(KaisatsuError::BadRequest(
                         "OKP COSE_Key must use Ed25519 curve (crv=6)".into(),
@@ -375,9 +365,7 @@ impl CosePublicKey {
                     .map_get_int(-2)
                     .and_then(CborValue::as_bytes)
                     .filter(|b| b.len() == 32)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("OKP COSE_Key x (-2) must be 32 bytes".into())
-                    })?;
+                    .ok_or_else(crate::missing("OKP COSE_Key x (-2) must be 32 bytes"))?;
                 Ok(Self::Okp {
                     alg,
                     crv,
@@ -398,9 +386,7 @@ impl CosePublicKey {
                     .map_get_int(-2)
                     .and_then(CborValue::as_bytes)
                     .filter(|b| !b.is_empty() && b.len() <= 8)
-                    .ok_or_else(|| {
-                        KaisatsuError::BadRequest("RSA COSE_Key exponent e (-2) invalid".into())
-                    })?;
+                    .ok_or_else(crate::missing("RSA COSE_Key exponent e (-2) invalid"))?;
                 Ok(Self::Rsa {
                     alg,
                     n: URL_SAFE_NO_PAD.encode(n),
@@ -420,10 +406,10 @@ impl CosePublicKey {
             Self::Ec2 { x, y, .. } => {
                 let xb = URL_SAFE_NO_PAD
                     .decode(x)
-                    .map_err(|_| KaisatsuError::Crypto("invalid stored EC2 x".into()))?;
+                    .map_err(crate::crypto_err("invalid stored EC2 x"))?;
                 let yb = URL_SAFE_NO_PAD
                     .decode(y)
-                    .map_err(|_| KaisatsuError::Crypto("invalid stored EC2 y".into()))?;
+                    .map_err(crate::crypto_err("invalid stored EC2 y"))?;
                 if xb.len() != 32 || yb.len() != 32 {
                     return Err(KaisatsuError::Crypto(
                         "invalid stored EC2 key length".into(),
@@ -441,7 +427,7 @@ impl CosePublicKey {
             Self::Okp { x, .. } => {
                 let xb = URL_SAFE_NO_PAD
                     .decode(x)
-                    .map_err(|_| KaisatsuError::Crypto("invalid stored OKP x".into()))?;
+                    .map_err(crate::crypto_err("invalid stored OKP x"))?;
                 let pub_key = UnparsedPublicKey::new(&ED25519, &xb);
                 pub_key.verify(signed_bytes, signature).map_err(|_| {
                     KaisatsuError::Unauthorized("WebAuthn Ed25519 signature invalid".into())
@@ -450,10 +436,10 @@ impl CosePublicKey {
             Self::Rsa { n, e, .. } => {
                 let nb = URL_SAFE_NO_PAD
                     .decode(n)
-                    .map_err(|_| KaisatsuError::Crypto("invalid stored RSA n".into()))?;
+                    .map_err(crate::crypto_err("invalid stored RSA n"))?;
                 let eb = URL_SAFE_NO_PAD
                     .decode(e)
-                    .map_err(|_| KaisatsuError::Crypto("invalid stored RSA e".into()))?;
+                    .map_err(crate::crypto_err("invalid stored RSA e"))?;
                 let components = RsaPublicKeyComponents { n: &nb, e: &eb };
                 components
                     .verify(&RSA_PKCS1_2048_8192_SHA256, signed_bytes, signature)
@@ -504,9 +490,9 @@ impl ParsedAuthData {
 
     /// Parses `authData` bytes according to W3C WebAuthn L3 §6.1 & §6.5.1.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let head = bytes.get(..37).ok_or_else(|| {
-            KaisatsuError::BadRequest("authenticatorData shorter than 37 bytes".into())
-        })?;
+        let head = bytes
+            .get(..37)
+            .ok_or_else(crate::missing("authenticatorData shorter than 37 bytes"))?;
         let mut rp_id_hash = [0u8; 32];
         rp_id_hash.copy_from_slice(&head[..32]);
         let flags = head[32];
@@ -523,9 +509,7 @@ impl ParsedAuthData {
         let attested = if (flags & AUTH_DATA_FLAG_AT) != 0 {
             let at_head = bytes
                 .get(offset..offset.saturating_add(18))
-                .ok_or_else(|| {
-                    KaisatsuError::BadRequest("truncated attestedCredentialData header".into())
-                })?;
+                .ok_or_else(crate::missing("truncated attestedCredentialData header"))?;
             let mut aaguid = [0u8; 16];
             aaguid.copy_from_slice(&at_head[..16]);
             let cred_len = usize::from(u16::from_be_bytes([at_head[16], at_head[17]]));
@@ -538,16 +522,16 @@ impl ParsedAuthData {
             offset = offset.saturating_add(18);
             let cred_end = offset
                 .checked_add(cred_len)
-                .ok_or_else(|| KaisatsuError::BadRequest("credentialId offset overflow".into()))?;
+                .ok_or_else(crate::missing("credentialId offset overflow"))?;
             let credential_id = bytes
                 .get(offset..cred_end)
-                .ok_or_else(|| KaisatsuError::BadRequest("truncated credentialId".into()))?
+                .ok_or_else(crate::missing("truncated credentialId"))?
                 .to_vec();
             offset = cred_end;
 
             let rest = bytes
                 .get(offset..)
-                .ok_or_else(|| KaisatsuError::BadRequest("missing credentialPublicKey".into()))?;
+                .ok_or_else(crate::missing("missing credentialPublicKey"))?;
             let (cose_cbor, consumed) = decode_cbor_prefix(rest)?;
             let public_key = CosePublicKey::from_cbor(&cose_cbor)?;
             offset = offset.saturating_add(consumed);
@@ -561,9 +545,9 @@ impl ParsedAuthData {
         };
 
         if (flags & AUTH_DATA_FLAG_ED) != 0 {
-            let ext_rest = bytes.get(offset..).ok_or_else(|| {
-                KaisatsuError::BadRequest("missing authenticator extensions".into())
-            })?;
+            let ext_rest = bytes
+                .get(offset..)
+                .ok_or_else(crate::missing("missing authenticator extensions"))?;
             let (ext_cbor, consumed) = decode_cbor_prefix(ext_rest)?;
             if !matches!(ext_cbor, CborValue::Map(_)) {
                 return Err(KaisatsuError::BadRequest(
@@ -690,13 +674,13 @@ fn parse_client_data(
 ) -> Result<(Vec<u8>, [u8; 32])> {
     let raw = URL_SAFE_NO_PAD
         .decode(client_data_b64.trim())
-        .map_err(|_| KaisatsuError::BadRequest("invalid clientDataJSON base64url".into()))?;
+        .map_err(crate::bad_request("invalid clientDataJSON base64url"))?;
     // W3C WebAuthn L3 §7.1 step 5 / §7.2 step 8: UTF-8 decode, stripping any leading UTF-8 BOM.
-    let text = std::str::from_utf8(&raw)
-        .map_err(|_| KaisatsuError::BadRequest("clientDataJSON is not UTF-8".into()))?;
+    let text =
+        std::str::from_utf8(&raw).map_err(crate::bad_request("clientDataJSON is not UTF-8"))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let c: CollectedClientData = serde_json::from_str(text)
-        .map_err(|_| KaisatsuError::BadRequest("invalid clientDataJSON structure".into()))?;
+        .map_err(crate::bad_request("invalid clientDataJSON structure"))?;
 
     // Step 7 / 10: Verify C.type
     if c.client_type != expected_type {
@@ -759,19 +743,19 @@ pub fn verify_registration_response(
     // Step 13: Perform CBOR decoding on attestationObject to obtain fmt, authData, attStmt
     let att_bytes = URL_SAFE_NO_PAD
         .decode(payload.response.attestation_object.trim())
-        .map_err(|_| KaisatsuError::BadRequest("invalid attestationObject base64url".into()))?;
+        .map_err(crate::bad_request("invalid attestationObject base64url"))?;
     let att_cbor = decode_cbor(&att_bytes)?;
     let _fmt = att_cbor
         .map_get_str("fmt")
         .and_then(CborValue::as_str)
-        .ok_or_else(|| KaisatsuError::BadRequest("attestationObject missing fmt".into()))?;
+        .ok_or_else(crate::missing("attestationObject missing fmt"))?;
     let auth_data_bytes = att_cbor
         .map_get_str("authData")
         .and_then(CborValue::as_bytes)
-        .ok_or_else(|| KaisatsuError::BadRequest("attestationObject missing authData".into()))?;
+        .ok_or_else(crate::missing("attestationObject missing authData"))?;
     let _att_stmt = att_cbor
         .map_get_str("attStmt")
-        .ok_or_else(|| KaisatsuError::BadRequest("attestationObject missing attStmt".into()))?;
+        .ok_or_else(crate::missing("attestationObject missing attStmt"))?;
 
     let auth_data = ParsedAuthData::parse(auth_data_bytes)?;
 
@@ -886,7 +870,7 @@ pub fn verify_authentication_response(
 
     let auth_data_bytes = URL_SAFE_NO_PAD
         .decode(payload.response.authenticator_data.trim())
-        .map_err(|_| KaisatsuError::BadRequest("invalid authenticatorData base64url".into()))?;
+        .map_err(crate::bad_request("invalid authenticatorData base64url"))?;
     let auth_data = ParsedAuthData::parse(&auth_data_bytes)?;
 
     // §6.1: For assertion signatures, the AT flag MUST NOT be set.
@@ -928,7 +912,7 @@ pub fn verify_authentication_response(
     // Step 20–21: Verify signature over authData || sha256(clientDataJSON)
     let sig_bytes = URL_SAFE_NO_PAD
         .decode(payload.response.signature.trim())
-        .map_err(|_| KaisatsuError::BadRequest("invalid signature base64url".into()))?;
+        .map_err(crate::bad_request("invalid signature base64url"))?;
     let mut signed = Vec::with_capacity(auth_data_bytes.len() + 32);
     signed.extend_from_slice(&auth_data_bytes);
     signed.extend_from_slice(&cdata_hash);

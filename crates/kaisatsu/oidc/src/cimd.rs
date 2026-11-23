@@ -67,14 +67,12 @@ pub fn validate_and_build_cimd_client(
     }
     let client_url = Url::parse(expected_client_id)
         .map_err(|_| KaisatsuError::invalid_client("CIMD client_id is not a valid URL"))?;
-    if client_url.scheme() != "https" {
+    // An https URL always has a host: the URL parser refuses one without.
+    let (true, Some(client_host)) = (client_url.scheme() == "https", client_url.host_str()) else {
         return Err(KaisatsuError::invalid_client(
             "CIMD client_id must use https",
         ));
-    }
-    let client_host = client_url
-        .host_str()
-        .ok_or_else(|| KaisatsuError::invalid_client("CIMD client_id has no host"))?;
+    };
     if !host_allowed(realm, client_host) {
         return Err(KaisatsuError::invalid_client(format!(
             "CIMD client host '{client_host}' is not permitted by realm policy"

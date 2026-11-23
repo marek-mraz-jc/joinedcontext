@@ -156,31 +156,49 @@ pub struct OrganizationCatalogue {
     #[serde(default)]
     pub data_host: Option<String>,
     /// The file holding the CKAN API token the Portal publishes with; read per run. Required in
-    /// `JC_PORTAL_ORGANIZATION_CATALOGUES`; jc's run-time entries carry [`Self::token`] instead.
+    /// `JC_PORTAL_ORGANIZATION_CATALOGUES`; jc's own entries carry [`Self::token`] instead.
     #[serde(default)]
     pub token_file: Option<std::path::PathBuf>,
-    /// The token jc minted in this process for a run-time Organization's catalogue (T-7185),
-    /// never read from the environment.
+    /// What mints the service token the Portal publishes into a catalogue jc named (S11-23),
+    /// asked once per publication; never read from the environment.
     #[serde(skip)]
-    pub token: Option<CatalogueToken>,
+    pub token: Option<PublisherToken>,
 }
 
-/// A catalogue token held in memory (see [`OrganizationCatalogue::token`]); `Debug` prints a
-/// placeholder, two are equal only when they are the same holder.
-#[derive(Clone)]
-pub struct CatalogueToken(pub std::sync::Arc<jcctl::secrets::SecretValue>);
+/// The source jc gives the Portal for its installation's own catalogue (`JC_PORTAL_CKAN_URL`
+/// with `JC_PORTAL_CKAN_API_URL`): an instance at exactly that URL publishes with its tokens
+/// instead of its `apiTokenRef` (S11-23). Unset outside jc.
+pub static INSTALLATION_PUBLISHER: std::sync::OnceLock<PublisherToken> = std::sync::OnceLock::new();
 
-impl PartialEq for CatalogueToken {
+/// One mint of a [`PublisherToken`]: a short-lived service token, or why none was had.
+pub type Minted = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<jcctl::secrets::SecretValue, String>> + Send>,
+>;
+
+/// The source of the service tokens the Portal publishes into a jc catalogue with: a token
+/// kaisatsu issues for the `dataroom` audience in a role split, one jc signs in process
+/// all in one. `Debug` prints a placeholder; two are equal only when they are the same source.
+#[derive(Clone)]
+pub struct PublisherToken(pub std::sync::Arc<dyn Fn() -> Minted + Send + Sync>);
+
+impl PublisherToken {
+    /// A fresh (or still valid cached) token.
+    pub fn mint(&self) -> Minted {
+        (self.0)()
+    }
+}
+
+impl PartialEq for PublisherToken {
     fn eq(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for CatalogueToken {}
+impl Eq for PublisherToken {}
 
-impl std::fmt::Debug for CatalogueToken {
+impl std::fmt::Debug for PublisherToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("CatalogueToken(redacted)")
+        f.write_str("PublisherToken(redacted)")
     }
 }
 

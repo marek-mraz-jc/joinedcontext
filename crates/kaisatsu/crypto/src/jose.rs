@@ -55,7 +55,7 @@ pub fn sign_jwt<T: Serialize>(
         // jsonwebtoken's aws-lc backend wants PKCS#1 DER; the stored key is PKCS#8, which its
         // PEM reader unwraps, so hand it the PKCS#8 document as PEM.
         Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(&pkcs8_der).as_bytes())
-            .map_err(|_| KaisatsuError::Crypto("stored RSA key is not PKCS#8".into()))?,
+            .map_err(crate::crypto_err("stored RSA key is not PKCS#8"))?,
         Algorithm::EdDSA => EncodingKey::from_ed_der(&pkcs8_der),
         _ => return Err(KaisatsuError::Crypto("forbidden algorithm".into())),
     };
@@ -114,9 +114,8 @@ fn verify_jwt_signed<T: DeserializeOwned>(
         ));
     }
     let pub_jwk: PublicJwk = serde_json::from_str(&rec.public_jwk_json)
-        .map_err(|_| KaisatsuError::Crypto("invalid stored public JWK".into()))?;
-    let jwk_val =
-        serde_json::to_value(&pub_jwk).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+        .map_err(crate::crypto_err("invalid stored public JWK"))?;
+    let jwk_val = serde_json::to_value(&pub_jwk).map_err(crate::crypto_display)?;
     verify_with_jwk(
         token,
         &jwk_val,
@@ -124,17 +123,6 @@ fn verify_jwt_signed<T: DeserializeOwned>(
         expected_audience,
         check_exp,
     )
-}
-
-pub fn verify_jwt_with_public_jwk<T: DeserializeOwned>(
-    token: &str,
-    pub_jwk: &PublicJwk,
-    expected_issuer: Option<&str>,
-    expected_audience: Option<&str>,
-) -> Result<(Header, T)> {
-    let jwk_val =
-        serde_json::to_value(pub_jwk).map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
-    verify_jwt_with_jwk(token, &jwk_val, expected_issuer, expected_audience)
 }
 
 /// Verifies a JWT against an arbitrary JWK JSON value (used for DPoP proofs, RFC 7523 assertions,

@@ -263,12 +263,15 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
         .enqueue_outbox(outbox_row("ob-a", "ann"))
         .await
         .unwrap();
-    let claimed = store.claim_outbox_batch(R, 10).await.unwrap();
+    let claimed = store
+        .claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5)
+        .await
+        .unwrap();
     assert_eq!(claimed.len(), 1);
     // A failed send under the attempt cap goes back to pending with a default backoff.
     let before = TimestampTz::now();
     store
-        .complete_outbox_row(R, "ob-a", false, Some("421 try later".into()), None, 5)
+        .complete_outbox_row(&claimed[0], false, Some("421 try later".into()), None, 5)
         .await
         .unwrap();
     let row = store
@@ -283,7 +286,13 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
     assert_eq!(row.last_error.as_deref(), Some("421 try later"));
     assert!(row.next_attempt_at > before, "backed off into the future");
     // Not due yet: nothing to claim.
-    assert!(store.claim_outbox_batch(R, 10).await.unwrap().is_empty());
+    assert!(
+        store
+            .claim_outbox_batch(R, 10, std::time::Duration::from_secs(90), 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Retrying a row nobody knows is a 404 (None).
     assert!(
         store
@@ -292,6 +301,90 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
             .unwrap()
             .is_none()
     );
+}
+
+/// S3-29: a claim whose claimer died is claimed again after its lease, by another dispatcher
+/// sharing the store; the dead claimer's late completion changes nothing, and a lapsed claim at
+/// its last attempt is failed instead of sent a further time.
+async fn outbox_lapsed_claims(store: &Arc<dyn Store>) {
+    let lapsed = std::time::Duration::from_millis(1);
+    let held = std::time::Duration::from_secs(90);
+    store
+        .enqueue_outbox(outbox_row("ob-lease", "ann"))
+        .await
+        .unwrap();
+    let a = Arc::clone(store);
+    let b = Arc::clone(store);
+    let first = a.claim_outbox_batch(R, 10, held, 5).await.unwrap();
+    assert_eq!(first.len(), 1);
+    // A live lease is not claimed by a second dispatcher.
+    assert!(
+        b.claim_outbox_batch(R, 10, held, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // The first claimer dies after a claim whose lease runs out.
+    store.retry_outbox_row(R, None, "ob-lease").await.unwrap();
+    let dead = a.claim_outbox_batch(R, 10, lapsed, 5).await.unwrap();
+    assert_eq!(dead.len(), 1);
+    assert_eq!(dead[0].status, "sending");
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let taken = b.claim_outbox_batch(R, 10, held, 5).await.unwrap();
+    let ids: Vec<_> = taken.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["ob-lease"], "the lapsed claim is claimed again");
+    assert_eq!(taken[0].attempts, dead[0].attempts + 1);
+    // The dead claimer's late outcome is refused; the live claimer's stands.
+    assert!(
+        !a.complete_outbox_row(&dead[0], false, Some("late".into()), None, 5)
+            .await
+            .unwrap()
+    );
+    assert!(
+        b.complete_outbox_row(&taken[0], true, None, None, 5)
+            .await
+            .unwrap()
+    );
+    let row = store
+        .list_outbox_rows(R, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == "ob-lease")
+        .unwrap();
+    assert_eq!(row.status, "sent");
+    assert_eq!(row.last_error, None);
+    // Completing the same claim twice records nothing the second time.
+    assert!(
+        !b.complete_outbox_row(&taken[0], true, None, None, 5)
+            .await
+            .unwrap()
+    );
+
+    // A claim that lapses at the last attempt is failed, never sent again.
+    store
+        .enqueue_outbox(outbox_row("ob-last", "ann"))
+        .await
+        .unwrap();
+    let last = a.claim_outbox_batch(R, 10, lapsed, 1).await.unwrap();
+    assert_eq!(last.len(), 1);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(
+        b.claim_outbox_batch(R, 10, held, 1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let row = store
+        .list_outbox_rows(R, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == "ob-last")
+        .unwrap();
+    assert_eq!(row.status, "failed");
+    assert_eq!(row.last_error.as_deref(), Some(OUTBOX_LEASE_LAPSED));
 }
 
 async fn sessions_go_with_their_person(store: &Arc<dyn Store>) {
@@ -455,6 +548,7 @@ async fn contract(store: Arc<dyn Store>) {
     seed(&store).await;
     passkeys_and_links(&store).await;
     outbox_backoff(&store).await;
+    outbox_lapsed_claims(&store).await;
     k_entity_sets(&store).await;
     sessions_go_with_their_person(&store).await;
 }

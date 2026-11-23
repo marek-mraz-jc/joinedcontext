@@ -4,7 +4,7 @@
  * the gateway with the person's session, and every refused row reported.
  */
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import en from "../src/locales/en.json";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
@@ -29,7 +29,9 @@ import {
   parseWorkbook,
   parseXlsx,
   parseXml,
+  readSheets,
   readTable,
+  sheetFileName,
   rejectedCsv,
   suggestMapping,
   toEntities,
@@ -182,6 +184,39 @@ describe("reading a file", () => {
     );
   });
 
+  it("reads XML and a workbook by their names, and offers every file as its sheets (JC1-07)", async () => {
+    const xmlTable = await readTable(new File(["<rows><row name=\"Kamppi\"/></rows>"], "rows.xml"));
+    expect(xmlTable.rows).toEqual([{ name: "Kamppi" }]);
+    const book = workbook({ Stops: [["name"], ["Kamppi"]], Lines: [["id"], ["7"]] });
+    const sheetFile = new File([new Uint8Array(book)], "Book.XLSX");
+    expect((await readTable(sheetFile)).rows).toEqual([{ name: "Kamppi" }]);
+    const sheets = await readSheets(sheetFile);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(["Stops", "Lines"]);
+    const csv = await readSheets(new File(["name\nKamppi\n"], "stations.csv"));
+    expect(csv).toEqual([{ name: "", table: expect.objectContaining({ rows: [{ name: "Kamppi" }] }) }]);
+    await expect(readSheets(new File([new Uint8Array(MAX_BYTES + 1)], "big.csv"))).rejects.toBeInstanceOf(FileTooLarge);
+    // one sheet of several travels under its own name, a lone sheet or a plain file under the file's
+    expect(sheetFileName("Book.xlsx", sheets, sheets[1])).toBe("Lines.csv");
+    expect(sheetFileName("stations.csv", csv, csv[0])).toBe("stations.csv");
+    expect(sheetFileName(".xlsx", csv, csv[0])).toBe("sample.csv");
+    expect(sheetFileName("Book.xlsx", sheets, { name: "a/b", table: sheets[0].table })).toBe("a-b.csv");
+  });
+
+  it("says a workbook with no readable sheet, or entries past its end, is damaged", async () => {
+    await expect(parseXlsx(zip({ "xl/workbook.xml": "<workbook/>" }))).rejects.toThrow("the workbook has no sheet");
+    const pastEnd = zip({ "xl/worksheets/sheet1.xml": "<worksheet/>" });
+    const view = new DataView(pastEnd.buffer);
+    const directory = view.getUint32(pastEnd.length - 22 + 16, true);
+    view.setUint32(directory + 20, pastEnd.length, true);
+    await expect(parseXlsx(pastEnd)).rejects.toThrow("the workbook's directory is damaged");
+  });
+
+  it("writes a nested JSON value as JSON text and an absent one as empty", () => {
+    expect(parseJson('[{"name":"Kamppi","at":{"x":1},"note":null}]').rows).toEqual([
+      { name: "Kamppi", at: '{"x":1}', note: "" },
+    ]);
+  });
+
   it("refuses a file over the limit by its size, before a byte is read", async () => {
     const big = new File(["x"], "big.csv");
     Object.defineProperty(big, "size", { value: 53_000_000 });
@@ -246,6 +281,15 @@ describe("a Slovak file (T-3248)", () => {
 });
 
 describe("mapping and checking", () => {
+  it("has no slots without a model or a class the model names, and never maps id or type", () => {
+    expect(importSlotsOf(undefined, TYPE)).toEqual([]);
+    expect(importSlotsOf(MODEL, "")).toEqual([]);
+    expect(importSlotsOf(MODEL, "Unknown")).toEqual([]);
+    const withId = MODEL.replace("slots: [name,", "slots: [id, type, name,");
+    expect(importSlotsOf(withId, TYPE).map((slot) => slot.name)).not.toContain("id");
+    expect(importSlotsOf(withId, TYPE).map((slot) => slot.name)).not.toContain("type");
+  });
+
   it("reads the slots of the class with what the model requires", () => {
     expect(SLOTS.find((s) => s.name === "name")?.required).toBe(true);
     expect(SLOTS.find((s) => s.name === "status")?.values).toEqual(["working", "outOfService"]);
@@ -332,6 +376,54 @@ describe("mapping and checking", () => {
     expect(rejected).toEqual([{ row: 4, reason: "`urn:ngsi-ld:BikeHireDockingStation:` is not an NGSI-LD URN" }]);
   });
 
+  it("writes JSON, list, language, vocab and map values in the shape of their NGSI-LD kind", () => {
+    const slots: ImportSlot[] = [
+      { name: "name", kind: "Property", required: true },
+      { name: "spec", kind: "JsonProperty", required: false },
+      { name: "tags", kind: "ListProperty", required: false },
+      { name: "label", kind: "LanguageProperty", required: false },
+      { name: "category", kind: "VocabProperty", required: false },
+      { name: "spot", kind: "GeoProperty", required: false },
+      { name: "capacity", kind: "Property", range: "integer", required: false, maximum: 40 },
+      { name: "open", kind: "Property", range: "boolean", required: false },
+    ];
+    const mapping = { name: "name", spec: "spec", tags: "tags", label: "label", category: "category", spot: "spot", capacity: "capacity", open: "open" };
+    const table = {
+      columns: Object.keys(mapping),
+      rows: [
+        { name: "a", spec: '{"v":1}', tags: '["x","y"]', label: '{"fi":"Asema","sv":"Station"}', category: "dock", spot: "POINT (24.9 60.1)", capacity: "40", open: "nie" },
+        { name: "b", spec: "", tags: "x; y |z", label: "Asema", category: "", spot: "", capacity: "", open: "" },
+        { name: "c", spec: "{nope", tags: '{"not":"a list"}', label: '{"fi":1}', category: "", spot: "north", capacity: "41", open: "maybe" },
+      ],
+    };
+    let n = 0;
+    const { entities, rejected } = toEntities(table, mapping, slots, TARGET, () => `id-${(n += 1)}`);
+    expect(entities).toHaveLength(2);
+    expect(entities[0].entity).toMatchObject({
+      spec: { type: "JsonProperty", json: { v: 1 } },
+      tags: { type: "ListProperty", valueList: ["x", "y"] },
+      label: { type: "LanguageProperty", languageMap: { fi: "Asema", sv: "Station" } },
+      category: { type: "VocabProperty", vocab: "dock" },
+      spot: { type: "GeoProperty", value: { type: "Point", coordinates: [24.9, 60.1] } },
+      capacity: { type: "Property", value: 40 },
+      open: { type: "Property", value: false },
+    });
+    // a list that is no JSON is split on ; and |, a plain text is a language-free one
+    expect(entities[1].entity).toMatchObject({
+      tags: { type: "ListProperty", valueList: ["x", "y", "z"] },
+      label: { type: "LanguageProperty", languageMap: { "@none": "Asema" } },
+    });
+    expect(rejected).toHaveLength(1);
+    const why = rejected[0].reason;
+    expect(why).toContain("spec: `{nope` is not JSON");
+    expect(why).toContain('spot: `north` is neither GeoJSON nor "longitude, latitude"');
+    expect(why).toContain("capacity: 41 is above 40");
+    expect(why).toContain("open: `maybe` is not yes or no");
+    // a JSON object where a list belongs is split as text, not refused; a map of non-texts is one text
+    expect(why).not.toContain("tags");
+    expect(why).not.toContain("label");
+  });
+
   it("writes the refused rows as CSV a spreadsheet opens", () => {
     expect(rejectedCsv([{ row: 3, id: "u", reason: 'a, "b"' }])).toBe('row,id,reason\r\n3,u,"a, ""b"""');
   });
@@ -415,6 +507,21 @@ describe("export", () => {
     // CSV is the one file an Endpoint publishes (T-4600): a listed `json` is no link.
     expect(screen.queryByRole("link", { name: "JSON" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Excel" })).toBeNull();
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <ExportLinks
+          endpoints={[endpoint("all", "a1", ["csv"]), endpoint("open", "o1", ["csv"])]}
+          type={TYPE}
+          q={undefined}
+          attrs={[]}
+        />
+      </I18nextProvider>,
+    );
+    // two Endpoints serve a file: the person picks which one the link goes through
+    const through = screen.getByRole("combobox", { name: en.spaces.export.endpoint });
+    expect(within(through).getAllByRole("option").map((o) => o.textContent)).toEqual(["all", "open"]);
+    fireEvent.change(through, { target: { value: "open" } });
+    expect(screen.getByRole("link", { name: "CSV" })).toHaveAttribute("href", `/api/endpoint/o1/file.csv?type=${TYPE}`);
     rerender(
       <I18nextProvider i18n={i18n}>
         <ExportLinks endpoints={[endpoint("map", "m1", ["geojson"])]} type={TYPE} q={undefined} attrs={[]} />
@@ -544,6 +651,75 @@ describe("the import dialog", () => {
     expect(created.expiresAt).toBe("2999-01-01T00:00:00.000Z");
   });
 
+  it("removes every imported entity at one fixed time picked in the person's time zone (T-4822)", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    const send = vi.fn<Send>(async () => ({ status: 201 }));
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ImportRowsDialog open onOpenChange={() => {}} target={TARGET} slots={SLOTS} send={send} onImported={() => {}} retention={[]} />
+      </I18nextProvider>,
+    );
+    await user.upload(screen.getByLabelText("Choose a file"), new File(["Title\nKamppi\n"], "stations.csv"));
+    const expiry = await screen.findByTestId("import-expiry");
+    await user.click(within(expiry).getByRole("radio", { name: "At one fixed time" }));
+    const at = within(expiry).getByLabelText("Remove all at");
+    // a day ahead by default, and nothing earlier than now can be picked
+    const shown = Date.parse((at as HTMLInputElement).value);
+    expect(shown - Date.now()).toBeGreaterThan(86_400_000 - 120_000);
+    expect(Date.parse(at.getAttribute("min") ?? "")).toBeLessThanOrEqual(Date.now());
+    expect(within(expiry).getByText("In your time zone.")).toBeInTheDocument();
+    // a half-typed value changes nothing; a whole one is the instant sent
+    fireEvent.change(at, { target: { value: "" } });
+    expect(Date.parse((at as HTMLInputElement).value)).toBe(shown);
+    fireEvent.change(at, { target: { value: "2999-06-01T12:30" } });
+    expect(at).toHaveValue("2999-06-01T12:30");
+    await user.click(screen.getByRole("button", { name: "Create 1 row" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const [created] = send.mock.calls[0][0].body as Record<string, unknown>[];
+    expect(created.expiresAt).toBe(new Date("2999-06-01T12:30").toISOString());
+  });
+
+  it("names a required slot no column feeds, goes back to another file, and resets when closed", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    const send = vi.fn<Send>(async () => ({ status: 201 }));
+    const onOpenChange = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ImportRowsDialog open onOpenChange={onOpenChange} target={TARGET} slots={SLOTS} send={send} onImported={() => {}} />
+      </I18nextProvider>,
+    );
+    await user.upload(screen.getByLabelText("Choose a file"), new File(["bikes\n4\n"], "bikes.csv"));
+    expect(await screen.findByText("No column feeds the required name: every row will be refused.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nothing to create" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: "Choose another file" }));
+    await user.upload(await screen.findByLabelText("Choose a file"), new File(["Title,bikes\nKamppi,4\n,2\n"], "stations.csv"));
+    await user.click(await screen.findByRole("button", { name: "Create 1 row" }));
+    await waitFor(() => expect(screen.getByText("1 row created, 1 refused.")).toBeInTheDocument());
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // the refused rows leave as a CSV file named after the type
+    const saved: string[] = [];
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: vi.fn(() => "blob:refused"), revokeObjectURL: vi.fn() }),
+    );
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    await user.click(screen.getByRole("button", { name: "Download the refused rows (CSV)" }));
+    expect(saved).toEqual([`${TYPE}-refused.csv`]);
+    click.mockRestore();
+    vi.unstubAllGlobals();
+
+    // the footer's Close, not the dialog's corner button
+    const footerClose = screen.getAllByRole("button", { name: "Close" }).find((b) => b.textContent === "Close");
+    await user.click(footerClose as HTMLElement);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(await screen.findByLabelText("Choose a file")).toBeInTheDocument();
+  });
+
   it("says a type no rule names keeps no history (T-5058, DM-132)", async () => {
     await i18n.changeLanguage("en");
     const user = userEvent.setup();
@@ -613,6 +789,10 @@ describe("the import dialog", () => {
     );
     await user.upload(screen.getByLabelText("Choose a file"), new File(["{nope"], "rows.json"));
     expect(await screen.findByRole("alert")).toHaveTextContent("The file could not be read: the file is not JSON");
+    expect(screen.getByLabelText("Choose a file")).toBeInTheDocument();
+    // a file with its header and no row has nothing to map
+    await user.upload(screen.getByLabelText("Choose a file"), new File(["Title,bikes\n"], "stations.csv"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.spaces.import.empty);
     expect(screen.getByLabelText("Choose a file")).toBeInTheDocument();
   });
 });

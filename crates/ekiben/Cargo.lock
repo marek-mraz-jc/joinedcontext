@@ -1700,9 +1700,13 @@ dependencies = [
  "ekiben-io-http",
  "futures",
  "lapin",
+ "rcgen",
  "regex",
+ "rustls",
+ "rustls-pki-types",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tracing",
 ]
 
@@ -1953,6 +1957,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
