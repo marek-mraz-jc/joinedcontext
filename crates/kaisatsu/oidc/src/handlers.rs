@@ -133,7 +133,7 @@ pub async fn active_realm(
 
 /// The realm a route names. `active_realm` already answered 404 for an unknown or disabled one; a
 /// realm deleted between that check and the handler's read answers the same 404.
-pub(crate) async fn named_realm(state: &OidcState, name: &str) -> Result<RealmConfig> {
+pub async fn named_realm(state: &OidcState, name: &str) -> Result<RealmConfig> {
     state
         .store
         .get_realm(name)

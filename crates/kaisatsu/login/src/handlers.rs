@@ -18,8 +18,8 @@ use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_oidc::{
-    ClientIp, OidcState, add_auth_cookie, auth_cookie_holds, read_cookie, second_factor_required,
-    sign_in_cookie, sign_in_cookie_name,
+    ClientIp, OidcState, add_auth_cookie, auth_cookie_holds, named_realm, read_cookie,
+    second_factor_required, sign_in_cookie, sign_in_cookie_name,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -701,9 +701,7 @@ async fn render_state_page_with(
             let rp_id = crate::passkey::effective_rp_id(realm, mount, true);
             let field = if let LoginState::RegisterWebAuthn { user_id, .. } = login_state {
                 // The creation options the browser needs: the person's handle names the passkey.
-                let mut user = user_of(user_id)
-                    .await?
-                    .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+                let mut user = login_person(state, realm, user_id).await?;
                 let handle =
                     crate::passkey::ensure_user_handle(&state.store, &realm.id, &mut user).await?;
                 let rp_name = if realm.display_name.is_empty() {
@@ -1117,11 +1115,7 @@ async fn restart_login_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let Some(mut auth_session) = state
         .store
@@ -1172,11 +1166,7 @@ async fn authenticate_page_get(
     mount_ext: Option<Extension<Mount>>,
     client_ip: ClientIp,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let Some(mut auth_session) = state
         .store
@@ -1223,12 +1213,11 @@ async fn authenticate_page_get(
             .filter(|u| u.enabled)
             .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(
+        let next = step(
             current_state,
             LoginInput::UpstreamAssertionVerified { user_id },
             &ctx,
-        )
-        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        )?;
         return advance_or_render(
             &state,
             &mount,
@@ -1253,6 +1242,25 @@ async fn authenticate_page_get(
     .await
 }
 
+/// The person a login step names. A person deleted while the login waits on a step is refused
+/// there (401), never signed in as a ghost.
+async fn login_person(
+    state: &OidcState,
+    realm: &RealmConfig,
+    user_id: &str,
+) -> Result<UserRepresentation> {
+    state
+        .store
+        .get_user_by_id(&realm.id, None, user_id)
+        .await?
+        .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))
+}
+
+/// One step of the login machine; an input the current state does not take is a 400 naming it.
+fn step(current: LoginState, input: LoginInput, ctx: &LoginPolicyContext) -> Result<LoginState> {
+    transition(current, input, ctx).map_err(|e| KaisatsuError::BadRequest(e.to_string()))
+}
+
 async fn authenticate_page_post(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
@@ -1262,11 +1270,7 @@ async fn authenticate_page_post(
     client_ip: ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let session_code = form
         .get("session_code")
@@ -1424,7 +1428,7 @@ async fn authenticate_page_post(
         )
         .await?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(
+        let next = step(
             LoginState::Passkey {
                 user_id: Some(user.id.clone()),
             },
@@ -1433,8 +1437,7 @@ async fn authenticate_page_post(
                 user_verified,
             },
             &ctx,
-        )
-        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        )?;
         return advance_or_render(
             &state,
             &mount,
@@ -1573,17 +1576,15 @@ async fn authenticate_page_post(
         }
 
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let s1 = transition(
+        let s1 = step(
             LoginState::IdentityFirst,
             LoginInput::SubmitIdentifier {
                 user_id: user.id.clone(),
                 routed_idp: None,
             },
             &ctx,
-        )
-        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
-        current_state = transition(s1, LoginInput::VerifyPasswordOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        )?;
+        current_state = step(s1, LoginInput::VerifyPasswordOk, &ctx)?;
 
         // If `otp` was also submitted in the same POST (or transition reached `Code`), handle next
         if !form.contains_key("otp") || !matches!(current_state, LoginState::SecondFactorOtp { .. })
@@ -1604,11 +1605,7 @@ async fn authenticate_page_post(
     if let LoginState::SecondFactorOtp { ref user_id, .. }
     | LoginState::EnrolTotp { ref user_id, .. } = current_state
     {
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(&state, &realm, user_id).await?;
         let otp_code = form
             .get("otp")
             .map(String::as_str)
@@ -1698,8 +1695,7 @@ async fn authenticate_page_post(
                 auth_session.kc_action_done = true;
             }
             let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-            let next = transition(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let next = step(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)?;
             return advance_or_render(
                 &state,
                 &mount,
@@ -1786,8 +1782,7 @@ async fn authenticate_page_post(
         }
 
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::VerifyOtpOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::VerifyOtpOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -1803,11 +1798,7 @@ async fn authenticate_page_post(
     // UPDATE_PASSWORD (a temporary password, or the required action): the new password must
     // pass the realm policy and history; it replaces the old one, which becomes history.
     if let LoginState::UpdatePassword { ref user_id, .. } = current_state {
-        let mut user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let mut user = login_person(&state, &realm, user_id).await?;
         let new_password = form
             .get("new_password")
             .map(String::as_str)
@@ -1878,8 +1869,7 @@ async fn authenticate_page_post(
             auth_session.kc_action_done = true;
         }
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -1893,17 +1883,12 @@ async fn authenticate_page_post(
     }
 
     if let LoginState::TermsAndConditions { ref user_id, .. } = current_state {
-        let mut user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let mut user = login_person(&state, &realm, user_id).await?;
         user.required_actions
             .retain(|a| a != "TERMS_AND_CONDITIONS");
         let user = state.store.update_user(user).await?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::AcceptTermsOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::AcceptTermsOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -1917,11 +1902,7 @@ async fn authenticate_page_post(
     }
 
     if let LoginState::Consent { ref user_id, .. } = current_state {
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(&state, &realm, user_id).await?;
         let now_ms = TimestampTz::now().as_millis();
         state
             .store
@@ -1941,8 +1922,7 @@ async fn authenticate_page_post(
             })
             .await?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::GrantConsent, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::GrantConsent, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -1957,11 +1937,7 @@ async fn authenticate_page_post(
 
     // K7: Recovery code verification (single-use, constant-time, brute-force counted like OTP)
     if let LoginState::RecoveryCode { ref user_id, .. } = current_state {
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(&state, &realm, user_id).await?;
         if bf
             .is_locked(&realm, Some(&user.id), client_ip.as_deref())
             .await?
@@ -2059,8 +2035,7 @@ async fn authenticate_page_post(
         state.store.upsert_credential(updated_cred).await?;
 
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::VerifyRecoveryCodeOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::VerifyRecoveryCodeOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -2075,11 +2050,7 @@ async fn authenticate_page_post(
 
     // K7: VerifyEmail step completion (either after action-link consumption or by verification code)
     if let LoginState::VerifyEmail { ref user_id, .. } = current_state {
-        let mut user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let mut user = login_person(&state, &realm, user_id).await?;
         let submitted_code = form
             .get("email_code")
             .map(String::as_str)
@@ -2110,8 +2081,7 @@ async fn authenticate_page_post(
         let mut auth_session = auth_session;
         auth_session.pending_email_code_hash = None;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::CompleteVerifyEmailOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::CompleteVerifyEmailOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -2126,11 +2096,7 @@ async fn authenticate_page_post(
 
     // K11: RegisterWebAuthn (`webauthn-register` / `CONFIGURE_PASSKEY`) required action step
     if let LoginState::RegisterWebAuthn { ref user_id, .. } = current_state {
-        let mut user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let mut user = login_person(&state, &realm, user_id).await?;
         let Some(challenge) = auth_session.webauthn_challenge.clone() else {
             return render_state_page(
                 &state,
@@ -2167,8 +2133,7 @@ async fn authenticate_page_post(
             .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
         let user = state.store.update_user(user).await?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::CompleteRegisterWebAuthnOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::CompleteRegisterWebAuthnOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -2216,8 +2181,7 @@ async fn authenticate_page_post(
         )
         .await?;
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(current_state, LoginInput::VerifyWebAuthn2faOk, &ctx)
-            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        let next = step(current_state, LoginInput::VerifyWebAuthn2faOk, &ctx)?;
         return advance_or_render(
             &state,
             &mount,
@@ -2231,19 +2195,14 @@ async fn authenticate_page_post(
     }
 
     if let LoginState::OrganizationChoice { ref user_id, .. } = current_state {
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(&state, &realm, user_id).await?;
         let chosen = form.get("org_id").cloned().unwrap_or_default();
         let ctx = build_policy_context(&state, &realm, &auth_session, &user).await?;
-        let next = transition(
+        let next = step(
             current_state,
             LoginInput::SelectOrganization { org_id: chosen },
             &ctx,
-        )
-        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        )?;
         return advance_or_render(
             &state,
             &mount,
@@ -2284,11 +2243,7 @@ async fn advance_or_render(
         } else {
             amr
         };
-        let user = state
-            .store
-            .get_user_by_id(&realm.id, None, &user_id)
-            .await?
-            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let user = login_person(state, realm, &user_id).await?;
         // Every required factor passed: the person's failure counter starts over (RI).
         BruteForceProtector::new(state.store.clone())
             .record_success(realm, &user.id)
@@ -2424,11 +2379,7 @@ async fn reset_credentials_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let mut session = reset_session(&state, &realm, &query, &headers).await?;
     if let (Some(s), Some(picked)) = (session.as_mut(), picked_locale(&realm, &query.kc_locale)) {
@@ -2556,11 +2507,7 @@ async fn reset_credentials_post(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let session = reset_session(&state, &realm, &query, &headers).await?;
     if let Some(s) = &session {
@@ -2675,11 +2622,7 @@ async fn action_token_get(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
     let Ok(claims) =
@@ -2877,11 +2820,7 @@ async fn action_token_post(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let session_code = form
         .get("session_code")
