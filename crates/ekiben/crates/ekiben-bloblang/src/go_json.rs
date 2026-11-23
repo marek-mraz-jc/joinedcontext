@@ -326,13 +326,11 @@ mod tests {
             v.to_go_json(),
             r#"{"a":5.0,"b":1E2,"c":10,"d":5.5,"e":-0,"f":12345678901234567890123,"g":[0.10]}"#
         );
-        let Value::Object(m) = &v else {
-            panic!("object")
-        };
-        assert!(matches!(m["c"], Value::Int(10)));
-        assert!(matches!(m["d"], Value::Float(f) if f == 5.5));
-        assert!(matches!(m["a"].sanitized(), Value::Float(f) if f == 5.0));
-        assert!(matches!(m["f"].sanitized(), Value::Float(_)));
+        let field = |k: &str| v.get_path(&[k.to_string()]);
+        assert!(matches!(field("c"), Value::Int(10)));
+        assert!(matches!(field("d"), Value::Float(f) if f == 5.5));
+        assert!(matches!(field("a").sanitized(), Value::Float(f) if f == 5.0));
+        assert!(matches!(field("f").sanitized(), Value::Float(_)));
         for bad in [
             &b"{\"a\":01}"[..],
             b"[1,]",
@@ -340,6 +338,11 @@ mod tests {
             b"\"a\tb\"",
             b"1.",
             b"-",
+            b"1e",
+            b"1e+",
+            b"tru",
+            b"\"open",
+            b"\"\xff\"",
         ] {
             assert!(
                 decode_with_numbers(bad).is_none(),
@@ -352,6 +355,71 @@ mod tests {
             decode_with_numbers(text.as_bytes()).map(|v| v.to_go_json()),
             Some("{\"s\":\"\u{e9}\\n\",\"t\":\"\u{e9}\"}".to_string())
         );
+    }
+
+    #[test]
+    fn exponents_signs_and_nesting_follow_go_and_serde_json_limits() {
+        assert_eq!(
+            decode_with_numbers(b" [1e+2, 1E-2, -3] ").map(|v| v.to_go_json()),
+            Some("[1e+2,1E-2,-3]".to_string())
+        );
+        let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        assert!(decode_with_numbers(deep(128).as_bytes()).is_some());
+        assert!(decode_with_numbers(deep(129).as_bytes()).is_none());
+        assert!(matches!(number_from_text("12"), Value::Int(12)));
+        assert!(
+            matches!(number_from_text("not a number"), Value::Number(t) if t == "not a number")
+        );
+        assert!(matches!(number_from_text("007"), Value::Number(t) if t == "007"));
+        assert!(matches!(number_from_text("2.5"), Value::Float(f) if f == 2.5));
+        assert!(matches!(number_from_text("2.50"), Value::Number(t) if t == "2.50"));
+    }
+
+    #[test]
+    fn marshal_writes_every_value_kind_and_indents_like_marshal_indent() {
+        let v = Value::from_json_value(serde_json::json!({
+            "a": [1, {"b": true}, []],
+            "e": {},
+            "s": "q\"\\\r\t\u{8}\u{c}<",
+            "z": null
+        }));
+        assert_eq!(
+            v.to_go_json_with(false, Some("  ")).as_deref(),
+            Some("{\n  \"a\": [\n    1,\n    {\n      \"b\": true\n    },\n    []\n  ],\n  \"e\": {},\n  \"s\": \"q\\\"\\\\\\r\\t\\b\\f<\",\n  \"z\": null\n}")
+        );
+        assert_eq!(
+            v.to_go_json_with(false, Some("")),
+            Some(v.to_go_json_unescaped())
+        );
+        let mixed = Value::Array(
+            vec![
+                Value::Bytes(b"hi".to_vec()),
+                Value::Delete,
+                Value::Uint(u64::MAX),
+                Value::Bool(false),
+                Value::Number("1.0".into()),
+                Value::Nothing,
+            ]
+            .into(),
+        );
+        assert_eq!(
+            mixed.to_go_json(),
+            r#"["aGk=",18446744073709551615,false,1.0]"#
+        );
+        assert_eq!(Value::Nothing.to_go_json(), "null");
+        let gaps = std::collections::BTreeMap::from([
+            ("a".to_string(), Value::Delete),
+            ("b".to_string(), Value::Int(1)),
+            ("c".to_string(), Value::Nothing),
+        ]);
+        assert_eq!(Value::Object(gaps.into()).to_go_json(), r#"{"b":1}"#);
+        let nan = Value::Array(vec![Value::Float(f64::NAN)].into());
+        assert_eq!(nan.to_go_json_with(true, None), None);
+        assert_eq!(nan.to_go_json_unescaped(), "null");
+        let inner = Value::Array(vec![Value::Float(f64::INFINITY)].into());
+        let nested =
+            Value::Object(std::collections::BTreeMap::from([("k".to_string(), inner)]).into());
+        assert_eq!(nested.to_go_json_with(true, Some(" ")), None);
     }
 
     #[test]

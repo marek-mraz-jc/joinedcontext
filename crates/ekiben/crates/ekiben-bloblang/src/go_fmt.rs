@@ -60,9 +60,9 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
         } else {
             f.wid = number(bytes, &mut i);
         }
-        if i + 1 < bytes.len() && bytes[i] == b'.' {
+        if i < bytes.len() && bytes[i] == b'.' {
             i += 1;
-            if bytes[i] == b'*' {
+            if bytes.get(i) == Some(&b'*') {
                 i += 1;
                 match args.get(arg).and_then(star) {
                     Some(p) if p >= 0 => f.prec = Some(p as usize),
@@ -195,16 +195,6 @@ fn print_value(out: &mut String, v: &Value, verb: char, f: Flags, depth: usize) 
         Value::Timestamp(_) => fmt_string(out, v, &crate::value::format_go_v(v), verb, f),
         Value::String(s) => fmt_string(out, v, s, verb, f),
         Value::Bytes(b) => match verb {
-            'v' | 'd' => {
-                out.push('[');
-                for (n, c) in b.iter().enumerate() {
-                    if n > 0 {
-                        out.push(' ');
-                    }
-                    fmt_integer(out, v, u64::from(*c), false, verb, f);
-                }
-                out.push(']');
-            }
             's' => pad(out, &truncate(&String::from_utf8_lossy(b), f), f),
             'x' | 'X' => fmt_hex_bytes(out, b, verb == 'X', f),
             'q' => fmt_q(out, &String::from_utf8_lossy(b), f),
@@ -562,12 +552,13 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
     }
     let nd = digs.len();
     match verb {
+        // fmt_float gives %e and %f a precision (6 by default); only %g and %v come shortest.
         'e' | 'E' => {
-            let p = prec.unwrap_or(nd.saturating_sub(1));
+            let p = prec.unwrap_or(6);
             fmt_e(&mut s, &digs, dp, p, verb);
         }
         'f' => {
-            let p = prec.unwrap_or_else(|| (nd as i64 - dp).max(0) as usize);
+            let p = prec.unwrap_or(6);
             fmt_f(&mut s, &digs, dp, p);
         }
         _ => {
@@ -746,5 +737,250 @@ mod tests {
             s("%v", vec![Value::Int(1), Value::Int(2)]),
             "1%!(EXTRA int64=2)"
         );
+    }
+
+    #[test]
+    fn formats_flags_widths_and_every_kind_as_go() {
+        use std::collections::BTreeMap;
+        let i = Value::Int;
+        let fl = Value::Float;
+        let st = |t: &str| Value::String(t.into());
+        let by = |t: &[u8]| Value::Bytes(t.to_vec());
+        let cases: Vec<(&str, Vec<Value>, &str)> = vec![
+            // operands: `*`, missing, extra, no verb
+            ("%*d|%-*d", vec![i(5), i(42), i(5), i(42)], "   42|42   "),
+            ("%*d", vec![i(-4), i(7)], "7   "),
+            ("%*d", vec![Value::Uint(3), i(7)], "  7"),
+            ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
+            ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            (
+                "%.*f|%.*f",
+                vec![i(2), fl(5.12159), i(-1), fl(1.5)],
+                "5.12|1.500000",
+            ),
+            ("%.*d", vec![st("x"), i(5)], "%!(BADPREC)5"),
+            ("abc%", vec![], "abc%!(NOVERB)"),
+            ("%-", vec![], "%!(NOVERB)"),
+            ("%.", vec![i(1)], "%!(NOVERB)%!(EXTRA int64=1)"),
+            ("100%%", vec![], "100%"),
+            (
+                "%d",
+                vec![i(1), Value::Null, st("a")],
+                "1%!(EXTRA <nil>, string=a)",
+            ),
+            ("%.f|%.1f", vec![fl(2.7), fl(0.05)], "3|0.1"),
+            // nil, bool, %T
+            (
+                "%v|%7v|%t|%d",
+                vec![
+                    Value::Null,
+                    Value::Null,
+                    Value::Bool(true),
+                    Value::Bool(false),
+                ],
+                "<nil>|  <nil>|true|%!d(bool=false)",
+            ),
+            (
+                "%T|%T|%T|%T|%T",
+                vec![
+                    Value::Null,
+                    Value::Bool(true),
+                    Value::Uint(1),
+                    fl(1.0),
+                    Value::Number("1".into()),
+                ],
+                "<nil>|bool|uint64|float64|json.Number",
+            ),
+            (
+                "%T|%T|%T|%10T|%T",
+                vec![
+                    by(b"a"),
+                    Value::Array(vec![].into()),
+                    Value::Object(BTreeMap::new().into()),
+                    i(1),
+                    Value::Timestamp(crate::time_format::utc(jiff::Timestamp::UNIX_EPOCH)),
+                ],
+                "[]uint8|[]interface {}|map[string]interface {}|     int64|time.Time",
+            ),
+            // arrays and maps print each element with the verb
+            (
+                "%v|%d",
+                vec![
+                    Value::Array(vec![i(1), Value::Null].into()),
+                    Value::Array(vec![i(1), st("a")].into()),
+                ],
+                "[1 <nil>]|[1 %!d(string=a)]",
+            ),
+            (
+                "%v",
+                vec![Value::Object(
+                    BTreeMap::from([("a".to_string(), i(1)), ("b".to_string(), st("x"))]).into(),
+                )],
+                "map[a:1 b:x]",
+            ),
+            // bytes
+            (
+                "%v|%s|%.1s|%x|%X|% x|%#x|%# x",
+                vec![by(b"hi"); 8],
+                "[104 105]|hi|h|6869|6869|68 69|0x6869|0x68 0x69",
+            ),
+            (
+                "%q|%o|%6x|%-6x|%4.0x|%d",
+                vec![by(b"hi"); 6],
+                "\"hi\"|[150 151]|  6869|6869  |    |[104 105]",
+            ),
+            // strings
+            (
+                "%x|%X|%q|%+q|%q|%#q|%#q|%d",
+                vec![
+                    st("hi"),
+                    st("hi"),
+                    st("a\"b"),
+                    st("é"),
+                    st("é"),
+                    st("ab"),
+                    st("a`b"),
+                    st("x"),
+                ],
+                "6869|6869|\"a\\\"b\"|\"\\u00e9\"|\"é\"|`ab`|\"a`b\"|%!d(string=x)",
+            ),
+            (
+                "%q|%q|%q|%+q|%q",
+                vec![
+                    st("\u{7}\u{8}\u{c}\n\r\t\u{b}\\"),
+                    st("\u{1}"),
+                    st("\u{200b}"),
+                    st("😀"),
+                    st("😀"),
+                ],
+                "\"\\a\\b\\f\\n\\r\\t\\v\\\\\"|\"\\x01\"|\"\\u200b\"|\"\\U0001f600\"|\"😀\"",
+            ),
+            (
+                "%v|%s|%d",
+                vec![
+                    Value::Number("1.50".into()),
+                    Value::Number("2".into()),
+                    Value::Number("3".into()),
+                ],
+                "1.50|2|%!d(json.Number=3)",
+            ),
+            // integers
+            (
+                "%x|%#x|%#X|%#o|%#o|%O|%#b|% x",
+                vec![i(-255), i(255), i(255), i(8), i(0), i(8), i(5), i(255)],
+                "-ff|0xff|0XFF|010|0|0o10|0b101| ff",
+            ),
+            (
+                "%+d|% d|%.0d|%3.0d|%.3d|%05d|%-05d|%+05d",
+                vec![i(0), i(5), i(0), i(0), i(5), i(-42), i(42), i(42)],
+                "+0| 5||   |005|-0042|42   |+0042",
+            ),
+            (
+                "%c|%c|%c|%q|%q|%+q|%#q|%q|%q",
+                vec![
+                    i(0x1F600),
+                    i(-1),
+                    i(0xD800),
+                    i(97),
+                    i(39),
+                    i(233),
+                    i(97),
+                    i(0x1F600),
+                    i(-1),
+                ],
+                "😀|\u{FFFD}|\u{FFFD}|'a'|'\\''|'\\u00e9'|'a'|'😀'|'\u{FFFD}'",
+            ),
+            (
+                "%U|%#U|%#U|%.6U|%08U|%z",
+                vec![i(0x1F600), i(65), i(10), i(65), i(65), i(5)],
+                "U+1F600|U+0041 'A'|U+000A|U+000041|  U+0041|%!z(int64=5)",
+            ),
+            (
+                "%d|%v|%x",
+                vec![Value::Uint(u64::MAX), Value::Uint(7), Value::Uint(255)],
+                "18446744073709551615|7|ff",
+            ),
+            // floats
+            (
+                "%v|%v|%v|%v|%g|%g",
+                vec![
+                    fl(1.5),
+                    fl(1e20),
+                    fl(1e6),
+                    fl(123456.0),
+                    fl(0.0),
+                    fl(100000.0),
+                ],
+                "1.5|1e+20|1e+06|123456|0|100000",
+            ),
+            (
+                "%e|%f|%G|%E|%F|%.3g",
+                vec![fl(0.0), fl(-0.0), fl(1e-7), fl(1234.5), fl(1.5), fl(1234.5)],
+                "0.000000e+00|-0.000000|1E-07|1.234500E+03|1.500000|1.23e+03",
+            ),
+            (
+                "%.0g|%.3g|%.3g|%.2g|%G|%.10g",
+                vec![
+                    fl(5.7),
+                    fl(100.0),
+                    fl(0.0001234),
+                    fl(1e-5),
+                    fl(1e21),
+                    fl(1.0 / 3.0),
+                ],
+                "6|100|0.000123|1e-05|1E+21|0.3333333333",
+            ),
+            (
+                "%f|%.0f|%.3f|%e|%g|%e",
+                vec![
+                    fl(1e21),
+                    fl(0.4),
+                    fl(0.0001),
+                    fl(1e-300),
+                    fl(1e-300),
+                    fl(1e100),
+                ],
+                "1000000000000000000000.000000|0|0.000|1.000000e-300|1e-300|1.000000e+100",
+            ),
+            (
+                "%#g|%#g|%#.0e|%#.0f|%#g|%#.3g",
+                vec![fl(1.0), fl(1e6), fl(1.0), fl(1.0), fl(0.0), fl(1.5)],
+                "1.00000|1.00000e+06|1.e+00|1.|0.00000|1.50",
+            ),
+            (
+                "%+f|% f|%+.1f|%08.2f|%+08.2f|%-8.2f|% 08.2f",
+                vec![
+                    fl(1.0),
+                    fl(1.0),
+                    fl(-1.0),
+                    fl(5.12159),
+                    fl(5.12),
+                    fl(5.12),
+                    fl(5.12),
+                ],
+                "+1.000000| 1.000000|-1.0|00005.12|+0005.12|5.12    | 0005.12",
+            ),
+            (
+                "%f|%+f|% f|%5f|%05f|%f|%05f",
+                vec![
+                    fl(f64::NAN),
+                    fl(f64::NAN),
+                    fl(f64::NAN),
+                    fl(f64::NAN),
+                    fl(f64::INFINITY),
+                    fl(f64::INFINITY),
+                    fl(f64::NEG_INFINITY),
+                ],
+                "NaN|+NaN| NaN|  NaN| +Inf|+Inf| -Inf",
+            ),
+            (
+                "%.2e|%10.3e|%b|%c",
+                vec![fl(1234.5), fl(1234.56), fl(1.5), fl(1.5)],
+                "1.23e+03| 1.235e+03|1.5|%!c(float64=1.5)",
+            ),
+        ];
+        for (format, args, want) in cases {
+            assert_eq!(sprintf(format, &args), want, "{format}");
+        }
     }
 }

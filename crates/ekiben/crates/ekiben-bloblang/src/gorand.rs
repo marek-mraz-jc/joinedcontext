@@ -256,4 +256,17 @@ mod tests {
         // `random_int(seed: 1, max: 100)`: Int63n(101).
         assert_eq!(GoRand::new(1).int63n(101), 76);
     }
+
+    #[test]
+    fn a_negative_seed_wraps_like_go_and_int63n_stays_below_n() {
+        // Go's rngSource.Seed: seed % int32max, plus int32max when negative.
+        let mut neg = GoRand::new(-1);
+        let mut pos = GoRand::new(2_147_483_646);
+        assert_eq!(neg.int63(), pos.int63());
+        // A bound just past 2^62 rejects about a quarter of the draws.
+        let n = (1i64 << 62) + 1;
+        let mut r = GoRand::new(7);
+        assert!((0..64).all(|_| (0..n).contains(&r.int63n(n))));
+        assert!((0..64).all(|_| r.int63n(8) < 8));
+    }
 }
