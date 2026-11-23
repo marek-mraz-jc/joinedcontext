@@ -326,10 +326,7 @@ impl AmqpInput {
             CoreError::other("amqp_0_9 input: the broker did not complete the handshake in 10 s")
         })?
         .map_err(failed("connect"))?;
-        let channel = conn
-            .create_channel()
-            .await
-            .map_err(failed("channel"))?;
+        let channel = conn.create_channel().await.map_err(failed("channel"))?;
         channel
             .basic_qos(self.s.prefetch_count, BasicQosOptions::default())
             .await
