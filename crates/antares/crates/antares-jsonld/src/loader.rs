@@ -2959,6 +2959,18 @@ mod tests {
         );
     }
 
+    /// The programmatic grant (the wasm constructor's and a test's switch)
+    /// wins over a host default that arms the private-range wall. The grant
+    /// stays on afterwards, as every test that grants itself loopback leaves it.
+    #[test]
+    fn the_programmatic_grant_wins_over_a_denying_host_default() {
+        super::allow_private_egress(true);
+        super::private_egress_default("false");
+        let granted = EgressPolicy::from_env().allow_private;
+        super::private_egress_default("true");
+        assert!(granted);
+    }
+
     /// The published posture is part of the switch. SECURITY.md told a reader
     /// private ranges were denied by default while this function allows them,
     /// which reads as an SSRF guard that is on when it is off — and an
