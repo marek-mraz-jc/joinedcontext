@@ -145,6 +145,48 @@ describe("notifications", () => {
     await waitFor(() => expect(sentTo(fetchMock, "/alerts/4/mute").map((r) => r.method)).toEqual(["POST"]));
   });
 
+  it("opens an agent's alert on its Activity tab and a pipeline's on the pipelines, marking only the unread read (T-5301)", async () => {
+    const agent = { id: 11, subscription: 5, project: "helsinki", pipeline: "air-agent", event: "refusalSpike", change: "opened", detail: "", createdAt: "2026-10-07T08:00:00Z", read: false };
+    const pipeline = { id: 12, subscription: 6, project: "hel sinki", pipeline: "bikes", event: "zero", change: "opened", detail: "", createdAt: "2026-10-07T09:00:00Z", read: true };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const request = input as Request;
+      if (request.method === "POST") return json(null, 204);
+      return new URL(request.url).pathname.endsWith("/alerts/notices") ? json({ items: [agent, pipeline], unread: 1 }) : json({ items: [], unread: 0 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
+    wrap(<NotificationsMenu project="helsinki" waiting={2} />);
+    // The two changes this person may decide count beside the unread alert.
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications, 3 unread" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^air-agent: it has 5/ }));
+    await waitFor(() => expect(sentTo(fetchMock, "/alerts/notices/11/read").map((r) => r.method)).toEqual(["POST"]));
+    expect(navigate).toHaveBeenCalledWith({ href: "/organization/agents/org/AgentProfile/air-agent#activity" });
+    await userEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^bikes: it writes nothing/ }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: "/projects/hel%20sinki/pipelines" });
+    expect(sentTo(fetchMock, "/alerts/notices/12/read")).toEqual([]);
+  });
+
+  it("opens the project's inbox from the menu's first entry", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => json({ items: [], unread: 0 })));
+    doorsAsRest();
+    wrap(<NotificationsMenu project="helsinki" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Notifications" }));
+    const items = await screen.findAllByRole("menuitem");
+    await userEvent.click(items[0]);
+    expect(navigate).toHaveBeenCalledWith({ to: "/projects/$project/inbox", params: { project: "helsinki" } });
+  });
+
+  it("shows 99+ on the button above 99 unread", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      new URL((input as Request).url).pathname.endsWith("/alerts/notices") ? json({ items: [], unread: 0 }) : json({ items: [], unread: 120 }),
+    ));
+    doorsAsRest();
+    wrap(<NotificationsMenu project="helsinki" />);
+    const button = await screen.findByRole("button", { name: "Notifications, 120 unread" });
+    expect(button.textContent).toContain("99+");
+  });
+
   it("counts the unread on the button, lists them, and marks one read when it is opened", async () => {
     const item = {
       id: 5,

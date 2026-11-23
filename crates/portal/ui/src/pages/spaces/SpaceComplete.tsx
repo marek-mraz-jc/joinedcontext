@@ -264,7 +264,6 @@ export function CompleteFlow({ project, file, inDock = false }: {
   const permissions = usePermissions(project);
   const [spaceName, setSpaceName] = useState(() => {
     if (file !== undefined) return spaceNameOf(file.name);
-    if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("space") ?? "";
   });
   const [url, setUrl] = useState("");
@@ -349,6 +348,7 @@ export function CompleteFlow({ project, file, inDock = false }: {
   const executeComplete = async (propose: boolean) => {
     setLoading(true);
     setError(null);
+    // No catch: callOperation answers every refusal and network failure as `ok: false`.
     try {
       const payload: Record<string, unknown> = {
         propose,
@@ -372,10 +372,13 @@ export function CompleteFlow({ project, file, inDock = false }: {
         return;
       }
 
-      const data = answer.output as CompleteResult;
+      const data = answer.output as CompleteResult | null;
+      // A proxy's HTML page or another 200 that is no completion would break the drafts below.
+      if (!Array.isArray(data?.drafts)) {
+        setError(t("spaces.complete.unreadable"));
+        return;
+      }
       setResult(data);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
