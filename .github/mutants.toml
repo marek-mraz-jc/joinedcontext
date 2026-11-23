@@ -51,6 +51,9 @@ exclude_re = [
   # side by side), so only a fresh server tells; streams_and_bucket_carry_their_contract pins the
   # configs it creates (T-7530).
   'antares-bus/src/nats\.rs:.*replace NatsBus::ensure_streams -> Result<\(\), BusError> with Ok\(\(\)\)',
+  # odata-axum read `/$count` (T-7597): `top: Some(0)` only spares fetching rows nobody reads; the
+  # count is computed apart from the page, so the answer is the same number with or without it.
+  'odata-axum/src/table\.rs:\d+:\d+: delete field top from struct QueryOptions expression in read',
   # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
   # carries; without it the count is the same, the page is built and dropped (T-7627).
   'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
