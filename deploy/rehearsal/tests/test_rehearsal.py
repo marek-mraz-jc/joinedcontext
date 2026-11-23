@@ -1935,9 +1935,10 @@ def test_up_sh_gives_jc_every_secret_it_holds_only_in_memory():
     """jc keeps these in memory and removes a stale state copy (jc-secrets), so the suites and the
     smoke read them only from the file up.sh gives jc."""
     text = (HERE / "up.sh").read_text()
-    for var in ("JCBIN_SHAKO_TOKEN_FILE", "JCBIN_DATAROOM_PORTAL_TOKEN_FILE", "JCBIN_EKIBEN_TOKEN_FILE",
-                "JCBIN_DAIYA_PORTAL_PASSWORD_FILE"):
+    for var in ("JCBIN_SHAKO_TOKEN_FILE", "JCBIN_EKIBEN_TOKEN_FILE", "JCBIN_DAIYA_PORTAL_PASSWORD_FILE"):
         assert re.search(rf"\bexport {var}\b|{var}=.*; export {var}\b", text), var
+    # S11-23: the Portal publishes into jc's dataroom with a service token, never a static one.
+    assert "catalogue-token" not in text and "CKAN_API_TOKEN" not in text
 
 
 def test_up_sh_hands_jc_the_deployments_age_identity_in_place_and_refuses_an_open_one(tmp_path):

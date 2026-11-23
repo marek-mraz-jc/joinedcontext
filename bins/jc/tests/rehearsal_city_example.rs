@@ -11,12 +11,15 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 
+/// What five's deprecated `portal_token_file` holds: a static bearer now.
 const TOKEN_FIVE: &str = "five-portal-publisher-token-0123456789";
 const REALM: &str = "jc";
 
 struct Jc {
     _dir: tempfile::TempDir,
     running: jc::Running,
+    /// The Portal's service token for dataroom (S11-23), as a bearer.
+    publisher: String,
 }
 
 /// The installation realm and the `five` Organization's realm, as a deployment import brings them.
@@ -67,10 +70,23 @@ async fn start() -> Jc {
     cfg.trusted_proxies = vec!["127.0.0.1/32".parse().unwrap()];
     assert!(cfg.roles.contains(&Module::Kaisatsu) && cfg.roles.contains(&Module::Dataroom));
     assert_eq!(cfg.login_host, "idm.city.example");
+    // dataroom names the Portal by a service token `[door]`'s issuer signed (S11-23); five's
+    // old token file still parses and is never read.
+    let issuer = jc_door::testing::Issuer::start("https://idm.city.example/realms/jc", "k1").await;
+    cfg.door = Some(jc::config::DoorSection {
+        issuer: issuer.issuer.clone(),
+        jwks_url: issuer.jwks_url.clone(),
+        clients: vec!["jc-portal".into()],
+    });
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
-    Jc { _dir: dir, running }
+    let publisher = format!("Bearer {}", issuer.token("jc-portal", "dataroom", 600));
+    Jc {
+        _dir: dir,
+        running,
+        publisher,
+    }
 }
 
 fn client() -> reqwest::Client {
@@ -126,7 +142,7 @@ async fn each_origin_form_keeps_its_refusals_over_http() {
             reqwest::Method::DELETE,
         ] {
             let resp = on(addr, method.clone(), host, path)
-                .header(header::AUTHORIZATION, TOKEN_FIVE)
+                .header(header::AUTHORIZATION, &jc.publisher)
                 .json(&json!({"name": "x"}))
                 .send()
                 .await
@@ -195,13 +211,29 @@ async fn a_dataset_iri_from_before_the_move_answers_200_or_308() {
         "name": "five-air", "title": "Air", "notes": "Air of five", "owner_org": "five",
         "license_id": "cc-by",
     });
-    let resp = on(
+    let refused = on(
         addr,
         reqwest::Method::POST,
         "smartcity.five.test",
         "/data/api/3/action/package_create",
     )
     .header(header::AUTHORIZATION, TOKEN_FIVE)
+    .json(&dataset)
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        refused.status(),
+        StatusCode::UNAUTHORIZED,
+        "a static bearer"
+    );
+    let resp = on(
+        addr,
+        reqwest::Method::POST,
+        "smartcity.five.test",
+        "/data/api/3/action/package_create",
+    )
+    .header(header::AUTHORIZATION, &jc.publisher)
     .json(&dataset)
     .send()
     .await

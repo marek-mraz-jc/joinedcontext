@@ -1,7 +1,8 @@
 //! Two Organizations of one `jc` on their own hosts (`[[organizations]]`): each open data portal
-//! is its own dataroom catalogue, the Portal's publisher token of one writes only its own
-//! catalogue and only under its Organization's CKAN organisation, and nothing of one shows on the
-//! other's host in any listing, count, search, feed or page.
+//! is its own dataroom catalogue, the Portal's publisher (a service token `[door]`'s issuer
+//! signed, S11-23) writes each catalogue only under its Organization's CKAN organisation, a
+//! static bearer writes nothing, and nothing of one shows on the other's host in any listing,
+//! count, search, feed or page.
 
 use jc::config::{Cli, Config};
 use jc::{Module, MountMode};
@@ -10,29 +11,34 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 
-const TOKEN_ALPHA: &str = "alpha-portal-publisher-token-0123456789";
-const TOKEN_BETA: &str = "beta-portal-publisher-token-01234567890";
+/// What an older jc.toml named as alpha's publisher token file: a static bearer now.
+const STATIC_TOKEN: &str = "alpha-portal-publisher-token-0123456789";
 
 struct Jc {
     _dir: tempfile::TempDir,
     running: jc::Running,
+    /// The Portal's service token for dataroom, as a bearer.
+    publisher: String,
 }
 
 /// jc with dataroom alone, in host mode on `city.test` over plain http, both Organizations of
-/// `tests/fixtures/two-orgs.toml` with a Portal token each; loopback is a trusted proxy, so the
-/// test client can forward a host.
+/// `tests/fixtures/two-orgs.toml` (alpha still naming a deprecated token file), its `[door]`
+/// trusting a test issuer as a role split's dataroom container does; loopback is a trusted
+/// proxy, so the test client can forward a host.
 async fn start() -> Jc {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut text = String::new();
-    for (org, token) in [("alpha", TOKEN_ALPHA), ("beta", TOKEN_BETA)] {
-        let path = dir.path().join(format!("{org}-token"));
-        std::fs::write(&path, token).unwrap();
+    let path = dir.path().join("alpha-token");
+    std::fs::write(&path, STATIC_TOKEN).unwrap();
+    for org in ["alpha", "beta"] {
         text.push_str(&format!("\n[[organizations]]\nname = \"{org}\"\n"));
         let id = if org == "alpha" { "a1" } else { "b1" };
         text.push_str(&format!(
-            "catalogue_id = \"00000000-0000-7000-8000-0000000000{id}\"\nportal_token_file = \"{}\"\n",
-            path.display()
+            "catalogue_id = \"00000000-0000-7000-8000-0000000000{id}\"\n"
         ));
+        if org == "alpha" {
+            text.push_str(&format!("portal_token_file = \"{}\"\n", path.display()));
+        }
         text.push_str(&format!(
             "hosts = {{ portal = \"portal.{org}.test\", opendata = \"opendata.{org}.test\", api = \"api.{org}.test\", mcp = \"mcp.{org}.test\" }}\n"
         ));
@@ -53,10 +59,21 @@ async fn start() -> Jc {
     cfg.state_dir = dir.path().join("state");
     cfg.trusted_proxies = vec!["127.0.0.1/32".parse().unwrap()];
     assert_eq!(cfg.roles, vec![Module::Dataroom]);
+    let issuer = jc_door::testing::Issuer::start("https://id.city.test/realms/jc", "k1").await;
+    cfg.door = Some(jc::config::DoorSection {
+        issuer: issuer.issuer.clone(),
+        jwks_url: issuer.jwks_url.clone(),
+        clients: vec!["jc-portal".into()],
+    });
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
-    Jc { _dir: dir, running }
+    let publisher = format!("Bearer {}", issuer.token("jc-portal", "dataroom", 600));
+    Jc {
+        _dir: dir,
+        running,
+        publisher,
+    }
 }
 
 struct Call<'a> {
@@ -139,7 +156,7 @@ async fn the_open_data_host_takes_no_write_and_no_credential() {
     let jc = start().await;
     let addr = jc.running.addr;
     let call = Call {
-        token: Some(TOKEN_ALPHA),
+        token: Some(&jc.publisher),
         body: Some(package("alpha-air", "alpha")),
         ..Call::on("opendata.alpha.test")
     };
@@ -148,7 +165,7 @@ async fn the_open_data_host_takes_no_write_and_no_credential() {
     // The publisher's token is removed before the dataroom reads it: a read of a private
     // listing is the anonymous one.
     let call = Call {
-        token: Some(TOKEN_ALPHA),
+        token: Some(&jc.publisher),
         ..Call::on("opendata.alpha.test")
     };
     let (status, body) = send(addr, call, "/api/3/action/organization_show?id=alpha").await;
@@ -205,10 +222,8 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
 
     // Each Portal publisher publishes under its own Organization's CKAN organisation, which jc
     // made from the configuration.
-    for (host, token, name, org) in [
-        (alpha, TOKEN_ALPHA, "alpha-air", "alpha"),
-        (beta, TOKEN_BETA, "beta-bikes", "beta"),
-    ] {
+    let token = jc.publisher.as_str();
+    for (host, name, org) in [(alpha, "alpha-air", "alpha"), (beta, "beta-bikes", "beta")] {
         let (status, body) = get(
             addr,
             host,
@@ -220,26 +235,36 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
         assert_eq!(status, StatusCode::OK, "{host} {name}: {body}");
     }
 
-    // The grant of one catalogue writes nothing in the other, under either organisation.
+    // The publisher of one catalogue writes nothing there under the other's organisation, and
+    // a static bearer (alpha's old token file) writes nothing anywhere.
     for (host, token, org) in [
-        (beta, TOKEN_ALPHA, "beta"),
-        (beta, TOKEN_ALPHA, "alpha"),
-        (alpha, TOKEN_BETA, "alpha"),
-        (alpha, TOKEN_BETA, "beta"),
+        (beta, token, "alpha"),
+        (alpha, token, "beta"),
+        (alpha, STATIC_TOKEN, "alpha"),
+        (beta, STATIC_TOKEN, "beta"),
     ] {
         let (status, body) =
             publish(addr, host, token, package("stray", org), "package_create").await;
         assert!(
             status.is_client_error(),
-            "{host} {org}: a foreign token wrote: {status} {body}"
+            "{host} {org}: a stray write landed: {status} {body}"
         );
     }
+    let (status, body) = publish(
+        addr,
+        alpha,
+        &format!("Bearer {STATIC_TOKEN}"),
+        package("stray", "alpha"),
+        "package_create",
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     // Inside its own catalogue it publishes under no other CKAN organisation (gap 6), and makes
     // none.
     let (status, body) = publish(
         addr,
         alpha,
-        TOKEN_ALPHA,
+        token,
         package("stray", "hel-fi"),
         "package_create",
     )
@@ -248,7 +273,7 @@ async fn two_organizations_publish_and_read_only_their_own_catalogue() {
     let (status, body) = publish(
         addr,
         alpha,
-        TOKEN_ALPHA,
+        token,
         json!({"name": "hel-fi", "title": "Helsinki"}),
         "organization_create",
     )

@@ -17,6 +17,7 @@ dataroom-rdf = { path = "../rdf" }
 dataroom-search = { path = "../search" }
 dataroom-shacl = { path = "../shacl" }
 dataroom-web = { path = "../web" }
+jc-door = { path = "../../shared/jc-door" }
 jc-router = { path = "../../shared/jc-router" }
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
@@ -29,6 +30,7 @@ url = "2.5.4"
 uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
 
 [dev-dependencies]
+jc-door = { path = "../../shared/jc-door", features = ["testing"] }
 dataroom-store-memory = { path = "../store-memory" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
 http-body-util = "0.1.3"

@@ -217,7 +217,7 @@ CIMD egress on 443 to public addresses, which jc already has.
 
 `[[organizations]]` (`bins/jc/src/config.rs`, fixture `bins/jc/tests/fixtures/two-orgs.toml`)
 puts each Organization on its own hosts: `name` (the JC Organization's `metadata.name`), `hosts =
-{ portal, opendata, api, mcp }`, `catalogue_id` (a UUID) and an optional `portal_token_file`.
+{ portal, opendata, api, mcp }`, `catalogue_id` (a UUID); `portal_token_file` still parses, deprecated and never read.
 An optional `id` is the Organization id, its verified domain reversed (`sk_bbsk` for bbsk.sk,
 EP-186): on a shared host the Organization's first path segment is then `/{id}/`, and the old
 `/{name}/` still answers during the move (a page `308` to `/{id}/...`, an API call in place).
@@ -235,9 +235,12 @@ EP-186): on a shared host the Organization's first path segment is then `/{id}/`
 - jc refuses to start on a name, catalogue or host given twice (hosts compared without the
   port), and on a host any other mount also names, a mode default included.
 - dataroom gets one catalogue per Organization, named after it on its `opendata` host, and in it
-  the CKAN organisation of the same name. A `portal_token_file` binds a publisher of that
-  catalogue alone (principal `portal-ckan:<catalogue id>`), with Read and Propose under that
-  CKAN organisation only. With Organizations configured a loopback host names no catalogue.
+  the CKAN organisation of the same name. The Portal publishes there with a short-lived service
+  token (S11-23): jc's in-process issuer signs it when the Portal runs beside dataroom, kaisatsu
+  issues it for the `dataroom` audience in a role split (`[door]` on dataroom's side, `[remote]`
+  on the Portal's). A verified token is the publisher of the catalogue the address names
+  (principal `portal-ckan:<catalogue id>`), with Read and Propose under that CKAN organisation
+  only; a static bearer is refused (401). With Organizations configured a loopback host names no catalogue.
 - dataroom and the gateway read the host and scheme from jc's router (the forwarded host of a
   trusted proxy), never the raw `Host` header. On an Organization's `api`, `mcp` and `portal`
   hosts every gateway listing (`/api/endpoints`, the MCP hub, `/catalog.jsonld`, `/catalog.ttl`,
