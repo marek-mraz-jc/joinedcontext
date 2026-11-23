@@ -745,6 +745,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn digits_count_the_decimal_digits() {
+        assert_eq!(
+            [0, 9, 10, 99, 100, u64::MAX].map(digits),
+            [1, 1, 2, 2, 3, U64_MAX_DIGITS]
+        );
+    }
+
     /// An attached connection's state with one Subscription `s`.
     fn attached() -> State {
         let mut st = State {

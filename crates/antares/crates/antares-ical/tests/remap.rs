@@ -100,6 +100,17 @@ fn a_language_a_sub_attribute_and_a_constant_category_are_read() {
     assert!(has(&l, "SUMMARY:Market"), "{l:?}");
     assert!(has(&l, "DESCRIPTION:pod holým nebom"), "{l:?}");
     assert!(has(&l, "CATEGORIES:Kultúra"), "{l:?}");
+    // language and firstOf serve LOCATION too
+    let located = json!({"preset": "sdm-event", "mapping": {
+        "LOCATION": {"attribute": "title", "language": "en"},
+        "DESCRIPTION": {"firstOf": ["place", "venue"]}}});
+    let e = entity(&json!({
+        "title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh", "en": "Market"}},
+        "venue": {"type": "Property", "value": "Hala"}}));
+    let l = render(&located, &e);
+    assert!(has(&l, "LOCATION:Market") && has(&l, "DESCRIPTION:Hala"), "{l:?}");
+    let first = json!({"preset": "sdm-event", "mapping": {"LOCATION": {"firstOf": ["place", "venue"]}}});
+    assert!(has(&render(&first, &e), "LOCATION:Hala"));
     // a language the entity lacks falls back to @none, then to the first tag
     let e = entity(&json!({"title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh"}}}));
     assert!(has(&render(&ical, &e), "SUMMARY:Trh"));
@@ -169,6 +180,11 @@ fn status_organizer_and_last_modified_follow_their_value_types() {
     assert!(has(&l, "STATUS:CONFIRMED"), "{l:?}");
     assert!(has(&l, "ORGANIZER:mailto:kultura@zvolen.sk"), "{l:?}");
     assert!(has(&l, "LAST-MODIFIED:20260930T080000Z"), "{l:?}");
+    // schema-org's eventStatus mapping says CONFIRMED for a value it does not map
+    let preset = json!({"preset": "schema-org"});
+    let other = entity(&json!({"eventStatus": {"type": "Property", "value": "EventMovedOnline"}}));
+    let unmapped = render(&preset, &other);
+    assert!(has(&unmapped, "STATUS:CONFIRMED"), "{unmapped:?}");
     // a value that is no calendar status or address is left out; DTSTAMP stays modifiedAt
     let e = entity(&json!({
         "state": {"type": "Property", "value": "postponed"},
