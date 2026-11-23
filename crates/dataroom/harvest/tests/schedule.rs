@@ -7,8 +7,11 @@ mod common;
 
 use common::*;
 use dataroom_core::ops::HarvestRunner;
+use dataroom_core::ops::{execute_operation, OpContext};
 use dataroom_core::store::BoxFuture;
-use dataroom_core::{DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, Result, Store};
+use dataroom_core::{
+    DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, RequestCtx, Result, Store,
+};
 use dataroom_harvest::{
     harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher, OutboundFetcher,
     ValidatedTarget, RETRIES,
@@ -17,7 +20,7 @@ use dataroom_store_memory::MemoryStore;
 use jc_time::TimestampTz;
 use serde_json::json;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -340,4 +343,111 @@ fn the_harvest_grant_runs_and_reads_sources_only() {
     ] {
         assert!(!authz.check(&ctx, action, &target).allowed, "{action:?}");
     }
+}
+
+/// Answers the Hub page once the test opens the gate.
+struct Gated {
+    open: AtomicBool,
+}
+
+impl OutboundFetcher for Gated {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        Box::pin(async move {
+            while !self.open.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok(FetchResponse::Ok {
+                content_type: Some("application/json".into()),
+                body: hub_answer(),
+            })
+        })
+    }
+}
+
+async fn run_state(w: &World, run_id: &str) -> HarvestRun {
+    w.store
+        .get_harvest_run(&w.ctx, run_id)
+        .await
+        .unwrap()
+        .expect("run row")
+}
+
+/// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the
+/// request that started it is dropped (a client or edge timeout); it then frees the source.
+#[tokio::test]
+async fn a_dropped_start_request_leaves_the_run_going_and_frees_the_source_at_its_end() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let gate = Arc::new(Gated {
+        open: AtomicBool::new(false),
+    });
+    let (subject, grant) = harvest_principal(w.org, w.cat);
+    let ctx = RequestCtx::new(w.org, w.cat, subject);
+    let op_ctx = Arc::new(OpContext {
+        store: Arc::new(w.store.clone()),
+        authorizer: Arc::new(PolicyAuthorizer::new(vec![grant])),
+        validator: None,
+        harvester: Some(Arc::new(engine_on(gate.clone()))),
+        sources_by_portal: false,
+        branding: None,
+    });
+    let start = || {
+        let (op_ctx, ctx) = (op_ctx.clone(), ctx.clone());
+        async move {
+            execute_operation(&op_ctx, &ctx, "harvest_run.start", json!({"source": "hub"})).await
+        }
+    };
+
+    let request = tokio::spawn(start());
+    let run_id = loop {
+        let runs = w
+            .store
+            .list_harvest_runs(&w.ctx, Some("hs-hub"))
+            .await
+            .unwrap();
+        if let Some(run) = runs.first() {
+            break run.id.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    request.abort();
+    if let Ok(answer) = request.await {
+        let answer = answer.unwrap();
+        assert_eq!(
+            (answer["id"].as_str(), answer["state"].as_str()),
+            (Some(run_id.as_str()), Some("running"))
+        );
+    }
+    // While the run holds the source, another start is refused at once.
+    let held = start().await.unwrap_err();
+    assert!(matches!(held, DataroomError::Conflict(_)), "{held}");
+
+    gate.open.store(true, Ordering::SeqCst);
+    let done = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let run = run_state(&w, &run_id).await;
+            if run.state != HarvestRunState::Running {
+                break run;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the run ends although its request was dropped");
+    assert_eq!(done.state, HarvestRunState::Succeeded, "{:?}", done.error);
+    assert_eq!(active_names(&w).await, vec!["city-cesty-aaa111".to_owned()]);
+    let again = start().await.unwrap();
+    assert_eq!(again["state"], "running", "the source is free again");
 }

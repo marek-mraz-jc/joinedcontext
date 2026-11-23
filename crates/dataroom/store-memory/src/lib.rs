@@ -5,7 +5,7 @@ use dataroom_core::odata_defs::{
     activity_to_row, catalogue_to_row, dataroom_service, dataset_to_row, distribution_to_row,
     harvest_run_to_row, harvest_source_to_row, publisher_to_row, shacl_report_to_row,
 };
-use dataroom_core::store::BoxFuture;
+use dataroom_core::store::{changed_since_read, next_modified, BoxFuture};
 use dataroom_core::{
     abandon_run, ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset,
     Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
@@ -97,6 +97,82 @@ fn refuse_deleted(inner: &Inner, ctx: &RequestCtx) -> Result<()> {
     }
 }
 
+/// Stores `dataset` under the caller's lock: the checks and the write of `upsert_dataset`.
+fn put_dataset(inner: &mut Inner, ctx: &RequestCtx, mut dataset: Dataset) -> Result<Dataset> {
+    dataset.org_id = ctx.org_id;
+    dataset.catalogue_id = ctx.catalogue_id;
+    if dataset.id.is_empty() {
+        dataset.id = format!("pkg-{}", dataset.name);
+    }
+    for (i, dist) in dataset.distributions.iter_mut().enumerate() {
+        dist.dataset_id = dataset.id.clone();
+        if dist.id.is_empty() {
+            dist.id = format!("res-{}-{i}", dataset.name);
+        }
+    }
+    refuse_deleted(inner, ctx)?;
+    let name_conflict = inner.datasets.iter().any(|((oid, cid, _), d)| {
+        *oid == ctx.org_id
+            && *cid == ctx.catalogue_id
+            && d.name == dataset.name
+            && d.id != dataset.id
+    });
+    if name_conflict {
+        return Err(DataroomError::field_error(
+            "name",
+            "That URL is already in use.",
+        ));
+    }
+    // A distribution id is unique in the catalogue, as PgStore's primary key holds it.
+    let taken = inner.datasets.iter().any(|((oid, cid, _), d)| {
+        *oid == ctx.org_id
+            && *cid == ctx.catalogue_id
+            && d.id != dataset.id
+            && d.distributions
+                .iter()
+                .any(|r| dataset.distributions.iter().any(|n| n.id == r.id))
+    });
+    if taken {
+        return Err(DataroomError::field_error(
+            "resources",
+            "A resource id is already used by another dataset.",
+        ));
+    }
+    inner.datasets.insert(
+        (ctx.org_id, ctx.catalogue_id, dataset.id.clone()),
+        dataset.clone(),
+    );
+    Ok(dataset)
+}
+
+/// Stores `catalogue` under the caller's lock: the checks and the write of `upsert_catalogue`.
+fn put_catalogue(inner: &mut Inner, catalogue: Catalogue) -> Result<Catalogue> {
+    let host_conflict = inner.catalogues.values().any(|c| {
+        c.host.eq_ignore_ascii_case(&catalogue.host)
+            && (c.org_id != catalogue.org_id || c.id != catalogue.id)
+    });
+    if host_conflict {
+        return Err(DataroomError::Conflict(format!(
+            "host '{}' is already claimed by another catalogue",
+            catalogue.host
+        )));
+    }
+    if inner
+        .catalogues
+        .keys()
+        .any(|&(o, c)| c == catalogue.id && o != catalogue.org_id)
+    {
+        return Err(DataroomError::Conflict(format!(
+            "catalogue {} belongs to another organisation",
+            catalogue.id
+        )));
+    }
+    inner
+        .catalogues
+        .insert((catalogue.org_id, catalogue.id), catalogue.clone());
+    Ok(catalogue)
+}
+
 impl Store for MemoryStore {
     fn resolve_host<'a>(&'a self, host: &'a str) -> BoxFuture<'a, Result<Option<Catalogue>>> {
         let clean = host
@@ -173,31 +249,40 @@ impl Store for MemoryStore {
     }
 
     fn upsert_catalogue<'a>(&'a self, catalogue: Catalogue) -> BoxFuture<'a, Result<Catalogue>> {
-        let mut guard = self.write_inner();
-        let host_conflict = guard.catalogues.values().any(|c| {
-            c.host.eq_ignore_ascii_case(&catalogue.host)
-                && (c.org_id != catalogue.org_id || c.id != catalogue.id)
-        });
-        if host_conflict {
-            return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
-                "host '{}' is already claimed by another catalogue",
-                catalogue.host
-            )))));
+        let saved = put_catalogue(&mut self.write_inner(), catalogue);
+        Box::pin(std::future::ready(saved))
+    }
+
+    fn save_catalogue<'a>(
+        &'a self,
+        mut catalogue: Catalogue,
+        expected: Option<TimestampTz>,
+        mut activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Catalogue>> {
+        let mut inner = self.write_inner();
+        if let Some(expected) = expected {
+            let stored = inner
+                .catalogues
+                .get(&(catalogue.org_id, catalogue.id))
+                .map(|c| c.modified);
+            if stored != Some(expected) {
+                return Box::pin(std::future::ready(Err(changed_since_read(
+                    "catalogue",
+                    &catalogue.name,
+                ))));
+            }
         }
-        if guard
-            .catalogues
-            .keys()
-            .any(|&(o, c)| c == catalogue.id && o != catalogue.org_id)
-        {
-            return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
-                "catalogue {} belongs to another organisation",
-                catalogue.id
-            )))));
+        catalogue.modified = next_modified(catalogue.modified, expected);
+        let saved = put_catalogue(&mut inner, catalogue);
+        if let Ok(c) = &saved {
+            activity.org_id = c.org_id;
+            activity.catalogue_id = c.id;
+            if activity.object_id.is_empty() {
+                activity.object_id = c.id.to_string();
+            }
+            inner.activity.push(activity);
         }
-        guard
-            .catalogues
-            .insert((catalogue.org_id, catalogue.id), catalogue.clone());
-        Box::pin(std::future::ready(Ok(catalogue)))
+        Box::pin(std::future::ready(saved))
     }
 
     fn list_publishers<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Publisher>>> {
@@ -374,55 +459,49 @@ impl Store for MemoryStore {
     fn upsert_dataset<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut dataset: Dataset,
+        dataset: Dataset,
     ) -> BoxFuture<'a, Result<Dataset>> {
-        dataset.org_id = ctx.org_id;
-        dataset.catalogue_id = ctx.catalogue_id;
-        if dataset.id.is_empty() {
-            dataset.id = format!("pkg-{}", dataset.name);
-        }
-        for (i, dist) in dataset.distributions.iter_mut().enumerate() {
-            dist.dataset_id = dataset.id.clone();
-            if dist.id.is_empty() {
-                dist.id = format!("res-{}-{i}", dataset.name);
+        let saved = put_dataset(&mut self.write_inner(), ctx, dataset);
+        Box::pin(std::future::ready(saved))
+    }
+
+    fn save_dataset<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut dataset: Dataset,
+        expected: Option<TimestampTz>,
+        mut activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Dataset>> {
+        let mut inner = self.write_inner();
+        if let Some(expected) = expected {
+            let id = if dataset.id.is_empty() {
+                format!("pkg-{}", dataset.name)
+            } else {
+                dataset.id.clone()
+            };
+            let stored = inner
+                .datasets
+                .get(&(ctx.org_id, ctx.catalogue_id, id))
+                .map(|d| d.modified);
+            if stored != Some(expected) {
+                return Box::pin(std::future::ready(Err(changed_since_read(
+                    "dataset",
+                    &dataset.name,
+                ))));
             }
         }
-        let mut guard = self.write_inner();
-        if let Err(e) = refuse_deleted(&guard, ctx) {
-            return Box::pin(std::future::ready(Err(e)));
-        }
-        let name_conflict = guard.datasets.iter().any(|((oid, cid, _), d)| {
-            *oid == ctx.org_id
-                && *cid == ctx.catalogue_id
-                && d.name == dataset.name
-                && d.id != dataset.id
+        dataset.modified = next_modified(dataset.modified, expected);
+        let saved = put_dataset(&mut inner, ctx, dataset).inspect(|d| {
+            if activity.object_id.is_empty() {
+                activity.object_id.clone_from(&d.id);
+            }
+            activity.org_id = ctx.org_id;
+            activity.catalogue_id = ctx.catalogue_id;
         });
-        if name_conflict {
-            return Box::pin(std::future::ready(Err(DataroomError::field_error(
-                "name",
-                "That URL is already in use.",
-            ))));
+        if saved.is_ok() {
+            inner.activity.push(activity);
         }
-        // A distribution id is unique in the catalogue, as PgStore's primary key holds it.
-        let taken = guard.datasets.iter().any(|((oid, cid, _), d)| {
-            *oid == ctx.org_id
-                && *cid == ctx.catalogue_id
-                && d.id != dataset.id
-                && d.distributions
-                    .iter()
-                    .any(|r| dataset.distributions.iter().any(|n| n.id == r.id))
-        });
-        if taken {
-            return Box::pin(std::future::ready(Err(DataroomError::field_error(
-                "resources",
-                "A resource id is already used by another dataset.",
-            ))));
-        }
-        guard.datasets.insert(
-            (ctx.org_id, ctx.catalogue_id, dataset.id.clone()),
-            dataset.clone(),
-        );
-        Box::pin(std::future::ready(Ok(dataset)))
+        Box::pin(std::future::ready(saved))
     }
 
     fn withdraw_dataset<'a>(

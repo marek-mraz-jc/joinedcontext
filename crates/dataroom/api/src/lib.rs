@@ -1156,29 +1156,47 @@ async fn handle_upload_logo(
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .insert(fname, asset.clone());
-    cat.theme.logo = Some(asset.url_path.clone());
-    let saved = match state.store.upsert_catalogue(cat).await {
-        Ok(c) => c,
-        Err(e) => return problem_response(e),
-    };
-    let _ = state
-        .store
-        .record_activity(
-            &ctx,
-            ActivityRow {
-                org_id: ctx.org_id,
-                catalogue_id: ctx.catalogue_id,
-                id: format!("act-{}", Uuid::now_v7()),
-                at: jc_time::TimestampTz::now(),
-                actor: ctx.actor_name().to_owned(),
-                operation: "branding.logo".into(),
-                object_type: "Catalogue".into(),
-                object_id: saved.id.to_string(),
-                summary: format!("Uploaded the logo of catalogue {}", saved.name),
-                details: json!({ "logo": asset.url_path }),
-            },
-        )
-        .await;
+    // The logo is one member of the catalogue: a concurrent write of another member makes the
+    // write read the catalogue again, three tries at most (S11-25); the activity row commits
+    // with it (AUD-02).
+    let mut tries = 3;
+    loop {
+        let read = cat.modified;
+        cat.theme.logo = Some(asset.url_path.clone());
+        cat.modified = jc_time::TimestampTz::now();
+        let row = ActivityRow {
+            org_id: ctx.org_id,
+            catalogue_id: ctx.catalogue_id,
+            id: format!("act-{}", Uuid::now_v7()),
+            at: jc_time::TimestampTz::now(),
+            actor: ctx.actor_name().to_owned(),
+            operation: "branding.logo".into(),
+            object_type: "Catalogue".into(),
+            object_id: cat.id.to_string(),
+            summary: format!("Uploaded the logo of catalogue {}", cat.name),
+            details: json!({ "logo": asset.url_path }),
+        };
+        match state.store.save_catalogue(cat, Some(read), row).await {
+            Ok(_) => break,
+            Err(DataroomError::Conflict(_)) if tries > 1 => {
+                tries -= 1;
+                cat = match state
+                    .store
+                    .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                    .await
+                {
+                    Ok(Some(c)) => c,
+                    Ok(None) => {
+                        return problem_response(DataroomError::NotFound(
+                            "catalogue not found".into(),
+                        ))
+                    }
+                    Err(e) => return problem_response(e),
+                };
+            }
+            Err(e) => return problem_response(e),
+        }
+    }
     let full_url = format!("{}{}", state.mount_prefix(), asset.url_path);
     Json(json!({
         "url": full_url,
