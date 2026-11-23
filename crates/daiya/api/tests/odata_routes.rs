@@ -207,9 +207,39 @@ async fn bad_query_options_and_unknown_sets_are_refused() {
         assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert_eq!(body["error"]["code"], "cr.bad_request", "{body}");
     }
-    for uri in ["/odata/v4/Nothing", "/odata/v4/Nothing/$count"] {
+    for uri in [
+        "/odata/v4/Nothing",
+        "/odata/v4/Nothing/$count",
+        "/odata/v4/Nothing/$allowed?op=read",
+        "/odata/v4/Dashboards('edge')/Nope",
+    ] {
         let (st, _) = w.call("GET", uri, Some("admin"), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{uri}");
+    }
+    // An option the table service does not implement says so (501), never a silent full list.
+    let (st, body) = w
+        .call(
+            "GET",
+            "/odata/v4/Dashboards?$apply=groupby((uid))",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_IMPLEMENTED, "{body}");
+    // A body that is no JSON is refused at both kinds of action, the public one included.
+    for uri in [
+        "/odata/v4/PublicDashboard.Query",
+        "/odata/v4/Datasource.Query",
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{not json"))
+            .unwrap();
+        let (st, body) = w.send(req).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {body}");
     }
     // Without a credential, the organization's sets hold nothing readable.
     let (st, body) = w.call("GET", "/odata/v4/Dashboards", None, None).await;

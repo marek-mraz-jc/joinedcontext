@@ -356,6 +356,146 @@ async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
 
 /// A public dashboard uid names one public dashboard, and deleting a folder deletes the public
 /// links of its dashboards: a later dashboard of the same uid answers no old link.
+/// Shapes a saved dashboard can hold that no panel draws: a value that is no object stays as it
+/// is, a section without a list keeps nothing, a field config that is no object is left alone,
+/// and the panels of a row are cut to the same members as the top level ones.
+#[test]
+fn the_public_view_of_odd_shapes_keeps_only_what_draws() {
+    use daiya_api::public::sanitize_dashboard_for_public_view as public_view;
+    assert_eq!(public_view(&json!(["x"]), false, false), json!(["x"]));
+    let view = public_view(
+        &json!({
+            "title": "Odd",
+            "templating": { "enabled": true },
+            "annotations": { "list": "nope" },
+            "panels": [{
+                "id": 1, "type": "row", "title": "Row", "internal": "hidden-row-note",
+                "fieldConfig": "plain",
+                "panels": [{
+                    "id": 2, "type": "stat", "title": "Inner", "internal": "hidden-inner-note",
+                    "fieldConfig": { "overrides": [{
+                        "matcher": { "id": "byName", "options": "a" },
+                        "properties": [
+                            { "id": "links", "value": [{ "url": "https://internal.example" }] },
+                            { "id": "unit", "value": "percent" }
+                        ],
+                        "extra": 1
+                    }]}
+                }]
+            }]
+        }),
+        false,
+        false,
+    );
+    assert_eq!(view["templating"], json!({}), "{view}");
+    assert_eq!(view["annotations"], json!({ "list": "nope" }), "{view}");
+    let row = &view["panels"][0];
+    assert_eq!(row["fieldConfig"], "plain", "{view}");
+    assert!(!view.to_string().contains("hidden-"), "{view}");
+    let inner = &row["panels"][0];
+    assert_eq!(inner["title"], "Inner", "{view}");
+    assert_eq!(
+        inner["fieldConfig"]["overrides"],
+        json!([{
+            "matcher": { "id": "byName", "options": "a" },
+            "properties": [{ "id": "unit", "value": "percent" }]
+        }]),
+        "{view}"
+    );
+}
+
+/// A public link lives as long as its organization: retired, the organization's links answer
+/// the same 404 as an unknown token.
+#[tokio::test]
+async fn a_public_link_of_a_retired_organization_answers_404() {
+    use daiya_model::DaiyaStore;
+    let (w, token) = published(false).await;
+    let created = w
+        .ok("POST", "/api/orgs", Some(json!({ "name": "Helsinki" })))
+        .await;
+    let helsinki: daiya_model::OrgId = created["uuid"].as_str().unwrap().parse().unwrap();
+    let store = &w.store.inner;
+    let (pubdash, dash) = store
+        .get_public_dashboard_by_token_hash(&daiya_model::sha256_hex(token.as_bytes()))
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .delete_public_dashboard(pubdash.org_id, &pubdash.uid)
+        .await
+        .unwrap();
+    store
+        .delete_dashboard(dash.org_id, &dash.uid)
+        .await
+        .unwrap();
+    let mut moved = dash.clone();
+    moved.org_id = helsinki;
+    store.upsert_dashboard(moved, "moved", true).await.unwrap();
+    let mut moved = pubdash.clone();
+    moved.org_id = helsinki;
+    store.upsert_public_dashboard(moved).await.unwrap();
+
+    let view = format!("/api/public/dashboards/{token}");
+    let (st, body) = w.call("GET", &view, None, None).await;
+    assert_eq!(
+        st,
+        StatusCode::OK,
+        "a live organization's link opens: {body}"
+    );
+    w.ok("DELETE", &format!("/api/orgs/{}", created["orgId"]), None)
+        .await;
+    let (st, body) = w.call("GET", &view, None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+}
+
+/// A stored dashboard whose JSON no longer reads as a dashboard is an error at publishing and at
+/// a panel query, never a guess at its panels.
+#[tokio::test]
+async fn a_stored_dashboard_that_does_not_read_is_an_error_not_a_guess() {
+    use daiya_model::DaiyaStore;
+    let (w, token) = published(false).await;
+    for uid in ["pub", "plain"] {
+        if uid == "plain" {
+            w.add_dashboard(templated("plain"), None).await;
+        }
+        let mut broken = w
+            .store
+            .inner
+            .get_dashboard(common::ORG, uid)
+            .await
+            .unwrap()
+            .unwrap();
+        broken.data["panels"] = json!("not a list");
+        w.store
+            .inner
+            .upsert_dashboard(broken, "broken", true)
+            .await
+            .unwrap();
+    }
+    let (st, body) = w
+        .call(
+            "POST",
+            &format!("/api/public/dashboards/{token}/panels/1/query"),
+            None,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/dashboards/uid/plain/public-dashboards",
+            Some("admin"),
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        body.to_string().contains("invalid stored dashboard JSON"),
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn a_public_link_belongs_to_one_dashboard_for_its_whole_life() {
     let w = world_beside(&gateway().await.0).await;
@@ -652,6 +792,11 @@ fn ipv6_callers_share_one_bucket_per_64_and_subjects_count_apart() {
     limiter.check_rate_limit(first).unwrap();
     assert!(limiter.check_rate_limit(same_64).is_err());
     limiter.check_rate_limit(other_64).unwrap();
+    // An IPv4 caller reaching an IPv6 socket as a mapped address counts as that IPv4 address.
+    let v4: IpAddr = "198.51.100.20".parse().unwrap();
+    let mapped: IpAddr = "::ffff:198.51.100.20".parse().unwrap();
+    limiter.check_rate_limit(mapped).unwrap();
+    assert!(limiter.check_rate_limit(v4).is_err());
     limiter
         .check_rate_limit(PublicCaller::Subject("pia".into()))
         .unwrap();

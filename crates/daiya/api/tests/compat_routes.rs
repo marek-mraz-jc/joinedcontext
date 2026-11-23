@@ -1011,6 +1011,122 @@ async fn store_failures_surface_as_errors() {
     assert_eq!(uids(&hits), ["edge"]);
 }
 
+/// The dashboard page draws every panel in dashboard order, those inside a row too, names an
+/// untitled panel by its id and escapes what the dashboard says; a page whose Organization or
+/// dashboard the store cannot read is the refusal page, never a partial one.
+#[tokio::test]
+async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    let mut board = dashboard("page", "prom");
+    board["panels"] = json!([
+        { "id": 2, "type": "text", "title": "Intro", "description": "About <this>",
+          "options": { "content": "hello" } },
+        { "id": 3, "type": "text", "options": { "content": "untitled" } },
+        { "type": "row", "title": "Row", "panels": [
+            { "id": 5, "type": "text", "title": "Nested", "options": { "content": "inside" } }
+        ]}
+    ]);
+    w.add_dashboard(board, None).await;
+    let page = |token: Option<&'static str>, uri: &'static str| {
+        let mut req = http::Request::builder().uri(uri);
+        if let Some(t) = token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        w.send(req.body(axum::body::Body::empty()).unwrap())
+    };
+    // The caller's own organization, without orgId in the link.
+    let (st, body) = page(Some("viewer"), "/d/page").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let body = body.as_str().unwrap().to_owned();
+    for part in [
+        "<h2>Intro</h2>",
+        "<p>About &lt;this&gt;</p>",
+        "<h2>Panel 3</h2>",
+        "<h2>Nested</h2>",
+    ] {
+        assert!(body.contains(part), "{part}: {body}");
+    }
+    assert!(body.find("Intro") < body.find("Nested"), "dashboard order");
+
+    // A dashboard whose stored JSON no longer reads draws no panel and no error text.
+    let mut broken = w
+        .store
+        .inner
+        .get_dashboard(ORG, "page")
+        .await
+        .unwrap()
+        .unwrap();
+    broken.data["panels"] = json!("not a list");
+    w.store
+        .inner
+        .upsert_dashboard(broken, "broken", true)
+        .await
+        .unwrap();
+    let (st, body) = page(Some("viewer"), "/d/page").await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(!body.as_str().unwrap().contains("<section><h2>"), "{body}");
+
+    // The store cannot answer: the Organization the link names, the caller's own one (an
+    // organization only the store knows), the dashboard.
+    for (method, token, uri) in [
+        ("find_org", "admin", "/d/page?orgId=5"),
+        ("find_org", "outsider", "/d/page"),
+        ("get_dashboard", "viewer", "/d/page"),
+    ] {
+        w.store.fail(method);
+        let (st, body) = page(Some(token), uri).await;
+        w.store.heal();
+        assert_eq!(
+            st,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}: {body}"
+        );
+        assert!(
+            body.as_str().unwrap().contains("Dashboard not found"),
+            "{body}"
+        );
+    }
+}
+
+/// A caller with no credential reads no data even inside a named Organization, and an
+/// `Authorization` header with an empty credential is refused as an invalid one.
+#[tokio::test]
+async fn an_unsigned_or_empty_credential_reads_no_data() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let query = json!({
+        "from": "1700000000000", "to": "1700000600000",
+        "queries": [{ "refId": "A", "datasource": { "uid": "prom" }, "expr": "up" }]
+    });
+    for auth in [None, Some("Bearer   ")] {
+        let mut req = http::Request::builder()
+            .method("POST")
+            .uri("/api/ds/query")
+            .header("content-type", "application/json")
+            .header("x-grafana-org-id", "1");
+        if let Some(a) = auth {
+            req = req.header("authorization", a);
+        }
+        let (st, body) = w
+            .send(req.body(axum::body::Body::from(query.to_string())).unwrap())
+            .await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{auth:?}: {body}");
+        let want = if auth.is_some() {
+            "invalid credential"
+        } else {
+            "sign in to read data"
+        };
+        assert!(body.to_string().contains(want), "{auth:?}: {body}");
+    }
+    assert!(
+        seen.lock().iter().all(|q| !q.contains("query_range")),
+        "nothing was queried: {:?}",
+        seen.lock()
+    );
+}
+
 /// A dashboard deleted (or a store failing) between the read decision and the export
 /// answers the export's error, not a half-built answer.
 #[tokio::test]
