@@ -573,7 +573,8 @@ async fn the_default_text_cap_is_8_kib() {
     let w = world(Limits::default(), 10, 0).await;
     let a = w.a.token("assistant-a", AUDIENCE, 300);
     let at_cap = "x".repeat(8 * 1024);
-    let (status, answer, _) = call(&w.service, request(Some(&a), body("passage", &[&at_cap]))).await;
+    let (status, answer, _) =
+        call(&w.service, request(Some(&a), body("passage", &[&at_cap]))).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
     let over = "x".repeat(8 * 1024 + 1);
     let (status, answer, _) = call(&w.service, request(Some(&a), body("passage", &[&over]))).await;
