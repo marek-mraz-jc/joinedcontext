@@ -711,6 +711,58 @@ async fn a_pg_table_whose_relation_is_gone_fails_as_a_source_failure() -> Result
 }
 
 #[tokio::test]
+async fn a_pg_table_writes_a_batch_whole_or_refuses_it_as_a_conflict() -> Result<(), String> {
+    let Some(pool) = admin().await? else {
+        return Ok(());
+    };
+    let name = relation(&pool, "writes", &rows()).await?;
+    let table = PgTable::new(info()?, pool.clone(), &name).must()?;
+    assert!(table.writable());
+    let batch = |change, keys: &[&str]| odata_table::Batch {
+        change,
+        keys: keys.iter().map(|k| json!(k)).collect(),
+        guard: Cond::Const(true),
+    };
+    let patch = |v: Value| odata_table::Change::Update(v.as_object().cloned().unwrap_or_default());
+    let rows_of = |org: &str| {
+        let (table, org) = (&table, org.to_owned());
+        async move {
+            let plan = plan_with(compare(&["org"], CompareOp::Eq, json!(org)))?;
+            let got = table.fetch(&plan, &Scope::all()).await.must()?;
+            Ok::<Vec<(Value, Value)>, String>(
+                got.rows
+                    .iter()
+                    .map(|r| (r["id"].clone(), r["size"].clone()))
+                    .collect(),
+            )
+        }
+    };
+    // two properties in one statement
+    table
+        .apply(&batch(patch(json!({"org": "z", "size": 9})), &["t1", "t2"]))
+        .await
+        .must()?;
+    assert_eq!(
+        rows_of("z").await?,
+        [(json!("t1"), json!(9)), (json!("t2"), json!(9))]
+    );
+    // a key that matches no row: nothing changes
+    assert!(matches!(
+        table
+            .apply(&batch(patch(json!({"org": "y"})), &["t3", "gone"]))
+            .await,
+        Err(TableError::Conflict(_))
+    ));
+    assert_eq!(rows_of("y").await?, []);
+    table
+        .apply(&batch(odata_table::Change::Delete, &["t1"]))
+        .await
+        .must()?;
+    assert_eq!(rows_of("z").await?, [(json!("t2"), json!(9))]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_pg_table_keeps_forced_row_level_security() -> Result<(), String> {
     let Some(admin) = admin().await? else {
         return Ok(());

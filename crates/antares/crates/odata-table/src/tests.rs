@@ -526,6 +526,19 @@ fn comparisons_read_either_side_and_nulls() {
 }
 
 #[test]
+fn a_path_through_a_primitive_names_nothing() {
+    assert_eq!(
+        planned(&filtered(Expr::Compare(
+            Box::new(member(&["org", "size"])),
+            CompareOp::Eq,
+            Box::new(Expr::Literal(Literal::Int(1))),
+        )))
+        .err(),
+        Some(TableError::UnknownProperty("org/size".into()))
+    );
+}
+
+#[test]
 fn a_parameter_alias_needs_a_value() {
     let by_alias = |aliases: Vec<(String, Literal)>| {
         planned(&QueryOptions {
@@ -745,6 +758,47 @@ async fn an_update_of_a_set_whose_type_left_the_model_is_refused() {
 }
 
 #[tokio::test]
+async fn a_memory_write_changes_the_rows_it_names_and_only_those() {
+    let t = table(things());
+    let by_alias = QueryOptions {
+        aliases: vec![("@k".into(), Literal::String("t1".into()))],
+        ..filtered(Expr::Compare(
+            Box::new(member(&["id"])),
+            CompareOp::Eq,
+            Box::new(Expr::Alias("@k".into())),
+        ))
+    };
+    let written = write(
+        &t,
+        &by_alias,
+        &Scope::all(),
+        patch(json!({"size": 5})),
+        false,
+        100,
+    )
+    .await
+    .expect("a filter with an alias");
+    assert_eq!(written.keys, [json!("t1")]);
+    let t2 = filtered(Expr::Compare(
+        Box::new(member(&["id"])),
+        CompareOp::Eq,
+        Box::new(text("t2")),
+    ));
+    write(&t, &t2, &Scope::all(), Change::Delete, false, 100)
+        .await
+        .expect("a delete");
+    let left = query(&t, &QueryOptions::default(), &Scope::all(), 10)
+        .await
+        .expect("a read");
+    let sizes: Vec<(Value, Value)> = left
+        .rows
+        .iter()
+        .map(|r| (r["id"].clone(), r["size"].clone()))
+        .collect();
+    assert_eq!(sizes, [(json!("t1"), json!(5)), (json!("t3"), json!(3))]);
+}
+
+#[tokio::test]
 async fn a_write_refuses_rows_outside_what_the_caller_may_change() {
     let rows: Vec<Value> = (0..12)
         .map(|i| json!({"id": format!("r{i:02}"), "org": "a", "size": i, "must": "x"}))
@@ -760,6 +814,15 @@ async fn a_write_refuses_rows_outside_what_the_caller_may_change() {
     );
     assert!(why.contains("\"r09\", ...); nothing was changed"), "{why}");
     assert!(!why.contains("r10"), "{why}");
+    // exactly as many rows as a refusal names: all of them, no ellipsis
+    let ten: Vec<Value> = (0..10)
+        .map(|i| json!({"id": format!("r{i:02}"), "org": "a", "size": i, "must": "x"}))
+        .collect();
+    let TableError::Forbidden(why) = refusal(update(&table(ten), &scope, json!({"size": 0})).await)
+    else {
+        panic!("not a 403");
+    };
+    assert!(why.ends_with("\"r09\"); nothing was changed"), "{why}");
 }
 
 #[tokio::test]
