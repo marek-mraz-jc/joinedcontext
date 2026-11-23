@@ -185,11 +185,12 @@ async fn a_read_of_a_personal_attribute_names_reader_endpoint_and_entities_never
         ),
         (reads[1], "urn:ngsi-ld:BikeTrip:t1,urn:ngsi-ld:BikeTrip:t2"),
     ] {
-        for named in [PERSONAL, "BikeTrip.rider", entities, "jana"] {
+        for named in [PERSONAL, "BikeTrip.rider", entities, "user:0f5a"] {
             assert!(line.contains(named), "{named} missing: {line}");
         }
     }
     assert!(!log.contains(RIDER), "a value reached the log: {log}");
+    assert!(!log.contains("jana"), "a username reached the log: {log}");
 }
 
 /// S-3-09: a read through the view's other surfaces leaves the same line: OData and OGC API -
@@ -259,9 +260,10 @@ async fn a_personal_read_through_odata_and_ogc_names_its_entities() {
     assert_eq!(reads.len(), 2, "one line per personal read: {log}");
     let entities = "urn:ngsi-ld:BikeTrip:g1,urn:ngsi-ld:BikeTrip:o1,urn:ngsi-ld:BikeTrip:o2";
     for (line, surface) in [(reads[0], "OData"), (reads[1], "OGC API Features")] {
-        for named in [PERSONAL, surface, entities, "jana"] {
+        for named in [PERSONAL, surface, entities, "user:0f5a"] {
             assert!(line.contains(named), "{named} missing: {line}");
         }
     }
     assert!(!log.contains(RIDER), "a value reached the log: {log}");
+    assert!(!log.contains("jana"), "a username reached the log: {log}");
 }

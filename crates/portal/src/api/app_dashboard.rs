@@ -984,7 +984,7 @@ async fn commit(
         )
         .await
         .map_err(refused)?;
-    tracing::info!(app = %name, project = %project, branch = %branch, by = %user.0.identity.username, "dashboard edit committed");
+    tracing::info!(app = %name, project = %project, branch = %branch, by = %user.0.identity.subject, "dashboard edit committed");
     Ok((sha, pull.url))
 }
 

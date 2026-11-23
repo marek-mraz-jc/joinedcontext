@@ -346,7 +346,7 @@ async fn save_of(
     let bucket = org_backup::bucket(state, &target)?;
     org_backup::require_versioning(&state.org_backup_egress.http, &bucket).await?;
     state.org_backups.save(&target).await?;
-    tracing::info!(organization = %organization, kind, by = %identity.username, "backup target saved");
+    tracing::info!(organization = %organization, kind, by = %identity.subject, "backup target saved");
     state
         .org_backups
         .target(&organization, kind)

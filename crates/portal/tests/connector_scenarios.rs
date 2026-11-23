@@ -3220,7 +3220,7 @@ async fn the_connector_door_holds_its_budget_under_load() {
             let connector = harness
                 .state
                 .connectors
-                .create(&owner, new, Vec::new(), BASE)
+                .create(&owner, new, Default::default(), BASE)
                 .await
                 .expect("a connector");
             let token = harness.sign(&owner, &user(i), (&[], &[]), (&connector.url, CLIENT), 3600);

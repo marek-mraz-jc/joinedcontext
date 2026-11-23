@@ -167,7 +167,7 @@ pub async fn revert_drift(
         source: "portal".to_owned(),
         summary: format!(
             "{} reverted '{id}' to what the repository declares",
-            user.0.identity.username
+            user.0.identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,

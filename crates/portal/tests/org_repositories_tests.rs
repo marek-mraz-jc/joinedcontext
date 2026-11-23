@@ -348,7 +348,7 @@ async fn the_archive_is_the_branch_head_and_each_download_is_audited() {
     assert_eq!(rows[0].details["repository"], "alfa-city");
     assert_eq!(rows[0].details["commit"], HEAD);
     assert_eq!(rows[0].details["organization"], "alfa");
-    assert_eq!(rows[0].details["actor"], person("ada").username);
+    assert_eq!(rows[0].details["actor"], person("ada").subject);
 }
 
 #[tokio::test]

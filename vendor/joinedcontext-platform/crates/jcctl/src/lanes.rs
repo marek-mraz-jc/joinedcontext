@@ -221,8 +221,11 @@ fn public_exposure(change: &ResourceChange) -> Option<&'static str> {
 fn green_reason(change: &ResourceChange) -> Option<&'static str> {
     let spec = change.declared.as_ref().map(|manifest| &manifest.spec)?;
     match change.id.kind.as_str() {
-        "ContextSpace" if spec.get("isSandbox").and_then(Value::as_bool) == Some(true) => {
-            Some("an unmanaged sandbox space is self-service (CC-67)")
+        "ContextSpace"
+            if change.live.is_none()
+                && spec.get("isSandbox").and_then(Value::as_bool) == Some(true) =>
+        {
+            Some("creating an unmanaged sandbox space is self-service (CC-67)")
         }
         "Dashboard" => match spec.get("visibility").and_then(Value::as_str) {
             // The default of an undeclared visibility is the private one, so an absent

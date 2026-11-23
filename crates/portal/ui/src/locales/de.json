@@ -12207,7 +12207,7 @@
     "lastCall": "Letzter Aufruf",
     "setupTitle": "Fügen Sie ihn Ihrem KI-Client hinzu",
     "activityLoading": "Aufrufe werden geladen",
-    "noCalls": "In den letzten 30 Tagen kam kein Aufruf über diesen Konnektor.",
+    "noCalls": "Kein Aufruf über diesen Konnektor ist gespeichert. Jeder seiner Aufrufe erscheint hier.",
     "activityOf": "Aufrufe über {name}",
     "noProjects": "Sie lesen noch kein Projekt und nichts ist mit Ihnen geteilt, ein Konnektor hätte also nichts zu erreichen. Bitten Sie einen Projektverantwortlichen oder die Administration Ihrer Organisation um Zugriff.",
     "accessOf": "Zugriff für {what}",
