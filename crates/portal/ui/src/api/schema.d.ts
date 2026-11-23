@@ -27469,7 +27469,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap */
+            /** @description The source is no webhook or names no single credential, `pipeline` reads no such source, or `body` is empty or over the cap */
             422: {
                 headers: {
                     [name: string]: unknown;
