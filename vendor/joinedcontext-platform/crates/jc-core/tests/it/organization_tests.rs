@@ -194,6 +194,7 @@ fn organization_names_validators_smoke() {
             installation: false,
             catalog: None,
             appearance: Default::default(),
+            dataset_fields: vec![],
         }
     )
     .resource_path()

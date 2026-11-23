@@ -16,6 +16,7 @@ pub mod csr;
 pub mod dashboard;
 pub mod data_model;
 pub mod data_source;
+pub mod dataset_fields;
 pub mod dataspace;
 pub mod delegation_policy;
 pub mod ekiben_components;
@@ -62,6 +63,7 @@ pub use app::{
     AppServiceLimits, AppSource, AppSpec, AppVisibility, ContentSecurityPolicy, DataNeed,
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
+pub use dataset_fields::{DatasetField, DatasetFieldType};
 pub use appearance::{
     contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceDisplay,
     AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, ButtonStyle, CardShadow,
