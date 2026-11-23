@@ -1373,10 +1373,12 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["organization"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["organization"].is_object()
+            && v["result"]["search_facets"]["license_id"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = ckan(
         app,
         "package_search",
@@ -1396,10 +1398,19 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["tags"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["tags"].is_object()
+            && v["result"]["search_facets"]["organization"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    // An anonymous search is publicly cacheable unless it asks for private records.
+    for (flags, cache) in [
+        ("", "public, max-age=60"),
+        ("?include_private=true", "private, no-store"),
+    ] {
+        let a = get(app, &format!("/api/3/action/package_search{flags}"), None).await;
+        assert_eq!(a.header("cache-control"), cache, "{flags}");
+    }
     assert_eq!(v["result"]["sort"], "score desc, metadata_modified desc");
     let a = get(
         app,
@@ -1432,6 +1443,15 @@ async fn ckan_dataset_and_resource_writes() {
         "package_create",
         Some("tok-editor"),
         json!({"name": "open"}),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
+    // A caller who sees the dataset learns the name is taken, though it may not propose one.
+    let a = ckan(
+        app,
+        "package_create",
+        Some("tok-member"),
+        json!({"name": "open", "owner_org": "city"}),
     )
     .await;
     assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
