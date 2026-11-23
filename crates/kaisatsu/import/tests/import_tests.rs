@@ -998,6 +998,12 @@ async fn prune_deletes_scopes_roles_clients_and_client_roles_the_file_dropped() 
             .unwrap()
             .is_none()
     );
+    // A dry run still refuses roles of a client neither the realm nor the file holds.
+    let ghost = json!({"realm": "prune", "roles": {"client": {"ghost": [{"name": "viewer"}]}}});
+    let err = apply_realm_files(&store, &[("realm.json".into(), ghost)], &dry)
+        .await
+        .expect_err("roles of no client");
+    assert!(err.to_string().contains("$.roles.client.ghost"), "{err}");
 }
 
 /// Organizations: the alias defaults to the name, a name is required, attributes must be a map,
