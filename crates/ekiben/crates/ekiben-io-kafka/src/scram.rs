@@ -15,23 +15,16 @@ const MAX_ITERATIONS: u32 = 1_000_000;
 
 fn hmac(m: Mechanism, key: &[u8], data: &[u8]) -> Vec<u8> {
     match m {
-        Mechanism::ScramSha512 => {
-            // HMAC takes a key of any length, so the Err arm is never taken
-            let Ok(mut h) = <Hmac<Sha512> as KeyInit>::new_from_slice(key) else {
-                return Vec::new();
-            };
-            h.update(data);
-            h.finalize().into_bytes().to_vec()
-        }
-        _ => {
-            // HMAC takes a key of any length, so the Err arm is never taken
-            let Ok(mut h) = <Hmac<Sha256> as KeyInit>::new_from_slice(key) else {
-                return Vec::new();
-            };
-            h.update(data);
-            h.finalize().into_bytes().to_vec()
-        }
+        Mechanism::ScramSha512 => mac::<Hmac<Sha512>>(key, data),
+        _ => mac::<Hmac<Sha256>>(key, data),
     }
+}
+
+fn mac<M: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
+    // HMAC takes a key of any length, so new_from_slice never fails and the default is unused
+    <M as KeyInit>::new_from_slice(key)
+        .map(|h| h.chain_update(data).finalize().into_bytes().to_vec())
+        .unwrap_or_default()
 }
 
 fn hash(m: Mechanism, data: &[u8]) -> Vec<u8> {
@@ -154,6 +147,32 @@ impl Check {
     }
 }
 
+/// The broker's side of the last step, for the tests: checks the client's proof against
+/// `password` and answers the server's signature, or `e=invalid-proof`.
+#[cfg(test)]
+pub(crate) fn server_final(
+    m: Mechanism,
+    password: &str,
+    salt: &[u8],
+    client_first_bare: &str,
+    server_first: &str,
+    client_final: &str,
+) -> String {
+    let (without_proof, proof) = client_final.rsplit_once(",p=").unwrap_or_default();
+    let salted = hi(m, password.as_bytes(), salt, 4096);
+    let client_key = hmac(m, &salted, b"Client Key");
+    let stored = hash(m, &client_key);
+    let auth = format!("{client_first_bare},{server_first},{without_proof}");
+    let sig = hmac(m, &stored, auth.as_bytes());
+    let proof = B64.decode(proof).unwrap_or_default();
+    let recovered: Vec<u8> = proof.iter().zip(&sig).map(|(a, b)| a ^ b).collect();
+    if hash(m, &recovered) != stored {
+        return "e=invalid-proof".into();
+    }
+    let server_key = hmac(m, &salted, b"Server Key");
+    format!("v={}", B64.encode(hmac(m, &server_key, auth.as_bytes())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +211,33 @@ mod tests {
             "r=abcd,i=4096",             // no salt
         ] {
             assert!(c.final_message(sf.as_bytes(), "pw").is_err(), "{sf}");
+        }
+        for (sf, want) in [
+            (&b"r=abcd,s=AAAA,i=\xff"[..], "not UTF-8"),
+            (b"r=abcd,s=!!!,i=4096", "salt is not base64"),
+            (b"r=abcd,s=AAAA,i=many", "not a number"),
+        ] {
+            let e = c.final_message(sf, "pw").err().expect("refused");
+            assert!(e.contains(want), "{e}");
+        }
+        // an attribute SCRAM does not define is skipped
+        assert!(c.final_message(b"x=1,r=abcd,s=AAAA,i=4096", "pw").is_ok());
+    }
+
+    #[test]
+    fn a_hostile_server_final_is_refused() {
+        let c = Client::with_nonce(Mechanism::ScramSha512, "u", "abc".into());
+        let (_, check) = c
+            .final_message(b"r=abcd,s=AAAA,i=4096", "pw")
+            .expect("final");
+        for (last, want) in [
+            (&b"v=\xff"[..], "not UTF-8"),
+            (b"x=1", "has no signature"),
+            (b"v=!!!", "signature is not base64"),
+            (b"v=AAAA", "the broker does not know the password"),
+        ] {
+            let e = check.verify(last).err().expect("refused");
+            assert!(e.contains(want), "{e}");
         }
     }
 }

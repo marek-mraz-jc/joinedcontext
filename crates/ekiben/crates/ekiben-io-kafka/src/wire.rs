@@ -169,8 +169,9 @@ impl Dec {
         if n < 0 {
             return Ok(None);
         }
-        let n = usize::try_from(n).map_err(|_| WireError("a length is out of range"))?;
-        self.take(n).map(Some)
+        // past usize (32-bit targets) the length cannot be in the frame: take reports it truncated
+        self.take(usize::try_from(n).unwrap_or(usize::MAX))
+            .map(Some)
     }
     pub fn remaining(&self) -> usize {
         self.0.remaining()
@@ -224,5 +225,74 @@ pub fn error_name(code: i16) -> &'static str {
         74 => "FENCED_LEADER_EPOCH",
         75 => "UNKNOWN_LEADER_EPOCH",
         _ => "an error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn varints_round_trip_and_an_overlong_one_is_refused() {
+        for v in [0, -1, 1, 63, -64, 64, 300, -300, i64::MAX, i64::MIN] {
+            let mut e = Enc::default();
+            e.varint(v);
+            assert_eq!(Dec(e.0.into()).varint(), Ok(v), "{v}");
+        }
+        assert_eq!(
+            Dec(Bytes::from_static(&[0x80; 11])).varint(),
+            Err(WireError("a varint is longer than 10 bytes"))
+        );
+        let mut e = Enc::default();
+        e.varint(-1);
+        assert_eq!(Dec(e.0.into()).var_bytes(), Ok(None));
+        let mut e = Enc::default();
+        e.i32(-1);
+        assert_eq!(Dec(e.0.into()).null_bytes(), Ok(None));
+    }
+
+    #[test]
+    fn a_string_that_is_not_utf8_is_refused_by_name() {
+        let e = Dec(Bytes::from_static(&[0, 1, 0xff]))
+            .null_str()
+            .unwrap_err();
+        assert_eq!(e, WireError("a string is not UTF-8"));
+        assert_eq!(
+            e.to_string(),
+            "malformed Kafka response: a string is not UTF-8"
+        );
+    }
+
+    #[test]
+    fn every_reported_error_code_has_its_kafka_name() {
+        for (code, name) in [
+            (1, "OFFSET_OUT_OF_RANGE"),
+            (3, "UNKNOWN_TOPIC_OR_PARTITION"),
+            (5, "LEADER_NOT_AVAILABLE"),
+            (6, "NOT_LEADER_OR_FOLLOWER"),
+            (7, "REQUEST_TIMED_OUT"),
+            (14, "COORDINATOR_LOAD_IN_PROGRESS"),
+            (15, "COORDINATOR_NOT_AVAILABLE"),
+            (16, "NOT_COORDINATOR"),
+            (22, "ILLEGAL_GENERATION"),
+            (23, "INCONSISTENT_GROUP_PROTOCOL"),
+            (24, "INVALID_GROUP_ID"),
+            (25, "UNKNOWN_MEMBER_ID"),
+            (26, "INVALID_SESSION_TIMEOUT"),
+            (27, "REBALANCE_IN_PROGRESS"),
+            (29, "TOPIC_AUTHORIZATION_FAILED"),
+            (30, "GROUP_AUTHORIZATION_FAILED"),
+            (31, "CLUSTER_AUTHORIZATION_FAILED"),
+            (33, "UNSUPPORTED_SASL_MECHANISM"),
+            (34, "ILLEGAL_SASL_STATE"),
+            (35, "UNSUPPORTED_VERSION"),
+            (58, "SASL_AUTHENTICATION_FAILED"),
+            (74, "FENCED_LEADER_EPOCH"),
+            (75, "UNKNOWN_LEADER_EPOCH"),
+            (0, "an error"),
+            (-1, "an error"),
+        ] {
+            assert_eq!(error_name(code), name, "{code}");
+        }
     }
 }

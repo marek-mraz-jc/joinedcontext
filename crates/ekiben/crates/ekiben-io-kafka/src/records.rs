@@ -63,12 +63,15 @@ pub fn crc32c(data: &[u8]) -> u32 {
     })
 }
 
+impl From<std::io::Error> for WireError {
+    fn from(_: std::io::Error) -> Self {
+        WireError("a compressed batch does not inflate")
+    }
+}
+
 fn bounded(mut r: impl Read) -> WireResult<Vec<u8>> {
     let mut out = Vec::new();
-    (&mut r)
-        .take(MAX_BATCH_BYTES + 1)
-        .read_to_end(&mut out)
-        .map_err(|_| WireError("a compressed batch does not inflate"))?;
+    (&mut r).take(MAX_BATCH_BYTES + 1).read_to_end(&mut out)?;
     if out.len() as u64 > MAX_BATCH_BYTES {
         return Err(WireError("a batch inflates past 64 MiB"));
     }
@@ -118,11 +121,7 @@ fn inflate(codec: i16, data: Bytes) -> WireResult<Bytes> {
         1 => bounded(flate2::read::GzDecoder::new(&data[..]))?.into(),
         2 => unsnappy(&data)?.into(),
         3 => bounded(lz4_flex::frame::FrameDecoder::new(&data[..]))?.into(),
-        4 => bounded(
-            zstd::stream::read::Decoder::new(&data[..])
-                .map_err(|_| WireError("a zstd batch does not inflate"))?,
-        )?
-        .into(),
+        4 => bounded(zstd::stream::read::Decoder::new(&data[..])?)?.into(),
         _ => return Err(WireError("a batch names an unknown compression codec")),
     })
 }
@@ -266,8 +265,7 @@ pub(crate) mod encode {
                 z.write_all(&body.0).expect("lz4");
                 z.finish().expect("lz4")
             }
-            4 => zstd::encode_all(&body.0[..], 1).expect("zstd"),
-            _ => unreachable!("codec"),
+            _ => zstd::encode_all(&body.0[..], 1).expect("zstd"),
         };
         let (pid, control) = producer.unwrap_or((-1, false));
         let mut attrs = codec;
@@ -303,6 +301,7 @@ pub(crate) mod encode {
 mod tests {
     use super::encode::batch;
     use super::*;
+    use crate::wire::Enc;
 
     fn values(d: &Decoded) -> Vec<String> {
         d.records
@@ -368,6 +367,84 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_and_unknown_compression_is_refused() {
+        let inflates = Err(WireError("a compressed batch does not inflate"));
+        assert_eq!(inflate(1, Bytes::from_static(b"not gzip")), inflates);
+        assert_eq!(inflate(4, Bytes::from_static(b"not zstd")), inflates);
+        assert_eq!(inflate(3, Bytes::from_static(b"not lz4")), inflates);
+        let corrupt = Err(WireError("a snappy block is corrupt"));
+        // a length header longer than a varint, then a length with no data
+        assert_eq!(inflate(2, Bytes::from_static(&[0xff; 6])), corrupt);
+        assert_eq!(inflate(2, Bytes::from_static(&[0x05, 0xff, 0xff])), corrupt);
+        // a raw block that declares 64 MiB and one byte
+        let mut header = Vec::new();
+        let mut n = MAX_BATCH_BYTES + 1;
+        while n >= 0x80 {
+            header.push((n as u8 & 0x7f) | 0x80);
+            n >>= 7;
+        }
+        header.push(n as u8);
+        assert_eq!(
+            inflate(2, header.into()),
+            Err(WireError("a batch inflates past 64 MiB"))
+        );
+        let mut x = b"\x82SNAPPY\x00".to_vec();
+        x.extend_from_slice(&1i32.to_be_bytes());
+        x.extend_from_slice(&1i32.to_be_bytes());
+        x.extend_from_slice(&(-1i32).to_be_bytes());
+        assert_eq!(
+            unsnappy(&x),
+            Err(WireError("a snappy block length is negative"))
+        );
+        let len = x.len();
+        x[len - 4..].copy_from_slice(&100i32.to_be_bytes());
+        assert_eq!(unsnappy(&x), Err(WireError("truncated")));
+        assert_eq!(
+            inflate(5, Bytes::new()),
+            Err(WireError("a batch names an unknown compression codec"))
+        );
+    }
+
+    #[test]
+    fn malformed_batches_and_records_are_refused() {
+        let mut e = Enc::default();
+        e.i64(0).i32(-1);
+        assert_eq!(
+            decode(e.0.into(), 0, None).unwrap_err(),
+            WireError("a batch length is negative")
+        );
+        let mut b = batch(0, 0, None, &[("a", "x")]);
+        b[16] = 1;
+        assert!(decode(b.into(), 0, None)
+            .unwrap_err()
+            .0
+            .contains("older than Kafka 0.11"));
+        let mut r = Enc::default();
+        r.varint(-1);
+        assert_eq!(
+            record(&mut Dec(r.0.into()), 0, 0).unwrap_err(),
+            WireError("a record length is negative")
+        );
+        let mut body = Enc::default();
+        body.i8(0)
+            .varint(0)
+            .varint(0)
+            .varint(-1)
+            .varint(-1)
+            .varint(1)
+            .varint(1);
+        body.0.push(0xff);
+        body.varint(-1);
+        let mut r = Enc::default();
+        r.varint(body.0.len() as i64);
+        r.0.extend_from_slice(&body.0);
+        assert_eq!(
+            record(&mut Dec(r.0.into()), 0, 0).unwrap_err(),
+            WireError("a header key is not UTF-8")
+        );
+    }
+
+    #[test]
     fn a_compression_bomb_stops_at_the_cap() {
         let big = vec![0u8; (MAX_BATCH_BYTES + 1024) as usize];
         let z = zstd::encode_all(&big[..], 3).expect("zstd");
@@ -380,10 +457,16 @@ mod tests {
         b.extend(batch(1, 0, Some((7, true)), &[("", "")]));
         b.extend(batch(2, 0, Some((8, false)), &[("a", "committed")]));
         b.extend(batch(3, 0, None, &[("a", "plain")]));
-        let aborted = [Aborted {
-            producer_id: 7,
-            first_offset: 0,
-        }];
+        let aborted = [
+            Aborted {
+                producer_id: 9,
+                first_offset: 50,
+            },
+            Aborted {
+                producer_id: 7,
+                first_offset: 0,
+            },
+        ];
         let d = decode(b.clone().into(), 0, Some(&aborted)).expect("decodes");
         assert_eq!(values(&d), ["committed", "plain"]);
         assert_eq!(d.next_offset, Some(4));
