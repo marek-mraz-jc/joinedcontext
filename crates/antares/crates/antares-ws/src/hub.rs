@@ -124,6 +124,33 @@ impl State {
         }
     }
 
+    /// The messages a resumed socket starts with: see [`Conn::replay`].
+    fn replay(&self, seq: u64) -> Vec<String> {
+        let st = self;
+        let mut out = Vec::new();
+        let after = seq.saturating_add(1);
+        let oldest = st.ring.front().map(|(s, _)| *s);
+        let lost_from = st.lost.map(|(f, _)| f);
+        // the first seq the ring or the queue still holds
+        let first_kept = oldest
+            .or_else(|| st.queue.front().map(|q| q.gap_from.unwrap_or(q.seq)))
+            .or(lost_from)
+            .unwrap_or(st.next_seq.max(1));
+        if first_kept > after {
+            out.push(envelope::gap(after, first_kept.saturating_sub(1)));
+        }
+        out.extend(
+            st.ring
+                .iter()
+                .filter(|(s, _)| *s > seq)
+                .map(|(_, t)| t.clone()),
+        );
+        if let Some((from, to)) = st.lost.filter(|(_, to)| *to > seq) {
+            out.push(envelope::gap(from.max(after), to));
+        }
+        out
+    }
+
     /// Room for `add` more queued bytes: the ring's oldest texts leave
     /// first; false when the queue alone would pass `queue_bytes`.
     fn room(&mut self, add: usize, limits: &Limits) -> bool {
@@ -371,29 +398,7 @@ impl Conn {
     /// what the ring no longer holds after `seq`, the ring after `seq`, and
     /// `x-gap` for what an overflow lost.
     pub fn replay(&self, seq: u64) -> Vec<String> {
-        let st = lock(&self.state);
-        let mut out = Vec::new();
-        let after = seq.saturating_add(1);
-        let oldest = st.ring.front().map(|(s, _)| *s);
-        let lost_from = st.lost.map(|(f, _)| f);
-        // the first seq the ring or the queue still holds
-        let first_kept = oldest
-            .or_else(|| st.queue.front().map(|q| q.gap_from.unwrap_or(q.seq)))
-            .or(lost_from)
-            .unwrap_or(st.next_seq.max(1));
-        if first_kept > after {
-            out.push(envelope::gap(after, first_kept.saturating_sub(1)));
-        }
-        out.extend(
-            st.ring
-                .iter()
-                .filter(|(s, _)| *s > seq)
-                .map(|(_, t)| t.clone()),
-        );
-        if let Some((from, to)) = st.lost.filter(|(_, to)| *to > seq) {
-            out.push(envelope::gap(from.max(after), to));
-        }
-        out
+        lock(&self.state).replay(seq)
     }
 }
 
@@ -798,6 +803,17 @@ mod tests {
         assert_eq!(st.ring.len(), 3);
         st.trim(2, 1024, 0);
         assert_eq!(st.ring.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [2, 3]);
+    }
+
+    /// A resume after the last seq an overflow lost replays nothing of it:
+    /// no `x-gap` that ends before it starts.
+    #[test]
+    fn a_resume_after_the_lost_range_has_no_gap() {
+        let mut st = attached();
+        st.lost = Some((1, 3));
+        st.next_seq = 4;
+        assert_eq!(st.replay(2).len(), 1, "seq 3 is still lost");
+        assert_eq!(st.replay(3), Vec::<String>::new());
     }
 
     /// F-ANT3-001: 256 notifications of 900 KiB, each drained as it comes,
