@@ -328,6 +328,8 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
             "127.0.0.1:0",
             "--host",
             "idm.cli.example.test",
+            "--path-prefix",
+            "/auth",
             "--import-dir",
             p(&import.0),
             "--import-watch",
@@ -358,9 +360,14 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
             break a.to_owned();
         }
     };
-    let cli = "/realms/cli/.well-known/openid-configuration";
-    let added = "/realms/added/.well-known/openid-configuration";
-    assert_eq!(http(&addr, "GET", cli, None).0, 200);
+    let cli = "/auth/realms/cli/.well-known/openid-configuration";
+    let added = "/auth/realms/added/.well-known/openid-configuration";
+    let (st, body) = http(&addr, "GET", cli, None);
+    assert_eq!(st, 200, "{body}");
+    assert!(
+        body.contains("\"issuer\":\"https://idm.cli.example.test/auth/realms/cli\""),
+        "{body}"
+    );
     assert_eq!(http(&addr, "GET", added, None).0, 404);
 
     // A realm file written while it runs is applied at the next poll.
@@ -391,6 +398,51 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
         !rest.iter().any(|l| l.contains("smtp-word-for-tests")),
         "{rest:?}"
     );
+
+    // `--import-watch 0` watches nothing: a file written while it runs stays unapplied.
+    let quiet = TempDir::new();
+    quiet.file("realm.yaml", REALM_YAML);
+    let mut child = Command::new(BIN)
+        .args([
+            "serve",
+            "--kek-file",
+            p(&kek),
+            "--listen",
+            "127.0.0.1:0",
+            "--host",
+            "idm.cli.example.test",
+            "--import-dir",
+            p(&quiet.0),
+            "--import-watch",
+            "0",
+        ])
+        .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
+        .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let addr = loop {
+        let line = lines
+            .next()
+            .expect("serve exited before listening")
+            .expect("stderr line");
+        if let Some(a) = line.strip_prefix("kaisatsu: listening on ") {
+            break a.to_owned();
+        }
+    };
+    quiet.file("realm2.yaml", "realm: added\n");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let unwatched = "/realms/added/.well-known/openid-configuration";
+    assert_eq!(http(&addr, "GET", unwatched, None).0, 404);
+    let term = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("send SIGTERM");
+    assert!(term.success());
+    assert_eq!(child.wait().expect("serve exits").code(), Some(0));
+    let rest: Vec<String> = lines.map_while(std::result::Result::ok).collect();
+    assert!(!rest.iter().any(|l| l.contains("panicked")), "{rest:?}");
 }
 
 // ---------------------------------------------------------------- PostgreSQL

@@ -328,6 +328,14 @@ mod tests {
     }
 
     #[test]
+    fn bare_drops_a_numeric_port_and_the_trailing_dot_only() {
+        assert_eq!(bare("IDM.City.sk."), "idm.city.sk");
+        assert_eq!(bare("idm.city.sk:8443"), "idm.city.sk");
+        assert_eq!(bare("[::1]"), "[::1]");
+        assert_eq!(bare("idm.city.sk:http"), "idm.city.sk:http");
+    }
+
+    #[test]
     fn realm_of_reads_the_three_realm_path_forms() {
         assert_eq!(realm_of("/realms/a/x/y"), Some(("a", "x/y")));
         assert_eq!(realm_of("/realms/a"), Some(("a", "")));
