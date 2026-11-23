@@ -704,6 +704,50 @@ async fn a_code_bound_to_a_dpop_key_needs_a_proof_at_the_exchange() {
     assert!(body.contains("bound to a DPoP key"), "{body}");
 }
 
+/// A step-up on a password session of a person with a passkey asks for the passkey at once,
+/// not the password again.
+#[tokio::test]
+async fn a_step_up_with_a_passkey_asks_for_the_passkey() {
+    let (app, store, _, _) = app().await;
+    let (_, sso) = browser_login(&app).await;
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .insert_webauthn_credential(WebAuthnCredentialRecord {
+            id: "pk-step".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: member.id.clone(),
+            user_handle: "handle-step".into(),
+            credential_id: "cred-step".into(),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: true,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "idm.dev.example.test".into(),
+            user_label: None,
+            created_at: jc_time::TimestampTz::now(),
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+    let (st, h, _) = get(&app, &auth_query("&acr_values=mfa"), Some(&sso), None).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let login = location(&h);
+    assert!(login.contains("/login-actions/authenticate"), "{login}");
+    let (st, _, html) = get(&app, &login, Some(&auth_cookie(&h)), None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("webauthn-authenticate"), "{html}");
+    assert!(!html.contains(r#"name="password""#), "{html}");
+}
+
 /// A confidential client `client_id` in the dev realm, with no redirect URIs.
 async fn edge_like(store: &MemoryStore, client_id: &str) -> ClientRepresentation {
     let client = ClientRepresentation {
