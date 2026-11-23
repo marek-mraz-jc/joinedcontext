@@ -1,0 +1,7 @@
+# cargo-mutants configuration for the coverage and mutants-diff workflows (T-7529).
+# Equivalent mutants: a mutation no test can tell from the original (same observable behaviour).
+# One regex per entry, matched against the names `cargo mutants --list` prints, each with its reason
+# on the line above it. A branch whose new mutant survives either adds the test that kills it or
+# lists it here with the reason; a reviewer reads every entry.
+exclude_re = [
+]
