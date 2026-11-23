@@ -78,6 +78,56 @@ async fn a_file_at_another_commit_than_the_index_pins_is_not_served() {
     );
 }
 
+/// A file the mirror cannot read is a miss like a stale one, and each is logged by the model's id,
+/// never with the file's content.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unreadable_or_stale_file_is_a_miss_logged_by_its_id() {
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let root = mirror("unreadable");
+    // A directory where the file should be: it resolves inside the mirror but does not read.
+    std::fs::create_dir_all(root.join("dataModel.Environment/Gone/linkml.yaml")).unwrap();
+    let open = SdmMirror::open(&root).unwrap();
+    let logs = Captured::default();
+    let sink = logs.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || sink.clone())
+            .finish(),
+    );
+    assert_eq!(
+        open.model("dataModel.Environment/Gone").await,
+        Mirrored::Unknown
+    );
+    assert_eq!(
+        open.model("dataModel.Environment/WaterObserved").await,
+        Mirrored::Unknown
+    );
+    let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        logs.contains("mirrored model could not be read")
+            && logs.contains("dataModel.Environment/Gone"),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("not at the commit its index pins") && logs.contains("WaterObserved"),
+        "{logs}"
+    );
+    assert!(
+        !logs.contains("smartdatamodels.org"),
+        "no content in the log: {logs}"
+    );
+}
+
 #[tokio::test]
 async fn a_failed_model_answers_its_finding() {
     let open = SdmMirror::open(&mirror("failed")).unwrap();
@@ -138,6 +188,27 @@ async fn the_import_answers_from_the_mirror_with_no_model_tools_behind_it() {
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let body: serde_json::Value = serde_json::from_str(&answer.text).unwrap();
     assert_eq!(body["linkml"], linkml(PIN));
+}
+
+/// A model that failed upstream imports as its finding, with no Model Tools behind the mirror.
+#[tokio::test]
+async fn a_failed_model_imports_as_its_finding() {
+    let state = AppState::new(config(&mirror("route-failed")), None);
+    let answer = common::send(
+        &state,
+        common::person("demo.steward"),
+        "POST",
+        "/api/v1/tools/import-sdm",
+        Some(serde_json::json!({ "model": "dataModel.Environment/Broken" })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: serde_json::Value = serde_json::from_str(&answer.text).unwrap();
+    assert_eq!(
+        body["errors"],
+        serde_json::json!(["schema.json answered 404"])
+    );
+    assert!(body["linkml"].is_null(), "{body}");
 }
 
 #[tokio::test]

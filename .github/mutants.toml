@@ -4,4 +4,10 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # T-7539: the cached token differs only when Instant::now() equals its expiry to the nanosecond.
+  'crates/embedder/src/client\.rs:\d+:\d+: replace < with <= in Remote::token',
+  # T-7539: the pinned model always answers a [1, tokens, 384] tensor, so neither half of the shape check is ever true.
+  'crates/embedder/src/model\.rs:\d+:\d+: replace \|\| with && in Engine::embed',
+  # T-7539: tokenizers 0.23.2 defaults max_length to 512, which is MAX_TOKENS.
+  'crates/embedder/src/model\.rs:\d+:\d+: delete field max_length from struct TruncationParams expression in Embedder::load',
 ]
