@@ -13,6 +13,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::{Extension, Router};
 use http_body_util::BodyExt;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_server::{KaisatsuState, router};
@@ -558,6 +559,71 @@ async fn cors_answers_only_the_console_origin() {
     );
 }
 
+/// A request without an Origin gets no CORS answer; the console client's `+` stands for its
+/// redirect URIs' origins beside the origins it lists, a `*` stands for none, and without the
+/// client no origin is allowed. A revoked token reads nothing.
+#[tokio::test]
+async fn cors_follows_the_console_clients_web_origins_and_a_revoked_token_is_refused() {
+    let (app, store) = app().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let preflight = |origin: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut headers = vec![("access-control-request-method", "GET")];
+            if let Some(o) = origin {
+                headers.push(("origin", o));
+            }
+            call(
+                &app,
+                Method::OPTIONS,
+                &format!("{ACCOUNT}/"),
+                &headers,
+                None,
+            )
+            .await
+        }
+    };
+    let (st, h, _) = preflight(None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert!(!h.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+
+    let mut console = store
+        .get_client_by_client_id("dev", "account-console")
+        .await
+        .unwrap()
+        .unwrap();
+    console.web_origins = vec!["+".into(), "https://app.example.test".into(), "*".into()];
+    console.redirect_uris = vec!["https://console.example.test/account/*".into()];
+    store.upsert_client(console.clone()).await.unwrap();
+    for origin in ["https://app.example.test", "https://console.example.test"] {
+        let (st, h, _) = preflight(Some(origin)).await;
+        assert_eq!(st, StatusCode::NO_CONTENT, "{origin}");
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_ORIGIN], origin);
+    }
+    let (st, _, _) = preflight(Some("https://elsewhere.example.test")).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    assert!(store.delete_client("dev", None, &console.id).await.unwrap());
+    let (st, h, _) = preflight(Some(ISSUER_ORIGIN)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(!h.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+
+    let jti = decode_jwt_payload(&me.token)["jti"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&jti),
+            realm_id: "dev".into(),
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_secs(600),
+        })
+        .await
+        .unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &me.token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn personal_info_changes_only_what_a_person_may_change() {
     let (app, store) = app().await;
@@ -682,6 +748,63 @@ async fn personal_info_changes_only_what_a_person_may_change() {
     assert!(!after.email_verified);
     let events = store.list_events("dev", None).await.unwrap();
     assert!(events.iter().any(|e| e.event_type == "UPDATE_EMAIL"));
+}
+
+/// Under verify-email a new address asks for its confirmation once; an attribute sent back
+/// unchanged is left alone, an empty one is removed, and an over-long address is refused.
+#[tokio::test]
+async fn personal_info_asks_to_verify_a_new_address_once_and_clears_emptied_attributes() {
+    let (app, store) = app().await;
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.verify_email = true;
+    store.upsert_realm(realm).await.unwrap();
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+
+    let (st, err) = rest(
+        &app,
+        Method::POST,
+        "/",
+        &me.token,
+        Some(json!({"email": format!("{}@hel.fi", "a".repeat(250))})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(err["field"], "email");
+
+    for address in ["anna.one@hel.fi", "anna.two@hel.fi"] {
+        let (st, info) = rest(
+            &app,
+            Method::POST,
+            "/",
+            &me.token,
+            Some(json!({"email": address, "attributes": {"locale": ["sk"]}})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{info}");
+        let after = user(&store, MEMBER).await;
+        assert_eq!(after.email.as_deref(), Some(address));
+        assert_eq!(
+            after
+                .required_actions
+                .iter()
+                .filter(|a| *a == "VERIFY_EMAIL")
+                .count(),
+            1,
+            "{address}"
+        );
+        assert_eq!(after.attributes.get("locale"), Some(&vec!["sk".to_owned()]));
+    }
+
+    let (st, info) = rest(
+        &app,
+        Method::POST,
+        "/",
+        &me.token,
+        Some(json!({"attributes": {"locale": []}})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{info}");
+    assert!(!user(&store, MEMBER).await.attributes.contains_key("locale"));
 }
 
 #[tokio::test]
@@ -1041,6 +1164,34 @@ async fn passkeys_are_removed_only_by_their_owner() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// A session signed in to several apps lists them in client id order, an app deleted since by
+/// its id; the console page of a realm without a display name names the realm.
+#[tokio::test]
+async fn sessions_list_every_app_and_the_page_falls_back_to_the_realm_name() {
+    let (app, store) = app().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let mut sso = store
+        .get_sso_session("dev", &me.sid)
+        .await
+        .unwrap()
+        .unwrap();
+    sso.clients.insert("zz-deleted-app".into(), String::new());
+    store.upsert_sso_session(sso).await.unwrap();
+    let (st, list) = rest(&app, Method::GET, "/sessions", &me.token, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let clients = &list[0]["clients"];
+    assert_eq!(clients[0]["clientId"], "account-console");
+    assert_eq!(clients[1]["clientId"], "zz-deleted-app");
+    assert_eq!(clients[1]["clientName"], "zz-deleted-app");
+
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.display_name = String::new();
+    store.upsert_realm(realm).await.unwrap();
+    let (st, _, html) = call(&app, Method::GET, ACCOUNT, &[], None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html.contains("\"realm\":\"dev\""), "{html}");
 }
 
 #[tokio::test]

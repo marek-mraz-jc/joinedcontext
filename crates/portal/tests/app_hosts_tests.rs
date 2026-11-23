@@ -6,11 +6,14 @@
 use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, query_param};
+use std::collections::BTreeMap;
+
+use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::apps::kube::KubeClient;
 use joinedcontext_portal::reconciler::app_hosts::{AppHosts, HostState};
+use joinedcontext_portal::reconciler::edge_file::hostname_key;
 
 const NS: &str = "apisix";
 const CERTS: &str = "/apis/cert-manager.io/v1/namespaces/apisix/certificates";
@@ -225,6 +228,181 @@ async fn a_retired_app_loses_its_certificate_and_ingress() {
         gone,
         [format!("{CERTS}/app-old"), format!("{INGRESSES}/app-old")]
     );
+}
+
+const HOSTNAME_SELECTOR: &str =
+    "app.kubernetes.io/managed-by=joinedcontext-portal,app.kubernetes.io/component=app-hostname";
+
+fn routed(app: &str, names: &[&str]) -> BTreeMap<String, Vec<String>> {
+    BTreeMap::from([(
+        app.to_owned(),
+        names.iter().map(|name| (*name).to_owned()).collect(),
+    )])
+}
+
+fn hostname_object(kind: &str, app: &str, hostname: &str, component: &str) -> Value {
+    let mut object = managed(kind, app, json!({}));
+    object["metadata"]["name"] = json!(format!("app-{app}-at-{}", hostname_key(hostname)));
+    object["metadata"]["labels"]["app.kubernetes.io/component"] = json!(component);
+    object
+}
+
+/// AP-172: a hostname on the Organization's domain gets a certificate and an Ingress of its
+/// own, from the edge's issuer, labelled as an App hostname; an App with no hostname asks for
+/// nothing.
+#[tokio::test]
+async fn a_routed_hostname_gets_its_own_certificate_and_ingress() {
+    let server = api(vec![], vec![]).await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/app-bikes-at-[0-9a-f]{8}$"))
+        .respond_with(not_found())
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let hosts = hosts(&server);
+    assert!(hosts
+        .converge_hostnames(&routed("bikes", &[]))
+        .await
+        .is_empty());
+
+    let states = hosts
+        .converge_hostnames(&routed("bikes", &["bikes.city.example"]))
+        .await;
+    assert_eq!(
+        states.get("bikes.city.example"),
+        Some(&HostState::Pending(
+            "the certificate is requested".to_owned()
+        ))
+    );
+    let certificate = &posted(&server, CERTS).await[0];
+    assert_eq!(
+        certificate["spec"]["dnsNames"],
+        json!(["bikes.city.example"])
+    );
+    assert_eq!(certificate["spec"]["issuerRef"]["name"], "letsencrypt-prod");
+    let name = format!("app-bikes-at-{}", hostname_key("bikes.city.example"));
+    assert_eq!(certificate["metadata"]["name"], name);
+    let ingress = &posted(&server, INGRESSES).await[0];
+    assert_eq!(ingress["metadata"]["name"], name);
+    assert_eq!(ingress["spec"]["rules"][0]["host"], "bikes.city.example");
+    assert_eq!(
+        ingress["metadata"]["labels"]["app.kubernetes.io/component"],
+        "app-hostname"
+    );
+}
+
+/// Every hostname says why when the edge cannot be copied: no edge Ingress, an edge Certificate
+/// naming no issuer, or the API server failing; nothing is requested.
+#[tokio::test]
+async fn a_hostname_says_why_the_edge_cannot_be_copied() {
+    let no_ingress = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(not_found())
+        .mount(&no_ingress)
+        .await;
+    let failing = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({ "kind": "Status", "code": 500 })),
+        )
+        .mount(&failing)
+        .await;
+    let no_issuer = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{INGRESSES}/apisix")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "spec": {} })))
+        .mount(&no_issuer)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{CERTS}/apisix-edge")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "spec": {} })))
+        .mount(&no_issuer)
+        .await;
+    for (server, why) in [
+        (&no_ingress, "edge Ingress apisix is not in apisix"),
+        (&failing, "answered 500"),
+        (&no_issuer, "names no issuer"),
+    ] {
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(server)
+            .await;
+        let states = hosts(server)
+            .converge_hostnames(&routed("bikes", &["a.city.example", "b.city.example"]))
+            .await;
+        assert_eq!(states.len(), 2, "{why}");
+        for state in states.values() {
+            let HostState::Failed(reason) = state else {
+                panic!("{why}: {states:?}");
+            };
+            assert!(reason.contains(why), "{reason}");
+        }
+    }
+}
+
+/// A hostname no App routes any more loses its certificate and Ingress; a routed one, an object
+/// of another component and one with no name stay, and a list or delete the API server refuses
+/// leaves the rest going.
+#[tokio::test]
+async fn an_unrouted_hostname_loses_its_objects_and_nothing_else_does() {
+    let server = MockServer::start().await;
+    let kept = hostname_object("Certificate", "bikes", "bikes.city.example", "app-hostname");
+    let stale = hostname_object("Certificate", "bikes", "old.city.example", "app-hostname");
+    let refused = hostname_object("Certificate", "bikes", "stuck.city.example", "app-hostname");
+    let other = hostname_object("Certificate", "bikes", "other.city.example", "app-host");
+    let nameless = json!({ "metadata": { "labels": {} } });
+    Mock::given(method("GET"))
+        .and(path(CERTS))
+        .and(query_param("labelSelector", HOSTNAME_SELECTOR))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "items": [kept, stale, refused, other, nameless] })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(INGRESSES))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({ "kind": "Status", "code": 500 })),
+        )
+        .mount(&server)
+        .await;
+    let stale_path = format!(
+        "{CERTS}/{}",
+        stale["metadata"]["name"].as_str().unwrap_or_default()
+    );
+    let refused_path = format!(
+        "{CERTS}/{}",
+        refused["metadata"]["name"].as_str().unwrap_or_default()
+    );
+    Mock::given(method("DELETE"))
+        .and(path(stale_path.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(refused_path.clone()))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(json!({ "kind": "Status", "code": 403 })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    hosts(&server)
+        .retire_hostnames(&routed("bikes", &["bikes.city.example"]))
+        .await;
+    let mut gone = deleted(&server).await;
+    gone.sort();
+    let mut want = vec![stale_path, refused_path];
+    want.sort();
+    assert_eq!(gone, want);
 }
 
 /// An object of the App's name that the Portal did not create is reported and left alone.

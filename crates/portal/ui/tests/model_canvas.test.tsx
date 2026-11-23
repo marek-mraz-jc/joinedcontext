@@ -24,7 +24,7 @@ import {
 import { fitRow, LinkmlGraphView, place } from "../src/pages/models/LinkmlGraphView";
 import { fieldsOf, layoutKey } from "../src/pages/models/ModelCanvas";
 import { graphData, parseModel } from "../src/pages/models/linkml";
-import { jsonResponse, list, renderRoute } from "./pageHarness";
+import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
 
 const manifest = (kind: string, name: string, spec: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
   ({ apiVersion: "joinedcontext.com/v1alpha1", kind, metadata: { name, namespace: "helsinki" }, spec, ...extra }) as Manifest;
@@ -121,6 +121,19 @@ describe("areas, layout and positions", () => {
     expect(areaTabs(new Map([["A", MAIN_AREA]]))).toEqual([]);
   });
 
+  it("puts an enum with the area of the class that uses it, or of its import, or in main", () => {
+    const nodes = [
+      { name: "A", kind: "class", rows: [] },
+      { name: "Used", kind: "enum" },
+      { name: "Imported", kind: "enum", from: "core" },
+      { name: "Lonely", kind: "enum" },
+    ] as unknown as Parameters<typeof areasOf>[0];
+    const areas = areasOf(nodes, [{ from: "A", to: "Used" }, { from: "Ghost", to: "Lonely" }], new Map([["A", "accounts"]]));
+    expect(areas.get("Used")).toBe("accounts");
+    expect(areas.get("Imported")).toBe("core");
+    expect(areas.get("Lonely")).toBe(MAIN_AREA);
+  });
+
   it("lays the same model out the same way every time", () => {
     const first = place(graph.nodes, graph.edges);
     const again = place(graphData(parseModel(BIKES)).nodes, graphData(parseModel(BIKES)).edges);
@@ -137,6 +150,13 @@ describe("areas, layout and positions", () => {
     expect(JSON.parse(kept)).toEqual({ "p/a": { A: { x: 1, y: 1 } }, "p/b": { B: { x: 2, y: 2 } } });
     expect(JSON.parse(writePositions(kept, "p/a", {}))).toEqual({ "p/b": { B: { x: 2, y: 2 } } });
     expect(JSON.parse(writePositions("garbage", "p/a", {}))).toEqual({});
+  });
+
+  it("lists a field the child redeclares once, under the child", () => {
+    const model = parseModel("name: m\nclasses:\n  Parent:\n    slots: [name, code]\n  Child:\n    is_a: Parent\n    slots: [name]\nslots:\n  name: { range: string }\n  code: { range: string }\n");
+    const child = model.classes.find((klass) => klass.name === "Child");
+    if (!child) throw new Error("no child");
+    expect(fieldsOf(model, child).map(({ slot, inherited }) => `${slot.name}${inherited ? `<${inherited}` : ""}`)).toEqual(["name", "code<Parent"]);
   });
 
   it("lists a class's own fields first and its inherited ones after, marked", () => {
@@ -223,6 +243,114 @@ describe("the canvas page", () => {
     await userEvent.click(within(tabs).getByRole("tab", { name: "accounts" }));
     expect(await screen.findByRole("button", { name: en.models.graph.openClass.replace("{name}", "Rider") })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: en.models.graph.openClass.replace("{name}", "Place") })).toBeNull();
+  });
+});
+
+describe("the canvas page: overlays, phone, failures and imports", () => {
+  const openClass = (klass: string) => en.models.graph.openClass.replace("{name}", klass);
+
+  it("lights what a Pipeline writes when it is picked, and names the classes it does not reach", async () => {
+    await renderRoute({ path: "/projects/helsinki/models/bikes/diagram", answer });
+    await screen.findByTestId("diagram-badge-Operator");
+    await waitFor(() => expect(within(screen.getByLabelText(en.models.canvas.overlay)).getByRole("option", { name: "gbfs" })).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByLabelText(en.models.canvas.overlay), "pipeline:gbfs");
+    expect(await screen.findByText("1 class of 4 is reached; the rest is faded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: openClass("Operator") })).toHaveAttribute("opacity", "0.45");
+    expect(screen.getByRole("button", { name: openClass("BikeHireDockingStation") })).not.toHaveAttribute("opacity");
+    // The phone's list says why a card is faded, naming the pick.
+    expect(screen.getAllByText(en.models.canvas.notReached.replace("{name}", "gbfs")).length).toBe(3);
+  });
+
+  it("picks a class from the phone's list, and takes the phone back to the drawing from the details", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      await renderRoute({ path: "/projects/helsinki/models/bikes/diagram", answer });
+      await screen.findByTestId("diagram-badge-Operator");
+      const list = within(screen.getByRole("region", { name: en.models.canvas.list }));
+      await userEvent.click(list.getByRole("button", { name: /^Operator/ }));
+      expect(await screen.findByRole("heading", { level: 2, name: "Operator" })).toBeInTheDocument();
+      expect(list.getByRole("button", { name: /^Operator/ })).toHaveAttribute("aria-pressed", "true");
+
+      const toggle = screen.getByRole("button", { name: en.models.canvas.showDiagram });
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      await userEvent.click(toggle);
+      expect(screen.getByRole("button", { name: en.models.canvas.showList })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("region", { name: en.models.canvas.list })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: en.models.canvas.backToDiagram }));
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+      await userEvent.click(screen.getByRole("button", { name: en.models.canvas.showList }));
+      expect(screen.getByRole("region", { name: en.models.canvas.list })).toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    }
+  });
+
+  it("says why the models could not be read, and reads them again on Retry", async () => {
+    let failing = true;
+    await renderRoute({
+      path: "/projects/helsinki/models/bikes/diagram",
+      answer: (path) => (path === "/api/v1/projects/helsinki/datamodels" && failing ? problem(503, "The registry did not answer.") : answer(path)),
+    });
+    expect(await screen.findByText(/The registry did not answer/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Diagram of bikes" })).toBeInTheDocument();
+    failing = false;
+    await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByTestId("diagram-badge-Operator")).toBeInTheDocument();
+  });
+
+  it("says the model is not in the project instead of drawing an empty canvas", async () => {
+    await renderRoute({ path: "/projects/helsinki/models/nope/diagram", answer });
+    expect(await screen.findByText(en.models.page.notFound.replace("{name}", "nope"))).toBeInTheDocument();
+    expect(screen.queryByTestId("diagram-badge-Operator")).toBeNull();
+  });
+
+  it("draws the classes of an imported model with the model's own", async () => {
+    const withImport = `${BIKES.replace("name: bikes", "name: bikes\nimports: [parts]")}`;
+    const parts = "id: https://hel.fi/models/parts\nname: parts\nclasses:\n  Bell:\n    slots: []\nslots: {}\n";
+    const lists: Record<string, Manifest[]> = {
+      ...LISTS,
+      datamodels: [
+        manifest("DataModel", "bikes", { contextSpaceRef: "helsinki", linkml: withImport, classes: ["BikeHireDockingStation"] }),
+        manifest("DataModel", "parts", { contextSpaceRef: "helsinki", linkml: parts, classes: ["Bell"] }),
+      ],
+    };
+    await renderRoute({
+      path: "/projects/helsinki/models/bikes/diagram",
+      answer: (path) => {
+        const plural = /^\/api\/v1\/projects\/helsinki\/([a-z]+)$/.exec(path)?.[1];
+        return plural ? jsonResponse(list(lists[plural] ?? [])) : undefined;
+      },
+    });
+    await screen.findByTestId("diagram-badge-Operator");
+    // An imported class sits on the tab of the import it came from, and in the list.
+    const tabs = await screen.findByRole("tablist", { name: en.models.canvas.areas });
+    await userEvent.click(within(tabs).getByRole("tab", { name: "parts" }));
+    expect(await screen.findByRole("button", { name: openClass("Bell") })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: en.models.canvas.list })).getByRole("button", { name: /^Bell/ })).toBeInTheDocument();
+  });
+
+  it("starts with no kept layout when the browser keeps nothing, and still moves a box", async () => {
+    const real = { get: Storage.prototype.getItem, set: Storage.prototype.setItem };
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key: string) {
+      if (key === LAYOUT_STORAGE) throw new Error("blocked");
+      return real.get.call(this, key);
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === LAYOUT_STORAGE) throw new Error("blocked");
+      real.set.call(this, key, value);
+    });
+    try {
+      await renderRoute({ path: "/projects/helsinki/models/bikes/diagram", answer });
+      const operator = await screen.findByRole("button", { name: openClass("Operator") });
+      const x = Number(operator.querySelector("rect")?.getAttribute("x"));
+      operator.focus();
+      await userEvent.keyboard("{Shift>}{ArrowRight}{/Shift}");
+      await waitFor(() => expect(Number(screen.getByRole("button", { name: openClass("Operator") }).querySelector("rect")?.getAttribute("x"))).toBe(x + 20));
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 });
 
@@ -388,5 +516,16 @@ describe("the overlay pick's how-to (T-6188)", () => {
     expect(tip).not.toHaveClass("sr-only");
     await userEvent.unhover(help);
     expect(tip).toHaveClass("sr-only");
+  });
+
+  it("closes when the focus leaves it", async () => {
+    const { OverlayHelp } = await import("../src/pages/models/ModelCanvas");
+    const { render } = await import("@testing-library/react");
+    render(<OverlayHelp id="overlay-hint" label="How the overlay works" hint="Pick an Endpoint" />);
+    const help = screen.getByRole("button", { name: "How the overlay works" });
+    await userEvent.click(help);
+    expect(help).toHaveAttribute("aria-expanded", "true");
+    await userEvent.tab();
+    expect(help).toHaveAttribute("aria-expanded", "false");
   });
 });

@@ -43,7 +43,8 @@ function renderSection({
   organization,
   project,
   mayPropose = true,
-}: { services?: string[]; organization?: string[]; project?: string[]; mayPropose?: boolean } = {}) {
+  refuse,
+}: { services?: string[]; organization?: string[]; project?: string[]; mayPropose?: boolean; refuse?: string } = {}) {
   const sent: { dryRun: boolean; body: { spec: Record<string, unknown> } }[] = [];
   const reply = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -70,6 +71,7 @@ function renderSection({
       if (url.pathname === APP && request.method === "PUT") {
         const dryRun = url.searchParams.get("dryRun") === "All";
         sent.push({ dryRun, body: (await request.json()) as { spec: Record<string, unknown> } });
+        if (dryRun && refuse) return reply(200, { valid: false, verdict: { ok: false, findings: [{ message: refuse }] } });
         return reply(200, dryRun ? { valid: true, verdict: { ok: true } } : CHANGE);
       }
       return undefined;
@@ -116,6 +118,29 @@ describe("AppServices", () => {
     const proposed = sent.filter((request) => !request.dryRun).map((request) => request.body.spec);
     expect(proposed).toEqual([expect.objectContaining({ services: ["files", "email"], limits: { emailsPerDay: 5 } })]);
     await expectNoViolations(document.body);
+  });
+
+  it("unticks a service the App keeps and proposes the list without it", async () => {
+    const sent = renderSection({ services: ["files", "email"], organization: ["identity", "data", "files", "email", "jobs"] });
+    const files = await box("files");
+    expect(files).toBeChecked();
+    await userEvent.click(files);
+    expect(files).not.toBeChecked();
+    expect(await box("email")).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: en.appServices.save }));
+    await screen.findByText(/chg-7/);
+    const proposed = sent.filter((request) => !request.dryRun).map((request) => request.body.spec);
+    expect(proposed).toEqual([expect.objectContaining({ services: ["email"] })]);
+  });
+
+  it("says the check's own sentence when the proposal is refused and sends nothing", async () => {
+    const refusal = "services: email needs a limit";
+    const sent = renderSection({ services: ["files"], organization: ["identity", "data", "files", "email", "jobs"], refuse: refusal });
+    await userEvent.click(await box("email"));
+    await userEvent.click(screen.getByRole("button", { name: en.appServices.save }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+    expect(sent.filter((request) => !request.dryRun)).toEqual([]);
+    expect(screen.queryByText(/chg-7/)).toBeNull();
   });
 
   it("disables Propose with the reason for a person who may not propose the App", async () => {

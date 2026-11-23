@@ -85,3 +85,16 @@ pub(crate) fn spawn_periodic(state: AppState) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Portal with no assistant keeps no answers: nothing to forget, and nothing is asked.
+    #[tokio::test]
+    async fn a_portal_without_an_assistant_forgets_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(state.config.knowledge_url.is_none());
+        assert_eq!(forget_all(&state).await, Some(0));
+    }
+}

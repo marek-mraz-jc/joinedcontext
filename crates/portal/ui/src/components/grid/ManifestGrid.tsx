@@ -227,7 +227,8 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
       {
         key: "actions",
         label: t("approvals.actions"),
-        text: () => "",
+        // The SDK never reads an actions column as text (no search, sort or filter); the type wants one.
+        text: name.text,
         actions: true,
         align: "right" as const,
         // One menu ends the row, Details first (owner 2026-10-31: no pinned column, no second button).
@@ -346,7 +347,6 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
           kept={rows.length}
           total={server.total ?? props.total ?? rows.length}
           step={step}
-          onMore={() => undefined}
           onMoreFromServer={
             server.hasMore
               ? () => {
@@ -465,7 +465,7 @@ export function GridFooter({
   kept: number;
   total: number;
   step: number;
-  onMore: () => void;
+  onMore?: () => void;
   /** Reads the next page from the server, once every row read so far is shown. */
   onMoreFromServer?: () => void;
 }): JSX.Element | null {

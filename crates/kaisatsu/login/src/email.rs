@@ -40,6 +40,21 @@ pub fn email_binding(address: &str) -> String {
     sha256_hex(&format!("action-email:{}", address.trim().to_lowercase()))
 }
 
+/// Signs `claims` with the realm's active key. The memory store keeps one active key per realm;
+/// a store that does not finds none here and mints no link.
+pub(crate) async fn sign_action_token(
+    store: &dyn Store,
+    kek: &Kek,
+    realm_id: &str,
+    claims: &SignedActionToken,
+) -> Result<String> {
+    let keys = store.list_signing_keys(realm_id).await?;
+    let Some(key) = keys.iter().find(|k| k.status == "ACTIVE") else {
+        return Err(KaisatsuError::Crypto("no active signing key".into()));
+    };
+    sign_jwt(key, kek, Some("JWT"), claims)
+}
+
 #[derive(Clone, Default)]
 pub struct EmailSender {
     smtp: Option<SmtpServerConfig>,
@@ -92,11 +107,6 @@ impl EmailSender {
         redirect_uri: Option<String>,
         lifespan_secs: Option<i64>,
     ) -> Result<String> {
-        let keys = store.list_signing_keys(realm_id).await?;
-        let key = keys
-            .iter()
-            .find(|k| k.status == "ACTIVE")
-            .ok_or_else(|| KaisatsuError::Crypto("no active signing key".into()))?;
         let email = store
             .get_user_by_id(realm_id, None, user_id)
             .await?
@@ -117,7 +127,7 @@ impl EmailSender {
             iat: now,
             exp: now + ttl,
         };
-        sign_jwt(key, kek, Some("JWT"), &claims)
+        sign_action_token(store.as_ref(), kek, realm_id, &claims).await
     }
 
     /// Verifies an action token without using it up: a link opened (or prefetched by a mail
@@ -219,13 +229,18 @@ impl EmailSender {
         let to = to_address
             .parse::<lettre::message::Mailbox>()
             .map_err(|_| KaisatsuError::BadRequest("invalid recipient address".into()))?;
-        lettre::Message::builder()
+        // One sender and one recipient, both parsed above: lettre refuses only a message
+        // missing either.
+        let Ok(message) = lettre::Message::builder()
             .from(from)
             .to(to)
             .subject(subject)
             .header(lettre::message::header::ContentType::TEXT_PLAIN)
             .body(body)
-            .map_err(|_| KaisatsuError::BadRequest("cannot build e-mail".into()))
+        else {
+            return Err(KaisatsuError::BadRequest("cannot build e-mail".into()));
+        };
+        Ok(message)
     }
 
     /// Sends `message` over SMTP with TLS (implicit TLS when `ssl`, otherwise STARTTLS) (W7).
@@ -249,21 +264,23 @@ impl EmailSender {
             .as_ref()
             .ok_or_else(|| KaisatsuError::BadRequest("SMTP is not configured".into()))?;
         let port = self.port()?;
-        let invalid_host = |_| KaisatsuError::BadRequest("invalid SMTP host".into());
-        let builder = match pinned {
-            Some(addr) => {
-                let tls = TlsParameters::new(smtp.host.trim().to_owned()).map_err(invalid_host)?;
-                Transport::builder_dangerous(addr.ip().to_string()).tls(if smtp.ssl == "true" {
-                    Tls::Wrapper(tls)
-                } else {
-                    Tls::Required(tls)
-                })
-            }
-            None if smtp.ssl == "true" => Transport::relay(&smtp.host).map_err(invalid_host)?,
-            None => Transport::starttls_relay(&smtp.host).map_err(invalid_host)?,
-        }
-        .port(port)
-        .timeout(Some(std::time::Duration::from_secs(10)));
+        // rustls checks the name when it connects; building the parameters fails only for a TLS
+        // version rustls lacks, and the minimum here is TLS 1.2.
+        let Ok(tls) = TlsParameters::new(smtp.host.trim().to_owned()) else {
+            return Err(KaisatsuError::BadRequest("invalid SMTP host".into()));
+        };
+        let target = match pinned {
+            Some(addr) => addr.ip().to_string(),
+            None => smtp.host.clone(),
+        };
+        let builder = Transport::builder_dangerous(target)
+            .tls(if smtp.ssl == "true" {
+                Tls::Wrapper(tls)
+            } else {
+                Tls::Required(tls)
+            })
+            .port(port)
+            .timeout(Some(std::time::Duration::from_secs(10)));
         let builder = if smtp.auth == "true" {
             builder.credentials(lettre::transport::smtp::authentication::Credentials::new(
                 smtp.user.clone(),
@@ -338,6 +355,89 @@ mod tests {
             .unwrap();
         assert!(!subject.is_empty());
         assert!(body.ends_with("https://idm/link"));
+    }
+
+    /// Without SMTP settings neither the port nor a send goes anywhere; a send pinned to an
+    /// address that refuses the connection fails with the cause and without the password.
+    #[tokio::test]
+    async fn sends_need_settings_a_nameable_host_and_a_server_that_answers() {
+        let unconfigured = EmailSender::default();
+        assert_eq!(
+            unconfigured.port().unwrap_err().to_string(),
+            KaisatsuError::BadRequest("SMTP is not configured".into()).to_string()
+        );
+        let cfg = SmtpServerConfig {
+            host: "localhost".into(),
+            from: "idm@example.org".into(),
+            ssl: "true".into(),
+            auth: "true".into(),
+            user: "idm".into(),
+            password: "smtp-word-for-tests".into(),
+            ..SmtpServerConfig::default()
+        };
+        let sender = EmailSender::from_stored(cfg.clone()).unwrap();
+        let msg = || {
+            sender
+                .build_message("anna@example.org", "s", "b".into())
+                .unwrap()
+        };
+        let err = unconfigured.send_via(msg(), None).await.unwrap_err();
+        assert!(err.to_string().contains("SMTP is not configured"), "{err}");
+
+        // Port 1 on loopback: nothing listens and no unprivileged test can bind it, so the
+        // connection is refused at once.
+        let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+        for (ssl, pin) in [("true", Some(addr)), ("false", Some(addr)), ("true", None)] {
+            let pinned = EmailSender::from_stored(SmtpServerConfig {
+                ssl: ssl.into(),
+                port: addr.port().to_string(),
+                ..cfg.clone()
+            })
+            .unwrap();
+            let err = pinned.send_via(msg(), pin).await.unwrap_err();
+            assert!(
+                err.to_string().contains("SMTP delivery failed"),
+                "{ssl} {pin:?}: {err}"
+            );
+            assert!(!err.to_string().contains("smtp-word-for-tests"));
+        }
+    }
+
+    /// A token of the realm's key that is not an action token is refused as one.
+    #[tokio::test]
+    async fn a_token_of_another_type_is_no_action_link() {
+        let kek = Kek::generate_for_tests();
+        let mem = MemoryStore::new(kek.clone());
+        mem.upsert_realm(kaisatsu_core::RealmConfig {
+            id: "dev".into(),
+            realm: "dev".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let store: Arc<dyn Store> = Arc::new(mem);
+        let issuer = "https://idm.example.test/realms/dev";
+        let keys = store.list_signing_keys("dev").await.unwrap();
+        let active = keys.iter().find(|k| k.status == "ACTIVE").unwrap().clone();
+        let now = TimestampTz::now().as_second();
+        let refresh = SignedActionToken {
+            iss: issuer.into(),
+            sub: "u1".into(),
+            aud: issuer.into(),
+            jti: "j1".into(),
+            typ: "Refresh".into(),
+            actions: vec!["UPDATE_PASSWORD".into()],
+            client_id: None,
+            redirect_uri: None,
+            email: None,
+            iat: now,
+            exp: now + 60,
+        };
+        let token = sign_jwt(&active, &kek, Some("JWT"), &refresh).unwrap();
+        let err = EmailSender::check_action_token(&store, "dev", issuer, &token)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not an action token"), "{err}");
     }
 
     #[tokio::test]

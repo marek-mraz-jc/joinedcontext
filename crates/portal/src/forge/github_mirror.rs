@@ -371,6 +371,24 @@ mod tests {
             ("JC_APP_MIRROR_GITHUB_API", "http://github.internal/api/v3"),
         ]))
         .is_err());
+        assert!(GithubMirror::from_env(env(&[
+            ("JC_APP_MIRROR_GITHUB_OWNER", "hel-apps"),
+            ("JC_APP_MIRROR_GITHUB_TOKEN", TOKEN),
+            ("JC_APP_MIRROR_GITHUB_URL", "http://github.internal"),
+        ]))
+        .is_err());
+        let garbled = GithubMirror::from_env(env(&[
+            ("JC_APP_MIRROR_GITHUB_OWNER", "hel-apps"),
+            ("JC_APP_MIRROR_GITHUB_TOKEN", TOKEN),
+            ("JC_APP_MIRROR_GITHUB_API", "github api"),
+        ]))
+        .expect_err("no address");
+        assert!(
+            garbled
+                .to_string()
+                .contains("invalid JC_APP_MIRROR_GITHUB_API"),
+            "{garbled}"
+        );
     }
 
     #[test]
@@ -477,6 +495,72 @@ mod tests {
             .await
             .expect("mirrored");
         assert_eq!(outcome, Mirrored::Current);
+    }
+
+    /// Each forge step that fails stops the mirror with the forge's error: reading the mirrors,
+    /// taking a broken one off, adding the new one and the first sync.
+    #[tokio::test]
+    async fn a_forge_step_that_fails_stops_the_mirror() {
+        let github = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/hel-apps/helsinki_bikes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&github)
+            .await;
+        let at = |action: &str| {
+            format!("/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/{action}")
+        };
+        let broken = serde_json::json!({ "value": [{
+            "Name": "remote_mirror_x",
+            "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+            "LastError": "authentication failed"
+        }] });
+        let none = serde_json::json!({ "value": [] });
+        let ok = || ResponseTemplate::new(200).set_body_json(serde_json::json!({}));
+        let fail = || ResponseTemplate::new(500);
+        for (step, mirrors, remove, add, sync) in [
+            ("read", fail(), ok(), ok(), ok()),
+            (
+                "remove",
+                ResponseTemplate::new(200).set_body_json(broken.clone()),
+                fail(),
+                ok(),
+                ok(),
+            ),
+            (
+                "add",
+                ResponseTemplate::new(200).set_body_json(none.clone()),
+                ok(),
+                fail(),
+                ok(),
+            ),
+            (
+                "sync",
+                ResponseTemplate::new(200).set_body_json(none.clone()),
+                ok(),
+                ok(),
+                fail(),
+            ),
+        ] {
+            let shako = MockServer::start().await;
+            for (verb, action, answer) in [
+                ("GET", "PushMirrors", mirrors),
+                ("POST", "Shako.RemovePushMirror", remove),
+                ("POST", "Shako.AddPushMirror", add),
+                ("POST", "Shako.SyncPushMirrors", sync),
+            ] {
+                Mock::given(method(verb))
+                    .and(path(at(action)))
+                    .respond_with(answer)
+                    .mount(&shako)
+                    .await;
+            }
+            let failed = mirror(&github, "hel-apps")
+                .mirror(&forge(&shako), "Application bikes")
+                .await
+                .expect_err(step);
+            assert!(!failed.to_string().contains(TOKEN), "{step}: {failed}");
+        }
     }
 
     #[tokio::test]
@@ -600,6 +684,125 @@ mod tests {
             .await
             .expect_err("never created in the wrong account");
         assert!(refused.to_string().contains("someone"), "{refused}");
+    }
+
+    /// GitHub at `server` answering `get` for the repository, `org` for its creation in an
+    /// organization, `user` for the token's account and `mine` for a creation there.
+    async fn answering(
+        get: ResponseTemplate,
+        org: ResponseTemplate,
+        user: ResponseTemplate,
+        mine: ResponseTemplate,
+    ) -> MockServer {
+        let github = MockServer::start().await;
+        for (verb, at, answer) in [
+            ("GET", "/repos/hel-apps/r", get),
+            ("POST", "/orgs/hel-apps/repos", org),
+            ("GET", "/user", user),
+            ("POST", "/user/repos", mine),
+        ] {
+            Mock::given(method(verb))
+                .and(path(at))
+                .respond_with(answer)
+                .mount(&github)
+                .await;
+        }
+        github
+    }
+
+    #[tokio::test]
+    async fn a_creation_race_is_success_and_every_other_refusal_is_returned() {
+        let ok = || ResponseTemplate::new(201).set_body_json(serde_json::json!({}));
+        let me =
+            || ResponseTemplate::new(200).set_body_json(serde_json::json!({ "login": "Hel-Apps" }));
+        let ensure = |github: MockServer| async move {
+            mirror(&github, "hel-apps")
+                .ensure_repository("r", "Application r")
+                .await
+        };
+        // Another run created it in the organization, or in the account, meanwhile: GitHub's 422.
+        let race = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(422),
+            me(),
+            ok(),
+        )
+        .await;
+        assert!(ensure(race).await.is_ok());
+        let race = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(404),
+            me(),
+            ResponseTemplate::new(422),
+        )
+        .await;
+        assert!(ensure(race).await.is_ok());
+        // A failing read, organization creation or account creation is the caller's error.
+        for github in [
+            answering(ResponseTemplate::new(500), ok(), me(), ok()).await,
+            answering(
+                ResponseTemplate::new(404),
+                ResponseTemplate::new(500),
+                me(),
+                ok(),
+            )
+            .await,
+            answering(
+                ResponseTemplate::new(404),
+                ResponseTemplate::new(404),
+                me(),
+                ResponseTemplate::new(500),
+            )
+            .await,
+        ] {
+            assert!(
+                matches!(ensure(github).await, Err(GitError::Api { status: 500, .. })),
+                "a 500 is returned"
+            );
+        }
+        let garbled = answering(
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(404),
+            ResponseTemplate::new(200).set_body_string("not json"),
+            ok(),
+        )
+        .await;
+        assert!(matches!(
+            ensure(garbled).await,
+            Err(GitError::Transport(m)) if m.contains("failed to parse the GitHub user")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_github_that_does_not_answer_is_a_transport_error_without_the_token() {
+        // A bound socket that never listens refuses the connection; kept bound to the end, so no
+        // parallel test takes its port.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let at = socket.local_addr().expect("addr");
+        let closed = GithubMirror::new(
+            Url::parse(&format!("http://{at}")).expect("url"),
+            Url::parse("https://github.com").expect("url"),
+            "hel-apps".to_owned(),
+            TOKEN.to_owned(),
+        )
+        .expect("client");
+        let refused = closed
+            .ensure_repository("r", "x")
+            .await
+            .expect_err("nothing answers");
+        assert!(
+            matches!(&refused, GitError::Transport(m) if !m.contains(TOKEN)),
+            "{refused:?}"
+        );
+        assert_eq!(
+            closed.web_url("r", ""),
+            "https://github.com/hel-apps/r",
+            "no branch: the repository's page"
+        );
+        drop(socket);
     }
 
     #[tokio::test]

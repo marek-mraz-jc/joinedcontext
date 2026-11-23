@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ApiError } from "../api/client";
+import { reasonOf } from "../api/client";
 import type { Change } from "../api/manifest";
 import { ORG_NAMESPACE } from "../api/manifest";
 import { door, doorAction } from "../api/odata";
@@ -24,10 +24,7 @@ interface Entry {
 const registryKey = (project: string) => ["projects", project, "registry"] as const;
 
 function failureOf(error: unknown, fallback: string): string | null {
-  if (error instanceof ApiError) {
-    return error.problem?.detail ?? error.message;
-  }
-  return error ? fallback : null;
+  return error ? reasonOf(error, fallback) : null;
 }
 
 /**

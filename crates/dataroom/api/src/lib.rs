@@ -86,6 +86,7 @@ use dataroom_web::{
     render_portal_page, render_resource_page, render_static_page, PageInputs, JC_ENUMS_JSON,
     JC_LOGO_SVG, JC_THEME_CSS,
 };
+use portals::{read, write};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -513,13 +514,6 @@ impl DataroomState {
             .cloned()
             .ok_or_else(refused)
     }
-}
-
-/// A read of one of the state's runtime-swapped tables; a poisoned lock still holds the last
-/// complete table (every writer replaces whole entries).
-fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Returns all registered operations in `dataroom` (G1, F1).
@@ -1092,11 +1086,7 @@ async fn handle_upload_logo(
         Err(e) => return problem_response(e),
     };
     let fname = asset.url_path.trim_start_matches("/assets/").to_owned();
-    state
-        .assets
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(fname, asset.clone());
+    write(&state.assets).insert(fname, asset.clone());
     // The logo is one member of the catalogue: a concurrent write of another member makes the
     // write read the catalogue again, three tries at most (S11-25); the activity row commits
     // with it (AUD-02).
@@ -1151,12 +1141,7 @@ async fn handle_serve_asset(
     State(state): State<DataroomState>,
     Path(name): Path<String>,
 ) -> Response {
-    let found = state
-        .assets
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&name)
-        .cloned();
+    let found = read(&state.assets).get(&name).cloned();
     match found {
         Some(asset) => (
             StatusCode::OK,
@@ -1181,10 +1166,7 @@ async fn handle_serve_asset(
 /// The file stores a request's catalogue reads: its own, then its Organization's own catalogue's
 /// (an Organization-wide file). Never another Organization's.
 fn file_keys(state: &DataroomState, ctx: &RequestCtx) -> Vec<(OrgId, CatalogueId)> {
-    let own = state
-        .organization_catalogues
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
+    let own = read(&state.organization_catalogues)
         .values()
         .find(|(org, _)| *org == ctx.org_id)
         .map(|(_, cat)| *cat);
@@ -2020,19 +2002,10 @@ async fn dispatch_ui_route(
                 Vec::new()
             };
             // ponytail: one catalogue listing per dataset page; a store query by type when
-            // catalogues hold thousands of packages.
-            let dashboards: Vec<Dataset> = state
-                .store
-                .list_datasets(&ctx)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|d| {
-                    is_dashboard(d)
-                        && d.state != RecordState::Withdrawn
-                        && dataset_shown(&state, &ctx, &cat, d, None)
-                })
-                .collect();
+            // catalogues hold thousands of packages. A dashboard of a withdrawn publisher is
+            // linked nowhere, as its own page is not found.
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
             let html = dataroom_web::render_dataset_page_linked(
                 &cat,
                 Some(&state.branding_of(&cat)),
@@ -2410,5 +2383,20 @@ async fn dispatch_ui_route(
         _ => problem_response(DataroomError::NotFound(format!(
             "route '{raw_path}' not found"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_redirect_to_a_target_no_header_can_carry_is_refused_not_a_panic() {
+        let ok = safe_redirect(StatusCode::SEE_OTHER, "/sk/dataset/air");
+        assert_eq!(ok.status(), StatusCode::SEE_OTHER);
+        assert_eq!(ok.headers()[header::LOCATION], "/sk/dataset/air");
+        let refused = safe_redirect(StatusCode::SEE_OTHER, "/sk/\r\nSet-Cookie: x=1");
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.headers().get(header::LOCATION).is_none());
     }
 }

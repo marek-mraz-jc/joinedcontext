@@ -226,6 +226,74 @@ describe("editing on the drawing", () => {
     expect(undo).toHaveAttribute("aria-disabled", "true");
   });
 
+  it("says why a name is not a name, and does not submit it on Enter", async () => {
+    const user = userEvent.setup();
+    const written = vi.fn();
+    renderPart(<Editable initial={SCHOOL} written={written} />);
+    await user.click(screen.getByRole("button", { name: en.models.graph.edit.addClass }));
+    const dialog = await screen.findByRole("dialog", { name: en.models.graph.edit.addClassTitle });
+    await user.type(within(dialog).getByLabelText(en.models.graph.edit.className), "not-ok{Enter}");
+    expect(within(dialog).getAllByText(en.models.relationships.add.nameInvalid).length).toBeGreaterThan(0);
+    expect(written).not.toHaveBeenCalled();
+    // Escape closes the dialog without writing.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(sourceNow()).toBe(SCHOOL);
+  });
+
+  it("offers the model's enums as the range of a new field, and closes the dialog on Cancel", async () => {
+    const user = userEvent.setup();
+    const withEnum = `${SCHOOL}enums:\n  Grade:\n    permissible_values:\n      A: {}\n`;
+    renderPart(<Editable initial={withEnum} />);
+    await user.click(screen.getByRole("button", { name: en.models.graph.edit.addField.replace("{name}", "School") }));
+    const dialog = await screen.findByRole("dialog", { name: en.models.graph.edit.addFieldTitle.replace("{name}", "School") });
+    await user.selectOptions(within(dialog).getByLabelText(en.models.graph.edit.fieldRange), "Grade");
+    await user.type(within(dialog).getByLabelText(en.models.graph.edit.fieldName), "level");
+    await user.click(within(dialog).getByRole("button", { name: en.models.graph.edit.add }));
+    expect(sourceNow()).toBe(expected(withEnum, [{ op: "addSlot", name: "level", class: "School", range: "Grade" }]));
+    await user.click(screen.getByRole("button", { name: en.models.graph.edit.addField.replace("{name}", "School") }));
+    const again = await screen.findByRole("dialog", { name: en.models.graph.edit.addFieldTitle.replace("{name}", "School") });
+    await user.click(within(again).getByRole("button", { name: en.app.cancel }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("renames the inverse end, closes the relationship dialog on Escape, and shows a refused edit instead of writing it", async () => {
+    const user = userEvent.setup();
+    const written = vi.fn();
+    const required = RELATED.replace("    inverse: pupils\n", "    inverse: pupils\n    required: true\n");
+    renderPart(<Editable initial={required} written={written} />);
+    await user.click(screen.getByRole("button", { name: /^Open the relationship pupils \/ school/ }));
+    let dialog = await screen.findByRole("dialog", { name: "Relationship pupils / school" });
+    await user.selectOptions(within(dialog).getByLabelText(en.models.relationships.cardinality), "one-to-one");
+    await user.click(within(dialog).getByRole("button", { name: en.models.graph.edit.apply }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("school would be computed on read, and it is required");
+    expect(written).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: /^Open the relationship pupils \/ school/ }));
+    dialog = await screen.findByRole("dialog", { name: "Relationship pupils / school" });
+    const inverse = within(dialog).getByLabelText(/^Inverse on Pupil/);
+    await user.clear(inverse);
+    await user.type(inverse, "pupils");
+    expect(within(dialog).getAllByText(en.models.relationships.add.nameTaken.replace("{name}", "pupils")).length).toBeGreaterThan(0);
+    expect(within(dialog).getByRole("button", { name: en.models.graph.edit.apply })).toHaveAttribute("aria-disabled", "true");
+    await user.clear(inverse);
+    await user.type(inverse, "campus");
+    await user.click(within(dialog).getByRole("button", { name: en.models.graph.edit.apply }));
+    const confirm = await screen.findByRole("alertdialog", { name: en.models.graph.edit.breakingTitle });
+    await user.click(within(confirm).getByRole("button", { name: en.models.graph.edit.breakingConfirm }));
+    expect(sourceNow()).toBe(expected(required, [{ op: "renameSlot", name: "school", to: "campus" }]));
+  });
+
+  it("does nothing when asked to undo before anything was written", () => {
+    const onChange = vi.fn();
+    const { result } = renderHook(() => useDiagramEditing(SCHOOL, onChange));
+    expect(result.current?.canUndo).toBe(false);
+    result.current?.undo();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("offers no edits without somewhere to write them", () => {
     expect(renderHook(() => useDiagramEditing(SCHOOL)).result.current).toBeUndefined();
   });

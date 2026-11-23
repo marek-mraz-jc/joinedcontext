@@ -129,6 +129,18 @@ describe("the endpoint proposal card", () => {
     expect(JSON.parse(writeText.mock.calls[0][0] as string).spec.operations).toEqual(["retrieveOps"]);
   });
 
+  it("does not say a draft policy was copied when the clipboard refuses", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderCard();
+    const card = await screen.findByRole("region", { name: en.agentRun.proposal.title });
+    await userEvent.click(within(card).getByText("Draft policies (1)"));
+    await userEvent.click(within(card).getByRole("button", { name: en.agentRun.proposal.copyPolicy }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(within(card).getByRole("button", { name: en.agentRun.proposal.copyPolicy })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: en.agentRun.proposal.copied })).toBeNull();
+  });
+
   it("takes only a proposal the Portal wrote", () => {
     expect(proposalOf(PROPOSAL)?.slug).toBe(SLUG);
     expect(proposalOf({ slug: SLUG })).toBeNull();

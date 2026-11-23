@@ -1414,6 +1414,158 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
     );
 }
 
+/// The admin report (T-7520): per dataset, each profile of its catalogue whose feed it is absent
+/// from, with the fields that keep it out; a profile the build lacks is named as not installed and
+/// a dataset outside the public feeds has no gaps whatever it declares.
+#[test]
+fn profile_gaps_name_each_missing_profile_once_and_skip_what_no_public_feed_carries() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let mut cat = make_catalogue(org, id, "gaps", "gaps.example");
+    cat.main_profile = "dcat-ap-cz".into();
+    cat.active_profiles = vec![
+        ProfilePin {
+            profile_id: dataroom_api::BASE_PROFILE.into(),
+            version: String::new(),
+        },
+        ProfilePin {
+            profile_id: "dcat-ap-sk-2.0".into(),
+            version: String::new(),
+        },
+        ProfilePin {
+            profile_id: "no-such-profile".into(),
+            version: "1".into(),
+        },
+    ];
+    let state = DataroomState::new(
+        Arc::new(MemoryStore::new()),
+        Arc::new(PolicyAuthorizer::default()),
+        org,
+        id,
+    );
+    let dataset = |name: &str, visibility: &str, state: &str| -> Dataset {
+        serde_json::from_value(json!({
+            "orgId": org, "catalogueId": id, "id": format!("id-{name}"), "name": name,
+            "title": {"sk": name}, "description": {}, "publisherId": "nobody",
+            "visibility": visibility, "state": state,
+            "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+        }))
+        .expect("dataset")
+    };
+    let datasets = [
+        dataset("bare", "public", "active"),
+        dataset("inner", "internal", "active"),
+        dataset("old", "public", "withdrawn"),
+    ];
+    let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new());
+    assert_eq!(gaps.len(), 3);
+    assert!(gaps[1].is_empty() && gaps[2].is_empty(), "{gaps:?}");
+    let ids: Vec<&str> = gaps[0].iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(
+        ids.iter()
+            .filter(|id| **id == dataroom_api::BASE_PROFILE)
+            .count(),
+        ids.contains(&dataroom_api::BASE_PROFILE) as usize,
+        "the base profile once: {ids:?}"
+    );
+    let missing = |want: &str| {
+        gaps[0]
+            .iter()
+            .find(|(id, _)| id == want)
+            .map(|(_, fields)| fields.to_vec())
+    };
+    assert_eq!(
+        missing("no-such-profile"),
+        Some(vec!["profile no-such-profile is not installed".to_owned()])
+    );
+    let sk = missing("dcat-ap-sk-2.0").expect("a bare dataset misses the Slovak profile's fields");
+    assert!(!sk.is_empty() && sk.iter().all(|f| !f.is_empty()), "{sk:?}");
+    assert!(
+        missing("dcat-ap-cz").is_some(),
+        "the main profile is judged too: {ids:?}"
+    );
+    // A second report reads the cached verdicts and answers the same.
+    assert_eq!(
+        dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new()),
+        gaps
+    );
+    // A main profile among the active ones is judged once.
+    cat.main_profile = "dcat-ap-sk-2.0".into();
+    let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new());
+    let sk = gaps[0]
+        .iter()
+        .filter(|(id, _)| id == "dcat-ap-sk-2.0")
+        .count();
+    assert_eq!(sk, 1, "{gaps:?}");
+    assert!(gaps[0].iter().all(|(id, _)| id != "dcat-ap-cz"), "{gaps:?}");
+}
+
+/// A dataset asked for in a profile whose feed it is absent from is not found, naming what keeps it
+/// out; a deleted catalogue answers 410; a host no catalogue holds still gets the lockup logo.
+#[tokio::test]
+async fn a_dataset_outside_a_profiles_feed_and_a_deleted_catalogue_are_refused() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let store = Arc::new(MemoryStore::new());
+    let mut cat = make_catalogue(org, id, "bare", "bare.example");
+    store.upsert_catalogue(cat.clone()).await.unwrap();
+    let ctx = RequestCtx::new(
+        org,
+        id,
+        Subject::authenticated("seed", vec![org], Vec::new()),
+    );
+    let ds: Dataset = serde_json::from_value(json!({
+        "orgId": org, "catalogueId": id, "id": "id-bare", "name": "bare",
+        "title": {"sk": "bare"}, "description": {}, "publisherId": "nobody",
+        "visibility": "public", "state": "active",
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dataset");
+    store.upsert_dataset(&ctx, ds).await.unwrap();
+    let app = router(DataroomState::new(
+        store.clone(),
+        Arc::new(PolicyAuthorizer::default()),
+        org,
+        id,
+    ));
+    let get = |uri: &'static str, host: &'static str| {
+        send_json(&app, Method::GET, uri, host, None, None, None)
+    };
+    let (status, _, body) = get("/dataset/bare.ttl?_profile=dcat-ap-sk-2.0", "bare.example").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.contains("is not in the dcat-ap-sk-2.0 feed; missing or not valid:"),
+        "{body}"
+    );
+    let (status, _, body) = get("/dataset/bare.ttl", "bare.example").await;
+    assert_eq!(status, StatusCode::OK, "the base feed carries it: {body}");
+    let (status, headers, body) = get("/logo.svg", "nobody.example").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("image/svg+xml"));
+    assert!(body.contains("<svg"), "{body}");
+    cat.deleted = Some(TimestampTz::now());
+    store.upsert_catalogue(cat).await.unwrap();
+    let (status, _, body) = get("/", "bare.example").await;
+    assert_eq!(status, StatusCode::GONE, "{body}");
+}
+
+#[test]
+fn the_registry_dataroom_answers_is_every_operation() {
+    let names = |ops: Vec<dataroom_core::ops::OperationDef>| -> Vec<String> {
+        ops.into_iter().map(|op| op.name.to_string()).collect()
+    };
+    let listed = names(dataroom_api::operations());
+    assert!(listed.iter().any(|n| n == "dataset.propose"), "{listed:?}");
+    assert_eq!(listed, names(all_operations()));
+}
+
 #[tokio::test]
 async fn profile_operations_refuse_a_built_in_id_bad_shapes_and_an_uninstalled_choice() {
     let (org, id) = (
@@ -3097,7 +3249,7 @@ async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
         .await
         .unwrap();
     let app = router(DataroomState::new(
-        store,
+        store.clone(),
         Arc::new(PolicyAuthorizer::default()),
         org,
         cat,
@@ -3139,4 +3291,46 @@ async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
     // A two-letter segment that is not a language code never reaches the cookie.
     let resp = post("url=%2F%3B%20%2Fdataset").await;
     assert!(resp.headers().get(header::SET_COOKIE).is_none());
+
+    // Under a mount prefix the cookie is scoped to it; a prefix no cookie can carry is refused
+    // rather than sent without its scope.
+    for (prefix, form, want) in [
+        (
+            "/open/",
+            "url=%2Fopen%2Fen%2Fdataset",
+            Some("ckan_lang=en; Path=/open;"),
+        ),
+        ("/op\u{1}en", "url=%2Fen%2Fdataset", None),
+    ] {
+        let state = DataroomState::new(
+            store.clone(),
+            Arc::new(PolicyAuthorizer::default()),
+            org,
+            cat,
+        )
+        .with_mount_prefix(prefix);
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/util/redirect")
+            .header(header::HOST, host)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form))
+            .unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        match want {
+            Some(want) => {
+                assert_eq!(resp.status(), StatusCode::SEE_OTHER, "{prefix:?}");
+                let cookie = resp.headers()[header::SET_COOKIE].to_str().unwrap();
+                assert!(cookie.starts_with(want), "{cookie}");
+            }
+            None => {
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "{prefix:?}"
+                );
+                assert!(resp.headers().get(header::SET_COOKIE).is_none());
+            }
+        }
+    }
 }

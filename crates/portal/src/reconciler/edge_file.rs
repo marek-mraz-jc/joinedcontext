@@ -1415,6 +1415,73 @@ routes:
         assert!(by_id(&file, "routes", "app-hsl-transport").is_ok());
     }
 
+    /// A Portal upstream whose nodes APISIX takes as a list is asked at its first node's host and
+    /// port; a listed node without a port, or nodes in neither form, name no node at all.
+    #[test]
+    fn a_portal_node_listed_as_host_and_port_is_the_one_asked() {
+        let map_form = "    nodes:\n      \"portal.jc.svc.cluster.local:8080\": 1\n";
+        let listed = BASE.replace(
+            map_form,
+            "    nodes:\n      - host: portal.jc.svc.cluster.local\n        port: 8081\n        weight: 1\n",
+        );
+        assert_ne!(listed, BASE);
+        let apps = [app("air-quality", false, pod("jc-helsinki-apps"))];
+        let file = parsed(
+            &compose(&listed, &apps, &EdgeLimits::default())
+                .expect("composes")
+                .file,
+        );
+        assert_eq!(
+            by_id(&file, "plugin_configs", "app-air-quality").expect("its plugins")["plugins"]
+                ["forward-auth"]["uri"],
+            "http://portal.jc.svc.cluster.local:8081/edge/apps/air-quality/admit"
+        );
+        for nameless in [
+            listed.replace("        port: 8081\n", ""),
+            BASE.replace(map_form, "    nodes: portal\n"),
+        ] {
+            let composed = compose(&nameless, &apps, &EdgeLimits::default()).expect("composes");
+            assert_eq!(composed.skipped.len(), 1, "{nameless}");
+        }
+    }
+
+    /// A base missing a part the composition reads is refused by what it misses.
+    #[test]
+    fn a_base_missing_a_part_is_refused_by_name() {
+        let refused = |base: &str, hosts: &[String]| {
+            compose_hosts(base, &[], &EdgeLimits::default(), hosts)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        let listed = refused("- a list\n", &[]);
+        assert!(
+            listed.ends_with("is not an APISIX file: not a mapping"),
+            "{listed}"
+        );
+        let oidc = refused(
+            &BASE.replace("      openid-connect:\n", "      openid-off:\n"),
+            &[],
+        );
+        assert!(
+            oidc.contains("has no openid-connect on apps-surface"),
+            "{oidc}"
+        );
+        let apex = refused(&BASE.replace("    host: city.example\n", ""), &[]);
+        assert!(
+            apex.contains("has no host on route context-endpoint"),
+            "{apex}"
+        );
+        let upstream = refused(
+            &base_with_jc().replace("    upstream_id: jc\n", ""),
+            &["smartcity.city.example".to_owned()],
+        );
+        assert!(
+            upstream.contains("has no upstream_id on route jc"),
+            "{upstream}"
+        );
+    }
+
     #[test]
     fn a_wasm_apps_server_is_routed_to_its_shard_on_each_of_its_hosts() {
         let mut kpi = app("kpi-forecast", false, Upstream::Static);
@@ -1997,6 +2064,11 @@ routes:
     #[test]
     fn the_organizations_body_limit_reaches_the_edge_body_rule() {
         let mib = 1024 * 1024;
+        let read_back = limits(json!({"edge": {"maxRequestBodyMegabytes": 32}}));
+        assert_eq!(
+            EdgeLimits::of(Some(&read_back), &OrganizationBounds::default()).body_bytes(),
+            Some(32 * 1024 * 1024)
+        );
         let compose_with = |json: Option<Value>| {
             let set = json.map(limits);
             let edge = EdgeLimits::of(set.as_ref(), &OrganizationBounds::default());

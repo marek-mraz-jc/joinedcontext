@@ -7,11 +7,13 @@
  * languages hold, that axe is clean while the preview stands and while it is still building, and
  * that the preview column is the same box in both so the page does not jump under a reader.
  */
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
-import { AgentRunPage } from "../src/pages/apps/AgentRunPage";
+import { AgentRunPage, useElapsed } from "../src/pages/apps/AgentRunPage";
+import { pickElement } from "../src/assistant/state";
 import {
   expectHeadingOutline,
   expectNoAxeViolations,
@@ -98,6 +100,41 @@ describe("the run page", () => {
     );
     expect(screen.getByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
     expect(screen.queryByText(en.agentRun.notFound)).not.toBeInTheDocument();
+  });
+
+  it("reads the run again when Retry is pressed", async () => {
+    let reads = 0;
+    renderPage(<AgentRunPage project={PROJECT} runId={RUN_ID} onClose={() => undefined} />, {
+      path: `/projects/${PROJECT}/apps/${RUN.appName}`,
+      answer: (url) => {
+        if (!url.pathname.includes("/agent-runs/")) return undefined;
+        reads += 1;
+        return problem(503, "The run store is not answering.");
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+  });
+
+  it("turns pointing at an element on in the frame and off once the frame names one (SDK-46)", async () => {
+    renderPage(<AgentRunPage project={PROJECT} runId={RUN_ID} onClose={() => undefined} />, {
+      path: `/projects/${PROJECT}/apps/${RUN.appName}`,
+      answer: (url) =>
+        url.pathname.includes("/agent-runs/")
+          ? json({ ...RUN, status: "previewing", previewUrl: `/apps/${PROJECT}/preview/1` })
+          : undefined,
+    });
+    const button = await screen.findByRole("button", { name: en.agentRun.preview.select });
+    const frame = document.querySelector("iframe") as HTMLIFrameElement;
+    const posted = vi.fn();
+    (frame.contentWindow as Window).postMessage = posted as unknown as Window["postMessage"];
+    await userEvent.click(button);
+    expect(posted).toHaveBeenLastCalledWith({ kind: "jc-select-mode", on: true }, "*");
+    expect(screen.getByRole("button", { name: en.agentRun.preview.selecting })).toHaveAttribute("aria-pressed", "true");
+    act(() => pickElement(RUN_ID, "src/App.tsx:12"));
+    expect(posted).toHaveBeenLastCalledWith({ kind: "jc-select-mode", on: false }, "*");
+    expect(await screen.findByRole("button", { name: en.agentRun.preview.select })).toHaveAttribute("aria-pressed", "false");
+    act(() => pickElement(RUN_ID, null));
   });
 
   // UI-44: refused says who refused it, in the API's words.
@@ -252,5 +289,21 @@ describe("the run page", () => {
     const { container } = renderRun({ fails: { status: 503, detail: "Not answering." } });
     await screen.findByRole("alert");
     await expectNoAxeViolations(container);
+  });
+});
+
+describe("the elapsed time", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("ticks once a second while the run works and stands still once it ended", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T08:00:10Z"));
+    const running = renderHook(() => useElapsed("2026-09-12T08:00:00Z", true));
+    const ended = renderHook(() => useElapsed("2026-09-12T08:00:00Z", false));
+    expect(running.result.current).toBe(10);
+    act(() => vi.advanceTimersByTime(3000));
+    expect(running.result.current).toBe(13);
+    expect(ended.result.current).toBe(10);
+    running.unmount();
   });
 });

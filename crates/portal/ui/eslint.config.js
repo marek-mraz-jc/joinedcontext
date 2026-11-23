@@ -90,7 +90,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "stryker.config.mjs"],
     languageOptions: { globals: { ...globals.node } },
   }
 );

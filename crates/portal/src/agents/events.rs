@@ -160,6 +160,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_inbox_skips_what_it_has_seen_and_ends_when_the_run_does() {
+        let hub = AgentEventHub::new();
+        let store = AgentStore::new(None, Default::default());
+        let mut inbox = RunInbox::new(hub.subscribe("r2").await, "r2", 1);
+        for (seq, status) in [(1, "queued"), (2, "building"), (3, "published")] {
+            let mut event = event("r2", "status", status);
+            event.seq = seq;
+            hub.broadcast(&event).await;
+        }
+        let next = inbox.recv(&store).await.expect("building");
+        assert_eq!((next.seq, &next.payload["status"]), (2, &json!("building")));
+        let end = inbox.recv(&store).await.expect("published");
+        assert_eq!(end.seq, 3);
+        assert!(
+            inbox.recv(&store).await.is_none(),
+            "the closed channel ends the inbox"
+        );
+    }
+
+    #[tokio::test]
     async fn a_lagging_inbox_reads_what_it_missed_from_the_store_in_order() {
         let hub = AgentEventHub::new();
         let store = AgentStore::new(None, Default::default());

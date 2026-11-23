@@ -111,6 +111,9 @@ describe("the Fields tab of a model's page", () => {
 
     fireEvent.change(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "Particles" } });
     expect(fieldNames()).toEqual(["pm10"]);
+    // A needle nothing holds matches no row, in any column.
+    fireEvent.change(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "nothing like this" } });
+    expect(within(table).queryByText("pm10")).toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: en.dataGrid.searchRows }), { target: { value: "" } });
 
     fireEvent.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
@@ -128,6 +131,13 @@ describe("the Fields tab of a model's page", () => {
     expect(await within(pm10).findByText("3 entities break MaxInclusive")).toBeInTheDocument();
     const level = within(table).getByText("level").closest("tr") as HTMLElement;
     expect(level).not.toHaveTextContent("break");
+  });
+
+  it("says a type has no entities when the run found none of it", async () => {
+    await renderRoute({ path: "/projects/helsinki/models/air?tab=fields", answer: answer(jsonResponse({ ...REPORT, types: [] })) });
+    const table = await screen.findByRole("table", { name: en.models.fields.caption.replace("{type}", "AirQualityObserved") });
+    const pm10 = within(table).getByText("pm10").closest("tr") as HTMLElement;
+    expect(await within(pm10).findByText(en.models.fields.noEntities)).toBeInTheDocument();
   });
 
   it("says when the daily run has not read the space yet", async () => {

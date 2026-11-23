@@ -588,6 +588,76 @@ mod tests {
     }
 
     #[test]
+    fn every_operator_reads_numbers_text_and_nested_values() {
+        let doc = json!({
+            "metadata": {"name": "air"},
+            "spec": {"n": 3, "on": true, "inner": {"a": 1}, "list": [1, 2], "rows": [{"k": "x"}]}
+        });
+        let run = |text: &str| Filter::parse(text, None).expect(text).matches(&doc);
+        assert!(run("spec.n <= 3") && run("spec.n <= 4") && !run("spec.n <= 2"));
+        assert!(run("spec.n < 4") && !run("spec.n < 3"));
+        assert!(run("spec.n > 2") && run("spec.n >= 3") && !run("spec.n >= 4"));
+        assert!(run("spec.n = 3.0"), "numbers compare as numbers");
+        assert!(run("spec.n != 4") && !run("spec.n != 3"));
+        assert!(run("spec.on = true") && run("spec.on != false"));
+        assert!(run("spec.inner != x"), "an object has no text to equal");
+        assert!(!run("spec.inner = x"));
+        assert!(run("metadata.name:air") && !run("metadata.name:water"));
+        assert!(run("spec.inner:a") && !run("spec.inner:b"));
+        assert!(run("spec.list:*") && run("spec.list = 2") && !run("spec.list = 5"));
+        assert!(run("spec.rows.k = x"));
+        assert!(
+            run(r#"metadata.name = "\a\i\r""#),
+            "a backslash keeps the next letter"
+        );
+        let unclosed = Filter::parse(r#"metadata.name = "air\"#, None).expect_err("open quote");
+        assert_eq!(unclosed.message, "the quoted string is not closed");
+        let extra = Filter::parse("metadata.name = air )", None).expect_err("extra text");
+        assert_eq!(extra.message, "unexpected text; join terms with AND or OR");
+        assert_eq!(
+            extra.to_string(),
+            format!("filter at position {}: {}", extra.position, extra.message)
+        );
+    }
+
+    #[test]
+    fn a_schema_path_follows_refs_items_combinators_and_open_objects() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+                "spec": {
+                    "type": "object",
+                    "properties": {
+                        "rows": {"type": "array", "items": {"properties": {"k": {"type": "string"}}}},
+                        "open": {"type": "object", "properties": {"a": {}}, "additionalProperties": true},
+                        "closed": {"type": "object", "properties": {"a": {}}, "additionalProperties": false},
+                        "map": {"type": "object", "additionalProperties": {"type": "object", "properties": {"v": {}}}},
+                        "nullable": {"type": ["object", "null"]},
+                        "scalars": {"type": ["string", "null"]},
+                        "text": {"type": "string"},
+                        "odd": {"type": 5},
+                        "loop": {"$ref": "#/definitions/loop"},
+                        "either": {"anyOf": [{"type": "string"}, {"properties": {"b": {}}}]}
+                    }
+                }
+            },
+            "definitions": {"loop": {"$ref": "#/definitions/loop"}}
+        });
+        let known = |text: &str| Filter::parse(text, Some(&schema)).is_ok();
+        assert!(known("spec.rows.k = x"));
+        assert!(known("spec.open.anything = x"));
+        assert!(known("spec.closed.a = x") && !known("spec.closed.b = x"));
+        assert!(known("spec.map.key.v = x") && !known("spec.map.key.w = x"));
+        assert!(known("spec.nullable.anything = x"));
+        assert!(!known("spec.scalars.anything = x"));
+        assert!(!known("spec.text.anything = x"));
+        assert!(!known("spec.odd.anything = x"));
+        assert!(!known("spec.loop.anything = x"), "a self-reference ends");
+        assert!(known("spec.either.b = x") && !known("spec.either.c = x"));
+    }
+
+    #[test]
     fn or_binds_tighter_than_and() {
         // a AND b OR c is a AND (b OR c): false AND ... is false whatever c is.
         assert!(!check(
@@ -668,6 +738,17 @@ mod tests {
         assert_eq!(order.key_of(&doc()), json!("1"));
         assert!(OrderBy::parse("spec.nope", Some(&schema)).is_err());
         assert!(OrderBy::parse("metadata.name sideways", Some(&schema)).is_err());
+        assert_eq!(
+            OrderBy::parse("metadata.name desc again", Some(&schema))
+                .expect_err("three words")
+                .message,
+            "orderBy takes one field, optionally followed by desc"
+        );
+        assert_eq!(order.cmp((&one, "a"), (&none, "b")), Ordering::Less);
+        let by_name = OrderBy::by_name_alone();
+        assert_eq!(by_name.key_of(&doc()), Value::Null);
+        assert_eq!(by_name.cmp((&none, "b"), (&none, "a")), Ordering::Greater);
+        assert_eq!(by_name.cmp((&none, "a"), (&none, "a")), Ordering::Equal);
         assert_eq!(
             OrderBy::parse("", Some(&schema)).expect("empty"),
             OrderBy::default()

@@ -229,6 +229,47 @@ describe("Smart Data Models import wizard", () => {
     expect(within(alert).getByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
   });
 
+  it("retries the preview of a model Model Tools could not convert, with the retry beside its reasons", async () => {
+    const { user, fetchMock } = renderWizard({ previewErrors: ["garden: duplicate key"] });
+    await user.click(await screen.findByRole("button", { name: /AirQualityObserved/ }));
+    const alert = await screen.findByRole("alert");
+    const previews = () => fetchMock.mock.calls.filter((call) => new URL((call[0] as Request).url).pathname !== "/api/v1/tools/sdm-catalog").length;
+    const before = previews();
+    await user.click(within(alert).getByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(previews()).toBeGreaterThan(before));
+  });
+
+  it("lists a page of the attributes, and the rest on request", async () => {
+    const many = Array.from({ length: 60 }, (_, index) => `attr${String(index).padStart(2, "0")}`);
+    const big = `id: https://example.org/Big\nname: Big\nclasses:\n  AirQualityObserved:\n    slots: [${many.join(", ")}]\nslots:\n${many.map((one) => `  ${one}: { range: string }`).join("\n")}\n`;
+    const { user } = renderWizard({ linkml: big });
+    await user.click(await screen.findByRole("button", { name: /AirQualityObserved/ }));
+    await user.click(await screen.findByRole("radio", { name: new RegExp(en.models.sdm.adapt) }));
+    await screen.findByLabelText("attr00");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(50);
+    expect(screen.queryByLabelText("attr59")).toBeNull();
+    await user.click(screen.getByRole("button", { name: en.models.sdm.showMore.replace("{count}", "10") }));
+    expect(screen.getAllByRole("checkbox")).toHaveLength(60);
+    expect(screen.getByLabelText("attr59")).toBeInTheDocument();
+  });
+
+  it("adds several attributes of one's own on Enter, removes one, and imports the rest", async () => {
+    const { user, onImport } = renderWizard();
+    await user.click(await screen.findByRole("button", { name: /AirQualityObserved/ }));
+    await user.click(await screen.findByRole("radio", { name: new RegExp(en.models.sdm.adapt) }));
+    const name = await screen.findByLabelText(en.models.sdm.addName);
+    await user.type(name, "noiseLevel{Enter}");
+    await user.type(name, "humidity{Enter}");
+    const added = screen.getByRole("list", { name: en.models.sdm.addedList });
+    expect(within(added).getAllByRole("listitem").map((item) => item.textContent?.replace("×", ""))).toEqual(["noiseLevel: string", "humidity: string"]);
+    await user.click(screen.getByRole("button", { name: en.models.sdm.addRemove.replace("{name}", "noiseLevel") }));
+    expect(within(screen.getByRole("list", { name: en.models.sdm.addedList })).getAllByRole("listitem")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Import AirQualityObserved" }));
+    const adopted = parseModel(onImport.mock.calls[0][0] as string);
+    expect(adopted.slots.map((slot) => slot.name)).toEqual(expect.arrayContaining(["humidity"]));
+    expect(adopted.slots.find((slot) => slot.name === "noiseLevel")).toBeUndefined();
+  });
+
   /// T-1107: a model of the catalogue can carry two hundred attributes.
   it("adopts a model as it is in two clicks, links its original, and adds the person's own attributes when adapted (T-3251)", async () => {
     const { user, onImport } = renderWizard();
