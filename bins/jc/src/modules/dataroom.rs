@@ -806,6 +806,25 @@ fn catalogue_looks(
         block.layout.pages.clone_from(&portal.pages);
         out.insert(id, block);
     }
+    // T-7745: a portal's own stylesheet, checked and scoped to its catalogue again where it is
+    // handed over; one jc-core refuses (a manifest older than a rule) is linked nowhere.
+    for portal in super::portals::in_mirror(mirror).values() {
+        let Some(css) = portal.appearance.as_ref().and_then(|a| a.css.as_deref()) else {
+            continue;
+        };
+        let Some((_, id)) = super::portals::catalogue_key(portal, &orgs) else {
+            continue;
+        };
+        let Some(block) = out.get_mut(&id) else {
+            continue;
+        };
+        match dataroom_core::branding::PortalStylesheet::checked(&id.to_string(), css) {
+            Ok(sheet) => block.layout.stylesheet = Some(sheet),
+            Err(e) => {
+                tracing::warn!(catalogue = %id, error = %e, "dataroom: a portal stylesheet jc-core refuses is not linked");
+            }
+        }
+    }
     out
 }
 
@@ -2957,6 +2976,23 @@ mod tests {
         ));
         let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
         assert!(looks[&city].layout.pages.is_empty(), "removed pages leave");
+        // T-7745: a portal's stylesheet reaches its own catalogue alone, scoped to its class; the
+        // Organization's default portal and town's catalogue link none.
+        mirror.upsert(envelope(
+            "Portal",
+            "city-mobility",
+            serde_json::json!({ "organizationRef": "city", "path": "mobility",
+                "appearance": { "css": ".site-header { background: #7a1f5c }" } }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        let sheet = looks[&mobility].layout.stylesheet.as_ref().expect("its own");
+        assert_eq!(
+            sheet.class,
+            jc_core::kinds::stylesheet::portal_class(&mobility.to_string())
+        );
+        assert!(sheet.css.starts_with(&format!("body.{} .site-header", sheet.class)));
+        assert!(looks[&city].layout.stylesheet.is_none(), "not the default portal's");
+        assert!(looks[&town].layout.stylesheet.is_none(), "not another Organization's");
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
     }
 

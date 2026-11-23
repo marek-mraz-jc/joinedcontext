@@ -47,6 +47,7 @@ pub mod role;
 pub mod script;
 pub mod service_account;
 pub mod space;
+pub mod stylesheet;
 pub mod subscription;
 pub mod sync;
 pub mod ui_schema;

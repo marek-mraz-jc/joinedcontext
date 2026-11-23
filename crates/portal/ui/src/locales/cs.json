@@ -13936,6 +13936,17 @@
         "choice": "Vyberte jednu z nabízených hodnot.",
         "number": "Celé číslo v uvedeném rozsahu.",
         "contrast": "Málo kontrastu: vyberte barvu s kontrastem alespoň 4,5:1 vůči pozadí (WCAG AA)."
+      },
+      "css": {
+        "heading": "Vlastní styl",
+        "lead": "CSS jen pro stránky tohoto portálu, nejvýše 32 KiB. Každé pravidlo platí jen na tomto portálu; řádky s licencí a vydavatelem zůstávají vždy viditelné.",
+        "label": "Styl (CSS)",
+        "hint": "Jen pravidla stylu a @media, např. {example}. Obrázky: {file} podle karty Soubory. Odmítne se: @import, @font-face, content, position, z-index, display: none, {important}, :has() a porovnání atributů jako [href^=…].",
+        "none": "Žádný: jen téma",
+        "fault": {
+          "size": "Nejvýše 32 KiB.",
+          "markup": "Odstraňte </: styl neobsahuje značky."
+        }
       }
     }
   },

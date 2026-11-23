@@ -3122,6 +3122,73 @@ mod tests {
         assert!(at("espoo").check("RoleBinding", Verb::Read, None).is_err());
     }
 
+    /// T-7745: `portal-editor` bound at an Organization, its Role naming one Portal, proposes that
+    /// Portal's Changes alone: not the Organization's default portal, not another Organization's
+    /// portal, never an approve, and never a move of its Portal to another Organization.
+    #[test]
+    fn a_portal_editor_proposes_its_named_portal_alone_and_approves_nothing() {
+        let mirror = Mirror::new();
+        for name in ["bbsk", "barcelona"] {
+            mirror.upsert(org("Organization", name, serde_json::json!({})));
+        }
+        mirror.upsert(org(
+            "Role",
+            "portal-editor-doprava",
+            serde_json::json!({ "rules": [{ "kinds": ["Portal"], "verbs": ["read", "propose"],
+                "constraints": [{ "field": "metadata.name", "in": ["bbsk-doprava"] }] }] }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "eva-doprava",
+            serde_json::json!({ "subjects": [{ "user": "eva@bbsk.sk" }],
+                                "role": "portal-editor-doprava",
+                                "scope": { "organization": "bbsk" } }),
+        ));
+        let eva = Identity {
+            client: None,
+            subject: "sub-eva".to_owned(),
+            username: "eva".to_owned(),
+            email: Some("eva@bbsk.sk".to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let portal = |name: &str, organization: &str| {
+            serde_json::to_value(org(
+                "Portal",
+                name,
+                serde_json::json!({ "organizationRef": organization, "path": "p",
+                    "appearance": { "css": ".site-header { background: #123456 }" } }),
+            ))
+            .expect("envelope")
+        };
+        let perms = effective(&mirror, "no-bootstrap", &eva, ORG_NAMESPACE, TimestampTz::now());
+        let doprava = portal("bbsk-doprava", "bbsk");
+        assert!(perms.check("Portal", Verb::Propose, Some(&doprava)).is_ok());
+        for (target, why) in [
+            (portal("bbsk-default", "bbsk"), "the Organization's default portal"),
+            (portal("barcelona-default", "barcelona"), "another Organization's portal"),
+            (portal("bbsk-doprava", "barcelona"), "its portal moved to another Organization"),
+        ] {
+            assert!(
+                matches!(
+                    perms.check("Portal", Verb::Propose, Some(&target)),
+                    Err(ApiError::Denied(_))
+                ),
+                "{why}"
+            );
+        }
+        assert!(
+            matches!(
+                perms.check("Portal", Verb::Approve, Some(&doprava)),
+                Err(ApiError::Denied(_))
+            ),
+            "an editor never approves its own Change"
+        );
+        assert!(perms.check("Organization", Verb::Propose, None).is_err());
+    }
+
     /// T-6692: an Organization administrator's permissions at the organization scope read the
     /// mirror inside `Mirror::matching` (the Policy and App groups of other Organizations). With a
     /// reconciler write racing it, the nested read once froze every route of the Portal.

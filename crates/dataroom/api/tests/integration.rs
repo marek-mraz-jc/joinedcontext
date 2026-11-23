@@ -1771,9 +1771,28 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             footer_links: vec![("/about#api".into(), "API mesta".into())],
             pages: Vec::new(),
             tokens: dataroom_core::branding::BrandingTokens::default(),
+            stylesheet: Some(
+                dataroom_core::branding::PortalStylesheet::checked(
+                    &cat_a.to_string(),
+                    ".site-header { background: #123456 }",
+                )
+                .expect("a stylesheet jc-core accepts"),
+            ),
         },
         ..dataroom_core::branding::BrandingBlock::default()
     };
+    let sheet = look_a.layout.stylesheet.clone().expect("set above");
+    let mut plain_a = look_a.clone();
+    plain_a.layout.stylesheet = None;
+    let plain = router(
+        DataroomState::new(
+            store.clone(),
+            Arc::new(PolicyAuthorizer::default()),
+            org_a,
+            cat_a,
+        )
+        .with_catalogue_branding(BTreeMap::from([(cat_a, plain_a)])),
+    );
     let app = router(
         DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), org_a, cat_a)
             .with_catalogue_branding(BTreeMap::from([(cat_a, look_a)])),
@@ -1804,6 +1823,54 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     );
     assert!(html_a.contains(">Mesto BB</a></li>"), "its header link");
     assert!(html_a.contains(">API mesta</a></li>"), "its footer link");
+    // T-7745: host A's pages link its own stylesheet and carry its body class; the file is the
+    // scoped text, on host A alone.
+    let link = format!("href=\"/portal-css/{}.css\"", sheet.hash);
+    assert!(html_a.contains(&link), "its stylesheet link");
+    assert!(html_a.contains(&format!("class=\"jc-portal-css {}\"", sheet.class)));
+    let css_path = format!("/portal-css/{}.css", sheet.hash);
+    let (st, headers, css) = send_json(
+        &app,
+        Method::GET,
+        &css_path,
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "text/css; charset=utf-8");
+    assert_eq!(
+        css,
+        format!("body.{} .site-header {{\n  background: #123456;\n}}\n", sheet.class)
+    );
+    let (st, _, _) = send_json(
+        &app,
+        Method::GET,
+        "/portal-css/0000000000000000.css",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "another hash");
+    // T-7745: the stylesheet changes no byte of the page's CSP but its per-request nonce.
+    let csp_of = |headers: &axum::http::HeaderMap| {
+        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap().to_owned();
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .unwrap()
+            .to_owned();
+        csp.replace(&nonce, "N")
+    };
+    let (_, with_sheet, _) = send_json(&app, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
+    let (_, without, html) = send_json(&plain, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
+    assert!(!html.contains("/portal-css/"), "no stylesheet, no link");
+    assert_eq!(csp_of(&with_sheet), csp_of(&without));
     let (st, _, list_a) = send_json(
         &app,
         Method::GET,
@@ -1860,6 +1927,20 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     ] {
         assert!(!html_b.contains(theirs), "host A's {theirs} on host B");
     }
+    // T-7745: the shared server never links or serves host A's stylesheet on host B.
+    assert!(!html_b.contains("/portal-css/"), "host A's stylesheet on host B");
+    assert!(!html_b.contains("jc-portal-css"));
+    let (st, _, _) = send_json(
+        &app,
+        Method::GET,
+        &css_path,
+        "demo.joinedcontext.com",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "host A's stylesheet served on host B");
 
     let (_, _, robots_b) = send_json(
         &app,

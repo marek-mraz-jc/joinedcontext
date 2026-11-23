@@ -35,6 +35,7 @@
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+{% if let Some(sheet) = chrome.branding.layout.stylesheet %}<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
@@ -42,7 +43,7 @@
   <meta property="og:description" content="{{ dataset_description }}">
   <script type="application/ld+json" nonce="{{ chrome.csp_nonce }}">{{ schema_org_jsonld|safe }}</script>
   </head>
-  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+  <body{% if let Some(sheet) = chrome.branding.layout.stylesheet %} class="jc-portal-css {{ sheet.class }}"{% endif %} data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
     <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
 {% if !chrome.branding.ribbon.is_empty() %}
 <div class="jc-ribbon" role="note">{{ chrome.branding.ribbon }}</div>
@@ -91,7 +92,7 @@
       <div class="row wrapper no-nav">
         {% if show_publisher %}
         <div class="col-12">
-          <section class="jc-publisher module">
+          <section class="jc-publisher module" data-jc-keep>
             <a href="{{ chrome.lang_prefix }}/organization/{{ publisher_slug }}" class="jc-publisher-image" tabindex="-1" aria-hidden="true"><img src="{{ publisher_image }}" alt=""></a>
             <div class="jc-publisher-text">
               <a href="{{ chrome.lang_prefix }}/organization/{{ publisher_slug }}" class="jc-publisher-name">{{ publisher_title }}</a>

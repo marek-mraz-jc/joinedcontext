@@ -183,6 +183,36 @@ pub struct BrandingLayout {
     /// The style tokens of `spec.appearance` (T-7744), each a value jc-core checked: colours as
     /// hex, the rest numbers or fixed words, so none can carry CSS of its own.
     pub tokens: BrandingTokens,
+    /// The portal's own stylesheet (`spec.appearance.css` of its Portal, T-7745), checked and
+    /// scoped by jc-core; `None` links none.
+    pub stylesheet: Option<PortalStylesheet>,
+}
+
+/// A portal's own stylesheet as its pages link it (T-7745): rewritten by jc-core with every
+/// selector under `body.{class}`, served at `/portal-css/{hash}.css` of the portal's own hosts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortalStylesheet {
+    /// The body class of the portal's pages, `jc-portal-` and 12 hex digits.
+    pub class: String,
+    /// The checked, scoped text.
+    pub css: String,
+    /// 16 hex digits of the text's SHA-256: the file name, so a changed sheet is a new address.
+    pub hash: String,
+}
+
+impl PortalStylesheet {
+    /// `css` of the portal whose catalogue is `key`, checked and scoped again where it is
+    /// served; `Err` names the line and construct jc-core refuses.
+    pub fn checked(key: &str, css: &str) -> std::result::Result<Self, jc_core::Error> {
+        let class = jc_core::kinds::stylesheet::portal_class(key);
+        let css = jc_core::kinds::stylesheet::scoped_stylesheet(css, &class)?;
+        let hash = Sha256::digest(css.as_bytes())
+            .iter()
+            .take(8)
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        Ok(Self { class, css, hash })
+    }
 }
 
 /// An appearance's style tokens beyond the five colours and the font stacks (T-7744); each

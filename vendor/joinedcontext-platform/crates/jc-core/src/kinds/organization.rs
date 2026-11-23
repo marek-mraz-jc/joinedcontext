@@ -250,6 +250,13 @@ impl OrganizationSpec {
             catalog.validate()?;
         }
         self.appearance.validate()?;
+        if self.appearance.css.is_some() {
+            return Err(Error::Invalid {
+                field: "spec.appearance.css".to_owned(),
+                reason: "is set on each `kind: Portal`, not on the Organization (T-7745)"
+                    .to_owned(),
+            });
+        }
 
         Ok(())
     }

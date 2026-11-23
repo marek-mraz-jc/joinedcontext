@@ -13936,6 +13936,17 @@
         "choice": "Wählen Sie einen der angebotenen Werte.",
         "number": "Eine ganze Zahl im genannten Bereich.",
         "contrast": "Zu wenig Kontrast: wählen Sie eine Farbe mit mindestens 4,5:1 zum Hintergrund (WCAG AA)."
+      },
+      "css": {
+        "heading": "Eigenes Stylesheet",
+        "lead": "CSS nur für die Seiten dieses Portals, höchstens 32 KiB. Jede Regel gilt nur auf diesem Portal; Lizenz- und Herausgeberzeilen bleiben immer sichtbar.",
+        "label": "Stylesheet",
+        "hint": "Nur Stilregeln und @media, z. B. {example}. Bilder: {file} wie im Tab Dateien. Abgelehnt: @import, @font-face, content, position, z-index, display: none, {important}, :has() und Attributvergleiche wie [href^=…].",
+        "none": "Keins: nur das Theme",
+        "fault": {
+          "size": "Höchstens 32 KiB.",
+          "markup": "Entfernen Sie </: ein Stylesheet enthält kein Markup."
+        }
       }
     }
   },

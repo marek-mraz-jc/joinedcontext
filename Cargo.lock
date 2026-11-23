@@ -7009,6 +7009,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
+ "cssparser",
  "form_urlencoded",
  "hmac 0.12.1",
  "hyper-util",

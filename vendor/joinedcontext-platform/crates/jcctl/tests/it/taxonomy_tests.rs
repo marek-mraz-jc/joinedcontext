@@ -185,6 +185,7 @@ fn an_editor_never_approves_and_never_deletes() {
         "pipeline-editor",
         "endpoint-editor",
         "app-editor",
+        "portal-editor",
     ] {
         let spec = role(name);
         for rule in &spec.rules {
@@ -203,7 +204,7 @@ fn seeding_twice_writes_nothing_the_second_time_and_leaves_an_edited_role_alone(
     std::fs::create_dir_all(&dir).expect("a temporary repository");
 
     let written = taxonomy::seed(&dir).expect("seeds");
-    assert_eq!(written.len(), 10);
+    assert_eq!(written.len(), 11);
     let steward = dir.join("users/roles/steward.yaml");
     std::fs::write(&steward, "# edited by a person\n").expect("edit the steward");
 

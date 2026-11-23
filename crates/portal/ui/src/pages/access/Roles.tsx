@@ -90,6 +90,7 @@ export const SEEDED_ROLES = [
   "pipeline-editor",
   "endpoint-editor",
   "app-editor",
+  "portal-editor",
   "steward",
   "publisher",
   "org-admin",
