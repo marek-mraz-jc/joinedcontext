@@ -601,6 +601,60 @@ pub async fn edges(store: &dyn Store) {
         ("moved", Some("pub-ghost"))
     );
 
+    // A merge into a publisher merged before lands on the one it was merged into.
+    for name in ["old", "new", "late"] {
+        store.upsert_publisher(&ctx, publisher(name)).await.unwrap();
+    }
+    store
+        .upsert_dataset(&ctx, dataset("noise", "late", "public"))
+        .await
+        .unwrap();
+    store.merge_publishers(&ctx, "old", "new").await.unwrap();
+    let target = store.merge_publishers(&ctx, "late", "old").await.unwrap();
+    assert_eq!(target.name, "new");
+    let late = store
+        .list_publishers(&ctx)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|p| p.name == "late")
+        .unwrap();
+    assert_eq!(late.merged_into.as_deref(), Some("new"));
+    let noise = store.get_dataset(&ctx, "noise").await.unwrap().unwrap();
+    assert_eq!(noise.publisher_id, "new");
+
+    // A save naming its own activity object keeps it.
+    let saved = store
+        .save_dataset(
+            &ctx,
+            dataset("water", "city", "public"),
+            None,
+            activity("act-water", "water-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.id, "pkg-water");
+    let held = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    store
+        .save_catalogue(
+            held.clone(),
+            Some(held.modified),
+            activity("act-cat", "catalogue-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    for object in ["water-object", "catalogue-object"] {
+        let rows = store.list_activity(&ctx, Some(object), 10).await.unwrap();
+        assert_eq!(rows.len(), 1, "{object}");
+    }
+
+    // A resource id another dataset holds: refused.
+    let mut copy = dataset("copy", "city", "public");
+    copy.distributions[0].id = saved.distributions[0].id.clone();
+    let refused = store.upsert_dataset(&ctx, copy).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(store.get_dataset(&ctx, "copy").await.unwrap().is_none());
+
     let mut report = shacl_report("pkg-air", "dcat-ap-3.0.1", true);
     report.id = "report-kept".into();
     let stored = store.upsert_shacl_report(&ctx, report).await.unwrap();
@@ -637,6 +691,44 @@ pub async fn edges(store: &dyn Store) {
         .await
         .unwrap()
         .is_some());
+
+    // Deleting the catalogue empties every kind of row it held and no other catalogue's.
+    let (_, cat_b) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat_b, "edges-b", &unique_host("edges-b")))
+        .await
+        .unwrap();
+    let ctx_b = member_ctx(org, cat_b);
+    store
+        .upsert_publisher(&ctx_b, publisher("kept"))
+        .await
+        .unwrap();
+    let resource = saved.distributions[0].id.clone();
+    store
+        .upsert_resource_view(&ctx, view("view-1", &resource, 1))
+        .await
+        .unwrap();
+    store
+        .upsert_profile(&ctx, profile("local", "1.0"))
+        .await
+        .unwrap();
+    store.upsert_page(&ctx, page("about", "sk")).await.unwrap();
+    store.upsert_plugin(&ctx, plugin("map")).await.unwrap();
+    assert!(store.delete_catalogue(org, cat).await.unwrap());
+    let gone = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    assert!(gone.deleted.is_some());
+    assert_eq!(
+        names(&store.list_publishers(&ctx_b).await.unwrap(), |p| p
+            .name
+            .clone()),
+        ["kept"]
+    );
+    assert!(store.list_publishers(&ctx).await.unwrap().is_empty());
+    assert!(store
+        .list_harvest_runs(&ctx, None)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 pub async fn records(store: &dyn Store) {
