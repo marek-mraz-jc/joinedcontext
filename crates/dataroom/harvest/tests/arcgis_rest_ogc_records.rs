@@ -369,6 +369,11 @@ fn a_record_reads_a_numeric_id_its_licence_link_bbox_html_page_and_link_formats(
             .all(|d| d.title["sk"] == "Stromy & parky mesta"),
         "an empty link title takes the record's"
     );
+    // The source skips the record by its id, with its reason.
+    src.skip_items.insert("7".into(), "not ours".into());
+    let skipped = parse_ogc_records_page(org, cat, &src, &url, &page, "sk").expect("page");
+    assert!(skipped.kept.is_empty());
+    assert_eq!(skipped.skipped[0].reason, "not ours");
     // A page address that does not parse is refused.
     assert!(parse_ogc_records_page(org, cat, &src, "not a url", &page, "sk").is_err());
 }
@@ -380,7 +385,7 @@ fn a_service_reads_its_initial_extent_and_skips_a_layer_without_an_id() {
         CatalogueId::from_uuid(Uuid::nil()),
     );
     let body = json!({
-        "serviceDescription": "Stromy",
+        "serviceDescription": "Stromy &gt; kry",
         "initialExtent": {"xmin": 17.0, "ymin": 48.1, "xmax": 17.2, "ymax": 48.2, "spatialReference": {"wkid": 4326}},
         "layers": [{"name": "no id"}, {"id": 3, "name": "Stromy"}]
     })
@@ -396,6 +401,7 @@ fn a_service_reads_its_initial_extent_and_skips_a_layer_without_an_id() {
     )
     .expect("a service");
     assert!(ds.extras["spatial"].contains("48.2"), "{:?}", ds.extras);
+    assert_eq!(ds.description["sk"], "Stromy > kry", "entities decoded");
     let urls: Vec<&str> = ds
         .distributions
         .iter()
@@ -710,6 +716,16 @@ async fn the_source_test_reads_a_service_and_a_sparql_answer_and_needs_its_catal
         let got = e.test_source(&w.ctx, &w.store, src).await.unwrap();
         assert_eq!(got, SourceTest::Ok, "{}", src.name);
     }
+    // A service without layers still reads as one by its description.
+    f.insert(
+        format!("{service}?f=json"),
+        Some("application/json"),
+        json!({"serviceDescription": "Stromy"}).to_string(),
+    );
+    assert_eq!(
+        e.test_source(&w.ctx, &w.store, &gis).await.unwrap(),
+        SourceTest::Ok
+    );
     // An error answer is no service; bindings that are no list are no SPARQL answer.
     f.insert(
         format!("{service}?f=json"),
