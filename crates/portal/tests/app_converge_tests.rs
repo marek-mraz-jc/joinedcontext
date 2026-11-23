@@ -287,6 +287,56 @@ async fn a_secret_without_the_slug_is_not_this_reconcilers_and_stops_the_app() {
     assert!(applied.is_empty(), "{applied:?} reached the cluster anyway");
 }
 
+/// EP-02: a slug in the Secret that is no endpoint slug stops the app before anything is applied;
+/// one written as `stringData` (a hand-written fixture) is read as the slug it holds.
+#[tokio::test]
+async fn the_slug_in_the_secret_is_checked_and_read_from_either_field() {
+    let refusing = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(SECRET))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "kind": "Secret",
+            "data": { "endpoint-slug": "Tk9UIEEgU0xVRw==" },
+        })))
+        .mount(&refusing)
+        .await;
+    let refused = converger(&refusing)
+        .converge_one(&app("published", Some(DIGEST)))
+        .await
+        .expect_err("a slug that is no slug is not deployed");
+    assert!(
+        matches!(
+            refused,
+            joinedcontext_portal::apps::converge::ConvergeError::Render(
+                joinedcontext_portal::apps::reconciler::RenderError::Slug(_)
+            )
+        ),
+        "{refused:?}"
+    );
+    let requests = refusing.received_requests().await.expect("recorded");
+    assert!(requests.iter().all(|r| r.method.as_str() == "GET"));
+
+    let api = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(SECRET))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "kind": "Secret",
+            "stringData": { "endpoint-slug": SLUG },
+        })))
+        .mount(&api)
+        .await;
+    for api_path in [DEPLOYMENT, SERVICE, SECRET, POLICY] {
+        accepts_apply(&api, api_path).await;
+    }
+    converger(&api)
+        .converge_one(&app("published", Some(DIGEST)))
+        .await
+        .expect("the app converges");
+    let requests = api.received_requests().await.expect("recorded");
+    let secret = body_of(applied(&requests, SECRET));
+    assert_eq!(secret["stringData"]["endpoint-slug"], json!(SLUG));
+}
+
 /// AP-21: retiring an app removes what it was running, and nothing is rendered to do it.
 #[tokio::test]
 async fn a_retired_app_has_its_objects_deleted() {
@@ -338,6 +388,32 @@ async fn deleting_an_object_that_is_already_gone_succeeds() {
         .await
         .expect("removing what is not there is not a failure");
     assert_eq!(outcome, Outcome::Deleted);
+}
+
+/// AP-21: a retired app whose project names no namespace had nothing deployed, so it is gone
+/// without a call; a manifest whose spec is no App spec is refused with the parse error.
+#[tokio::test]
+async fn a_retired_app_without_a_namespace_and_a_broken_spec_reach_no_cluster() {
+    let api = MockServer::start().await;
+    let mut retired = app("retired", None);
+    retired.metadata.namespace =
+        Some("a-project-name-that-is-long-enough-to-overflow-the-label-limit".into());
+    assert_eq!(
+        converger(&api).converge_one(&retired).await.expect("gone"),
+        Outcome::Deleted
+    );
+
+    let mut broken = app("published", Some(DIGEST));
+    broken.spec["lifecycle"] = json!("sideways");
+    let refused = converger(&api)
+        .converge_one(&broken)
+        .await
+        .expect_err("no spec, no objects");
+    assert!(refused.to_string().contains("sideways"), "{refused}");
+    let mut homeless = app("published", Some(DIGEST));
+    homeless.metadata.namespace = None;
+    assert!(converger(&api).converge_one(&homeless).await.is_err());
+    assert!(api.received_requests().await.expect("recorded").is_empty());
 }
 
 /// AP-18: a draft renders no pod, and the cluster is not called at all.

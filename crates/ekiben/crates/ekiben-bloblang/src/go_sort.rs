@@ -341,7 +341,7 @@ fn reverse_range<T, F: FnMut(usize, &T, usize, &T) -> bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::sort_slice;
+    use super::{pdqsort, sort_slice, Data};
 
     #[test]
     fn equal_keys_land_where_go_puts_them() {
@@ -368,5 +368,69 @@ mod tests {
         let mut r: Vec<u64> = (0..300).rev().collect();
         sort_slice(&mut r, |a, b| a < b);
         assert_eq!(r, (0..300).collect::<Vec<_>>());
+    }
+
+    fn assert_sorts(name: &str, mut v: Vec<i64>) {
+        let mut want = v.clone();
+        want.sort_unstable();
+        sort_slice(&mut v, |a, b| a < b);
+        assert_eq!(v, want, "{name}");
+    }
+
+    #[test]
+    fn sorts_every_input_shape_pdqsort_branches_on() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % m) as i64
+        };
+        for n in [13usize, 49, 50, 64, 100, 257, 1000, 4096] {
+            assert_sorts("random", (0..n).map(|_| rnd(1 << 20)).collect());
+            assert_sorts("few unique", (0..n).map(|_| rnd(3)).collect());
+            assert_sorts("all equal", vec![7; n]);
+            assert_sorts("ascending", (0..n as i64).collect());
+            assert_sorts("descending", (0..n as i64).rev().collect());
+            assert_sorts("sawtooth", (0..n as i64).map(|i| i % 17).collect());
+            assert_sorts(
+                "organ pipe",
+                (0..n as i64).map(|i| i.min(n as i64 - i)).collect(),
+            );
+            let mut nearly: Vec<i64> = (0..n as i64).collect();
+            nearly.swap(1, 2);
+            nearly.swap(n - 3, n - 2);
+            assert_sorts("nearly sorted", nearly.clone());
+            nearly.reverse();
+            assert_sorts("nearly descending", nearly);
+            let mut shifted: Vec<i64> = (0..n as i64).collect();
+            shifted.rotate_left(1);
+            assert_sorts("rotated", shifted);
+            let mut one_out: Vec<i64> = (0..n as i64).collect();
+            one_out[n / 2] = -1;
+            assert_sorts("one out of place", one_out);
+            assert_sorts(
+                "median of three killer",
+                (0..n as i64)
+                    .map(|i| if i % 2 == 0 { i } else { n as i64 + i })
+                    .collect(),
+            );
+        }
+    }
+
+    #[test]
+    fn a_spent_recursion_limit_falls_back_to_heap_sort() {
+        for n in [13usize, 40, 101] {
+            let mut v: Vec<i64> = (0..n as i64).map(|i| (i * 37) % 23).collect();
+            let mut want = v.clone();
+            want.sort_unstable();
+            let mut less = |_: usize, a: &i64, _: usize, b: &i64| a < b;
+            let mut d = Data {
+                v: &mut v,
+                less: &mut less,
+            };
+            pdqsort(&mut d, 0, n, 0);
+            assert_eq!(v, want);
+        }
     }
 }

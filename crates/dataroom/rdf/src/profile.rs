@@ -339,9 +339,10 @@ fn is_iri(text: &str) -> bool {
 /// An embedded file's text. `debug-embed` keeps it borrowed from the binary in every build.
 fn embedded<E: rust_embed::RustEmbed>(path: &str) -> std::result::Result<&'static str, String> {
     match E::get(path).map(|file| file.data) {
-        Some(std::borrow::Cow::Borrowed(bytes)) => {
-            std::str::from_utf8(bytes).map_err(|e| format!("{path}: {e}"))
-        }
+        Some(std::borrow::Cow::Borrowed(bytes)) => match std::str::from_utf8(bytes) {
+            Ok(text) => Ok(text),
+            Err(e) => Err(format!("{path}: {e}")),
+        },
         _ => Err(format!("{path}: not embedded")),
     }
 }
@@ -493,10 +494,10 @@ static NONE: LazyLock<Profile> = LazyLock::new(Profile::default);
 
 /// Refuses to start on a manifest that does not load; without it every profiled feed is closed.
 pub fn check() -> Result<()> {
-    INSTALLED
-        .as_ref()
-        .map(|_| ())
-        .map_err(|e| DataroomError::Rdf(e.clone()))
+    match &*INSTALLED {
+        Ok(_) => Ok(()),
+        Err(e) => Err(DataroomError::Rdf(e.clone())),
+    }
 }
 
 /// A handle on one installed profile.
@@ -533,7 +534,7 @@ impl DcatProfile {
 
     /// EU DCAT-AP, which every catalogue serves.
     pub fn eu() -> Self {
-        Self::installed().next().unwrap_or_else(|| Self(&NONE))
+        Self::installed().next().unwrap_or(Self(&NONE))
     }
 
     pub fn manifest(self) -> &'static Profile {
@@ -599,6 +600,15 @@ mod tests {
     fn every_installed_manifest_loads() {
         check().expect("profiles");
         assert!(DcatProfile::eu().is_base());
+        assert!(
+            !DcatProfile::eu().requires_publisher(),
+            "EU asks no catalogue publisher"
+        );
+        let cz = DcatProfile::from_token("dcat-ap-cz").expect("installed");
+        assert!(
+            cz.requires_publisher(),
+            "CZ asks the catalogue's publisher IRI"
+        );
         for profile in DcatProfile::installed() {
             assert_eq!(DcatProfile::from_token(profile.id()), Some(profile));
             assert_eq!(
@@ -657,5 +667,42 @@ mod tests {
             let err = load(&[("dcat-ap-3.0.1", EU, FILES), ("c", text, &[])]).expect_err(text);
             assert!(err.contains('c'), "{err}");
         }
+        let loaded = |sources: &[Embedded<'_>]| load(sources).expect_err("refused");
+        let row = format!(r#""bases":["dcat-ap-3.0.1"],{row}"#);
+        let text: &'static str = Box::leak(child(&row).into_boxed_str());
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", EU, FILES), ("d", text, &[])]),
+            "profile d: id is not the directory's name"
+        );
+        let unversioned =
+            r#"{"id":"c","version":"","uri":"urn:x:c","source":"s","title":{"en":"C"}}"#;
+        assert_eq!(
+            loaded(&[("c", unversioned, &[])]),
+            "profile c: version, title and source are required"
+        );
+        let empty_prefix: &'static str = Box::leak(
+            child(&format!(
+                r#""contexts":[{{"prefixes":[""],"file":"a.ttl"}}],{row}"#
+            ))
+            .into_boxed_str(),
+        );
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", EU, FILES), ("c", empty_prefix, FILES)]),
+            "profile c: an empty context prefix would take every @context"
+        );
+        let silent = EU.replace(r#""serialisations":["turtle"],"#, "");
+        let silent: &'static str = Box::leak(silent.into_boxed_str());
+        assert_eq!(
+            loaded(&[("dcat-ap-3.0.1", silent, FILES)]),
+            "profile dcat-ap-3.0.1: no serialisation"
+        );
+        let half = EU.replace(
+            r#""render":{"identifier":true,"licence":true}"#,
+            r#""render":{"personalData":{"contains":"urn:x:yes","doesNotContain":"urn:x:no"}}"#,
+        );
+        let half: &'static str = Box::leak(half.into_boxed_str());
+        assert!(loaded(&[("dcat-ap-3.0.1", half, FILES)]).contains("dcat-ap-3.0.1"));
+        let alone = r#"{"id":"x","version":"1","uri":"urn:x:x","source":"s","title":{"en":"X"},"serialisations":["turtle"],"shapes":["a.ttl"]}"#;
+        assert_eq!(loaded(&[("x", alone, FILES)]), "no dcat-ap-3.0.1");
     }
 }

@@ -2,9 +2,45 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
+
+test("the live line names what each step does, per language (T-7753)", () => {
+  assert.equal(live({ stage: "searching", topic: "mosty BBSK", count: 12 }, "sk"), "Hľadám v 12 zdrojoch pre „mosty BBSK“…");
+  assert.equal(live({ stage: "searching", topic: "bridges", count: 1 }, "en"), "Searching 1 source for „bridges“…");
+  assert.equal(live({ stage: "searching", topic: "mosty", count: 3 }, "cs"), "Hledám v 3 zdrojích pro „mosty“…");
+  assert.equal(live({ stage: "reading", topic: "AirQualityObserved", source: "Ovzdušie BB", filter: "yearBuilt<1950" }, "cs"),
+    "Čtu Ovzdušie BB: Kvalita ovzduší, Year built < 1950…");
+  assert.match(live({ stage: "reading", topic: "Bridge", source: "Register mostov", titles: { en: "Bridge register" } }, "en"), /^Reading Bridge register: Bridges…$/);
+  assert.equal(live({ stage: "history", source: "Ovzdušie", filter: "2026-10-01..2026-10-08" }, "sk"), "Čítam históriu Ovzdušie: 2026-10-01 – 2026-10-08…");
+  assert.equal(live({ stage: "checking", count: 6 }, "en"), "Checking 6 passages…");
+  assert.equal(live({ stage: "checking", count: 6, verdict: "answers" }, "en"), "Checked 6 passages: they answer the question");
+  assert.equal(live({ stage: "checking", count: 2, verdict: "more" }, "sk"), "2 úryvky nestačí, hľadám ďalej");
+  assert.equal(live({ stage: "checking", count: 5, verdict: "stop" }, "cs"), "Zkontrolováno 5 úryvků");
+  assert.equal(live({ stage: "answering", count: 3 }, "en"), "Writing the answer from 3 sources…");
+  // Without its detail a step says what it said before; an unknown one says nothing.
+  assert.equal(live({ stage: "answering" }, "en"), "Preparing the answer…");
+  assert.equal(live({ stage: "searching", topic: "x" }, "en"), "Searching the sources: „x“…");
+  assert.equal(live({ stage: "checking" }, "en"), null);
+  assert.equal(live({ stage: "__proto__", count: 1 }, "en"), null);
+  // A read never shows a type name the widget has no words for, nor an unknown language's words.
+  assert.equal(live({ stage: "reading", topic: "urn:x", source: "Data" }, "xx"), "Reading Data…");
+});
+
+test("a read's end, its key, a failed step and the elapsed seconds (T-7753)", () => {
+  assert.equal(ended({ count: 1651, ms: 800 }, "en"), "1,651 rows, 0.8 s");
+  assert.equal(ended({ count: 1, ms: 1250 }, "sk"), "1 záznam, 1,3 s");
+  assert.equal(ended({ count: 3 }, "cs"), "3 záznamy");
+  assert.equal(ended({ ms: -1 }, "en"), null);
+  assert.equal(liveKey({ source: "A", topic: "Bridge" }), liveKey({ source: "A", type: "Bridge" }));
+  assert.equal(failedLine("Reading A: Bridge…", "en"), "Reading A: Bridge (failed)");
+  assert.equal(failedLine("Čítam A…", "sk"), "Čítam A (nepodarilo sa)");
+  assert.equal(elapsed(2999), null);
+  assert.equal(elapsed(3000), "3 s");
+  assert.equal(elapsed(65000), "1 min 5 s");
+  assert.equal(elapsed(NaN), null);
+});
 
 test("lines of a paragraph keep their breaks and a blank line starts the next", () => {
   assert.deepEqual(markdown("one\ntwo\n\nthree"), [

@@ -83,10 +83,9 @@ pub fn resample_frames(
                 let mut resampled = Vec::with_capacity(new_len + 1);
                 let mut bookmark = 0usize;
                 let mut last_seen: Option<f64> = None;
-                let mut idx = 0usize;
                 let mut t = from_ms;
 
-                while t <= to_ms && idx <= new_len {
+                while t <= to_ms {
                     let mut vals = Vec::new();
                     let mut s_idx = bookmark;
                     while s_idx < points.len() {
@@ -117,8 +116,11 @@ pub fn resample_frames(
                         reduce_slice(downsampler, &vals)
                     };
                     resampled.push((t, value));
-                    t += interval_ms;
-                    idx += 1;
+                    // a range ending at the clock's last millisecond ends the series there
+                    let Some(next) = t.checked_add(interval_ms) else {
+                        break;
+                    };
+                    t = next;
                 }
 
                 out.push(ExprValue::Series {
@@ -301,6 +303,34 @@ mod tests {
         assert!(
             resample_frames("B", 0, ReducerId::Mean, Upsampler::FillNa, 0, 4 * S, one).is_err()
         );
+        // Exactly the length bound is still sampled.
+        let at_bound = resample_frames(
+            "B",
+            1,
+            ReducerId::Mean,
+            Upsampler::Pad,
+            0,
+            MAX_NEW_SERIES_LENGTH as i64,
+            one,
+        )
+        .expect("exactly the bound");
+        assert_eq!(at_bound.len(), 1);
+        let points = points_of(&at_bound[0]);
+        assert_eq!(points.len(), MAX_NEW_SERIES_LENGTH + 1);
+        // A range ending at the clock's last millisecond stops there instead of overflowing.
+        let edge = resample_frames(
+            "B",
+            S,
+            ReducerId::Mean,
+            Upsampler::Pad,
+            i64::MAX - 2 * S,
+            i64::MAX,
+            one,
+        )
+        .expect("edge of the clock");
+        assert_eq!(edge.len(), 1);
+        let points = points_of(&edge[0]);
+        assert_eq!(points.len(), 3);
         // Result too big (Grafana case "upsampling, result too big").
         let err = resample_frames("B", 1, ReducerId::Mean, Upsampler::Pad, 0, 11_000_000, one)
             .unwrap_err();

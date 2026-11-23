@@ -1262,24 +1262,27 @@ mod tests {
 
     /// T-6508: an uncounted page asks the store for no whole count; `items` still does.
     #[test]
-    fn an_uncounted_page_asks_the_store_for_no_count() -> Result<(), String> {
+    fn an_uncounted_page_asks_the_store_for_no_count() -> Result<(), Problem> {
         let c = car();
-        let whole = |p: Params| -> Result<bool, String> {
-            let cursor = Cursor::new(&c, &p, 0).map_err(|e| e.1.to_owned())?;
-            let part = cursor.parts.first().ok_or("one part")?;
-            let reading = cursor.enter(part).map_err(|e| e.1.to_owned())?;
+        let whole = |p: Params| -> Result<bool, Problem> {
+            let cursor = Cursor::new(&c, &p, 0)?;
+            let part = cursor
+                .parts
+                .first()
+                .ok_or(Problem(StatusCode::NOT_FOUND, "one part"))?;
+            let reading = cursor.enter(part)?;
             Ok(cursor.store_page(&reading, 10).whole)
         };
-        assert!(whole(params(&c, &[]).map_err(|e| e.1.to_owned())?)?);
+        assert!(whole(params(&c, &[])?)?);
         let uncounted = Params {
             uncounted: true,
-            ..params(&c, &[]).map_err(|e| e.1.to_owned())?
+            ..params(&c, &[])?
         };
         assert!(!whole(uncounted)?);
         // R3-001: a page read from a `next` token counts nothing either.
         let further = Params {
             next: Some(token(0, 10, 0)),
-            ..params(&c, &[]).map_err(|e| e.1.to_owned())?
+            ..params(&c, &[])?
         };
         assert!(!whole(further)?);
         Ok(())

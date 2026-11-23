@@ -294,10 +294,14 @@ pub fn round_local(dt: &Zoned, span_nanos: i64) -> Result<Zoned, String> {
         (span_nanos - delta_down, delta_down)
     };
     let shift = if up <= down { up } else { -down };
-    dt.timestamp()
+    // `stamp` fits an i64 of nanoseconds (years 1677 to 2262), far inside jiff's range.
+    let Ok(ts) = dt
+        .timestamp()
         .checked_add(SignedDuration::from_nanos(shift))
-        .map(|ts| ts.to_zoned(dt.time_zone().clone()))
-        .map_err(|e| e.to_string())
+    else {
+        return Err("timestamp exceeds num_nanoseconds limit".to_string());
+    };
+    Ok(ts.to_zoned(dt.time_zone().clone()))
 }
 
 /// RFC 3339 with 0, 3, 6 or 9 fraction digits, as chrono's `to_rfc3339_opts(SecondsFormat::AutoSi,
@@ -334,7 +338,6 @@ fn format_offset_nocolon(secs: i32) -> String {
 
 fn month_short_name(m: i8) -> &'static str {
     match m {
-        1 => "Jan",
         2 => "Feb",
         3 => "Mar",
         4 => "Apr",
@@ -346,13 +349,13 @@ fn month_short_name(m: i8) -> &'static str {
         10 => "Oct",
         11 => "Nov",
         12 => "Dec",
+        // January: jiff months run 1 to 12.
         _ => "Jan",
     }
 }
 
 fn month_long_name(m: i8) -> &'static str {
     match m {
-        1 => "January",
         2 => "February",
         3 => "March",
         4 => "April",
@@ -364,6 +367,7 @@ fn month_long_name(m: i8) -> &'static str {
         10 => "October",
         11 => "November",
         12 => "December",
+        // January: jiff months run 1 to 12.
         _ => "January",
     }
 }
@@ -801,14 +805,16 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<Zoned, String> {
     // Match Go's `time.Date(year, month, day, ...)` rollover behavior!
     // In Go, `time.Date(2026, 2, 31, 0, 0, 0, 0, UTC)` adds `(day - 1)` days to the 1st of the month.
     // the fields are range-checked above (a year has at most 4 digits): the casts are exact
-    let first_of_month = civil::Date::new(year as i16, month as i8, 1)
-        .map_err(|_| format!("invalid year/month {year}-{month}"))?;
-    let rolled_date = first_of_month
-        .checked_add(SignedDuration::from_hours(i64::from(day - 1) * 24))
-        .map_err(|_| format!("invalid year/month {year}-{month}"))?;
-    let time = civil::Time::new(hour as i8, minute as i8, second as i8, nanosecond as i32)
-        .map_err(|_| "invalid time".to_string())?;
-    let dt = rolled_date.to_datetime(time);
+    // A day of at most 31 rolls no further than 9999-12-31, so this error is never seen.
+    let Ok(dt) = civil::Date::new(year as i16, month as i8, 1)
+        .and_then(|first| first.checked_add(SignedDuration::from_hours(i64::from(day - 1) * 24)))
+        .and_then(|date| {
+            civil::Time::new(hour as i8, minute as i8, second as i8, nanosecond as i32)
+                .map(|time| date.to_datetime(time))
+        })
+    else {
+        return Err(format!("invalid date {year}-{month}-{day}"));
+    };
     fixed_civil(dt, offset_secs).or_else(|_| fixed_civil(dt, 0))
 }
 
@@ -899,9 +905,11 @@ fn take_digits(s: &str, min_len: usize, max_len: usize) -> Result<(u32, usize), 
     if count < min_len {
         return Err(format!("expected {min_len}..{max_len} digits in '{s}'"));
     }
-    let val = s[..count]
-        .parse::<u32>()
-        .map_err(|e| format!("invalid digits: {e}"))?;
+    // Callers read at most 9 digits, which always fit a u32.
+    let val = s
+        .bytes()
+        .take(count)
+        .fold(0, |n, b| n * 10 + u32::from(b - b'0'));
     Ok((val, count))
 }
 
@@ -915,8 +923,8 @@ fn parse_fractional_nanos(s: &str) -> Result<(u32, usize), String> {
     }
     let take = digits.min(9);
     let raw = s[1..1 + take]
-        .parse::<u32>()
-        .map_err(|e| format!("invalid fractional seconds: {e}"))?;
+        .bytes()
+        .fold(0, |n, b| n * 10 + u32::from(b - b'0'));
     let scale = 9u32.saturating_sub(take as u32);
     Ok((raw * 10u32.pow(scale), 1 + digits))
 }
@@ -1133,7 +1141,6 @@ impl Iso8601Period {
 fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
         2 => {
             if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
                 29
@@ -1141,6 +1148,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
                 28
             }
         }
+        // April, June, September and November.
         _ => 30,
     }
 }
@@ -1151,7 +1159,7 @@ mod zone_tests {
 
     #[test]
     fn zone_offsets_change_at_the_dst_instant_in_bratislava_and_helsinki() {
-        let utc = |s: &str| jc_time::parse_rfc3339(s).ok_or_else(|| s.to_string());
+        let utc = |s: &str| jc_time::parse_rfc3339(s).ok_or("bad fixture".to_string());
         for (tz, winter, summer) in [
             ("Europe/Bratislava", 3600, 7200),
             ("Europe/Helsinki", 7200, 10800),
@@ -1196,7 +1204,7 @@ mod zone_tests {
             ),
         ] {
             let tz = zone(name)?;
-            let civil = |s: &str| s.parse::<civil::DateTime>().map_err(|e| e.to_string());
+            let civil = |s: &str| s.parse::<civil::DateTime>().ok().ok_or("bad fixture");
             assert_eq!(earliest_local(&tz, civil(gap)?), None, "{name} gap");
             let early = earliest_local(&tz, civil(fold)?).ok_or("fold")?;
             assert_eq!(
@@ -1207,6 +1215,394 @@ mod zone_tests {
             let jan = earliest_local(&tz, civil("2026-01-15T12:00:00")?).ok_or("jan")?;
             assert_eq!(jan.offset().seconds(), winter, "{name} January");
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type R = Result<(), String>;
+    const RFC: &str = "2006-01-02T15:04:05.999999999Z07:00";
+
+    fn at(s: &str) -> Result<Zoned, String> {
+        parse_go_layout(s, RFC)
+    }
+
+    fn rfc(z: &Zoned) -> String {
+        format_go_layout(z, RFC)
+    }
+
+    #[test]
+    fn layouts_print_every_month_weekday_and_token() -> R {
+        let short = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let long = [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ];
+        for m in 1..=12 {
+            let z = at(&format!("2026-{m:02}-01T00:00:00Z"))?;
+            let want = format!("{} {}", short[m - 1], long[m - 1]);
+            assert_eq!(format_go_layout(&z, "Jan January"), want);
+            assert_eq!(format_strftime(&z, "%b %B"), want);
+        }
+        let days = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ];
+        for (n, day) in days.iter().enumerate() {
+            let z = at(&format!("2026-01-{:02}T00:00:00Z", 5 + n))?;
+            assert_eq!(
+                format_go_layout(&z, "Mon Monday"),
+                format!("{} {day}", &day[..3])
+            );
+        }
+        let midnight = at("2026-03-04T00:07:09.120Z")?;
+        assert_eq!(
+            format_go_layout(&midnight, "03 PM pm 06 2 1 .000 .999 Z0700 Z07 MST"),
+            "12 AM am 26 4 3 .120 .12 Z Z UTC"
+        );
+        let east = at("2026-03-04T15:07:09+05:30")?;
+        assert_eq!(
+            format_go_layout(&east, "03 PM pm .999 Z0700 -0700 Z07 -07:00 MST"),
+            "03 PM pm  +0530 +0530 +05 +05:30 +05:30"
+        );
+        assert_eq!(
+            format_strftime(&midnight, "%m %I %Z %z %% %q"),
+            "03 12 UTC +0000 % %q"
+        );
+        assert_eq!(format_strftime(&east, "%I %Z %p %P"), "03 +05:30 PM pm");
+        Ok(())
+    }
+
+    #[test]
+    fn go_layouts_parse_every_token_and_name_what_does_not_match() -> R {
+        let p = parse_go_layout;
+        assert_eq!(rfc(&p("70-Feb-03", "06-Jan-02")?), "1970-02-03T00:00:00Z");
+        assert_eq!(
+            rfc(&p("05 March 3", "06 January _2")?),
+            "2005-03-03T00:00:00Z"
+        );
+        assert_eq!(
+            rfc(&p("Tuesday 3/4 12:05 am", "Monday 1/2 03:04 pm")?),
+            "0000-03-04T00:05:00Z"
+        );
+        assert_eq!(
+            rfc(&p("Tue 2026 11 PM CET", "Mon 2006 03 PM MST")?),
+            "2026-01-01T23:00:00Z"
+        );
+        assert_eq!(rfc(&p("2026 12 PM", "2006 03 PM")?), "2026-01-01T12:00:00Z");
+        assert_eq!(rfc(&p("2026 .5", "2006 .000")?), "2026-01-01T00:00:00.5Z");
+        assert_eq!(
+            rfc(&p("2026 Z +05", "2006 Z07 -07")?),
+            "2026-01-01T00:00:00+05:00"
+        );
+        assert_eq!(
+            rfc(&p("2026 -05", "2006 Z07")?),
+            "2026-01-01T00:00:00-05:00"
+        );
+        assert_eq!(
+            rfc(&p("2026 -0530", "2006 -0700")?),
+            "2026-01-01T00:00:00-05:30"
+        );
+        let errors = [
+            (
+                "2026 Smarch",
+                "2006 Jan",
+                "cannot parse '2026 Smarch' with layout '2006 Jan'",
+            ),
+            ("2026 Smarch", "2006 January", "cannot parse"),
+            ("2026 7", "2006 Monday", "expected weekday in '2026 7'"),
+            ("2026", "2006 .000", "unexpected end of timestamp"),
+            (
+                "2026 x",
+                "2006 .000",
+                "expected fractional seconds in '2026 x'",
+            ),
+            ("2026x", "2006 ", "cannot parse \"x\" as ' '"),
+            ("2026 x", "2006 Z07", "cannot parse \"x\" as \"-07\""),
+            ("2026 7", "2006 MST", "expected timezone name in '2026 7'"),
+            ("2026 xm", "2006 PM", "expected AM/PM in '2026 xm'"),
+            ("2026-", "2006", "extra text \"-\""),
+            ("2026/01", "2006-01", "cannot parse \"/01\" as '-'"),
+            ("2026-13-01", "2006-01-02", "invalid date 2026-13-01"),
+            ("2026 25:00", "2006 15:04", "invalid time 25:00:00"),
+            (
+                "2026 +24:00",
+                "2006 Z07:00",
+                "invalid timezone offset 86400",
+            ),
+            (
+                "9999-12-31 23:59 -23:00",
+                "2006-01-02 15:04 -07:00",
+                "invalid timezone offset -82800",
+            ),
+        ];
+        for (input, layout, want) in errors {
+            let got = p(input, layout).err().unwrap_or_default();
+            assert!(got.contains(want), "{input} / {layout}: {got}");
+        }
+        assert!(p("2026 .", "2006 .999").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn strptime_reads_every_directive_and_refuses_out_of_range_fields() -> R {
+        let p = parse_strptime;
+        assert_eq!(rfc(&p("31.02.2026", "%d.%m.%Y")?), "2026-03-03T00:00:00Z");
+        assert_eq!(
+            rfc(&p("70 Mar  4 12:05:60 am", "%y %b %e %I:%M:%S %p")?),
+            "1970-03-04T00:05:59Z"
+        );
+        assert_eq!(
+            rfc(&p("05 4 1 PM Z", "%y %e %I %p %Z")?),
+            "2005-01-04T13:00:00Z"
+        );
+        assert_eq!(
+            rfc(&p("2026 CET 100%", "%Y %Z 100%%")?),
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(rfc(&p("2026 +9900", "%Y %z")?), "2026-01-01T00:00:00Z");
+        assert_eq!(
+            rfc(&p("2026 +01:00", "%Y %z")?),
+            "2026-01-01T00:00:00+01:00"
+        );
+        let errors = [
+            ("2026", "%Y%", "trailing '%' in strptime format"),
+            ("13", "%m", "month 13 out of range"),
+            ("Smarch", "%b", "invalid month name in 'Smarch'"),
+            ("32", "%d", "day 32 out of range"),
+            ("24", "%H", "hour 24 out of range"),
+            ("13", "%I", "hour12 13 out of range"),
+            ("60", "%M", "minute 60 out of range"),
+            ("61", "%S", "second 61 out of range"),
+            ("xm", "%p", "expected AM/PM in 'xm'"),
+            ("x", "%%", "expected literal '%'"),
+            ("1", "%Q", "unsupported strptime directive '%Q'"),
+            ("2026", "%Y-", "unexpected end of input '2026'"),
+            (
+                "2026/",
+                "%Y-",
+                "mismatch in strptime: expected '-', got '/'",
+            ),
+            ("2026x", "%Y", "extra unparsed text in '2026x'"),
+            ("x", "%Y", "expected 1..4 digits in 'x'"),
+        ];
+        for (input, format, want) in errors {
+            let got = p(input, format).err().unwrap_or_default();
+            assert_eq!(got, want, "{input} / {format}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn offset_and_fraction_tokens_read_each_form() {
+        assert_eq!(parse_tz_offset_token("z", true), Ok((0, 1)));
+        assert_eq!(
+            parse_tz_offset_token("", true).err().as_deref(),
+            Some("expected timezone offset")
+        );
+        assert_eq!(
+            parse_tz_offset_token("x1", true).err().as_deref(),
+            Some("expected '+' or '-' in timezone offset 'x1'")
+        );
+        assert_eq!(parse_tz_offset_token("+05:30", true), Ok((19800, 6)));
+        assert_eq!(parse_tz_offset_token("-0530", false), Ok((-19800, 5)));
+        assert_eq!(parse_tz_offset_token("+05:30", false), Ok((18000, 3)));
+        assert_eq!(parse_tz_offset_token("+05", true), Ok((18000, 3)));
+        assert_eq!(parse_fractional_nanos("x"), Ok((0, 0)));
+        assert_eq!(
+            parse_fractional_nanos(".x").err().as_deref(),
+            Some("expected digits after '.'")
+        );
+        assert_eq!(parse_fractional_nanos(".1234567891"), Ok((123_456_789, 11)));
+        assert_eq!(take_digits("123456789", 1, 9), Ok((123_456_789, 9)));
+    }
+
+    #[test]
+    fn go_durations_read_every_unit_sign_and_refuse_bad_text() {
+        let d = parse_go_duration_nanos;
+        assert_eq!(d("0"), Ok(0));
+        assert_eq!(d("-1.5h"), Ok(-5_400_000_000_000));
+        assert_eq!(d("+2h45m"), Ok(9_900_000_000_000));
+        assert_eq!(d(" 1ns1us1µs1μs1ms1s "), Ok(1_001_003_001));
+        assert_eq!(d("").err().as_deref(), Some("invalid duration: empty"));
+        assert_eq!(d("h").err().as_deref(), Some("invalid duration: h"));
+        assert_eq!(
+            d("1.2.3s").err().as_deref(),
+            Some("invalid number in duration: 1.2.3s")
+        );
+        assert_eq!(d("5").err().as_deref(), Some("missing unit in duration: 5"));
+        assert_eq!(
+            d("5x").err().as_deref(),
+            Some("unknown unit \"x\" in duration \"5x\"")
+        );
+    }
+
+    #[test]
+    fn iso_periods_parse_negate_approximate_and_add_by_the_calendar() -> R {
+        let p = Iso8601Period::parse("P1Y2M3W4DT1H2M3.25S")?;
+        assert_eq!((p.years, p.months, p.weeks, p.days), (1, 2, 3, 4));
+        assert_eq!(p.nanos, 3_723_200_000_000);
+        let n = p.negate();
+        assert_eq!(
+            (n.years, n.months, n.weeks, n.days, n.nanos),
+            (-1, -2, -3, -4, -3_723_200_000_000)
+        );
+        assert_eq!(
+            Iso8601Period::parse("P1Y1M1W1D")?.approx_nanos(),
+            31_556_952_000_000_000 + 2_629_746_000_000_000 + 8 * 86_400_000_000_000
+        );
+        let errors = [
+            ("1Y", "invalid ISO-8601 duration '1Y': must start with 'P'"),
+            ("P", "invalid ISO-8601 duration 'P': empty after 'P'"),
+            ("PT", "invalid ISO-8601 duration 'PT': empty after 'T'"),
+            ("P1", "invalid ISO-8601 duration 'P1'"),
+            ("PY", "invalid ISO-8601 duration 'PY'"),
+            ("P1-2D", "invalid number in ISO-8601 duration 'P1-2D'"),
+            ("P1X", "invalid date unit 'X' in ISO-8601 duration 'P1X'"),
+            ("PT1D", "invalid time unit 'D' in ISO-8601 duration 'PT1D'"),
+        ];
+        for (input, want) in errors {
+            assert_eq!(
+                Iso8601Period::parse(input).err().as_deref(),
+                Some(want),
+                "{input}"
+            );
+        }
+        let month = Iso8601Period::parse("P1M")?;
+        assert_eq!(
+            rfc(&month.add_to(&at("2026-01-31T10:00:00+01:00")?)),
+            "2026-02-28T10:00:00+01:00"
+        );
+        assert_eq!(
+            rfc(&month.add_to(&at("2024-01-31T10:00:00Z")?)),
+            "2024-02-29T10:00:00Z"
+        );
+        assert_eq!(
+            rfc(&Iso8601Period::parse("P1M")?
+                .negate()
+                .add_to(&at("2026-01-15T00:00:00Z")?)),
+            "2025-12-15T00:00:00Z"
+        );
+        let start = at("2026-05-31T00:00:00Z")?;
+        assert_eq!(
+            rfc(&Iso8601Period::parse("P99999Y")?.add_to(&start)),
+            rfc(&start)
+        );
+        assert_eq!(
+            rfc(&Iso8601Period::parse("P9999999D")?.add_to(&start)),
+            rfc(&start)
+        );
+        assert_eq!(
+            [
+                days_in_month(2026, 4),
+                days_in_month(2100, 2),
+                days_in_month(2000, 2),
+                days_in_month(2026, 12)
+            ],
+            [30, 28, 29, 31]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rounding_and_rfc3339_follow_chrono() -> R {
+        let z = at("2026-03-04T10:07:30+01:00")?;
+        assert_eq!(
+            round_local(&z, 0).err().as_deref(),
+            Some("duration exceeds num_nanoseconds limit")
+        );
+        assert_eq!(
+            rfc(&round_local(&z, 60_000_000_000)?),
+            "2026-03-04T10:08:00+01:00"
+        );
+        assert_eq!(
+            rfc(&round_local(&z, 1_000_000_000)?),
+            "2026-03-04T10:07:30+01:00"
+        );
+        let before = at("1969-12-31T23:59:50Z")?;
+        assert_eq!(
+            rfc(&round_local(&before, 60_000_000_000)?),
+            "1970-01-01T00:00:00Z"
+        );
+        let early = at("1969-12-31T23:59:10Z")?;
+        assert_eq!(
+            rfc(&round_local(&early, 60_000_000_000)?),
+            "1969-12-31T23:59:00Z"
+        );
+        assert_eq!(
+            round_local(&at("3000-01-01T00:00:00Z")?, 1)
+                .err()
+                .as_deref(),
+            Some("timestamp exceeds num_nanoseconds limit")
+        );
+        let cases = [
+            ("2026-03-04T10:07:30Z", true, "2026-03-04T10:07:30Z"),
+            (
+                "2026-03-04T10:07:30.5Z",
+                false,
+                "2026-03-04T10:07:30.500+00:00",
+            ),
+            (
+                "2026-03-04T10:07:30.000001Z",
+                true,
+                "2026-03-04T10:07:30.000001Z",
+            ),
+            (
+                "2026-03-04T10:07:30.000000001+02:00",
+                true,
+                "2026-03-04T10:07:30.000000001+02:00",
+            ),
+        ];
+        for (input, use_z, want) in cases {
+            assert_eq!(format_rfc3339_auto_si(&at(input)?, use_z), want);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_offsets_refuse_a_day_and_named_zones_resolve() -> R {
+        let t = Timestamp::UNIX_EPOCH;
+        assert_eq!(
+            fixed(t, 86_400).err().as_deref(),
+            Some("invalid timezone offset 86400")
+        );
+        assert_eq!(fixed(t, -3600)?.offset().seconds(), -3600);
+        for name in ["UTC", "utc", "Z", "Local"] {
+            assert_eq!(resolve_tz_offset(name, t), Ok(0));
+        }
+        let z = utc(t);
+        assert_eq!(apply_timezone(z.clone(), None)?.offset().seconds(), 0);
+        assert_eq!(
+            apply_timezone(z.clone(), Some("Europe/Helsinki"))?
+                .offset()
+                .seconds(),
+            7200
+        );
+        assert!(apply_timezone(z, Some("Nowhere/Town")).is_err());
+        assert_eq!(
+            unix_floor(at("1969-12-31T23:59:59.5Z")?.timestamp(), 1_000_000_000),
+            Some(-1)
+        );
         Ok(())
     }
 }

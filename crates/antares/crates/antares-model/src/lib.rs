@@ -427,6 +427,13 @@ mod tests {
         assert_eq!((d.hours, d.minutes, d.seconds), (12.0, 30.0, 5.5));
         assert!(!d.whole, "a fractional component is not whole");
         assert!(!d.empty);
+        // one half alone carries something too
+        for half in ["P1D", "PT1H"] {
+            assert!(
+                !super::parse_iso_duration(half).expect(half).empty,
+                "{half}"
+            );
+        }
         // 4.6.3 leaves the fraction separator open
         assert_eq!(
             super::parse_iso_duration("PT0,5S").map(|d| d.seconds),

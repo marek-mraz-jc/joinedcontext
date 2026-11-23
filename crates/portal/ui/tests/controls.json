@@ -2488,7 +2488,8 @@
         "bulk_bar_loaded.test.tsx",
         "grid_toolbar.test.tsx",
         "part_space_inside.test.tsx",
-        "space_inside.test.tsx"
+        "space_inside.test.tsx",
+        "space_inside_wiring.test.tsx"
       ]
     },
     "src/pages/spaces/SpacePersonalData.tsx": {

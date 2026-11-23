@@ -243,6 +243,7 @@ mod tests {
             ("lte", &[5.0], 5.1, false),
             ("within_range", &[1.0, 3.0], 1.0, false),
             ("within_range", &[1.0, 3.0], 2.0, true),
+            ("within_range", &[1.0, 3.0], 3.0, false),
             ("outside_range", &[1.0, 3.0], 3.0, false),
             ("outside_range", &[1.0, 3.0], 3.5, true),
             ("within_range_included", &[1.0, 3.0], 1.0, true),

@@ -234,12 +234,7 @@ pub fn refusal(
         HeaderValue::from_static("private, no-store"),
     );
     // The Portal frames the page when it opens the App (AP-122), so the refusal shows there.
-    if let Ok(csp) = HeaderValue::from_str(&format!(
-        "default-src 'none'; frame-ancestors {}",
-        portal_origin.unwrap_or("'none'")
-    )) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
-    }
+    headers.insert(header::CONTENT_SECURITY_POLICY, frame_policy(portal_origin));
     response
 }
 
@@ -292,12 +287,7 @@ pub fn missing_page(
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    if let Ok(csp) = HeaderValue::from_str(&format!(
-        "default-src 'none'; frame-ancestors {}",
-        portal_origin.unwrap_or("'none'")
-    )) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
-    }
+    headers.insert(header::CONTENT_SECURITY_POLICY, frame_policy(portal_origin));
     Some(response)
 }
 
@@ -337,13 +327,18 @@ pub fn unavailable_page(
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if let Ok(csp) = HeaderValue::from_str(&format!(
-        "default-src 'none'; frame-ancestors {}",
-        portal_origin.unwrap_or("'none'")
-    )) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
-    }
+    headers.insert(header::CONTENT_SECURITY_POLICY, frame_policy(portal_origin));
     Some(response)
+}
+
+/// What may frame a page of the App host: the Portal's origin when it is a header value, else
+/// nothing, so a misconfigured origin never leaves the page frameable by anyone.
+fn frame_policy(portal_origin: Option<&str>) -> HeaderValue {
+    let none = HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'");
+    portal_origin.map_or(none.clone(), |origin| {
+        HeaderValue::from_str(&format!("default-src 'none'; frame-ancestors {origin}"))
+            .unwrap_or(none)
+    })
 }
 
 /// The two sentences of the refusal page per locale.
@@ -604,6 +599,95 @@ mod tests {
             !page.contains("helsinki-operations"),
             "no group is named: {page}"
         );
+    }
+
+    fn page(response: Response) -> String {
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            response.into_body(),
+            usize::MAX,
+        ))
+        .expect("a ready body")
+        .expect("the page");
+        String::from_utf8(body.to_vec()).expect("utf-8")
+    }
+
+    /// AP-122: the missing, unavailable and refusal pages speak each locale, and an origin that
+    /// is no header value lets nothing frame them.
+    #[test]
+    fn each_page_speaks_each_locale_and_frames_only_in_the_portal() {
+        for (language, missing, unavailable, refused) in [
+            (
+                "en",
+                "does not exist",
+                "temporarily unavailable",
+                "Ask a steward",
+            ),
+            (
+                "sk",
+                "neexistuje",
+                "dočasne nedostupná",
+                "Požiadajte správcu",
+            ),
+            (
+                "cs",
+                "neexistuje",
+                "dočasně nedostupná",
+                "Požádejte správce",
+            ),
+            (
+                "de",
+                "gibt es in der Anwendung nicht",
+                "vorübergehend nicht verfügbar",
+                "Bitten Sie",
+            ),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT, HeaderValue::from_static("text/html"));
+            headers.insert(
+                header::ACCEPT_LANGUAGE,
+                HeaderValue::from_str(language).expect("a header"),
+            );
+            let lang = format!("<html lang=\"{language}\">");
+            let response = missing_page(&headers, "/a/<start>", Some("https://portal.hel.fi"))
+                .expect("a page for a browser");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            let html = page(response);
+            assert!(html.contains(&lang) && html.contains(missing), "{html}");
+            assert!(html.contains("href=\"/a/&lt;start&gt;\""), "{html}");
+
+            let title = jc_core::i18n::Text::from("Alerts & <more>");
+            let response =
+                unavailable_page(&headers, "alerts", Some(&title), None).expect("a page");
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                "default-src 'none'; frame-ancestors 'none'"
+            );
+            let html = page(response);
+            assert!(html.contains(&lang) && html.contains(unavailable), "{html}");
+            assert!(
+                html.contains("<h1>Alerts &amp; &lt;more&gt;</h1>"),
+                "{html}"
+            );
+
+            let response = refusal(
+                &spec(),
+                "alerts",
+                None,
+                "helsinki",
+                &headers,
+                Some("x\u{7f}"),
+            );
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                "default-src 'none'; frame-ancestors 'none'"
+            );
+            let html = page(response);
+            assert!(html.contains(&lang) && html.contains(refused), "{html}");
+        }
+        let json = HeaderMap::new();
+        assert!(missing_page(&json, "/", None).is_none());
+        assert!(unavailable_page(&json, "alerts", None, None).is_none());
     }
 
     #[test]
