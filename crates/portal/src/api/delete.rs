@@ -1024,10 +1024,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err_name {
-            ApiError::NotFound(msg) => assert!(msg.contains("nonexistent")),
-            other => panic!("expected NotFound, got {other:?}"),
-        }
+        assert!(
+            matches!(&err_name, ApiError::NotFound(msg) if msg.contains("nonexistent")),
+            "{err_name:?}"
+        )
     }
 
     #[tokio::test]
@@ -1152,15 +1152,10 @@ mod tests {
         .await
         .unwrap_err();
 
-        match err2 {
-            ApiError::Conflict(msg) => {
-                assert_eq!(
-                    msg,
-                    "2 dependent resources block deletion: Endpoint live-traffic, Pipeline traffic-stream"
-                );
-            }
-            other => panic!("expected Conflict, got {other:?}"),
-        }
+        assert!(
+            matches!(&err2, ApiError::Conflict(msg) if msg == "2 dependent resources block deletion: Endpoint live-traffic, Pipeline traffic-stream"),
+            "{err2:?}"
+        )
     }
 
     #[tokio::test]
@@ -1190,10 +1185,10 @@ mod tests {
         .await
         .unwrap_err();
 
-        match err {
-            ApiError::Unavailable(msg) => assert!(msg.contains("git forge")),
-            other => panic!("expected Unavailable, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::Unavailable(msg) if msg.contains("git forge")),
+            "{err:?}"
+        )
     }
 
     #[tokio::test]
@@ -1453,9 +1448,9 @@ mod tests {
         .await
         .unwrap_err();
 
-        match err {
-            ApiError::NotFound(msg) => assert!(msg.contains("mobility")),
-            other => panic!("expected NotFound, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::NotFound(msg) if msg.contains("mobility")),
+            "{err:?}"
+        )
     }
 }
