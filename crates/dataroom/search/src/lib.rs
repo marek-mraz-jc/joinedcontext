@@ -12,7 +12,7 @@
 use dataroom_core::vocab::{find_licence, theme_code, theme_label};
 use dataroom_core::{
     text_in_lang, Authorizer, DataroomError, Dataset, DatasetFilter, Publisher, RecordState,
-    RequestCtx, Result, Visibility,
+    RequestCtx, Result, SearchCandidate, SearchQuery, Store, Visibility,
 };
 use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
@@ -272,107 +272,135 @@ pub fn apply_fq_to_filter(fq: &str, filter: &mut DatasetFilter) -> Result<()> {
     Ok(())
 }
 
-/// Builds a Postgres `tsquery` expression (`term1:* & term2:*`) from search terms.
-pub fn to_pg_prefix_tsquery(terms: &[String]) -> Option<String> {
-    let clean: Vec<String> = terms
-        .iter()
-        .map(|t| {
-            t.chars()
-                .filter(|c| c.is_alphanumeric() || *c == '_')
-                .collect::<String>()
-        })
-        .filter(|t| !t.is_empty())
-        .map(|t| format!("{t}:*"))
+/// The longest word a Postgres `tsvector` holds (2046 bytes): index words and query prefixes are
+/// both cut there, at a character boundary, so the store and [`SearchLexemes::rank`] agree.
+pub const MAX_LEXEME_BYTES: usize = 2046;
+
+fn cut_lexeme(mut word: String) -> String {
+    if word.len() > MAX_LEXEME_BYTES {
+        let mut end = MAX_LEXEME_BYTES;
+        while !word.is_char_boundary(end) {
+            end -= 1;
+        }
+        word.truncate(end);
+    }
+    word
+}
+
+/// The folded words of `text` as search splits them: letters, digits, `-` and `_`.
+fn folded_words(text: &str) -> Vec<String> {
+    let mut words: Vec<String> = fold_unaccent(text)
+        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+        .filter(|w| !w.is_empty())
+        .map(|w| cut_lexeme(w.to_owned()))
         .collect();
-    if clean.is_empty() {
-        None
-    } else {
-        Some(clean.join(" & "))
+    words.sort();
+    words.dedup();
+    words
+}
+
+/// Per query word of `q`, the folded prefixes any of which matches it ([`word_stem_candidates`]),
+/// cut like the index words; refuses what [`parse_search_terms`] refuses.
+pub fn term_candidates(q: &str) -> Result<Vec<Vec<String>>> {
+    Ok(parse_search_terms(q)?
+        .iter()
+        .map(|term| {
+            let mut cands: Vec<String> =
+                word_stem_candidates(term).into_iter().map(cut_lexeme).collect();
+            cands.dedup();
+            cands
+        })
+        .collect())
+}
+
+/// The folded words a dataset is found by (C2, S11-38): every title (`sk`, `cs`, `en`, `fi`,
+/// `ca` and any other language), every description, its tags and keywords, and its name. The
+/// Postgres store keeps them as `tsvector` columns, so SQL and [`SearchLexemes::rank`] match
+/// the same words.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchLexemes {
+    /// The folded name; a prefix matches anywhere in it.
+    pub name: String,
+    pub title: Vec<String>,
+    pub keywords: Vec<String>,
+    pub description: Vec<String>,
+}
+
+impl SearchLexemes {
+    #[must_use]
+    pub fn of(dataset: &Dataset) -> Self {
+        let join = |texts: &mut dyn Iterator<Item = &String>| {
+            texts.fold(String::new(), |mut bag, t| {
+                bag.push(' ');
+                bag.push_str(t);
+                bag
+            })
+        };
+        let keywords = join(
+            &mut dataset
+                .tags
+                .iter()
+                .chain(dataset.keywords.values().flatten()),
+        );
+        Self {
+            name: fold_unaccent(&dataset.name),
+            title: folded_words(&join(&mut dataset.title.values())),
+            keywords: folded_words(&keywords),
+            description: folded_words(&join(&mut dataset.description.values())),
+        }
+    }
+
+    /// Every suffix of the folded name, cut to [`MAX_LEXEME_BYTES`]: a prefix starts one of
+    /// them exactly when the name contains it, which a `tsvector` prefix query can test.
+    #[must_use]
+    pub fn name_suffixes(&self) -> Vec<String> {
+        self.name
+            .char_indices()
+            .map(|(i, _)| cut_lexeme(self.name[i..].to_owned()))
+            .collect()
+    }
+
+    /// `None` unless every term matches the name, a title, a keyword or a description word;
+    /// else the rank: per term 8 for the name, 4 for a title, 2 for a keyword, 1 for the
+    /// description. The Postgres store computes the same sum in SQL.
+    #[must_use]
+    pub fn rank(&self, terms: &[Vec<String>]) -> Option<usize> {
+        let mut score = 0usize;
+        for candidates in terms {
+            let starts = |words: &[String]| {
+                words
+                    .iter()
+                    .any(|w| candidates.iter().any(|cand| w.starts_with(cand.as_str())))
+            };
+            let in_name = candidates
+                .iter()
+                .any(|cand| self.name.contains(cand.as_str()));
+            let hits = [
+                (in_name, 8),
+                (starts(&self.title), 4),
+                (starts(&self.keywords), 2),
+                (starts(&self.description), 1),
+            ];
+            if !hits.iter().any(|(hit, _)| *hit) {
+                return None;
+            }
+            score += hits.iter().filter(|(hit, _)| *hit).map(|(_, w)| w).sum::<usize>();
+        }
+        Some(score)
     }
 }
 
-/// Checks if a dataset matches the folded prefix terms across its `sk`, `cs`, `en` titles and
-/// descriptions, its `fi` and `ca` titles (C2), its name, and its tags/keywords.
+/// Checks if a dataset matches the folded prefix terms across its titles, descriptions, name,
+/// tags and keywords ([`SearchLexemes::rank`]); the rank is 0 when there is no term.
 pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
-    if terms.is_empty() {
-        return (true, 0);
+    let candidates: Vec<Vec<String>> = terms
+        .iter()
+        .map(|t| word_stem_candidates(t).into_iter().map(cut_lexeme).collect())
+        .collect();
+    match SearchLexemes::of(dataset).rank(&candidates) {
+        Some(rank) => (true, rank),
+        None => (false, 0),
     }
-    let mut title_bag = String::new();
-    for lang in ["sk", "cs", "en", "fi", "ca"] {
-        if let Some(t) = dataset.title.get(lang) {
-            title_bag.push(' ');
-            title_bag.push_str(t);
-        }
-    }
-    for t in dataset.title.values() {
-        title_bag.push(' ');
-        title_bag.push_str(t);
-    }
-    let mut desc_bag = String::new();
-    for lang in ["sk", "cs", "en"] {
-        if let Some(d) = dataset.description.get(lang) {
-            desc_bag.push(' ');
-            desc_bag.push_str(d);
-        }
-    }
-    for d in dataset.description.values() {
-        desc_bag.push(' ');
-        desc_bag.push_str(d);
-    }
-    let mut kw_bag = dataset.tags.join(" ");
-    for words in dataset.keywords.values() {
-        for w in words {
-            kw_bag.push(' ');
-            kw_bag.push_str(w);
-        }
-    }
-
-    let folded_name = fold_unaccent(&dataset.name);
-    let folded_title = fold_unaccent(&title_bag);
-    let folded_desc = fold_unaccent(&desc_bag);
-    let folded_kw = fold_unaccent(&kw_bag);
-
-    let words_of = |s: &str| -> Vec<String> {
-        s.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-            .filter(|w| !w.is_empty())
-            .map(str::to_owned)
-            .collect()
-    };
-
-    let title_words = words_of(&folded_title);
-    let desc_words = words_of(&folded_desc);
-    let kw_words = words_of(&folded_kw);
-
-    let mut score = 0usize;
-    for term in terms {
-        let candidates = word_stem_candidates(term);
-        let matches_any = |words: &[String]| -> bool {
-            words
-                .iter()
-                .any(|w| candidates.iter().any(|cand| w.starts_with(cand)))
-        };
-        // A word of the name starting with a candidate contains it: one substring test covers both.
-        let in_name = candidates.iter().any(|cand| folded_name.contains(cand));
-        let in_title = matches_any(&title_words);
-        let in_kw = matches_any(&kw_words);
-        let in_desc = matches_any(&desc_words);
-        if !(in_name || in_title || in_kw || in_desc) {
-            return (false, 0);
-        }
-        if in_name {
-            score += 8;
-        }
-        if in_title {
-            score += 4;
-        }
-        if in_kw {
-            score += 2;
-        }
-        if in_desc {
-            score += 1;
-        }
-    }
-    (true, score)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -601,7 +629,70 @@ pub fn search_datasets(
     filter: &DatasetFilter,
     lang: &str,
 ) -> Result<SearchOutcome> {
-    let terms = parse_search_terms(&filter.q)?;
+    let candidates = datasets
+        .iter()
+        .map(|d| SearchCandidate {
+            dataset: d.clone(),
+            rank: None,
+        })
+        .collect();
+    search_candidates(ctx, authorizer, candidates, publishers, filter, lang)
+}
+
+/// One search page read from `store` in one transaction (S11-38): the store matches and ranks
+/// the text, `keep` drops what the route never lists (dashboards, hidden datasets), and
+/// [`search_candidates`] authorizes, counts facets and pages; the page's datasets are full
+/// records. Facets count over `facet_publishers` when given, else over every publisher. Also
+/// returns the catalogue's publishers.
+pub async fn search_store(
+    store: &dyn Store,
+    ctx: &RequestCtx,
+    authorizer: &dyn Authorizer,
+    filter: &DatasetFilter,
+    lang: &str,
+    keep: &(dyn Fn(&Dataset, &[Publisher]) -> bool + Sync),
+    facet_publishers: Option<&[Publisher]>,
+) -> Result<(SearchOutcome, Vec<Publisher>)> {
+    let query = SearchQuery {
+        terms: term_candidates(&filter.q)?,
+        include_drafts: filter.include_drafts,
+        include_withdrawn: filter.include_withdrawn,
+        public_only: ctx.subject.is_anonymous() && !filter.include_private,
+    };
+    let mut outcome = None;
+    let mut pick = |publishers: &[Publisher], mut candidates: Vec<SearchCandidate>| {
+        candidates.retain(|c| keep(&c.dataset, publishers));
+        let found = search_candidates(
+            ctx,
+            authorizer,
+            candidates,
+            facet_publishers.unwrap_or(publishers),
+            filter,
+            lang,
+        )?;
+        let ids = found.datasets.iter().map(|d| d.id.clone()).collect();
+        outcome = Some(found);
+        Ok(ids)
+    };
+    let page = store.search_page(ctx, &query, &mut pick).await?;
+    let mut outcome = outcome.ok_or_else(|| {
+        DataroomError::Storage("the store answered a search without choosing a page".into())
+    })?;
+    outcome.datasets = page.datasets;
+    Ok((outcome, page.publishers))
+}
+
+/// [`search_datasets`] over store candidates: a candidate with a rank was matched by the store,
+/// one without is matched here against its full record.
+pub fn search_candidates(
+    ctx: &RequestCtx,
+    authorizer: &dyn Authorizer,
+    candidates: Vec<SearchCandidate>,
+    publishers: &[Publisher],
+    filter: &DatasetFilter,
+    lang: &str,
+) -> Result<SearchOutcome> {
+    let terms = term_candidates(&filter.q)?;
     let this_year = i32::from(TimestampTz::now().utc().year());
 
     let mut pub_map = BTreeMap::new();
@@ -611,7 +702,7 @@ pub fn search_datasets(
     }
 
     let mut filed = Vec::new();
-    for ds in datasets {
+    for SearchCandidate { dataset: ds, rank } in candidates {
         if ds.org_id != ctx.org_id || ds.catalogue_id != ctx.catalogue_id {
             continue;
         }
@@ -624,7 +715,7 @@ pub fn search_datasets(
         let pub_rec = pub_map.get(&ds.publisher_id);
         // The flags widen an editor's search only: a caller who may not propose the dataset never
         // sees a draft, a withdrawn record or a withdrawn publisher's dataset (as `package_show`).
-        if !dataroom_core::dataset_visible(authorizer, ctx, ds, pub_rec, false) {
+        if !dataroom_core::dataset_visible(authorizer, ctx, &ds, pub_rec, false) {
             continue;
         }
         // Withdrawn publisher's datasets leave public feeds/listings unless include_private is requested (C16).
@@ -646,12 +737,11 @@ pub fn search_datasets(
                 continue;
             }
         }
-        let (matched, rank) = matches_full_text(ds, &terms);
-        if !matched {
+        let Some(rank) = rank.or_else(|| SearchLexemes::of(&ds).rank(&terms)) else {
             continue;
-        }
+        };
         filed.push(FiledDataset::from_dataset(
-            ds.clone(),
+            ds,
             rank,
             &pub_map,
             lang,
@@ -1253,13 +1343,6 @@ mod tests {
             32,
             "terms are capped"
         );
-
-        assert_eq!(
-            to_pg_prefix_tsquery(&["a'b".into(), "c".into()]).as_deref(),
-            Some("ab:* & c:*")
-        );
-        assert_eq!(to_pg_prefix_tsquery(&["!&|".into()]), None);
-        assert_eq!(to_pg_prefix_tsquery(&[]), None);
 
         assert_eq!(jc_search_words(""), "");
         assert_eq!(jc_search_words("\"exact\" x"), "\"exact\" x");

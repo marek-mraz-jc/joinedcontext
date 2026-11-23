@@ -75,7 +75,7 @@ pub fn installed_id(name: &str) -> Option<String> {
 pub fn requires_publisher(id: &str) -> bool {
     dataroom_rdf::DcatProfile::by_id(id).is_some_and(dataroom_rdf::DcatProfile::requires_publisher)
 }
-use dataroom_search::search_datasets;
+use dataroom_search::search_store;
 use dataroom_shacl::ProfileRegistry;
 use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
@@ -714,15 +714,6 @@ async fn handle_portal_catalogue(
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let datasets = match state.store.list_datasets(&ctx).await {
-        Ok(d) => d,
-        Err(e) => return problem_response(e),
-    };
-    let publishers = match state.store.list_publishers(&ctx).await {
-        Ok(p) => p,
-        Err(e) => return problem_response(e),
-    };
-
     let page = params.page.unwrap_or(1).max(1);
     let mut filter = DatasetFilter {
         q: params.q.unwrap_or_default(),
@@ -750,26 +741,21 @@ async fn handle_portal_catalogue(
     }
 
     // The datasets `package_show` would show this caller: a `jc_hide` one only to its editors.
-    let pub_map: BTreeMap<&str, &Publisher> = publishers
-        .iter()
-        .flat_map(|p| [(p.id.as_str(), p), (p.name.as_str(), p)])
-        .collect();
-    let datasets: Vec<Dataset> = datasets
-        .into_iter()
-        .filter(|ds| {
-            let pub_rec = pub_map.get(ds.publisher_id.as_str()).copied();
-            dataset_shown(&state, &ctx, &cat, ds, pub_rec)
-        })
-        .collect();
-    let outcome = match search_datasets(
+    let shown = |ds: &Dataset, publishers: &[Publisher]| {
+        dataset_shown(&state, &ctx, &cat, ds, publisher_of(publishers, ds))
+    };
+    let outcome = match search_store(
+        state.store.as_ref(),
         &ctx,
         state.authorizer.as_ref(),
-        &datasets,
-        &publishers,
         &filter,
         &cat.default_language,
-    ) {
-        Ok(o) => o,
+        &shown,
+        None,
+    )
+    .await
+    {
+        Ok((o, _)) => o,
         Err(e) => return problem_response(e),
     };
 
@@ -1216,12 +1202,11 @@ async fn portal_page(
         let Some(d) = datasets.iter().find(|d| d.name == name) else {
             continue;
         };
-        let mut all = Vec::new();
-        for dist in &d.distributions {
-            if let Ok(v) = state.store.list_resource_views(ctx, &dist.id).await {
-                all.extend(v);
-            }
-        }
+        let all = state
+            .store
+            .list_views_of(ctx, &distribution_ids(d))
+            .await
+            .unwrap_or_default();
         views.insert(name, all);
     }
     render_portal_page(
@@ -1660,10 +1645,37 @@ async fn map_shown(state: &DataroomState, ctx: &RequestCtx, cat: &Catalogue, ds:
     ds.state != RecordState::Withdrawn && dataset_shown(state, ctx, cat, ds, pub_rec.as_ref())
 }
 
+/// The ids of a dataset's distributions, in its order.
+pub(crate) fn distribution_ids(ds: &Dataset) -> Vec<String> {
+    ds.distributions.iter().map(|d| d.id.clone()).collect()
+}
+
 fn publisher_of<'a>(publishers: &'a [Publisher], ds: &Dataset) -> Option<&'a Publisher> {
     publishers
         .iter()
         .find(|p| p.id == ds.publisher_id || p.name == ds.publisher_id)
+}
+
+/// The `jc_hide` rule of the search routes: a hidden dataset is listed only to an editor of its
+/// publisher (`plugin.py` lines 168-197, D2, G2).
+pub(crate) fn listed_to(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    cat: &Catalogue,
+    ds: &Dataset,
+    publishers: &[Publisher],
+) -> bool {
+    if !cat.hidden_datasets.contains_key(&ds.name) {
+        return true;
+    }
+    if ctx.subject.is_anonymous() {
+        return false;
+    }
+    let target = ObjectTarget::from_dataset(ds, publisher_of(publishers, ds));
+    state
+        .authorizer
+        .check(ctx, Action::Propose, &target)
+        .allowed
 }
 
 /// The dashboards of the catalogue the reader may see (T-6790).
@@ -1675,7 +1687,7 @@ async fn shown_dashboards(
 ) -> Vec<Dataset> {
     state
         .store
-        .list_datasets(ctx)
+        .list_datasets_of_type(ctx, dataroom_web::dashboards::DASHBOARD_TYPE)
         .await
         .unwrap_or_default()
         .into_iter()
@@ -1780,33 +1792,6 @@ async fn dispatch_ui_route(
         }
         // D2: Dataset list & search (`/dataset`, `/dataset/`)
         ["dataset"] => {
-            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
-            all_ds.retain(|d| !is_dashboard(d));
-            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
-            let pub_map: BTreeMap<String, Publisher> = publishers
-                .iter()
-                .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p.clone())])
-                .collect();
-
-            // `jc_hide` rule: hidden datasets are hidden from the public, visible to editors of the publisher
-            let visible_ds: Vec<Dataset> = all_ds
-                .into_iter()
-                .filter(|ds| {
-                    if !cat.hidden_datasets.contains_key(&ds.name) {
-                        return true;
-                    }
-                    if ctx.subject.is_anonymous() {
-                        return false;
-                    }
-                    let pub_rec = pub_map.get(&ds.publisher_id);
-                    let target = ObjectTarget::from_dataset(ds, pub_rec);
-                    state
-                        .authorizer
-                        .check(&ctx, Action::Propose, &target)
-                        .allowed
-                })
-                .collect();
-
             let page = q_params
                 .get("page")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1855,20 +1840,30 @@ async fn dispatch_ui_route(
                 filter.spatial.push(sp.clone());
             }
 
-            let outcome = search_datasets(
+            let listed = |ds: &Dataset, publishers: &[Publisher]| {
+                !is_dashboard(ds) && listed_to(&state, &ctx, &cat, ds, publishers)
+            };
+            let (outcome, publishers) = search_store(
+                state.store.as_ref(),
                 &ctx,
                 state.authorizer.as_ref(),
-                &visible_ds,
-                &publishers,
                 &filter,
                 &lang,
+                &listed,
+                None,
             )
-            .unwrap_or_else(|_| dataroom_search::SearchOutcome {
-                total: 0,
-                offset: 0,
-                limit: 20,
-                datasets: Vec::new(),
-                facets: Default::default(),
+            .await
+            .unwrap_or_else(|_| {
+                (
+                    dataroom_search::SearchOutcome {
+                        total: 0,
+                        offset: 0,
+                        limit: 20,
+                        datasets: Vec::new(),
+                        facets: Default::default(),
+                    },
+                    Vec::new(),
+                )
             });
 
             let html = render_dataset_list_page(
@@ -1982,12 +1977,11 @@ async fn dispatch_ui_route(
                     .into_response();
             }
 
-            let mut all_views = Vec::new();
-            for d in &ds.distributions {
-                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
-                    all_views.extend(v);
-                }
-            }
+            let all_views = state
+                .store
+                .list_views_of(&ctx, &distribution_ids(&ds))
+                .await
+                .unwrap_or_default();
             let can_edit = state
                 .authorizer
                 .check(&ctx, Action::Propose, &target)
@@ -2001,9 +1995,7 @@ async fn dispatch_ui_route(
             } else {
                 Vec::new()
             };
-            // ponytail: one catalogue listing per dataset page; a store query by type when
-            // catalogues hold thousands of packages. A dashboard of a withdrawn publisher is
-            // linked nowhere, as its own page is not found.
+            // A dashboard of a withdrawn publisher is linked nowhere, as its own page is not found.
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
             let html = dataroom_web::render_dataset_page_linked(
@@ -2050,12 +2042,11 @@ async fn dispatch_ui_route(
                     "dashboard '{name}' not found"
                 )));
             };
-            let mut views = Vec::new();
-            for d in &ds.distributions {
-                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
-                    views.extend(v);
-                }
-            }
+            let views = state
+                .store
+                .list_views_of(&ctx, &distribution_ids(&ds))
+                .await
+                .unwrap_or_default();
             let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
             datasets.retain(|d| !is_dashboard(d));
             let html = render_dashboard_page(
@@ -2159,12 +2150,6 @@ async fn dispatch_ui_route(
                     "publisher '{name}' not found"
                 )));
             }
-            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
-            all_ds.retain(|d| !is_dashboard(d));
-            let visible_ds: Vec<Dataset> = all_ds
-                .into_iter()
-                .filter(|d| !cat.hidden_datasets.contains_key(&d.name))
-                .collect();
             let q = q_params.get("q").cloned().unwrap_or_default();
             let sort = q_params
                 .get("sort")
@@ -2192,14 +2177,20 @@ async fn dispatch_ui_route(
             if let Some(l) = q_params.get("license_id") {
                 filter.licences.push(l.clone());
             }
-            let outcome = search_datasets(
+            let listed = |d: &Dataset, _: &[Publisher]| {
+                !is_dashboard(d) && !cat.hidden_datasets.contains_key(&d.name)
+            };
+            let outcome = search_store(
+                state.store.as_ref(),
                 &ctx,
                 state.authorizer.as_ref(),
-                &visible_ds,
-                std::slice::from_ref(&pub_rec),
                 &filter,
                 &lang,
+                &listed,
+                Some(std::slice::from_ref(&pub_rec)),
             )
+            .await
+            .map(|(o, _)| o)
             .unwrap_or_else(|_| dataroom_search::SearchOutcome {
                 total: 0,
                 offset: 0,

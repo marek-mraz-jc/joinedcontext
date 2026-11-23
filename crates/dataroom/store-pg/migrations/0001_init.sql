@@ -5,25 +5,6 @@ CREATE SCHEMA IF NOT EXISTS dataroom;
 
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'dataroom_simple') THEN
-        CREATE TEXT SEARCH CONFIGURATION dataroom.dataroom_simple (COPY = simple);
-        ALTER TEXT SEARCH CONFIGURATION dataroom.dataroom_simple
-            ALTER MAPPING FOR hword, hword_part, word WITH unaccent, simple;
-    END IF;
-END
-$$;
-
-CREATE OR REPLACE FUNCTION dataroom.immutable_unaccent(text)
-RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
-    SELECT public.unaccent('public.unaccent', $1);
-$$;
-
--- The tenant of the current transaction, set by the store with set_config(..., true).
--- NULLIF: once a custom setting was set in a session, it reads '' (not NULL) after the
--- transaction ends; ''::uuid would raise instead of hiding every row.
 CREATE OR REPLACE FUNCTION dataroom.current_org()
 RETURNS uuid
 LANGUAGE sql STABLE PARALLEL SAFE AS $$
@@ -124,11 +105,6 @@ CREATE TABLE IF NOT EXISTS dataroom.cat_dataset (
     endpoint_url text COLLATE "C",
     issued timestamptz NOT NULL DEFAULT now(),
     modified timestamptz NOT NULL DEFAULT now(),
-    search_sk tsvector NOT NULL DEFAULT ''::tsvector,
-    search_cs tsvector NOT NULL DEFAULT ''::tsvector,
-    search_en tsvector NOT NULL DEFAULT ''::tsvector,
-    search_fi tsvector NOT NULL DEFAULT ''::tsvector,
-    search_ca tsvector NOT NULL DEFAULT ''::tsvector,
     doc jsonb NOT NULL,
     PRIMARY KEY (org_id, catalogue_id, id),
     UNIQUE (org_id, catalogue_id, name)
@@ -138,6 +114,34 @@ CREATE INDEX IF NOT EXISTS idx_cat_dataset_publisher
     ON dataroom.cat_dataset (org_id, catalogue_id, publisher_id);
 CREATE INDEX IF NOT EXISTS idx_cat_dataset_visibility
     ON dataroom.cat_dataset (org_id, catalogue_id, visibility, state);
+
+-- S11-38: the words dataroom-search finds a dataset by, folded by the store in Rust
+-- (SearchLexemes) and kept without positions; search_v below the store's SEARCH_VERSION marks
+-- a row not indexed yet (written by an older build), which a search matches in Rust instead.
+ALTER TABLE dataroom.cat_dataset
+    DROP COLUMN IF EXISTS search_sk,
+    DROP COLUMN IF EXISTS search_cs,
+    DROP COLUMN IF EXISTS search_en,
+    DROP COLUMN IF EXISTS search_fi,
+    DROP COLUMN IF EXISTS search_ca,
+    ADD COLUMN IF NOT EXISTS search_v smallint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS search_name tsvector NOT NULL DEFAULT ''::tsvector,
+    ADD COLUMN IF NOT EXISTS search_title tsvector NOT NULL DEFAULT ''::tsvector,
+    ADD COLUMN IF NOT EXISTS search_kw tsvector NOT NULL DEFAULT ''::tsvector,
+    ADD COLUMN IF NOT EXISTS search_desc tsvector NOT NULL DEFAULT ''::tsvector,
+    ADD COLUMN IF NOT EXISTS search_all tsvector GENERATED ALWAYS AS
+        (search_name || search_title || search_kw || search_desc) STORED;
+
+DROP TEXT SEARCH CONFIGURATION IF EXISTS dataroom.dataroom_simple;
+DROP FUNCTION IF EXISTS dataroom.immutable_unaccent(text);
+
+CREATE INDEX IF NOT EXISTS idx_cat_dataset_search
+    ON dataroom.cat_dataset USING gin (search_all);
+-- The rows a search matches in Rust; the literal is the store's SEARCH_VERSION.
+CREATE INDEX IF NOT EXISTS idx_cat_dataset_unindexed
+    ON dataroom.cat_dataset (org_id, catalogue_id) WHERE search_v < 1;
+CREATE INDEX IF NOT EXISTS idx_cat_dataset_type
+    ON dataroom.cat_dataset (org_id, catalogue_id, (doc->>'datasetType'));
 
 ALTER TABLE dataroom.cat_dataset ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dataroom.cat_dataset FORCE ROW LEVEL SECURITY;

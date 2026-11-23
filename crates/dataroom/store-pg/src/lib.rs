@@ -10,9 +10,10 @@ use dataroom_core::store::{changed_since_read, next_modified, BoxFuture};
 use dataroom_core::{
     text_in_lang, ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin,
     DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord,
-    Publisher, RecordState, RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage,
-    Store,
+    PickPage, Publisher, RecordState, RequestCtx, ResourceView, Result, SearchCandidate,
+    SearchPage, SearchQuery, ShaclValidationReport, StaticPage, Store,
 };
+use dataroom_search::SearchLexemes;
 use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
 use sqlx::postgres::PgConnection;
@@ -76,14 +77,16 @@ impl PgStore {
             .await
             .map_err(|e| DataroomError::Storage(format!("advisory lock: {e}")))?;
 
-        let res = sqlx::raw_sql(MIGRATION_0001_SQL).execute(&mut *conn).await;
+        let res = match sqlx::raw_sql(MIGRATION_0001_SQL).execute(&mut *conn).await {
+            Ok(_) => reindex_search(&mut conn).await.map(|_| ()),
+            Err(e) => Err(DataroomError::Storage(format!("{e}"))),
+        };
 
         let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext('jc-migrate-dataroom'))")
             .execute(&mut *conn)
             .await;
 
-        res.map_err(|e| DataroomError::Storage(format!("migration failed: {e}")))?;
-        Ok(())
+        res.map_err(|e| DataroomError::Storage(format!("migration failed: {e}")))
     }
 
     /// Moves every row of `catalogue` from tenant `from` to tenant `to` in one transaction, as
@@ -393,59 +396,135 @@ async fn dataset_for_update(
 
 /// Writes a dataset row and replaces its distribution rows inside the caller's tenant
 /// transaction.
+/// The version of the search columns this build writes (`cat_dataset.search_v`); a row below it
+/// was written before them and is matched in Rust until [`PgStore::migrate`] reindexes it.
+const SEARCH_VERSION: i16 = 1;
+
+/// The `cat_dataset` search columns of a dataset, as text arrays for `array_to_tsvector`.
+struct SearchColumns {
+    name: Vec<String>,
+    title: Vec<String>,
+    keywords: Vec<String>,
+    description: Vec<String>,
+}
+
+impl SearchColumns {
+    fn of(dataset: &Dataset) -> Self {
+        let lex = SearchLexemes::of(dataset);
+        Self {
+            name: lex.name_suffixes(),
+            title: lex.title,
+            keywords: lex.keywords,
+            description: lex.description,
+        }
+    }
+}
+
+/// A `tsquery` matching a word that starts with any of `candidates` (`'a':* | 'b':*`); `None`
+/// for no candidate, which matches nothing.
+fn prefix_tsquery(candidates: &[String]) -> Option<String> {
+    let alternatives: Vec<String> = candidates
+        .iter()
+        .map(|c| format!("'{}':*", c.replace('\\', "\\\\").replace('\'', "''")))
+        .collect();
+    (!alternatives.is_empty()).then(|| format!("({})", alternatives.join(" | ")))
+}
+
+/// A search candidate's record as the search reads it: no description, version notes,
+/// provenance or SHACL shapes, and distributions holding only id and format (S11-38).
+const SLIM_DOC: &str = "jsonb_set(
+        jsonb_set(doc - 'versionNotes' - 'provenance' - 'customShaclShapes',
+                  '{description}', '{}'::jsonb),
+        '{distributions}',
+        COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                             'id', d->'id', 'datasetId', d->'datasetId', 'title', '{}'::jsonb,
+                             'accessUrl', '', 'format', d->'format') ORDER BY n)
+                  FROM jsonb_array_elements(doc->'distributions') WITH ORDINALITY AS e(d, n)),
+                 '[]'::jsonb))";
+
+async fn read_publishers(conn: &mut PgConnection, ctx: &RequestCtx) -> Result<Vec<Publisher>> {
+    let rows: Vec<(Json<Publisher>,)> = sqlx::query_as(
+        "SELECT doc FROM dataroom.cat_publisher
+         WHERE org_id = $1 AND catalogue_id = $2
+         ORDER BY name COLLATE \"C\"",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(|(Json(p),)| p).collect())
+}
+
+/// Reindexes every row whose search columns are older than [`SEARCH_VERSION`], 200 at a time,
+/// with row level security lifted for the table as in [`PgStore::move_catalogue`] (the rows of
+/// every tenant); `conn` holds the migration lock.
+async fn reindex_search(conn: &mut PgConnection) -> Result<u64> {
+    let fail = |e: sqlx::Error| DataroomError::Storage(format!("search reindex: {e}"));
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.map_err(fail)?;
+    sqlx::raw_sql("ALTER TABLE dataroom.cat_dataset NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .map_err(fail)?;
+    let mut done = 0;
+    loop {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, Json<Dataset>)> = sqlx::query_as(
+            "SELECT org_id, catalogue_id, id, doc FROM dataroom.cat_dataset
+             WHERE search_v < $1 LIMIT 200",
+        )
+        .bind(SEARCH_VERSION)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(fail)?;
+        if rows.is_empty() {
+            break;
+        }
+        for (org, cat, id, Json(ds)) in rows {
+            let lex = SearchColumns::of(&ds);
+            sqlx::query(
+                "UPDATE dataroom.cat_dataset SET search_v = $4,
+                     search_name = array_to_tsvector($5), search_title = array_to_tsvector($6),
+                     search_kw = array_to_tsvector($7), search_desc = array_to_tsvector($8)
+                 WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
+            )
+            .bind(org)
+            .bind(cat)
+            .bind(&id)
+            .bind(SEARCH_VERSION)
+            .bind(&lex.name)
+            .bind(&lex.title)
+            .bind(&lex.keywords)
+            .bind(&lex.description)
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+            done += 1;
+        }
+    }
+    sqlx::raw_sql("ALTER TABLE dataroom.cat_dataset FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .map_err(fail)?;
+    tx.commit().await.map_err(fail)?;
+    Ok(done)
+}
+
 async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Dataset) -> Result<()> {
     refuse_deleted(conn, ctx).await?;
     let title = text_in_lang(&dataset.title, None)
         .unwrap_or(&dataset.name)
         .to_owned();
     let notes = text_in_lang(&dataset.description, None).map(str::to_owned);
-    let tags_joined = dataset.tags.join(" ");
-    let text_sk = format!(
-        "{} {} {}",
-        dataset.title.get("sk").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("sk")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_cs = format!(
-        "{} {} {}",
-        dataset.title.get("cs").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("cs")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_en = format!(
-        "{} {} {}",
-        dataset.title.get("en").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("en")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_fi = dataset.title.get("fi").cloned().unwrap_or_default();
-    let text_ca = dataset.title.get("ca").cloned().unwrap_or_default();
-
+    let lex = SearchColumns::of(dataset);
     sqlx::query(
         "INSERT INTO dataroom.cat_dataset
              (org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state,
               licence_id, frequency, endpoint_url, issued, modified,
-              search_sk, search_cs, search_en, search_fi, search_ca, doc)
+              search_v, search_name, search_title, search_kw, search_desc, doc)
              VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                to_tsvector('dataroom.dataroom_simple', $15),
-                to_tsvector('dataroom.dataroom_simple', $16),
-                to_tsvector('dataroom.dataroom_simple', $17),
-                to_tsvector('dataroom.dataroom_simple', $18),
-                to_tsvector('dataroom.dataroom_simple', $19),
-                $20
+                $15, array_to_tsvector($16), array_to_tsvector($17),
+                array_to_tsvector($18), array_to_tsvector($19), $20
              )
              ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
                 name = EXCLUDED.name,
@@ -459,11 +538,11 @@ async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Data
                 endpoint_url = EXCLUDED.endpoint_url,
                 issued = EXCLUDED.issued,
                 modified = EXCLUDED.modified,
-                search_sk = EXCLUDED.search_sk,
-                search_cs = EXCLUDED.search_cs,
-                search_en = EXCLUDED.search_en,
-                search_fi = EXCLUDED.search_fi,
-                search_ca = EXCLUDED.search_ca,
+                search_v = EXCLUDED.search_v,
+                search_name = EXCLUDED.search_name,
+                search_title = EXCLUDED.search_title,
+                search_kw = EXCLUDED.search_kw,
+                search_desc = EXCLUDED.search_desc,
                 doc = EXCLUDED.doc",
     )
     .bind(ctx.org_id.as_uuid())
@@ -480,11 +559,11 @@ async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Data
     .bind(&dataset.endpoint_url)
     .bind(dataset.issued)
     .bind(dataset.modified)
-    .bind(text_sk)
-    .bind(text_cs)
-    .bind(text_en)
-    .bind(text_fi)
-    .bind(text_ca)
+    .bind(SEARCH_VERSION)
+    .bind(&lex.name)
+    .bind(&lex.title)
+    .bind(&lex.keywords)
+    .bind(&lex.description)
     .bind(Json(&dataset))
     .execute(&mut *conn)
     .await
@@ -786,18 +865,9 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let rows: Vec<(Json<Publisher>,)> = sqlx::query_as(
-                "SELECT doc FROM dataroom.cat_publisher
-                 WHERE org_id = $1 AND catalogue_id = $2
-                 ORDER BY name COLLATE \"C\"",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let publishers = read_publishers(&mut tx, ctx).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows.into_iter().map(|(Json(p),)| p).collect())
+            Ok(publishers)
         })
     }
 
@@ -946,6 +1016,130 @@ impl Store for PgStore {
             )
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(rows.into_iter().map(|(Json(d),)| d).collect())
+        })
+    }
+
+    fn search_page<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        query: &'a SearchQuery,
+        pick: &'a mut PickPage<'_>,
+    ) -> BoxFuture<'a, Result<SearchPage>> {
+        Box::pin(async move {
+            // Per term, the query that matches it; a row is kept when every term matches. A
+            // term with no candidate matches nothing.
+            let per_term: Option<Vec<String>> =
+                query.terms.iter().map(|c| prefix_tsquery(c)).collect();
+            let per_term = per_term.unwrap_or_default();
+            let all = per_term.join(" & ");
+            // The indexed rows the text matches (GIN), and the rows not indexed yet, which the
+            // caller matches in Rust (their search columns are empty).
+            let text_filter = match (query.terms.is_empty(), per_term.is_empty()) {
+                (true, _) => "",
+                (false, true) => {
+                    "AND id IN (SELECT id FROM dataroom.cat_dataset
+                                WHERE org_id = $1 AND catalogue_id = $2 AND search_v < $8)"
+                }
+                (false, false) => {
+                    "AND id IN (SELECT id FROM dataroom.cat_dataset
+                                WHERE org_id = $1 AND catalogue_id = $2
+                                  AND search_all @@ $6::tsquery
+                                UNION ALL
+                                SELECT id FROM dataroom.cat_dataset
+                                WHERE org_id = $1 AND catalogue_id = $2 AND search_v < $8)"
+                }
+            };
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let publishers = read_publishers(&mut tx, ctx).await?;
+            // ponytail: O(matches) slim rows reach Rust, which authorizes (Authorizer) and counts
+            // facets; facet counts in SQL would need the authorization rules in SQL.
+            let rows: Vec<(Json<Dataset>, Option<i64>)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                    "WITH q AS (SELECT array_agg(t::tsquery) AS terms FROM unnest($5::text[]) t)
+                     SELECT CASE WHEN search_v >= $8 THEN {SLIM_DOC} ELSE doc END,
+                            CASE WHEN search_v >= $8 THEN
+                                (SELECT COALESCE(sum(
+                                     CASE WHEN search_name @@ t THEN 8 ELSE 0 END
+                                     + CASE WHEN search_title @@ t THEN 4 ELSE 0 END
+                                     + CASE WHEN search_kw @@ t THEN 2 ELSE 0 END
+                                     + CASE WHEN search_desc @@ t THEN 1 ELSE 0 END), 0)
+                                 FROM unnest(q.terms) t)
+                            END
+                     FROM dataroom.cat_dataset, q
+                     WHERE org_id = $1 AND catalogue_id = $2
+                       AND (state = 'active' OR (state = 'draft' AND $3)
+                            OR (state = 'withdrawn' AND $4))
+                       AND (NOT $7 OR visibility = 'public')
+                       AND $6::text IS NOT NULL -- types $6 where no filter reads it
+                       {text_filter}
+                     ORDER BY name COLLATE \"C\""
+                )))
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(query.include_drafts)
+                .bind(query.include_withdrawn)
+                .bind(&per_term)
+                .bind(all)
+                .bind(query.public_only)
+                .bind(SEARCH_VERSION)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            let candidates = rows
+                .into_iter()
+                .map(|(Json(dataset), rank)| SearchCandidate {
+                    dataset,
+                    rank: rank.map(|r| usize::try_from(r).unwrap_or(usize::MAX)),
+                })
+                .collect();
+            let ids = pick(&publishers, candidates)?;
+            let found: Vec<(Json<Dataset>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_dataset
+                 WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = ANY($3)",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            let mut by_id: std::collections::HashMap<String, Dataset> = found
+                .into_iter()
+                .map(|(Json(d),)| (d.id.clone(), d))
+                .collect();
+            let datasets = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            Ok(SearchPage {
+                publishers,
+                datasets,
+            })
+        })
+    }
+
+    fn list_datasets_of_type<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset_type: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Dataset>>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_dataset
+                 WHERE org_id = $1 AND catalogue_id = $2 AND doc->>'datasetType' = $3
+                 ORDER BY name COLLATE \"C\"",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(dataset_type)
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
@@ -1158,6 +1352,36 @@ impl Store for PgStore {
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
             .bind(resource_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(rows.into_iter().map(|(Json(v),)| v).collect())
+        })
+    }
+
+    fn list_views_of<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        distribution_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<ResourceView>>> {
+        Box::pin(async move {
+            if distribution_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let rows: Vec<(Json<ResourceView>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_view
+                 WHERE org_id = $1 AND catalogue_id = $2
+                   AND distribution_id COLLATE \"C\" = ANY($3)
+                 ORDER BY array_position($3, distribution_id::text), view_order ASC,
+                          id COLLATE \"C\" ASC",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(distribution_ids)
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
