@@ -68,6 +68,159 @@ fn conf(kind: &str, config: Value) -> ComponentConfig {
     }
 }
 
+/// Every config the `ftp` and `imap` inputs refuse, built through the registry, with the words
+/// of the answer that tell the person what to write instead; a good config builds.
+#[test]
+fn a_bad_ftp_or_imap_config_is_refused_naming_what_to_write() {
+    let registry = Registry::new();
+    ekiben_io_remote::register_all(&registry);
+    let ctx = context(OrgQuotas::default());
+    let build = |kind: &str, config: Value| match registry.build_input(&conf(kind, config), &ctx) {
+        Ok(_) => String::new(),
+        Err(e) => e.to_string(),
+    };
+    let ftp = |extra: Value| {
+        let mut c = json!({ "address": "files.example.org", "path": "/exports/*.csv" });
+        for (k, v) in extra.as_object().unwrap() {
+            c[k] = v.clone();
+        }
+        c
+    };
+    for (kind, config) in [
+        ("ftp", ftp(json!({}))),
+        (
+            "imap",
+            json!({ "address": "imap.example.org", "username": "u", "password": "p" }),
+        ),
+    ] {
+        let input = registry
+            .build_input(&conf(kind, config), &ctx)
+            .expect("builds");
+        assert_eq!(input.input_type(), kind);
+        assert!(
+            !input.is_connected(),
+            "{kind} connects only at its first read"
+        );
+    }
+    assert_eq!(
+        build(
+            "ftp",
+            ftp(json!({ "processed_suffix": ".done", "max_file_bytes": 10,
+        "max_files": 5, "timeout": "10s" }))
+        ),
+        ""
+    );
+    for (config, words) in [
+        (json!("not an object"), "must be an object"),
+        (ftp(json!({ "folder": "/x" })), "has no field 'folder'"),
+        (json!({ "path": "/exports/*.csv" }), "requires 'address'"),
+        (json!({ "address": "files.example.org" }), "requires 'path'"),
+        (
+            ftp(json!({ "tls": "implicit" })),
+            "explicit (FTPS, the default) or none",
+        ),
+        (ftp(json!({ "tls": "none" })), "allow_plain_ftp"),
+        (
+            ftp(json!({ "delete_on_finish": true, "processed_suffix": ".done" })),
+            "not both",
+        ),
+        (
+            ftp(json!({ "processed_suffix": "../x" })),
+            "plain file-name ending",
+        ),
+        (
+            ftp(json!({ "max_file_bytes": 0 })),
+            "max_file_bytes is 1 to",
+        ),
+        (ftp(json!({ "max_files": 100000 })), "max_files is 1 to"),
+        (ftp(json!({ "timeout": "10m" })), "duration up to 5m"),
+        (
+            ftp(json!({ "path": "/exports/[" })),
+            "ftp path '/exports/['",
+        ),
+    ] {
+        let err = build("ftp", config.clone());
+        assert!(err.contains(words), "{config}: {err}");
+    }
+
+    let imap = |extra: Value| {
+        let mut c = json!({ "address": "imap.example.org", "username": "u", "password": "p" });
+        for (k, v) in extra.as_object().unwrap() {
+            c[k] = v.clone();
+        }
+        c
+    };
+    assert_eq!(build("imap", imap(json!({}))), "");
+    assert_eq!(
+        build(
+            "imap",
+            imap(json!({ "address": "[2001:db8::1]:993", "after_ack": "move",
+        "move_to": "INBOX/Done", "subject": "^Export", "max_attachment_bytes": 10,
+        "max_messages": 5, "timeout": "10s", "from": "exports@stat.example.org" }))
+        ),
+        ""
+    );
+    for (config, words) in [
+        (json!([]), "must be an object"),
+        (imap(json!({ "folder": "x" })), "has no field 'folder'"),
+        (
+            json!({ "username": "u", "password": "p" }),
+            "requires 'address'",
+        ),
+        (
+            imap(json!({ "address": "imap.example.org:0" })),
+            "the port is 1 to 65535",
+        ),
+        (
+            imap(json!({ "address": "user@imap.example.org" })),
+            "is host or host:port",
+        ),
+        (
+            json!({ "address": "imap.example.org", "password": "p" }),
+            "requires 'username'",
+        ),
+        (
+            json!({ "address": "imap.example.org", "username": "u" }),
+            "requires 'password'",
+        ),
+        (
+            imap(json!({ "subject": "(" })),
+            "subject is a regular expression",
+        ),
+        (imap(json!({ "attachment": "[" })), "file-name glob"),
+        (imap(json!({ "after_ack": "move" })), "needs move_to"),
+        (
+            imap(json!({ "move_to": "Done" })),
+            "only for after_ack: move",
+        ),
+        (
+            imap(json!({ "after_ack": "delete" })),
+            "seen (the default) or move",
+        ),
+        (
+            imap(json!({ "after_ack": "move", "move_to": "a\u{7}" })),
+            "1 to 200 printable",
+        ),
+        (
+            imap(json!({ "max_attachment_bytes": 0 })),
+            "max_attachment_bytes is 1 to",
+        ),
+        (imap(json!({ "max_messages": 0 })), "max_messages is 1 to"),
+        (imap(json!({ "timeout": "0s" })), "duration up to 5m"),
+        (
+            imap(json!({ "from": "two words@x.org" })),
+            "one e-mail address",
+        ),
+        (
+            imap(json!({ "mailbox": "m".repeat(201) })),
+            "1 to 200 printable",
+        ),
+    ] {
+        let err = build("imap", config.clone());
+        assert!(err.contains(words), "{config}: {err}");
+    }
+}
+
 /// Reads every message of one run, acking those `ack` keeps and nacking the others.
 async fn run(
     input: &mut dyn Input,

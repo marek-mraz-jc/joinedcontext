@@ -533,8 +533,11 @@ impl OutboundGuard {
             .resolve(&host, addr)
             .no_proxy();
         if let Some(pem) = ca_pem {
-            let roots = reqwest::Certificate::from_pem_bundle(pem)
-                .map_err(|_| KaisatsuError::OutboundRefused("unreadable cluster CA".into()))?;
+            let Ok(roots) = reqwest::Certificate::from_pem_bundle(pem) else {
+                return Err(KaisatsuError::OutboundRefused(
+                    "unreadable cluster CA".into(),
+                ));
+            };
             builder = builder.tls_built_in_root_certs(false);
             for root in roots {
                 builder = builder.add_root_certificate(root);
@@ -566,12 +569,16 @@ impl OutboundGuard {
     /// The first address `host` resolves to, once every address it resolves to passed the W12
     /// rule under `exempt`.
     async fn resolve_judged(host: &str, port: u16, exempt: Exempt) -> Result<SocketAddr> {
-        let addrs: Vec<SocketAddr> =
-            tokio::time::timeout(OUTBOUND_TIMEOUT, tokio::net::lookup_host((host, port)))
-                .await
-                .map_err(|_| KaisatsuError::OutboundRefused("DNS resolution timed out".into()))?
-                .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
-                .collect();
+        let Ok(lookup) =
+            tokio::time::timeout(OUTBOUND_TIMEOUT, tokio::net::lookup_host((host, port))).await
+        else {
+            return Err(KaisatsuError::OutboundRefused(
+                "DNS resolution timed out".into(),
+            ));
+        };
+        let addrs: Vec<SocketAddr> = lookup
+            .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
+            .collect();
         for addr in &addrs {
             if Self::refuses_resolved(exempt, addr.ip()) {
                 return Err(KaisatsuError::OutboundRefused(format!(
@@ -580,10 +587,12 @@ impl OutboundGuard {
                 )));
             }
         }
-        addrs
-            .first()
-            .copied()
-            .ok_or_else(|| KaisatsuError::OutboundRefused("DNS returned no addresses".into()))
+        let Some(first) = addrs.first() else {
+            return Err(KaisatsuError::OutboundRefused(
+                "DNS returned no addresses".into(),
+            ));
+        };
+        Ok(*first)
     }
 
     /// The address a socket that is no URL (SMTP) dials for `host:port`, judged as a fetch is
@@ -693,6 +702,24 @@ mod tests {
 
     /// No suffix rule: an in-cluster name is reachable over `http` or on a private address only
     /// when `outbound_private_hosts` lists it exactly (and its port, when the entry names one).
+    #[test]
+    fn a_saved_url_is_checked_and_an_empty_one_skipped() {
+        let guard = listing(&[]);
+        assert!(
+            guard
+                .check_saved([("logo", ""), ("site", "https://example.org/")])
+                .is_ok()
+        );
+        let err = guard
+            .check_saved([("logo", ""), ("jwks", "http://169.254.169.254/latest")])
+            .unwrap_err();
+        assert!(
+            matches!(&err, KaisatsuError::Validation { message, fields }
+                if message.starts_with("jwks: ") && fields.keys().eq(["jwks"].iter())),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn only_a_listed_exact_host_skips_the_public_address_rule() {
         let none = OutboundGuard::default();
