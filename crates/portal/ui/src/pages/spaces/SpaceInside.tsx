@@ -54,7 +54,7 @@ import { ChangeNotice } from "../../components/ChangeNotice";
 import { PermissionGuard } from "../../components/ui/PermissionGuard";
 import { usePermissions } from "../../api/permissions";
 import { assigneeWords, operationKinds } from "./policyWords";
-import { classSlots, isAnyClass, parseModel } from "../models/linkml";
+import { classSlots, EMPTY_MODEL, isAnyClass, parseModel } from "../models/linkml";
 import { localId, textOf } from "../apps/QueryResultCard";
 import { TypeLink } from "../models/ModelLinks";
 import { useSourceOf } from "../models/ModelPage";
@@ -867,7 +867,14 @@ function SpaceData({
   const addField =
     model && modelSource !== undefined && ownClass ? (
       <PermissionGuard project={project} kind="DataModel" verb="propose">
-        <Button className="w-fit" onClick={() => setAdding(true)}>
+        <Button
+          className="w-fit"
+          onClick={() => {
+            // A new dialog starts a new list: the notices of the last one stay until then.
+            setProposed([]);
+            setAdding(true);
+          }}
+        >
           {t("spaces.fields.add")}
         </Button>
       </PermissionGuard>
@@ -966,10 +973,7 @@ function SpaceData({
             source={modelSource}
             type={type}
             open={adding}
-            onOpenChange={(next) => {
-              if (next) setProposed([]);
-              setAdding(next);
-            }}
+            onOpenChange={setAdding}
             onProposed={(change) => setProposed((before) => [...before, change])}
             space={space}
             endpoints={endpoints}
@@ -1554,7 +1558,8 @@ export function BulkSetDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (next) setRefused(null);
+        // Radix reports only a close here (the bar opens the dialog): the next open starts clean.
+        if (!next) setRefused(null);
         onOpenChange(next);
       }}
       title={t("spaces.toolbar.setTitle", { n: rows.length })}
@@ -1764,10 +1769,6 @@ function Representations({
       <Badge mono>{rep}</Badge>
     );
 
-  if (representations.length === 0 && !slug) {
-    return <span className="text-body text-fg-subtle">{t("endpoints.field.noRepresentations")}</span>;
-  }
-
   return (
     <details className="group">
       <summary className="focus-ring cursor-pointer list-none text-body">
@@ -1919,7 +1920,10 @@ const SUMMARY_CLASSES = 8;
 export function classNamesOf(source: string | undefined): string[] | null {
   if (source === undefined) return null;
   try {
-    return parseModel(source).classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name);
+    const model = parseModel(source);
+    // A YAML error reads as EMPTY_MODEL: the summary says unreadable, never "0 classes".
+    if (model === EMPTY_MODEL) return null;
+    return model.classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name);
   } catch {
     return null;
   }
