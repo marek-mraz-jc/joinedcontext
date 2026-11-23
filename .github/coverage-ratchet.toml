@@ -24,6 +24,7 @@
 "daiya-server" = { lines = 99.07, functions = 100.00 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
+"dataroom-api" = { lines = 99.00, functions = 99.53 }
 "dataroom-mcp" = { lines = 100.00, functions = 100.00 }
 "dataroom-plugin" = { lines = 100.00, functions = 100.00 }
 "dataroom-server" = { lines = 98.70, functions = 100.00 }

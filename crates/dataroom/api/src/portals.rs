@@ -130,10 +130,12 @@ async fn slug_address(
     next.run(req).await
 }
 
-fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+/// A read of one of the state's runtime-swapped tables; a poisoned lock still holds the last
+/// complete table (every writer replaces whole entries).
+pub(crate) fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+pub(crate) fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(PoisonError::into_inner)
 }
