@@ -248,6 +248,25 @@ fn an_nkod_query_url_needs_a_url_and_a_publisher_iri_the_query_can_hold() {
 }
 
 #[tokio::test]
+async fn a_deadline_too_long_to_record_falls_back_to_an_hour() {
+    let w = world(&[]).await;
+    let base = "https://ckan.remote.example";
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{base}/api/3/action/package_search?rows=1000&start=0"),
+        Some("application/json"),
+        ckan_page(1, vec![ckan_package("r-1", "remote-air", "Air")]),
+    );
+    let src = source("ckan-action", "remote", base, &["ckan.remote.example"]);
+    let run = engine(&f)
+        .with_deadline(Duration::MAX)
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    assert_eq!(run.created_count, 1);
+}
+
+#[tokio::test]
 async fn a_record_already_withdrawn_is_not_withdrawn_again() {
     let w = world(&[]).await;
     let url = "https://feeds.example.org/c.ttl";

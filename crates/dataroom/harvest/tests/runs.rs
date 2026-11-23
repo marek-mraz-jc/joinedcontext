@@ -508,6 +508,43 @@ async fn a_converted_source_lists_the_endpoints_distributions_and_skips_the_rest
 }
 
 #[tokio::test]
+async fn a_converted_dataset_the_catalogue_hides_gets_no_sheet_probe() {
+    let w = world(&[]).await;
+    let mut cat = w
+        .store
+        .get_catalogue(w.org, w.cat)
+        .await
+        .unwrap()
+        .expect("catalogue");
+    cat.hidden_datasets
+        .insert("remote-trees".into(), "hidden".into());
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let base = "https://ckan.remote.example";
+    let (src, f) = converted_source(base);
+    let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");
+    f.insert(
+        format!("{root}schema/index.json"),
+        Some("application/json"),
+        tree_index(),
+    );
+    let sheet = dataroom_harvest::converted::sheet_address(&root, &src.converted["remote-trees"]);
+    f.insert(sheet.clone(), Some("text/csv"), "id\n1\n");
+    let run = engine(&f)
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    assert_eq!(run.created_count, 1);
+    let ds = w.store.list_datasets(&w.ctx).await.unwrap();
+    let trees = ds.iter().find(|d| d.name == "remote-trees").expect("trees");
+    let reads = trees
+        .distributions
+        .iter()
+        .filter(|d| d.access_url == sheet)
+        .count();
+    assert_eq!(reads, 1, "only the CSV distribution, no sheet");
+}
+
+#[tokio::test]
 async fn a_converted_sheet_that_keeps_failing_or_is_refused_is_left_out() {
     let base = "https://ckan.remote.example";
     let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");

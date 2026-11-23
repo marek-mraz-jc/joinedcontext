@@ -468,6 +468,97 @@ async fn an_arcgis_url_naming_one_service_reads_that_service_alone() {
 }
 
 #[tokio::test]
+async fn a_service_the_source_skips_by_id_is_listed_as_skipped_with_its_title() {
+    let w = world(&[]).await;
+    let mut src = gis_source();
+    src.skip_items
+        .insert("Elevation/GlacierBay/MapServer".into(), "not ours".into());
+    let run = engine(&gis_fetcher())
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    let skipped: Vec<(&str, &str)> = run
+        .skipped
+        .iter()
+        .filter(|s| s.item_id == "Elevation/GlacierBay/MapServer")
+        .map(|s| (s.title.as_str(), s.reason.as_str()))
+        .collect();
+    assert_eq!(skipped, [("Glacier Bay Elevation", "not ours")]);
+    assert!(run.created_count > 0, "the other services are kept");
+}
+
+/// A records page whose `next` is `next` and whose features are `ids`.
+fn records_page(ids: &[&str], matched: Option<usize>, next: Option<&str>) -> String {
+    let features: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"id": id, "properties": {"title": format!("Record {id}")}, "links": []}))
+        .collect();
+    let mut links = vec![];
+    if let Some(n) = next {
+        links.push(json!({"rel": "next", "href": n}));
+    }
+    let mut page = json!({"features": features, "links": links});
+    if let Some(m) = matched {
+        page["numberMatched"] = json!(m);
+    }
+    page.to_string()
+}
+
+#[tokio::test]
+async fn a_records_read_that_loops_pages_forever_or_repeats_an_id_changes_nothing() {
+    let first = format!("{RECORDS}/items?limit=100&f=json");
+    let geo = Some("application/geo+json");
+    let cases: Vec<(&str, MapFetcher)> = vec![
+        ("the pages loop back", {
+            let f = MapFetcher::new();
+            f.insert(&first, geo, records_page(&["a"], None, Some(&first)));
+            f
+        }),
+        ("still pages after", {
+            let f = MapFetcher::new();
+            f.insert(
+                &first,
+                geo,
+                records_page(&["p0"], None, Some(&format!("{RECORDS}/p/1"))),
+            );
+            for i in 1..=60 {
+                let id = format!("p{i}");
+                f.insert(
+                    format!("{RECORDS}/p/{i}"),
+                    geo,
+                    records_page(
+                        &[id.as_str()],
+                        None,
+                        Some(&format!("{RECORDS}/p/{}", i + 1)),
+                    ),
+                );
+            }
+            f
+        }),
+        ("1 of them distinct", {
+            let f = MapFetcher::new();
+            f.insert(&first, geo, records_page(&["a", "a"], Some(2), None));
+            f
+        }),
+    ];
+    for (want, f) in cases {
+        let w = world(&[]).await;
+        let res = engine(&f)
+            .run_source(&w.ctx, &w.store, &records_source())
+            .await;
+        let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+        let said = res
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default()
+            + runs[0].error.as_deref().unwrap_or("");
+        assert!(said.contains(want), "{want}: {said}");
+        assert!(active_names(&w).await.is_empty(), "{want}");
+    }
+}
+
+#[tokio::test]
 async fn an_ogc_records_collection_reads_every_page_and_reruns_changed_only() {
     let w = world(&[]).await;
     let f = records_fetcher();
@@ -630,6 +721,77 @@ async fn the_source_test_reads_a_service_and_a_sparql_answer_and_needs_its_catal
         matches!(err, dataroom_core::DataroomError::NotFound(_)),
         "{err}"
     );
+}
+
+#[tokio::test]
+async fn the_source_test_reads_ckan_and_hub_first_pages_and_refuses_an_nkod_source_without_its_iri()
+{
+    let w = world(&[]).await;
+    let f = MapFetcher::new();
+    let ckan = "https://ckan.remote.example";
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?rows=1&start=0"),
+        Some("application/json"),
+        ckan_page(0, vec![]),
+    );
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?q=air&rows=1&start=0"),
+        Some("application/json"),
+        ckan_page(0, vec![]),
+    );
+    f.insert(
+        format!("{ckan}/api/3/action/package_search?rows=1&start=0&x=1"),
+        Some("application/json"),
+        "not json",
+    );
+    let hub = "https://hub.city.example";
+    f.insert(
+        format!("{hub}/api/search/v1/collections/dataset/items?limit=1"),
+        Some("application/json"),
+        json!({"features": []}).to_string(),
+    );
+    let e = engine(&f);
+    let hosts = ["ckan.remote.example", "hub.city.example", "data.gov.cz"];
+    let cases = [
+        (source("ckan-action", "c1", ckan, &hosts), SourceTest::Ok),
+        (
+            source(
+                "ckan-action",
+                "c2",
+                &format!("{ckan}/api/3/action/package_search?q=air"),
+                &hosts,
+            ),
+            SourceTest::Ok,
+        ),
+        (source("arc-gis-hub", "h", hub, &hosts), SourceTest::Ok),
+        (
+            source("nkod-sparql", "n", "https://data.gov.cz/sparql", &hosts),
+            SourceTest::RefusedHost,
+        ),
+    ];
+    for (src, want) in cases {
+        let got = e.test_source(&w.ctx, &w.store, &src).await.unwrap();
+        assert_eq!(got, want, "{}", src.name);
+    }
+}
+
+#[tokio::test]
+async fn a_preview_whose_listing_fails_is_partial_with_no_records() {
+    let w = world(&[]).await;
+    // The test's one-record page answers; the listing's first page does not.
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{RECORDS}/items?limit=1&f=json"),
+        Some("application/geo+json"),
+        fixture("ogc-records/page1.json"),
+    );
+    let p = engine(&f)
+        .preview_source(&w.ctx, &w.store, &records_source())
+        .await
+        .expect("preview");
+    assert_eq!(p.outcome, SourceTest::Ok);
+    assert!(p.partial);
+    assert!(p.records.is_empty());
 }
 
 #[tokio::test]
