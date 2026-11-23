@@ -64,9 +64,13 @@ async fn ri_and_all_keycloak_clients_apply_cleanly_and_second_apply_is_idempoten
     let doc = ri_fixture();
     let opts = default_opts();
 
-    // 1. Offline check (`kaisatsu check`) passes with zero warnings (no unknown fields)
+    // 1. Offline check (`kaisatsu check`) passes with no unknown field; the one warning names the
+    // RI's `defaultGroups`, which kaisatsu stores but applies to nobody (S3-39).
     let warnings = check_realm_value(&doc, &opts).expect("check_realm_value");
-    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    assert!(
+        warnings.len() == 1 && warnings[0].starts_with("$.defaultGroups"),
+        "unexpected warnings: {warnings:?}"
+    );
 
     // 2. Dry run writes nothing
     let mut dry_opts = opts.clone();
@@ -815,7 +819,10 @@ async fn a_refused_outbound_address_is_kept_with_a_warning_not_a_failed_import()
         ..default_opts()
     };
     let warnings = check_realm_value(&doc, &listed).unwrap();
-    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(
+        warnings.iter().all(|w| w.starts_with("$.defaultGroups")),
+        "{warnings:?}"
+    );
 
     // An identity provider's key address the guard refuses is named too.
     doc["identityProviders"][0]["config"]["jwksUrl"] = json!("https://10.0.0.1/jwks");

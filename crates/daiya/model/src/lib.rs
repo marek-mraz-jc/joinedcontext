@@ -51,7 +51,7 @@ pub use registry::{
     daiya_registry,
 };
 pub use rows::{RowPage, RowQuery, RowSet, RowWindow};
-pub use store::{DaiyaStore, OrgKey, OrgRow};
+pub use store::{DaiyaStore, OrgKey, OrgRow, folder_content_refusal};
 pub use validation::{
     FeatureFinding, ValidationReport, Verdict, classify_and_validate, sanitize_markdown_to_html,
 };

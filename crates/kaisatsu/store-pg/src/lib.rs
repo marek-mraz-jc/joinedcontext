@@ -3289,14 +3289,34 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
+            // An offline family outlives the SSO session it began in (S3-22).
             revoke_families!(
                 tx,
-                "realm_id = $1 AND sso_session_id = $2",
+                "realm_id = $1 AND sso_session_id = $2
+                 AND NOT COALESCE((doc->>'offline')::boolean, false)",
                 realm_id,
                 session_id
             )?;
             jc_audit::commit(tx).await.map_err(storage)?;
             Ok(Some(sso_from_row(row)?))
+        })
+    }
+
+    fn revoke_offline_families_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            revoke_families!(
+                tx,
+                "realm_id = $1 AND user_id = $2 AND COALESCE((doc->>'offline')::boolean, false)",
+                realm_id,
+                user_id
+            )?;
+            jc_audit::commit(tx).await.map_err(storage)?;
+            Ok(())
         })
     }
 

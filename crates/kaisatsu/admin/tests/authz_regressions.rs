@@ -717,7 +717,8 @@ async fn roles_never_leak_across_realms_or_from_role_names() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
-/// A grant on one realm name creates no realm under another (id and name are both judged).
+/// A grant on one realm name creates no realm under another: the body's id is ignored, the realm
+/// is keyed by its name (S3-28).
 #[tokio::test]
 async fn a_realm_grant_creates_that_realm_only() {
     let f = Fixture::new().await;
@@ -746,11 +747,14 @@ async fn a_realm_grant_creates_that_realm_only() {
     );
     assert_eq!(
         create(json!({ "id": "other", "realm": "fresh" })).await,
-        StatusCode::FORBIDDEN
+        StatusCode::CREATED
     );
+    let fresh = f.store.get_realm("fresh").await.unwrap().expect("fresh");
+    assert_eq!(fresh.id, "fresh");
+    assert!(f.store.get_realm("other").await.unwrap().is_none());
     assert_eq!(
         create(json!({ "realm": "fresh" })).await,
-        StatusCode::CREATED
+        StatusCode::CONFLICT
     );
 }
 
@@ -808,6 +812,7 @@ fn live_family(id: &str, sso: &str) -> RefreshTokenFamily {
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
+        offline_since: None,
         revoked: false,
         expires_at: now + jiff::SignedDuration::from_hours(1),
         act: None,
@@ -889,6 +894,7 @@ async fn person_delete_and_service_account_user_follow_the_person() {
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
+        offline_since: None,
         revoked: false,
         expires_at: now + jiff::SignedDuration::from_hours(1),
         act: None,

@@ -1212,6 +1212,10 @@ pub struct RefreshTokenFamily {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dpop_jkt: Option<String>,
     pub offline: bool,
+    /// When an offline family's first token was minted: its maximum lifetime counts from here,
+    /// whatever the rotations since (S3-22).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_since: Option<TimestampTz>,
     pub revoked: bool,
     pub expires_at: TimestampTz,
     /// The delegation chain of an exchanged token, minted again by each refresh (S-4-08).

@@ -45,6 +45,8 @@ pub const KEYS_0001_SQL: &str = include_str!("../migrations/keys/0001_org_keys.s
 
 /// The audit rows (S6-20), in a ledger of its own for the same reason.
 pub const AUDIT_0001_SQL: &str = include_str!("../migrations/audit/0001_audit.sql");
+/// T-7564: the store log is trimmed once the tables hold it and the rollback window passed.
+pub const TRIM_0001_SQL: &str = include_str!("../migrations/trim/0001_trim.sql");
 
 /// How long a claimed event is this process's to send; after it another may claim it again, so
 /// an event is sent once, or again when its sender died or took longer.
@@ -278,6 +280,13 @@ impl PgStore {
             .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("audit migration failed: {e}")))?;
+        let mut trim =
+            Migrator::with_migrations(vec![migration(1, "store_log_trim", TRIM_0001_SQL)]);
+        trim.create_schema("shako_trim_migrations");
+        trim.dangerous_set_table_name("shako_trim_migrations._sqlx_migrations");
+        trim.run(migrate_pool)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("trim migration failed: {e}")))?;
         Ok(())
     }
 
@@ -294,6 +303,28 @@ impl PgStore {
         jc_audit::commit(tx).await.map_err(tables::failed)?;
         self.mark_ready(tenant).await;
         Ok(count)
+    }
+
+    /// Deletes the store log entries of tenant `(instance_id, org_id)` that its typed tables hold
+    /// and that a rollback can no longer need (the `trim_projected` policy decides which: 30 days
+    /// since the tenant's first projection and since the entry). Oldest first, in batches of
+    /// their own transaction under the tenant's lock, so no request waits behind one long
+    /// delete. Answers how many went.
+    // ponytail: run once per start; a periodic run when replicas live for weeks.
+    pub async fn trim_log(&self, instance_id: InstanceId, org_id: OrgId) -> ShakoResult<u64> {
+        let tenant = (instance_id, org_id);
+        let mut trimmed = 0;
+        loop {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            projection::lock(&mut tx, tenant).await?;
+            let (picked, gone) = projection::trim(&mut tx, tenant).await?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            trimmed += gone;
+            // An entry the policy keeps ends the run: every later one is younger.
+            if gone < picked || picked == 0 {
+                return Ok(trimmed);
+            }
+        }
     }
 
     /// Marks `tenant`'s tables caught up, once that stands: a request's unit that rolls back

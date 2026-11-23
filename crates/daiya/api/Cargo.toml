@@ -11,6 +11,7 @@ base64 = "0.22"
 bytes = "1"
 jc-time = { path = "../../shared/jc-time" }
 jc-types = { path = "../../shared/jc-types" }
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
 jc-audit = { path = "../../shared/jc-audit" }
 daiya-expr = { path = "../expr" }
 daiya-import = { path = "../import" }

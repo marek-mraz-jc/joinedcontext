@@ -202,8 +202,8 @@ async fn contract_folders(store: &dyn DaiyaStore) {
         .unwrap_err();
     assert!(looped.to_string().contains("cyclic"), "{looped}");
 
-    // Deleting a folder deletes its dashboards with their versions and public records;
-    // deleting twice answers false.
+    // A folder that holds dashboards, subfolders or library panels is refused naming them and
+    // keeps everything; emptied it deletes, and deleting twice answers false (S9-36).
     store
         .upsert_dashboard(dashboard(org, "in-folder", Some("f-a")), "", true)
         .await
@@ -212,36 +212,43 @@ async fn contract_folders(store: &dyn DaiyaStore) {
         .upsert_public_dashboard(public_dashboard(org, "pd-in", "in-folder", "tok-in"))
         .await
         .unwrap();
+    let now = TimestampTz::now();
     store
-        .upsert_dashboard(dashboard(org, "elsewhere", Some("f-b")), "", true)
+        .upsert_library_panel(LibraryPanelRecord {
+            installation_id: INST,
+            org_id: org,
+            instance_id: INSTANCE,
+            folder_uid: Some("f-b".into()),
+            uid: "lp-b".into(),
+            name: "CPU".into(),
+            panel_type: "timeseries".into(),
+            description: String::new(),
+            model: json!({ "type": "timeseries" }),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
         .await
         .unwrap();
-    assert!(store.delete_folder(org, "f-a").await.unwrap());
-    assert!(!store.delete_folder(org, "f-a").await.unwrap());
-    assert!(
-        store
-            .get_dashboard(org, "in-folder")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    for (uid, names) in [("f-a", "in-folder"), ("f-b", "lp-b"), ("l3", "l4")] {
+        let refused = store.delete_folder(org, uid).await.unwrap_err();
+        assert_eq!(refused.status_code(), 409, "{uid}: {refused}");
+        assert!(refused.to_string().contains(names), "{uid}: {refused}");
+    }
+    assert!(store.get_folder(org, "f-a").await.unwrap().is_some());
     assert!(
         store
             .get_public_dashboard(org, "pd-in")
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
+    assert!(store.delete_dashboard(org, "in-folder").await.unwrap());
+    assert!(store.delete_folder(org, "f-a").await.unwrap());
+    assert!(!store.delete_folder(org, "f-a").await.unwrap());
     assert!(
         store
-            .list_dashboard_versions(org, "in-folder")
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        store
-            .get_dashboard(org, "elsewhere")
+            .get_library_panel(org, "lp-b")
             .await
             .unwrap()
             .is_some()

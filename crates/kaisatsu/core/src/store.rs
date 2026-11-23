@@ -433,6 +433,13 @@ pub trait Store: Send + Sync {
         family: RefreshTokenFamily,
         expected_hash: &'a str,
     ) -> StoreFuture<'a, bool>;
+    /// Revokes every offline refresh family of the person: an offline session outlives its SSO
+    /// session, but not a password change that signs out the other devices (S3-22).
+    fn revoke_offline_families_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, ()>;
     fn revoke_refresh_families_for_session<'a>(
         &'a self,
         realm_id: &'a str,
