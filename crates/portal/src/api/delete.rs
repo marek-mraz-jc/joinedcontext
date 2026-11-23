@@ -108,6 +108,18 @@ pub fn has_typed_ref(
     }
 }
 
+/// The repository file of a resource that leaves or changes beside the deleted one: its own
+/// namespace's, `project` when it names none.
+fn file_of(
+    envelope: &crate::resource::ResourceEnvelope,
+    project: &str,
+) -> Result<String, ApiError> {
+    let info = crate::resource::by_kind(&envelope.kind)
+        .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", envelope.kind)))?;
+    let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
+    resolve_repo_path(envelope, info, namespace)
+}
+
 /// What else a Group's removal writes (PF-95): every `RoleBinding` and `App` naming the group,
 /// with the group taken out. A binding left naming nobody is removed; an access entry left naming
 /// nobody is dropped from its App.
@@ -451,7 +463,7 @@ pub async fn delete_with_identity(
         .ok_or_else(not_found)?;
 
     // 1b. Deletion needs `delete` in a binding that covers the project (T-0526, PF-50).
-    let target = serde_json::to_value(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let target = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     if !effective.may_read_manifest(kind_info.kind, &target) {
         return Err(not_found());
     }
@@ -540,7 +552,7 @@ pub async fn delete_with_identity(
         {
             let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
             let manifest =
-                serde_json::to_value(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+                serde_json::to_value(envelope).map_err(ApiError::internal)?;
             crate::permissions::for_request(state, identity, namespace).check(
                 &envelope.kind,
                 verb,
@@ -605,11 +617,8 @@ pub async fn delete_with_identity(
     // Inside a workspace, its branch is both where the file is read and where it goes (CC-76).
     let workspace_branch = match workspace {
         Some(workspace) => {
-            let open = state
-                .workspaces
-                .live(workspace)
-                .await
-                .map_err(|err| ApiError::NotFound(err.to_string()))?;
+            let open =
+                crate::ops::workspaces::visible(state, identity, project, workspace).await?;
             crate::api::mutate::within_workspace(&open, project, kind_info.kind, &envelope)?;
             if !crate::ops::workspaces::owns(&open, identity) {
                 return Err(ApiError::Denied(format!(
@@ -666,10 +675,7 @@ pub async fn delete_with_identity(
     // keeps serving a removed App's grants (T-2632, AP-21).
     if kind_info.kind == "App" {
         for grant in crate::api::mutate::held_grants(&mirror, project, name) {
-            let info = crate::resource::by_kind(&grant.kind).ok_or_else(|| {
-                ApiError::Internal(format!("no catalogue entry for {}", grant.kind))
-            })?;
-            let path = resolve_repo_path(&grant, info, project)?;
+            let path = file_of(&grant, project)?;
             if let Some(file) = shako.get_file(&path, &read_from).await? {
                 removals.push((path, file.sha));
             }
@@ -679,21 +685,12 @@ pub async fn delete_with_identity(
     // A Group's references, edited or removed beside it (PF-95).
     let mut uploads = Vec::new();
     for envelope in &cleanup.edited {
-        let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
-            ApiError::Internal(format!("no catalogue entry for {}", envelope.kind))
-        })?;
-        let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
-        let path = resolve_repo_path(envelope, info, namespace)?;
-        let yaml = serde_norway::to_string(envelope)
-            .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+        let path = file_of(envelope, project)?;
+        let yaml = serde_norway::to_string(envelope).map_err(ApiError::internal)?;
         uploads.push((path, yaml));
     }
     for envelope in &cleanup.removed {
-        let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
-            ApiError::Internal(format!("no catalogue entry for {}", envelope.kind))
-        })?;
-        let namespace = envelope.metadata.namespace.as_deref().unwrap_or(project);
-        let path = resolve_repo_path(envelope, info, namespace)?;
+        let path = file_of(envelope, project)?;
         if let Some(file) = shako.get_file(&path, &read_from).await? {
             removals.push((path, file.sha));
         }
@@ -827,6 +824,61 @@ mod tests {
         ));
     }
 
+    /// A file is named at any depth of a spec, in a list too, and a number names nothing.
+    #[test]
+    fn a_file_named_inside_a_list_is_still_named() {
+        let spec = json!({ "sources": [{ "files": ["./air.linkml.yaml"] }, 7] });
+        assert!(names_file(&spec, "air.linkml.yaml"));
+        assert!(!names_file(&spec, "water.linkml.yaml"));
+    }
+
+    fn org_envelope(kind: &str, name: &str, spec: serde_json::Value) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec,
+            status: None,
+        }
+    }
+
+    /// PF-95: a binding without subjects and an App without access entries name no group, and an
+    /// access entry without subjects is dropped from an App the group is removed from.
+    #[test]
+    fn a_group_cleanup_skips_what_names_no_group_and_drops_an_entry_left_empty() {
+        let mirror = crate::store::Mirror::new();
+        mirror.upsert(org_envelope("RoleBinding", "no-subjects", json!({ "role": "reader" })));
+        mirror.upsert(org_envelope("App", "no-access", json!({})));
+        mirror.upsert(org_envelope(
+            "App",
+            "alerts",
+            json!({ "access": [
+                { "roles": ["viewer"] },
+                { "subjects": [{ "group": "stewards" }, { "user": "jana@hel.fi" }], "roles": ["steward"] }
+            ] }),
+        ));
+        let cleanup = group_cleanup(&mirror, "stewards").expect("a cleanup");
+        assert!(cleanup.removed.is_empty());
+        let names: Vec<&str> = cleanup.edited.iter().map(|e| e.metadata.name.as_str()).collect();
+        assert_eq!(names, ["alerts"]);
+        assert_eq!(
+            cleanup.edited[0].spec["access"],
+            json!([{ "subjects": [{ "user": "jana@hel.fi" }], "roles": ["steward"] }])
+        );
+    }
+
+    /// A resource of a kind the catalogue does not know has no file to write.
+    #[test]
+    fn a_kind_without_a_catalogue_entry_has_no_file() {
+        let unknown = org_envelope("Spaceship", "x", json!({}));
+        assert!(matches!(
+            file_of(&unknown, "ovzdusie"),
+            Err(ApiError::Internal(m)) if m == "no catalogue entry for Spaceship"
+        ));
+        let binding = org_envelope("RoleBinding", "readers", json!({}));
+        assert!(file_of(&binding, "ovzdusie").is_ok_and(|path| path.ends_with("readers.yaml")));
+    }
+
     #[test]
     fn has_typed_ref_scenarios() {
         let same_ns_ref = json!({
@@ -947,10 +999,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err_plural {
-            ApiError::NotFound(msg) => assert!(msg.contains("mobility")),
-            other => panic!("expected NotFound, got {other:?}"),
-        }
+        assert!(
+            matches!(&err_plural, ApiError::NotFound(msg) if msg.contains("mobility")),
+            "{err_plural:?}"
+        );
 
         let err_name = delete_resource(
             user,
@@ -1056,15 +1108,11 @@ mod tests {
         .await
         .unwrap_err();
 
-        match err1 {
-            ApiError::Conflict(msg) => {
-                assert_eq!(
-                    msg,
-                    "1 dependent resource blocks deletion: Endpoint live-traffic"
-                );
-            }
-            other => panic!("expected Conflict, got {other:?}"),
-        }
+        assert!(
+            matches!(&err1, ApiError::Conflict(msg)
+                if msg == "1 dependent resource blocks deletion: Endpoint live-traffic"),
+            "{err1:?}"
+        );
 
         state.mirror.upsert(ResourceEnvelope {
             api_version: API_VERSION.into(),

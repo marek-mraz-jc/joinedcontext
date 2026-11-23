@@ -104,7 +104,7 @@ fn reading(
         "class": "auto",
         "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
     }))
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .map_err(ApiError::internal)?;
     let sample = Sample {
         text: Some(String::new()),
         url: None,
@@ -113,7 +113,7 @@ fn reading(
         sheet: None,
     };
     let mut config =
-        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
+        harness(&probe, &sample, capture).map_err(ApiError::internal)?;
     config["input"] = input;
     config["pipeline"] = json!({ "processors": processors });
     Ok(config)
@@ -136,7 +136,7 @@ pub(crate) fn source_read(
     }
     let context = InputContext::new(name, project, reader);
     let input = serde_json::to_value(input_of(source, &context))
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::internal)?;
     // The allow-list a pipeline step is held to (PL-07), over every address the input names.
     if let Some(reason) = refused_target(&input.to_string()) {
         return Err(ApiError::BadRequest(format!(
@@ -146,7 +146,7 @@ pub(crate) fn source_read(
     let input = isolated(input).map_err(ApiError::BadRequest)?;
     let (input, mut processors) = match (&source.source_type, input) {
         (DataSourceType::Http | DataSourceType::GtfsRt, Value::Object(mut map)) => {
-            let mut fetch = map.remove("http_client").unwrap_or_else(|| json!({}));
+            let mut fetch = map.remove("http_client").unwrap_or_default();
             fetch["timeout"] = json!("3s");
             fetch["retries"] = json!(0);
             (
@@ -158,7 +158,7 @@ pub(crate) fn source_read(
     };
     for processor in prepended_processors(source, &context) {
         processors
-            .push(serde_json::to_value(processor).map_err(|e| ApiError::Internal(e.to_string()))?);
+            .push(serde_json::to_value(processor).map_err(ApiError::internal)?);
     }
     Ok((input, processors))
 }
@@ -235,7 +235,7 @@ pub(crate) fn saved_source(
         .get(project, "DataSource", name)
         .ok_or_else(unknown)?;
     let manifest =
-        serde_json::to_value(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+        serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     // Running a source on the runner is what proposing one is for: a reader sees it, an author tests it.
     effective.check("DataSource", Verb::Propose, Some(&manifest))?;
     serde_json::from_value(envelope.spec.clone())

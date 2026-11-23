@@ -135,7 +135,7 @@ pub async fn webhook_info(
         .get(&project, "DataSource", &name)
         .ok_or_else(unknown)?;
     let manifest =
-        serde_json::to_value(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+        serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     effective.check("DataSource", Verb::Read, Some(&manifest))?;
     let source: DataSourceSpec = serde_json::from_value(envelope.spec.clone())
         .map_err(|e| ApiError::BadRequest(format!("the saved source does not parse: {e}")))?;
@@ -172,7 +172,7 @@ fn signed(
     match &webhook.auth.hmac {
         Some(hmac) => {
             let mut mac = Hmac::<Sha256>::new_from_slice(credential.as_bytes())
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::internal)?;
             mac.update(body.as_bytes());
             let digest: String = mac
                 .finalize()
@@ -205,7 +205,7 @@ fn signed(
         (status = 401, description = "Unauthorized", body = ProblemDetails),
         (status = 403, description = "No grant proposes a DataSource in this project", body = ProblemDetails),
         (status = 404, description = "No such DataSource in this project", body = ProblemDetails),
-        (status = 422, description = "The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap", body = ProblemDetails),
+        (status = 422, description = "The source is no webhook or names no single credential, `pipeline` reads no such source, or `body` is empty or over the cap", body = ProblemDetails),
         (status = 503, description = "The runner does not run in this process, or holds no credential for the source yet", body = ProblemDetails),
     )
 )]
@@ -246,9 +246,13 @@ pub async fn test_event(
         .as_deref()
         .ok_or_else(unavailable)?;
     let host = crate::pipeline_secrets::host_runner().ok_or_else(unavailable)?;
-    let reference = webhook
-        .credential()
-        .ok_or_else(|| ApiError::Internal("a validated webhook holds one credential".into()))?;
+    // A source written into the repository by hand may name no credential, or both.
+    let Some(reference) = webhook.credential() else {
+        return Err(ApiError::Unprocessable {
+            detail: "spec.webhook.auth: name exactly one of hmac or bearer, so the event can be signed".into(),
+            errors: vec!["spec.webhook.auth".into()],
+        });
+    };
     let credential = host
         .credential(&project, &env_var_of(&name, reference))
         .ok_or_else(|| {
@@ -266,7 +270,7 @@ pub async fn test_event(
         .timeout(TEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::internal)?;
     let request = signed(
         client
             .post(url)

@@ -288,11 +288,20 @@ pub async fn execute_dry_run(
     )
     .await?;
 
-    let bytes = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to read dry-run response: {e}")))?;
-    serde_json::from_slice::<DryRunResult>(&bytes)
-        .map_err(|e| ApiError::Internal(format!("failed to deserialize dry-run result: {e}")))
+    let bytes = match axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(ApiError::Internal(format!(
+                "failed to read dry-run response: {e}"
+            )))
+        }
+    };
+    match serde_json::from_slice::<DryRunResult>(&bytes) {
+        Ok(result) => Ok(result),
+        Err(e) => Err(ApiError::Internal(format!(
+            "failed to deserialize dry-run result: {e}"
+        ))),
+    }
 }
 
 #[cfg(test)]

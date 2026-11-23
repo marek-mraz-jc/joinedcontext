@@ -163,6 +163,27 @@ async fn a_group_leaves_every_binding_and_access_entry_in_the_same_change() {
     files_exist(&shako).await;
     let state = state_with(&shako);
 
+    // The dry run names every binding and App the removal edits or removes, and writes nothing
+    // (T-3247, T-7657).
+    let checked = send(&state, person("ada"), "DELETE", &format!("{GROUP}?dryRun=All"), None).await;
+    assert_eq!(checked.status, StatusCode::OK, "{}", checked.text);
+    let plan: serde_json::Value = serde_json::from_str(&checked.text).expect("a dry run");
+    let bindings = &plan["goesWith"][0];
+    assert_eq!(bindings["what"], "bindings", "{plan}");
+    let names: Vec<&str> = bindings["names"]
+        .as_array()
+        .map(|names| names.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(bindings["count"], names.len(), "{plan}");
+    for name in ["RoleBinding/mixed", "RoleBinding/stewards-only", "App/alerts"] {
+        assert!(names.contains(&name), "{name}: {plan}");
+    }
+    let writes = shako.received_requests().await.unwrap_or_default();
+    assert!(
+        !writes.iter().any(|r| r.method.as_str() == "POST"),
+        "a dry run writes nothing"
+    );
+
     let answer = send(
         &state,
         person("ada"),
@@ -308,6 +329,45 @@ async fn deleting_a_group_needs_the_rights_its_cascade_needs() {
         "{}",
         answer.text
     );
+}
+
+/// T-7657: a binding's removal is checked like every other (its own-access rule included), and
+/// an organization model nothing imports may go; both dry runs answer the plan and write nothing.
+#[tokio::test]
+async fn a_binding_and_an_unimported_organization_model_plan_their_removal() {
+    let shako = forge().await;
+    files_exist(&shako).await;
+    let state = state_with(&shako);
+    state.mirror.upsert(envelope(
+        "Role",
+        "model-admin",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["DataModel"], "verbs": ["read", "delete"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "model-admins",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ada@hel.fi" }], "role": "model-admin", "scope": { "organization": "hel" } }),
+    ));
+    state.mirror.upsert(envelope(
+        "DataModel",
+        "air",
+        ORG_NAMESPACE,
+        json!({ "linkml": "./air.linkml.yaml" }),
+    ));
+    for uri in [
+        "/api/v1/projects/org/rolebindings/editors?dryRun=All",
+        "/api/v1/projects/org/datamodels/air?dryRun=All",
+    ] {
+        let answer = send(&state, person("ada"), "DELETE", uri, None).await;
+        assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
+        let plan: serde_json::Value = serde_json::from_str(&answer.text).expect("a dry run");
+        assert_eq!(plan["valid"], true, "{plan}");
+        assert_eq!(plan["plan"]["summary"]["delete"], 1, "{plan}");
+    }
+    let writes = shako.received_requests().await.unwrap_or_default();
+    assert!(!writes.iter().any(|r| r.method.as_str() == "POST"));
 }
 
 /// A group nothing names is removed alone, as before.

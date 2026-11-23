@@ -78,7 +78,7 @@ fn draft_op(name: &str) -> Result<&'static ops::Operation, ApiError> {
 }
 
 fn sse_draft_event(event: &DraftEvent) -> Event {
-    let data = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
+    let data = serde_json::to_string(event).unwrap_or_default();
     Event::default()
         .event(event.event.clone())
         .id(event.version.to_string())
@@ -412,6 +412,27 @@ mod tests {
             assert_eq!(caller.identity.subject, "sub-1");
             assert!(caller.bearer.is_none() && caller.access.is_none());
         }
+    }
+
+    /// The request the API reference shows for Put Draft is one the route takes.
+    #[test]
+    fn the_documented_put_draft_example_is_a_request_the_route_takes() {
+        use utoipa::Path as _;
+        let operation = __path_put_draft::operation();
+        let body = operation.request_body.expect("a request body");
+        let example = body.content["application/json"]
+            .example
+            .clone()
+            .expect("an example");
+        let req: PutDraftRequest = serde_json::from_value(example).expect("a PutDraftRequest");
+        assert_eq!(req.expected_version, Some(3));
+        assert_eq!(req.manifest["metadata"]["name"], "helsinki-air");
+        // The reference carries the request's schema beside the operation.
+        use utoipa::OpenApi as _;
+        let components = crate::openapi::ApiDoc::openapi()
+            .components
+            .expect("components");
+        assert!(components.schemas.contains_key("PutDraftRequest"));
     }
 
     #[test]

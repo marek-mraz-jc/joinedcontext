@@ -699,6 +699,39 @@ async fn a_write_into_someone_elses_workspace_is_refused() {
     assert!(answer.text.contains("only its owner"), "{}", answer.text);
 }
 
+/// API/01 §22 (T-7657): a removal inside the owner's workspace is one commit on its branch and
+/// no Change of the project; in someone else's workspace it is refused and nothing is written.
+#[tokio::test]
+async fn a_removal_inside_a_workspace_is_a_commit_on_its_branch_and_only_the_owners() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    for git_ref in ["base1", "workspace/air-v2"] {
+        tree(&server, git_ref, &[(AIR, "x")]).await;
+    }
+    file(&server, "workspace/air-v2", &space("en", 10)).await;
+    let uri = "/api/v1/projects/ovzdusie/spaces/air?workspace=air-v2&confirm=air";
+    let other = Identity {
+        client: None,
+        groups: vec!["portal-approver".into()],
+        ..person("petra")
+    };
+    let refused = send(&state, other, "DELETE", uri, None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert!(refused.text.contains("only its owner"), "{}", refused.text);
+    assert!(calls(&server, "POST", "/Shako.CommitFiles").await.is_empty());
+
+    let removed = send(&state, steward(), "DELETE", uri, None).await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.text);
+    let answer = body(&removed.text);
+    assert_eq!(answer["branch"], "workspace/air-v2", "{answer}");
+    assert_eq!(answer["path"], AIR, "{answer}");
+    assert!(answer["metadata"].is_null(), "no Change: {answer}");
+    let commits = calls(&server, "POST", "/Shako.CommitFiles").await;
+    assert_eq!(commits.len(), 1, "{commits:?}");
+    assert_eq!(commits[0]["Branch"], "workspace/air-v2", "{}", commits[0]);
+    assert!(calls(&server, "POST", "/PullRequests").await.is_empty());
+}
+
 #[tokio::test]
 async fn a_form_checks_and_writes_its_draft_into_the_owners_workspace() {
     // T-4868: every Portal form names the draft it holds beside the manifest; inside a copy the

@@ -1601,6 +1601,19 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
         variable,
         "tok-1".into(),
     )));
+    // A source written into the repository by hand with no credential cannot be signed.
+    let mut bare = webhook_source("bare", json!({}));
+    bare.metadata = ObjectMeta::new("ttn", "porvoo");
+    let unsigned = Arc::new(Mirror::new());
+    for envelope in mirror.matching(|env| env.metadata.name != "ttn" || env.kind != "DataSource") {
+        unsigned.upsert(envelope);
+    }
+    unsigned.upsert(bare);
+    let unsigned = AppState::new(config(Some(&runner)), None).with_mirror(unsigned);
+    let (status, answer) = send(&unsigned, "dev@hel.fi", uri, &event("uplinks", "{}".into())).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(answer["errors"][0]["path"], "spec.webhook.auth", "{answer}");
+
     Mock::given(method("POST"))
         .and(wiremock::matchers::path("/porvoo/ingest/default/porvoo.uplinks/ttn"))
         .and(wiremock::matchers::header("authorization", "Bearer tok-1"))

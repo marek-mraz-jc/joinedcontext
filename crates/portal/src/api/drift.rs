@@ -243,8 +243,11 @@ pub async fn adopt_drift(
             ))
         })?;
     let content = adopted(&file.content, &id, &live).map_err(ApiError::Conflict)?;
-    let envelope = crate::api::changes::seed_envelope(&entity.source, &content)
-        .ok_or_else(|| ApiError::Internal("the adopted seed file is no JSON".to_owned()))?;
+    let Some(envelope) = crate::api::changes::seed_envelope(&entity.source, &content) else {
+        return Err(ApiError::Internal(
+            "the adopted seed file is no JSON".to_owned(),
+        ));
+    };
 
     // Held until the merge request is open, so a second adoption finds it (F-POR2-011).
     let held = crate::api::mutate::turn(shako, &adopt_branch(&project, &space, &id)).await;
@@ -339,9 +342,8 @@ fn adopted(text: &str, id: &str, live: &Value) -> Result<String, String> {
             }
         }
     }
-    let mut out = serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?;
-    out.push('\n');
-    Ok(out)
+    // `{:#}` is serde_json's pretty printer, which cannot fail on a `Value`.
+    Ok(format!("{document:#}\n"))
 }
 
 pub fn router() -> Router<AppState> {
