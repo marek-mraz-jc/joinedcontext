@@ -983,7 +983,7 @@ async fn move_person(
     realm: &str,
     old: UserRepresentation,
     mut new: UserRepresentation,
-    grants: Option<(Vec<String>, HashMap<String, Vec<String>>)>,
+    grants: Option<kaisatsu_import::Grants>,
 ) -> Result<UserRepresentation> {
     let credentials = store.list_credentials(realm, &old.id).await?;
     let passkeys = store.list_webauthn_credentials(realm, &old.id).await?;

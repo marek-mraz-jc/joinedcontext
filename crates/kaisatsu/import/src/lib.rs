@@ -1212,7 +1212,7 @@ fn merged_user(
     prev: &UserRepresentation,
     file: &Value,
     parsed: &UserRepresentation,
-    admin_grants: (Vec<String>, HashMap<String, Vec<String>>),
+    admin_grants: Grants,
 ) -> Result<UserRepresentation> {
     let mut doc = serde_json::to_value(prev).map_err(|e| KaisatsuError::Storage(e.to_string()))?;
     if let (Value::Object(stored), Some(named)) = (&mut doc, file.as_object()) {
@@ -1256,13 +1256,16 @@ fn merged_user(
     Ok(user)
 }
 
+/// A person's role grants: realm role names, and role names by `clientId`.
+pub type Grants = (Vec<String>, HashMap<String, Vec<String>>);
+
 /// The grants `given` names added to an administrator's (`admin_grants`): realm role names, and
 /// role names by `clientId`, each once.
 pub fn grants_with(
-    admin_grants: (Vec<String>, HashMap<String, Vec<String>>),
+    admin_grants: Grants,
     realm_roles: &[String],
     client_roles: &HashMap<String, Vec<String>>,
-) -> (Vec<String>, HashMap<String, Vec<String>>) {
+) -> Grants {
     let (mut realm, mut clients) = admin_grants;
     for role in realm_roles {
         if !realm.contains(role) {
@@ -1287,7 +1290,7 @@ pub async fn admin_grants(
     store: &Arc<dyn Store>,
     realm_id: &str,
     user: &UserRepresentation,
-) -> Result<(Vec<String>, HashMap<String, Vec<String>>)> {
+) -> Result<Grants> {
     let realm_roles = store
         .list_role_mappings_for_principal(realm_id, "user", &user.id, None)
         .await?
