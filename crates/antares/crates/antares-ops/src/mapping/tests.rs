@@ -38,13 +38,12 @@ fn compile(ir: &Value) -> Result<Mapping, String> {
     Mapping::compile(ir, &antares_jsonld::core_context(), None)
 }
 
-fn mapping() -> Mapping {
-    compile(&ir()).unwrap_or_else(|e| unreachable!("the IR compiles: {e}"))
+fn mapping() -> Result<Mapping, String> {
+    compile(&ir())
 }
 
-fn slots(slots: &Value) -> Mapping {
+fn slots(slots: &Value) -> Result<Mapping, String> {
     compile(&json!({ "version": 2, "sourceClass": "S", "targetClass": "T", "slots": slots }))
-        .unwrap_or_else(|e| unreachable!("the IR compiles: {e}"))
 }
 
 /// The generated term the broker's answer names a source Attribute by.
@@ -116,8 +115,8 @@ fn sent(m: &Mapping, q: &str) -> Result<String, &'static str> {
 }
 
 #[test]
-fn an_answer_comes_back_in_the_target_model() {
-    let m = mapping();
+fn an_answer_comes_back_in_the_target_model() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     let mut entity = answered(&m, &stored());
     m.rebuild(&mut entity, &Keep::default());
     assert_eq!(
@@ -174,18 +173,18 @@ fn an_answer_comes_back_in_the_target_model() {
         ]),
         "no source name, input or underived attribute survives: {entity}"
     );
+    Ok(())
 }
 
 #[test]
-fn a_filter_written_in_the_target_model_reaches_the_broker_in_the_source_model() {
-    let m = mapping();
-    let inv = m
-        .invert(&pairs(&[
-            ("type", "AirQualityObserved"),
-            ("attrs", "pm25,temperature"),
-            ("q", "reliability==\"high\";temperature>19"),
-        ]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+fn a_filter_written_in_the_target_model_reaches_the_broker_in_the_source_model(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let inv = m.invert(&pairs(&[
+        ("type", "AirQualityObserved"),
+        ("attrs", "pm25,temperature"),
+        ("q", "reliability==\"high\";temperature>19"),
+    ]))?;
     assert!(!inv.selects_nothing);
     assert_eq!(
         inv.pairs.first(),
@@ -197,11 +196,13 @@ fn a_filter_written_in_the_target_model_reaches_the_broker_in_the_source_model()
         sent(&m, "reliability==\"high\";temperature>19"),
         Ok("spolahlivost==\"vysoka\",\"high\";teplota>292.15".to_owned())
     );
+    Ok(())
 }
 
 #[test]
-fn a_filter_on_a_slot_the_mapping_cannot_invert_is_refused() {
-    let m = mapping();
+fn a_filter_on_a_slot_the_mapping_cannot_invert_is_refused(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     for q in [
         "label==\"x\"",
         "dataProvider==\"bb\"",
@@ -220,11 +221,12 @@ fn a_filter_on_a_slot_the_mapping_cannot_invert_is_refused() {
         Err(UNKNOWN),
         "nor a generated term"
     );
+    Ok(())
 }
 
 #[test]
-fn the_two_directions_agree_on_every_derivation() {
-    let m = mapping();
+fn the_two_directions_agree_on_every_derivation() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     for (target, produced, source, stored) in [
         (
             "reliability",
@@ -240,10 +242,11 @@ fn the_two_directions_agree_on_every_derivation() {
             Ok(format!("{source}=={stored}"))
         );
     }
+    Ok(())
 }
 
 #[test]
-fn an_ir_this_broker_does_not_run_is_refused_at_load() {
+fn an_ir_this_broker_does_not_run_is_refused_at_load() -> Result<(), Box<dyn std::error::Error>> {
     let with = |key: &str, v: Value| {
         let mut d = ir();
         d[key] = v;
@@ -264,12 +267,12 @@ fn an_ir_this_broker_does_not_run_is_refused_at_load() {
         .contains("an object"));
     let mut ctx = antares_jsonld::core_context();
     let bad = json!({ "Bad": "@id" });
-    ctx.merge_object(bad.as_object().unwrap_or(&Map::new()))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    ctx.merge_object(bad.as_object().unwrap_or(&Map::new()))?;
     let mut d = ir();
     d["targetClass"] = json!("Bad");
     let e = Mapping::compile(&d, &ctx, None).err().unwrap_or_default();
     assert!(e.contains("does not expand"), "{e}");
+    Ok(())
 }
 
 #[test]
@@ -365,22 +368,22 @@ fn a_malformed_slot_is_refused_with_its_index() {
 }
 
 #[test]
-fn a_slot_that_does_not_say_it_is_filterable_is_not() {
-    let m = slots(&json!([{ "target": "x", "source": "y", "kind": "rename" }]));
+fn a_slot_that_does_not_say_it_is_filterable_is_not() -> Result<(), Box<dyn std::error::Error>> {
+    let m = slots(&json!([{ "target": "x", "source": "y", "kind": "rename" }]))?;
     assert_eq!(invert_q(&m, "x==1"), Err(NOT_FILTERABLE));
     assert_eq!(
         m.source_attribute("x").map(|(i, _)| i),
         Ok(0),
         "it is still served"
     );
+    Ok(())
 }
 
 #[test]
-fn attrs_asks_the_broker_for_what_a_computed_slot_reads_and_the_answer_keeps_only_what_was_asked() {
-    let m = mapping();
-    let inv = m
-        .invert(&pairs(&[("attrs", "label,pm25")]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+fn attrs_asks_the_broker_for_what_a_computed_slot_reads_and_the_answer_keeps_only_what_was_asked(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let inv = m.invert(&pairs(&[("attrs", "label,pm25")]))?;
     let asked = format!(
         "{},{},{}",
         term(&m, "nazov"),
@@ -399,9 +402,7 @@ fn attrs_asks_the_broker_for_what_a_computed_slot_reads_and_the_answer_keeps_onl
         entity.get("reliability").is_none(),
         "an input fetched for an expression is no attribute the caller asked for: {entity}"
     );
-    let only_constant = m
-        .invert(&pairs(&[("attrs", "dataProvider")]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    let only_constant = m.invert(&pairs(&[("attrs", "dataProvider")]))?;
     assert!(
         only_constant.pairs.is_empty(),
         "nothing to ask the broker for"
@@ -419,11 +420,11 @@ fn attrs_asks_the_broker_for_what_a_computed_slot_reads_and_the_answer_keeps_onl
         Some(UNKNOWN),
         "attrs names at least one"
     );
+    Ok(())
 }
 
-fn computed(slots: &Value) -> Mapping {
+fn computed(slots: &Value) -> Result<Mapping, String> {
     compile(&json!({ "version": 2, "sourceClass": "A", "targetClass": "B", "slots": slots }))
-        .unwrap_or_else(|e| unreachable!("{e}"))
 }
 
 fn slot_of(target: &str, expression: &Value) -> Value {
@@ -437,9 +438,9 @@ fn rebuilt(m: &Mapping, entity: &Value) -> Value {
 }
 
 /// Each computed slot of `cases` over one Entity holds its expected value.
-fn evaluates(cases: &[(&str, Value, Value)]) {
+fn evaluates(cases: &[(&str, Value, Value)]) -> Result<(), Box<dyn std::error::Error>> {
     let listed: Vec<Value> = cases.iter().map(|(n, e, _)| slot_of(n, e)).collect();
-    let m = computed(&Value::Array(listed));
+    let m = computed(&Value::Array(listed))?;
     let e = rebuilt(
         &m,
         &json!({
@@ -454,6 +455,7 @@ fn evaluates(cases: &[(&str, Value, Value)]) {
     for (slot, _, value) in cases {
         assert_eq!(&e[*slot]["value"], value, "{slot}: {e}");
     }
+    Ok(())
 }
 
 fn op(kind: &str, op: &str, left: &Value, right: &Value) -> Value {
@@ -461,7 +463,7 @@ fn op(kind: &str, op: &str, left: &Value, right: &Value) -> Value {
 }
 
 #[test]
-fn every_arithmetic_form_evaluates() {
+fn every_arithmetic_form_evaluates() -> Result<(), Box<dyn std::error::Error>> {
     let (a, b, f) = (
         json!({ "slot": "a" }),
         json!({ "slot": "b" }),
@@ -484,11 +486,12 @@ fn every_arithmetic_form_evaluates() {
             op("binary", "+", &json!({ "slot": "name" }), &k(json!("!"))),
             json!("sensor!"),
         ),
-    ]);
+    ])?;
+    Ok(())
 }
 
 #[test]
-fn every_comparison_and_junction_evaluates() {
+fn every_comparison_and_junction_evaluates() -> Result<(), Box<dyn std::error::Error>> {
     let (a, b) = (json!({ "slot": "a" }), json!({ "slot": "b" }));
     let (name, on) = (json!({ "slot": "name" }), json!({ "slot": "on" }));
     let k = |v: Value| json!({ "const": v });
@@ -527,11 +530,13 @@ fn every_comparison_and_junction_evaluates() {
             ] }),
             json!(false),
         ),
-    ]);
+    ])?;
+    Ok(())
 }
 
 #[test]
-fn a_computed_slot_with_nothing_to_compute_from_is_left_out() {
+fn a_computed_slot_with_nothing_to_compute_from_is_left_out(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = computed(&json!([
         slot_of(
             "missing",
@@ -585,7 +590,7 @@ fn a_computed_slot_with_nothing_to_compute_from_is_left_out() {
             "present",
             &json!({ "binary": "*", "left": { "slot": "a" }, "right": { "const": 10 } })
         )
-    ]));
+    ]))?;
     let e = rebuilt(
         &m,
         &json!({
@@ -621,14 +626,16 @@ fn a_computed_slot_with_nothing_to_compute_from_is_left_out() {
         json!(40),
         "the rest of the view still answers"
     );
+    Ok(())
 }
 
 #[test]
-fn an_expression_reads_a_key_value_entity_as_readily_as_a_normalized_one() {
+fn an_expression_reads_a_key_value_entity_as_readily_as_a_normalized_one(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = computed(&json!([slot_of(
         "joined",
         &json!({ "binary": "+", "left": { "slot": "name" }, "right": { "slot": "rel" } })
-    )]));
+    )]))?;
     let e = rebuilt(
         &m,
         &json!({ "id": "urn:ngsi-ld:A:1", "type": "jcSrcClass", "name": "a", "rel": "b" }),
@@ -640,6 +647,7 @@ fn an_expression_reads_a_key_value_entity_as_readily_as_a_normalized_one() {
         "name": { "type": "Property", "value": "a" }, "rel": { "type": "Relationship", "object": "b" } }),
     );
     assert_eq!(e["joined"], json!({ "type": "Property", "value": "ab" }));
+    Ok(())
 }
 
 #[test]
@@ -670,11 +678,12 @@ fn an_expression_node_this_broker_does_not_evaluate_is_refused() {
 }
 
 #[test]
-fn a_computed_slot_is_refused_in_a_filter_an_order_and_a_geoquery() {
+fn a_computed_slot_is_refused_in_a_filter_an_order_and_a_geoquery(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = computed(&json!([slot_of(
         "label",
         &json!({ "binary": "+", "left": { "slot": "name" }, "right": { "const": "!" } })
-    )]));
+    )]))?;
     assert_eq!(
         invert_q(&m, "label==\"x!\""),
         Err(UNKNOWN).or(Err(NOT_FILTERABLE))
@@ -688,25 +697,28 @@ fn a_computed_slot_is_refused_in_a_filter_an_order_and_a_geoquery() {
         Some(NOT_FILTERABLE)
     );
     assert_eq!(m.source_attribute("label").err(), Some(COMPUTED));
+    Ok(())
 }
 
 #[test]
-fn a_separator_inside_a_quoted_value_stays_in_the_value() {
+fn a_separator_inside_a_quoted_value_stays_in_the_value() -> Result<(), Box<dyn std::error::Error>>
+{
     let m = slots(
         &json!([{ "target": "name", "source": "nazov", "kind": "rename", "filterable": true }]),
-    );
+    )?;
     assert_eq!(
         sent(&m, r#"name=="a;b|(c)""#),
         Ok(r#"nazov=="a;b|(c)""#.to_owned())
     );
+    Ok(())
 }
 
 #[test]
-fn a_negative_factor_turns_the_comparison_around() {
+fn a_negative_factor_turns_the_comparison_around() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "depth", "source": "height", "kind": "unitConversion",
         "factor": -1.0, "offset": 0.0, "filterable": true }]),
-    );
+    )?;
     for (asked, sent_q) in [
         ("depth>5", "height<-5"),
         ("depth>=5", "height<=-5"),
@@ -718,14 +730,16 @@ fn a_negative_factor_turns_the_comparison_around() {
     ] {
         assert_eq!(sent(&m, asked), Ok(sent_q.to_owned()), "{asked}");
     }
+    Ok(())
 }
 
 #[test]
-fn a_positive_factor_keeps_the_order_and_inverts_the_values() {
+fn a_positive_factor_keeps_the_order_and_inverts_the_values(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "t", "source": "s", "kind": "unitConversion",
         "factor": 2.0, "offset": 1.0, "filterable": true }]),
-    );
+    )?;
     for (asked, sent_q) in [
         ("t>5", "s>2"),
         ("t<=5", "s<=2"),
@@ -748,15 +762,16 @@ fn a_positive_factor_keeps_the_order_and_inverts_the_values() {
     ] {
         assert!(invert_q(&m, refused).is_err(), "{refused}");
     }
+    Ok(())
 }
 
 #[test]
-fn a_many_to_one_table_inverts_to_every_source_value() {
+fn a_many_to_one_table_inverts_to_every_source_value() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "level", "source": "uroven", "kind": "valueMappings",
         "forward": { "a": "high", "b": "high", "c": "low", "high": "low", "7": "seven", "true": "yes" },
         "inverse": { "high": "a", "low": "c" }, "filterable": true }]),
-    );
+    )?;
     for (asked, sent_q) in [
         ("level==\"high\"", r#"uroven=="a","b""#),
         ("level!=\"high\"", r#"uroven!="a","b""#),
@@ -785,15 +800,16 @@ fn a_many_to_one_table_inverts_to_every_source_value() {
     ] {
         assert!(invert_q(&m, refused).is_err(), "{refused}");
     }
+    Ok(())
 }
 
 #[test]
-fn a_cast_a_constant_and_an_expression_compare_nowhere() {
+fn a_cast_a_constant_and_an_expression_compare_nowhere() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "n", "source": "s", "kind": "cast", "range": "integer", "filterable": true },
         { "target": "k", "kind": "constant", "value": 1, "filterable": true },
         { "target": "e", "kind": "expr", "filterable": true, "expression": { "slot": "s" } }
-    ]));
+    ]))?;
     assert_eq!(
         sent(&m, "n"),
         Ok("s".to_owned()),
@@ -816,13 +832,15 @@ fn a_cast_a_constant_and_an_expression_compare_nowhere() {
     for produced in ["k", "e", "!k"] {
         assert_eq!(invert_q(&m, produced), Err(NOT_FILTERABLE), "{produced}");
     }
+    Ok(())
 }
 
 #[test]
-fn a_renamed_slot_keeps_every_operator_and_a_member_path() {
+fn a_renamed_slot_keeps_every_operator_and_a_member_path() -> Result<(), Box<dyn std::error::Error>>
+{
     let m = slots(
         &json!([{ "target": "name", "source": "nazov", "kind": "rename", "filterable": true }]),
-    );
+    )?;
     for (asked, sent_q) in [
         ("name~=\"a.*\"", "nazov~=\"a.*\""),
         ("name!~=\"a\"", "nazov!~=\"a\""),
@@ -835,31 +853,30 @@ fn a_renamed_slot_keeps_every_operator_and_a_member_path() {
     ] {
         assert_eq!(sent(&m, asked), Ok(sent_q.to_owned()), "{asked}");
     }
+    Ok(())
 }
 
 #[test]
-fn a_linked_path_and_an_unparsable_q_are_refused() {
+fn a_linked_path_and_an_unparsable_q_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "name", "source": "nazov", "kind": "rename", "filterable": true }]),
-    );
+    )?;
     assert_eq!(invert_q(&m, "name{name}==\"a\""), Err(DEEP_PATH));
     assert_eq!(invert_q(&m, "name=="), Err(BAD_Q));
+    Ok(())
 }
 
 #[test]
-fn a_type_selects_the_source_class_or_nothing() {
-    let m = mapping();
-    let ty = |sel: &str| {
-        m.invert(&pairs(&[("type", sel)]))
-            .unwrap_or_else(|e| unreachable!("{e}"))
-    };
+fn a_type_selects_the_source_class_or_nothing() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let ty = |sel: &str| m.invert(&pairs(&[("type", sel)]));
     for served in [
         "AirQualityObserved",
         "*",
         "Other,AirQualityObserved",
         "Other|(AirQualityObserved)",
     ] {
-        let i = ty(served);
+        let i = ty(served)?;
         assert!(!i.selects_nothing, "{served}");
         assert_eq!(
             i.pairs,
@@ -868,17 +885,16 @@ fn a_type_selects_the_source_class_or_nothing() {
         );
     }
     for nothing in ["Other", "MestskySenzor", "(AirQualityObserved;Other)"] {
-        let i = ty(nothing);
+        let i = ty(nothing)?;
         assert!(i.selects_nothing && i.pairs.is_empty(), "{nothing}");
     }
+    Ok(())
 }
 
 #[test]
-fn pick_and_omit_apply_to_the_rebuilt_answer() {
-    let m = mapping();
-    let inv = m
-        .invert(&pairs(&[("pick", "id,pm25,label"), ("omit", "label")]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+fn pick_and_omit_apply_to_the_rebuilt_answer() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let inv = m.invert(&pairs(&[("pick", "id,pm25,label"), ("omit", "label")]))?;
     assert!(inv.pairs.is_empty(), "neither goes to the broker");
     let mut e = answered(&m, &stored());
     e["@context"] = json!({ "jcSrc0": "x" });
@@ -893,17 +909,18 @@ fn pick_and_omit_apply_to_the_rebuilt_answer() {
         assert!(m.invert(&pairs(&[("pick", listed)])).is_ok(), "{listed}");
     }
     assert_eq!(m.invert(&pairs(&[("omit", "pm2p5")])).err(), Some(UNKNOWN));
+    Ok(())
 }
 
 #[test]
-fn order_by_follows_the_slot_kind() {
+fn order_by_follows_the_slot_kind() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "name", "source": "nazov", "kind": "rename", "filterable": true },
         { "target": "up", "source": "u", "kind": "unitConversion", "factor": 2, "filterable": true },
         { "target": "down", "source": "d", "kind": "unitConversion", "factor": -2, "filterable": true },
         { "target": "level", "source": "l", "kind": "valueMappings", "forward": {}, "filterable": true },
         { "target": "hidden", "source": "h", "kind": "rename" }
-    ]));
+    ]))?;
     let order = |spec: &str| {
         m.invert(&pairs(&[("orderBy", spec)]))
             .map(|i| sent_names(&m, &i.pairs[0].1))
@@ -922,6 +939,7 @@ fn order_by_follows_the_slot_kind() {
     assert_eq!(order("name.x").err(), Some(DEEP_PATH));
     assert_eq!(order("name[x]").err(), Some(DEEP_PATH));
     assert_eq!(order("nope").err(), Some(UNKNOWN));
+    Ok(())
 }
 
 fn sent_names(m: &Mapping, text: &str) -> String {
@@ -934,16 +952,14 @@ fn sent_names(m: &Mapping, text: &str) -> String {
 }
 
 #[test]
-fn a_geoquery_names_a_renamed_filterable_slot() {
+fn a_geoquery_names_a_renamed_filterable_slot() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "where", "source": "location", "kind": "rename", "filterable": true },
         { "target": "area", "source": "a", "kind": "rename" },
         { "target": "level", "source": "l", "kind": "valueMappings", "forward": {}, "filterable": true }
-    ]));
+    ]))?;
     for name in ["geoproperty", "geometryProperty"] {
-        let i = m
-            .invert(&pairs(&[(name, "where")]))
-            .unwrap_or_else(|e| unreachable!("{e}"));
+        let i = m.invert(&pairs(&[(name, "where")]))?;
         assert_eq!(sent_names(&m, &i.pairs[0].1), "location", "{name}");
     }
     assert_eq!(
@@ -958,20 +974,19 @@ fn a_geoquery_names_a_renamed_filterable_slot() {
         m.invert(&pairs(&[("geoproperty", "nope")])).err(),
         Some(UNKNOWN)
     );
+    Ok(())
 }
 
 #[test]
-fn a_parameter_is_passed_rewritten_or_refused() {
-    let m = mapping();
+fn a_parameter_is_passed_rewritten_or_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     // `georel` alone adds the target's `location` (its own test)
     let passed: Vec<(&str, &str)> = PASSED
         .iter()
         .filter(|p| **p != "georel")
         .map(|p| (*p, "x"))
         .collect();
-    let inv = m
-        .invert(&pairs(&passed))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    let inv = m.invert(&pairs(&passed))?;
     assert_eq!(
         inv.pairs,
         pairs(&passed),
@@ -1004,21 +1019,19 @@ fn a_parameter_is_passed_rewritten_or_refused() {
         m.invert(&pairs(&[("limit", "1"), ("limit", "2")])).err(),
         Some(TWICE)
     );
+    Ok(())
 }
 
 #[test]
-fn retrieve_attribute_value_reads_a_source_attribute_and_rebuilds_it() {
-    let m = mapping();
-    let (i, source) = m
-        .source_attribute("temperature")
-        .unwrap_or_else(|e| unreachable!("{e}"));
+fn retrieve_attribute_value_reads_a_source_attribute_and_rebuilds_it(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let (i, source) = m.source_attribute("temperature")?;
     assert_eq!(source, term(&m, "teplota"));
     let mut bare = json!(292.15);
     assert!(m.rebuild_attribute(i, &mut bare));
     assert_eq!(bare, json!(19.0));
-    let (i, _) = m
-        .source_attribute("reliab%69lity")
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    let (i, _) = m.source_attribute("reliab%69lity")?;
     let mut attribute =
         json!({ "@context": { "jcSrc0": "x" }, "type": "Property", "value": "nizka" });
     assert!(m.rebuild_attribute(i, &mut attribute));
@@ -1042,15 +1055,17 @@ fn retrieve_attribute_value_reads_a_source_attribute_and_rebuilds_it() {
     );
     assert_eq!(m.source_attribute("dataProvider").err(), Some(COMPUTED));
     assert_eq!(m.source_attribute("nope").err(), Some(UNKNOWN));
+    Ok(())
 }
 
 #[test]
-fn every_representation_and_a_multi_attribute_are_rebuilt() {
+fn every_representation_and_a_multi_attribute_are_rebuilt() -> Result<(), Box<dyn std::error::Error>>
+{
     let m = slots(&json!([
         { "target": "t", "source": "s", "kind": "unitConversion", "factor": 2, "filterable": true },
         { "target": "r", "source": "o", "kind": "valueMappings", "forward": { "urn:a": "urn:b" } },
         { "target": "g", "source": "location", "kind": "unitConversion", "factor": 2 }
-    ]));
+    ]))?;
     let point = json!({ "type": "Point", "coordinates": [1, 2] });
     let normalized = rebuilt(
         &m,
@@ -1100,26 +1115,29 @@ fn every_representation_and_a_multi_attribute_are_rebuilt() {
         json!(["urn:b"]),
         "a simplified list is translated element by element"
     );
+    Ok(())
 }
 
 #[test]
-fn a_conversion_that_leaves_json_numbers_keeps_the_value() {
+fn a_conversion_that_leaves_json_numbers_keeps_the_value() -> Result<(), Box<dyn std::error::Error>>
+{
     let m = slots(
         &json!([{ "target": "t", "source": "s", "kind": "unitConversion", "factor": 1e308 }]),
-    );
+    )?;
     assert_eq!(
         rebuilt(&m, &json!({ "id": "urn:x", "s": 1e308 }))["t"],
         json!(1e308)
     );
+    Ok(())
 }
 
 #[test]
-fn a_cast_follows_the_reference_engine() {
+fn a_cast_follows_the_reference_engine() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "i", "source": "a", "kind": "cast", "range": "integer" },
         { "target": "f", "source": "b", "kind": "cast", "range": "float" },
         { "target": "s", "source": "c", "kind": "cast", "range": "string" }
-    ]));
+    ]))?;
     let cast = |a: Value, b: Value, c: Value| {
         let e = rebuilt(&m, &json!({ "id": "urn:x", "a": a, "b": b, "c": c }));
         (e["i"].clone(), e["f"].clone(), e["s"].clone())
@@ -1145,11 +1163,13 @@ fn a_cast_follows_the_reference_engine() {
         json!(1e20),
         "out of range stays as it is"
     );
+    Ok(())
 }
 
 #[test]
-fn what_is_not_an_entity_passes_and_an_entity_without_attributes_is_normalized() {
-    let m = slots(&json!([{ "target": "k", "kind": "constant", "value": 1 }]));
+fn what_is_not_an_entity_passes_and_an_entity_without_attributes_is_normalized(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = slots(&json!([{ "target": "k", "kind": "constant", "value": 1 }]))?;
     for body in [
         json!({ "type": "https://uri.etsi.org/ngsi-ld/errors/NotFound" }),
         json!("x"),
@@ -1167,15 +1187,15 @@ fn what_is_not_an_entity_passes_and_an_entity_without_attributes_is_normalized()
     );
     let simplified = rebuilt(&m, &json!({ "id": "urn:x", "type": "jcSrcClass", "x": 2 }));
     assert_eq!(simplified["k"], json!(1));
+    Ok(())
 }
 
 #[test]
-fn names_are_iris_through_the_views_own_context() {
+fn names_are_iris_through_the_views_own_context() -> Result<(), Box<dyn std::error::Error>> {
     let mut ctx = antares_jsonld::core_context();
     let own = json!({ "pm25": "https://smartdatamodels.org/pm25", "AQ": "https://smartdatamodels.org/AQ" });
     let own = own.as_object().cloned().unwrap_or_default();
-    ctx.merge_object(&own)
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    ctx.merge_object(&own)?;
     let m = Mapping::compile(
         &json!({ "version": 2, "sourceClass": "https://example.org/Sensor",
                  "targetClass": "https://smartdatamodels.org/AQ",
@@ -1183,8 +1203,7 @@ fn names_are_iris_through_the_views_own_context() {
                              "source": "https://example.org/pm2p5", "kind": "rename", "filterable": true }] }),
         &ctx,
         Some(&own),
-    )
-    .unwrap_or_else(|e| unreachable!("{e}"));
+    )?;
     assert_eq!(m.source_class(), "https://example.org/Sensor");
     assert_eq!(
         m.inner_context(),
@@ -1200,11 +1219,13 @@ fn names_are_iris_through_the_views_own_context() {
         e,
         json!({ "@context": own, "id": "urn:x", "type": "AQ", "pm25": 3 })
     );
+    Ok(())
 }
 
 #[test]
-fn a_refusal_in_the_inner_terms_is_reworded_into_the_target_model() {
-    let m = mapping();
+fn a_refusal_in_the_inner_terms_is_reworded_into_the_target_model(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     let text = format!(
         "{} has no attribute {} or {}",
         "jcSrcClass",
@@ -1216,14 +1237,13 @@ fn a_refusal_in_the_inner_terms_is_reworded_into_the_target_model() {
         "AirQualityObserved has no attribute temperature or an attribute",
         "an input only an expression reads has no target name of its own"
     );
+    Ok(())
 }
 
 #[test]
-fn what_two_slots_or_two_literals_share_is_asked_once() {
-    let m = mapping();
-    let inv = m
-        .invert(&pairs(&[("attrs", "label,reliability,pm25,pm25")]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+fn what_two_slots_or_two_literals_share_is_asked_once() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
+    let inv = m.invert(&pairs(&[("attrs", "label,reliability,pm25,pm25")]))?;
     let asked = format!(
         "{},{},{}",
         term(&m, "nazov"),
@@ -1234,29 +1254,30 @@ fn what_two_slots_or_two_literals_share_is_asked_once() {
     let twice = computed(&json!([slot_of(
         "double",
         &json!({ "binary": "+", "left": { "slot": "a" }, "right": { "slot": "a" } })
-    )]));
-    let inv = twice
-        .invert(&pairs(&[("attrs", "double")]))
-        .unwrap_or_else(|e| unreachable!("{e}"));
+    )]))?;
+    let inv = twice.invert(&pairs(&[("attrs", "double")]))?;
     assert_eq!(inv.pairs, [("attrs".to_owned(), term(&twice, "a"))]);
     assert_eq!(
         sent(&m, "reliability==\"high\",\"high\""),
         Ok("spolahlivost==\"vysoka\",\"high\"".to_owned())
     );
+    Ok(())
 }
 
 #[test]
-fn a_number_or_a_boolean_literal_inverts_through_a_table_by_its_text() {
+fn a_number_or_a_boolean_literal_inverts_through_a_table_by_its_text(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "level", "source": "l", "kind": "valueMappings",
         "forward": { "1": 7, "on": true }, "filterable": true }]),
-    );
+    )?;
     assert_eq!(sent(&m, "level==7"), Ok("l==1,7".to_owned()));
     assert_eq!(sent(&m, "level==true"), Ok("l==\"on\",true".to_owned()));
+    Ok(())
 }
 
 #[test]
-fn a_junction_decides_on_every_operand() {
+fn a_junction_decides_on_every_operand() -> Result<(), Box<dyn std::error::Error>> {
     let k = |v: Value| json!({ "const": v });
     evaluates(&[
         (
@@ -1269,18 +1290,20 @@ fn a_junction_decides_on_every_operand() {
             json!({ "boolean": "or", "operands": [k(json!(true)), k(json!(false))] }),
             json!(true),
         ),
-    ]);
+    ])?;
+    Ok(())
 }
 
 #[test]
-fn an_inverse_too_large_to_round_is_kept_as_it_is() {
+fn an_inverse_too_large_to_round_is_kept_as_it_is() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(
         &json!([{ "target": "t", "source": "s", "kind": "unitConversion",
         "factor": 1e-300, "filterable": true }]),
-    );
+    )?;
     let q = sent(&m, "t==1").unwrap_or_default();
     let n: f64 = q.trim_start_matches("s==").parse().unwrap_or_default();
     assert!((n - 1.0 / 1e-300).abs() <= 1e284, "{q}: not rounded away");
+    Ok(())
 }
 
 const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
@@ -1290,8 +1313,9 @@ fn iri(name: &str) -> String {
 }
 
 #[test]
-fn the_temporal_parameters_pass_and_an_aggregate_is_refused() {
-    let m = mapping();
+fn the_temporal_parameters_pass_and_an_aggregate_is_refused(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     let asked = pairs(&[
         ("timerel", "between"),
         ("timeAt", "2026-01-01T00:00:00Z"),
@@ -1303,9 +1327,8 @@ fn the_temporal_parameters_pass_and_an_aggregate_is_refused() {
     ]);
     let inverted = m.invert(&asked).map(|i| i.pairs);
     let mut expected = asked.clone();
-    if let Some(attrs) = expected.last_mut() {
-        attrs.1 = term(&m, "teplota");
-    }
+    expected.pop();
+    expected.push(("attrs".to_owned(), term(&m, "teplota")));
     assert_eq!(inverted, Ok(expected));
     for refused in [
         ("options", "temporalValues,aggregatedValues"),
@@ -1314,16 +1337,18 @@ fn the_temporal_parameters_pass_and_an_aggregate_is_refused() {
         ("aggrPeriodDuration", "PT1H"),
     ] {
         assert_eq!(
-            m.invert(&pairs(&[refused])).map(|i| i.pairs),
-            Err(NOT_SERVED),
+            m.invert(&pairs(&[refused])).err(),
+            Some(NOT_SERVED),
             "{refused:?}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn every_instance_of_a_history_is_rebuilt_and_what_has_none_is_left_out() {
-    let m = mapping();
+fn every_instance_of_a_history_is_rebuilt_and_what_has_none_is_left_out(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     let history = json!({
         "id": STATION, "type": "jcSrcClass",
         "teplota": [
@@ -1353,11 +1378,13 @@ fn every_instance_of_a_history_is_rebuilt_and_what_has_none_is_left_out() {
     let mut current = answered(&m, &stored());
     m.rebuild(&mut current, &Keep::default());
     assert!(current.get("dataProvider").is_some(), "{current}");
+    Ok(())
 }
 
 #[test]
-fn a_type_list_names_the_target_class_only_for_the_source_class() {
-    let m = mapping();
+fn a_type_list_names_the_target_class_only_for_the_source_class(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     for (inner, shown) in [
         (json!(["jcSrcClass"]), json!(["AirQualityObserved"])),
         (json!([iri("MestskySenzor")]), json!(["AirQualityObserved"])),
@@ -1371,11 +1398,13 @@ fn a_type_list_names_the_target_class_only_for_the_source_class() {
             json!({"id": "urn:ngsi-ld:EntityTypeList:1", "type": "EntityTypeList", "typeList": shown})
         );
     }
+    Ok(())
 }
 
 #[test]
-fn discovery_names_the_slots_whose_sources_the_view_shows() {
-    let m = mapping();
+fn discovery_names_the_slots_whose_sources_the_view_shows() -> Result<(), Box<dyn std::error::Error>>
+{
+    let m = mapping()?;
     let (teplota, nazov, spolahlivost) = (
         term(&m, "teplota"),
         term(&m, "nazov"),
@@ -1415,11 +1444,12 @@ fn discovery_names_the_slots_whose_sources_the_view_shows() {
     let mut empty = json!([]);
     m.rebuild_discovery(&mut empty, None);
     assert_eq!(empty, json!([]));
+    Ok(())
 }
 
 #[test]
-fn attribute_entries_are_made_from_their_sources() {
-    let m = mapping();
+fn attribute_entries_are_made_from_their_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     let mut info = json!({
         "@context": "inner", "id": iri("MestskySenzor"), "type": "EntityTypeInfo",
         "typeName": "jcSrcClass", "entityCount": 2,
@@ -1464,11 +1494,13 @@ fn attribute_entries_are_made_from_their_sources() {
     let mut other = json!({"type": "Unknown", "x": 1});
     m.rebuild_discovery(&mut other, None);
     assert_eq!(other, json!({"type": "Unknown", "x": 1}));
+    Ok(())
 }
 
 #[test]
-fn a_discovery_read_names_the_target_class_and_takes_its_own_parameters() {
-    let m = mapping();
+fn a_discovery_read_names_the_target_class_and_takes_its_own_parameters(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     assert_eq!(m.source_type("AirQualityObserved"), Some("jcSrcClass"));
     assert_eq!(
         m.source_type(
@@ -1492,11 +1524,13 @@ fn a_discovery_read_names_the_target_class_and_takes_its_own_parameters() {
         discovery_pairs(&pairs(&[("details", "true"), ("details", "false")])),
         Err(TWICE)
     );
+    Ok(())
 }
 
 #[test]
-fn what_discovery_or_a_history_cannot_name_passes_as_it_is() {
-    let m = mapping();
+fn what_discovery_or_a_history_cannot_name_passes_as_it_is(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = mapping()?;
     for mut body in [
         json!(null),
         json!("text"),
@@ -1516,14 +1550,16 @@ fn what_discovery_or_a_history_cannot_name_passes_as_it_is() {
         history.get("temperature"),
         Some(&json!({"type": "Property", "values": [[], [10.0]]}))
     );
+    Ok(())
 }
 
 #[test]
-fn a_geoquery_without_geoproperty_filters_the_target_location() {
+fn a_geoquery_without_geoproperty_filters_the_target_location(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "location", "source": "position", "kind": "rename", "filterable": true },
         { "target": "where", "source": "location", "kind": "rename", "filterable": true }
-    ]));
+    ]))?;
     let geo = [
         ("georel", "near;maxDistance==500"),
         ("geometry", "Point"),
@@ -1554,11 +1590,11 @@ fn a_geoquery_without_geoproperty_filters_the_target_location() {
     for refusing in [
         slots(
             &json!([{ "target": "where", "source": "location", "kind": "rename", "filterable": true }]),
-        ),
-        slots(&json!([{ "target": "location", "source": "position", "kind": "rename" }])),
+        )?,
+        slots(&json!([{ "target": "location", "source": "position", "kind": "rename" }]))?,
         slots(
             &json!([{ "target": "location", "source": "p", "kind": "unitConversion", "factor": 2, "filterable": true }]),
-        ),
+        )?,
     ] {
         assert_eq!(refusing.invert(&pairs(&geo)).err(), Some(NOT_FILTERABLE));
     }
@@ -1566,14 +1602,15 @@ fn a_geoquery_without_geoproperty_filters_the_target_location() {
         m.invert(&pairs(&[("geometry", "Point")])).is_ok(),
         "no georel, no geo-query"
     );
+    Ok(())
 }
 
 #[test]
-fn a_slot_the_rules_hide_is_read_by_no_filter() {
+fn a_slot_the_rules_hide_is_read_by_no_filter() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = slots(&json!([
         { "target": "location", "source": "position", "kind": "rename", "filterable": true },
         { "target": "t", "source": "s", "kind": "rename", "filterable": true }
-    ]));
+    ]))?;
     let geo = [
         ("georel", "near;maxDistance==500"),
         ("geometry", "Point"),
@@ -1612,10 +1649,11 @@ fn a_slot_the_rules_hide_is_read_by_no_filter() {
             "{q}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn each_attribute_kind_is_translated_through_a_mapping() {
+fn each_attribute_kind_is_translated_through_a_mapping() -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "v", "source": "a", "kind": "valueMappings", "forward": { "x": "y", "urn:p": "urn:q" } },
         { "target": "l", "source": "b", "kind": "unitConversion", "factor": 10 },
@@ -1623,7 +1661,7 @@ fn each_attribute_kind_is_translated_through_a_mapping() {
         { "target": "m", "source": "d", "kind": "valueMappings", "forward": { "x": "y" } },
         { "target": "j", "source": "e", "kind": "unitConversion", "factor": 2 },
         { "target": "n", "source": "f", "kind": "rename" }
-    ]));
+    ]))?;
     let normalized = rebuilt(
         &m,
         &json!({ "id": "urn:x", "type": "jcSrcClass",
@@ -1680,14 +1718,16 @@ fn each_attribute_kind_is_translated_through_a_mapping() {
         Ok(false),
         "Retrieve Attribute Value answers as for an absent Attribute"
     );
+    Ok(())
 }
 
 #[test]
-fn history_leaves_out_the_instances_a_mapping_cannot_translate() {
+fn history_leaves_out_the_instances_a_mapping_cannot_translate(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "t", "source": "s", "kind": "unitConversion", "factor": 2 },
         { "target": "v", "source": "a", "kind": "valueMappings", "forward": { "x": "y" } }
-    ]));
+    ]))?;
     let mut history = answered(
         &m,
         &json!({ "id": "urn:x", "type": "jcSrcClass",
@@ -1726,13 +1766,15 @@ fn history_leaves_out_the_instances_a_mapping_cannot_translate() {
         json!(["not a pair", ["y", "2026-10-22T08:00:00Z"]]),
         "what is no pair passes as it is"
     );
+    Ok(())
 }
 
 #[test]
-fn a_table_keyed_by_a_number_translates_the_same_number_stored_as_a_float() {
+fn a_table_keyed_by_a_number_translates_the_same_number_stored_as_a_float(
+) -> Result<(), Box<dyn std::error::Error>> {
     let m = slots(&json!([
         { "target": "v", "source": "a", "kind": "valueMappings", "forward": { "1": "one", "true": "yes" }, "filterable": true }
-    ]));
+    ]))?;
     for (stored, served) in [
         (json!(1.0), json!("one")),
         (json!(1), json!("one")),
@@ -1746,21 +1788,24 @@ fn a_table_keyed_by_a_number_translates_the_same_number_stored_as_a_float() {
         assert_eq!(e["v"], served, "{stored}");
     }
     assert_eq!(sent(&m, "v==\"one\""), Ok("a==1,\"one\"".to_owned()));
+    Ok(())
 }
 
 #[test]
-fn a_slot_whose_source_no_rule_shows_is_listed_as_hidden() {
+fn a_slot_whose_source_no_rule_shows_is_listed_as_hidden() -> Result<(), Box<dyn std::error::Error>>
+{
     let m = slots(&json!([
         { "target": "t", "source": "s", "kind": "rename" },
         { "target": "u", "source": "gone", "kind": "rename" },
         { "target": "k", "kind": "constant", "value": 1 }
-    ]));
+    ]))?;
     let shown = BTreeSet::from([antares_jsonld::core_context().expand_key("s")]);
     assert_eq!(m.hidden_slots(&shown), vec!["u".to_owned()]);
     assert_eq!(
         m.hidden_slots(&BTreeSet::new()),
         vec!["t".to_owned(), "u".to_owned()]
     );
+    Ok(())
 }
 
 /// F-ANT4-010: an ordering keeps the exact inverse of a unit conversion, so
