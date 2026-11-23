@@ -287,10 +287,27 @@ mod tests {
             load_location("Nowhere/Town").unwrap_err(),
             "unknown time zone Nowhere/Town"
         );
+        for name in ["../etc/passwd", "/etc/localtime", "\\x"] {
+            assert_eq!(
+                load_location(name).unwrap_err(),
+                "time: invalid location name"
+            );
+        }
     }
 
     #[test]
     fn go_time_helpers_match_go() {
+        // a year before 1 prints with its sign, four digits wide
+        let before: jiff::Timestamp = "-000001-03-04T05:06:07Z".parse().unwrap();
+        assert_eq!(
+            format_rfc3339_nano(&utc_zoned(before)),
+            "-0001-03-04T05:06:07Z"
+        );
+        // an offset that moves the wall time past jiff's last year is out of range
+        assert_eq!(
+            parse_rfc3339(b"9999-12-31T23:59:59-01:00").unwrap_err(),
+            "parsing time \"9999-12-31T23:59:59-01:00\": day out of range"
+        );
         let t = parse_rfc3339(b"2003-10-11T22:14:15.003000-07:00").unwrap();
         assert_eq!(format_rfc3339_nano(&t), "2003-10-11T22:14:15.003-07:00");
         assert_eq!(

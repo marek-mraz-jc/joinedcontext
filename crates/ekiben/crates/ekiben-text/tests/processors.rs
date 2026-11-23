@@ -302,6 +302,100 @@ async fn jq_recursion_loops_and_deep_results_fail_the_message_not_the_process() 
     assert_eq!(bytes(&out[0][0]), "[1,1,1]");
 }
 
+#[tokio::test]
+async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
+    use ekiben_bloblang::Value;
+    let (p, c) = build_yaml("jq:\n  query: .\n").unwrap();
+    assert_eq!(p.processor_type(), "jq");
+    let part = |v: Value| {
+        let mut part = Part::new(Bytes::new());
+        part.set_structured(v);
+        part
+    };
+    let big = "123456789012345678901234567890";
+    let input = Value::Array(
+        vec![
+            Value::Uint(u64::MAX),
+            Value::Number("12".into()),
+            Value::Number(big.into()),
+            Value::Number("1.5".into()),
+        ]
+        .into(),
+    );
+    let out = p.process_batch(&c, vec![part(input)]).await.unwrap();
+    assert_eq!(
+        bytes(&out[0][0]),
+        format!("[18446744073709551615,12,{big},1.5]")
+    );
+    let ts = ekiben_bloblang::time_format::utc("2026-01-02T03:04:05Z".parse().unwrap());
+    for (v, want) in [
+        (Value::Bytes(b"x".to_vec().into()), "invalid type: []uint8"),
+        (
+            Value::Timestamp(ts),
+            "invalid type: time.Time (2026-01-02T03:04:05",
+        ),
+    ] {
+        // inside a document: a whole message of bytes is its raw body
+        let out = p
+            .process_batch(&c, vec![part(Value::Array(vec![v].into()))])
+            .await
+            .unwrap();
+        let err = out[0][0].error_get().unwrap().to_string();
+        assert!(err.starts_with(want), "{err}");
+    }
+    for (query, want) in [
+        (
+            "nan",
+            "failed marshal JQ result at index 0: json: unsupported value",
+        ),
+        ("halt", "jq query halted"),
+        ("{(1): 2}", "object key 1 is not a string"),
+    ] {
+        let conf = format!("jq:\n  query: '{query}'\n  output_raw: true\n");
+        let out = run(&conf, &["{}"]).await;
+        let err = out[0][0].error_get().expect(query).to_string();
+        assert_eq!(err, want, "{query}");
+    }
+    assert_eq!(
+        bytes(&run("jq:\n  query: 1.25\n", &["{}"]).await[0][0]),
+        "1.25"
+    );
+    assert!(run("jq:\n  query: empty\n  output_raw: true\n", &["{}"])
+        .await
+        .is_empty());
+    let over = format!(
+        "jq:\n  query: '\"x\" * {}'\n  output_raw: true\n",
+        ekiben_text::processor_jq::MAX_OUTPUT_BYTES + 1
+    );
+    let err = run(&over, &["{}"]).await[0][0]
+        .error_get()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("the most one message may hold"), "{err}");
+    // A cut error never splits a character, whatever the prefix before it.
+    for pad in 0..3 {
+        let conf = format!(
+            "jq:\n  query: 'error(\"{}\" + (\"€\" * 2000))'\n",
+            "a".repeat(pad)
+        );
+        let err = run(&conf, &["{}"]).await[0][0]
+            .error_get()
+            .unwrap()
+            .to_string();
+        assert!(err.ends_with("€..."), "{pad}: {}", err.len());
+    }
+    let err = build_yaml("jq: {}\n").err().unwrap().to_string();
+    assert!(err.contains("field 'query' is required"), "{err}");
+    let err = build_yaml("jq:\n  query: no_such_fn(1)\n")
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        err.contains("error compiling jq query") && err.contains("no_such_fn"),
+        "{err}"
+    );
+}
+
 // processor_jmespath_test.go
 
 #[tokio::test]
@@ -325,6 +419,19 @@ async fn test_jmes_path_validation() {
     let out = run("jmespath:\n  query: foo.bar\n", &["this is bad json"]).await;
     assert_eq!(bytes(&out[0][0]), "this is bad json");
     assert!(out[0][0].is_errored());
+}
+
+#[tokio::test]
+async fn jmespath_names_its_type_and_refuses_a_bad_config() {
+    let (p, _) = build_yaml("jmespath:\n  query: foo\n").unwrap();
+    assert_eq!(p.processor_type(), "jmespath");
+    let err = build_yaml("jmespath: {}\n").err().unwrap().to_string();
+    assert!(err.contains("field 'query' is required"), "{err}");
+    let err = build_yaml("jmespath:\n  query: 'foo[?'\n")
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("failed to compile JMESPath query"), "{err}");
 }
 
 #[tokio::test]
@@ -526,6 +633,84 @@ async fn grok_refuses_cycles_traversal_and_reports_no_match() {
     );
 }
 
+#[tokio::test]
+async fn grok_names_each_refusal_and_types_its_captures() {
+    let (p, _) = build_yaml("grok:\n  expressions: ['%{WORD}']\n").unwrap();
+    assert_eq!(p.processor_type(), "grok");
+    let refused = |yaml: &str| build_yaml(yaml).err().expect(yaml).to_string();
+    let err = refused("grok:\n  pattern_definitions: {A: x}\n");
+    assert!(err.contains("field 'expressions' is required"), "{err}");
+    let err = refused("grok:\n  expressions: ['%{NOPE}']\n");
+    assert!(
+        err.contains("failed to compile Grok pattern '%{NOPE}': no pattern found for %{NOPE}"),
+        "{err}"
+    );
+    let err = refused("grok:\n  expressions: ['%{A}']\n  pattern_definitions: {A: '%{NOPE}'}\n");
+    assert!(err.contains("no pattern found for %{NOPE}"), "{err}");
+    let err = refused("grok:\n  expressions: ['%{A}']\n  pattern_paths: ['a*']\n");
+    assert!(
+        err.contains("glob patterns are not supported here"),
+        "{err}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("nope");
+    let err = refused(&format!(
+        "grok:\n  expressions: ['%{{A}}']\n  pattern_paths: ['{}']\n",
+        missing.display()
+    ));
+    assert!(
+        err.contains("stat ") && err.contains("No such file"),
+        "{err}"
+    );
+    std::fs::write(dir.path().join("binary"), [0xff, 0xfe, b'\n']).unwrap();
+    let err = refused(&format!(
+        "grok:\n  expressions: ['%{{A}}']\n  pattern_paths: ['{}']\n",
+        dir.path().display()
+    ));
+    assert!(err.contains("valid UTF-8"), "{err}");
+    // Doubling a reference ten times grows the expression past its bound.
+    let mut defs = String::from("{L0: 'xxxxxxxxxxxxxxxx'");
+    for i in 1..=20 {
+        defs.push_str(&format!(", L{i}: '%{{L{}}}%{{L{}}}'", i - 1, i - 1));
+    }
+    defs.push('}');
+    let err = refused(&format!(
+        "grok:\n  expressions: ['%{{L20}}']\n  pattern_definitions: {defs}\n"
+    ));
+    assert!(err.contains("the expanded expression is over"), "{err}");
+    // A capture its type cannot hold fails that pattern, as Go's ParseTyped error does.
+    let unmatched = Err("no pattern matches found");
+    for (pattern, input, want) in [
+        // a later group of the same name wins
+        ("%{WORD:a} %{WORD:a}", "x y", Ok(r#"{"a":"y"}"#)),
+        ("%{WORD:a:bool}", "x", unmatched),
+        ("%{NOTSPACE:n:int}", "1x", unmatched),
+        ("%{NOTSPACE:n:int}", "-12", Ok(r#"{"n":-12}"#)),
+        ("%{NOTSPACE:n:int}", "99999999999999999999", unmatched),
+        ("%{NOTSPACE:n:float}", "1.2.3", unmatched),
+        ("%{NOTSPACE:n:float}", "-2.5e1", Ok(r#"{"n":-25}"#)),
+    ] {
+        let yaml = format!("grok:\n  expressions: ['{pattern}']\n");
+        let out = run(&yaml, &[input]).await;
+        let got = match out[0][0].error_get() {
+            Some(e) => Err(e.to_string()),
+            None => Ok(bytes(&out[0][0])),
+        };
+        assert_eq!(
+            got,
+            want.map(str::to_string).map_err(str::to_string),
+            "{pattern}"
+        );
+    }
+    // A pattern whose cast fails is passed over for the next one.
+    let out = run(
+        "grok:\n  expressions: ['%{WORD:a:int}', '%{WORD:b}']\n",
+        &["x"],
+    )
+    .await;
+    assert_eq!(bytes(&out[0][0]), r#"{"b":"x"}"#);
+}
+
 // msgpack/processor_test.go
 
 #[test]
@@ -594,4 +779,21 @@ fn test_msg_pack_from_json() {
             .unwrap()
             .contains("operator not recognised: nope")
     );
+}
+
+#[tokio::test]
+async fn msgpack_names_its_type_and_fails_a_message_it_cannot_decode() {
+    let (p, c) = build_yaml("msgpack:\n  operator: to_json\n").unwrap();
+    assert_eq!(p.processor_type(), "msgpack");
+    let out = p
+        .process_batch(&c, vec![Part::new(Bytes::from_static(&[0xc1]))])
+        .await
+        .unwrap();
+    let err = out[0][0].error_get().expect("errored").to_string();
+    assert!(
+        err.starts_with("failed to convert MsgPack document to JSON: "),
+        "{err}"
+    );
+    let err = build_yaml("msgpack: {}\n").err().unwrap().to_string();
+    assert!(err.contains("field 'operator' is required"), "{err}");
 }

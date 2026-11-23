@@ -210,7 +210,7 @@ pub fn compile(query: &str) -> Result<JqFilter, String> {
         ));
     }
     let extra = jaq_core::load::parse(GOJQ_DEFS, |p| p.defs())
-        .ok_or_else(|| "error compiling jq query: built-in definitions".to_string())?;
+        .ok_or("error compiling jq query: built-in definitions")?;
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
         .chain(jaq_json::defs())

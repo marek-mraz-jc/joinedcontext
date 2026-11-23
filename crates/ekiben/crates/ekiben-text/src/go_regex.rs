@@ -66,6 +66,26 @@ fn push_literal(out: &mut String, c: char) {
     }
 }
 
+/// A class no character is in: what a surrogate (`\x{D800}`, which Go reads) matches, since no
+/// text holds one.
+const NO_CHAR: &str = "[^\\x{0}-\\x{10FFFF}]";
+
+/// The code points `lo..=hi` as class members, without the surrogates Rust has no `char` for.
+fn push_range(out: &mut String, lo: u32, hi: u32) {
+    let surrogate = |c: u32| (0xD800..0xE000).contains(&c);
+    let lo = if surrogate(lo) { 0xE000 } else { lo };
+    let hi = if surrogate(hi) { 0xD7FF } else { hi };
+    match (char::from_u32(lo), char::from_u32(hi)) {
+        (Some(l), Some(h)) if l < h => {
+            push_literal(out, l);
+            out.push('-');
+            push_literal(out, h);
+        }
+        (Some(l), Some(h)) if l == h => push_literal(out, l),
+        _ => out.push_str(NO_CHAR),
+    }
+}
+
 /// Ends the open group's last operand for the nested repeat limit: a new one starts.
 fn fold(frames: &mut [(u64, u64)]) {
     if let Some(f) = frames.last_mut() {
@@ -84,6 +104,8 @@ struct Parser<'a> {
 /// What one escape stands for.
 enum Escape {
     Char(char),
+    /// A surrogate code point: Go takes `\x{D800}`, and no text holds it.
+    Surrogate(u32),
     /// Rust text for a class (`[0-9]`) or an assertion, already complete.
     Class(String),
     Assert(String),
@@ -151,7 +173,7 @@ impl<'a> Parser<'a> {
                             _ => return Err(bad(self)),
                         }
                     }
-                    return char::from_u32(r).map(Escape::Char).ok_or_else(|| bad(self));
+                    return Ok(char::from_u32(r).map_or(Escape::Surrogate(r), Escape::Char));
                 }
                 match (hex(self), hex(self)) {
                     (Some(a), Some(b)) => Ok(Escape::Char(
@@ -294,12 +316,14 @@ impl<'a> Parser<'a> {
             let rest = self.rest();
             if rest.starts_with('-') && !rest.starts_with("-]") && rest.len() > 1 {
                 self.bump();
+                let hi_start = self.pos;
                 let hi = match self.class_char()? {
                     Ok(ch) => ch,
+                    // Go reads a class escape (`\d`) as no range end at all
                     Err(_) => {
                         return Err(err(
-                            "invalid character class range",
-                            &self.src[item_start..self.pos],
+                            "invalid escape sequence",
+                            &self.src[hi_start..self.pos],
                         ))
                     }
                 };
@@ -309,27 +333,26 @@ impl<'a> Parser<'a> {
                         &self.src[item_start..self.pos],
                     ));
                 }
-                push_literal(out, lo);
-                out.push('-');
-                push_literal(out, hi);
+                push_range(out, lo, hi);
             } else {
-                push_literal(out, lo);
+                push_range(out, lo, lo);
             }
         }
         out.push(']');
         Ok(())
     }
 
-    /// One class member: a character, or (as `Err`) a nested set already in Rust syntax.
-    fn class_char(&mut self) -> Result<Result<char, String>, String> {
+    /// One class member: a code point, or (as `Err`) a nested set already in Rust syntax.
+    fn class_char(&mut self) -> Result<Result<u32, String>, String> {
         let Some(c) = self.bump() else {
             return Err(err("missing closing ]", self.src));
         };
         if c != '\\' {
-            return Ok(Ok(c));
+            return Ok(Ok(u32::from(c)));
         }
         Ok(match self.escape(true)? {
-            Escape::Char(ch) => Ok(ch),
+            Escape::Char(ch) => Ok(u32::from(ch)),
+            Escape::Surrogate(point) => Ok(point),
             Escape::Class(set) => Err(set),
             Escape::Assert(a) | Escape::Quote(a) => Err(a),
         })
@@ -416,6 +439,7 @@ impl<'a> Parser<'a> {
                     }
                     match esc {
                         Escape::Char(ch) => push_literal(&mut out, ch),
+                        Escape::Surrogate(_) => out.push_str(NO_CHAR),
                         Escape::Class(set) | Escape::Assert(set) => out.push_str(&set),
                         // A quoted run is a concatenation: a repeat after it binds its last char.
                         Escape::Quote(lit) if lit.is_empty() => {
@@ -578,80 +602,6 @@ impl GoRegex {
     pub fn group_names(&self) -> impl Iterator<Item = Option<&str>> {
         self.names.iter().map(Option::as_deref)
     }
-
-    /// Go's `ReplaceAllString(src, template)`: `$1`, `${1}`, `$name`, `${name}` expand as
-    /// `Regexp.Expand` does, `$$` is a `$`, a malformed `$` stays.
-    pub fn replace_all_go(&self, src: &str, template: &str) -> String {
-        let mut out = String::with_capacity(src.len());
-        let mut last = 0;
-        for caps in self.re.captures_iter(src) {
-            let Some(m) = caps.get(0) else { continue };
-            out.push_str(&src[last..m.start()]);
-            self.expand(&mut out, template, &caps);
-            last = m.end();
-        }
-        out.push_str(&src[last..]);
-        out
-    }
-
-    fn expand(&self, out: &mut String, template: &str, caps: &regex::Captures<'_>) {
-        let mut t = template;
-        while let Some(i) = t.find('$') {
-            out.push_str(&t[..i]);
-            t = &t[i + 1..];
-            if let Some(rest) = t.strip_prefix('$') {
-                out.push('$');
-                t = rest;
-                continue;
-            }
-            let Some((name, rest)) = extract(t) else {
-                out.push('$');
-                continue;
-            };
-            t = rest;
-            let group = match group_number(name) {
-                Some(n) => caps.get(n),
-                None => self
-                    .names
-                    .iter()
-                    .position(|n| n.as_deref() == Some(name))
-                    .and_then(|i| caps.get(i)),
-            };
-            if let Some(g) = group {
-                out.push_str(g.as_str());
-            }
-        }
-        out.push_str(t);
-    }
-}
-
-/// Go's `extract`: the name after a `$` (letters, digits, `_`; in braces or bare) and the rest.
-fn extract(t: &str) -> Option<(&str, &str)> {
-    let (body, brace) = match t.strip_prefix('{') {
-        Some(b) => (b, true),
-        None => (t, false),
-    };
-    let len = body
-        .char_indices()
-        .find(|&(_, c)| !(c.is_alphabetic() || c.is_numeric() || c == '_'))
-        .map_or(body.len(), |(i, _)| i);
-    if len == 0 {
-        return None;
-    }
-    let name = &body[..len];
-    let rest = &body[len..];
-    if brace {
-        return rest.strip_prefix('}').map(|r| (name, r));
-    }
-    Some((name, rest))
-}
-
-/// A group number as `extract` reads it: digits only, no leading zero, below 1e8.
-fn group_number(name: &str) -> Option<usize> {
-    if !name.bytes().all(|b| b.is_ascii_digit()) || (name.len() > 1 && name.starts_with('0')) {
-        return None;
-    }
-    name.parse::<usize>().ok().filter(|&n| n < 100_000_000)
 }
 
 /// Go's `regexp.Compile(pattern)`.
@@ -702,5 +652,387 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(r, Ok(vec![None, Some("a".into()), Some("a".into())]));
+    }
+
+    /// Each pattern against Go 1.25's `regexp.Compile` and `FindStringIndex`, recorded with the
+    /// golang:1.25-alpine image: the compile error text, or where the first match lies.
+    #[test]
+    fn compiles_and_matches_as_go_does() {
+        type Expected = Result<Option<(usize, usize)>, &'static str>;
+        let cases: &[(&str, &str, Expected)] = &[
+            (r#"\0"#, "\u{0}", Ok(Some((0, 1)))),
+            (r#"\012"#, "\u{a}", Ok(Some((0, 1)))),
+            (
+                r#"\1"#,
+                "1",
+                Err(r#"error parsing regexp: invalid escape sequence: `\1`"#),
+            ),
+            (
+                r#"\18"#,
+                "\u{1}8",
+                Err(r#"error parsing regexp: invalid escape sequence: `\1`"#),
+            ),
+            (r#"\177"#, "\u{7f}", Ok(Some((0, 1)))),
+            (r#"\400"#, "\u{100}", Ok(Some((0, 2)))),
+            (r#"\0123"#, "\u{a}3", Ok(Some((0, 2)))),
+            (r#"\x41"#, "A", Ok(Some((0, 1)))),
+            (r#"\x{41}"#, "A", Ok(Some((0, 1)))),
+            (
+                r#"\x{}"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\x{}`"#),
+            ),
+            (
+                r#"\x{110000}"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\x{110000`"#),
+            ),
+            (r#"\x{D800}"#, "", Ok(None)),
+            (
+                r#"\xZ1"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\xZ1`"#),
+            ),
+            (
+                r#"\x4"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\x4`"#),
+            ),
+            (
+                r#"\x{4G}"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\x{4G`"#),
+            ),
+            (
+                r#"\x{41"#,
+                "A",
+                Err(r#"error parsing regexp: invalid escape sequence: `\x{41`"#),
+            ),
+            (r#"\a"#, "\u{7}", Ok(Some((0, 1)))),
+            (r#"\f"#, "\u{c}", Ok(Some((0, 1)))),
+            (r#"\n"#, "\u{a}", Ok(Some((0, 1)))),
+            (r#"\r"#, "\u{d}", Ok(Some((0, 1)))),
+            (r#"\t"#, "\u{9}", Ok(Some((0, 1)))),
+            (r#"\v"#, "\u{b}", Ok(Some((0, 1)))),
+            (r#"\d\D\s\S\w\W"#, "1a b_.", Ok(Some((0, 6)))),
+            (r#"[\d\D]"#, "x", Ok(Some((0, 1)))),
+            (r#"[\s]"#, "\u{2028}", Ok(None)),
+            (r#"[\W]"#, "\u{e9}", Ok(Some((0, 2)))),
+            (r#"\pL"#, "\u{e9}", Ok(Some((0, 2)))),
+            (r#"\p{Greek}"#, "\u{3b1}", Ok(Some((0, 2)))),
+            (r#"\p{^Greek}"#, "\u{3b1}", Ok(None)),
+            (r#"\PL"#, "1", Ok(Some((0, 1)))),
+            (r#"\P{^L}"#, "a", Ok(Some((0, 1)))),
+            (
+                r#"\p{Foo}"#,
+                "",
+                Err(r#"error parsing regexp: invalid character class range: `\p{Foo}`"#),
+            ),
+            (
+                r#"\p{L"#,
+                "L",
+                Err(r#"error parsing regexp: invalid character class range: `\p{L`"#),
+            ),
+            (
+                r#"\p"#,
+                "",
+                Err(r#"error parsing regexp: invalid character class range: `\p`"#),
+            ),
+            (r#"[\p{Lu}]"#, "A", Ok(Some((0, 1)))),
+            (r#"\p{greek}"#, "\u{3b1}", Ok(Some((0, 2)))),
+            (r#"\Aa\z"#, "a", Ok(Some((0, 1)))),
+            (r#"a\b"#, "a!", Ok(Some((0, 1)))),
+            (r#"a\Bb"#, "ab", Ok(Some((0, 2)))),
+            (
+                r#"[\b]"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\b`"#),
+            ),
+            (
+                r#"[\A]"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\A`"#),
+            ),
+            (
+                r#"[\Q]"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\Q`"#),
+            ),
+            (r#"\Qab"#, "ab", Ok(Some((0, 2)))),
+            (
+                r#"\Q\E*"#,
+                "",
+                Err("error parsing regexp: missing argument to repetition operator: `*`"),
+            ),
+            (r#"a\Q\E*"#, "aa", Ok(Some((0, 2)))),
+            (r#"\Qa.\E+"#, "a..", Ok(Some((0, 3)))),
+            (r#"\."#, ".", Ok(Some((0, 1)))),
+            (
+                "\\\u{e9}",
+                "",
+                Err("error parsing regexp: invalid escape sequence: `\\\u{e9}`"),
+            ),
+            (
+                r#"\"#,
+                "",
+                Err("error parsing regexp: trailing backslash at end of expression: ``"),
+            ),
+            (
+                r#"\8"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\8`"#),
+            ),
+            ("a{2}", "aa", Ok(Some((0, 2)))),
+            ("a{2,}", "aaa", Ok(Some((0, 3)))),
+            ("a{2,3}", "aaaa", Ok(Some((0, 3)))),
+            ("a{,3}", "a{,3}", Ok(Some((0, 5)))),
+            ("a{2", "a{2", Ok(Some((0, 3)))),
+            ("a{2,3", "a{2,3", Ok(Some((0, 5)))),
+            ("a{x}", "a{x}", Ok(Some((0, 4)))),
+            (
+                "{2}",
+                "",
+                Err("error parsing regexp: missing argument to repetition operator: `{2}`"),
+            ),
+            (
+                "a{1001}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{1001}`"),
+            ),
+            (
+                "a{3,2}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{3,2}`"),
+            ),
+            (
+                "a{2}{3}",
+                "",
+                Err("error parsing regexp: invalid nested repetition operator: `{2}{3}`"),
+            ),
+            ("a*?", "aa", Ok(Some((0, 0)))),
+            (
+                "a**",
+                "",
+                Err("error parsing regexp: invalid nested repetition operator: `**`"),
+            ),
+            (
+                "*",
+                "",
+                Err("error parsing regexp: missing argument to repetition operator: `*`"),
+            ),
+            (
+                "(a{500}){3}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{3}`"),
+            ),
+            ("a{0}", "a", Ok(Some((0, 0)))),
+            ("(a{2}){0}", "aa", Ok(Some((0, 0)))),
+            (
+                "a{99999999999}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{99999999999}`"),
+            ),
+            (
+                "a{2,1001}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{2,1001}`"),
+            ),
+            ("(a{10}b{100}){10}", "", Ok(None)),
+            ("(a{10}|b{200}){5}", "", Ok(None)),
+            ("((a{10}){10}){10}", "", Ok(None)),
+            (
+                "((a{10}){10}){11}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{11}`"),
+            ),
+            ("(a{2})(b{2}){500}", "", Ok(None)),
+            ("a{1000}", "", Ok(None)),
+            ("a{1,1000}", "", Ok(None)),
+            (
+                "(?:a{0}){1001}",
+                "",
+                Err("error parsing regexp: invalid repeat count: `{1001}`"),
+            ),
+            (
+                "(a)*{2}",
+                "",
+                Err("error parsing regexp: invalid nested repetition operator: `*{2}`"),
+            ),
+            ("a{2}?", "aaa", Ok(Some((0, 2)))),
+            (
+                "a{2}+",
+                "",
+                Err("error parsing regexp: invalid nested repetition operator: `{2}+`"),
+            ),
+            ("[^a]", "b", Ok(Some((0, 1)))),
+            ("[]a]", "]", Ok(Some((0, 1)))),
+            ("[a-]", "-", Ok(Some((0, 1)))),
+            ("[a-z]", "q", Ok(Some((0, 1)))),
+            (
+                "[z-a]",
+                "",
+                Err("error parsing regexp: invalid character class range: `z-a`"),
+            ),
+            (
+                r#"[a-\d]"#,
+                "",
+                Err(r#"error parsing regexp: invalid escape sequence: `\d`"#),
+            ),
+            ("[[:alpha:]]", "q", Ok(Some((0, 1)))),
+            ("[[:^alpha:]]", "1", Ok(Some((0, 1)))),
+            (
+                "[[:foo:]]",
+                "",
+                Err("error parsing regexp: invalid character class range: `[:foo:]`"),
+            ),
+            ("[[:alpha]", "[", Ok(Some((0, 1)))),
+            (
+                "[abc",
+                "",
+                Err("error parsing regexp: missing closing ]: `[abc`"),
+            ),
+            ("[", "", Err("error parsing regexp: missing closing ]: `[`")),
+            ("[a&&b]", "&", Ok(Some((0, 1)))),
+            ("[~~]", "~", Ok(Some((0, 1)))),
+            ("[-a]", "-", Ok(Some((0, 1)))),
+            (
+                r#"[a\"#,
+                "",
+                Err("error parsing regexp: trailing backslash at end of expression: ``"),
+            ),
+            (
+                "[a-",
+                "",
+                Err("error parsing regexp: missing closing ]: `[a-`"),
+            ),
+            (r#"[a-\x7A]"#, "z", Ok(Some((0, 1)))),
+            (r#"[\n]"#, "\u{a}", Ok(Some((0, 1)))),
+            (r#"[\x{41}-\x{43}]"#, "B", Ok(Some((0, 1)))),
+            (
+                "[^]",
+                "]",
+                Err("error parsing regexp: missing closing ]: `[^]`"),
+            ),
+            (
+                "[]",
+                "]",
+                Err("error parsing regexp: missing closing ]: `[]`"),
+            ),
+            ("[a-b-c]", "-", Ok(Some((0, 1)))),
+            ("[.+*?(){}^$#&~|]", "#", Ok(Some((0, 1)))),
+            (r#"[\]]"#, "]", Ok(Some((0, 1)))),
+            ("(a)", "a", Ok(Some((0, 1)))),
+            ("(?:a)", "a", Ok(Some((0, 1)))),
+            ("(?i)a", "A", Ok(Some((0, 1)))),
+            ("(?i:a)b", "Ab", Ok(Some((0, 2)))),
+            ("(?P<n>a)", "a", Ok(Some((0, 1)))),
+            ("(?<n>a)", "a", Ok(Some((0, 1)))),
+            (
+                "(?P<>a)",
+                "",
+                Err("error parsing regexp: invalid named capture: `(?P<>`"),
+            ),
+            ("(?P<1a>a)", "a", Ok(Some((0, 1)))),
+            (
+                "(?P<n",
+                "",
+                Err("error parsing regexp: invalid named capture: `(?P<n`"),
+            ),
+            (
+                "(?P<n-x>a)",
+                "",
+                Err("error parsing regexp: invalid named capture: `(?P<n-x>`"),
+            ),
+            (
+                "(?-)",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?-)`"),
+            ),
+            ("(?i-m)a", "A", Ok(Some((0, 1)))),
+            (
+                "(?x)",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?x`"),
+            ),
+            (
+                "(?",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?`"),
+            ),
+            ("(?)a", "a", Ok(Some((0, 1)))),
+            ("a(?i)*", "aa", Ok(Some((0, 2)))),
+            ("a(?i)(?s)+", "aa", Ok(Some((0, 2)))),
+            (")", "", Err("error parsing regexp: unexpected ): `)`")),
+            ("(", "", Err("error parsing regexp: missing closing ): `(`")),
+            (
+                "(?i)*",
+                "",
+                Err("error parsing regexp: missing argument to repetition operator: `*`"),
+            ),
+            ("(?-i:a)", "a", Ok(Some((0, 1)))),
+            (
+                "(?i-:a)",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?i-:`"),
+            ),
+            (
+                "(?--i)",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?--`"),
+            ),
+            ("(?U)a+", "aa", Ok(Some((0, 1)))),
+            ("(?s:.)", "\u{a}", Ok(Some((0, 1)))),
+            ("(?m)^a$", "b\u{a}a", Ok(Some((2, 3)))),
+            (
+                "(?i",
+                "",
+                Err("error parsing regexp: invalid or unsupported Perl syntax: `(?i`"),
+            ),
+            ("}", "}", Ok(Some((0, 1)))),
+            (
+                "a|*",
+                "",
+                Err("error parsing regexp: missing argument to repetition operator: `*`"),
+            ),
+            ("^a.c$|x", "abc", Ok(Some((0, 3)))),
+            ("a\u{1}", "a\u{1}", Ok(Some((0, 2)))),
+            ("a#&~", "a#&~", Ok(Some((0, 4)))),
+            ("(|a)*", "a", Ok(Some((0, 0)))),
+            ("x(?i)", "", Ok(None)),
+            (r#"\pN{1000}"#, "", Ok(None)),
+            ("a|b{3}", "bbb", Ok(Some((0, 3)))),
+            (r#"\Q\E"#, "x", Ok(Some((0, 0)))),
+            (r#"a\Q\E(?i)*"#, "aa", Ok(Some((0, 2)))),
+            (r#"[\x{D800}]"#, "a", Ok(None)),
+            (r#"[a\x{D800}]"#, "a", Ok(Some((0, 1)))),
+            (r#"[^\x{D800}]"#, "a", Ok(Some((0, 1)))),
+            (r#"[\x{D7FF}-\x{E000}]"#, "\u{e000}", Ok(Some((0, 3)))),
+            (r#"[\x{D800}-\x{DFFF}]"#, "-", Ok(None)),
+            (
+                r#"[\x{D800}-a]"#,
+                "",
+                Err(r#"error parsing regexp: invalid character class range: `\x{D800}-a`"#),
+            ),
+            (r#"a\x{DFFF}*"#, "a", Ok(Some((0, 1)))),
+            (r#"[\x{DC00}-\x{E001}]"#, "\u{e001}", Ok(Some((0, 3)))),
+            (r#"[\x{10FFFF}]"#, "\u{10ffff}", Ok(Some((0, 4)))),
+        ];
+        for (pattern, input, want) in cases {
+            let got = compile(pattern).map(|r| r.find(input).map(|m| (m.start(), m.end())));
+            assert_eq!(
+                got,
+                want.map_err(str::to_string),
+                "pattern {pattern:?} on {input:?}"
+            );
+        }
+        // Go compiles this; the regex crate's 10 MiB program limit stays, since a pattern from a
+        // config file may not grow a pipeline's memory without bound: the refusal names the pattern.
+        let big = r"(?i)\p{L}{1000}";
+        assert_eq!(
+            compile(big).err(),
+            Some(format!(
+                "error parsing regexp: Compiled regex exceeds size limit of 10485760 bytes.: `{big}`"
+            ))
+        );
     }
 }

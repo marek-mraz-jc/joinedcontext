@@ -100,3 +100,81 @@ impl<'a> Fields<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Fields;
+    use serde_json::json;
+
+    fn err(r: Result<impl std::fmt::Debug, ekiben_core::CoreError>) -> String {
+        r.map_or_else(|e| e.to_string(), |v| format!("ok {v:?}"))
+    }
+
+    #[test]
+    fn a_config_is_an_object_of_known_fields() {
+        let known = ["a", "b"];
+        assert!(Fields::new("grok", &json!(null), &known).is_ok());
+        assert!(Fields::new("grok", &json!({"a": 1}), &known).is_ok());
+        assert_eq!(
+            err(Fields::new("grok", &json!([1]), &known).map(|_| ())),
+            "configuration error: grok config must be an object"
+        );
+        assert_eq!(
+            err(Fields::new("grok", &json!({"a": 1, "c": 2}), &known).map(|_| ())),
+            "configuration error: grok: field c not recognised"
+        );
+    }
+
+    #[test]
+    fn each_kind_reads_its_values_and_refuses_the_others() -> Result<(), ekiben_core::CoreError> {
+        let conf = json!({
+            "s": "x", "n": 7, "t": true, "o": {},
+            "l": ["x", 2, false], "bl": [[]],
+            "m": {"a": "x", "b": 2, "c": true}, "bm": {"a": null},
+        });
+        let keys = ["s", "n", "t", "o", "l", "bl", "m", "bm"];
+        let f = Fields::new("jq", &conf, &keys)?;
+        assert_eq!(f.string("s")?, Some("x".into()));
+        assert_eq!(f.string("n")?, Some("7".into()));
+        assert_eq!(f.string("t")?, Some("true".into()));
+        assert_eq!(f.string("absent")?, None);
+        assert_eq!(
+            err(f.string("o")),
+            "configuration error: jq field o: expected string value"
+        );
+        assert_eq!(f.bool("t")?, Some(true));
+        assert_eq!(f.bool("absent")?, None);
+        assert_eq!(
+            err(f.bool("s")),
+            "configuration error: jq field s: expected bool value"
+        );
+        assert_eq!(
+            f.string_list("l")?,
+            Some(vec!["x".into(), "2".into(), "false".into()])
+        );
+        assert_eq!(f.string_list("absent")?, None);
+        let list = "configuration error: jq field bl: expected string list value";
+        assert_eq!(err(f.string_list("bl")), list);
+        assert_eq!(
+            err(f.string_list("s")),
+            "configuration error: jq field s: expected string list value"
+        );
+        let map = f.string_map("m")?.unwrap_or_default();
+        assert_eq!(
+            map.into_iter().collect::<Vec<_>>(),
+            [("a", "x"), ("b", "2"), ("c", "true")].map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert_eq!(f.string_map("absent")?, None);
+        let bad_map = "configuration error: jq field bm: expected string map value";
+        assert_eq!(err(f.string_map("bm")), bad_map);
+        assert_eq!(
+            err(f.string_map("l")),
+            "configuration error: jq field l: expected string map value"
+        );
+        assert_eq!(
+            f.missing("s").to_string(),
+            "configuration error: jq: field 's' is required"
+        );
+        Ok(())
+    }
+}

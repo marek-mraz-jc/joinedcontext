@@ -104,16 +104,16 @@ impl GrokProcessor {
     /// Bento's `newGrok`.
     pub fn new(conf: &GrokConfig) -> Result<Self, String> {
         let mut known = HashMap::new();
-        if conf.use_defaults {
-            let defaults: BTreeMap<String, String> = DEFAULT_PATTERNS
+        let defaults: Option<BTreeMap<String, String>> = conf.use_defaults.then(|| {
+            DEFAULT_PATTERNS
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
-            add_list(&mut known, &defaults, conf.named_only)
+                .collect()
+        });
+        for list in defaults.iter().chain([&conf.pattern_definitions]) {
+            add_list(&mut known, list, conf.named_only)
                 .map_err(|e| format!("failed to create grok compiler: {e}"))?;
         }
-        add_list(&mut known, &conf.pattern_definitions, conf.named_only)
-            .map_err(|e| format!("failed to create grok compiler: {e}"))?;
         let mut parsers = Vec::with_capacity(conf.expressions.len());
         for pattern in &conf.expressions {
             let compiled = compile(pattern, &known, conf.named_only, conf.remove_empty)
@@ -181,14 +181,15 @@ fn add_patterns_from_path(
     if path.contains(['*', '?', '[']) {
         return Err("glob patterns are not supported here; name a file or a directory".into());
     }
+    let text = |e: std::io::Error| e.to_string();
     let full =
         ekiben_io_file::path_guard::sanitize_file_path(path, root).map_err(|e| e.to_string())?;
     let meta = std::fs::metadata(&full).map_err(|e| format!("stat {path}: {e}"))?;
     let mut files = Vec::new();
     if meta.is_dir() {
-        for entry in std::fs::read_dir(&full).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if entry.file_type().map_err(|e| e.to_string())?.is_file() {
+        for entry in std::fs::read_dir(&full).map_err(text)? {
+            let entry = entry.map_err(text)?;
+            if entry.file_type().map_err(text)?.is_file() {
                 files.push(entry.path());
             }
         }
@@ -197,8 +198,8 @@ fn add_patterns_from_path(
         files.push(full);
     }
     for f in files {
-        let text = std::fs::read_to_string(&f).map_err(|e| e.to_string())?;
-        for (n, l) in text.lines().enumerate() {
+        let body = std::fs::read_to_string(&f).map_err(text)?;
+        for (n, l) in body.lines().enumerate() {
             if l.is_empty() || l.starts_with('#') {
                 continue;
             }
