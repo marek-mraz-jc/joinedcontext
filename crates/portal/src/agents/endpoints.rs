@@ -339,6 +339,99 @@ mod tests {
         ])
     }
 
+    fn envelope(
+        kind: &str,
+        name: &str,
+        project: &str,
+        spec: Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, project),
+            spec,
+            status: None,
+        }
+    }
+
+    /// `own` and `noslug` in project `p`; `theirs` in `q`, which names `p` and which `p`'s
+    /// SharedSpaceReference points at.
+    fn mirror() -> Mirror {
+        let mirror = Mirror::new();
+        let space = json!({"kind": "ContextSpace", "name": "transportation"});
+        mirror.upsert(envelope(
+            "Endpoint",
+            "own",
+            "p",
+            json!({"slug": "own-s", "contextSpaceRef": space}),
+        ));
+        mirror.upsert(envelope(
+            "Endpoint",
+            "noslug",
+            "p",
+            json!({"slug": "", "contextSpaceRef": space}),
+        ));
+        mirror.upsert(envelope(
+            "Endpoint",
+            "theirs",
+            "q",
+            json!({"slug": "theirs-s", "contextSpaceRef": {"name": "air"}, "allowedProjects": ["p"]}),
+        ));
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "air",
+            "p",
+            json!({"endpointRef": {"project": "q", "name": "theirs"}}),
+        ));
+        mirror
+    }
+
+    #[test]
+    fn a_name_resolves_in_the_project_and_a_conversation_also_reads_what_is_shared() {
+        let mirror = mirror();
+        let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            resolve(&mirror, "p", &names(&["own"])).unwrap(),
+            vec![RunEndpoint {
+                name: "own".into(),
+                slug: "own-s".into(),
+                space: "transportation".into()
+            }]
+        );
+        assert!(matches!(
+            resolve(&mirror, "p", &names(&["ghost"])),
+            Err(ApiError::NotFound(m)) if m.contains("'ghost'")
+        ));
+        assert!(matches!(
+            resolve(&mirror, "p", &names(&["noslug"])),
+            Err(ApiError::BadRequest(m)) if m.contains("EP-02")
+        ));
+        // a build stays on its own Endpoints (AP-44); a conversation reads the shared one too
+        assert!(matches!(
+            resolve(&mirror, "p", &names(&["theirs"])),
+            Err(ApiError::NotFound(_))
+        ));
+        assert_eq!(
+            resolve_readable(&mirror, "p", &names(&["own", "theirs"])).unwrap(),
+            vec![
+                RunEndpoint {
+                    name: "own".into(),
+                    slug: "own-s".into(),
+                    space: "transportation".into()
+                },
+                RunEndpoint {
+                    name: "theirs".into(),
+                    slug: "theirs-s".into(),
+                    space: "air".into()
+                },
+            ]
+        );
+        assert!(matches!(
+            resolve_readable(&mirror, "p", &names(&["ghost"])),
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
     #[test]
     fn a_request_names_one_endpoint_or_a_list_never_both() {
         assert_eq!(requested(Some("a"), &[]).unwrap(), vec!["a"]);
@@ -408,6 +501,17 @@ mod tests {
             "{section}"
         );
         assert_eq!(pack_section(&endpoints[..1], &needs), "");
+        // a type two needs of one space name is listed once; an endpoint no need names says so
+        let repeated = json!([
+            { "contextSpaceRef": { "name": "transportation" }, "types": ["Vehicle"] },
+            { "contextSpaceRef": { "name": "transportation" }, "types": ["Vehicle"] }
+        ]);
+        assert_eq!(types_by_endpoint(&endpoints, &repeated)[0], vec!["Vehicle"]);
+        let bare = pack_section(&endpoints, &repeated);
+        assert!(
+            bare.contains("types: none named by the data needs"),
+            "{bare}"
+        );
         let config = config(&endpoints, &needs);
         assert_eq!(
             config[1]["types"],

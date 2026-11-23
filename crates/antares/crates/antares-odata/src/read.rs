@@ -1006,7 +1006,10 @@ pub(crate) async fn entity(
     )
     .await?;
     attach(&mut docs, &computing, version)?;
-    let doc = docs.first().ok_or_else(|| not_found(version))?;
+    // a Retrieve Entity that answered holds its Entity
+    let Some(doc) = docs.first() else {
+        return Err(not_found(version));
+    };
     let value = entity_value(
         reads,
         set_name,
@@ -2240,7 +2243,10 @@ pub(crate) fn set_of<'r>(
     version: ODataVersion,
 ) -> Result<&'r Set, ODataErrorResponse> {
     // The URL resolved against the same model, so the set is there.
-    reads.edm.sets.get(name).ok_or_else(|| not_found(version))
+    let Some(set) = reads.edm.sets.get(name) else {
+        return Err(not_found(version));
+    };
+    Ok(set)
 }
 
 pub(crate) fn resource<'r>(
@@ -2248,7 +2254,10 @@ pub(crate) fn resource<'r>(
     name: &str,
     version: ODataVersion,
 ) -> Result<Resource<'r>, ODataErrorResponse> {
-    Resource::new(&reads.state.model, name).ok_or_else(|| not_found(version))
+    let Some(resource) = Resource::new(&reads.state.model, name) else {
+        return Err(not_found(version));
+    };
+    Ok(resource)
 }
 
 /// The header every answer names its OData version in (Protocol 8.1.5), a plain-text one too.
@@ -2263,7 +2272,10 @@ pub(crate) fn body_resource<'r>(
     name: &str,
     version: ODataVersion,
 ) -> Result<Resource<'r>, ODataErrorResponse> {
-    Resource::new(reads.state.url_model(), name).ok_or_else(|| not_found(version))
+    let Some(resource) = Resource::new(reads.state.url_model(), name) else {
+        return Err(not_found(version));
+    };
+    Ok(resource)
 }
 
 /// Whether `Prefer: odata.include-annotations` (Protocol 4.01 8.2.8.4) asks for an annotation
@@ -2527,6 +2539,22 @@ mod tests {
         // T-3822: `pick`, never `attrs`, which drops the Entities holding none
         let mut set = set();
         let none = Translated::default();
+        // nothing picked and nothing joined: the whole Entity, neither a pick nor attrs
+        let whole = query(&set, None, &[], &none);
+        assert!(
+            !whole.contains("pick=") && !whole.contains("attrs="),
+            "{whole}"
+        );
+        assert!(!whole.contains("expandValues="), "{whole}");
+        let expanding = Translated {
+            expand_values: vec!["https://e.org/m".into()],
+            ..Translated::default()
+        };
+        let listed = query(&set, None, &[], &expanding);
+        assert!(
+            listed.contains("&expandValues=https%3A%2F%2Fe.org%2Fm"),
+            "{listed}"
+        );
         let q = query(&set, Some(&["geo", "createdAt"]), &[], &none);
         assert!(
             q.ends_with(
@@ -2725,6 +2753,33 @@ mod tests {
     }
 
     #[test]
+    fn only_a_model_refusal_of_a_shown_member_is_passed_on() {
+        let edm = Edm {
+            csdl: odata_csdl::Model {
+                version: odata_csdl::CsdlVersion::V4_01,
+                references: vec![],
+                schemas: vec![],
+            },
+            namespace: "v".into(),
+            sets: BTreeMap::from([("T".into(), set())]),
+            schema_version: "0.m1".into(),
+            histories: std::collections::BTreeMap::new(),
+        };
+        let mark = linkml_model::check::MARK;
+        assert!(shown_refusal(
+            &edm,
+            &format!("the attribute geo {mark} city")
+        ));
+        // a member no set shows, a detail without the mark, nothing before the mark
+        assert!(!shown_refusal(
+            &edm,
+            &format!("the attribute secret {mark} city")
+        ));
+        assert!(!shown_refusal(&edm, "the attribute geo is wrong"));
+        assert!(!shown_refusal(&edm, &format!("{mark} city")));
+    }
+
+    #[test]
     fn a_refusal_keeps_its_status_and_never_its_detail() {
         for (status, code) in [
             (StatusCode::NOT_FOUND, "NotFound"),
@@ -2899,9 +2954,10 @@ mod tests {
     fn single_or(key: &Key) -> Key {
         // The canonical form of a named key is the single one.
         match key {
-            Key::Compound(pairs) => pairs
-                .first()
-                .map_or_else(|| key.clone(), |(_, v)| Key::Single(v.clone())),
+            Key::Compound(pairs) => match pairs.first() {
+                Some((_, v)) => Key::Single(v.clone()),
+                None => key.clone(),
+            },
             Key::Single(_) => key.clone(),
         }
     }

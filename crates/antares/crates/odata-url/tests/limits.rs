@@ -119,6 +119,44 @@ mod o7 {
         }
     }
 
+    /// A path and a query exactly at their length bounds are read; one byte more is refused.
+    #[test]
+    fn a_path_and_a_query_at_their_bounds_are_taken() {
+        let bound = Limits {
+            max_path_len: 12,
+            max_query_len: 6,
+            ..TINY
+        };
+        assert!(parse("Buildings(1)?$top=5", &Service, &bound).is_ok());
+        for (uri, limit) in [
+            ("Buildings(12)?$top=5", LimitKind::PathLength),
+            ("Buildings(1)?$top=50", LimitKind::QueryLength),
+        ] {
+            let refused = parse(uri, &Service, &bound).err().map(|e| e.kind);
+            assert!(
+                matches!(refused, Some(UrlErrorKind::LimitExceeded { limit: l, .. }) if l == limit),
+                "{uri}: {refused:?}"
+            );
+        }
+        // a search word at the literal bound is read, one byte more is refused
+        let word = |n: usize| format!("Buildings?$search={}", "a".repeat(n));
+        assert!(parse(&word(16), &Service, &TINY).is_ok());
+        let over = parse(&word(17), &Service, &TINY).err().map(|e| e.kind);
+        assert!(
+            matches!(
+                over,
+                Some(UrlErrorKind::LimitExceeded {
+                    limit: LimitKind::LiteralLength,
+                    ..
+                })
+            ),
+            "{over:?}"
+        );
+        // the depth bound counts nesting, not how many groups stand side by side
+        let wide = "Buildings?$filter=(true) and (true) and (true) and (true)";
+        assert!(parse(wide, &Service, &TINY).is_ok());
+    }
+
     /// ODA-04: a `$skip` past its bound is refused; the client follows `@odata.nextLink`.
     #[test]
     fn a_skip_past_its_bound_is_refused() {

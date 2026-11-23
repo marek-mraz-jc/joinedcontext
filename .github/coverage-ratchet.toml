@@ -13,6 +13,7 @@
 "antares-jsonstat" = { lines = 100.00, functions = 100.00 }
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
 "antares-notifier" = { lines = 99.05, functions = 99.14 }
+"antares-odata" = { lines = 99.47, functions = 99.12 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sta" = { lines = 100.00, functions = 99.78 }
 "antares-views" = { lines = 99.70, functions = 99.30 }

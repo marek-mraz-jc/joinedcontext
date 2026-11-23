@@ -167,7 +167,10 @@ pub(crate) async fn related(
         version,
     )
     .await?;
-    let doc = docs.first().ok_or_else(|| not_found(version))?;
+    // a Retrieve Entity that answered holds its Entity
+    let Some(doc) = docs.first() else {
+        return Err(not_found(version));
+    };
     let mut urns = objects(default_instance(doc.get(core_name(iri))));
     if !collection {
         urns.truncate(1);
@@ -210,7 +213,10 @@ pub(crate) async fn related(
     if collection {
         let _ = write_collection(ctx, &resource, &found, &Page::default(), &mut body);
     } else {
-        let one = found.first().ok_or_else(|| not_found(version))?;
+        // `targets` answers one Entity or 404 for a single navigation
+        let Some(one) = found.first() else {
+            return Err(not_found(version));
+        };
         let _ = write_entity(ctx, &resource, one, &mut body);
     }
     Ok(json_response(version, ctx.level, body))

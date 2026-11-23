@@ -2570,13 +2570,15 @@ mod tests {
         );
         for e in [length, created.clone()] {
             let t = translate(&e, &set(), &BTreeMap::new(), &[]).unwrap_or_default();
+            // the same filter translates the same, its derived context index aside
+            assert_eq!(
+                translate(&e, &set(), &BTreeMap::new(), &[]).as_ref(),
+                Ok(&t)
+            );
             assert_eq!((t.q, t.residual.len()), (None, 1), "{e:?}");
         }
         // a history row carries no system member
-        assert_eq!(
-            residual_whole(&created, &set(), &[]).map(|t| t.residual.len()),
-            Err(Refused::Later)
-        );
+        assert_eq!(residual_whole(&created, &set(), &[]), Err(Refused::Later));
     }
 
     #[test]
@@ -3707,7 +3709,7 @@ mod tests {
     #[test]
     fn what_any_over_a_navigation_cannot_say_in_q_is_refused() {
         let (car, sets) = navigating();
-        let q = |e: &Expr| translate(e, &car, &sets, &[]).map(|t| t.q);
+        let q = |e: &Expr| translate(e, &car, &sets, &[]);
         let en = cmp(
             over("d", &["name"]),
             CompareOp::Eq,

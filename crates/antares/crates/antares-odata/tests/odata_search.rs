@@ -266,15 +266,26 @@ async fn search_joins_filter_count_order_and_paging() -> Result<(), String> {
     let (status, body) = send_text(&app, "$search=blue").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(cars(&body), [1, 3]);
+    // a body that is not UTF-8 is no URL query
+    let (status, body) = send_text(&app, b"$search=\xff").await;
+    assert_eq!(
+        (status, &body["error"]["message"]),
+        (
+            StatusCode::BAD_REQUEST,
+            &json!("the query body is not a URL query")
+        ),
+        "{body}"
+    );
     Ok(())
 }
 
-async fn send_text(app: &Router, text: &str) -> (StatusCode, Value) {
+async fn send_text(app: &Router, text: impl AsRef<[u8]>) -> (StatusCode, Value) {
+    let text = text.as_ref().to_vec();
     let req = Request::post(format!("{ROOT}/Car/$query"))
         .header("NGSILD-Tenant", "city")
         .header("Content-Type", "text/plain")
         .header("Content-Length", text.len())
-        .body(Body::from(text.to_owned()))
+        .body(Body::from(text))
         .unwrap_or_default();
     let Ok(resp) = app.clone().oneshot(req).await;
     let status = resp.status();
