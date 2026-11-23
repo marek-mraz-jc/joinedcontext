@@ -38,6 +38,7 @@ fn every_seeded_role_is_a_valid_role_manifest() {
             "pipeline-editor",
             "endpoint-editor",
             "app-editor",
+            "portal-editor",
             "steward",
             "publisher",
             "people-admin",
