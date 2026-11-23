@@ -1001,6 +1001,35 @@ async fn the_page_names_no_outsider_a_member() {
     assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
 }
 
+/// An installation act is decided in the main Organization: only the server administrator
+/// becomes a member of it there, never an outsider.
+#[tokio::test]
+async fn an_installation_act_names_no_outsider_a_member_of_the_main_organization() {
+    let w = world_with(Arc::new(DenySome), loopback());
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("admin"),
+            Some(json!({ "name": "doprava" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/orgs",
+            Some("outsider"),
+            Some(json!({ "name": "kosice" })),
+        )
+        .await;
+    assert!(st.is_client_error(), "{st} {body}");
+    let (st, _) = w
+        .call("GET", "/api/orgs/name/kosice", Some("admin"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "nothing was created");
+}
+
 /// Denies read on dashboard `secret` and folder `hidden` (and what lives in it); allows
 /// everything else in ORG for members.
 struct DenySome;

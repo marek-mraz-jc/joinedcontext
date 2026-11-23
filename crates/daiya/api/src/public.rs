@@ -1144,6 +1144,35 @@ mod tests {
         );
     }
 
+    /// A full table first drops the windows that ended: the live ones stay counted.
+    #[test]
+    fn a_full_table_drops_ended_windows_and_keeps_live_ones() {
+        let limiter = PublicRateLimiter::new(1, 1);
+        let addr = |i: usize| {
+            IpAddr::V4(Ipv4Addr::from(
+                0x0a00_0000 + u32::try_from(i).unwrap_or(u32::MAX),
+            ))
+        };
+        let half = PublicRateLimiter::MAX_TRACKED_ADDRESSES / 2;
+        for i in 0..half {
+            limiter.check_rate_limit(addr(i)).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1100));
+        for i in half..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
+            limiter.check_rate_limit(addr(i)).unwrap();
+        }
+        limiter
+            .check_rate_limit(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+            .unwrap();
+        assert_eq!(limiter.buckets.lock().len(), half + 1);
+        assert!(
+            limiter
+                .check_rate_limit(addr(PublicRateLimiter::MAX_TRACKED_ADDRESSES - 1))
+                .is_err(),
+            "a live window keeps its count"
+        );
+    }
+
     /// A newcomer to a full table takes the place of the oldest window: the table never grows
     /// past its bound.
     #[test]
