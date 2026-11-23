@@ -470,7 +470,7 @@ async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
     let mut input = AmqpInput::from_config(&conf(json!({
         "urls": [url.clone()],
         "queue": queue,
-        "queue_declare": {"enabled": true, "durable": false, "auto_delete": true},
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": false},
         "bindings_declare": [{"exchange": "amq.topic", "key": format!("ekiben.{}.#", std::process::id())}],
         "auto_ack": true,
         "consumer_tag": "ekiben-auto",
@@ -522,6 +522,52 @@ async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
     ));
     input.close().await.expect("close");
     assert!(!input.is_connected());
+    let left = ch
+        .queue_delete(queue.as_str().into(), Default::default())
+        .await
+        .expect("delete");
+    assert_eq!(left, 0, "auto_ack: nothing went back to the queue on close");
+    let _ = conn.close(200, "test done".into()).await;
+}
+
+/// queue_declare.auto_delete reaches the broker: the queue goes when its consumer does.
+#[tokio::test]
+async fn an_auto_delete_queue_goes_with_its_consumer() {
+    let Some(url) = live_url("an_auto_delete_queue_goes_with_its_consumer") else {
+        return;
+    };
+    let queue = format!("ekiben-auto-delete-{}", std::process::id());
+    let mut input = AmqpInput::from_config(&conf(json!({
+        "urls": [url.clone()],
+        "queue": queue,
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": true},
+    })))
+    .expect("builds");
+    let c = loopback();
+    assert!(matches!(
+        input.read_batch(&c).await,
+        Err(CoreError::Timeout)
+    ));
+    input.close().await.expect("close");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let conn = Connection::connect(&url, ConnectionProperties::default())
+        .await
+        .expect("connects");
+    let ch = conn.create_channel().await.expect("channel");
+    let passive = ch
+        .queue_declare(
+            queue.as_str().into(),
+            QueueDeclareOptions {
+                passive: true,
+                ..QueueDeclareOptions::default()
+            },
+            FieldTable::default(),
+        )
+        .await;
+    assert!(
+        passive.is_err(),
+        "the auto_delete queue outlived its consumer"
+    );
     let _ = conn.close(200, "test done".into()).await;
 }
 

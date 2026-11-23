@@ -127,6 +127,8 @@ async fn consumes_acks_requeues_and_rejects() {
     ack.nack(BatchError::new(b, "poison message".to_string()));
 
     tokio::time::sleep(Duration::from_millis(500)).await;
+    // closed first: a message the input still held would go back to the queue and be counted
+    input.close().await.expect("close");
     let q = ch
         .queue_declare(
             queue.clone().into(),
@@ -139,6 +141,5 @@ async fn consumes_acks_requeues_and_rejects() {
         .await
         .expect("passive declare");
     assert_eq!(q.message_count(), 0, "every message acked or rejected");
-    input.close().await.expect("close");
     let _ = ch.queue_delete(queue.into(), Default::default()).await;
 }
