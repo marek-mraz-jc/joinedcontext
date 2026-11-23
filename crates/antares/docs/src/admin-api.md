@@ -48,6 +48,7 @@ schema: `docs/openapi/antares-admin.yaml`, rendered at
 | `GET /q/dead-letters` | Notifications the delivery policy gave up on |
 | `GET`, `PUT`, `DELETE /q/retention/{tenant}` | How long a Tenant keeps each type ([Retention](#retention)) |
 | `POST /q/retention/{tenant}/preview`, `GET /q/retention/{tenant}/deleted` | What a retention document would delete now; what this pod's sweeps deleted ([Retention](#retention)) |
+| `GET /q/dead-letters/{id}` | One dead letter with its payload |
 | `POST /q/dead-letters/{id}/replay` | One more delivery attempt |
 | `DELETE /q/dead-letters/{id}` | Drop a dead letter |
 | `POST /ex/v1/remote-notify` | The 5.8.1.4 receiver other brokers post to |
@@ -299,9 +300,18 @@ why an egress refusal never does:
 
 ### GET /q/dead-letters
 
-`?tenant=&subscription=&limit=` — letters of one tenant (the default tenant
-when `tenant` is absent), newest first, `limit` 100 by default; `400` for a
-`limit` that is not a positive integer or a tenant outside the grammar.
+`?tenant=&subscription=&limit=&offset=` — letters of one tenant (the default
+tenant when `tenant` is absent), newest first, a page of `limit` (100 by
+default, at most 1000) after skipping `offset` (0 by default); `400` for a
+`limit` that is not a positive integer, an `offset` that is not a
+non-negative integer or a tenant outside the grammar. Each listed letter
+carries `payloadBytes` instead of its payload. A tenant keeps at most 1000
+letters; writing one past that deletes the oldest.
+
+### GET /q/dead-letters/{id}
+
+`?tenant=` — one letter whole, payload included, credentials blanked as in
+the listing; `404` when the tenant holds no such letter.
 Endpoint userinfo, `receiverInfo`, `notifierInfo` and the rendered `headers`
 of an older letter are shown blanked; the stored letter keeps them so a
 replay still authenticates.

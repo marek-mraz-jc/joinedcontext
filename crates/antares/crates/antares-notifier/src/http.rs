@@ -93,7 +93,7 @@ impl NotificationSink for HttpSink {
                         r.status().as_u16()
                     ))),
                     Some(Err(e)) => Err(DeliveryError {
-                        timed_out: e.is_timeout(),
+                        unreachable: e.is_timeout() || e.is_connect(),
                         message: crate::redact_userinfo(&e.to_string()),
                     }),
                     None => Err(DeliveryError::timeout("timeout")),

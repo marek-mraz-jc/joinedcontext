@@ -33,6 +33,10 @@ pub const KEPT: usize = 256;
 pub const MAX_CLOSED: usize = 256;
 /// The notification bytes the closed connections of one hub keep, cut the same way.
 pub const MAX_CLOSED_BYTES: usize = 4 * 1024 * 1024;
+/// The notification bytes one connection keeps for a resume (S2-24): past it the oldest go, as
+/// past [`KEPT`], and a resume asking for them answers a gap. A notification larger than this
+/// is sent and not kept.
+pub const KEPT_BYTES: usize = 512 * 1024;
 /// The bound of the entity table when `JC_GATEWAY_WS_ENTITIES` names none (ADR-N-049 §2.2).
 pub const DEFAULT_ENTITIES: usize = 50_000;
 
@@ -183,6 +187,51 @@ struct Conn {
     next: u32,
 }
 
+/// What a connection keeps for a resume: its last notifications as `(x-seq, text)`, within
+/// [`KEPT`] and [`KEPT_BYTES`], and the last x-seq it sent, kept or not, so a resume past an
+/// evicted notification still knows there was one.
+#[derive(Clone, Debug, Default)]
+pub struct Kept {
+    items: VecDeque<(u64, String)>,
+    bytes: usize,
+    last: u64,
+}
+
+impl Kept {
+    /// Keeps `text` sent as `seq`, dropping the oldest past either bound.
+    pub fn push(&mut self, seq: u64, text: String) {
+        self.mark(seq);
+        self.bytes = self.bytes.saturating_add(text.len());
+        self.items.push_back((seq, text));
+        while self.items.len() > KEPT || self.bytes > KEPT_BYTES {
+            let Some((_, gone)) = self.items.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(gone.len());
+        }
+    }
+
+    /// Records `seq` as sent without keeping a text (an `x-gap`).
+    pub fn mark(&mut self, seq: u64) {
+        self.last = self.last.max(seq);
+    }
+
+    /// The kept notifications, oldest first.
+    pub fn items(&self) -> &VecDeque<(u64, String)> {
+        &self.items
+    }
+
+    /// The bytes the kept texts hold.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// The last x-seq sent.
+    pub fn last(&self) -> u64 {
+        self.last
+    }
+}
+
 /// A closed connection, held for [`RESUME_WINDOW`].
 #[derive(Clone)]
 pub struct Closed {
@@ -192,8 +241,8 @@ pub struct Closed {
     pub principal: String,
     /// Its subscriptions, as `(id, body)`.
     pub subs: Vec<(String, Value)>,
-    /// The notifications it sent last, as `(x-seq, text)`.
-    pub sent: VecDeque<(u64, String)>,
+    /// The notifications it sent last.
+    pub sent: Kept,
     /// When it closed.
     pub at: Instant,
 }
@@ -357,7 +406,7 @@ impl Hub {
 
     /// Closes connection `id`: its filters leave the index, and what a resume needs is held
     /// under `name` for [`RESUME_WINDOW`].
-    pub fn close(&self, id: u64, name: &str, token: &str, sent: VecDeque<(u64, String)>) {
+    pub fn close(&self, id: u64, name: &str, token: &str, sent: Kept) {
         let mut state = self.state();
         let Some(conn) = state.conns.remove(&id) else {
             return;
@@ -384,13 +433,7 @@ impl Hub {
                 at: now,
             },
         );
-        let kept = |closed: &Closed| {
-            closed
-                .sent
-                .iter()
-                .map(|(_, text)| text.len())
-                .sum::<usize>()
-        };
+        let kept = |closed: &Closed| closed.sent.bytes();
         let mut bytes: usize = state.closed.values().map(kept).sum();
         while state.closed.len() > MAX_CLOSED || bytes > MAX_CLOSED_BYTES {
             let oldest = state
@@ -1148,7 +1191,7 @@ mod tests {
             token: "s3cr3t-test".into(),
             principal: "anna".into(),
             subs: Vec::new(),
-            sent: VecDeque::new(),
+            sent: Kept::default(),
             at: Instant::now(),
         };
         let text = format!("{closed:?}");
@@ -1810,12 +1853,9 @@ mod tests {
         let hub = Hub::new("s", 100);
         let (conn, _) = open(&hub);
         let id = subscribe(&hub, conn, json!({}));
-        hub.close(
-            conn,
-            "name",
-            "token",
-            VecDeque::from([(1, "one".to_owned())]),
-        );
+        let mut sent = Kept::default();
+        sent.push(1, "one".to_owned());
+        hub.close(conn, "name", "token", sent);
         assert_eq!(hub.subscriptions(conn), 0);
         assert!(hub.idle_for().is_some());
         assert!(hub.take_closed("name", "wrong", "anonymous").is_none());
@@ -1835,11 +1875,30 @@ mod tests {
         let hub = Hub::new("s", 100);
         let (conn, _) = open(&hub);
         subscribe(&hub, conn, json!({}));
-        hub.close(conn, "", "", VecDeque::new());
+        hub.close(conn, "", "", Kept::default());
         assert_eq!(hub.subscriptions(conn), 0);
         assert!(hub.take_closed("", "", "anonymous").is_none());
         assert!(same_token("abc", "abc"));
         assert!(!same_token("abc", "abd") && !same_token("abc", "ab") && !same_token("", "a"));
+    }
+
+    /// S2-24: a live connection keeps its last notifications within KEPT_BYTES, and the last
+    /// x-seq survives an eviction, so a resume can still answer a gap.
+    #[test]
+    fn kept_holds_a_byte_bound() {
+        let mut kept = Kept::default();
+        let large = "x".repeat(64 * 1024);
+        for n in 1..=KEPT as u64 {
+            kept.push(n, large.clone());
+        }
+        assert!(kept.bytes() <= KEPT_BYTES, "{}", kept.bytes());
+        assert_eq!(kept.items().len(), KEPT_BYTES / large.len());
+        assert_eq!(kept.items().back().map(|(n, _)| *n), Some(KEPT as u64), "the newest is kept");
+        kept.push(KEPT as u64 + 1, "y".repeat(KEPT_BYTES + 1));
+        assert!(kept.items().is_empty(), "a notification past the bound is not kept");
+        assert_eq!((kept.bytes(), kept.last()), (0, KEPT as u64 + 1));
+        kept.mark(KEPT as u64 + 2);
+        assert_eq!(kept.last(), KEPT as u64 + 2, "a gap moves the last x-seq");
     }
 
     /// Reconnect churn holds no more than the caps: the oldest closed connections go first.
@@ -1849,11 +1908,12 @@ mod tests {
         let large = "x".repeat(64 * 1024);
         for n in 0..(MAX_CLOSED + 40) {
             let (conn, _) = open(&hub);
-            let sent = VecDeque::from([(1, large.clone())]);
+            let mut sent = Kept::default();
+            sent.push(1, large.clone());
             hub.close(conn, &format!("c{n}"), "token", sent);
         }
         let state = hub.state();
-        let bytes: usize = state.closed.values().map(|c| c.sent[0].1.len()).sum();
+        let bytes: usize = state.closed.values().map(|c| c.sent.bytes()).sum();
         assert!(state.closed.len() <= MAX_CLOSED, "{}", state.closed.len());
         assert!(bytes <= MAX_CLOSED_BYTES, "{bytes}");
         let newest = format!("c{}", MAX_CLOSED + 39);

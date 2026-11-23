@@ -1961,6 +1961,135 @@ mod delivery_policy_tests {
         assert_eq!(l[0]["attempts"], json!(3));
     }
 
+    /// S4-31: a tenant keeps at most MAX_DEAD_LETTERS letters, the oldest go
+    /// first, and another tenant's letters are untouched.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dead_letters_are_capped_per_tenant() {
+        let (st, t) = state(policy(1, 0));
+        let other = TenantId::new("other").expect("tenant");
+        let letter = |i: usize| {
+            json!({"id": format!("urn:ngsi-ld:DeadLetter:{i:013}-x"),
+            "type": "DeadLetter", "subscriptionId": SUB_ID, "payload": {}})
+        };
+        assert!(park_dead_letter(&st, &other, letter(0)).await);
+        for i in 0..MAX_DEAD_LETTERS + 3 {
+            assert!(park_dead_letter(&st, &t, letter(i)).await);
+        }
+        let held = letters(&st, &t).await;
+        assert_eq!(held.len(), MAX_DEAD_LETTERS);
+        let first = held.iter().filter_map(|l| l["id"].as_str()).min();
+        assert_eq!(
+            first,
+            Some("urn:ngsi-ld:DeadLetter:0000000000003-x"),
+            "the oldest went"
+        );
+        assert_eq!(
+            letters(&st, &other).await.len(),
+            1,
+            "another tenant keeps its letter"
+        );
+    }
+
+    /// Letter ids sort by the time they were written.
+    #[test]
+    fn dead_letter_ids_sort_by_time() {
+        let a = dead_letter_id();
+        std::thread::sleep(Duration::from_millis(2));
+        let b = dead_letter_id();
+        assert!(a < b, "{a} then {b}");
+    }
+
+    /// S4-32: a subscription has one retry task in flight; a failure while it
+    /// sleeps is parked at once, so failures cannot pile up sleeping bodies.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_retry_in_flight_per_subscription() {
+        let (st, t) = state(policy(2, 1_500));
+        let (uri, _hits) = flaky_endpoint(usize::MAX).await;
+        let sub = subscribe(&st, &t, SUB_ID, &uri).await;
+        for _ in 0..4 {
+            send(&st, &t, &sub).await;
+        }
+        assert_eq!(
+            retries_in_flight(&st, &t),
+            1,
+            "one sleeping retry, not four"
+        );
+        let parked = letters(&st, &t).await;
+        assert_eq!(parked.len(), 3, "{parked:?}");
+        assert!(
+            parked.iter().all(|l| l["attempts"] == json!(1)),
+            "{parked:?}"
+        );
+        wait_until(
+            || async { letters(&st, &t).await.len() == 4 },
+            "the retry's letter",
+        )
+        .await;
+        wait_until(
+            || async { retries_in_flight(&st, &t) == 0 },
+            "the slot back",
+        )
+        .await;
+    }
+
+    /// S4-32: one tenant's retries stop at RETRIES_PER_TENANT; another
+    /// tenant still gets its retry.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retries_are_bounded_per_tenant() {
+        // a backoff no slow host outlasts: every retry still sleeps at the end
+        let (st, t) = state(policy(2, 30_000));
+        let other = TenantId::new("other").expect("tenant");
+        let (uri, _hits) = flaky_endpoint(usize::MAX).await;
+        for i in 0..=RETRIES_PER_TENANT {
+            let sub = subscribe(&st, &t, &format!("urn:ngsi-ld:Subscription:p{i}"), &uri).await;
+            send(&st, &t, &sub).await;
+        }
+        assert_eq!(retries_in_flight(&st, &t), RETRIES_PER_TENANT);
+        assert_eq!(
+            letters(&st, &t).await.len(),
+            1,
+            "the one past the bound is parked"
+        );
+        let sub = subscribe(&st, &other, SUB_ID, &uri).await;
+        send(&st, &other, &sub).await;
+        assert_eq!(
+            retries_in_flight(&st, &other),
+            1,
+            "another tenant is not starved"
+        );
+    }
+
+    /// S4-32: a refused connection is an unreachable peer and opens the
+    /// breaker; an endpoint answering 500 is alive and does not.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_connection_counts_toward_the_breaker() {
+        let (st, t) = state(policy(1, 0));
+        // bound and never listening: every connect is refused, and the port
+        // stays ours while the socket lives
+        let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let refused = format!("http://{}/notify", closed.local_addr().expect("addr"));
+        let sub = subscribe(&st, &t, SUB_ID, &refused).await;
+        for _ in 0..crate::egress::TRIP_AFTER {
+            send(&st, &t, &sub).await;
+        }
+        assert!(
+            st.egress.is_open(t.as_str(), &refused),
+            "refusals open the breaker"
+        );
+        let (answering, _hits) = flaky_endpoint(usize::MAX).await;
+        let sub = subscribe(&st, &t, "urn:ngsi-ld:Subscription:answers", &answering).await;
+        for _ in 0..crate::egress::TRIP_AFTER {
+            send(&st, &t, &sub).await;
+        }
+        assert!(
+            !st.egress.is_open(t.as_str(), &answering),
+            "a 500 is an answer"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_exhausted_policy_leaves_exactly_one_dead_letter() {
         let (st, t) = state(policy(2, 50));

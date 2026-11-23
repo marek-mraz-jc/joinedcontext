@@ -1,7 +1,7 @@
 //! The sockets of the fan-out (ADR-N-049): the registry of hubs, each hub's one upstream to the
 //! broker view, and each client's session.
 
-use super::hub::{self, Answer, Hub, Out, Queue, KEPT};
+use super::hub::{self, Answer, Hub, Kept, Out, Queue};
 use crate::app::Gateway;
 use crate::auth::subject::Subject;
 use crate::middleware::tenancy;
@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, HeaderValue, Method};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -804,7 +804,7 @@ pub async fn session(
     let named = hub::random_name().zip(hub::random_name());
     let (name, token) = named.clone().unwrap_or_default();
     let mut seq = 0_u64;
-    let mut sent: VecDeque<(u64, String)> = VecDeque::new();
+    let mut sent = Kept::default();
     let welcome =
         json!({"metadata": {"x-op": "x-welcome", "x-connection": name, "x-resume-token": token}});
     let mut ended = if named.is_none() {
@@ -874,14 +874,12 @@ pub async fn session(
                                 "x-op": "x-notification", "x-seq": seq,
                                 "x-subscription": subscription, "Content-Type": "application/json"},
                                 "body": body}).to_string();
-                            if sent.len() >= KEPT {
-                                sent.pop_front();
-                            }
-                            sent.push_back((seq, text.clone()));
+                            sent.push(seq, text.clone());
                             outgoing.push(text);
                         }
                         Out::Gap => {
                             seq += 1;
+                            sent.mark(seq);
                             outgoing.push(gap(seq, seq));
                         }
                         Out::OutOfScope { entity, subscriptions } => {
@@ -890,10 +888,7 @@ pub async fn session(
                                 "x-op": "x-out-of-scope", "x-seq": seq,
                                 "Content-Type": "application/json"},
                                 "body": {"id": entity, "subscriptionIds": subscriptions}}).to_string();
-                            if sent.len() >= KEPT {
-                                sent.pop_front();
-                            }
-                            sent.push_back((seq, text.clone()));
+                            sent.push(seq, text.clone());
                             outgoing.push(text);
                         }
                         Out::Closing(reason) => {
@@ -1040,7 +1035,7 @@ fn answer(
     text: &str,
     first: bool,
     seq: &mut u64,
-    sent: &mut VecDeque<(u64, String)>,
+    sent: &mut Kept,
 ) -> Vec<String> {
     let (metadata, body) = match hub::envelope(text) {
         Ok(message) => message,
@@ -1100,7 +1095,7 @@ fn resume(
     principal: &str,
     metadata: &Map<String, Value>,
     seq: &mut u64,
-    sent: &mut VecDeque<(u64, String)>,
+    sent: &mut Kept,
 ) -> Vec<String> {
     let name = text_of(metadata, "x-connection");
     let token = text_of(metadata, "x-resume-token");
@@ -1121,15 +1116,23 @@ fn resume(
         hub.subscribe(conn, Some(id), body, false);
     }
     let mut out = Vec::new();
-    let missed: Vec<&(u64, String)> = closed.sent.iter().filter(|(n, _)| *n > after).collect();
-    let last = closed.sent.back().map_or(after, |(n, _)| *n).max(after);
+    // a client cannot have read past what was sent
+    let last = closed.sent.last();
+    let after = after.min(last);
+    let missed: Vec<&(u64, String)> = closed
+        .sent
+        .items()
+        .iter()
+        .filter(|(n, _)| *n > after)
+        .collect();
     if missed.first().is_some_and(|(n, _)| *n > after + 1) || (missed.is_empty() && last > after) {
         out.push(gap(after + 1, missed.first().map_or(last, |(n, _)| n - 1)));
     }
     for (n, text) in missed {
         out.push(text.clone());
-        sent.push_back((*n, text.clone()));
+        sent.push(*n, text.clone());
     }
+    sent.mark(last);
     *seq = last;
     out.insert(
         0,
@@ -1156,7 +1159,10 @@ mod tests {
             "anonymous".into(),
             Subject::default(),
         );
-        let held: VecDeque<(u64, String)> = sent.iter().map(|n| (*n, format!("n{n}"))).collect();
+        let mut held = Kept::default();
+        for n in sent {
+            held.push(*n, format!("n{n}"));
+        }
         hub.close(old, "name", "token", held);
         let (new, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
         (hub, new)
@@ -1168,7 +1174,7 @@ mod tests {
         }))
         .expect("metadata");
         let mut seq = 0;
-        let mut sent = VecDeque::new();
+        let mut sent = Kept::default();
         (
             resume(hub, conn, "anonymous", &metadata, &mut seq, &mut sent),
             seq,
@@ -1374,6 +1380,26 @@ mod tests {
         assert_eq!(seq, 5);
     }
 
+    /// S2-24: a notification past the byte bound is not kept, and a resume after it answers a
+    /// gap instead of nothing.
+    #[test]
+    fn a_resume_past_an_evicted_notification_answers_a_gap() {
+        let hub = Hub::new("s", 10);
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let (old, _) = hub.open(Arc::clone(&endpoint), "anonymous".into(), Subject::default());
+        let mut held = Kept::default();
+        held.push(3, "n3".to_owned());
+        held.push(4, "y".repeat(hub::KEPT_BYTES + 1));
+        hub.close(old, "name", "token", held);
+        let (conn, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
+        let (out, seq) = resumed(&hub, conn, 3);
+        assert!(
+            out[1].contains("x-gap") && out[1].contains("\"x-from\":4") && out[1].contains("\"x-to\":4"),
+            "{out:?}"
+        );
+        assert_eq!((out.len(), seq), (2, 4));
+    }
+
     #[test]
     fn a_resume_from_before_what_is_held_starts_with_a_gap() {
         let (hub, conn) = hub_with_closed(&[3, 4, 5]);
@@ -1400,7 +1426,7 @@ mod tests {
             "anonymous",
             &metadata,
             &mut 0,
-            &mut VecDeque::new(),
+            &mut Kept::default(),
         );
         assert!(out[0].contains("\"x-status\":404"), "{out:?}");
     }
@@ -1426,7 +1452,7 @@ mod tests {
                 text,
                 false,
                 &mut 0,
-                &mut VecDeque::new(),
+                &mut Kept::default(),
             );
             assert!(
                 out[0].contains("\"x-status\":400") && out[0].contains(says),
@@ -1440,7 +1466,7 @@ mod tests {
             r#"{"metadata": {"x-op": "x-resume", "x-id": "r"}}"#,
             false,
             &mut 0,
-            &mut VecDeque::new(),
+            &mut Kept::default(),
         );
         assert!(late[0].contains("first message"), "{late:?}");
         let echoed = answer(
@@ -1450,7 +1476,7 @@ mod tests {
             r#"{"metadata": {"x-op": "x-subscribe", "x-id": "s1"}, "body": {"type": "Subscription", "entities": [{"type": "Vehicle"}]}}"#,
             true,
             &mut 0,
-            &mut VecDeque::new(),
+            &mut Kept::default(),
         );
         assert!(
             echoed[0].contains("\"x-id\":\"s1\"") && echoed[0].contains("\"x-status\":201"),
