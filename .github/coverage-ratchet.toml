@@ -31,10 +31,13 @@
 "ekiben-parquet" = { lines = 99.68, functions = 100.00 }
 "ekiben-protobuf" = { lines = 99.91, functions = 100.00 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
+"jc-chart" = { lines = 99.75, functions = 100.00 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
+"kaisatsu-core" = { lines = 99.63, functions = 99.30 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
+"kaisatsu-store-memory" = { lines = 99.30, functions = 99.81 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
 "linkml-model" = { lines = 99.90, functions = 99.60 }
 "ngsild-jsonld" = { lines = 99.05, functions = 99.33 }
@@ -42,3 +45,4 @@
 "ngsild-model" = { lines = 99.87, functions = 100.00 }
 "ngsild-ql" = { lines = 99.69, functions = 99.33 }
 "ngsild-residual" = { lines = 99.92, functions = 100.00 }
+"shako-api" = { lines = 91.12, functions = 84.02 }
