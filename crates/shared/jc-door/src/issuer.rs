@@ -90,7 +90,10 @@ impl LocalIssuer {
     pub(crate) fn sign(&self, claims: &serde_json::Value) -> Result<String, String> {
         let mut header = Header::new(Algorithm::EdDSA);
         header.kid = Some(self.kid.clone());
-        encode(&header, claims, &self.key).map_err(|e| format!("not signed: {e}"))
+        match encode(&header, claims, &self.key) {
+            Ok(token) => Ok(token),
+            Err(e) => Err(format!("not signed: {e}")),
+        }
     }
 }
 

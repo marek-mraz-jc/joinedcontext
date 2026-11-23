@@ -366,10 +366,9 @@ impl CatalogueWriter {
     ) -> Result<CatalogueReport> {
         let ctx = self.live(org, id)?;
         let store = self.state.store.as_ref();
-        let cat = store
-            .get_catalogue(org, id)
-            .await?
-            .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+        let Some(cat) = store.get_catalogue(org, id).await? else {
+            return Err(DataroomError::NotFound("catalogue not found".into()));
+        };
         let mut all = self.datasets(org, id).await?;
         all.retain(|ds| ds.state == RecordState::Active);
         let total = all.len();
@@ -414,8 +413,11 @@ impl CatalogueWriter {
             let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &page, &publishers);
             page.into_iter().zip(gaps).collect()
         })
-        .await
-        .map_err(|e| DataroomError::Storage(format!("profile report: {e}")))?;
+        .await;
+        let datasets = match datasets {
+            Ok(datasets) => datasets,
+            Err(e) => return Err(DataroomError::Storage(format!("profile report: {e}"))),
+        };
         Ok(CatalogueReport {
             total,
             missing_publisher,

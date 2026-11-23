@@ -26,7 +26,7 @@
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
 "dataroom-mcp" = { lines = 100.00, functions = 100.00 }
 "dataroom-plugin" = { lines = 100.00, functions = 100.00 }
-"dataroom-server" = { lines = 98.50, functions = 98.10 }
+"dataroom-server" = { lines = 98.70, functions = 100.00 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
 "ekiben-io-remote" = { lines = 92.20, functions = 80.00 }
 "ekiben-io-s3" = { lines = 99.02, functions = 100.00 }
@@ -35,7 +35,7 @@
 "ekiben-parquet" = { lines = 99.68, functions = 100.00 }
 "ekiben-protobuf" = { lines = 99.91, functions = 100.00 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
-"jc-door" = { lines = 97.40, functions = 97.70 }
+"jc-door" = { lines = 97.40, functions = 100.00 }
 "jc-pool" = { lines = 100.00, functions = 100.00 }
 "jc-secret" = { lines = 99.00, functions = 100.00 }
 "jc-types" = { lines = 99.20, functions = 100.00 }

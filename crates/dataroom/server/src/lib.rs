@@ -529,8 +529,10 @@ pub fn serve_state(
             ))
         }
     };
-    let verifier = jc_door::Verifier::new(issuer, jwks_url, &tokens.clients)
-        .map_err(|e| DataroomError::field_error("jwksUrl", e))?;
+    let verifier = match jc_door::Verifier::new(issuer, jwks_url, &tokens.clients) {
+        Ok(verifier) => verifier,
+        Err(e) => return Err(DataroomError::field_error("jwksUrl", e)),
+    };
     let (subject, grant) = dataroom_api::portal_publisher(org_id, catalogue_id);
     let authz = Arc::new(PolicyAuthorizer::new(vec![grant]));
     Ok(DataroomState::new(store, authz, org_id, catalogue_id)
