@@ -332,6 +332,14 @@ mod tests {
             a
         );
         assert!(decode_assignment(Bytes::new()).expect("empty").is_empty());
+        // both end in null user data (bytes length -1), which a broker hands back unchanged
+        for bytes in [subscription(&topics), assignment(&a)] {
+            assert_eq!(
+                bytes.get(bytes.len() - 4..),
+                Some(&[0xff; 4][..]),
+                "{bytes:?}"
+            );
+        }
     }
 
     #[test]

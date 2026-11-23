@@ -202,6 +202,15 @@ async fn a_set_answers_pages_with_a_next_link_to_follow() -> Result<(), String> 
 async fn count_key_and_select_resolve() -> Result<(), String> {
     let (status, _, body) = get("/odata/Things/$count?$filter=org%20eq%20'a'").await?;
     assert_eq!((status, body), (StatusCode::OK, json!(2)));
+    // the count keeps the filter's aliases and its $search (which this service refuses)
+    let (status, _, body) = get("/odata/Things/$count?$filter=org%20eq%20@o&@o='a'").await?;
+    assert_eq!((status, body), (StatusCode::OK, json!(2)));
+    let (status, _, body) = get("/odata/Things/$count?$search=a").await?;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    let (status, _, body) =
+        get("/odata/Things('it''s')?$format=application/json;odata.metadata=full").await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["@odata.id"], "Things('it''s')", "{body}");
     let (status, _, body) = get("/odata/Things('it''s')?$select=size").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["size"], 2);
@@ -341,6 +350,33 @@ async fn a_bad_accept_or_version_header_is_refused_before_any_row() -> Result<()
         let (status, _, body) = send(app(Some(Scope::all()))?, request).await?;
         assert!(status.is_client_error(), "{uri} {header}: {status} {body}");
         assert!(body["error"]["code"].is_string(), "{uri} {header}: {body}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_header_of_exactly_the_limit_is_read_and_one_byte_more_is_refused() -> Result<(), String>
+{
+    let model = model();
+    let things = MemoryTable::new(
+        TableInfo::new(model.clone(), "Things").ok_or("no set")?,
+        vec![json!({"id": "t1"})],
+    )
+    .map_err(|e| e.to_string())?;
+    let mut state = state(model, None);
+    state.max_header_len = 3;
+    let tables: Vec<Arc<dyn Table>> = vec![Arc::new(things)];
+    let router = Router::new()
+        .nest_service("/odata", table_router(Arc::new(state), tables, 2))
+        .layer(Extension(Scope::all()));
+    for (version, status) in [("4.0", StatusCode::OK), ("4.01", StatusCode::BAD_REQUEST)] {
+        let request = Request::builder()
+            .uri("/odata/Things")
+            .header("odata-maxversion", version)
+            .body(Body::empty())
+            .map_err(|e| e.to_string())?;
+        let (got, _, body) = send(router.clone(), request).await?;
+        assert_eq!(got, status, "{version}: {body}");
     }
     Ok(())
 }
