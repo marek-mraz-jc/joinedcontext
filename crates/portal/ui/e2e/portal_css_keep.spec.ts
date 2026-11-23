@@ -32,9 +32,26 @@ async function hidden(sheet: string, browserPage: import("@playwright/test").Pag
     await element.scrollIntoViewIfNeeded();
     faults.push(
       ...(await element.evaluate((el) => {
-        const rgb = (value: string) => (value.match(/[\d.]+/g) ?? []).map(Number);
+        // Any CSS colour (oklab and color-mix included) as RGBA through a 1x1 canvas.
+        const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+        const rgba = (value: string) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = "#00000000";
+          context.fillStyle = value;
+          context.fillRect(0, 0, 1, 1);
+          const [r = 0, g = 0, b = 0, a = 0] = context.getImageData(0, 0, 1, 1).data;
+          return [r, g, b, a / 255];
+        };
         const lum = ([r = 0, g = 0, b = 0]: number[]) =>
           [r, g, b].map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4)).reduce((sum, c, k) => sum + c * [0.2126, 0.7152, 0.0722][k]!, 0);
+        // What the text is drawn on: the nearest box with a background, the page's white at the end.
+        const backdrop = (from: Element) => {
+          for (let at: Element | null = from; at; at = at.parentElement) {
+            const colour = rgba(getComputedStyle(at).backgroundColor);
+            if ((colour[3] ?? 0) > 0.5) return colour;
+          }
+          return [255, 255, 255, 1];
+        };
         const out: string[] = [];
         const name = `${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 24)}"`;
         const style = getComputedStyle(el);
@@ -46,8 +63,8 @@ async function hidden(sheet: string, browserPage: import("@playwright/test").Pag
           const s = getComputedStyle(at);
           if (s.display === "none" || parseFloat(s.opacity) < 1) out.push(`${name}: hidden by ${at.tagName.toLowerCase()}`);
         }
-        const colour = rgb(style.color);
-        const back = rgb(style.backgroundColor);
+        const colour = rgba(style.color);
+        const back = backdrop(el);
         if ((colour[3] ?? 1) < 1) out.push(`${name}: see-through text`);
         const [hi, lo] = [lum(colour), lum(back)].sort((a, b) => b - a) as [number, number];
         if ((hi + 0.05) / (lo + 0.05) < 4.5) out.push(`${name}: contrast ${style.color} on ${style.backgroundColor}`);
