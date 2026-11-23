@@ -443,6 +443,71 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_fixed_option_needs_nothing() {
+        assert_eq!(
+            option("csv", "A CSV file"),
+            StepOption {
+                value: "csv",
+                title: "A CSV file",
+                needs: None
+            }
+        );
+    }
+
+    /// T-2874: only the dashboard path hides with the dashboards section, and it names why.
+    #[test]
+    fn a_hidden_section_hides_only_its_path() {
+        let mut config = crate::config::Config::for_tests();
+        config.dashboards = true;
+        assert!(Path::ALL
+            .iter()
+            .all(|path| path.hidden_by(&config).is_none()));
+        config.dashboards = false;
+        let hidden: Vec<Path> = Path::ALL
+            .into_iter()
+            .filter(|path| path.hidden_by(&config).is_some())
+            .collect();
+        assert_eq!(hidden, vec![Path::BuildDashboard]);
+        assert!(Path::BuildDashboard
+            .hidden_by(&config)
+            .is_some_and(|why| why.contains("JC_PORTAL_DASHBOARDS")));
+    }
+
+    /// AG-87: each path proposes the kind it ends with; finding data proposes nothing.
+    #[test]
+    fn each_path_proposes_its_kind() {
+        let proposed: Vec<(&str, Option<&str>)> = Path::ALL
+            .into_iter()
+            .map(|p| (p.id(), p.proposes()))
+            .collect();
+        for (id, kind) in [
+            ("integrate-pipeline", Some("Pipeline")),
+            ("define-kpi", Some("Pipeline")),
+            ("upload-data", Some("ContextSpace")),
+            ("find-data", None),
+            ("share-data", Some("Endpoint")),
+            ("build-app", Some("App")),
+            ("build-dashboard", Some("Dashboard")),
+            ("create-data-model", Some("DataModel")),
+        ] {
+            assert!(proposed.contains(&(id, kind)), "{id}: {proposed:?}");
+        }
+        assert_eq!(proposed.len(), 8);
+    }
+
+    /// T-2771: a tool on a path or on none is known by its static name; a made-up one is not.
+    #[test]
+    fn a_tool_is_known_by_its_name_only() {
+        assert_eq!(known_tool("write_entities"), Some("write_entities"));
+        assert_eq!(known_tool("navigate"), Some("navigate"));
+        for tool in Path::IntegratePipeline.tools() {
+            assert_eq!(known_tool(tool), Some(tool));
+        }
+        assert_eq!(known_tool("drop_database"), None);
+        assert_eq!(known_tool(""), None);
+    }
+
     /// JC1-13: the refusal of a second resource names `jc_workspace_open` and
     /// `jc_workspace_compare`, so every path lets the model call them.
     #[test]

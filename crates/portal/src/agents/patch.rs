@@ -342,6 +342,11 @@ mod tests {
         assert_eq!(blocks[1], block("errors.md", "", "- nothing missing"));
         assert_eq!(prose, "I made the tiles bigger.");
         assert_eq!(unread, 0);
+        // an answer that is one fence and nothing else: its inside is read
+        let fenced = "```\nspec.json\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n```";
+        let (blocks, prose, unread) = parse(fenced);
+        assert_eq!(blocks, vec![block("spec.json", "a", "b")]);
+        assert_eq!((prose.as_str(), unread), ("", 0));
     }
 
     #[test]
@@ -487,6 +492,38 @@ mod tests {
             &["spec.json"],
         );
         assert_eq!(bad[0].reason, "Start anchor not found");
+        let mut map = files("a\nx\na\ny\n");
+        for (search, reason) in [
+            (
+                format!("a\n{GAP}\ny"),
+                "Ambiguous start anchor - 2 matches".to_owned(),
+            ),
+            (
+                format!("x\n{GAP}\nnope"),
+                "End anchor not found after start anchor".to_owned(),
+            ),
+            // the end anchor stands before the start: no range
+            (
+                format!("y\n{GAP}\nx"),
+                "End anchor not found after start anchor".to_owned(),
+            ),
+            (
+                format!("\n{GAP}\ny"),
+                format!("Anchor missing - need lines before and after {GAP}"),
+            ),
+        ] {
+            let (ok, bad) = apply(
+                &mut map,
+                &[block("spec.json", &search, "z")],
+                &["spec.json"],
+            );
+            assert!(ok.is_empty(), "{search}");
+            assert_eq!(bad[0].reason, reason, "{search}");
+        }
+        assert_eq!(
+            map["spec.json"], "a\nx\na\ny\n",
+            "a refused block changes nothing"
+        );
     }
 
     #[test]

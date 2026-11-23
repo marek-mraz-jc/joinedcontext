@@ -769,7 +769,7 @@ fn format(c: &mut Cursor<'_>) -> Result<Format, UrlError> {
     // A form encoder writes the separator as `%2F` (T-3719, T-3742): the value as written,
     // with its decoded form `type/subtype`.
     c.reset(start);
-    if pchars(c, b'&') > 0 {
+    if pchars(c, b'&') != 0 {
         let written = c.slice(start);
         let decoded = crate::percent_decoded(written).unwrap_or_default();
         if decoded
