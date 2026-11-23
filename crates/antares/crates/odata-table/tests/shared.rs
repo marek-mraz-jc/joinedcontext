@@ -15,9 +15,10 @@ use odata_csdl::{
     TypeRef,
 };
 use odata_table::{
-    query, Answer, GitLimits, GitTable, MemoryTable, PgTable, Scope, Table, TableError, TableInfo,
+    query, Answer, Cond, GitLimits, GitTable, MemoryTable, PgTable, Plan, Scope, Table, TableError,
+    TableInfo,
 };
-use odata_url::{EdmModel, Limits, ODataUri, QueryOptions};
+use odata_url::{CompareOp, EdmModel, Limits, ODataUri, QueryOptions};
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
@@ -567,6 +568,143 @@ async fn a_pg_table_names_only_plain_identifiers() -> Result<(), String> {
         );
     }
     assert!(PgTable::new(info()?, pool, "public.things").is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pg_table_refuses_a_property_that_is_not_a_plain_identifier() -> Result<(), String> {
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://localhost/x")
+        .must()?;
+    let mut bad = info()?;
+    bad.properties.push("name; --".into());
+    assert!(PgTable::new(bad, pool, "things").is_err());
+    Ok(())
+}
+
+/// A plan of every row with `filter`, as a caller of [`Table::fetch`] may build it.
+fn plan_with(filter: Cond) -> Result<Plan, String> {
+    let mut plan = odata_table::plan(&info()?, &QueryOptions::default(), 100).must()?;
+    plan.filter = filter;
+    Ok(plan)
+}
+
+fn compare(path: &[&str], op: CompareOp, value: Value) -> Cond {
+    Cond::Compare {
+        path: path.iter().map(|s| (*s).to_owned()).collect(),
+        op,
+        value,
+    }
+}
+
+#[tokio::test]
+async fn a_pg_table_answers_every_condition_a_caller_builds() -> Result<(), String> {
+    let Some(pool) = admin().await? else {
+        return Ok(());
+    };
+    let name = relation(&pool, "conds", &rows()).await?;
+    let table = PgTable::new(info()?, pool.clone(), &name).must()?;
+    let fetched = |cond: Cond| {
+        let table = &table;
+        async move {
+            let plan = plan_with(cond)?;
+            let got = table.fetch(&plan, &Scope::all()).await.must()?;
+            Ok::<Vec<String>, String>(
+                got.rows
+                    .iter()
+                    .filter_map(|r| r.get("id").and_then(Value::as_str).map(str::to_owned))
+                    .collect(),
+            )
+        }
+    };
+    // `ne` as the planner never writes it: SQL `<>`, typed, so nulls and other kinds drop out
+    assert_eq!(
+        fetched(compare(&["org"], CompareOp::Ne, json!("a"))).await?,
+        ["t3", "t4", "t6"]
+    );
+    // a list or an object value compares with nothing
+    assert!(fetched(compare(&["org"], CompareOp::Eq, json!(["a"])))
+        .await?
+        .is_empty());
+    assert!(fetched(compare(&["org"], CompareOp::Eq, json!(null)))
+        .await?
+        .is_empty());
+    for (path, missing) in [(&["nope"][..], "nope"), (&[][..], "")] {
+        let plan = plan_with(compare(path, CompareOp::Eq, json!("a")))?;
+        assert_eq!(
+            table.fetch(&plan, &Scope::all()).await.err(),
+            Some(TableError::UnknownProperty(missing.into()))
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pg_table_reads_more_than_forty_columns() -> Result<(), String> {
+    let Some(pool) = admin().await? else {
+        return Ok(());
+    };
+    let name = format!("odata_table.wide_{}", std::process::id());
+    let columns: Vec<String> = (0..45).map(|i| format!("c{i}")).collect();
+    let ddl = format!(
+        "CREATE TABLE {name} (id text PRIMARY KEY, {})",
+        columns
+            .iter()
+            .map(|c| format!("{c} bigint"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    for stmt in [
+        "CREATE SCHEMA IF NOT EXISTS odata_table".to_owned(),
+        format!("DROP TABLE IF EXISTS {name}"),
+        ddl,
+        format!("INSERT INTO {name} (id, c0, c44) VALUES ('w1', 0, 44)"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt))
+            .execute(&pool)
+            .await
+            .must()?;
+    }
+    let mut wide = info()?;
+    wide.properties = std::iter::once("id".to_owned()).chain(columns).collect();
+    let table = PgTable::new(wide, pool, &name).must()?;
+    let got = table
+        .fetch(&plan_with(Cond::Const(true))?, &Scope::all())
+        .await
+        .must()?;
+    assert_eq!(got.rows.len(), 1);
+    let row = got.rows.first().must()?;
+    assert_eq!(
+        (row["c0"].clone(), row["c44"].clone(), row["c20"].clone()),
+        (json!(0), json!(44), json!(null))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pg_table_whose_relation_is_gone_fails_as_a_source_failure() -> Result<(), String> {
+    let Some(pool) = admin().await? else {
+        return Ok(());
+    };
+    let name = relation(&pool, "gone", &rows()).await?;
+    let table = PgTable::new(info()?, pool.clone(), &name).must()?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {name}")))
+        .execute(&pool)
+        .await
+        .must()?;
+    let failed = |e: Option<TableError>| matches!(e, Some(TableError::Source(_)));
+    let read = table
+        .fetch(&plan_with(Cond::Const(true))?, &Scope::all())
+        .await
+        .err();
+    assert!(failed(read.clone()), "{read:?}");
+    let batch = odata_table::Batch {
+        change: odata_table::Change::Delete,
+        keys: vec![json!("t1")],
+        guard: Cond::Const(true),
+    };
+    let wrote = table.apply(&batch).await.err();
+    assert!(failed(wrote.clone()), "{wrote:?}");
     Ok(())
 }
 

@@ -139,6 +139,25 @@ fn git_with(
     env: &[(&str, &str)],
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, TableError> {
+    let out = spawned(repo, args, env, input)
+        .map_err(|e| TableError::Source(format!("git did not run: {e}")))?;
+    if !out.status.success() {
+        return Err(TableError::Source(format!(
+            "git {} failed: {}",
+            args.first().unwrap_or(&""),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(out.stdout)
+}
+
+/// Runs `git` to its end: spawned, `input` written, its output collected.
+fn spawned(
+    repo: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+    input: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -152,24 +171,11 @@ fn git_with(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| TableError::Source(format!("git did not run: {e}")))?;
+        .spawn()?;
     if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
-        stdin
-            .write_all(bytes)
-            .map_err(|e| TableError::Source(format!("git did not read its input: {e}")))?;
+        stdin.write_all(bytes)?;
     }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| TableError::Source(format!("git did not finish: {e}")))?;
-    if !out.status.success() {
-        return Err(TableError::Source(format!(
-            "git {} failed: {}",
-            args.first().unwrap_or(&""),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
-    }
-    Ok(out.stdout)
+    child.wait_with_output()
 }
 
 impl GitTable {
@@ -489,7 +495,83 @@ impl Table for GitTable {
 
 #[cfg(test)]
 mod tests {
-    use super::{glob, matched, segments};
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use odata_csdl::{
+        CsdlVersion, EntityContainer, EntitySet, EntityType, Model, Property, Schema, TypeRef,
+    };
+    use serde_json::{json, Value};
+
+    use super::{glob, matched, segments, GitLimits, GitTable};
+    use crate::{Batch, Change, Cond, Table, TableError, TableInfo};
+
+    fn info() -> TableInfo {
+        let mut thing = EntityType::new("Thing");
+        thing.key = vec!["id".into()];
+        thing.properties = vec![
+            Property::new("id", TypeRef::single("Edm.String")),
+            Property::new("org", TypeRef::single("Edm.String")),
+        ];
+        let mut schema = Schema::new("Test");
+        schema.entity_types.push(thing);
+        let mut container = EntityContainer::new("Service");
+        container
+            .entity_sets
+            .push(EntitySet::new("Things", "Test.Thing"));
+        schema.entity_container = Some(container);
+        let model = Model {
+            version: CsdlVersion::V4_01,
+            references: vec![],
+            schemas: vec![schema],
+        };
+        TableInfo::new(Arc::new(model), "Things").expect("a keyed set")
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.org"])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// A repository of `files` (path, contents) committed on `main`, and its commit.
+    fn repository(test: &str, files: &[(&str, &str)]) -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("odata-git-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temporary directory");
+        run(&dir, &["init", "-q", "-b", "main"]);
+        for (path, text) in files {
+            let file = dir.join(path);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("a directory");
+            std::fs::write(file, text).expect("a file");
+        }
+        run(&dir, &["add", "-A"]);
+        run(&dir, &["commit", "-q", "--allow-empty", "-m", "rows"]);
+        let sha = run(&dir, &["rev-parse", "HEAD"]);
+        (dir, sha)
+    }
+
+    fn open(repo: &Path, sha: &str, limits: GitLimits) -> Result<GitTable, TableError> {
+        GitTable::open(info(), repo, sha, "things/*", limits)
+    }
+
+    fn refused(result: Result<GitTable, TableError>) -> TableError {
+        match result {
+            Ok(_) => panic!("the set opened"),
+            Err(e) => e,
+        }
+    }
 
     #[test]
     fn a_pattern_stays_under_the_root() {
@@ -505,7 +587,172 @@ mod tests {
         assert!(glob("a*b*c", "aXbYc"));
         assert!(!glob("*.yaml", "a.json"));
         assert!(!glob("a*a", "a"));
+        assert!(!glob("a*b", "xb"), "the first part is a prefix");
+        assert!(!glob("a*x*b", "a-b"), "a middle part must occur");
         assert!(matched(&["spaces", "*", "e.yaml"], "spaces/s1/e.yaml"));
         assert!(!matched(&["spaces", "*", "e.yaml"], "spaces/s1/x/e.yaml"));
+    }
+
+    #[test]
+    fn a_repository_git_cannot_reach_is_a_source_failure() {
+        let sha = "0".repeat(40);
+        let bad = refused(open(Path::new("/no\0where"), &sha, GitLimits::strict()));
+        assert!(
+            matches!(&bad, TableError::Source(why) if why.starts_with("git did not run: ")),
+            "{bad:?}"
+        );
+        let missing = refused(open(
+            Path::new("/nonexistent-odata-repo"),
+            &sha,
+            GitLimits::strict(),
+        ));
+        assert!(
+            matches!(&missing, TableError::Source(why) if why.starts_with("git ls-tree failed: ")),
+            "{missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_file_must_be_a_row_within_the_limits() {
+        let bad = |why: &str| TableError::BadRequest(why.into());
+        let cases: [(&str, &str, TableError); 4] = [
+            (
+                "things/a.txt",
+                "id: a",
+                bad("things/a.txt: only .yaml, .yml and .json files are rows"),
+            ),
+            (
+                "things/a.json",
+                "[1]",
+                bad("things/a.json: a row is an object"),
+            ),
+            (
+                "things/a.yml",
+                "- 1",
+                bad("things/a.yml: a row is an object"),
+            ),
+            (
+                "things/a.JSON",
+                "{",
+                bad("things/a.JSON: EOF while parsing an object at line 1 column 1"),
+            ),
+        ];
+        for (i, (path, text, expected)) in cases.into_iter().enumerate() {
+            let (repo, sha) = repository(&format!("parse{i}"), &[(path, text)]);
+            assert_eq!(refused(open(&repo, &sha, GitLimits::strict())), expected);
+        }
+        let (repo, sha) = repository("parse-yaml", &[("things/a.yaml", "id: [")]);
+        let got = refused(open(&repo, &sha, GitLimits::strict()));
+        assert!(
+            matches!(&got, TableError::BadRequest(why) if why.starts_with("things/a.yaml: ")),
+            "{got:?}"
+        );
+        let (repo, sha) = repository(
+            "limits",
+            &[("things/a.yaml", "id: a\n"), ("things/b.yaml", "id: b\n")],
+        );
+        let limits = GitLimits::strict();
+        assert_eq!(
+            refused(open(
+                &repo,
+                &sha,
+                GitLimits {
+                    max_files: 1,
+                    ..limits
+                }
+            )),
+            bad("more than 1 files match")
+        );
+        assert_eq!(
+            refused(open(
+                &repo,
+                &sha,
+                GitLimits {
+                    max_file_bytes: 3,
+                    ..limits
+                }
+            )),
+            bad("things/a.yaml is over the size this set reads")
+        );
+        assert_eq!(
+            refused(open(
+                &repo,
+                &sha,
+                GitLimits {
+                    max_total_bytes: 8,
+                    ..limits
+                }
+            )),
+            bad("things/b.yaml is over the size this set reads")
+        );
+        assert_eq!(open(&repo, &sha, limits).map(|t| t.commit()), Ok(sha));
+    }
+
+    #[test]
+    fn links_are_refused_and_submodules_skipped() {
+        let (repo, _) = repository("links", &[("things/a.yaml", "id: a\n")]);
+        // a submodule entry is a commit, not a file: the set skips it
+        let head = run(&repo, &["rev-parse", "HEAD"]);
+        run(
+            &repo,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{head},things/sub"),
+            ],
+        );
+        run(&repo, &["commit", "-q", "-m", "submodule"]);
+        let with_sub = run(&repo, &["rev-parse", "HEAD"]);
+        let table = open(&repo, &with_sub, GitLimits::strict()).expect("the submodule is skipped");
+        assert_eq!(table.commit(), with_sub);
+        std::os::unix::fs::symlink("a.yaml", repo.join("things/l.yaml")).expect("a link");
+        run(&repo, &["add", "-A"]);
+        run(&repo, &["commit", "-q", "-m", "link"]);
+        let linked = run(&repo, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            refused(open(&repo, &linked, GitLimits::strict())),
+            TableError::BadRequest(
+                "things/l.yaml is a symbolic link; a set reads files only".into()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_writer_needs_a_plain_author_and_the_branch_at_the_commit() {
+        let (repo, sha) = repository("branch", &[("things/a.json", r#"{"id": "a", "org": "x"}"#)]);
+        let set = || open(&repo, &sha, GitLimits::strict()).expect("the set opens");
+        let refused_branch = |branch: &str, name: &str, why: &str| {
+            assert_eq!(
+                set().on_branch(branch, name, "t@example.org").err(),
+                Some(TableError::BadRequest(format!("the branch {branch} {why}"))),
+                "{branch}"
+            );
+        };
+        refused_branch("main", "a <b>", "or its author is not a plain name");
+        refused_branch("-x", "a", "or its author is not a plain name");
+        refused_branch("a..b", "a", "is not a valid branch name");
+        refused_branch("gone", "a", "does not exist");
+        // the read-only set refuses a batch before any git call
+        let batch = Batch {
+            change: Change::Update(json!({"org": "y"}).as_object().cloned().unwrap_or_default()),
+            keys: vec![json!("a")],
+            guard: Cond::Const(true),
+        };
+        assert_eq!(
+            set().apply(&batch).await,
+            Err(TableError::Forbidden("Things is served read only".into()))
+        );
+        // a JSON row is written back as JSON
+        let writer = set()
+            .on_branch("main", "a", "t@example.org")
+            .expect("main is at the commit");
+        writer.apply(&batch).await.expect("one commit");
+        let text = run(&repo, &["show", "main:things/a.json"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).ok(),
+            Some(json!({"id": "a", "org": "y"}))
+        );
+        refused_branch("main", "a", "has moved past the commit this set reads");
     }
 }
