@@ -1608,6 +1608,8 @@ mod tests {
                sh:property [ sh:path ex:dt ; sh:datatype xsd:string ] ;
                sh:property [ sh:path ex:int ; sh:datatype xsd:integer ] ;
                sh:property [ sh:path ex:count ; sh:datatype xsd:nonNegativeInteger ] ;
+               sh:property [ sh:path ex:len ; sh:minLength 2 ; sh:maxLength 3 ] ;
+               sh:property [ sh:path ex:flag ; sh:datatype xsd:boolean ] ;
                sh:property [ sh:path ex:cls ; sh:class ex:Kind ] ;
                sh:property [ sh:path ex:lang ; sh:languageIn ( \"en\" ) ] ;
                sh:property [ sh:path ex:name ; sh:datatype <http://www.w3.org/1999/02/22-rdf-syntax-ns#langString> ; sh:maxCount 1 ] ;
@@ -1622,7 +1624,7 @@ mod tests {
                sh:minCount 1 ; sh:severity sh:Info ] .";
         let ok = report(
             shapes_body,
-            "ex:i a ex:Item ; ex:dt \"s\" ; ex:int \"-3\"^^xsd:integer ; ex:count \"3\"^^xsd:nonNegativeInteger ;
+            "ex:i a ex:Item ; ex:dt \"s\" ; ex:int \"-3\"^^xsd:integer ; ex:count \"3\"^^xsd:nonNegativeInteger ; ex:len \"ab\", \"abc\" ; ex:flag \"1\"^^xsd:boolean ;
                 ex:cls ex:k ; ex:lang \"x\"@en-GB ; ex:name \"a\"@en, \"b\"@cs ;
                 ex:hop ex:h1, ex:h2 ; ex:a ex:same ; ex:b ex:same ; ex:ref ex:r ; ex:must 1 ; ex:hint 1 .
              ex:h1 ex:end ex:same . ex:h2 ex:end ex:same . ex:k a ex:Kind . ex:r ex:v 1 .",
@@ -1632,14 +1634,14 @@ mod tests {
 
         let bad = report(
             shapes_body,
-            "ex:i a ex:Item ; ex:dt ex:x ; ex:int \"x\"^^xsd:integer ; ex:count \"-1\"^^xsd:nonNegativeInteger ;
+            "ex:i a ex:Item ; ex:dt ex:x ; ex:int \"x\"^^xsd:integer ; ex:count \"-1\"^^xsd:nonNegativeInteger ; ex:flag \"yes\"^^xsd:boolean ;
                 ex:cls \"k\" ; ex:lang ex:x ; ex:name \"a\"@en, \"b\"@en, \"c\"@cs ;
                 ex:hop \"lit\", ex:h1 ; ex:a ex:one ; ex:b ex:two ; ex:ref ex:r ; ex:extra 1 .
              ex:h1 ex:end ex:e1, ex:e2 .",
         );
         let seen = components(&bad);
         let count = |c: &str| seen.iter().filter(|s| *s == c).count();
-        assert_eq!(count("DatatypeConstraintComponent"), 3, "{seen:?}");
+        assert_eq!(count("DatatypeConstraintComponent"), 4, "{seen:?}");
         assert_eq!(count("ClassConstraintComponent"), 1, "{seen:?}");
         assert_eq!(count("LanguageInConstraintComponent"), 1, "{seen:?}");
         assert_eq!(
