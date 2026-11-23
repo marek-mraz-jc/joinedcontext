@@ -36,3 +36,33 @@ pub fn script_hash(js: &str) -> String {
         base64::engine::general_purpose::STANDARD.encode(Sha256::digest(js.as_bytes()))
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each getter answers the embedded file exactly, or `None` when the build carried no SDK.
+    #[test]
+    fn the_getters_answer_the_embedded_files_or_none() {
+        match Dist::get("kit-worker.js") {
+            Some(file) => assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(worker().expect("the worker"))
+                    .expect("base64"),
+                file.data.as_ref()
+            ),
+            None => assert!(worker().is_none()),
+        }
+        match Dist::get("functions-server.js") {
+            Some(file) => assert_eq!(
+                functions_server().expect("the module").as_bytes(),
+                file.data.as_ref()
+            ),
+            None => assert!(functions_server().is_none()),
+        }
+        assert_eq!(
+            script_hash(""),
+            "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='"
+        );
+    }
+}

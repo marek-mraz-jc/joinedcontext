@@ -182,6 +182,60 @@ describe("the derivations the editor guesses", () => {
   });
 });
 
+describe("the guesses on small models", () => {
+  const model = (body: string) => parseModel(`id: https://x.test/m\nname: m\nprefixes:\n  a: https://a.test/\n  b: https://b.test/\nslots:\n${body}`);
+
+  it("matches by the same term IRI under another name, and by SSSOM exact, skipping rows that name nothing", () => {
+    const source = model("  temp:\n    slot_uri: a:t\n  level:\n    slot_uri: a:l\n  mood:\n");
+    const target = model("  temperature:\n    slot_uri: a:t\n  lvl:\n  feeling:\n  other:\n");
+    const derivations = autoAlign(source, target, [
+      { subject_id: "nothing", predicate_id: "skos:exactMatch", object_id: "lvl" },
+      { subject_id: "level", predicate_id: "skos:exactMatch", object_id: "nowhere" },
+      { subject_id: "a:l", predicate_id: "skos:exactMatch", object_id: "lvl" },
+      { subject_id: "mood", predicate_id: "skos:closeMatch", object_id: "lvl" },
+      { subject_id: "mood", predicate_id: "skos:closeMatch", object_id: "feeling" },
+    ]);
+    const by = (name: string) => derivations.find((d) => d.target === name);
+    expect(by("temperature")).toMatchObject({ populatedFrom: "temp", origin: "exact" });
+    // The first row that names both slots wins; a later row for the same target is ignored.
+    expect(by("lvl")).toMatchObject({ populatedFrom: "level", origin: "exact" });
+    expect(by("feeling")).toMatchObject({ populatedFrom: "mood", origin: "close" });
+    expect(by("other")).toEqual({ target: "other", origin: "manual" });
+  });
+});
+
+describe("the casts a derivation applies", () => {
+  const cast = (value: unknown, range: string | undefined) =>
+    transform({ v: value }, [{ target: "t", populatedFrom: "v", origin: "manual", cast: range }]).output.t;
+
+  it("truncates to an integer, reads floats, and keeps what is not a number as it stands", () => {
+    expect(cast("12.9", "integer")).toBe(12);
+    expect(cast("abc", "integer")).toBe("abc");
+    for (const range of ["float", "double", "decimal"]) {
+      expect(cast("1.5", range)).toBe(1.5);
+      expect(cast("abc", range)).toBe("abc");
+    }
+  });
+
+  it("reads booleans and strings, and leaves any other range alone", () => {
+    expect(cast(true, "boolean")).toBe(true);
+    expect(cast("true", "boolean")).toBe(true);
+    expect(cast(1, "boolean")).toBe(true);
+    expect(cast("no", "boolean")).toBe(false);
+    expect(cast("text", "string")).toBe("text");
+    expect(cast(7, "string")).toBe("7");
+    expect(cast({ a: 1 }, "uriorcurie")).toEqual({ a: 1 });
+    expect(cast("5", undefined)).toBe("5");
+  });
+
+  it("applies the unit offset after the factor", () => {
+    const { output } = transform({ v: 10 }, [
+      { target: "t", populatedFrom: "v", origin: "manual", unitConversion: { factor: 2, offset: 3 } },
+    ]);
+    expect(output.t).toBe(23);
+  });
+});
+
 describe("what the derivations do to one example", () => {
   const derivations: Derivation[] = [
     {
@@ -289,6 +343,30 @@ describe("the specification that gets saved", () => {
   });
 });
 
+describe("the specification of a mapping nothing or only a native block fills", () => {
+  it("writes an empty slot_derivations when nothing is filled", () => {
+    const spec = toTransformationSpec([{ target: "a", origin: "manual" }], "S", "T");
+    expect(spec).toBe("class_derivations:\n  T:\n    populated_from: S\n    slot_derivations: {}\n");
+  });
+
+  it("records a native block as a comment and writes the offset of a conversion", () => {
+    const spec = toTransformationSpec(
+      [
+        { target: "aqi", origin: "manual", native: "root.aqi = 1" },
+        { target: "t", populatedFrom: "v", origin: "manual", unitConversion: { factor: 1.8, offset: 32 } },
+      ],
+      "S",
+      "T",
+    );
+    expect(spec).toContain("# native: bloblang, unchecked (DM-38)");
+    expect(spec).not.toContain("root.aqi");
+    expect(spec).toContain("factor: 1.8");
+    expect(spec).toContain("offset: 32");
+    expect(spec).not.toContain("source_unit");
+    expect(spec).not.toContain("target_unit");
+  });
+});
+
 describe("the specification's text", () => {
   it("reads back as the strings it was written from (F-UI2-012)", () => {
     // `[degF]` is a UCUM unit and a YAML sequence when unquoted; ": " and "#" break a line.
@@ -329,6 +407,34 @@ describe("the editor on screen", () => {
     render(<Harness />);
     expect(screen.getByLabelText("Target unit for pm10")).toBeInTheDocument();
     expect(screen.queryByLabelText("Target unit for temperature")).not.toBeInTheDocument();
+  });
+
+  it("writes the unit the author picks and the factor the author types into the specification", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const unit = screen.getByRole("combobox", { name: "Target unit for pm10" });
+    await user.click(unit);
+    await user.click(within(screen.getByRole("listbox", { name: "Target unit for pm10" })).getByText("°C — degree Celsius"));
+    const factor = screen.getByLabelText("Conversion factor for pm10");
+    await user.clear(factor);
+    await user.type(factor, "2.5");
+    const spec = screen.getByLabelText("spec") as HTMLTextAreaElement;
+    expect(spec.value).toContain("target_unit: CEL");
+    expect(spec.value).toContain("factor: 2.5");
+  });
+
+  it("starts the alignment again when another model is chosen on either side", async () => {
+    const user = userEvent.setup();
+    render(<Harness project="helsinki" spaceOf={() => "ilma"} />);
+    await user.selectOptions(screen.getByLabelText("Source slot for quality"), "band");
+    const spec = screen.getByLabelText("spec") as HTMLTextAreaElement;
+    expect(spec.value).toContain("populated_from: band");
+    // Another source: what the author connected is a derivation from slots the new source may not have.
+    await user.selectOptions(screen.getByRole("combobox", { name: en.mappings.source }), "partner-air");
+    expect(screen.getAllByText(en.mappings.sameModel).length).toBeGreaterThan(0);
+    await user.selectOptions(screen.getByRole("combobox", { name: en.mappings.target }), "air");
+    expect(screen.queryByText(en.mappings.sameModel)).toBeNull();
+    expect(screen.getByLabelText("Source slot for pm10")).toBeInTheDocument();
   });
 
   it("names each model choice by its label alone and says what the name and the example are for (T-4824)", () => {

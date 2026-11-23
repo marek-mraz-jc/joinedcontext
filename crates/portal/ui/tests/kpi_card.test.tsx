@@ -3,7 +3,7 @@
  * count, one button that writes the entity through the indicator space's endpoint with the
  * person's session, the refusal shown in place, and the link into the space once written.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -110,6 +110,19 @@ describe("the indicator card", () => {
     expect(screen.queryByText(en.agentRun.kpi.written)).toBeNull();
   });
 
+  it("says the status when the refusal has no reason, and that the endpoint did not answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>Bad gateway</html>", { status: 502 })));
+    renderCard();
+    await userEvent.click(await screen.findByRole("button", { name: en.agentRun.kpi.write }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(en.agentRun.kpi.refused.replace("{status}", "502"));
+    expect(screen.queryByText(en.agentRun.kpi.written)).toBeNull();
+
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    await userEvent.click(screen.getByRole("button", { name: en.agentRun.kpi.write }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(en.agentRun.kpi.refused.replace("{status}", "0")));
+    expect(screen.getByRole("button", { name: en.agentRun.kpi.write })).toBeInTheDocument();
+  });
+
   it("says when the indicator space has no endpoint and offers the endpoints page instead", async () => {
     const fetchMock = stubFetch(201);
     renderCard({ ...KPI, endpointSlug: undefined, endpointName: undefined });
@@ -164,6 +177,11 @@ describe("the indicator card", () => {
     expect(kpiOf(KPI)?.name).toBe("average-pm10");
     expect(kpiOf({ name: "x", value: "18" })).toBeNull();
     expect(kpiOf(null)).toBeNull();
+    // A call that names no type or no aggregation says nothing about what it was computed over.
+    expect(kpiOf(KPI, { type: "BikeHireDockingStation" })?.query).toBeUndefined();
+    expect(kpiOf(KPI, { agg: "count" })?.query).toBeUndefined();
+    expect(kpiOf(KPI, "avg")?.query).toBeUndefined();
+    expect(kpiOf(KPI, { type: "X", agg: "avg", attribute: 4, q: "" })?.query).toEqual({ type: "X", attribute: "", agg: "avg", q: undefined });
     expect(formatValue(1200, "en")).toBe("1,200");
     expect(formatValue(18.4444, "en")).toBe("18.44");
     expect(formatValue(123.456, "en")).toBe("123.5");

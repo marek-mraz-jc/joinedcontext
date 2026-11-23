@@ -53,6 +53,10 @@ describe("a schedule in words (PL-69)", () => {
     for (const choice of choices) expect(choiceOf(cronOf(choice)!)).toEqual(choice);
   });
 
+  it("writes no cron of its own for a custom choice", () => {
+    expect(cronOf({ kind: "custom" })).toBeUndefined();
+  });
+
   it("calls anything the choices do not say custom", () => {
     for (const text of ["0 8-10/2 * * *", "*/7 * * * *", "0 0 1 * *", "0 0 * 1 *", "nonsense"]) {
       expect(choiceOf(text)).toEqual({ kind: "custom" });

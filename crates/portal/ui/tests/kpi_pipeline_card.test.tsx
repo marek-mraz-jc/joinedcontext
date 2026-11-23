@@ -63,6 +63,18 @@ describe("the indicator pipeline card", () => {
     expect(kpiPipelineOf(null)).toBeNull();
   });
 
+  it("lists the findings of a test that did not pass, as text, and leaves out what says nothing", async () => {
+    const pipeline = kpiPipelineOf({
+      ...OUTPUT,
+      verdict: { ok: false, findings: [{ message: "formula: <b>unknown</b> attribute" }, {}, { message: 4 }, "plain", null] },
+    });
+    expect(pipeline?.verdict.findings).toHaveLength(1);
+    renderCard(pipeline as KpiPipeline);
+    expect(await screen.findByText(en.agentRun.kpiPipeline.failed)).toBeInTheDocument();
+    expect(screen.getByText(/unknown.*attribute/)).toBeInTheDocument();
+    expect(document.querySelector("b")).toBeNull();
+  });
+
   it("shows the route, the trigger, an untested verdict as untested, and the title as text", async () => {
     renderCard(kpiPipelineOf(OUTPUT) as KpiPipeline);
     const card = await screen.findByRole("region", { name: en.agentRun.kpiPipeline.title });

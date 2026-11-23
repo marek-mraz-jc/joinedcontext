@@ -3,10 +3,10 @@
  * workbench samples, maps and tests before anything is proposed.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import type { Manifest } from "../src/api/manifest";
@@ -69,6 +69,7 @@ describe("the recipe gallery", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it("asks a load recipe for its source and target, says what is missing, and hands over the form", async () => {
     const user = userEvent.setup();
@@ -123,6 +124,59 @@ describe("the recipe gallery", () => {
     await user.click(screen.getByRole("button", { name: new RegExp(r.kpi.title) }));
     expect(screen.getByRole("option", { name: "bikes-read" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "app-bikes-map" })).toBeNull();
+  });
+
+  it("hands over a KPI over the type and number the source's space models", async () => {
+    const linkml = [
+      "id: https://hel.fi/models/bikes",
+      "name: bikes",
+      "classes:",
+      "  BikeHireDockingStation:",
+      "    slots: [availableBikeNumber, name]",
+      "slots:",
+      "  availableBikeNumber: {range: integer}",
+      "  name: {range: string}",
+      "",
+    ].join("\n");
+    const list = (items: unknown[]) => Response.json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items, smartDataModels: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/datamodels/bikes/source")) return new Response(linkml, { status: 200, headers: { "Content-Type": "text/yaml" } });
+        if (url.includes("/organization/datamodels")) {
+          return list([{ name: "bikes", project: "helsinki", space: "bikes", version: "1.0.0", lifecycle: "published", classes: ["BikeHireDockingStation"] }]);
+        }
+        if (url.includes("/projects/helsinki/spaces")) return list([manifest("ContextSpace", "bikes", { dataModelRef: { kind: "DataModel", name: "bikes" } })]);
+        if (url.includes("/projects/helsinki/datamodels")) return list([manifest("DataModel", "bikes", { linkml })]);
+        return list([]);
+      }),
+    );
+    const user = userEvent.setup();
+    const onUse = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <RecipeGallery project="helsinki" orgDomain="hel.fi" dataSources={[]} endpoints={ENDPOINTS} targets={[]} onUse={onUse} />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: new RegExp(r.kpi.title) }));
+    await user.selectOptions(screen.getByLabelText(new RegExp(r.kpi.source)), "bikes-read");
+    await user.click(screen.getByRole("button", { name: r.use }));
+    expect(screen.getByText(r.problem.type)).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: r.kpi.type }));
+    await user.click(await screen.findByRole("option", { name: /BikeHireDockingStation/ }));
+    await user.click(screen.getByRole("combobox", { name: r.kpi.attribute }));
+    const offered = await screen.findByRole("listbox", { name: en.picker.list });
+    await user.click(await within(offered).findByRole("option", { name: /availableBikeNumber/ }));
+    await user.click(screen.getByRole("button", { name: r.use }));
+    expect(onUse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: { endpointRef: "bikes-read", query: { type: "BikeHireDockingStation", attrs: ["availableBikeNumber"] } },
+        output: expect.objectContaining({ type: "KeyPerformanceIndicator" }),
+      }),
+    );
   });
 
   it("says where to start when the project has no data source", async () => {

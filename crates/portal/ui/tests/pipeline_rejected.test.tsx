@@ -228,6 +228,30 @@ describe("a pipeline's rejected records", () => {
     await expectAxeClean(container);
   });
 
+  it("unpicks_the_page_and_says_the_servers_refusal_of_a_retry", async () => {
+    const seen: Seen = { retried: [] };
+    const base = answering(seen, { newest: { items: [record(9), record(8)], total: 2 } });
+    await renderRoute({
+      path: PATH,
+      answer: (path, request) =>
+        path === `${REJECTED}/retry` && request.method === "POST"
+          ? problem(409, "the pipeline is paused: resume it before a retry")
+          : base(path, request),
+    });
+    const dialog = await openRejected();
+    await within(dialog).findByText("2 records kept (the newest 1000)");
+    const page = within(dialog).getByRole("checkbox", { name: en.pipelines.rejected.pickPage });
+    await userEvent.click(page);
+    expect(page).toBeChecked();
+    await userEvent.click(page);
+    expect(page).not.toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "Retry after fix" })).toHaveAttribute("aria-disabled", "true");
+
+    await userEvent.click(page);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry 2 records after fix" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("the pipeline is paused: resume it before a retry");
+  });
+
   it("an_empty_list_says_every_record_passed", async () => {
     await renderRoute({
       path: PATH,

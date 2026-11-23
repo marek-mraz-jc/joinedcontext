@@ -187,12 +187,10 @@ async fn caller(
 
 /// The realm the caller is in: its own (`extract_admin_ctx` checked the token's issuer).
 async fn realm_of(state: &AdminState, ctx: &RequestCtx) -> Result<kaisatsu_core::RealmConfig> {
-    state
-        .oidc
-        .store
-        .get_realm(&ctx.realm_id)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))
+    match state.oidc.store.get_realm(&ctx.realm_id).await? {
+        Some(realm) => Ok(realm),
+        None => Err(KaisatsuError::NotFound("realm not found".into())),
+    }
 }
 
 pub(crate) async fn get_smtp(
@@ -348,6 +346,15 @@ mod tests {
             }),
             "password"
         );
+        for user in ["ops\nadmin".to_owned(), "u".repeat(257)] {
+            assert_eq!(
+                field(SmtpWrite {
+                    user,
+                    ..write("a.org")
+                }),
+                "user"
+            );
+        }
         assert_eq!(
             field(SmtpWrite {
                 password: Some("a\nb".into()),

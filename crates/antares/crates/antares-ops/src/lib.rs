@@ -1555,20 +1555,23 @@ impl<S: Surface> antares_api::ApiSurface for Mounted<S> {
 /// to measure and again to answer (T-6612, R3-016).
 #[must_use]
 pub fn json_len(v: &serde_json::Value) -> usize {
-    struct Count(usize);
-    impl std::io::Write for Count {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0 = self.0.saturating_add(buf.len());
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     let mut count = Count(0);
     // A Value always serialises; a write into the counter cannot fail.
     let _ = serde_json::to_writer(&mut count, v);
     count.0
+}
+
+/// The bytes written to it, kept nowhere: what [`json_len`] counts with.
+struct Count(usize);
+
+impl std::io::Write for Count {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A broker over the built-in store, for a surface's integration tests.
@@ -1954,7 +1957,32 @@ mod tests {
             assert_eq!(super::json_len(&v), v.to_string().len(), "{v}");
         }
     }
+
+    /// The counter takes every byte it is handed, and a flush neither loses nor adds one.
+    #[test]
+    fn the_counter_counts_what_it_is_handed_through_a_flush() -> std::io::Result<()> {
+        use std::io::Write;
+        let mut c = super::Count(0);
+        c.write_all(b"ab")?;
+        c.flush()?;
+        c.write_all(&[0; 3])?;
+        assert_eq!(c.0, 5);
+        Ok(())
+    }
     use super::*;
+
+    /// A streamed body polled after its handler returned reads at the depth it was handed, the
+    /// inner of two nested depths wins, and outside any in-process call the depth is zero.
+    #[tokio::test]
+    async fn a_body_reads_at_the_call_depth_it_was_handed() {
+        assert_eq!(call_depth(), 0);
+        assert_eq!(at_call_depth(3, async { call_depth() }).await, 3);
+        assert_eq!(
+            at_call_depth(1, at_call_depth(2, async { call_depth() })).await,
+            2
+        );
+        assert_eq!(call_depth(), 0, "the depth ends with its future");
+    }
 
     /// F-ANT5-009: a named instance listed first is not the member's value; with only
     /// named instances the first one is.

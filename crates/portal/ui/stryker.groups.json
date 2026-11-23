@@ -1,0 +1,47 @@
+{
+  "1": {
+    "mutate": [
+      "src/api/{access,activity,approval,dataViews,datamodelSource,decision,digest,drafts}.ts"
+    ],
+    "break": 71
+  },
+  "2": {
+    "mutate": [
+      "src/api/{endpointUsage,gateway,manifest,operations,pastedSecrets,permissions,personNames}.ts"
+    ],
+    "break": null
+  },
+  "3": {
+    "mutate": [
+      "src/api/{odata,pipelineTest,projects,proposal,sessionEnded,spaceUsage,stepUp,surfaceFit}.ts"
+    ],
+    "break": null
+  },
+  "4": {
+    "mutate": [
+      "src/schemas/*.ts",
+      "!src/schemas/kinds.ts"
+    ],
+    "break": null
+  },
+  "5": {
+    "mutate": [
+      "src/schemas/kinds.ts"
+    ],
+    "break": null
+  },
+  "6": {
+    "mutate": [
+      "src/{units,jobs,kindWords,phone,documentTitle,pageHelp,whatsNew}.ts",
+      "src/navigation/{places,shortcuts,urlState}.ts"
+    ],
+    "break": 71
+  },
+  "7": {
+    "mutate": [
+      "src/components/{ago,yamlManifest,loadWhenOpen}.ts",
+      "src/components/grid/fieldWidget.ts"
+    ],
+    "break": 65
+  }
+}

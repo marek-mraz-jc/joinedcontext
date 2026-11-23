@@ -153,6 +153,8 @@ mod tests {
             Writer::new(Vec::new(), false, 3).err(),
             Some(Error::TooLarge)
         );
+        // A header of exactly the ceiling ("id\r\n") still fits.
+        assert!(Writer::new(Vec::new(), false, 4).is_ok());
         let mut writer = Box::new(Writer::new(Vec::new(), false, 8)?);
         let page = writer.page(&[json!({"id": "urn:long-enough"})]);
         assert_eq!(page, Err(Error::TooLarge));

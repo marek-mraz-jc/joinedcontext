@@ -367,15 +367,14 @@ fn position(v: &Value) -> Result<Vec<f64>, String> {
     let items = items_of(v, "position")?;
     let nums: Option<Vec<f64>> = items.iter().map(number).collect();
     let nums = nums.ok_or_else(|| "a GeoJSON position holds numbers only".to_string())?;
-    if !(2..=3).contains(&nums.len()) {
-        return Err(format!(
-            "a GeoJSON position holds 2 or 3 numbers, got {}",
-            nums.len()
-        ));
-    }
     let (lon, lat) = match nums.as_slice() {
-        [lon, lat, ..] => (*lon, *lat),
-        _ => return Err("a GeoJSON position holds 2 or 3 numbers".to_string()),
+        [lon, lat] | [lon, lat, _] => (*lon, *lat),
+        other => {
+            return Err(format!(
+                "a GeoJSON position holds 2 or 3 numbers, got {}",
+                other.len()
+            ));
+        }
     };
     if !(-180.0..=180.0).contains(&lon) || !(-90.0..=90.0).contains(&lat) {
         return Err(format!(
@@ -560,14 +559,14 @@ fn normalize(key: &str, v: &Value, in_dataset: bool) -> Result<Value, String> {
             if let (Some(Value::Object(ds)), false) = (m.get("dataset"), in_dataset) {
                 let mut items = Vec::with_capacity(ds.len());
                 for (dataset_id, inner) in ds.iter() {
-                    let mut attr = normalize(key, inner, true)?;
-                    if dataset_id != "@none" {
-                        if let Value::Object(am) = &mut attr {
-                            let mut copy: BTreeMap<String, Value> = (**am).clone();
+                    let attr = match normalize(key, inner, true)? {
+                        Value::Object(am) if dataset_id != "@none" => {
+                            let mut copy: BTreeMap<String, Value> = (*am).clone();
                             copy.insert("datasetId".to_string(), Value::String(dataset_id.clone()));
-                            attr = Value::Object(copy.into());
+                            Value::Object(copy.into())
                         }
-                    }
+                        attr => attr,
+                    };
                     items.push(attr);
                 }
                 return Ok(Value::Array(items.into()));

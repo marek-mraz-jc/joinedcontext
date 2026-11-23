@@ -61,7 +61,8 @@ function renderSection({
   app = manifest() as unknown,
   mayPropose = true,
   groupsReadable = true,
-}: { app?: unknown; mayPropose?: boolean; groupsReadable?: boolean } = {}) {
+  refuse,
+}: { app?: unknown; mayPropose?: boolean; groupsReadable?: boolean; refuse?: string } = {}) {
   const sent: { url: string; dryRun: boolean; body: unknown }[] = [];
   const reply = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), {
@@ -95,6 +96,7 @@ function renderSection({
       if ((url.pathname === APP || group !== null) && request.method === "PUT") {
         const dryRun = url.searchParams.get("dryRun") === "All";
         sent.push({ url: url.pathname, dryRun, body: await request.json() });
+        if (dryRun && refuse) return reply(200, { valid: false, verdict: { ok: false, findings: [{ message: refuse }] } });
         return reply(200, dryRun ? { valid: true, verdict: { ok: true } } : CHANGE);
       }
       return undefined;
@@ -161,6 +163,33 @@ describe("an application's roles and members", () => {
       ...defaultGroup("alerts-steward", []),
       spec: { members: [{ user: "00000000-0000-4000-8000-0000000000dd" }] },
     });
+  });
+
+  it("says the check's reason when the proposal is refused, and proposes nothing", async () => {
+    const user = userEvent.setup();
+    const refusal = "members: a member must be a person of this organization";
+    const { sent } = renderSection({ refuse: refusal });
+    const steward = await role("Steward");
+    await within(steward).findByText(en.apps.roles.nobody);
+    const box = within(steward).getByRole("combobox", { name: en.apps.roles.email });
+    await user.type(box, "00000000-0000-4000-8000-0000000000dd{Enter}");
+    await user.click(within(steward).getByRole("button", { name: en.apps.roles.addPerson }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+    expect(sent.filter((request) => !request.dryRun)).toEqual([]);
+    expect(screen.queryByRole("link", { name: /review/i })).toBeNull();
+  });
+
+  it("reads a role's title given as a plain string, in any language", async () => {
+    renderSection({
+      app: manifest({
+        roles: [{ name: "viewer", title: "Plain viewer", description: "Reads" } as never, { name: "steward", title: { sk: "Správca" } as never }],
+        access: [],
+      }),
+    });
+    expect(await role("Plain viewer")).toBeInTheDocument();
+    // No title in the reader's language nor English: the role's own name.
+    expect(within(await section()).getByRole("listitem", { name: "steward" })).toBeInTheDocument();
   });
 
   // AP-119: Remove on a default group member proposes the group without them.

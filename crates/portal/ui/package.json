@@ -51,6 +51,8 @@
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@playwright/test": "^1.57.0",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^7.0.1",
@@ -83,7 +85,9 @@
       "js-yaml@>=4 <4.3.2": "^4.3.2",
       "fast-uri@>=3 <3.1.9": "^3.1.9",
       "fast-uri@>=4 <4.2.3": "^4.2.3",
-      "zod@<4.6.6": "^4.6.6"
+      "zod@<4.6.6": "^4.6.6",
+      "qs@<6.16.2": "^6.16.2",
+      "minimatch@>=7 <11.0.1": "^11.0.1"
     }
   }
 }

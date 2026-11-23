@@ -365,6 +365,46 @@ async fn a_source_that_moved_reaches_a_reviewable_merge_request() {
     );
 }
 
+/// CC-03: the loop runs on its own timer and only on the replica that reconciles: a follower's
+/// ticks open nothing, the leader's first tick runs a pass that reaches the forge.
+#[tokio::test]
+async fn the_timer_runs_a_pass_on_the_leader_alone() {
+    use joinedcontext_portal::reconciler::leader::Leadership;
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::store::Mirror;
+    use joinedcontext_portal::sync::driver::spawn_periodic;
+    let (server, recorded) = repository(json!({"interval": "30m"})).await;
+    let origin = Origin::at(MOVED);
+    let states = Arc::new(States::new(None));
+    let mirror = Arc::new(Mirror::new());
+    // A claim that never reached its database is never the leader.
+    let nowhere = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let follower = Syncer::new(client(&server), Arc::clone(&mirror))
+        .with_leadership(Arc::new(Leadership::new(nowhere, 7)));
+    let ticking = spawn_periodic(
+        Arc::new(driver(&server, &origin, &states)),
+        Arc::new(follower),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    ticking.abort();
+    assert!(recorded.pulls.lock().expect("pulls").is_empty());
+
+    let leader = Syncer::new(client(&server), mirror);
+    let ticking = spawn_periodic(
+        Arc::new(driver(&server, &origin, &states)),
+        Arc::new(leader),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while recorded.pulls.lock().expect("pulls").is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the leader's first tick opened a merge request");
+    ticking.abort();
+}
 #[tokio::test]
 async fn a_restart_mid_flight_does_not_open_a_second_proposal_for_the_same_revision() {
     let (server, recorded) = repository(json!({"interval": "30m"})).await;

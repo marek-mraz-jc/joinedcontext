@@ -1428,6 +1428,35 @@ mod tests {
     }
 
     #[test]
+    fn a_realm_offering_no_bundled_language_gets_its_default_or_english() {
+        let mut realm = crate::model::RealmConfig {
+            internationalization_enabled: true,
+            supported_locales: vec!["xx".into(), "cs".into(), "en".into()],
+            default_locale: "de".into(),
+            ..Default::default()
+        };
+        assert_eq!(realm_locales(&realm), ["cs", "en"]);
+        assert_eq!(
+            negotiate_for_realm(&realm, None, None, None),
+            "cs",
+            "the first offered"
+        );
+        assert_eq!(negotiate_for_realm(&realm, None, Some("hu"), None), "hu");
+        assert_eq!(
+            negotiate_for_realm(&realm, Some("xx yy"), None, None),
+            "cs",
+            "no asked language is shipped"
+        );
+        realm.supported_locales = vec!["xx".into()];
+        assert_eq!(realm_locales(&realm), ["de"]);
+        realm.internationalization_enabled = false;
+        realm.supported_locales = vec!["sk".into()];
+        assert_eq!(realm_locales(&realm), ["de"], "offers nothing without i18n");
+        realm.default_locale = "pl".into();
+        assert_eq!(realm_locales(&realm), ["en"]);
+    }
+
+    #[test]
     fn format_fills_each_placeholder_once() {
         let en = Bundle::for_locale("en");
         assert_eq!(

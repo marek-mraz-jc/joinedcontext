@@ -2412,3 +2412,202 @@ mod tests_repair {
         assert!(asked(&server).await.is_empty());
     }
 }
+
+#[cfg(test)]
+mod jc_types_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A driver whose proxy and model tools are `server`, reading `Bike` through two endpoints.
+    fn driver(server: &MockServer) -> Driver {
+        let mut config = crate::config::Config::for_tests();
+        config.model_tools_url = Some(format!("{}/tools", server.uri()));
+        let state = AppState::new(config, None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = server.uri();
+        driver.data_needs = json!([{ "types": ["Bike"] }]);
+        driver.endpoints = ["bikes", "docks"]
+            .map(|name| endpoints::RunEndpoint {
+                name: name.into(),
+                slug: format!("{name}-slug"),
+                space: "mobility".into(),
+            })
+            .to_vec();
+        driver
+    }
+
+    async fn index(server: &MockServer, at: &str, status: u16, body: Value) {
+        Mock::given(method("GET"))
+            .and(path(format!("{at}/schema/index.json")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(server)
+            .await;
+    }
+
+    /// SDK-10, EP-46: the types are the model each endpoint publishes for a needed type,
+    /// rendered by Model Tools; an endpoint whose index cannot be read keeps its needed types
+    /// and adds no file.
+    #[tokio::test]
+    async fn the_types_are_rendered_from_the_model_serving_a_needed_type() {
+        let server = MockServer::start().await;
+        index(
+            &server,
+            "/v1/data",
+            200,
+            json!({ "models": [
+                { "name": "parks", "types": ["Park"], "version": 3 },
+                { "name": "bikes", "types": ["Bike"], "version": 2 }
+            ] }),
+        )
+        .await;
+        index(&server, "/v1/data/endpoints/docks-slug", 503, json!({})).await;
+        Mock::given(method("GET"))
+            .and(path("/v1/data/schema/v2/model.linkml.yaml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("id: bikes"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "typescript": "export interface Bike {}\n" })),
+            )
+            .mount(&server)
+            .await;
+        let driver = driver(&server);
+        let index = driver.schema_index().await.expect("an index");
+        assert_eq!(
+            index["models"][2],
+            json!({ "endpoint": 1, "unread": true, "types": [] }),
+            "{index}"
+        );
+        assert_eq!(index["models"][1]["endpoint"], 0);
+        assert_eq!(
+            driver.jc_types().await.expect("types"),
+            "export interface Bike {}\n"
+        );
+        let generated: Vec<Value> = server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .filter(|request| request.method.as_str() == "POST")
+            .map(|request| serde_json::from_slice(&request.body).expect("JSON"))
+            .collect();
+        assert_eq!(generated, [json!({ "source": "id: bikes" })]);
+    }
+
+    /// An endpoint with no model, a model without a version and a primary model Model Tools
+    /// cannot render each say why there are no types.
+    #[tokio::test]
+    async fn no_model_no_version_and_a_refused_render_each_say_why() {
+        for (models, linkml, said) in [
+            (json!([]), 200, "the endpoint publishes no model"),
+            (
+                json!([{ "types": ["Park"] }]),
+                200,
+                "the endpoint's model has no version",
+            ),
+            (json!([{ "types": ["Park"], "version": 1 }]), 404, "404"),
+        ] {
+            let server = MockServer::start().await;
+            let mut driver = driver(&server);
+            driver.endpoints.truncate(1);
+            let _ = driver.schema_index.set(json!({ "models": models }));
+            Mock::given(method("GET"))
+                .and(path("/v1/data/schema/v1/model.linkml.yaml"))
+                .respond_with(ResponseTemplate::new(linkml).set_body_string("gone"))
+                .mount(&server)
+                .await;
+            let err = driver.jc_types().await.expect_err("no types");
+            assert!(err.contains(said), "{err}");
+        }
+    }
+
+    fn stored_run(id: &str, app: &str, prompt: &str, continues: Option<&str>) -> AgentRun {
+        serde_json::from_value(json!({
+            "id": id, "project": "helsinki", "appName": app, "title": app,
+            "endpointName": "bikes", "endpointSlug": "bikes-slug", "profile": "app-builder",
+            "kind": "application", "unattended": false, "appClass": "ui",
+            "visibility": "project", "prompt": prompt, "promptDigest": "d", "dataNeeds": [],
+            "allowsWrite": false, "branch": "agent/test", "pathPrefix": "",
+            "status": "previewing", "ticketHash": "", "steps": 0, "tokensUsed": 0,
+            "createdBy": "test-user@hel.fi", "createdAt": "2026-09-21T06:00:00Z",
+            "expiresAt": "2099-09-21T06:00:00Z", "continues": continues
+        }))
+        .expect("a run")
+    }
+
+    /// AP-137: another App of the project with the same design, read from its first run, gets
+    /// this one a different layout; an App with another design, or none named, gives no advice.
+    #[tokio::test]
+    async fn an_app_with_the_same_design_gets_this_one_another_layout() {
+        let server = MockServer::start().await;
+        let mut driver = driver(&server);
+        driver.prompt = "A map of city bikes".into();
+        for run in [
+            stored_run("r1", "parking", "A map of city bikes", None),
+            stored_run("r2", "parking", "a table of invoices", Some("r1")),
+            stored_run("r3", "test", "A map of city bikes", None),
+        ] {
+            driver.state.agents.create_run(&run).await.expect("stored");
+        }
+        let (line, section) = driver
+            .design_advice(&["parking".to_owned()])
+            .await
+            .expect("advice");
+        assert!(line.starts_with("The App parking is already a "), "{line}");
+        assert!(section.contains("the App `parking`"), "{section}");
+        assert_eq!(driver.design_advice(&[]).await, None);
+        driver.prompt = "a table of invoices".into();
+        assert_eq!(driver.design_advice(&["parking".to_owned()]).await, None);
+    }
+
+    /// SDK-15: a published version stores its files, says its prose and points the frame at the
+    /// numbered preview; the first one is recorded as the run's first version.
+    #[tokio::test]
+    async fn a_published_version_points_the_frame_at_its_numbered_preview() {
+        let server = MockServer::start().await;
+        let driver = driver(&server);
+        let run: AgentRun = serde_json::from_value(json!({
+            "id": "test-run", "project": "helsinki", "appName": "test", "title": "Test",
+            "endpointName": "bikes", "endpointSlug": "bikes-slug", "profile": "app-builder",
+            "kind": "application", "unattended": false, "appClass": "ui",
+            "visibility": "project", "prompt": "p", "promptDigest": "d", "dataNeeds": [],
+            "allowsWrite": false, "branch": "agent/test", "pathPrefix": "",
+            "status": "previewing", "ticketHash": "", "steps": 0, "tokensUsed": 0,
+            "createdBy": "test-user@hel.fi", "createdAt": "2026-09-21T06:00:00Z",
+            "expiresAt": "2099-09-21T06:00:00Z"
+        }))
+        .expect("a run");
+        driver.state.agents.create_run(&run).await.expect("stored");
+        let files = BTreeMap::from([("src/App.tsx".to_owned(), "export {}".to_owned())]);
+        let shown = driver
+            .publish_code(&files, "First version.", None, true)
+            .await
+            .expect("published");
+        assert_eq!(shown.version, 1);
+        let stored = driver
+            .state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("the run");
+        assert_eq!(stored.files, json!({ "src/App.tsx": "export {}" }));
+        assert_eq!(
+            stored.preview_url.as_deref(),
+            Some("/api/v1/projects/helsinki/agent-runs/test-run/preview?v=1")
+        );
+        assert!(stored.first_version_ms.is_some());
+        let events = driver
+            .state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .expect("events");
+        let kinds: Vec<&str> = events.iter().map(|event| event.kind.as_str()).collect();
+        assert_eq!(kinds, ["thought", "preview"]);
+        assert_eq!(events[1].seq, shown.seq);
+    }
+}

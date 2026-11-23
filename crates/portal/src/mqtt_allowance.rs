@@ -722,6 +722,101 @@ pub(crate) mod tests {
     /// Step 4b-mqtt sends each kind to its own check: a broker to the allowance, a Project's
     /// quotas to the organization admin, a ServiceAccount's grants to mqtt_roles, the rest through.
     #[test]
+    fn a_broker_role_naming_an_unreadable_account_is_refused_as_missing() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let person = |groups: Vec<String>| crate::auth::session::Identity {
+            client: None,
+            subject: "sub-aino".into(),
+            username: "aino".into(),
+            email: Some("aino@hel.fi".into()),
+            name: None,
+            roles: vec![],
+            groups,
+            second_factor: false,
+        };
+        state.mirror.upsert(envelope(
+            "ServiceAccount",
+            "cam",
+            "helsinki",
+            json!({
+            "owner": {"user": "kalle"}, "purpose": "cameras",
+            "credentials": [{"kind": "oauth-client", "name": "main"}] }),
+        ));
+        let spec = json!({
+            "roles": [{"name": "camera", "serviceAccounts": [7, "absent", "cam"], "publish": ["cams/#"]}],
+            "limits": {"maxConnections": 1, "messagesPerSecond": 1} });
+        let stranger = person(vec![]);
+        match check_accounts(&state, &stranger, "helsinki", &spec) {
+            Err(ApiError::Invalid { detail, errors }) => {
+                assert_eq!(errors, ["spec.roles[0].serviceAccounts[2]"]);
+                assert!(
+                    detail.contains("does not exist"),
+                    "the same words as an absent one: {detail}"
+                );
+            }
+            other => panic!("an account the caller cannot read: {other:?}"),
+        }
+        let admin = person(vec![state.config.bootstrap_admins.clone()]);
+        assert!(
+            check_accounts(&state, &admin, "helsinki", &spec).is_ok(),
+            "an admin reads every account"
+        );
+        assert!(
+            check_accounts(&state, &stranger, "helsinki", &json!({})).is_ok(),
+            "no roles"
+        );
+    }
+
+    #[test]
+    fn an_organization_admin_changes_a_project_allowance_within_the_operator_bound() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let admin = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-root".into(),
+            username: "root".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![state.config.bootstrap_admins.clone()],
+            second_factor: false,
+        };
+        let quotas = |mqtt: Value| json!({ "organizationRef": { "name": "hel" }, "quotas": { "mqtt": mqtt } });
+        assert!(
+            check_project(&state, &admin, "helsinki", &json!({})).is_ok(),
+            "nothing asked, nothing stored"
+        );
+        assert!(check_project(
+            &state,
+            &admin,
+            "helsinki",
+            &quotas(json!({"enabled": true, "brokers": 1}))
+        )
+        .is_ok());
+        assert!(
+            check_project(
+                &state,
+                &admin,
+                "helsinki",
+                &quotas(json!("not an allowance"))
+            )
+            .is_ok(),
+            "the schema check refuses the shape"
+        );
+        match check_project(
+            &state,
+            &admin,
+            "helsinki",
+            &quotas(json!({"enabled": true, "brokers": 4_000_000_000_u32})),
+        ) {
+            Err(ApiError::BadRequest(reason)) => assert!(
+                reason.contains("PF-97") && reason.contains("spec.quotas.mqtt"),
+                "{reason}"
+            ),
+            other => panic!("past the operator's bound: {other:?}"),
+        }
+    }
+
+    #[test]
     fn check_manifest_sends_each_kind_to_its_check() {
         let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
         let caller = crate::auth::session::Identity {
