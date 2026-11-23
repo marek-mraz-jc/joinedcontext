@@ -72,6 +72,11 @@ fn caller_of(user: CurrentUser, front: Front) -> Caller {
     }
 }
 
+/// The ops door's draft operation every draft route answers through (AG-61).
+fn draft_op(name: &str) -> Result<&'static ops::Operation, ApiError> {
+    ops::find(name).ok_or_else(|| ApiError::NotFound(format!("operation '{name}' not found")))
+}
+
 fn sse_draft_event(event: &DraftEvent) -> Event {
     let data = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
     Event::default()
@@ -107,11 +112,7 @@ pub async fn list_drafts(
     if !is_dns1123(&project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let Some(op) = ops::find("jc_draft_list") else {
-        return Err(ApiError::NotFound(
-            "operation 'jc_draft_list' not found".into(),
-        ));
-    };
+    let op = draft_op("jc_draft_list")?;
     let caller = caller_of(user, front);
     let input = match query.workspace.as_deref() {
         Some(name) => json!({ "workspace": name }),
@@ -152,11 +153,7 @@ pub async fn get_draft(
     if !is_dns1123(&project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let Some(op) = ops::find("jc_draft_get") else {
-        return Err(ApiError::NotFound(
-            "operation 'jc_draft_get' not found".into(),
-        ));
-    };
+    let op = draft_op("jc_draft_get")?;
     let caller = caller_of(user, front);
     let mut input = json!({
         "kind": kind,
@@ -218,11 +215,7 @@ pub async fn put_draft(
     if !is_dns1123(&project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let Some(op) = ops::find("jc_draft_put") else {
-        return Err(ApiError::NotFound(
-            "operation 'jc_draft_put' not found".into(),
-        ));
-    };
+    let op = draft_op("jc_draft_put")?;
     let caller = caller_of(user, front);
     let mut input = serde_json::Map::new();
     input.insert("kind".to_string(), Value::String(kind));
@@ -269,11 +262,7 @@ pub async fn drop_draft(
     if !is_dns1123(&project) {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let Some(op) = ops::find("jc_draft_drop") else {
-        return Err(ApiError::NotFound(
-            "operation 'jc_draft_drop' not found".into(),
-        ));
-    };
+    let op = draft_op("jc_draft_drop")?;
     let caller = caller_of(user, front);
     let mut input = json!({
         "kind": kind,
@@ -376,6 +365,53 @@ mod tests {
         let req: PutDraftRequest = serde_json::from_str(json_str).expect("deserialize");
         assert_eq!(req.expected_version, Some(3));
         assert_eq!(req.manifest["kind"], "DataSource");
+    }
+
+    #[test]
+    fn each_draft_route_finds_its_operation_and_an_unknown_one_is_404() {
+        for name in ["jc_draft_list", "jc_draft_get", "jc_draft_put", "jc_draft_drop"] {
+            assert_eq!(draft_op(name).expect(name).name, name);
+        }
+        assert!(matches!(
+            draft_op("jc_draft_nope"),
+            Err(ApiError::NotFound(detail)) if detail == "operation 'jc_draft_nope' not found"
+        ));
+    }
+
+    /// A bearer token is its own way in; a Portal or edge session is the session's (AG-61).
+    #[test]
+    fn a_caller_comes_through_the_front_it_used() {
+        let user = || {
+            CurrentUser(crate::auth::session::Session {
+                identity: crate::auth::session::Identity {
+                    client: None,
+                    subject: "sub-1".into(),
+                    username: "jana".into(),
+                    email: Some("jana@hel.fi".into()),
+                    name: None,
+                    roles: vec![],
+                    groups: vec![],
+                    second_factor: false,
+                },
+                expires_at: 9_999_999_999,
+                issued_at: 1000,
+                signed_in_at: None,
+                stepped_up_at: None,
+                id_token: String::new(),
+                access_expires_at: 9_999_999_999,
+                refresh_token: None,
+            })
+        };
+        for (front, via) in [
+            (Front::Portal, Via::Session),
+            (Front::Edge, Via::Session),
+            (Front::Bearer, Via::Bearer),
+        ] {
+            let caller = caller_of(user(), front);
+            assert_eq!(caller.via, via, "{front:?}");
+            assert_eq!(caller.identity.subject, "sub-1");
+            assert!(caller.bearer.is_none() && caller.access.is_none());
+        }
     }
 
     #[test]

@@ -282,6 +282,34 @@ async fn a_draft_inside_a_workspace_is_reached_only_with_the_workspace_named() {
     .await;
     assert_eq!(StatusCode::OK, named.status, "{}", named.text());
     assert_eq!("ws-air", named.body["workspace"]);
+
+    // The REST routes carry the copy as `?workspace=` (CC-76, T-7657): written, listed, read and
+    // dropped there, and the project's own list still holds none of it.
+    let base = format!("/api/v1/projects/{PROJECT}/drafts");
+    let one = format!("{base}/Pipeline/aq-rest?workspace=ws-air");
+    let put = doors::http(
+        &state,
+        steward(),
+        "PUT",
+        &one,
+        Some(json!({ "manifest": pipeline("aq-rest") })),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, put.status, "{}", put.text());
+    assert_eq!("ws-air", put.body["workspace"], "{}", put.text());
+    let listed = doors::http(&state, steward(), "GET", &format!("{base}?workspace=ws-air"), None).await;
+    let mut listed = names(&listed);
+    listed.sort();
+    assert_eq!(vec!["Pipeline/aq-copy", "Pipeline/aq-rest"], listed);
+    let project = doors::http(&state, steward(), "GET", &base, None).await;
+    assert!(names(&project).is_empty(), "{}", project.text());
+    let read = doors::http(&state, steward(), "GET", &one, None).await;
+    assert_eq!(StatusCode::OK, read.status, "{}", read.text());
+    let dropped = doors::http(&state, steward(), "DELETE", &one, None).await;
+    assert_eq!(StatusCode::OK, dropped.status, "{}", dropped.text());
+    assert_eq!(true, dropped.body["dropped"], "{}", dropped.text());
+    let gone = doors::http(&state, steward(), "GET", &one, None).await;
+    assert_eq!(StatusCode::NOT_FOUND, gone.status, "{}", gone.text());
 }
 
 /// AG-70: an agent run reads and drops drafts only when its profile names the operation, and the
