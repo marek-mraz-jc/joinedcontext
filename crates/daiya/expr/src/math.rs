@@ -1210,6 +1210,59 @@ mod tests {
         assert_eq!(null_check, vec![ExprValue::Scalar(Some(1.0))]);
     }
 
+    /// A series keeps its notices when it becomes a frame, as a number does.
+    #[test]
+    fn a_series_frame_carries_its_notices() {
+        let notice = daiya_model::Notice {
+            severity: daiya_model::NoticeSeverity::Warning,
+            text: "gap filled".into(),
+        };
+        let series = ExprValue::Series {
+            name: String::new(),
+            labels: BTreeMap::new(),
+            points: vec![(1000, Some(1.0))],
+            notices: vec![notice.clone()],
+        };
+        let frame = series.to_frame("A");
+        assert_eq!(frame.meta.notices, vec![notice]);
+        assert_eq!(frame.name, "A");
+    }
+
+    /// Each two-character operator is one token, wherever it stands; its one-character
+    /// prefix alone, last in the input, is its own token or a named refusal.
+    #[test]
+    fn two_character_operators_tokenize_at_any_position() {
+        use Token::*;
+        let n = Number;
+        for (text, op) in [
+            ("1**2", Pow),
+            ("1!=2", Ne),
+            ("1==2", Eq),
+            ("1>=2", Ge),
+            ("1<=2", Le),
+            ("1&&2", And),
+            ("1||2", Or),
+        ] {
+            assert_eq!(
+                tokenize(text).unwrap(),
+                vec![n(1.0), op.clone(), n(2.0)],
+                "{text}"
+            );
+            let spaced = format!("1 + 1 {}", &text[1..]);
+            assert_eq!(
+                tokenize(&spaced).unwrap(),
+                vec![n(1.0), Plus, n(1.0), op, n(2.0)],
+                "{spaced}"
+            );
+        }
+        for (text, last) in [("1*", Mul), ("!", Not), ("1>", Gt), ("1<", Lt)] {
+            assert_eq!(tokenize(text).unwrap().last(), Some(&last), "{text}");
+        }
+        for text in ["1=", "1&", "1|", "1=2"] {
+            assert!(tokenize(text).is_err(), "{text}");
+        }
+    }
+
     #[test]
     fn deeply_nested_expression_exceeding_cap_is_refused() {
         let deep = format!("{}$A{}", "(".repeat(105), ")".repeat(105));
