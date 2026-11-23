@@ -407,6 +407,44 @@ async fn revoking_an_access_token_ends_its_session_refresh_and_no_password_is_re
     assert_eq!(err(&body), "invalid_grant", "{body}");
 }
 
+/// `offline_access` is granted only to a person holding its role (directly, through a
+/// composite, or the realm's default roles).
+#[tokio::test]
+async fn offline_access_needs_its_role() {
+    let (app, store, _) = app().await;
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .set_user_grants("dev", &member.id, &[], &member.client_roles)
+        .await
+        .unwrap();
+    client(&store, "offline-app", |c| {
+        c.direct_access_grants_enabled = true;
+        c.optional_client_scopes = vec!["offline_access".into()];
+    })
+    .await;
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "offline-app"),
+            ("client_secret", "offline-app-secret"),
+            ("username", "demo.orgmember@hel.fi"),
+            ("password", "MemberPass123!Valid"),
+            ("scope", "openid offline_access"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(err(&body), "invalid_scope", "{body}");
+    assert!(body.contains("offline_access role"), "{body}");
+}
+
 fn jwt_alg(jwt: &str) -> Value {
     let header: Value = serde_json::from_slice(
         &URL_SAFE_NO_PAD

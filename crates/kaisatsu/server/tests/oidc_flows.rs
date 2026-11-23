@@ -669,6 +669,41 @@ async fn userinfo_needs_a_live_access_token() {
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 }
 
+/// A code asked for with `dpop_jkt` (RFC 9449 §10) is bound to that key: its exchange without
+/// a proof of the key is refused.
+#[tokio::test]
+async fn a_code_bound_to_a_dpop_key_needs_a_proof_at_the_exchange() {
+    let (app, _, _, _) = app().await;
+    let (st, h, _) = get(
+        &app,
+        &auth_query("&dpop_jkt=0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let (st, h2, body) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
+    let code = query_param(&location(&h2), "code").expect("code");
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("code", code.as_str()),
+            ("redirect_uri", CALLBACK),
+            ("code_verifier", VERIFIER),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("invalid_dpop_proof"), "{body}");
+    assert!(body.contains("bound to a DPoP key"), "{body}");
+}
+
 /// A confidential client `client_id` in the dev realm, with no redirect URIs.
 async fn edge_like(store: &MemoryStore, client_id: &str) -> ClientRepresentation {
     let client = ClientRepresentation {

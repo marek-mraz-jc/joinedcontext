@@ -594,59 +594,54 @@ pub async fn device_submit(
             } else {
                 rec.status = DeviceStatus::Denied;
             }
-            if !state.store.decide_device_code(rec).await? {
-                return render(
-                    &state,
-                    &mount,
-                    &realm,
-                    &headers,
-                    StatusCode::CONFLICT,
-                    "info",
-                    "oauth2DeviceVerificationFailedHeader",
-                    |b, p| {
-                        p.instructions
-                            .push(b.get("oauth2DeviceExpiredUserCodeMessage").to_owned());
-                    },
-                )
-                .await;
-            }
-            state
-                .store
-                .append_event(AuditEvent {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    realm_id: realm.id.clone(),
-                    org_id: None,
-                    time: now.as_millis(),
-                    event_type: if allow {
-                        "OAUTH2_DEVICE_VERIFY_USER_CODE".into()
-                    } else {
-                        "OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR".into()
-                    },
-                    client_id: Some(client.client_id.clone()),
-                    user_id: Some(sso.user_id.clone()),
-                    session_id: Some(sso.id.clone()),
-                    ip_address: client_ip.for_audit(),
-                    error: (!allow).then(|| "consent_denied".into()),
-                    details: BTreeMap::new(),
-                })
-                .await?;
-            let (heading, text) = if allow {
+            // A code another tab or the device's expiry settled since the page read it.
+            let (status, heading, text) = if !state.store.decide_device_code(rec).await? {
                 (
-                    "oauth2DeviceVerificationCompleteHeader",
-                    "oauth2DeviceVerificationCompleteMessage",
+                    StatusCode::CONFLICT,
+                    "oauth2DeviceVerificationFailedHeader",
+                    "oauth2DeviceExpiredUserCodeMessage",
                 )
             } else {
-                (
-                    "oauth2DeviceVerificationFailedHeader",
-                    "oauth2DeviceConsentDeniedMessage",
-                )
+                state
+                    .store
+                    .append_event(AuditEvent {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        realm_id: realm.id.clone(),
+                        org_id: None,
+                        time: now.as_millis(),
+                        event_type: if allow {
+                            "OAUTH2_DEVICE_VERIFY_USER_CODE".into()
+                        } else {
+                            "OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR".into()
+                        },
+                        client_id: Some(client.client_id.clone()),
+                        user_id: Some(sso.user_id.clone()),
+                        session_id: Some(sso.id.clone()),
+                        ip_address: client_ip.for_audit(),
+                        error: (!allow).then(|| "consent_denied".into()),
+                        details: BTreeMap::new(),
+                    })
+                    .await?;
+                if allow {
+                    (
+                        StatusCode::OK,
+                        "oauth2DeviceVerificationCompleteHeader",
+                        "oauth2DeviceVerificationCompleteMessage",
+                    )
+                } else {
+                    (
+                        StatusCode::OK,
+                        "oauth2DeviceVerificationFailedHeader",
+                        "oauth2DeviceConsentDeniedMessage",
+                    )
+                }
             };
             render(
                 &state,
                 &mount,
                 &realm,
                 &headers,
-                StatusCode::OK,
+                status,
                 "info",
                 heading,
                 |b, p| {
