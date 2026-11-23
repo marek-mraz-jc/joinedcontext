@@ -6,7 +6,7 @@
  * at. A person with no sample chosen saw a dead button and no explanation at all. The input is
  * the shared `FilePicker`, and the button carries whichever reason applies.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +32,7 @@ const TRACE = {
   errors: [],
 };
 
-function show(draft: PipelineForm | undefined = MAPPED) {
+function show(draft: PipelineForm | undefined = MAPPED, toManifest: (form: PipelineForm) => unknown = (form) => form) {
   const onChange = vi.fn();
   const view = render(
     <I18nextProvider i18n={i18n}>
@@ -40,7 +40,7 @@ function show(draft: PipelineForm | undefined = MAPPED) {
         project="helsinki"
         draft={draft}
         onChange={onChange}
-        toManifest={(form) => form}
+        toManifest={toManifest}
       />
     </I18nextProvider>,
   );
@@ -61,6 +61,7 @@ describe("the pipeline sample test against the UI contract", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("says a sample is missing on the button that is refused for it", () => {
@@ -95,6 +96,42 @@ describe("the pipeline sample test against the UI contract", () => {
     await userEvent.click(runButton());
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentTo(fetchMock, "/pipelines/test")).toHaveLength(1);
+  });
+
+  it("says the test did not run when the draft cannot be made a manifest, and sends nothing", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    show(MAPPED, () => {
+      throw new Error("no manifest");
+    });
+    await userEvent.upload(screen.getByLabelText(en.pipelines.test.chooseFile), csv());
+    await screen.findByText(/air\.csv/);
+    await userEvent.click(runButton());
+    expect(await screen.findByText(en.pipelines.test.failed.replace("{status}", "0"))).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("takes a sample dropped on the panel", async () => {
+    show(MAPPED);
+    const panel = screen.getByTestId("pipeline-test");
+    const over = fireEvent.dragOver(panel);
+    // A cancelled dragover is what lets the browser drop here.
+    expect(over).toBe(false);
+    // A drop that carries no file (a text selection) takes nothing.
+    fireEvent.drop(panel, { dataTransfer: { files: [] } });
+    expectDenied(runButton(), en.pipelines.test.noSample);
+    fireEvent.drop(panel, { dataTransfer: { files: [csv()] } });
+    expect(await screen.findByText(/air\.csv/)).toBeInTheDocument();
+  });
+
+  it("says a sample the browser cannot read, and keeps no sample", async () => {
+    vi.spyOn(FileReader.prototype, "readAsText").mockImplementation(function (this: FileReader) {
+      queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error")));
+    });
+    show(MAPPED);
+    await userEvent.upload(screen.getByLabelText(en.pipelines.test.chooseFile), csv());
+    expect(await screen.findByText(/The file could not be read/)).toBeInTheDocument();
+    expectDenied(runButton(), en.pipelines.test.noSample);
   });
 
   it("keeps a typed mapping when a sample lands, and replaces it only when asked (T-3971)", async () => {

@@ -298,7 +298,15 @@ export function PipelineTest({ project, draft, onChange, toManifest, sampleUrl, 
       return;
     }
     setAt(0);
-    const text = await readText(file);
+    let text: string;
+    try {
+      text = await readText(file);
+    } catch (err) {
+      // A file the browser cannot read (moved, locked, unreadable) is said, not left unhandled.
+      setSample(null);
+      setError(t("spaces.import.unreadable", { reason: err instanceof Error ? err.message : t("app.error.generic") }));
+      return;
+    }
     const space = spaceOfTarget(draft?.targetEndpoint, project);
     const drafted = draftFromSample(file.name, text, space);
     setSample({ name: file.name, text, format: testFormatOf(drafted?.format ?? formatOf(file.name, text), sourceBody) });
@@ -308,10 +316,7 @@ export function PipelineTest({ project, draft, onChange, toManifest, sampleUrl, 
     }
   }
 
-  async function run(message?: number) {
-    if (!sample || !draft) {
-      return;
-    }
+  async function run(sample: SampleSource, draft: PipelineForm, message?: number) {
     const text = message === undefined ? sample.text : messages[message];
     setRunning(true);
     setError(null);
@@ -432,7 +437,8 @@ export function PipelineTest({ project, draft, onChange, toManifest, sampleUrl, 
                 : undefined
           }
           onClick={() => {
-            void run(stepping && messages.length > 0 ? at : undefined);
+            // The button is refused without a sample or a mapping, so both are there here.
+            if (sample && draft) void run(sample, draft, stepping && messages.length > 0 ? at : undefined);
           }}
         >
           {running
