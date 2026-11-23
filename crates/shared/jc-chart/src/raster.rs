@@ -1628,8 +1628,12 @@ mod tests {
                 })
                 .collect(),
         );
+        // 6.5 days over 920 px: six labels' room takes two-day steps, seven would take one.
         let wide = Chart {
             width: 1000,
+            points: (0..14)
+                .map(|i| at(1.7e12 + f64::from(i) * day / 2.0, f64::from(i % 3), None))
+                .collect(),
             ..line.clone()
         };
         let quantitative_bars = chart(
@@ -1728,7 +1732,7 @@ mod tests {
             "95ebec0cf90f21ea06fc6144c71ece59aad984cfc9972fd8bcd6044b95ad114e",
             "591f720c1f39e59520089d2cc8260e67577d71a49b007d1daaa95fe1a43873a4",
             "e9825373ca3c6382a21c29d74fc6befb85320b23746208c1d028166dc69ca256",
-            "7222814cc9ac2c109acbbb916af6e5252faf81fa6c071a56ecca0a00b3e30298",
+            "b02a25f64634cd018d82f8765bb954a9bdee97db1cb3d3adf30bc81fe8593a6e",
             "ddc57b2c2d2ad0b3c8333af82dc4dd623048d69d98acdee6c45b3ec911c99143",
             "6a4e627770df543b0b5bb7adfeb964de658fefbf840199aef52b7868ce824a9a",
             "ed6f55af21f3f3e72ceabc1548db7d31695f7d0680877ea5d832716498c8eb5c",
