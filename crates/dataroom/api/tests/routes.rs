@@ -2703,6 +2703,18 @@ async fn odata_rows_follow_package_show() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(a.json()["allowed"], true, "{}", a.body);
+    // The key names the entity asked about: one the caller cannot read is refused.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$allowed?op=read&key=pkg-nope",
+        None,
+    )
+    .await;
+    assert_eq!(a.json()["allowed"], false, "{}", a.body);
+    // An empty query string is no query.
+    let a = get(app, "/odata/v4/Datasets/$export?", None).await;
+    assert_eq!(a.json().as_array().map(Vec::len), Some(2), "{}", a.body);
     let a = get(app, "/odata/v4/Datasets/$allowed?key=pkg-open&x=1", None).await;
     assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
     assert!(a.body.contains("op is required"));
