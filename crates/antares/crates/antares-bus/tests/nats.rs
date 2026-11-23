@@ -464,6 +464,12 @@ async fn topology_and_tenant_checks_refuse_what_does_not_match() {
     let n = nonce();
     let durable = format!("topo-{n}");
     let consumer = bus.consume_balanced(&durable).await.expect("durable");
+    let config = &consumer.cached_info().config;
+    assert_eq!(
+        config.ack_policy,
+        async_nats::jetstream::consumer::AckPolicy::Explicit
+    );
+    assert_eq!(config.max_ack_pending, antares_bus::nats::MAX_ACK_PENDING);
     bus.assert_topology(&[durable.as_str()])
         .await
         .expect("present");
@@ -536,6 +542,20 @@ async fn next_delta_skips_a_message_that_is_not_json() {
     let url = require_nats!();
     let bus = NatsBus::connect(&url).await.expect("connect");
     let consumer = bus.consume_registry_broadcast().await.expect("consumer");
+    let config = &consumer.cached_info().config;
+    assert_eq!(
+        config.durable_name, None,
+        "ephemeral: every instance sees every delta"
+    );
+    assert_eq!(
+        config.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::New
+    );
+    assert_eq!(
+        config.ack_policy,
+        async_nats::jetstream::consumer::AckPolicy::Explicit
+    );
+    assert_eq!(config.max_ack_pending, antares_bus::nats::MAX_ACK_PENDING);
     let mut stream = consumer.messages().await.expect("messages");
     let n = nonce();
     let tenant = TenantId::new(&format!("nd{n}")).expect("tenant");

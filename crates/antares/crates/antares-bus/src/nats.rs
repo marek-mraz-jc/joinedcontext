@@ -314,7 +314,7 @@ impl NatsBus {
             durable,
             consumer::pull::Config {
                 durable_name: Some(durable.into()),
-                ack_policy: consumer::AckPolicy::Explicit,
+                // A pull consumer's default ack policy is Explicit.
                 max_ack_pending: MAX_ACK_PENDING,
                 ..Default::default()
             },
@@ -332,7 +332,7 @@ impl NatsBus {
             // no durable name = ephemeral = broadcast
             durable_name: None,
             deliver_policy: consumer::DeliverPolicy::New,
-            ack_policy: consumer::AckPolicy::Explicit,
+            // A pull consumer's default ack policy is Explicit.
             max_ack_pending: MAX_ACK_PENDING,
             ..Default::default()
         })
