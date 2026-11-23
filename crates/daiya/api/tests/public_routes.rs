@@ -490,9 +490,10 @@ async fn a_stored_dashboard_that_does_not_read_is_an_error_not_a_guess() {
         )
         .await;
     assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "cr.internal_error", "{body}");
     assert!(
-        body.to_string().contains("invalid stored dashboard JSON"),
-        "{body}"
+        !body.to_string().contains("not a list"),
+        "the stored JSON stays inside: {body}"
     );
 }
 
