@@ -669,6 +669,19 @@ async fn userinfo_needs_a_live_access_token() {
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 }
 
+/// A confidential client `client_id` in the dev realm, with no redirect URIs.
+async fn edge_like(store: &MemoryStore, client_id: &str) -> ClientRepresentation {
+    let client = ClientRepresentation {
+        id: format!("uuid-{client_id}"),
+        realm_id: "dev".into(),
+        client_id: client_id.into(),
+        enabled: true,
+        ..Default::default()
+    };
+    store.upsert_client(client.clone()).await.unwrap();
+    client
+}
+
 #[tokio::test]
 async fn rp_initiated_logout_and_back_channel_logout() {
     let (app, store, state, kek) = app().await;
@@ -705,6 +718,7 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         format!("?post_logout_redirect_uri={signed_out}"),
         format!("?client_id=nope&post_logout_redirect_uri={signed_out}"),
         "?id_token_hint=not-a-jwt".to_owned(),
+        format!("?id_token_hint={id_token}&client_id=account-console"),
     ] {
         let (st, _, _) = get(&app, &format!("{logout}{q}"), None, None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{q}");
@@ -713,6 +727,21 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         store.get_sso_session("dev", &sid).await.unwrap().is_some(),
         "nothing ended yet"
     );
+    // The session also names a client deleted since and one whose pinned algorithm this realm
+    // cannot sign: neither gets a logout token, and the logout still ends the session.
+    let mut pinned = edge_like(&store, "pinned-alg").await;
+    pinned
+        .attributes
+        .insert("backchannel.logout.url".into(), backchannel.into());
+    pinned
+        .attributes
+        .insert("id.token.signed.response.alg".into(), "HS512".into());
+    store.upsert_client(pinned).await.unwrap();
+    let mut session = store.get_sso_session("dev", &sid).await.unwrap().unwrap();
+    for id in ["deleted-since", "pinned-alg"] {
+        session.clients.insert(id.into(), id.into());
+    }
+    store.upsert_sso_session(session).await.unwrap();
 
     let (st, h, _) = get(
         &app,

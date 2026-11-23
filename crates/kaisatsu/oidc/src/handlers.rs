@@ -4395,6 +4395,76 @@ mod tests {
         assert!(matches!(&err, KaisatsuError::Crypto(m) if m.contains("no active signing key")));
     }
 
+    /// A person takes the roles their groups carry and the realm and client role mappings of
+    /// each group and its ancestors, each role once, each group read once.
+    #[tokio::test]
+    async fn group_roles_and_mappings_reach_the_person_once() {
+        let state = state();
+        let parent = GroupRepresentation {
+            id: "g-parent".into(),
+            realm_id: "dev".into(),
+            name: "parent".into(),
+            ..Default::default()
+        };
+        state.store.upsert_group(parent.clone()).await.unwrap();
+        let child = GroupRepresentation {
+            id: "g-child".into(),
+            realm_id: "dev".into(),
+            name: "child".into(),
+            parent_id: Some("g-parent".into()),
+            realm_roles: vec!["reader".into(), "own".into()],
+            client_roles: HashMap::from([("app".to_owned(), vec!["viewer".to_owned()])]),
+            ..Default::default()
+        };
+        let client = ClientRepresentation {
+            id: "uuid-app".into(),
+            realm_id: "dev".into(),
+            client_id: "app".into(),
+            ..Default::default()
+        };
+        state.store.upsert_client(client.clone()).await.unwrap();
+        for (id, role, client_uuid) in [
+            ("m-1", "auditor", None),
+            ("m-2", "editor", Some("uuid-app".to_owned())),
+        ] {
+            state
+                .store
+                .add_role_mapping(RoleMappingRecord {
+                    id: id.into(),
+                    realm_id: "dev".into(),
+                    org_id: None,
+                    principal_kind: "group".into(),
+                    principal_id: "g-parent".into(),
+                    role_id: format!("role-{role}"),
+                    role_name: role.into(),
+                    client_uuid,
+                })
+                .await
+                .unwrap();
+        }
+        let user = UserRepresentation {
+            id: "u-1".into(),
+            realm_id: "dev".into(),
+            realm_roles: vec!["own".into()],
+            ..Default::default()
+        };
+        let merged = with_group_roles(
+            state.store.as_ref(),
+            "dev",
+            &user,
+            &[child.clone(), child, parent],
+            &client,
+        )
+        .await
+        .unwrap();
+        let mut realm_roles = merged.realm_roles.clone();
+        realm_roles.sort();
+        assert_eq!(realm_roles, ["auditor", "own", "reader"]);
+        let mut app_roles = merged.client_roles["app"].clone();
+        app_roles.sort();
+        assert_eq!(app_roles, ["editor", "viewer"]);
+    }
+
     #[test]
     fn a_form_value_decodes_plus_and_escapes_and_refuses_broken_ones() {
         assert_eq!(form_urldecode("a+b%20c%2B").as_deref(), Some("a b c+"));

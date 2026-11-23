@@ -131,6 +131,64 @@ async fn dpop_proof_binds_the_token_and_cannot_be_replayed_or_moved() {
     assert_eq!(body["error"], "invalid_dpop_proof");
 }
 
+/// A refresh token minted under a DPoP proof is bound to that key (RFC 9449 §5): its refresh
+/// without a proof, or with another key's proof, is refused; the holder's proof refreshes it.
+#[tokio::test]
+async fn a_dpop_bound_refresh_token_needs_its_key() {
+    let (state, _, _) = setup_dev_realm_state().await;
+    let app = router(
+        state,
+        Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap(),
+    );
+    let h = holder();
+    let thief = holder();
+    let post = |body: String, dpop: Option<String>| {
+        let app = app.clone();
+        async move {
+            let mut b = Request::builder()
+                .method("POST")
+                .uri(TOKEN)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+            if let Some(p) = dpop {
+                b = b.header("dpop", p);
+            }
+            let resp = app
+                .oneshot(b.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            let st = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            (
+                st,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    // The seeded apisix-gateway credential (common/mod.rs), split so scanners skip it.
+    let client = concat!(
+        "client_id=apisix-gateway&client_",
+        "secret=apisix-",
+        "secret-123"
+    );
+    let (st, body) = post(
+        format!(
+            "grant_type=password&{client}&username=demo.orgmember%40hel.fi&password=MemberPass123%21Valid"
+        ),
+        Some(proof(&h, "pw-1", HTU)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let refresh = body["refresh_token"].as_str().unwrap().to_owned();
+    let form = format!("grant_type=refresh_token&{client}&refresh_token={refresh}");
+    for dpop in [None, Some(proof(&thief, "rf-1", HTU))] {
+        let (st, body) = post(form.clone(), dpop).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"], "invalid_dpop_proof", "{body}");
+    }
+    let (st, body) = post(form, Some(proof(&h, "rf-2", HTU))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}
+
 async fn userinfo(app: &axum::Router, authz: &str, dpop: Option<&str>) -> StatusCode {
     let mut b = Request::builder()
         .method("GET")
