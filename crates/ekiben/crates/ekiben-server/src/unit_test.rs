@@ -1210,7 +1210,7 @@ mod tests {
             "{out}"
         );
 
-        let (ok, out, _) = report(&[PathBuf::from(d.join("ok.yaml"))], &[]).await;
+        let (ok, out, _) = report(&[d.join("ok.yaml")], &[]).await;
         assert!(ok, "{out}");
         let (ok, out, _) = report(&[d.join("sub")], &[]).await;
         assert!(!ok);
@@ -1344,7 +1344,7 @@ tests:
       - - file_json_equals: want.json
 "#,
         );
-        let res = [PathBuf::from(d.join("shared.yaml"))];
+        let res = [d.join("shared.yaml")];
         let (ok, out, err) = report(&[d.join("t.yaml")], &res).await;
         assert!(err.is_empty(), "{err}");
         assert!(!ok, "{out}");
