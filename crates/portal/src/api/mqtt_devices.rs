@@ -602,6 +602,16 @@ mod tests {
             !add_to_role(&mut json!({}), "publisher", "meter-4"),
             "no roles at all"
         );
+        let mut odd = json!({ "roles": [{ "name": "publisher", "serviceAccounts": "meter-1" }] });
+        assert!(
+            add_to_role(&mut odd, "publisher", "meter-5"),
+            "the role is there"
+        );
+        assert_eq!(
+            odd["roles"][0]["serviceAccounts"],
+            json!("meter-1"),
+            "a list that is no list is left for the door to refuse"
+        );
         assert_eq!(spec, before);
     }
 
