@@ -260,6 +260,8 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
   const [deleting, setDeleting] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [copying, setCopying] = useState<string | null>(null);
+  // A download that fails says why beside the list instead of failing unseen.
+  const [downloadError, setDownloadError] = useState<unknown>(null);
   const versions = useQuery({ queryKey: versionsKey(kind), queryFn: () => readVersions(kind) });
   const remove = useMutation({
     mutationFn: () => softDelete(kind),
@@ -270,7 +272,14 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
     },
   });
   const save = async (version: string) => {
-    const blob = await downloadVersion(kind, version, t("backups.unreadable"));
+    setDownloadError(null);
+    let blob: Blob;
+    try {
+      blob = await downloadVersion(kind, version, t("backups.unreadable"));
+    } catch (error) {
+      setDownloadError(error);
+      return;
+    }
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
@@ -305,6 +314,7 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
           </Badge>
         </div>
       ) : null}
+      {downloadError ? <Alert tone="danger">{reasonOf(downloadError, t("backups.unreadable"))}</Alert> : null}
       {current?.deleteMarker ? <Alert tone="warning">{t("backups.versions.deletedHint")}</Alert> : null}
       {versions.data && list.length === 0 ? (
         <EmptyState bare title={t("backups.versions.empty")} description={t("backups.versions.emptyHint")} />
