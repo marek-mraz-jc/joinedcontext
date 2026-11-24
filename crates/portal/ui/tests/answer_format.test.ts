@@ -90,6 +90,10 @@ describe("an answer's Markdown", () => {
       { tag: "p", children: ["x ", { tag: "cite", numbers: [2, 3] }, " y ", " z ", { tag: "cite", numbers: [1] }] },
     ]);
   });
+
+  it("drops every citation marker when no source list is given", () => {
+    expect(markdown("PM10 rose [1] and fell [2, 3].")).toEqual([{ tag: "p", children: ["PM10 rose ", " and fell ", "."] }]);
+  });
 });
 
 describe("an answer's sources", () => {

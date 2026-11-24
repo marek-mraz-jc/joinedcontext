@@ -144,7 +144,7 @@ export default defineConfig({
     // 5 s default would kill a test in the middle of an assertion that is merely slow.
     testTimeout: 20_000,
     // Coverage is measured, never targeted (T-2136): the thresholds below are what the suite
-    // reached on 2026-11-24 (T-7631, T-7682, T-7588), so the number can rise and cannot fall. `ci-full` runs
+    // reached on 2026-11-24 (T-7540, T-7588), so the number can rise and cannot fall. `ci-full` runs
     // `pnpm vitest run --coverage`; the fast lane does not, because instrumenting every module
     // costs more than the lane's whole budget.
     coverage: {

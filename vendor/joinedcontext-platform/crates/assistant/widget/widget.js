@@ -1306,6 +1306,7 @@
         keep();
       }
     } else if (name === "error") {
+      item.failed = true;
       fail(item, JCRender.trouble(data.status, data.title), data.detail);
     }
   }
@@ -1505,6 +1506,12 @@
       var parsed = JCRender.events(buffer + decoder.decode(chunk.value, { stream: true }));
       buffer = parsed.rest;
       parsed.events.forEach(function (event) { handle(item, event.name, event.data); });
+      if (item.failed) {
+        // An error ends the answer here: the server may still be writing the turn down behind a
+        // 504, and the composer must not show Stop beside the error until it closes (T-7765).
+        reader.cancel().catch(function () {});
+        return;
+      }
     }
     if (item.pending !== null && item.pending !== undefined) {
       show(item, item.pending, [], item.turn);

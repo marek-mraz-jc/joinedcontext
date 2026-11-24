@@ -20,6 +20,8 @@ import { deniedReason } from "../src/components/ui/PermissionGuard";
 
 const PROJECT = "banskabystrica";
 const RUN_ID = "01J8ZQ4T7K9M2N3P4Q5R6S7T8V";
+// The key the dock keeps its last run ui action under (src/assistant/state.ts ACTED_KEY).
+const ACTED = "jc.assistant.acted";
 
 const RUN = {
   id: RUN_ID,
@@ -316,6 +318,44 @@ describe("the assistant dock", () => {
     // person sees, or the page reads as if the agent had done nothing.
     expect(await screen.findByTestId("complete-draft-Pipeline")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Propose all/i })).toBeEnabled();
+  });
+
+  it("points at a field once, after the page it opened, and skips what a remount already ran (T-5959)", async () => {
+    // The dock before this remount already ran the run's ui action 8.
+    window.sessionStorage.setItem(ACTED, JSON.stringify({ runId: RUN_ID, seq: 8 }));
+    renderPortal();
+    await screen.findByRole("heading", { name: "Ovzdusie dnes" });
+    await waitFor(() => {
+      expect(StubEventSource.opened.length).toBeGreaterThan(0);
+    });
+    await emitToEveryStream("navigate", {
+      seq: 7,
+      route: `/projects/${PROJECT}/endpoints`,
+      prefill: { name: "air-quality-public", contextSpaceRef: "ovzdusie" },
+    });
+    const dialog = await findFormPage();
+    // Every note the dock puts on the page, even one a later action replaces at once.
+    const shown: string[] = [];
+    const watch = new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement && node.id === "assistant-highlight-note") shown.push(node.textContent ?? "");
+        });
+      }
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    await emitToEveryStream("ui", { seq: 8, action: "highlight", field: "name", message: "Already shown" });
+    // A payload no action reads moves nothing; the field action after it still runs.
+    await emitToEveryStream("ui", { seq: 9, action: "submit" });
+    await emitToEveryStream("ui", { seq: 10, action: "highlight", field: "name", message: "A short name, e.g. air-quality-public" });
+
+    const note = await screen.findByText("A short name, e.g. air-quality-public");
+    expect(note).toHaveAttribute("role", "status");
+    watch.disconnect();
+    expect(shown).toEqual(["A short name, e.g. air-quality-public"]);
+    const field = dialog.querySelector("#root_name") as HTMLInputElement;
+    expect(field.getAttribute("aria-describedby")).toContain(note.id);
+    expect(JSON.parse(window.sessionStorage.getItem(ACTED) ?? "null")).toEqual({ runId: RUN_ID, seq: 10 });
   });
 
   it("never replays a navigate it followed once the person has moved on to another page", async () => {

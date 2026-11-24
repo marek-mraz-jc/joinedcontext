@@ -1457,6 +1457,60 @@ async fn chunk_terms_keep_to_their_project_and_follow_the_text() {
     drop_database(admin, pool, &name).await;
 }
 
+/// T-7765: a page looked up by its address reads index `chunks_url` as the app role under
+/// row-level security, and still answers only the session's project's page.
+#[tokio::test]
+async fn a_page_by_its_address_reads_its_index_and_keeps_to_the_project() {
+    let (admin, pool, name) = database("urlindex").await;
+    site(
+        &pool,
+        "helsinki",
+        "hel-web",
+        &[("Library opening hours", "en", "public", embedding(0, None))],
+    )
+    .await;
+    site(
+        &pool,
+        "espoo",
+        "esp-web",
+        &[("Library in Espoo", "en", "public", embedding(1, None))],
+    )
+    .await;
+    let url: String = sqlx::query_scalar("SELECT url FROM chunks WHERE project = 'espoo'")
+        .fetch_one(&pool)
+        .await
+        .expect("espoo's page");
+    let app = app_pool(&pool).await;
+    let mut tx = project_scope(&app, "helsinki").await.expect("scope");
+    // Three rows are read whole whatever the indexes: the planner is told to prefer an index.
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("no seq scan");
+    let plan: Vec<String> =
+        sqlx::query_scalar("EXPLAIN SELECT 1 FROM chunks c WHERE c.url = 'https://x.example/'")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("plan");
+    tx.rollback().await.expect("rollback");
+    let plan = plan.join("\n");
+    assert!(
+        plan.contains("chunks_url"),
+        "the lookup reads its index:\n{plan}"
+    );
+    let held = held_page_projects(
+        &app,
+        &url,
+        &[("helsinki".to_owned(), vec!["hel-web".to_owned()])],
+        true,
+    )
+    .await
+    .expect("lookup");
+    assert!(!held, "espoo's page is not helsinki's");
+    app.close().await;
+    drop_database(admin, pool, &name).await;
+}
+
 /// T-6547: the embedder's claim of chunks without a vector reads index `chunks_embedding_pending`
 /// as the app role under row-level security, never every chunk of every project (on dev 1.2 to
 /// 2.4 s a claim, 105 an hour), and still answers only the session's project's pending chunks.
