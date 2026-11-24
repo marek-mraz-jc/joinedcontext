@@ -724,7 +724,7 @@ mod tests {
             "deviceAuth": ["token", "clientCertificate"], "clientCaRef": {"name": "city-device-ca", "key": "ca.crt"}
         }))
         .expect("reads");
-        assert_eq!(read.validate(field).map_err(|e| e.to_string()), Ok(()));
+        assert_eq!(read.validate(field), Ok(()));
         // An inline certificate or key has no field to sit in.
         assert!(serde_json::from_value::<MqttAllowance>(serde_json::json!({
             "customHostnames": [{"name": "mqtt.city.example", "certificate": "-----BEGIN CERTIFICATE-----"}]
@@ -760,5 +760,28 @@ mod tests {
         .expect("reads");
         assert_eq!(read.limit("brokers"), 2);
         assert!(serde_json::from_value::<MqttAllowance>(serde_json::json!({"x": 1})).is_err());
+    }
+
+    #[test]
+    fn an_unknown_limit_field_is_zero_even_when_mqtt_is_on() {
+        assert_eq!(on().limit("unknownField"), 0);
+        assert_eq!(on().limit("brokers"), DEFAULT_BROKERS);
+    }
+
+    #[test]
+    fn an_empty_address_list_is_refused() {
+        let allowance = MqttAllowance {
+            addresses: Some(Vec::new()),
+            ..on()
+        };
+        let err = allowance.validate("spec.mqtt").unwrap_err();
+        assert_eq!(
+            err,
+            Error::Invalid {
+                field: "spec.mqtt".into(),
+                reason: "addresses names no address kind; leave it out for [platform] (PF-119)"
+                    .into(),
+            }
+        );
     }
 }

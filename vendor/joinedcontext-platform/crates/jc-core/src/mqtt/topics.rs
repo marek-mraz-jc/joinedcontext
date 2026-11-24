@@ -195,6 +195,21 @@ mod tests {
     }
 
     #[test]
+    fn verdict_names_a_parse_failure_and_a_refusal_that_is_not_invalid() {
+        let parse = verdict(serde_json::json!({ "roles": [], "bogus": true })).expect("refused");
+        assert!(parse.starts_with("parse: "), "{parse}");
+        assert!(parse.contains("bogus"), "{parse}");
+        let named = verdict(serde_json::json!({
+            "roles": [{ "name": "Bad_Name", "publish": ["air/${clientid}/pm10"] }]
+        }))
+        .expect("refused");
+        assert!(
+            named.starts_with("invalid metadata.name `Bad_Name`"),
+            "{named}"
+        );
+    }
+
+    #[test]
     fn a_filter_covers_what_it_reaches_and_no_more() {
         assert!(covers("air/#", "air/${clientid}/pm10"));
         assert!(covers("air/+/pm10", "air/${clientid}/pm10"));
@@ -237,5 +252,46 @@ mod tests {
         assert!(!matches("air/+", "$SYS/x", "cam-1"));
         assert!(!matches("air/+", "air/+", "cam-1"));
         assert!(!matches("air/x", "air/x/y", "cam-1"));
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn overlaps_finds_when_first_role_covers_second() {
+        let role_a = MqttRole {
+            name: "wide".into(),
+            service_accounts: Vec::new(),
+            publish: vec!["air/${clientid}/#".into()],
+            subscribe: Vec::new(),
+            shared_topics: false,
+            reason: None,
+        };
+        let role_b = MqttRole {
+            name: "narrow".into(),
+            service_accounts: Vec::new(),
+            publish: vec!["air/${clientid}/pm10".into()],
+            subscribe: Vec::new(),
+            shared_topics: false,
+            reason: None,
+        };
+        let found = overlaps(&[role_a, role_b]);
+        assert_eq!(
+            found,
+            vec!["role `wide` publish `air/${clientid}/#` covers role `narrow` `air/${clientid}/pm10`"]
+        );
+    }
+
+    #[test]
+    fn covers_returns_false_when_wide_has_more_levels_than_narrow() {
+        assert!(!covers("air/status/temp", "air/status"));
+    }
+
+    #[test]
+    fn matches_handles_level_mismatch_and_plus_wildcard() {
+        assert!(!matches("air/temp/celsius", "air/temp", "client1"));
+        assert!(matches("air/+/temp", "air/sensor1/temp", "client1"));
     }
 }

@@ -1,0 +1,64 @@
+# Fuzzing agent-proxy's parsers of outside input (T-7795) under libFuzzer: a model call's body and
+# the provider's stream, the fetch route's URL and its redirects, the run's credential headers and
+# a token's issuer, the redaction of text and event payloads, a forge write's body, its ref and
+# every door's path rule, and the configuration and model-key answers. Not a workspace member:
+# `cargo +nightly fuzz run <target> fuzz/corpus/<target> fuzz/seeds/<target>` from
+# crates/agent-proxy; seeds/ holds the committed seed inputs.
+[package]
+name = "agent-proxy-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+axum = "0.8"
+serde_json = "1"
+agent-proxy = { path = "..", features = ["fuzz"] }
+
+[[bin]]
+name = "llm_body"
+path = "fuzz_targets/llm_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetch_url"
+path = "fuzz_targets/fetch_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "credentials"
+path = "fuzz_targets/credentials.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redact"
+path = "fuzz_targets/redact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "forge_body"
+path = "fuzz_targets/forge_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false

@@ -1353,3 +1353,282 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn narrowed_ignores_unrecognized_query_parameters() {
+        let (ty, q) = narrowed("/api/endpoint/air/ngsi-ld/v1/entities?type=AirQualityObserved&q=pm10>20&limit=10&format=keyValues")
+            .expect("parses query");
+        assert_eq!(ty, "AirQualityObserved");
+        assert_eq!(q.as_deref(), Some("pm10>20"));
+    }
+
+    #[test]
+    fn language_map_text_and_iri_helpers() {
+        let plain = language_map(Some(&json!("English text"))).expect("plain string parsed");
+        assert_eq!(plain.get("en").unwrap(), "English text");
+
+        let tagged_obj = language_map(Some(&json!({ "@language": "sk", "@value": "Slovensky" })))
+            .expect("tagged object parsed");
+        assert_eq!(tagged_obj.get("sk").unwrap(), "Slovensky");
+
+        assert_eq!(
+            text(&json!({ "@value": "sample" })).as_deref(),
+            Some("sample")
+        );
+        assert_eq!(text(&json!(123)), None);
+
+        assert_eq!(
+            iri(&json!({ "@id": "https://example.com/ns" })).as_deref(),
+            Some("https://example.com/ns")
+        );
+        assert_eq!(iri(&json!(123)), None);
+
+        let items = [
+            Some(json!(["https://example.com/1", { "@id": "https://example.com/2" }])),
+            Some(json!("https://example.com/3")),
+        ];
+        let res = union(items.iter().map(Option::as_ref), iri);
+        assert_eq!(
+            res,
+            vec![
+                "https://example.com/1",
+                "https://example.com/2",
+                "https://example.com/3"
+            ]
+        );
+    }
+
+    #[test]
+    fn entities_and_link_with_publisher_temporal_and_service_distributions() {
+        let record_node = json!({
+            "@id": "https://city.example/api/endpoint/weather",
+            "@type": "dcat:Dataset",
+            "dct:identifier": "weather",
+            "dct:title": { "@language": "en", "@value": "Weather data" },
+            "dct:description": "Live weather observations.",
+            "dcat:keyword": ["weather", "temperature"],
+            "dcat:theme": ["http://publications.europa.eu/resource/authority/data-theme/ENVI"],
+            "dct:spatial": "http://data.europa.eu/nuts/code/SK032",
+            "dct:temporal": {
+                "@type": "dct:PeriodOfTime",
+                "dcat:startDate": { "@value": "2026-01-01" },
+                "dcat:endDate": { "@value": "2026-12-31" }
+            },
+            "dct:accrualPeriodicity": { "@id": "http://publications.europa.eu/resource/authority/frequency/HOURLY" },
+            "dct:publisher": {
+                "@id": "https://city.example/org/meteo",
+                "@type": "foaf:Agent",
+                "foaf:name": { "@language": "sk", "@value": "Meteo úrad" }
+            },
+            "dct:accessRights": "http://publications.europa.eu/resource/authority/access-right/PUBLIC",
+            "dct:license": "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0",
+            "dcat:distribution": [
+                {
+                    "@id": "https://city.example/api/endpoint/weather/ngsi-ld/v1/",
+                    "@type": "dcat:Distribution",
+                    "dcat:accessURL": "https://city.example/api/endpoint/weather/ngsi-ld/v1/",
+                    "dct:conformsTo": "https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/",
+                    "dcat:mediaType": "https://www.iana.org/assignments/media-types/application/ld+json"
+                }
+            ]
+        });
+
+        let service_node = json!({
+            "@id": "https://city.example/api/endpoint/weather#service",
+            "@type": "dcat:DataService",
+            "dcat:endpointURL": "https://city.example/api/endpoint/weather/",
+            "dcat:servesDataset": "https://city.example/api/endpoint/weather"
+        });
+
+        let places = BTreeMap::from([(
+            "weather".to_owned(),
+            Place::public("meteo-space", Some([17.0, 48.0, 18.0, 49.0])),
+        )]);
+
+        let nodes = vec![record_node, service_node];
+        let built = entities(&nodes, &places, None);
+
+        let dataset = built
+            .get("urn:ngsi-ld:Dataset:weather")
+            .expect("Dataset created");
+        assert!(dataset.get("temporal").is_some());
+        assert!(dataset.get("frequency").is_some());
+        assert!(dataset.get("publisher").is_some());
+
+        let service = built
+            .get("urn:ngsi-ld:DataService:weather")
+            .expect("DataService created");
+        assert_eq!(
+            service["endpointURL"]["value"],
+            "https://city.example/api/endpoint/weather/"
+        );
+        assert_eq!(
+            service["accessRights"]["value"],
+            "http://publications.europa.eu/resource/authority/access-right/PUBLIC"
+        );
+        assert_eq!(
+            service["license"]["value"],
+            "http://publications.europa.eu/resource/authority/licence/CC_BY_4_0"
+        );
+
+        let mut catalog = built;
+        catalog.insert("non-object-entity".into(), json!("raw-string-entity"));
+        link(&mut catalog);
+    }
+
+    fn bare_record() -> Value {
+        json!({
+            "@id": "https://city.example/api/endpoint/bare",
+            "@type": "dcat:Dataset",
+            "dct:identifier": "bare",
+        })
+    }
+
+    #[test]
+    fn a_bare_record_is_a_dataset_and_a_service_with_nothing_more() {
+        // A dataset record with neither an `@id` nor an identifier belongs to no Endpoint.
+        let orphan = json!({ "@type": "dcat:Dataset", "dct:title": "Nobody's" });
+        let places = BTreeMap::from([("bare".to_owned(), Place::public("plain", None))]);
+        let built = entities(&[bare_record(), orphan], &places, None);
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            ["urn:ngsi-ld:DataService:bare", "urn:ngsi-ld:Dataset:bare"]
+        );
+        let dataset = &built["urn:ngsi-ld:Dataset:bare"];
+        for absent in [
+            "title",
+            "description",
+            "temporal",
+            "frequency",
+            "publisher",
+            "location",
+        ] {
+            assert!(dataset.get(absent).is_none(), "{absent}: {dataset}");
+        }
+        assert_eq!(dataset["searchText"]["value"], "plain");
+        let service = &built["urn:ngsi-ld:DataService:bare"];
+        for absent in [
+            "title",
+            "endpointURL",
+            "accessURL",
+            "accessRights",
+            "license",
+        ] {
+            assert!(service.get(absent).is_none(), "{absent}: {service}");
+        }
+        assert_eq!(service["accessLevel"]["value"], "public");
+    }
+
+    #[test]
+    fn a_named_dataset_without_a_service_keeps_its_own_title() {
+        let named = json!({
+            "@id": "https://city.example/api/endpoint/air/datasets/pm10",
+            "@type": "dcat:Dataset",
+            "dct:title": "PM10",
+            "dct:description": "Particulate matter",
+        });
+        let places = BTreeMap::from([("air".to_owned(), Place::public("air", None))]);
+        let built = entities(&[named], &places, None);
+        let service = &built["urn:ngsi-ld:DataService:air"];
+        assert_eq!(service["title"]["languageMap"]["en"], "PM10");
+        assert!(service.get("description").is_none(), "{service}");
+        assert!(built.contains_key("urn:ngsi-ld:Dataset:pm10"));
+    }
+
+    #[test]
+    fn a_ckan_dataset_without_an_organization_publishes_no_organization() {
+        let package = Package {
+            name: "bare-data".into(),
+            title: "Bare".into(),
+            notes: String::new(),
+            organization: None,
+            tags: vec![],
+            extras: BTreeMap::from([("identifier".to_owned(), "bare".to_owned())]),
+            license_url: None,
+            created: None,
+            modified: None,
+            slug: "bare".into(),
+            rows: None,
+        };
+        let places = BTreeMap::from([("bare".to_owned(), Place::public("plain", None))]);
+        let packages = [package];
+        let ckan = Ckan {
+            site: "https://opendata.city.example",
+            packages: &packages,
+        };
+        let built = entities(&[bare_record()], &places, Some(ckan));
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            [
+                "urn:ngsi-ld:DataService:bare",
+                "urn:ngsi-ld:Dataset:bare-data"
+            ]
+        );
+        let dataset = &built["urn:ngsi-ld:Dataset:bare-data"];
+        assert!(dataset.get("title").is_none(), "{dataset}");
+        assert!(dataset.get("refPublisher").is_none(), "{dataset}");
+        assert_eq!(
+            dataset["refDataService"]["object"],
+            "urn:ngsi-ld:DataService:bare"
+        );
+    }
+
+    #[test]
+    fn a_publisher_keeps_what_it_names_and_an_empty_period_is_left_out() {
+        let place = Place::public("plain", None);
+        let with_id = own_dataset(
+            "bare",
+            "bare",
+            &json!({ "dct:temporal": {}, "dct:publisher": { "@id": "https://org.example" } }),
+            &place,
+        );
+        assert!(with_id.get("temporal").is_none(), "{with_id}");
+        assert_eq!(
+            with_id["publisher"]["value"],
+            json!({ "id": "https://org.example" })
+        );
+        let with_name = own_dataset(
+            "bare",
+            "bare",
+            &json!({ "dct:publisher": { "foaf:name": "Mesto" } }),
+            &place,
+        );
+        assert_eq!(
+            with_name["publisher"]["value"],
+            json!({ "name": { "en": "Mesto" } })
+        );
+        let empty = own_dataset("bare", "bare", &json!({ "dct:publisher": {} }), &place);
+        assert!(empty.get("publisher").is_none(), "{empty}");
+    }
+
+    #[test]
+    fn a_distribution_without_a_profile_or_media_type_is_its_url_alone() {
+        let record = json!({
+            "dcat:distribution": [{ "dcat:accessURL": "https://city.example/ngsi-ld/v1/" }]
+        });
+        let (id, service) = data_service("bare", &record, None, &Place::public("plain", None));
+        assert_eq!(id, "urn:ngsi-ld:DataService:bare");
+        assert_eq!(
+            service["accessURL"]["value"],
+            json!([{ "accessURL": "https://city.example/ngsi-ld/v1/" }])
+        );
+    }
+
+    #[test]
+    fn a_language_map_skips_untagged_objects_and_non_text_values() {
+        let map = language_map(Some(&json!([{ "@language": "sk" }, 5, "Data"])))
+            .expect("the plain string");
+        assert_eq!(Value::Object(map), json!({ "en": "Data" }));
+        assert_eq!(language_map(Some(&json!([5, { "@value": "x" }]))), None);
+    }
+
+    #[test]
+    fn union_keeps_each_value_once() {
+        let terms = json!(["a", "a", "b"]);
+        assert_eq!(union(std::iter::once(Some(&terms)), text), ["a", "b"]);
+    }
+}

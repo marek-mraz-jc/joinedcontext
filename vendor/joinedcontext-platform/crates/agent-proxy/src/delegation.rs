@@ -418,6 +418,20 @@ impl Grants {
     }
 }
 
+/// The unverified issuer read over any token, for the fuzz target `credentials` (T-7795).
+/// Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// An issuer read from a token never ends in `/`; a revocation URL ends in `/revoke`.
+    pub fn issuer(token: &str) {
+        if let Some(issuer) = super::issuer_of(token) {
+            assert!(!issuer.ends_with('/'));
+        }
+        assert!(super::revocation_url(token).ends_with("/revoke"));
+    }
+}
+
 /// The revocation endpoint (RFC 7009) beside a Keycloak token endpoint: `…/openid-connect/revoke`.
 fn revocation_url(token_url: &str) -> String {
     match token_url.strip_suffix("/token") {

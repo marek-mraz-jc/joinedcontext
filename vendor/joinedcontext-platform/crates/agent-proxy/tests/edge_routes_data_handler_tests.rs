@@ -158,6 +158,19 @@ async fn a_path_that_would_leave_the_endpoint_is_refused_however_it_is_spelled()
         "ngsi-ld/v1/../../admin",
         "a//b",
         "./x",
+        // The URL parser drops every tab and line break, so these are `..` once sent (T-7795).
+        ".%09./admin",
+        "%09../admin",
+        ".%0A./admin",
+        "ngsi-ld/.%0D./.%0D./admin",
+        // The path arrives decoded: a `?` or `#` ends the path, and the `..` before it is a dot
+        // segment once sent (T-7795).
+        "..%3Fid=x",
+        "..%23",
+        "ngsi-ld/v1/..%3F/../../admin",
+        // The URL parser strips trailing spaces from the whole URL, so a last `.. ` is `..`.
+        "..%20",
+        "..%20%20",
     ] {
         let proxy = with_gateway(false, &gateway.uri());
         let response = proxy
@@ -478,10 +491,41 @@ async fn nothing_the_workspace_sets_reaches_the_gateway_as_an_identity() {
             "'{forbidden}' was relayed to the gateway"
         );
     }
-    assert!(
-        headers.get("accept").is_some(),
-        "an ordinary header still travels"
+    assert_eq!(
+        headers.get("accept").and_then(|value| value.to_str().ok()),
+        Some("application/ld+json"),
+        "an ordinary header still travels as the run sent it"
     );
+}
+
+/// ADR-N-038: a run that holds no grant of the person who started it reads nothing, and is told
+/// why, never with the proxy's own token (T-7795).
+#[tokio::test]
+async fn a_run_without_its_persons_grant_is_told_it_holds_no_identity() {
+    let gateway = MockServer::start().await;
+    let proxy = app(
+        sample_run(false),
+        Bases {
+            gateway: gateway.uri(),
+            realm: Some("http://127.0.0.1:9/realms/jc".to_owned()),
+            ..Bases::default()
+        },
+    );
+    let response = proxy
+        .oneshot(
+            authed("GET", "/v1/data/ngsi-ld/v1/entities")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(body_of(response).await.contains("holds no identity"));
+    assert!(gateway
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
 }
 
 /// AG-41, T-0811: a body past the proxy's ceiling is refused, and the one at the ceiling is not.

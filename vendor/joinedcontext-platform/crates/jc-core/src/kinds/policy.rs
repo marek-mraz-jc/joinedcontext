@@ -1468,3 +1468,318 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn sample_policy() -> PolicySpec {
+        PolicySpec {
+            context_space_ref: Ref::Typed(crate::envelope::TypedRef {
+                kind: "ContextSpace".to_string(),
+                name: "air".to_string(),
+                namespace: None,
+            }),
+            effect: PolicyEffect::Permission,
+            assigner: "did:web:city.example".to_string(),
+            assignee: Principal::new(PrincipalKind::Role, "editors"),
+            operations: vec![OperationRef::Single(Operation::QueryEntity)],
+            actions: vec![],
+            information: vec![],
+            q: None,
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+            rules: None,
+            validity: None,
+        }
+    }
+
+    #[test]
+    fn operation_display_formats_wire_name() {
+        assert_eq!(Operation::CreateEntity.to_string(), "createEntity");
+        assert_eq!(Operation::RetrieveEntity.to_string(), "retrieveEntity");
+        assert_eq!(Operation::PurgeEntity.to_string(), "purgeEntity");
+    }
+
+    #[test]
+    fn operation_group_operations_and_display() {
+        let groups = [
+            OperationGroup::FederationOps,
+            OperationGroup::AssociationOps,
+            OperationGroup::UpdateOps,
+            OperationGroup::RetrieveOps,
+            OperationGroup::RedirectionOps,
+        ];
+        for group in groups {
+            assert!(!group.operations().is_empty());
+            assert_eq!(group.to_string(), group.as_str());
+        }
+        assert!(OperationGroup::UpdateOps.includes_write());
+        assert!(!OperationGroup::RetrieveOps.includes_write());
+    }
+
+    #[test]
+    fn principal_kind_as_str_and_display() {
+        let kinds = [
+            (PrincipalKind::User, "user"),
+            (PrincipalKind::Group, "group"),
+            (PrincipalKind::Role, "role"),
+            (PrincipalKind::ServiceAccount, "serviceAccount"),
+            (PrincipalKind::Did, "did"),
+            (PrincipalKind::Organization, "organization"),
+        ];
+        for (kind, expected) in kinds {
+            assert_eq!(kind.as_str(), expected);
+            assert_eq!(kind.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn context_space_ref_with_wrong_kind_is_refused() {
+        let mut spec = sample_policy();
+        spec.context_space_ref = Ref::Typed(crate::envelope::TypedRef {
+            kind: "Endpoint".to_string(),
+            name: "air".to_string(),
+            namespace: None,
+        });
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("kind must be `ContextSpace`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn empty_or_whitespace_assigner_is_refused() {
+        let mut spec = sample_policy();
+        spec.assigner = "   ".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("assigner must not be empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn duplicate_operation_in_operations_list_is_refused() {
+        let mut spec = sample_policy();
+        spec.operations = vec![
+            OperationRef::Single(Operation::QueryEntity),
+            OperationRef::Single(Operation::QueryEntity),
+        ];
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate operation in operations list"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn public_grant_cannot_write_or_keep_versions_in_attribute_capabilities() {
+        let mut spec = sample_policy();
+        spec.assignee = Principal::new(PrincipalKind::Role, "public");
+        spec.operations = vec![OperationRef::Single(Operation::CreateEntity)];
+        let mut caps = std::collections::BTreeMap::new();
+        caps.insert(
+            "speed".to_string(),
+            AttributeCapabilities {
+                write: Some(vec![WriteCapability::Update]),
+                ..Default::default()
+            },
+        );
+        spec.information = vec![RegistrationInfo {
+            entities: vec![EntitySelector {
+                entity_type: "Vehicle".to_string(),
+                id: None,
+                id_pattern: None,
+            }],
+            property_names: vec!["speed".to_string()],
+            relationship_names: vec![],
+            attributes: caps,
+        }];
+        let err = spec.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a public grant never writes or keeps versions"));
+    }
+
+    #[test]
+    fn public_grant_cannot_pass_modified_by_actor_or_provenance_metadata() {
+        let mut spec = sample_policy();
+        spec.assignee = Principal::new(PrincipalKind::Role, "public");
+        spec.operations = vec![OperationRef::Single(Operation::QueryEntity)];
+        let mut caps = std::collections::BTreeMap::new();
+        caps.insert(
+            "speed".to_string(),
+            AttributeCapabilities {
+                metadata: Some(vec![MetadataMember::ModifiedByActor]),
+                ..Default::default()
+            },
+        );
+        spec.information = vec![RegistrationInfo {
+            entities: vec![EntitySelector {
+                entity_type: "Vehicle".to_string(),
+                id: None,
+                id_pattern: None,
+            }],
+            property_names: vec!["speed".to_string()],
+            relationship_names: vec![],
+            attributes: caps,
+        }];
+        let err = spec.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a public grant never passes modifiedBy.actor or provenance (DM-140)"));
+    }
+
+    #[test]
+    fn entity_write_returns_none_for_prohibition() {
+        let mut spec = sample_policy();
+        spec.effect = PolicyEffect::Prohibition;
+        spec.operations = vec![OperationRef::Single(Operation::UpdateAttrs)];
+        assert_eq!(spec.entity_write(), None);
+    }
+
+    #[test]
+    fn scope_definition_validation_refusals() {
+        let non_root_tax = ScopeDefinitionSpec {
+            scope_string: "/geo".to_string(),
+            is_root: false,
+            is_child_of: None,
+        };
+        let err = non_root_tax.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("isRoot must be true for taxonomy roots (/geo, /domain, /admin)"));
+
+        let root_with_parent = ScopeDefinitionSpec {
+            scope_string: "/geo".to_string(),
+            is_root: true,
+            is_child_of: Some("/domain".to_string()),
+        };
+        let err = root_with_parent.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("isChildOf must be absent when isRoot is true"));
+
+        let child_no_parent = ScopeDefinitionSpec {
+            scope_string: "/geo/SK".to_string(),
+            is_root: false,
+            is_child_of: None,
+        };
+        let err = child_no_parent.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("isChildOf must be present when isRoot is false"));
+
+        let child_wrong_parent = ScopeDefinitionSpec {
+            scope_string: "/geo/SK/BB".to_string(),
+            is_root: false,
+            is_child_of: Some("/geo/CZ".to_string()),
+        };
+        let err = child_wrong_parent.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("isChildOf must match the immediate parent prefix of scopeString"));
+    }
+
+    #[test]
+    fn scope_definition_spec_and_meta_validation() {
+        let spec = ScopeDefinitionSpec {
+            scope_string: "/geo".to_string(),
+            is_root: true,
+            is_child_of: None,
+        };
+        let meta = ObjectMeta::new("geo-root", "org");
+        assert!(spec.validate_spec(&meta).is_ok());
+
+        let bad_meta = ObjectMeta::new("INVALID_DNS", "org");
+        assert!(spec.validate_spec(&bad_meta).is_err());
+    }
+
+    #[test]
+    fn policy_rules_shape_checks_and_expansion() {
+        let mut spec = sample_policy();
+        spec.rules = Some(vec![]);
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("rules must list at least one rule"),
+            "{err}"
+        );
+
+        let mut spec_both = sample_policy();
+        spec_both.rules = Some(vec![PolicyRule {
+            effect: PolicyEffect::Permission,
+            assignee: Principal::new(PrincipalKind::Role, "editors"),
+            operations: vec![OperationRef::Single(Operation::QueryEntity)],
+            actions: vec![],
+            information: vec![],
+            q: None,
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+        }]);
+        spec_both.q = Some("speed>50".to_string());
+        let err = spec_both.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("carries this member inside each rule"),
+            "{err}"
+        );
+
+        let mut spec_unset = sample_policy();
+        spec_unset.assignee = Principal::unset();
+        let err = spec_unset.check_shape().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a Policy names an assignee or lists rules"),
+            "{err}"
+        );
+
+        assert_eq!(PolicySpec::policy_of("policy-name#1"), "policy-name");
+        assert_eq!(PolicySpec::policy_of("policy-name"), "policy-name");
+    }
+
+    #[test]
+    fn endpoint_grant_and_context_space_helpers() {
+        let mut spec = sample_policy();
+        spec.assignee = Principal::new(PrincipalKind::Role, "endpoint:proj/ep1/editor");
+        assert!(spec.is_endpoint_grant("proj", "ep1"));
+        assert!(!spec.is_endpoint_grant("proj", "ep2"));
+        assert!(!spec.is_endpoint_grant("other", "ep1"));
+
+        assert_eq!(spec.context_space(), Some("air"));
+    }
+    #[test]
+    fn rejects_a_scope_segment_with_invalid_characters() {
+        let spec = ScopeDefinitionSpec {
+            scope_string: "/geo/Banska Bystrica".to_string(),
+            is_root: false,
+            is_child_of: Some("/geo".to_string()),
+        };
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("each segment must match ^[A-Za-z0-9._-]+$ and not be empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_is_root_on_a_child_scope() {
+        let spec = ScopeDefinitionSpec {
+            scope_string: "/geo/SK".to_string(),
+            is_root: true,
+            is_child_of: None,
+        };
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("isRoot can only be true for taxonomy roots"),
+            "{err}"
+        );
+    }
+}

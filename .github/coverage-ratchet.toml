@@ -2,6 +2,7 @@
 # its line. `.github/scripts/coverage-ratchet.py update EXPORT.json` raises them; a branch that raises a
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
+"agent-proxy" = { lines = 99.79, functions = 99.81 }
 "antares-bus" = { lines = 99.22, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
 "antares-feed" = { lines = 99.80, functions = 99.37 }
@@ -65,7 +66,7 @@
 "jc" = { lines = 89.83, functions = 83.79 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 99.75, functions = 100.00 }
-"jc-core" = { lines = 94.39, functions = 94.61 }
+"jc-core" = { lines = 99.85, functions = 99.75 }
 "jc-dcat" = { lines = 97.56, functions = 97.76 }
 "jc-door" = { lines = 97.78, functions = 100.00 }
 "jc-embedder" = { lines = 96.08, functions = 87.50 }
@@ -85,9 +86,9 @@
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
 "kaisatsu-import" = { lines = 99.17, functions = 99.39 }
-"kaisatsu-login" = { lines = 99.09, functions = 99.54 }
+"kaisatsu-login" = { lines = 99.62, functions = 99.54 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
-"kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
+"kaisatsu-oidc" = { lines = 99.82, functions = 100.00 }
 "kaisatsu-server" = { lines = 99.17, functions = 100.00 }
 "kaisatsu-store-memory" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }

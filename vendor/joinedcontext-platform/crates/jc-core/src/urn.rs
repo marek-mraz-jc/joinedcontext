@@ -355,3 +355,50 @@ impl schemars::JsonSchema for Urn {
         schemars::schema::Schema::Object(schema)
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn types_of_extracts_from_type_id_or_addressed() {
+        let mut map = serde_json::Map::new();
+        map.insert("type".into(), serde_json::json!("Device"));
+        assert_eq!(types_of(&map, None), vec!["Device"]);
+
+        let mut map2 = serde_json::Map::new();
+        map2.insert("@type".into(), serde_json::json!(["Sensor", "Device"]));
+        assert_eq!(types_of(&map2, None), vec!["Sensor", "Device"]);
+
+        let mut map3 = serde_json::Map::new();
+        map3.insert("id".into(), serde_json::json!("urn:ngsi-ld:Building:1"));
+        assert_eq!(types_of(&map3, None), vec!["Building"]);
+
+        let map4 = serde_json::Map::new();
+        assert_eq!(types_of(&map4, Some("urn:ngsi-ld:Room:101")), vec!["Room"]);
+        assert!(types_of(&map4, None).is_empty());
+    }
+
+    #[test]
+    fn urn_from_str_refuses_invalid_entity_type() {
+        assert!("urn:ngsi-ld:invalid_entity_type:123"
+            .parse::<Urn>()
+            .is_err());
+    }
+
+    #[test]
+    fn non_prefixed_urn_accessors_and_entity_ref_display() {
+        let urn: Urn = "urn:ngsi-ld:Device:123".parse().unwrap();
+        assert_eq!(urn.org_domain(), None);
+        assert_eq!(urn.space(), None);
+        assert_eq!(urn.local_id(), "123");
+
+        let eref = EntityRef::new("air-quality", urn.clone()).unwrap();
+        assert_eq!(eref.space(), "air-quality");
+        assert_eq!(eref.urn(), &urn);
+        assert_eq!(
+            eref.to_string(),
+            "/cs/air-quality/ngsi-ld/v1/entities/urn:ngsi-ld:Device:123"
+        );
+    }
+}

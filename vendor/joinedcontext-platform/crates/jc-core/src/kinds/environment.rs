@@ -168,3 +168,52 @@ mod tests {
         assert!(spec.validate().is_err());
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn environment_spec_refuses_invalid_org_domain() {
+        let spec = EnvironmentSpec {
+            org_domain: Some("invalid_domain_with_underscore".to_string()),
+            ..Default::default()
+        };
+        let err = spec.validate().expect_err("invalid org domain should fail");
+        assert!(err.to_string().contains("spec.orgDomain"), "{err}");
+    }
+
+    #[test]
+    fn environment_spec_refuses_empty_secret_backend() {
+        let spec = EnvironmentSpec {
+            secrets: Some(SecretBackend {
+                backend: "   ".to_string(),
+                mount: None,
+            }),
+            ..Default::default()
+        };
+        let err = spec
+            .validate()
+            .expect_err("empty secret backend should fail");
+        assert!(err.to_string().contains("spec.secrets.backend"), "{err}");
+
+        let spec_valid = EnvironmentSpec {
+            secrets: Some(SecretBackend {
+                backend: "openbao".to_string(),
+                mount: None,
+            }),
+            ..Default::default()
+        };
+        assert!(spec_valid.validate().is_ok());
+    }
+
+    #[test]
+    fn an_environment_without_a_secret_backend_validates() {
+        let spec = EnvironmentSpec {
+            org_domain: Some("staging.banskabystrica.sk".to_owned()),
+            secrets: None,
+            ..Default::default()
+        };
+        assert_eq!(spec.validate(), Ok(()));
+    }
+}

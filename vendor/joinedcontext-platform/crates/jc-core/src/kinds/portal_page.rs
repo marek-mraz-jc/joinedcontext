@@ -572,12 +572,12 @@ mod tests {
         );
         let again: Vec<PortalPage> = serde_json::from_value(back).unwrap();
         assert_eq!(again, pages);
-        let PortalBlock::DatasetGallery(g) =
-            page(json!([{ "type": "dataset-gallery" }])).unwrap()[0].rows[0].blocks[0].clone()
-        else {
-            panic!("a gallery");
-        };
-        assert_eq!(g.limit, 6, "a gallery shows six unless it says otherwise");
+        let block =
+            page(json!([{ "type": "dataset-gallery" }])).unwrap()[0].rows[0].blocks[0].clone();
+        assert!(
+            matches!(&block, PortalBlock::DatasetGallery(g) if g.limit == 6),
+            "a gallery shows six unless it says otherwise: {block:?}"
+        );
     }
 
     #[test]
@@ -733,6 +733,11 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("spec.pages"));
+        let unparsable = pages(json!([{ "slug": "home", "bogus": true }])).unwrap_err();
+        assert!(
+            matches!(&unparsable, Error::Parse(message) if message.contains("bogus")),
+            "{unparsable}"
+        );
     }
 
     #[test]

@@ -288,8 +288,14 @@ mod tests {
     fn field_of(err: Error) -> String {
         match err {
             Error::Invalid { field, .. } => field,
-            other => panic!("expected Invalid, got {other:?}"),
+            other => format!("not an Invalid error: {other}"),
         }
+    }
+
+    #[test]
+    fn field_of_names_an_error_of_another_kind() {
+        let said = field_of(Error::Locale("xx".to_owned()));
+        assert!(said.starts_with("not an Invalid error: "), "{said}");
     }
 
     #[test]
@@ -382,5 +388,131 @@ mod tests {
         assert!(!is_https_url("https://user@evil.example/"));
         assert!(!is_https_url("https://a.sk/\"onmouseover=x"));
         assert!(is_https_url("https://a.sk"));
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn dataset_field_extra_key_and_label_in_fallbacks() {
+        let field = DatasetField {
+            name: "funding_source".into(),
+            label: BTreeMap::from([
+                ("sk".into(), "Zdroj".into()),
+                ("en".into(), "Source".into()),
+            ]),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        assert_eq!(field.extra_key(), "x_funding_source");
+        assert_eq!(field.label_in("sk", "en"), "Zdroj");
+        assert_eq!(field.label_in("de", "en"), "Source");
+        assert_eq!(field.label_in("de", "cs"), "Source");
+
+        let empty_label = DatasetField {
+            name: "bare_field".into(),
+            label: BTreeMap::new(),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        assert_eq!(empty_label.label_in("de", "cs"), "bare_field");
+    }
+
+    #[test]
+    fn check_value_length_control_chars_and_text_kind() {
+        let text_field = DatasetField {
+            name: "notes".into(),
+            label: BTreeMap::from([("en".into(), "Notes".into())]),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        assert!(text_field.check_value("Plain text notes").is_ok());
+
+        let too_long = "a".repeat(MAX_FIELD_VALUE + 1);
+        let err = text_field
+            .check_value(&too_long)
+            .expect_err("too long value rejected");
+        assert!(err.contains("at most 2000 characters"));
+
+        let with_ctrl = "Line 1\nLine 2";
+        let err = text_field
+            .check_value(with_ctrl)
+            .expect_err("control char rejected");
+        assert!(err.contains("one line of plain text, no control characters"));
+    }
+
+    #[test]
+    fn validate_field_definitions_name_labels_and_enum_values() {
+        let long_name = DatasetField {
+            name: "a".repeat(63),
+            label: BTreeMap::from([("en".into(), "Label".into())]),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        let err = validate(&[long_name]).expect_err("field name > 62 chars rejected");
+        assert!(err.to_string().contains("at most 62 characters"), "{err}");
+
+        let bad_locale = DatasetField {
+            name: "valid-name".into(),
+            label: BTreeMap::from([("INVALID".into(), "Label".into())]),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        let err = validate(&[bad_locale]).expect_err("bad locale rejected");
+        assert!(err.to_string().contains("is no locale"), "{err}");
+
+        let long_label = DatasetField {
+            name: "valid-name".into(),
+            label: BTreeMap::from([("en".into(), "a".repeat(121))]),
+            kind: DatasetFieldType::Text,
+            values: Vec::new(),
+            required: false,
+        };
+        let err = validate(&[long_label]).expect_err("label > 120 chars rejected");
+        assert!(
+            err.to_string()
+                .contains("one line of at most 120 characters"),
+            "{err}"
+        );
+
+        let bad_enum_val = DatasetField {
+            name: "status".into(),
+            label: BTreeMap::from([("en".into(), "Status".into())]),
+            kind: DatasetFieldType::Enum,
+            values: vec!["   ".into()],
+            required: false,
+        };
+        let err = validate(&[bad_enum_val]).expect_err("empty enum value rejected");
+        assert!(
+            err.to_string()
+                .contains("each value once, one line of 1 to 120 characters"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_values_bounds_and_names() {
+        let mut map = BTreeMap::new();
+        for i in 0..=MAX_DATASET_FIELDS {
+            map.insert(format!("field{i}"), "value".into());
+        }
+        let err = validate_values(&map).expect_err("too many values rejected");
+        assert!(err.to_string().contains("at most 20 fields"), "{err}");
+
+        let mut bad_key = BTreeMap::new();
+        bad_key.insert("BAD_NAME!".into(), "val".into());
+        let err = validate_values(&bad_key).expect_err("invalid key rejected");
+        assert!(
+            err.to_string()
+                .contains("a field name is a DNS label such as `funding`"),
+            "{err}"
+        );
     }
 }

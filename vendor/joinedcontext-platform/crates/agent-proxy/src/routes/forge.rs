@@ -128,6 +128,31 @@ fn read_ref_of<'a>(query: &str, branch: &'a str) -> Result<Option<&'a str>, Box<
     Ok(asked)
 }
 
+/// The forge body and path rules over any bytes, for the fuzz target `forge_body` (T-7795).
+/// Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// A pinned write carries the run's branch and the proposer's trailer whatever the body
+    /// said; a read takes the run's own ref or none; a directory ends in one `/`.
+    pub fn body(bytes: &[u8], query: &str, run: &crate::runs::RunContext) {
+        let _ = object_body(bytes);
+        if let Ok(map) = pinned_write(bytes, run) {
+            assert_eq!(map["branch"], serde_json::json!(run.branch));
+            let message = map["message"].as_str().unwrap_or_default();
+            assert!(message.contains("Co-Proposed-By:"));
+        }
+        if let Ok(Some(asked)) = read_ref_of(query, &run.branch) {
+            assert_eq!(asked, run.branch);
+        }
+        if let Some(directory) = directory_of(query) {
+            assert!(directory.ends_with('/') && !directory.ends_with("//"));
+        }
+    }
+}
+
 fn no_directory() -> Response {
     jc_core::ProblemDetails::forbidden()
         .with_detail("this run has no application directory, so it reaches no file in the forge")
@@ -344,9 +369,10 @@ pub async fn handler(
         return refusal;
     }
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        Body::from(resp_bytes),
+    )
+        .into_response()
 }

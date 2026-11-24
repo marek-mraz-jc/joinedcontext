@@ -234,4 +234,12 @@ mod tests {
         .expect_err("unknown field");
         assert!(err.to_string().contains("note"), "{err}");
     }
+
+    #[test]
+    fn field_of_reports_another_error_by_its_message() {
+        assert_eq!(
+            field_of(Error::Parse("bad".into())),
+            "manifest does not parse: bad"
+        );
+    }
 }
