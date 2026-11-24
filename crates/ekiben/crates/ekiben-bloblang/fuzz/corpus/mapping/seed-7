@@ -1,0 +1,2 @@
+let v = this.b
+root = "%s-%v".format($v, this.a)
