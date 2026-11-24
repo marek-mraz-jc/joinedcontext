@@ -498,6 +498,34 @@ mod tests {
     }
 
     #[test]
+    fn a_name_takes_the_female_lists_exactly_when_the_draw_is_over_50() {
+        let mut boundary = 0;
+        for seed in 0..1000 {
+            let mut probe = GoRand::new(seed);
+            let draw = probe.int63n(100);
+            boundary += usize::from(draw == 50);
+            let title_list = if draw > 50 {
+                TITLES_FEMALE
+            } else {
+                TITLES_MALE
+            };
+            let title = title_list[probe.int63n(title_list.len() as i64) as usize];
+            let mut f = Faker {
+                rng: GoRand::new(seed),
+                card: None,
+            };
+            let name = f
+                .generate("name")
+                .map(|v| v.to_string_coerced())
+                .unwrap_or_default();
+            assert!(
+                name.starts_with(&format!("{title} ")),
+                "seed {seed} draw {draw}: {name}"
+            );
+        }
+    }
+
+    #[test]
     fn first_names_and_names_draw_from_both_lists() {
         let firsts: Vec<String> = (0..300).map(|_| s("first_name")).collect();
         assert!(firsts
