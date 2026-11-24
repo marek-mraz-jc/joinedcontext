@@ -71,8 +71,8 @@ async fn a_complete_configuration_serves_until_it_is_told_to_stop() {
 /// why (T-1480): no proxy anyone runs can answer an empty client secret with a made-up token.
 #[test]
 fn the_binary_built_with_the_stub_refuses_to_start() {
+    // The environment is passed on: a coverage run collects the binary's profile through it.
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_jc-agent-proxy"))
-        .env_clear()
         .output()
         .expect("the binary runs");
     assert!(!output.status.success());
@@ -80,5 +80,44 @@ fn the_binary_built_with_the_stub_refuses_to_start() {
     assert!(
         said.contains("built with the test-stub feature and does not start"),
         "{said}"
+    );
+}
+
+/// The maintenance beside the router ends, at its first tick, what a run the Portal no longer
+/// holds was given: its data credentials go (ADR-N-038 decision 6).
+#[tokio::test]
+async fn maintenance_ends_what_a_finished_run_held() {
+    let portal = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(wiremock::ResponseTemplate::new(404))
+        .mount(&portal)
+        .await;
+    let config = std::sync::Arc::new({
+        let uri = portal.uri();
+        Config::from_lookup(move |key| (key == "JC_PORTAL_BASE").then(|| uri.clone()))
+            .expect("a configuration")
+    });
+    let credentials = agent_proxy::inject::CredentialManager::new(config.clone());
+    let runs = agent_proxy::runs::RunResolver::new(config.portal_base.clone(), credentials.clone());
+    let state = agent_proxy::ProxyState::new(
+        config,
+        runs,
+        credentials,
+        agent_proxy::limits::LimitManager::default(),
+    );
+    let token = state.data_credentials.mint("run-1");
+    let secret = token.rsplit('.').next().expect("a secret").to_owned();
+    assert!(state.data_credentials.verify("run-1", &secret));
+    let maintenance = tokio::spawn(agent_proxy::maintain(state.clone()));
+    for _ in 0..100 {
+        if !state.data_credentials.verify("run-1", &secret) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    maintenance.abort();
+    assert!(
+        !state.data_credentials.verify("run-1", &secret),
+        "the finished run's credential went"
     );
 }

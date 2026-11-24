@@ -156,6 +156,13 @@ async fn a_type_that_runs_or_no_type_is_refused_before_the_body() {
     let untyped = fetch(&proxy, "/plain").await;
     assert_eq!(untyped.status(), StatusCode::FORBIDDEN);
     assert!(body_of(untyped).await.contains("'(none)'"));
+    // A refusal of the host's own is relayed with its status, as bytes when it names no type.
+    let missing = fetch(&proxy, "/missing").await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        missing.headers()["content-type"],
+        "application/octet-stream"
+    );
 }
 
 /// An answer past the run's `maxResponseBytes` is a `413` naming the cap; one that breaks off is
@@ -207,6 +214,7 @@ async fn a_package_download_from_a_listed_registry_is_relayed() {
     assert_eq!(download.status(), StatusCode::OK);
     assert_eq!(body_of(download).await, "crate-bytes");
     let missing = proxy
+        .clone()
         .oneshot(
             authed("GET", &format!("/v1/packages/{HOST}/no/such/crate"))
                 .body(Body::empty())
@@ -215,6 +223,19 @@ async fn a_package_download_from_a_listed_registry_is_relayed() {
         .await
         .expect("an answer");
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    let big = proxy
+        .oneshot(
+            authed("GET", &format!("/v1/packages/{HOST}/big"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(
+        big.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "past the run's maxResponseBytes"
+    );
 }
 
 /// The listed host over plain http is refused before any connection is made: the deployment's

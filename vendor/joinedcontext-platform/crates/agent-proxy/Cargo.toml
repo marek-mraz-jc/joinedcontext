@@ -45,6 +45,9 @@ url = "2"
 [dev-dependencies]
 agent-proxy = { path = ".", features = ["test-stub"] }
 tower = { version = "0.5", features = ["util"] }
+# The `log` facade a host without a tracing subscriber reads the proxy's lines through
+# (log_fallback_tests.rs, T-7795); already in the tree through tracing's `log` feature.
+log = "0.4"
 # A paused clock for the stream's 120 s idle cut (llm_stream_edges_tests.rs, T-7795).
 tokio = { version = "1", features = ["full", "test-util"] }
 # Captures the proxy's log lines, to prove no token is written to one; already in the tree via jc-core.
