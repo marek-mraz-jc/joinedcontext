@@ -5166,6 +5166,25 @@ mod tests {
             })
             .await
             .expect("q's account");
+        for (realm, id, name) in [
+            ("q", "q-fresh", "service-account-fresh"),
+            (R, "held", "service-account-held"),
+        ] {
+            store
+                .create_user(UserRepresentation {
+                    realm_id: realm.into(),
+                    username: name.into(),
+                    ..user(id)
+                })
+                .await
+                .expect("namesake person");
+        }
+        app.client_id = "held".into();
+        let taken = store.upsert_client(app.clone()).await;
+        assert!(
+            matches!(taken, Err(KaisatsuError::Conflict(_))),
+            "{taken:?}"
+        );
         app.client_id = "fresh".into();
         let renamed = store.upsert_client(app).await.expect("q's id is free in r");
         assert_eq!(renamed.client_id, "fresh");
