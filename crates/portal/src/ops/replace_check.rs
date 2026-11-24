@@ -217,7 +217,9 @@ mod tests {
     async fn stored(answer: ResponseTemplate) -> MockServer {
         let broker = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path_regex("^/q/tenants/[^/]+/types/BikeCounter/attributes$"))
+            .and(path_regex(
+                "^/q/tenants/[^/]+/types/BikeCounter/attributes$",
+            ))
             .respond_with(answer)
             .mount(&broker)
             .await;
@@ -243,27 +245,35 @@ mod tests {
         )
         .await;
         let text = one_message(&writing(Some(&broker)), &replace()).await;
-        assert!(text.contains("replaces whole BikeCounter entities"), "{text}");
+        assert!(
+            text.contains("replaces whole BikeCounter entities"),
+            "{text}"
+        );
         assert!(text.contains("Stored and not admitted: count ("), "{text}");
         assert!(text.contains("lane ("), "{text}");
         assert!(!text.contains("more may exist"), "{text}");
         assert!(text.contains("Endpoint 'intake'"), "{text}");
 
-        let partial = stored(ResponseTemplate::new(200).set_body_json(
-            json!({ "attributes": ["count"], "partial": true }),
-        ))
+        let partial = stored(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "attributes": ["count"], "partial": true })),
+        )
         .await;
         let text = one_message(&writing(Some(&partial)), &replace()).await;
         assert!(text.contains("Stored and not admitted: count ("), "{text}");
         assert!(text.ends_with("before applying"), "{text}");
-        assert!(text.contains("read only part of the stored entities, so more may exist"), "{text}");
+        assert!(
+            text.contains("read only part of the stored entities, so more may exist"),
+            "{text}"
+        );
     }
 
     /// Nothing stored is no warning; nothing found in a partial read is still a warning that the
     /// check did not see everything.
     #[tokio::test]
     async fn nothing_stored_passes_and_a_partial_read_that_finds_nothing_says_so() {
-        let empty = stored(ResponseTemplate::new(200).set_body_json(json!({ "attributes": [] }))).await;
+        let empty =
+            stored(ResponseTemplate::new(200).set_body_json(json!({ "attributes": [] }))).await;
         assert_eq!(
             warnings(&writing(Some(&empty)), "city", "city", &replace()).await,
             Vec::<Value>::new()
@@ -282,9 +292,18 @@ mod tests {
     #[tokio::test]
     async fn a_broker_that_cannot_answer_is_a_warning_naming_why() {
         for (answer, why) in [
-            (ResponseTemplate::new(503), "the broker answered 503 Service Unavailable"),
-            (ResponseTemplate::new(200).set_body_string("<html>"), "not JSON"),
-            (ResponseTemplate::new(200).set_body_json(json!({ "names": [] })), "names no attributes"),
+            (
+                ResponseTemplate::new(503),
+                "the broker answered 503 Service Unavailable",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_string("<html>"),
+                "not JSON",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_json(json!({ "names": [] })),
+                "names no attributes",
+            ),
         ] {
             let broker = stored(answer).await;
             let text = one_message(&writing(Some(&broker)), &replace()).await;
@@ -299,9 +318,17 @@ mod tests {
     #[tokio::test]
     async fn an_endpoint_without_a_space_cannot_be_judged() {
         let state = writing(None);
-        state.mirror.upsert(envelope("Endpoint", "intake", "city", json!({ "slug": "intake" })));
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "intake",
+            "city",
+            json!({ "slug": "intake" }),
+        ));
         let text = one_message(&state, &replace()).await;
-        assert!(text.contains("names no Context Space this Portal holds"), "{text}");
+        assert!(
+            text.contains("names no Context Space this Portal holds"),
+            "{text}"
+        );
     }
 
     /// An output that names no entity type cannot be checked; an output already replacing in the
@@ -319,14 +346,25 @@ mod tests {
         assert!(text.contains("the output names no entity type"), "{text}");
 
         let held = replace();
-        state.mirror.upsert(envelope("Pipeline", "counters", "city", held["spec"].clone()));
-        assert_eq!(warnings(&state, "city", "city", &held).await, Vec::<Value>::new());
+        state.mirror.upsert(envelope(
+            "Pipeline",
+            "counters",
+            "city",
+            held["spec"].clone(),
+        ));
+        assert_eq!(
+            warnings(&state, "city", "city", &held).await,
+            Vec::<Value>::new()
+        );
         // Held in another project: still a new replace there.
         assert_eq!(warnings(&state, "city", "elsewhere", &held).await.len(), 1);
 
         let mut broken = replace();
         broken["spec"]["class"] = json!(7);
-        assert_eq!(warnings(&state, "city", "city", &broken).await, Vec::<Value>::new());
+        assert_eq!(
+            warnings(&state, "city", "city", &broken).await,
+            Vec::<Value>::new()
+        );
     }
 
     /// The warning's path names the field to change: one output, the outputs list by index.

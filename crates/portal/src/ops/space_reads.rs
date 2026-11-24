@@ -174,21 +174,36 @@ mod tests {
 
     fn outcome(result: Result<Value, OpError>) -> String {
         match result {
-            Ok(Value::Object(map)) => format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(",")),
+            Ok(Value::Object(map)) => {
+                format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(","))
+            }
             Ok(other) => format!("200 {other}"),
             Err(err) => err.into_response().status().as_u16().to_string(),
         }
     }
 
-    async fn each_aspect(caller: &super::super::Caller, state: &crate::state::AppState) -> Vec<String> {
+    async fn each_aspect(
+        caller: &super::super::Caller,
+        state: &crate::state::AppState,
+    ) -> Vec<String> {
         let op = find(GOVERNANCE).expect("listed");
         let mut got = Vec::new();
-        for aspect in ["quality", "qualityChecks", "usage", "temporalAudit", "surfaceFit", "drift"] {
+        for aspect in [
+            "quality",
+            "qualityChecks",
+            "usage",
+            "temporalAudit",
+            "surfaceFit",
+            "drift",
+        ] {
             let mut input = json!({ "space": "air", "aspect": aspect });
             if aspect == "temporalAudit" {
                 input["pipeline"] = json!("sensors");
             }
-            got.push(format!("{aspect}: {}", outcome(call(op, caller, state, "helsinki", input).await)));
+            got.push(format!(
+                "{aspect}: {}",
+                outcome(call(op, caller, state, "helsinki", input).await)
+            ));
         }
         got
     }
@@ -198,7 +213,9 @@ mod tests {
     #[tokio::test]
     async fn each_aspect_answers_the_routes_reading() {
         let state = state();
-        state.mirror.upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
+        state
+            .mirror
+            .upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
         let got = each_aspect(&admin(&state), &state).await;
         // usage counts on the broker this Portal has none of; the audit names a pipeline the
         // project does not hold.
@@ -217,9 +234,18 @@ mod tests {
     #[tokio::test]
     async fn a_stranger_reads_no_aspect() {
         let state = state();
-        state.mirror.upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
+        state
+            .mirror
+            .upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
         let got = each_aspect(&caller(person("mallory", &[]), Via::Mcp), &state).await;
-        let want = ["quality: 404", "qualityChecks: 404", "usage: 404", "temporalAudit: 404", "surfaceFit: 404", "drift: 404"];
+        let want = [
+            "quality: 404",
+            "qualityChecks: 404",
+            "usage: 404",
+            "temporalAudit: 404",
+            "surfaceFit: 404",
+            "drift: 404",
+        ];
         assert_eq!(got, want);
     }
 
@@ -228,7 +254,14 @@ mod tests {
     async fn the_body_refuses_a_pipeline_on_another_aspect() {
         let state = state();
         let op = find(GOVERNANCE).expect("listed");
-        match (op.run)(&admin(&state), &state, "helsinki", json!({ "space": "air", "aspect": "usage", "pipeline": "p" })).await {
+        match (op.run)(
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "space": "air", "aspect": "usage", "pipeline": "p" }),
+        )
+        .await
+        {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/pipeline"),
             other => panic!("a 422, got {other:?}"),
         }
@@ -237,6 +270,9 @@ mod tests {
     /// Drift findings without a list stay as they are.
     #[test]
     fn drift_without_items_is_answered_as_it_came() {
-        assert_eq!(of_space(json!({ "scanned": false }), "air"), json!({ "scanned": false }));
+        assert_eq!(
+            of_space(json!({ "scanned": false }), "air"),
+            json!({ "scanned": false })
+        );
     }
 }

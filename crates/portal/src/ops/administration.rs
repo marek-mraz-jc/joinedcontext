@@ -613,20 +613,36 @@ mod tests {
     use axum::response::IntoResponse;
 
     const ASPECTS: [&str; 13] = [
-        "projects", "setup", "health", "healthChecks", "limits", "brokers", "agents",
-        "agentActivity", "costs", "addresses", "dataAccess", "widgetOptions", "personReadable",
+        "projects",
+        "setup",
+        "health",
+        "healthChecks",
+        "limits",
+        "brokers",
+        "agents",
+        "agentActivity",
+        "costs",
+        "addresses",
+        "dataAccess",
+        "widgetOptions",
+        "personReadable",
     ];
 
     /// An answer as its HTTP status, and for a 200 the members it answers.
     fn outcome(result: Result<Value, OpError>) -> String {
         match result {
-            Ok(Value::Object(map)) => format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(",")),
+            Ok(Value::Object(map)) => {
+                format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(","))
+            }
             Ok(other) => format!("200 {other}"),
             Err(err) => err.into_response().status().as_u16().to_string(),
         }
     }
 
-    async fn each_aspect(caller: &super::super::Caller, state: &crate::state::AppState) -> Vec<String> {
+    async fn each_aspect(
+        caller: &super::super::Caller,
+        state: &crate::state::AppState,
+    ) -> Vec<String> {
         let op = find(ORGANIZATION).expect("listed");
         let mut got = Vec::new();
         for aspect in ASPECTS {
@@ -636,7 +652,10 @@ mod tests {
                 "widgetOptions" => input["organization"] = json!("city"),
                 _ => {}
             }
-            got.push(format!("{aspect}: {}", outcome(call(op, caller, state, "helsinki", input).await)));
+            got.push(format!(
+                "{aspect}: {}",
+                outcome(call(op, caller, state, "helsinki", input).await)
+            ));
         }
         got
     }
@@ -684,13 +703,53 @@ mod tests {
         let state = state();
         let admin = admin(&state);
         let decide = find(DECIDE).expect("listed");
-        let approve = call(decide, &admin, &state, "helsinki", json!({ "id": "r-404", "decision": "approve" })).await;
-        let revoke = call(decide, &admin, &state, "helsinki", json!({ "id": "r-404", "decision": "revoke", "reason": "left" })).await;
-        let blank = (decide.run)(&admin, &state, "helsinki", json!({ "id": "r-404", "decision": "revoke", "reason": " " })).await;
-        let account = call(find(ACCOUNT).expect("listed"), &admin, &state, "helsinki", json!({ "name": "cam-west" })).await;
-        let requests = call(find(REQUESTS).expect("listed"), &admin, &state, "helsinki", json!({})).await;
+        let approve = call(
+            decide,
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "id": "r-404", "decision": "approve" }),
+        )
+        .await;
+        let revoke = call(
+            decide,
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "id": "r-404", "decision": "revoke", "reason": "left" }),
+        )
+        .await;
+        let blank = (decide.run)(
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "id": "r-404", "decision": "revoke", "reason": " " }),
+        )
+        .await;
+        let account = call(
+            find(ACCOUNT).expect("listed"),
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "name": "cam-west" }),
+        )
+        .await;
+        let requests = call(
+            find(REQUESTS).expect("listed"),
+            &admin,
+            &state,
+            "helsinki",
+            json!({}),
+        )
+        .await;
         assert_eq!(
-            [outcome(approve), outcome(revoke), outcome(blank), outcome(account), outcome(requests)],
+            [
+                outcome(approve),
+                outcome(revoke),
+                outcome(blank),
+                outcome(account),
+                outcome(requests)
+            ],
             ["404", "404", "422", "404", "503"]
         );
     }

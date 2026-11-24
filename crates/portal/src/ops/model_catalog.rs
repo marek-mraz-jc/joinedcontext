@@ -426,7 +426,14 @@ mod tests {
     }
 
     async fn run(state: &crate::state::AppState, op: &str, input: Value) -> Result<Value, OpError> {
-        call(find(op).expect("listed"), &admin(state), state, "helsinki", input).await
+        call(
+            find(op).expect("listed"),
+            &admin(state),
+            state,
+            "helsinki",
+            input,
+        )
+        .await
     }
 
     /// A search reads the catalogue once, keeps the first 25 hits, says more follow and passes
@@ -447,13 +454,23 @@ mod tests {
             .mount(&server)
             .await;
         let state = on(&server);
-        let found = run(&state, SEARCH, json!({ "q": " OCCUPANCY ", "subject": "dataModel.Parking" }))
-            .await
-            .expect("hits");
+        let found = run(
+            &state,
+            SEARCH,
+            json!({ "q": " OCCUPANCY ", "subject": "dataModel.Parking" }),
+        )
+        .await
+        .expect("hits");
         let hits = found["models"].as_array().expect("models");
         assert_eq!(hits.len(), MAX_HITS, "{found}");
-        assert_eq!(hits[0], json!({ "id": "dataModel.Parking/Spot0", "name": "Spot0", "description": "a parking spot" }));
-        assert_eq!((found["more"].as_bool(), found["stale"].as_bool()), (Some(true), Some(true)));
+        assert_eq!(
+            hits[0],
+            json!({ "id": "dataModel.Parking/Spot0", "name": "Spot0", "description": "a parking spot" })
+        );
+        assert_eq!(
+            (found["more"].as_bool(), found["stale"].as_bool()),
+            (Some(true), Some(true))
+        );
     }
 
     /// Exactly as many hits as fit is no "more"; no hit at all is an empty list, not an error.
@@ -469,10 +486,17 @@ mod tests {
             .mount(&server)
             .await;
         let state = on(&server);
-        let two = run(&state, SEARCH, json!({ "q": "spot" })).await.expect("hits");
+        let two = run(&state, SEARCH, json!({ "q": "spot" }))
+            .await
+            .expect("hits");
         assert_eq!(two["models"].as_array().map(Vec::len), Some(2));
-        assert_eq!((two["more"].as_bool(), two["stale"].as_bool()), (Some(false), Some(false)));
-        let none = run(&state, SEARCH, json!({ "q": "tramway" })).await.expect("an answer");
+        assert_eq!(
+            (two["more"].as_bool(), two["stale"].as_bool()),
+            (Some(false), Some(false))
+        );
+        let none = run(&state, SEARCH, json!({ "q": "tramway" }))
+            .await
+            .expect("an answer");
         assert_eq!(none["models"], json!([]));
     }
 
@@ -480,7 +504,13 @@ mod tests {
     /// names the internal address (the reason is logged, not told).
     #[tokio::test]
     async fn a_missing_or_failing_model_tools_is_a_503_that_hides_its_address() {
-        match run(&crate::ops::testkit::state(), SEARCH, json!({ "q": "spot" })).await {
+        match run(
+            &crate::ops::testkit::state(),
+            SEARCH,
+            json!({ "q": "spot" }),
+        )
+        .await
+        {
             Err(OpError::Api(ApiError::Unavailable(why))) => {
                 assert_eq!(why, "no model tools service is configured")
             }
@@ -529,20 +559,40 @@ mod tests {
             .mount(&server)
             .await;
         let state = on(&server);
-        match run(&state, IMPORT, json!({ "model": "dataModel.Parking/Spot9" })).await {
+        match run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot9" }),
+        )
+        .await
+        {
             Err(OpError::InvalidInput { path, message }) => {
                 assert_eq!(path, "/model");
-                assert!(message.contains("dataModel.Parking/Spot9 is not in the Smart Data Models catalogue"), "{message}");
+                assert!(
+                    message.contains(
+                        "dataModel.Parking/Spot9 is not in the Smart Data Models catalogue"
+                    ),
+                    "{message}"
+                );
             }
             other => panic!("a 422, got {other:?}"),
         }
-        let imported = run(&state, IMPORT, json!({ "model": "dataModel.Parking/Spot1" }))
-            .await
-            .expect("imported");
+        let imported = run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot1" }),
+        )
+        .await
+        .expect("imported");
         assert_eq!(imported["model"], "dataModel.Parking/Spot1");
-        assert_eq!(imported["classes"], json!([{ "name": "Spot1", "slots": ["occupancy"] }]));
+        assert_eq!(
+            imported["classes"],
+            json!([{ "name": "Spot1", "slots": ["occupancy"] }])
+        );
         assert_eq!(imported["errors"], json!(["occupancy has no unit"]));
-        assert!(imported["source"].as_str().is_some_and(|s| s.contains("Spot1")));
+        assert!(imported["source"]
+            .as_str()
+            .is_some_and(|s| s.contains("Spot1")));
     }
 
     /// An import with no LinkML back lists no classes; a URL is refused by the body itself even
@@ -559,17 +609,30 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/import-sdm"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "errors": ["not converted"] })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "errors": ["not converted"] })),
+            )
             .mount(&server)
             .await;
         let state = on(&server);
-        let imported = run(&state, IMPORT, json!({ "model": "dataModel.Parking/Spot1" }))
-            .await
-            .expect("an answer");
+        let imported = run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot1" }),
+        )
+        .await
+        .expect("an answer");
         assert_eq!(imported["classes"], json!([]));
         assert_eq!(imported["source"], Value::Null);
         let op = find(IMPORT).expect("listed");
-        match (op.run)(&admin(&state), &state, "helsinki", json!({ "model": "https://evil.example/x" })).await {
+        match (op.run)(
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "model": "https://evil.example/x" }),
+        )
+        .await
+        {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/model"),
             other => panic!("a 422, got {other:?}"),
         }
@@ -584,12 +647,16 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/generate"))
             .and(body_json(json!({ "source": source })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "shacl": "@prefix sh: <x> ." })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "shacl": "@prefix sh: <x> ." })),
+            )
             .expect(1)
             .mount(&server)
             .await;
         let state = on(&server);
-        let built = run(&state, GENERATE, json!({ "source": source })).await.expect("artifacts");
+        let built = run(&state, GENERATE, json!({ "source": source }))
+            .await
+            .expect("artifacts");
         assert_eq!(built["shacl"], "@prefix sh: <x> .");
         match run(&state, GENERATE, json!({ "source": " \n " })).await {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/source"),

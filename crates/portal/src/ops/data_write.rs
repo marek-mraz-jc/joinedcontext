@@ -533,15 +533,35 @@ mod tests {
         let entity = json!({ "id": "urn:ngsi-ld:Bus:1", "type": "Bus" });
         for (action, path) in [
             ("create", "ngsi-ld/v1/entityOperations/create"),
-            ("upsert", "ngsi-ld/v1/entityOperations/upsert?options=update"),
+            (
+                "upsert",
+                "ngsi-ld/v1/entityOperations/upsert?options=update",
+            ),
             ("merge", "ngsi-ld/v1/entityOperations/merge"),
         ] {
-            let call = input(json!({ "endpoint": "bus", "action": action, "entities": [entity, { "type": "Bus" }] }));
-            assert_eq!(request_of(&call), (path, json!([entity, { "type": "Bus" }])));
-            assert_eq!(named_ids(&call), ["urn:ngsi-ld:Bus:1"], "an entity without an id names none");
+            let call = input(
+                json!({ "endpoint": "bus", "action": action, "entities": [entity, { "type": "Bus" }] }),
+            );
+            assert_eq!(
+                request_of(&call),
+                (path, json!([entity, { "type": "Bus" }]))
+            );
+            assert_eq!(
+                named_ids(&call),
+                ["urn:ngsi-ld:Bus:1"],
+                "an entity without an id names none"
+            );
         }
-        let delete = input(json!({ "endpoint": "bus", "action": "delete", "ids": ["urn:ngsi-ld:Bus:2"], "reason": "sold" }));
-        assert_eq!(request_of(&delete), ("ngsi-ld/v1/entityOperations/delete", json!(["urn:ngsi-ld:Bus:2"])));
+        let delete = input(
+            json!({ "endpoint": "bus", "action": "delete", "ids": ["urn:ngsi-ld:Bus:2"], "reason": "sold" }),
+        );
+        assert_eq!(
+            request_of(&delete),
+            (
+                "ngsi-ld/v1/entityOperations/delete",
+                json!(["urn:ngsi-ld:Bus:2"])
+            )
+        );
         assert_eq!(named_ids(&delete), ["urn:ngsi-ld:Bus:2"]);
     }
 
@@ -567,29 +587,67 @@ mod tests {
         );
         let why = json!({ "detail": "speed is no number" });
         match answer_of("bus", 400, &why, Action::Create, ids()) {
-            Err(OpError::Api(ApiError::BadRequest(m))) => assert_eq!(m, "Endpoint bus refused the entities: speed is no number"),
+            Err(OpError::Api(ApiError::BadRequest(m))) => {
+                assert_eq!(m, "Endpoint bus refused the entities: speed is no number")
+            }
             other => panic!("a 400, got {other:?}"),
         }
-        for (status, action, operation) in [(401, Action::Merge, "mergeBatch"), (403, Action::Delete, "deleteBatch"), (403, Action::Create, "createBatch"), (403, Action::Upsert, "upsertBatch")] {
-            match answer_of("bus", status, &json!({ "title": "Forbidden" }), action, ids()) {
+        for (status, action, operation) in [
+            (401, Action::Merge, "mergeBatch"),
+            (403, Action::Delete, "deleteBatch"),
+            (403, Action::Create, "createBatch"),
+            (403, Action::Upsert, "upsertBatch"),
+        ] {
+            match answer_of(
+                "bus",
+                status,
+                &json!({ "title": "Forbidden" }),
+                action,
+                ids(),
+            ) {
                 Err(OpError::Api(ApiError::Denied(m))) => {
-                    assert!(m.starts_with("Endpoint bus's Policy does not let you write this: Forbidden;"), "{m}");
-                    assert!(m.contains(&format!("grants the operation {operation} ")), "{m}");
+                    assert!(
+                        m.starts_with(
+                            "Endpoint bus's Policy does not let you write this: Forbidden;"
+                        ),
+                        "{m}"
+                    );
+                    assert!(
+                        m.contains(&format!("grants the operation {operation} ")),
+                        "{m}"
+                    );
                 }
                 other => panic!("a 403, got {other:?}"),
             }
         }
         match answer_of("bus", 404, &Value::Null, Action::Create, ids()) {
-            Err(OpError::Api(ApiError::NotFound(m))) => assert_eq!(m, "the gateway does not serve writes on Endpoint bus: no reason given"),
+            Err(OpError::Api(ApiError::NotFound(m))) => assert_eq!(
+                m,
+                "the gateway does not serve writes on Endpoint bus: no reason given"
+            ),
             other => panic!("a 404, got {other:?}"),
         }
-        match answer_of("bus", 409, &json!({ "detail": "exists" }), Action::Create, ids()) {
-            Err(OpError::Api(ApiError::Conflict(m))) => assert_eq!(m, "Endpoint bus: exists; upsert writes an entity that exists"),
+        match answer_of(
+            "bus",
+            409,
+            &json!({ "detail": "exists" }),
+            Action::Create,
+            ids(),
+        ) {
+            Err(OpError::Api(ApiError::Conflict(m))) => assert_eq!(
+                m,
+                "Endpoint bus: exists; upsert writes an entity that exists"
+            ),
             other => panic!("a 409, got {other:?}"),
         }
         match answer_of("bus", 502, &Value::Null, Action::Create, ids()) {
             Err(OpError::Api(ApiError::Unavailable(m))) => {
-                assert!(m.starts_with("the gateway answered 502 for Endpoint bus; nothing is known written"), "{m}")
+                assert!(
+                    m.starts_with(
+                        "the gateway answered 502 for Endpoint bus; nothing is known written"
+                    ),
+                    "{m}"
+                )
             }
             other => panic!("a 503, got {other:?}"),
         }

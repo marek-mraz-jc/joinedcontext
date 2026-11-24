@@ -241,8 +241,14 @@ mod tests {
     fn world() -> crate::state::AppState {
         let state = state();
         for (name, spec) in [
-            ("web", json!({ "source": "website", "startUrls": ["https://www.hel.fi/"], "visibility": "public" })),
-            ("guide", json!({ "source": "guide", "visibility": "public", "languages": ["en"] })),
+            (
+                "web",
+                json!({ "source": "website", "startUrls": ["https://www.hel.fi/"], "visibility": "public" }),
+            ),
+            (
+                "guide",
+                json!({ "source": "guide", "visibility": "public", "languages": ["en"] }),
+            ),
         ] {
             state
                 .mirror
@@ -278,13 +284,22 @@ mod tests {
         assert_eq!(items.len(), 2, "{all}");
         assert!(items.iter().all(|i| i["state"] == "no-assistant"), "{all}");
         let reader = caller(person("eva", &["readers"]), Via::Mcp);
-        grant(&state, "readers", "helsinki", &["Project", "KnowledgeSource"], &["read"]);
+        grant(
+            &state,
+            "readers",
+            "helsinki",
+            &["Project", "KnowledgeSource"],
+            &["read"],
+        );
         let one = status_of(&reader, &state, json!({ "source": "web" }))
             .await
             .expect("one source");
         assert_eq!(one["items"].as_array().map(Vec::len), Some(1), "{one}");
         assert_eq!(one["items"][0]["source"], "web");
-        assert!(one.get("errors").is_none(), "a reader reads no errors: {one}");
+        assert!(
+            one.get("errors").is_none(),
+            "a reader reads no errors: {one}"
+        );
     }
 
     /// A proposer may read a source's failed reads, but a Portal with no assistant holds none:
@@ -336,17 +351,40 @@ mod tests {
         let state = world();
         let op = find("jc_knowledge_search").expect("listed");
         let admin = admin(&state);
-        match call(op, &admin, &state, "helsinki", json!({ "source": "web", "q": " parking " })).await {
+        match call(
+            op,
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "source": "web", "q": " parking " }),
+        )
+        .await
+        {
             Err(OpError::Api(ApiError::Unavailable(why))) => {
                 assert!(why.contains("JC_PORTAL_KNOWLEDGE_URL"), "{why}")
             }
             other => panic!("a 503, got {other:?}"),
         }
-        match call(op, &admin, &state, "helsinki", json!({ "source": "web", "q": "   " })).await {
+        match call(
+            op,
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "source": "web", "q": "   " }),
+        )
+        .await
+        {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/q"),
             other => panic!("a 422, got {other:?}"),
         }
-        match (op.run)(&admin, &state, "helsinki", json!({ "source": "web", "q": "" })).await {
+        match (op.run)(
+            &admin,
+            &state,
+            "helsinki",
+            json!({ "source": "web", "q": "" }),
+        )
+        .await
+        {
             Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/q"),
             other => panic!("the body judges its input too, got {other:?}"),
         }

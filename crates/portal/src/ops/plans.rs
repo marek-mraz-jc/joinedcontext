@@ -2442,14 +2442,20 @@ mod tests {
         let one = [create("Endpoint", "air")];
         match revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one) {
             Err(OpError::Api(ApiError::Conflict(why))) => {
-                assert!(why.starts_with("main changed projects/p/a.yaml since change 'c1'"), "{why}");
+                assert!(
+                    why.starts_with("main changed projects/p/a.yaml since change 'c1'"),
+                    "{why}"
+                );
                 assert!(why.contains(PLAN), "{why}");
             }
             other => panic!("a 409, got {other:?}"),
         }
         match revertible("c1", &[], vec!["README.md".into()], &one) {
             Err(OpError::Api(ApiError::Unprocessable { detail, errors })) => {
-                assert!(detail.contains("touched files a plan cannot write"), "{detail}");
+                assert!(
+                    detail.contains("touched files a plan cannot write"),
+                    "{detail}"
+                );
                 assert_eq!(errors, ["README.md"]);
             }
             other => panic!("a 422, got {other:?}"),
@@ -2470,9 +2476,18 @@ mod tests {
             manifest_names(&json!({ "kind": "Endpoint", "metadata": { "name": "air" } })),
             Some(("Endpoint".to_owned(), "air".to_owned()))
         );
-        assert_eq!(manifest_names(&json!({ "kind": "Deployment", "metadata": { "name": "x" } })), None);
-        assert_eq!(manifest_names(&json!({ "kind": "Endpoint", "metadata": {} })), None);
-        assert_eq!(manifest_names(&json!({ "metadata": { "name": "air" } })), None);
+        assert_eq!(
+            manifest_names(&json!({ "kind": "Deployment", "metadata": { "name": "x" } })),
+            None
+        );
+        assert_eq!(
+            manifest_names(&json!({ "kind": "Endpoint", "metadata": {} })),
+            None
+        );
+        assert_eq!(
+            manifest_names(&json!({ "metadata": { "name": "air" } })),
+            None
+        );
     }
 
     /// The forge's pull request 7 as `row` adds to a merged Portal change.
@@ -2486,17 +2501,23 @@ mod tests {
             pull.extend(row);
         }
         Mock::given(method("GET"))
-            .and(path("/odata/Repositories(Owner='o',Name='r')/PullRequests(7)"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/PullRequests(7)",
+            ))
             .respond_with(ResponseTemplate::new(status).set_body_json(pull))
             .mount(&server)
             .await;
         server
     }
 
-    async fn merged_of(row: Value, status: u16) -> Result<(crate::forge::PullRequest, String), OpError> {
+    async fn merged_of(
+        row: Value,
+        status: u16,
+    ) -> Result<(crate::forge::PullRequest, String), OpError> {
         let server = forge_with_pull(row, status).await;
-        let forge = crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
-            .expect("client");
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
         merged_change(&forge, 7, "doprava", "c7").await
     }
 
@@ -2506,9 +2527,12 @@ mod tests {
     async fn a_merged_portal_change_answers_the_commit_it_merged_as() {
         let (pull, after) = merged_of(json!({}), 200).await.expect("merged");
         assert_eq!((pull.number, after.as_str()), (7, "m1"));
-        let (_, after) = merged_of(json!({ "Head": "refs/heads/workspace/air", "MergeCommitSha": "" }), 200)
-            .await
-            .expect("merged");
+        let (_, after) = merged_of(
+            json!({ "Head": "refs/heads/workspace/air", "MergeCommitSha": "" }),
+            200,
+        )
+        .await
+        .expect("merged");
         assert_eq!(after, "h1");
     }
 
@@ -2527,14 +2551,20 @@ mod tests {
         for row in [json!({ "Merged": false }), json!({ "MergeBase": "" })] {
             match merged_of(row, 200).await {
                 Err(OpError::Api(ApiError::Conflict(why))) => {
-                    assert!(why.contains("is not merged") && why.contains("reject it"), "{why}")
+                    assert!(
+                        why.contains("is not merged") && why.contains("reject it"),
+                        "{why}"
+                    )
                 }
                 other => panic!("a 409, got {other:?}"),
             }
         }
         match merged_of(json!({}), 500).await {
             Err(OpError::Api(ApiError::Unavailable(why))) => {
-                assert!(why.starts_with("The Git repository did not answer"), "{why}")
+                assert!(
+                    why.starts_with("The Git repository did not answer"),
+                    "{why}"
+                )
             }
             other => panic!("the forge's outage, got {other:?}"),
         }

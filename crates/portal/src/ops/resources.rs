@@ -813,7 +813,13 @@ mod tests {
     #[test]
     fn the_resource_tools_offer_only_the_kinds_the_caller_reads() {
         let state = state();
-        grant(&state, "readers", "doprava", &["Endpoint", "Pipeline"], &["read"]);
+        grant(
+            &state,
+            "readers",
+            "doprava",
+            &["Endpoint", "Pipeline"],
+            &["read"],
+        );
         let reader = person_via(person("eva", &["readers"]), super::super::Via::Mcp);
         let mut kinds = readable_kinds(&reader, &state, "doprava");
         let listed = json!(kinds);
@@ -823,17 +829,34 @@ mod tests {
         let offered = with_readable_kinds(tools(), &reader, &state, "doprava", None);
         assert_eq!(offered.len(), 3);
         for tool in &offered[..2] {
-            assert_eq!(tool["inputSchema"]["properties"]["kind"]["enum"], listed, "{tool}");
+            assert_eq!(
+                tool["inputSchema"]["properties"]["kind"]["enum"], listed,
+                "{tool}"
+            );
         }
-        assert!(offered[2]["inputSchema"]["properties"]["kind"].get("enum").is_none());
+        assert!(offered[2]["inputSchema"]["properties"]["kind"]
+            .get("enum")
+            .is_none());
 
-        let within = with_readable_kinds(tools(), &reader, &state, "doprava", Some(&["Pipeline", "Role"]));
-        assert_eq!(within[0]["inputSchema"]["properties"]["kind"]["enum"], json!(["Pipeline"]));
+        let within = with_readable_kinds(
+            tools(),
+            &reader,
+            &state,
+            "doprava",
+            Some(&["Pipeline", "Role"]),
+        );
+        assert_eq!(
+            within[0]["inputSchema"]["properties"]["kind"]["enum"],
+            json!(["Pipeline"])
+        );
 
         // A connector scoped to kinds the caller does not read, and a caller who reads nothing.
         for (who, segments) in [
             (reader.clone(), Some(&["Role"][..])),
-            (person_via(person("mallory", &[]), super::super::Via::Mcp), None),
+            (
+                person_via(person("mallory", &[]), super::super::Via::Mcp),
+                None,
+            ),
         ] {
             let left = with_readable_kinds(tools(), &who, &state, "doprava", segments);
             let names: Vec<&str> = left.iter().filter_map(|t| t["name"].as_str()).collect();

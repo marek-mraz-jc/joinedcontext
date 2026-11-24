@@ -1083,8 +1083,14 @@ mod tests {
         for (url, says) in [
             ("not a url", "not an address"),
             ("ftp://data.hel.fi/a.json", "http or https"),
-            ("https://jana:s3cret-pw@data.hel.fi/a.json", "carries a user name"),
-            ("https://data.hel.fi/a.json?apiKey=k-123456", "carries a user name"),
+            (
+                "https://jana:s3cret-pw@data.hel.fi/a.json",
+                "carries a user name",
+            ),
+            (
+                "https://data.hel.fi/a.json?apiKey=k-123456",
+                "carries a user name",
+            ),
             ("http://gitea/a.json", "inside the cluster"),
             ("http://127.0.0.1:9/a.json", ""),
         ] {
@@ -1092,14 +1098,27 @@ mod tests {
                 Err(OpError::InvalidInput { path, message }) => {
                     assert_eq!(path, "/url", "{url}");
                     assert!(message.contains(says), "{url}: {message}");
-                    assert!(!message.contains("s3cret-pw") && !message.contains("k-123456"), "{message}");
+                    assert!(
+                        !message.contains("s3cret-pw") && !message.contains("k-123456"),
+                        "{message}"
+                    );
                 }
                 other => panic!("{url}: a 422, got {other:?}"),
             }
         }
         let stranger = crate::ops::testkit::person("mallory", &[]);
-        match infer_from_url(&stranger, &state, "helsinki", None, "https://data.hel.fi/a.json").await {
-            Err(OpError::Api(ApiError::Denied(why))) => assert!(why.contains("DataSource"), "{why}"),
+        match infer_from_url(
+            &stranger,
+            &state,
+            "helsinki",
+            None,
+            "https://data.hel.fi/a.json",
+        )
+        .await
+        {
+            Err(OpError::Api(ApiError::Denied(why))) => {
+                assert!(why.contains("DataSource"), "{why}")
+            }
             other => panic!("a 403, got {other:?}"),
         }
     }
