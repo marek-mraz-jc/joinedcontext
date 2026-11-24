@@ -316,7 +316,7 @@ impl MemoryStore {
                     let u_org = st
                         .users
                         .iter()
-                        .find(|u| u.id == c.user_id)
+                        .find(|u| u.realm_id == c.realm_id && u.id == c.user_id)
                         .and_then(|u| u.org_id.as_deref());
                     odata_defs::credential_to_row(c, u_org)
                 })
@@ -1652,8 +1652,6 @@ impl Store for MemoryStore {
                         realm_id: client.realm_id.clone(),
                         org_id: client.org_id.clone(),
                         username: sa_username,
-                        enabled: true,
-                        email_verified: false,
                         service_account_client_id: Some(client.client_id.clone()),
                         created_timestamp: Some(TimestampTz::now().as_millis()),
                         ..Default::default()
@@ -3011,7 +3009,6 @@ impl Store for MemoryStore {
             st.revoked_tokens.retain(|r| r.expires_at > now);
             removed += (b6 - st.revoked_tokens.len()) as u64;
 
-            let _ = SignedDuration::from_secs(0);
             Ok(removed)
         })
     }
@@ -3074,6 +3071,809 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    /// One row of every entity set in `realm`, each id `{realm}-{kind}`; the realm itself is
+    /// stored under the id `realm` and named `{realm}-name`.
+    fn seed_every_set(st: &mut State, realm: &str, org: &str) {
+        let now = TimestampTz::now();
+        let r = || realm.to_owned();
+        let id = |kind: &str| format!("{realm}-{kind}");
+        st.realms.insert(
+            r(),
+            RealmConfig {
+                id: r(),
+                realm: id("name"),
+                ..RealmConfig::default()
+            },
+        );
+        st.organizations.push(Organization {
+            id: id("org"),
+            realm_id: r(),
+            name: id("org"),
+            alias: id("org"),
+            enabled: true,
+            description: String::new(),
+            domains: vec![OrganizationDomain {
+                id: id("dom"),
+                realm_id: r(),
+                org_id: id("org"),
+                name: format!("{realm}.example"),
+                verified: true,
+                verification_token: None,
+                challenge_hash: None,
+                challenge_expires_at: None,
+            }],
+            attributes: HashMap::new(),
+            managed_by: None,
+        });
+        st.memberships.push(Membership {
+            id: id("ms"),
+            realm_id: r(),
+            org_id: id("org"),
+            person_id: "p".into(),
+            org_roles: Vec::new(),
+            created_at: now,
+        });
+        // The same person id in every realm, each in its own organization.
+        st.users.push(UserRepresentation {
+            id: "p".into(),
+            realm_id: r(),
+            org_id: Some(org.into()),
+            username: id("user"),
+            ..UserRepresentation::default()
+        });
+        st.credentials.push(CredentialRecord {
+            id: id("cred"),
+            realm_id: r(),
+            user_id: "p".into(),
+            ..CredentialRecord::default()
+        });
+        st.groups.push(GroupRepresentation {
+            id: id("group"),
+            ..group("g", None, "/g")
+        });
+        st.groups.last_mut().expect("group").realm_id = r();
+        st.group_members.push(GroupMemberRecord {
+            id: id("gm"),
+            realm_id: r(),
+            org_id: None,
+            group_id: id("group"),
+            user_id: "p".into(),
+        });
+        st.roles.push(RoleRepresentation {
+            id: id("role"),
+            realm_id: r(),
+            name: "viewer".into(),
+            ..RoleRepresentation::default()
+        });
+        st.role_mappings.push(RoleMappingRecord {
+            id: id("rm"),
+            realm_id: r(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: "p".into(),
+            role_id: id("role"),
+            role_name: "viewer".into(),
+            client_uuid: None,
+        });
+        let mapper = |kind: &str| ProtocolMapperRepresentation {
+            id: id(kind),
+            name: id(kind),
+            ..ProtocolMapperRepresentation::default()
+        };
+        st.clients.push(ClientRepresentation {
+            id: id("client"),
+            realm_id: r(),
+            client_id: id("client"),
+            protocol_mappers: vec![mapper("client-mapper")],
+            ..ClientRepresentation::default()
+        });
+        st.client_scopes.push(ClientScopeRepresentation {
+            id: id("scope"),
+            realm_id: r(),
+            name: id("scope"),
+            protocol_mappers: vec![mapper("scope-mapper")],
+            ..ClientScopeRepresentation::default()
+        });
+        st.idps.push(IdentityProviderRepresentation {
+            internal_id: id("idp"),
+            realm_id: r(),
+            alias: id("idp"),
+            ..IdentityProviderRepresentation::default()
+        });
+        st.signing_keys.push(SigningKeyRecord {
+            id: id("key"),
+            realm_id: r(),
+            kid: id("key"),
+            algorithm: "ES256".into(),
+            status: "active".into(),
+            priority: 1,
+            public_jwk_json: "{}".into(),
+            encrypted_private_key: Vec::new(),
+            created_at: now,
+            activate_at: None,
+            expires_at: None,
+        });
+        st.sso_sessions.push(SsoSession {
+            id: id("sso"),
+            realm_id: r(),
+            org_id: None,
+            handle_hash: id("h"),
+            user_id: "p".into(),
+            username: "p".into(),
+            ip_address: String::new(),
+            user_agent: String::new(),
+            start: 0,
+            last_access: 0,
+            auth_time: 0,
+            acr: "1".into(),
+            amr: Vec::new(),
+            clients: HashMap::new(),
+            idle_expires_at: now,
+            max_expires_at: now,
+        });
+        st.client_sessions.push(ClientSession {
+            id: id("cs"),
+            realm_id: r(),
+            org_id: None,
+            sso_session_id: id("sso"),
+            client_id: id("client"),
+            user_id: "p".into(),
+            scopes: Vec::new(),
+            created_at: now,
+            last_access: now,
+        });
+        st.offline_sessions.push(OfflineSession {
+            id: id("off"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            client_id: id("client"),
+            scopes: Vec::new(),
+            created_at: now,
+            last_access: now,
+            idle_expires_at: now,
+            max_expires_at: now,
+        });
+        st.consents.push(ConsentRecord {
+            id: id("consent"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            client_id: id("client"),
+            granted_client_scopes: Vec::new(),
+            created_date: 0,
+            last_updated_date: 0,
+        });
+        st.required_actions.push(RequiredActionConfig {
+            id: id("ra"),
+            realm_id: r(),
+            ..RequiredActionConfig::default()
+        });
+        st.brandings.push(BrandingBlock {
+            id: id("brand"),
+            realm_id: r(),
+            ..BrandingBlock::default()
+        });
+        st.events.push(AuditEvent {
+            id: id("event"),
+            realm_id: r(),
+            org_id: None,
+            time: 0,
+            event_type: "LOGIN".into(),
+            client_id: None,
+            user_id: None,
+            session_id: None,
+            ip_address: String::new(),
+            error: None,
+            details: std::collections::BTreeMap::new(),
+        });
+        st.admin_events.push(AdminEvent {
+            id: id("admin-event"),
+            realm_id: r(),
+            org_id: None,
+            time: 0,
+            operation_type: "CREATE".into(),
+            resource_type: "USER".into(),
+            resource_path: "users/p".into(),
+            actor_id: "a".into(),
+            actor_client_id: None,
+            representation: None,
+        });
+        st.webauthn_credentials.push(WebAuthnCredentialRecord {
+            id: id("wa"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            user_handle: id("uh"),
+            credential_id: id("cid"),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: false,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "example.org".into(),
+            user_label: None,
+            created_at: now,
+            last_used_at: None,
+        });
+        st.email_outbox.push(EmailOutboxRecord {
+            id: id("mail"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            to_address: "p@example.org".into(),
+            locale: "en".into(),
+            template_kind: "verify-email".into(),
+            action_jti: id("jti"),
+            actions: Vec::new(),
+            client_id: None,
+            redirect_uri: None,
+            lifespan_secs: 60,
+            issuer: "https://id.example.org".into(),
+            status: "queued".into(),
+            attempts: 0,
+            last_error: None,
+            next_attempt_at: now,
+            created_at: now,
+            sent_at: None,
+        });
+        st.idp_links.push(IdentityProviderLinkRecord {
+            id: id("link"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            idp_alias: id("idp"),
+            external_user_id: id("ext"),
+            external_username: None,
+            created_at: now,
+        });
+    }
+
+    /// Each entity set answers the rows of the realm asked for and none of another realm; a
+    /// credential carries the organization of its own realm's person.
+    #[test]
+    fn every_entity_set_reads_only_its_realms_rows() {
+        let store = MemoryStore::default();
+        {
+            let mut st = store.inner.write();
+            seed_every_set(&mut st, "r", "hel");
+            seed_every_set(&mut st, "q", "esp");
+        }
+        let st = store.inner.read();
+        let ids = |realm: &str, set: &str| -> Vec<String> {
+            let mut ids: Vec<String> = store
+                .build_entity_rows(&st, realm, set)
+                .iter()
+                .map(|row| {
+                    let key = row.get("id").or_else(|| row.get("internalId"));
+                    key.and_then(Value::as_str).expect("key").to_owned()
+                })
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let service = odata_defs::kaisatsu_odata_service();
+        assert_eq!(service.sets.len(), 26);
+        for def in &service.sets {
+            let want: Vec<String> = match def.set.as_str() {
+                "Realms" => vec!["r".into()],
+                "People" => vec!["p".into()],
+                "ProtocolMappers" => vec!["r-client-mapper".into(), "r-scope-mapper".into()],
+                set => {
+                    let kind = [
+                        ("Organizations", "org"),
+                        ("OrganizationDomains", "dom"),
+                        ("Memberships", "ms"),
+                        ("Groups", "group"),
+                        ("GroupMembers", "gm"),
+                        ("Roles", "role"),
+                        ("RoleMappings", "rm"),
+                        ("Applications", "client"),
+                        ("ClientScopes", "scope"),
+                        ("IdentityProviders", "idp"),
+                        ("Credentials", "cred"),
+                        ("Sessions", "sso"),
+                        ("ClientSessions", "cs"),
+                        ("OfflineSessions", "off"),
+                        ("Consents", "consent"),
+                        ("Events", "event"),
+                        ("AdminEvents", "admin-event"),
+                        ("SigningKeys", "key"),
+                        ("RequiredActions", "ra"),
+                        ("BrandingBlocks", "brand"),
+                        ("WebAuthnCredentials", "wa"),
+                        ("EmailOutbox", "mail"),
+                        ("IdentityProviderLinks", "link"),
+                    ]
+                    .into_iter()
+                    .find_map(|(name, kind)| (name == set).then_some(kind))
+                    .unwrap_or(set);
+                    vec![format!("r-{kind}")]
+                }
+            };
+            assert_eq!(ids("r", &def.set), want, "{}", def.set);
+        }
+        assert_eq!(
+            ids("r-name", "Realms"),
+            ["r"],
+            "a realm is found by its name too"
+        );
+        assert!(ids("nowhere", "Realms").is_empty());
+        assert!(ids("r", "NoSuchSet").is_empty());
+        let creds = store.build_entity_rows(&st, "q", "Credentials");
+        assert_eq!(creds.len(), 1);
+        assert_eq!(
+            creds[0]["org_id"], "esp",
+            "the organization of q's own person"
+        );
+    }
+
+    fn org(realm: &str, id: &str, alias: &str) -> Organization {
+        Organization {
+            id: id.into(),
+            realm_id: realm.into(),
+            name: alias.into(),
+            alias: alias.into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: HashMap::new(),
+            managed_by: None,
+        }
+    }
+
+    /// An organization is replaced by its id or its alias within its realm, found by either,
+    /// and listed when either is allowed; the same names in another realm are another one.
+    #[tokio::test]
+    async fn organizations_are_kept_per_realm_by_id_or_alias() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            store
+                .upsert_organization(org(realm, "o1", "hel"))
+                .await
+                .expect("org");
+        }
+        store
+            .upsert_organization(org(R, "o2", "hel"))
+            .await
+            .expect("same alias");
+        store
+            .upsert_organization(org(R, "o2", "helsinki"))
+            .await
+            .expect("same id");
+        let ids = |realm: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_organizations(realm, None)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|o| (o.id, o.alias))
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(ids(R).await, [("o2".to_owned(), "helsinki".to_owned())]);
+        assert_eq!(ids("q").await, [("o1".to_owned(), "hel".to_owned())]);
+        for key in ["o2", "helsinki"] {
+            let found = store.get_organization(R, key).await.expect("get");
+            assert_eq!(found.map(|o| o.id).as_deref(), Some("o2"), "{key}");
+        }
+        assert!(
+            store
+                .get_organization(R, "o1")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_organization(R, "hel")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_organization("q", "hel")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        for allowed in ["o2", "helsinki"] {
+            let only: &[String] = &[allowed.to_owned()];
+            assert_eq!(
+                store
+                    .list_organizations(R, Some(only))
+                    .await
+                    .expect("list")
+                    .len(),
+                1,
+                "allowed by {allowed}"
+            );
+        }
+        let other: &[String] = &["o1".to_owned()];
+        assert!(
+            store
+                .list_organizations(R, Some(other))
+                .await
+                .expect("list")
+                .is_empty()
+        );
+    }
+
+    fn membership(realm: &str, org_id: &str, person: &str, role: &str) -> Membership {
+        Membership {
+            id: format!("{realm}-{org_id}-{person}"),
+            realm_id: realm.into(),
+            org_id: org_id.into(),
+            person_id: person.into(),
+            org_roles: vec![role.into()],
+            created_at: TimestampTz::now(),
+        }
+    }
+
+    /// A membership is one per realm, organization and person: writing it again replaces that
+    /// one only, and a person's list holds their own realm's memberships.
+    #[tokio::test]
+    async fn memberships_are_one_per_realm_organization_and_person() {
+        let store = MemoryStore::default();
+        for (realm, o, p) in [
+            (R, "a", "p"),
+            (R, "b", "p"),
+            ("q", "a", "p"),
+            (R, "a", "p2"),
+        ] {
+            store
+                .upsert_membership(membership(realm, o, p, "member"))
+                .await
+                .expect("membership");
+        }
+        store
+            .upsert_membership(membership(R, "a", "p", "org-admin"))
+            .await
+            .expect("again");
+        let roles = |realm: &'static str, person: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, Vec<String>)> = store
+                    .list_memberships_for_person(realm, person)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|m| (m.org_id, m.org_roles))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        assert_eq!(
+            roles(R, "p").await,
+            [
+                ("a".to_owned(), vec!["org-admin".to_owned()]),
+                ("b".to_owned(), vec!["member".to_owned()])
+            ]
+        );
+        assert_eq!(
+            roles("q", "p").await,
+            [("a".to_owned(), vec!["member".to_owned()])]
+        );
+        assert_eq!(
+            roles(R, "p2").await,
+            [("a".to_owned(), vec!["member".to_owned()])]
+        );
+        assert!(roles("q", "p2").await.is_empty());
+    }
+
+    fn credential(realm: &str, id: &str, user: &str, kind: &str) -> CredentialRecord {
+        CredentialRecord {
+            id: id.into(),
+            realm_id: realm.into(),
+            user_id: user.into(),
+            credential_type: kind.into(),
+            secret_data: format!("{realm}-{id}"),
+            ..CredentialRecord::default()
+        }
+    }
+
+    /// A new password moves the person's old one to history, in their realm only; credentials
+    /// are replaced by id within a realm, listed per person and deleted by person and id.
+    #[tokio::test]
+    async fn credentials_are_kept_per_realm_and_person_with_password_history() {
+        let store = MemoryStore::default();
+        for c in [
+            credential(R, "pw1", "p", "password"),
+            credential("q", "pw1", "p", "password"),
+            credential(R, "otp", "p", "otp"),
+            credential(R, "pw-b", "p2", "password"),
+        ] {
+            store.upsert_credential(c).await.expect("credential");
+        }
+        store
+            .upsert_credential(credential(R, "pw2", "p", "password"))
+            .await
+            .expect("new password");
+        let kinds = |realm: &'static str, user: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, String)> = store
+                    .list_credentials(realm, user)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|c| (c.credential_type, c.secret_data))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        assert_eq!(
+            kinds(R, "p").await,
+            [
+                pair("otp", "r-otp"),
+                pair("password", "r-pw2"),
+                pair("password-history", "r-pw1")
+            ]
+        );
+        assert_eq!(kinds("q", "p").await, [pair("password", "q-pw1")]);
+        assert_eq!(kinds(R, "p2").await, [pair("password", "r-pw-b")]);
+
+        store
+            .upsert_credential(credential("q", "otp", "p", "otp"))
+            .await
+            .expect("same id elsewhere");
+        assert_eq!(kinds(R, "p").await.len(), 3, "q's otp leaves r's alone");
+        assert!(
+            !store
+                .delete_credential(R, "p2", "otp")
+                .await
+                .expect("delete"),
+            "not p2's"
+        );
+        assert!(
+            !store
+                .delete_credential("x", "p", "otp")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            store
+                .delete_credential(R, "p", "otp")
+                .await
+                .expect("delete")
+        );
+        assert_eq!(
+            kinds(R, "p").await,
+            [pair("password", "r-pw2"), pair("password-history", "r-pw1")]
+        );
+        assert_eq!(
+            kinds("q", "p").await,
+            [pair("otp", "q-otp"), pair("password", "q-pw1")]
+        );
+    }
+
+    /// A group under an organization's id or alias belongs to it, in that organization's
+    /// realm only; an edit keeping its own path is no conflict, taking another's in the realm is.
+    #[tokio::test]
+    async fn groups_take_their_realms_organization_and_paths_are_unique_per_realm() {
+        let store = MemoryStore::default();
+        store
+            .upsert_organization(org(R, "o9", "esp"))
+            .await
+            .expect("org");
+        let put = |realm: &'static str, name: &'static str, path: &'static str| {
+            let store = &store;
+            async move {
+                let mut g = group(name, None, path);
+                g.realm_id = realm.into();
+                store.upsert_group(g).await.expect("group")
+            }
+        };
+        assert_eq!(put(R, "a", "/esp/a").await.org_id.as_deref(), Some("esp"));
+        assert_eq!(put(R, "b", "/o9/b").await.org_id.as_deref(), Some("o9"));
+        assert_eq!(put("q", "a", "/esp/a").await.org_id, None, "esp is r's");
+        assert_eq!(put(R, "c", "/other/c").await.org_id, None);
+
+        let x = put(R, "x", "/x").await;
+        put(R, "y", "/y").await;
+        put("q", "z", "/z").await;
+        let edited = store
+            .update_group(GroupRepresentation {
+                attributes: HashMap::from([("k".to_owned(), vec!["edited".to_owned()])]),
+                ..x.clone()
+            })
+            .await
+            .expect("own path");
+        assert_eq!(edited.path, "/x");
+        let taken = store
+            .update_group(GroupRepresentation {
+                path: "/y".into(),
+                ..x.clone()
+            })
+            .await;
+        assert!(
+            matches!(taken, Err(KaisatsuError::Conflict(_))),
+            "{taken:?}"
+        );
+        let elsewhere = store
+            .update_group(GroupRepresentation {
+                path: "/z".into(),
+                ..x
+            })
+            .await
+            .expect("q's path is free in r");
+        assert_eq!(elsewhere.path, "/z");
+    }
+
+    /// Deleting a person drops their credentials, memberships, sessions, passkeys, links and
+    /// user role mappings, and nothing of another person or of the same id in another realm.
+    #[tokio::test]
+    async fn deleting_a_person_drops_their_rows_only() {
+        let store = MemoryStore::default();
+        let now = TimestampTz::now();
+        let team = store
+            .upsert_group(GroupRepresentation {
+                id: "ada".into(),
+                ..group("team", None, "/team")
+            })
+            .await
+            .expect("group");
+        for (realm, id) in [(R, "ada"), (R, "bob"), ("r2", "ada")] {
+            store
+                .create_user(UserRepresentation {
+                    realm_id: realm.into(),
+                    ..user(id)
+                })
+                .await
+                .expect("person");
+            store
+                .upsert_credential(CredentialRecord {
+                    id: format!("{realm}-{id}-pw"),
+                    realm_id: realm.into(),
+                    user_id: id.into(),
+                    ..CredentialRecord::default()
+                })
+                .await
+                .expect("credential");
+            store
+                .upsert_sso_session(SsoSession {
+                    id: format!("{realm}-{id}-sso"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    handle_hash: format!("{realm}-{id}-h"),
+                    user_id: id.into(),
+                    username: id.into(),
+                    ip_address: "127.0.0.1".into(),
+                    user_agent: "t".into(),
+                    start: 1,
+                    last_access: 1,
+                    auth_time: 1,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    clients: HashMap::new(),
+                    idle_expires_at: now + jiff::SignedDuration::from_hours(1),
+                    max_expires_at: now + jiff::SignedDuration::from_hours(2),
+                })
+                .await
+                .expect("session");
+            store
+                .insert_webauthn_credential(WebAuthnCredentialRecord {
+                    id: format!("{realm}-{id}-wa"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    user_id: id.into(),
+                    user_handle: format!("{realm}-{id}-uh"),
+                    credential_id: format!("{realm}-{id}-cid"),
+                    public_key_cose_json: "{}".into(),
+                    cose_alg: -7,
+                    sign_count: 0,
+                    uv_initialized: true,
+                    backup_eligible: false,
+                    backup_state: false,
+                    transports: Vec::new(),
+                    attestation_type: "none".into(),
+                    rp_id: "example.org".into(),
+                    user_label: None,
+                    created_at: now,
+                    last_used_at: None,
+                })
+                .await
+                .expect("passkey");
+            store
+                .upsert_idp_link(IdentityProviderLinkRecord {
+                    id: format!("{realm}-{id}-link"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    user_id: id.into(),
+                    idp_alias: "google".into(),
+                    external_user_id: format!("{realm}-{id}-ext"),
+                    external_username: None,
+                    created_at: now,
+                })
+                .await
+                .expect("link");
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    principal_kind: "user".into(),
+                    principal_id: id.into(),
+                    role_id: "viewer".into(),
+                    role_name: "viewer".into(),
+                    client_uuid: None,
+                })
+                .await
+                .expect("mapping");
+            if realm == R {
+                store
+                    .add_user_to_group(R, id, &team.id)
+                    .await
+                    .expect("member");
+            }
+        }
+        store
+            .add_role_mapping(RoleMappingRecord {
+                id: String::new(),
+                realm_id: R.into(),
+                org_id: None,
+                principal_kind: "group".into(),
+                principal_id: team.id.clone(),
+                role_id: "viewer".into(),
+                role_name: "viewer".into(),
+                client_uuid: None,
+            })
+            .await
+            .expect("group mapping");
+
+        assert!(store.delete_user(R, None, "ada").await.expect("delete"));
+        let counts = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                [
+                    store.list_credentials(realm, id).await.expect("c").len(),
+                    store.list_user_groups(realm, id).await.expect("g").len(),
+                    store
+                        .list_user_sso_sessions(realm, id)
+                        .await
+                        .expect("s")
+                        .len(),
+                    store
+                        .list_webauthn_credentials(realm, id)
+                        .await
+                        .expect("w")
+                        .len(),
+                    store
+                        .list_idp_links_for_user(realm, id)
+                        .await
+                        .expect("l")
+                        .len(),
+                    store
+                        .list_role_mappings_for_principal(realm, "user", id, None)
+                        .await
+                        .expect("m")
+                        .len(),
+                ]
+            }
+        };
+        assert_eq!(counts(R, "ada").await, [0, 0, 0, 0, 0, 0], "ada is gone");
+        assert_eq!(counts(R, "bob").await, [1, 1, 1, 1, 1, 1], "bob keeps his");
+        assert_eq!(
+            counts("r2", "ada").await,
+            [1, 0, 1, 1, 1, 1],
+            "ada of r2 keeps hers"
+        );
+        let kept = store
+            .list_role_mappings_for_principal(R, "group", &team.id, None)
+            .await
+            .expect("group mappings");
+        assert_eq!(kept.len(), 1, "the group's own mapping stays");
     }
 
     #[tokio::test]
@@ -3312,6 +4112,1434 @@ mod tests {
         );
     }
 
+    fn confidential(realm: &str, id: &str, client_id: &str) -> ClientRepresentation {
+        ClientRepresentation {
+            id: id.into(),
+            realm_id: realm.into(),
+            client_id: client_id.into(),
+            org_id: Some("hel".into()),
+            public_client: false,
+            service_accounts_enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// A confidential client with service accounts gets `service-account-{clientId}`: an id of
+    /// its own, the client's organization, enabled and stamped; deleting the client takes that
+    /// account, its roles and mappings, and nothing of another client, person or realm.
+    #[tokio::test]
+    async fn a_client_comes_and_goes_with_its_own_service_account_roles_and_mappings() {
+        let store = MemoryStore::default();
+        // Stored first: a person of another realm whose service account names a client `app`.
+        store
+            .create_user(UserRepresentation {
+                realm_id: "elsewhere".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("stray")
+            })
+            .await
+            .expect("stray account");
+        store.create_user(user("ada")).await.expect("person");
+        for realm in [R, "q"] {
+            store
+                .upsert_client(confidential(realm, "c-app", "app"))
+                .await
+                .expect("client");
+            store
+                .upsert_client(confidential(realm, "c-other", "other"))
+                .await
+                .expect("client");
+            for container in ["c-app", "c-other"] {
+                store
+                    .upsert_role(RoleRepresentation {
+                        realm_id: realm.into(),
+                        name: format!("{container}-reader"),
+                        client_role: true,
+                        container_id: Some(container.into()),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("client role");
+            }
+        }
+        store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "realm-reader".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("realm role");
+        let account = store
+            .get_user_by_username_or_email(R, None, "service-account-app")
+            .await
+            .expect("read")
+            .expect("service account");
+        assert!(!account.id.is_empty() && account.id != "ada");
+        assert_eq!(account.org_id.as_deref(), Some("hel"));
+        assert!(account.enabled && !account.email_verified);
+        assert!(account.created_timestamp.is_some_and(|t| t > 0));
+        assert_eq!(account.service_account_client_id.as_deref(), Some("app"));
+        for (who, uuid) in [("ada", "c-app"), ("ada", "c-other")] {
+            let role = format!("{uuid}-reader");
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: R.into(),
+                    org_id: None,
+                    principal_kind: "user".into(),
+                    principal_id: who.into(),
+                    role_id: role.clone(),
+                    role_name: role,
+                    client_uuid: Some(uuid.into()),
+                })
+                .await
+                .expect("mapping");
+        }
+
+        assert!(store.delete_client(R, None, "c-app").await.expect("delete"));
+        assert!(
+            store
+                .get_user_by_username_or_email(R, None, "service-account-app")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        for (realm, name) in [
+            (R, "service-account-other"),
+            ("q", "service-account-app"),
+            (R, "ada"),
+            ("elsewhere", "stray"),
+        ] {
+            let kept = store.get_user_by_username_or_email(realm, None, name).await;
+            assert!(kept.expect("read").is_some(), "{realm} {name}");
+        }
+        let role_names = |realm: &'static str, container: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_roles(realm, Some(container))
+                    .await
+                    .expect("roles")
+                    .into_iter()
+                    .map(|r| r.name)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert!(role_names(R, "c-app").await.is_empty());
+        assert_eq!(role_names(R, "c-other").await, ["c-other-reader"]);
+        assert_eq!(
+            role_names("q", "c-app").await,
+            ["c-app-reader"],
+            "q's client stays"
+        );
+        assert_eq!(store.list_roles(R, None).await.expect("realm").len(), 1);
+        let mapped = |uuid: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_role_mappings_for_principal(R, "user", "ada", Some(uuid))
+                    .await
+                    .expect("mappings")
+                    .len()
+            }
+        };
+        assert_eq!((mapped("c-app").await, mapped("c-other").await), (0, 1));
+    }
+
+    /// Scopes, identity providers and signing keys are found, replaced and deleted by their own
+    /// key within their realm: a second one of the realm and a namesake elsewhere stay.
+    #[tokio::test]
+    async fn scopes_providers_and_keys_are_kept_per_realm_by_their_key() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for name in ["first", "second"] {
+                store
+                    .upsert_client_scope(ClientScopeRepresentation {
+                        id: format!("{realm}-{name}"),
+                        realm_id: realm.into(),
+                        name: name.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("scope");
+                store
+                    .upsert_idp(IdentityProviderRepresentation {
+                        realm_id: realm.into(),
+                        alias: name.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("idp");
+                store
+                    .upsert_signing_key(SigningKeyRecord {
+                        id: format!("{realm}-{name}"),
+                        realm_id: realm.into(),
+                        kid: name.into(),
+                        algorithm: "ES256".into(),
+                        status: "active".into(),
+                        priority: 1,
+                        public_jwk_json: "{}".into(),
+                        encrypted_private_key: Vec::new(),
+                        created_at: TimestampTz::now(),
+                        activate_at: None,
+                        expires_at: None,
+                    })
+                    .await
+                    .expect("key");
+            }
+        }
+        for key in ["second", "r-second"] {
+            let found = store.get_client_scope(R, key).await.expect("get");
+            assert_eq!(found.map(|s| s.id).as_deref(), Some("r-second"), "{key}");
+        }
+        assert!(
+            store
+                .get_client_scope(R, "q-first")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_client_scope(R, "nothing")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        store
+            .upsert_idp(IdentityProviderRepresentation {
+                realm_id: R.into(),
+                alias: "second".into(),
+                enabled: false,
+                ..Default::default()
+            })
+            .await
+            .expect("idp again");
+        let idps = store.list_idps(R).await.expect("idps");
+        assert_eq!(idps.len(), 2);
+        assert!(idps.iter().any(|i| i.alias == "first" && i.enabled));
+        assert!(idps.iter().any(|i| i.alias == "second" && !i.enabled));
+        assert!(
+            store
+                .list_idps("q")
+                .await
+                .expect("q")
+                .iter()
+                .all(|i| i.enabled)
+        );
+        let ours = |realm: &'static str| {
+            let store = &store;
+            async move {
+                let mut keys: Vec<(String, String)> = store
+                    .list_signing_keys(realm)
+                    .await
+                    .expect("keys")
+                    .into_iter()
+                    .filter(|k| k.kid == "first" || k.kid == "second")
+                    .map(|k| (k.kid, k.status))
+                    .collect();
+                keys.sort();
+                keys
+            }
+        };
+        let second = store
+            .list_signing_keys(R)
+            .await
+            .expect("keys")
+            .into_iter()
+            .find(|k| k.kid == "second")
+            .expect("second");
+        store
+            .upsert_signing_key(SigningKeyRecord {
+                status: "passive".into(),
+                ..second
+            })
+            .await
+            .expect("key again");
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        assert_eq!(
+            ours(R).await,
+            [pair("first", "active"), pair("second", "passive")]
+        );
+        assert_eq!(
+            ours("q").await,
+            [pair("first", "active"), pair("second", "active")]
+        );
+        assert!(
+            store
+                .delete_client_scope(R, "r-second")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            !store
+                .delete_client_scope(R, "q-first")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            store
+                .get_client_scope(R, "first")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        assert_eq!(store.list_client_scopes("q").await.expect("q").len(), 2);
+    }
+
+    fn auth_session(realm: &str, id: &str) -> AuthSession {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "realmId": realm, "handleHash": format!("{realm}-{id}"),
+            "clientId": "portal", "redirectUri": "https://x.test/cb", "responseType": "code",
+            "responseMode": "query", "scope": "openid", "codeChallenge": "c",
+            "codeChallengeMethod": "S256", "csrfToken": "t", "stepStateJson": "{}",
+            "acrAchieved": "pwd", "createdAt": "2026-11-14T00:00:00Z",
+            "expiresAt": (TimestampTz::now() + SignedDuration::from_hours(1)).to_rfc3339()
+        }))
+        .expect("auth session")
+    }
+
+    /// An auth session is replaced by its id within its realm only.
+    #[tokio::test]
+    async fn auth_sessions_are_kept_per_realm_and_id() {
+        let store = MemoryStore::default();
+        for (realm, id) in [(R, "a"), (R, "b"), ("q", "a")] {
+            store
+                .put_auth_session(auth_session(realm, id))
+                .await
+                .expect("put");
+        }
+        let mut again = auth_session(R, "a");
+        again.scope = "openid profile".into();
+        store.put_auth_session(again).await.expect("again");
+        let get = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_auth_session_by_id(realm, id)
+                    .await
+                    .expect("get")
+                    .map(|s| s.scope)
+            }
+        };
+        assert_eq!(get(R, "a").await.as_deref(), Some("openid profile"));
+        assert_eq!(get(R, "b").await.as_deref(), Some("openid"));
+        assert_eq!(get("q", "a").await.as_deref(), Some("openid"));
+        assert_eq!(get("q", "b").await, None);
+    }
+
+    /// SSO sessions, client sessions, offline sessions and refresh families of realms r and q:
+    /// people ada and bob, SSO session `s-{person}`, clients app and other.
+    fn seed_sessions(store: &MemoryStore) {
+        let now = TimestampTz::now();
+        let later = now + SignedDuration::from_hours(1);
+        let mut st = store.inner.write();
+        for realm in [R, "q"] {
+            for person in ["ada", "bob"] {
+                let sso = format!("s-{person}");
+                st.sso_sessions.push(SsoSession {
+                    id: sso.clone(),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    handle_hash: format!("{realm}-{sso}"),
+                    user_id: person.into(),
+                    username: person.into(),
+                    ip_address: String::new(),
+                    user_agent: String::new(),
+                    start: 0,
+                    last_access: 0,
+                    auth_time: 0,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    clients: HashMap::new(),
+                    idle_expires_at: later,
+                    max_expires_at: later,
+                });
+                for client in ["app", "other"] {
+                    st.client_sessions.push(ClientSession {
+                        id: format!("{sso}-{client}"),
+                        realm_id: realm.into(),
+                        org_id: None,
+                        sso_session_id: sso.clone(),
+                        client_id: client.into(),
+                        user_id: person.into(),
+                        scopes: Vec::new(),
+                        created_at: now,
+                        last_access: now,
+                    });
+                    st.offline_sessions.push(OfflineSession {
+                        id: format!("off-{person}-{client}"),
+                        realm_id: realm.into(),
+                        org_id: None,
+                        user_id: person.into(),
+                        client_id: client.into(),
+                        scopes: Vec::new(),
+                        created_at: now,
+                        last_access: now,
+                        idle_expires_at: later,
+                        max_expires_at: later,
+                    });
+                    for offline in [false, true] {
+                        st.refresh_families.push(RefreshTokenFamily {
+                            id: format!("{person}-{client}-{offline}"),
+                            realm_id: realm.into(),
+                            org_id: None,
+                            sso_session_id: sso.clone(),
+                            user_id: person.into(),
+                            client_id: client.into(),
+                            scope: "openid".into(),
+                            mapper_scopes: Vec::new(),
+                            acr: "1".into(),
+                            amr: Vec::new(),
+                            auth_time: 0,
+                            rotation_counter: 0,
+                            current_jti_hash: format!("{realm}-{person}-{client}-{offline}"),
+                            previous_hashes: Vec::new(),
+                            dpop_jkt: None,
+                            offline,
+                            offline_since: offline.then_some(now),
+                            revoked: false,
+                            expires_at: later,
+                            act: None,
+                            only_audience: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// `{realm}/{id}` of the client sessions, offline sessions and revoked families left.
+    fn session_state(store: &MemoryStore) -> [Vec<String>; 3] {
+        let st = store.inner.read();
+        let mut out = [
+            st.client_sessions
+                .iter()
+                .map(|c| format!("{}/{}", c.realm_id, c.id))
+                .collect::<Vec<_>>(),
+            st.offline_sessions
+                .iter()
+                .map(|o| format!("{}/{}", o.realm_id, o.id))
+                .collect(),
+            st.refresh_families
+                .iter()
+                .filter(|f| f.revoked)
+                .map(|f| format!("{}/{}", f.realm_id, f.id))
+                .collect(),
+        ];
+        for v in &mut out {
+            v.sort();
+        }
+        out
+    }
+
+    /// Ending one SSO session takes its client sessions and revokes its online families, never
+    /// its offline ones, another session's or another realm's.
+    #[tokio::test]
+    async fn ending_an_sso_session_takes_only_its_own_rows() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let gone = store.delete_sso_session(R, "s-ada").await.expect("delete");
+        assert_eq!(
+            gone.map(|s| (s.realm_id, s.user_id)),
+            Some((R.to_owned(), "ada".to_owned()))
+        );
+        assert!(
+            store
+                .delete_sso_session(R, "s-ada")
+                .await
+                .expect("again")
+                .is_none()
+        );
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 6);
+        assert!(
+            client.iter().all(|c| !c.starts_with("r/s-ada")),
+            "{client:?}"
+        );
+        assert!(client.contains(&"q/s-ada-app".to_owned()));
+        assert_eq!(offline.len(), 8, "offline sessions stay");
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-other-false"]);
+        assert!(
+            store
+                .get_sso_session("q", "s-ada")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        assert!(
+            store
+                .get_sso_session(R, "s-bob")
+                .await
+                .expect("get")
+                .is_some()
+        );
+    }
+
+    /// Signing a person out everywhere takes their SSO and client sessions and revokes all
+    /// their families in that realm only.
+    #[tokio::test]
+    async fn signing_a_person_out_takes_their_sessions_in_that_realm() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let gone = store
+            .delete_user_sso_sessions(R, "bob")
+            .await
+            .expect("delete");
+        assert_eq!(
+            gone.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["s-bob"]
+        );
+        assert!(gone.iter().all(|s| s.realm_id == R));
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(
+            client
+                .iter()
+                .filter(|c| c.starts_with("r/"))
+                .collect::<Vec<_>>(),
+            ["r/s-ada-app", "r/s-ada-other"]
+        );
+        assert_eq!(client.len(), 6);
+        assert_eq!(offline.len(), 8);
+        assert_eq!(
+            revoked,
+            [
+                "r/bob-app-false",
+                "r/bob-app-true",
+                "r/bob-other-false",
+                "r/bob-other-true"
+            ]
+        );
+        assert_eq!(
+            store
+                .list_user_sso_sessions(R, "ada")
+                .await
+                .expect("ada")
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .list_user_sso_sessions(R, "bob")
+                .await
+                .expect("bob")
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .list_user_sso_sessions("q", "bob")
+                .await
+                .expect("q")
+                .len(),
+            1
+        );
+    }
+
+    /// An offline session is replaced by its id in its realm; revoking a person's offline access
+    /// to one client takes that client's sessions and families only.
+    #[tokio::test]
+    async fn offline_sessions_go_per_realm_person_and_client() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let mut again = store.inner.read().offline_sessions[0].clone();
+        assert_eq!(
+            (again.realm_id.as_str(), again.id.as_str()),
+            (R, "off-ada-app")
+        );
+        again.scopes = vec!["offline_access".into()];
+        store.upsert_offline_session(again).await.expect("again");
+        {
+            let st = store.inner.read();
+            assert_eq!(st.offline_sessions.len(), 8);
+            let ours: Vec<_> = st
+                .offline_sessions
+                .iter()
+                .filter(|o| o.id == "off-ada-app")
+                .map(|o| (o.realm_id.as_str(), o.scopes.len()))
+                .collect();
+            assert!(
+                ours.contains(&(R, 1)) && ours.contains(&("q", 0)),
+                "{ours:?}"
+            );
+        }
+        store
+            .delete_user_client_offline_sessions(R, "ada", "app")
+            .await
+            .expect("revoke");
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 8, "online sessions stay");
+        assert_eq!(offline.len(), 7);
+        assert!(!offline.contains(&"r/off-ada-app".to_owned()));
+        assert!(offline.contains(&"q/off-ada-app".to_owned()));
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+    }
+
+    /// Revoking one SSO session's families (all, or one client's, whose client session goes
+    /// too) touches no other session or realm; a family is replaced by its id in its realm.
+    #[tokio::test]
+    async fn refresh_families_are_revoked_per_realm_session_and_client() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        store
+            .revoke_refresh_families_for_session(R, "s-ada", Some("app"))
+            .await
+            .expect("revoke one client");
+        let [client, _, revoked] = session_state(&store);
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+        assert!(!client.contains(&"r/s-ada-app".to_owned()));
+        assert!(client.contains(&"r/s-ada-other".to_owned()));
+        assert!(client.contains(&"q/s-ada-app".to_owned()));
+        assert_eq!(client.len(), 7);
+        store
+            .revoke_refresh_families_for_session(R, "s-bob", None)
+            .await
+            .expect("revoke a session");
+        let [client, _, revoked] = session_state(&store);
+        assert_eq!(
+            client.len(),
+            7,
+            "a whole-session revoke keeps the client sessions"
+        );
+        assert_eq!(
+            revoked,
+            [
+                "r/ada-app-false",
+                "r/ada-app-true",
+                "r/bob-app-false",
+                "r/bob-app-true",
+                "r/bob-other-false",
+                "r/bob-other-true"
+            ]
+        );
+        let mut again = store
+            .get_refresh_family("q", "ada-app-false")
+            .await
+            .expect("get")
+            .expect("q's family");
+        again.scope = "openid profile".into();
+        store.upsert_refresh_family(again).await.expect("again");
+        let scopes: Vec<(String, String)> = store
+            .inner
+            .read()
+            .refresh_families
+            .iter()
+            .filter(|f| f.id == "ada-app-false")
+            .map(|f| (f.realm_id.clone(), f.scope.clone()))
+            .collect();
+        assert_eq!(scopes.len(), 2, "{scopes:?}");
+        assert!(scopes.contains(&(R.to_owned(), "openid".to_owned())));
+        assert!(scopes.contains(&("q".to_owned(), "openid profile".to_owned())));
+    }
+
+    fn failure(realm: &str, key: &str, n: u32) -> LoginFailureRecord {
+        LoginFailureRecord {
+            id: format!("{realm}-{key}"),
+            realm_id: realm.into(),
+            target_key: key.into(),
+            num_failures: n,
+            last_failure_ms: 0,
+            last_ip_failure: String::new(),
+            locked_until: None,
+            window_started_at: TimestampTz::now(),
+        }
+    }
+
+    /// Login failures are one per realm and key: written, updated and cleared without touching
+    /// another key or realm.
+    #[tokio::test]
+    async fn login_failures_are_one_per_realm_and_key() {
+        let store = MemoryStore::default();
+        for (realm, key, n) in [(R, "ada", 1), (R, "bob", 2), ("q", "ada", 3)] {
+            store
+                .upsert_login_failure(failure(realm, key, n))
+                .await
+                .expect("put");
+        }
+        store
+            .upsert_login_failure(failure(R, "ada", 5))
+            .await
+            .expect("again");
+        let count = |realm: &'static str, key: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_login_failure(realm, key)
+                    .await
+                    .expect("get")
+                    .map(|f| f.num_failures)
+            }
+        };
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (Some(5), Some(2), Some(3))
+        );
+        let bump = |prev: Option<LoginFailureRecord>| {
+            let mut rec = prev.unwrap_or_else(|| failure(R, "new", 0));
+            rec.num_failures += 1;
+            rec
+        };
+        let got = store
+            .update_login_failure(R, "bob", &bump)
+            .await
+            .expect("update");
+        assert_eq!(got.num_failures, 3);
+        let fresh = store
+            .update_login_failure(R, "new", &bump)
+            .await
+            .expect("first");
+        assert_eq!(fresh.num_failures, 1);
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (Some(5), Some(3), Some(3))
+        );
+        assert_eq!(store.inner.read().login_failures.len(), 4);
+        store.clear_login_failure(R, "ada").await.expect("clear");
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (None, Some(3), Some(3))
+        );
+    }
+
+    /// A consent is one per realm, person and client: given again it replaces that one only.
+    #[tokio::test]
+    async fn consents_are_one_per_realm_person_and_client() {
+        let store = MemoryStore::default();
+        for (realm, who, c, scope) in [
+            (R, "ada", "app", "a"),
+            (R, "ada", "other", "b"),
+            (R, "bob", "app", "c"),
+            ("q", "ada", "app", "d"),
+            (R, "ada", "app", "e"),
+        ] {
+            store
+                .upsert_consent(ConsentRecord {
+                    realm_id: realm.into(),
+                    granted_client_scopes: vec![scope.into()],
+                    ..consent(who, c)
+                })
+                .await
+                .expect("consent");
+        }
+        let granted = |realm: &'static str, who: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, Vec<String>)> = store
+                    .list_consents(realm, who)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|c| (c.client_id, c.granted_client_scopes))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        let g = |c: &str, s: &str| (c.to_owned(), vec![s.to_owned()]);
+        assert_eq!(granted(R, "ada").await, [g("app", "e"), g("other", "b")]);
+        assert_eq!(granted(R, "bob").await, [g("app", "c")]);
+        assert_eq!(granted("q", "ada").await, [g("app", "d")]);
+    }
+
+    /// Withdrawing a consent takes that consent, the offline sessions and the families of that
+    /// realm, person and client only.
+    #[tokio::test]
+    async fn withdrawing_a_consent_takes_only_its_own_offline_access() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        for (realm, who, c) in [
+            (R, "ada", "app"),
+            (R, "ada", "other"),
+            (R, "bob", "app"),
+            ("q", "ada", "app"),
+        ] {
+            store
+                .upsert_consent(ConsentRecord {
+                    realm_id: realm.into(),
+                    ..consent(who, c)
+                })
+                .await
+                .expect("consent");
+        }
+        assert!(
+            store
+                .delete_consent(R, "ada", "app")
+                .await
+                .expect("withdraw")
+        );
+        assert!(!store.delete_consent(R, "ada", "app").await.expect("again"));
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 8);
+        assert_eq!(offline.len(), 7);
+        assert!(!offline.contains(&"r/off-ada-app".to_owned()));
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+        let left: Vec<(String, String, String)> = store
+            .inner
+            .read()
+            .consents
+            .iter()
+            .map(|c| (c.realm_id.clone(), c.user_id.clone(), c.client_id.clone()))
+            .collect();
+        assert_eq!(left.len(), 3, "{left:?}");
+        assert!(!left.contains(&(R.into(), "ada".into(), "app".into())));
+    }
+
+    /// Required actions are one per realm and alias, brandings one per realm and organization,
+    /// a passkey is updated by its id in its realm, and the outbox lists one realm's rows.
+    #[tokio::test]
+    async fn realm_settings_and_rows_are_kept_per_realm_by_their_key() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for alias in ["CONFIGURE_TOTP", "VERIFY_EMAIL"] {
+                store
+                    .upsert_required_action(RequiredActionConfig {
+                        realm_id: realm.into(),
+                        alias: alias.into(),
+                        ..RequiredActionConfig::default()
+                    })
+                    .await
+                    .expect("action");
+            }
+            for org_id in [None, Some("hel")] {
+                store
+                    .upsert_branding(BrandingBlock {
+                        realm_id: realm.into(),
+                        org_id: org_id.map(str::to_owned),
+                        instance_name: format!("{realm}-{org_id:?}"),
+                        ..BrandingBlock::default()
+                    })
+                    .await
+                    .expect("branding");
+            }
+        }
+        store
+            .upsert_required_action(RequiredActionConfig {
+                realm_id: R.into(),
+                alias: "VERIFY_EMAIL".into(),
+                enabled: false,
+                ..RequiredActionConfig::default()
+            })
+            .await
+            .expect("again");
+        let actions = store.list_required_actions(R).await.expect("actions");
+        assert_eq!(actions.len(), 2);
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.alias == "CONFIGURE_TOTP" && a.enabled)
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.alias == "VERIFY_EMAIL" && !a.enabled)
+        );
+        assert!(
+            store
+                .list_required_actions("q")
+                .await
+                .expect("q")
+                .iter()
+                .all(|a| a.enabled)
+        );
+        store
+            .upsert_branding(BrandingBlock {
+                realm_id: R.into(),
+                org_id: Some("hel".into()),
+                instance_name: "renamed".into(),
+                ..BrandingBlock::default()
+            })
+            .await
+            .expect("branding again");
+        let name = |realm: &'static str, org: Option<&'static str>| {
+            let store = &store;
+            async move {
+                store
+                    .get_branding(realm, org)
+                    .await
+                    .expect("get")
+                    .map(|b| b.instance_name)
+            }
+        };
+        assert_eq!(name(R, Some("hel")).await.as_deref(), Some("renamed"));
+        assert_eq!(name(R, None).await.as_deref(), Some("r-None"));
+        assert_eq!(
+            name("q", Some("hel")).await.as_deref(),
+            Some("q-Some(\"hel\")")
+        );
+        assert_eq!(store.inner.read().brandings.len(), 4);
+
+        let mut st_rows = Vec::new();
+        {
+            let mut st = store.inner.write();
+            seed_every_set(&mut st, "r2", "hel");
+            seed_every_set(&mut st, "q2", "hel");
+            st_rows.extend(st.webauthn_credentials.iter().cloned());
+        }
+        let mut passkey = st_rows[1].clone();
+        assert_eq!(passkey.realm_id, "q2");
+        passkey.user_label = Some("phone".into());
+        store
+            .update_webauthn_credential(passkey)
+            .await
+            .expect("update");
+        let labels: Vec<(String, Option<String>)> = store
+            .inner
+            .read()
+            .webauthn_credentials
+            .iter()
+            .map(|w| (w.realm_id.clone(), w.user_label.clone()))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("r2".to_owned(), None),
+                ("q2".to_owned(), Some("phone".to_owned()))
+            ]
+        );
+        let mut missing = st_rows[0].clone();
+        missing.realm_id = "nowhere".into();
+        let refused = store.update_webauthn_credential(missing).await;
+        assert!(
+            matches!(refused, Err(KaisatsuError::NotFound(_))),
+            "{refused:?}"
+        );
+        let rows = store.list_outbox_rows("q2", None).await.expect("outbox");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["q2-mail"]
+        );
+        let other: &[String] = &["esp".to_owned()];
+        assert!(
+            store
+                .list_outbox_rows("q2", Some(other))
+                .await
+                .expect("outbox")
+                .is_empty()
+        );
+    }
+
+    /// An upstream link is one per realm, provider and external id, found by all three.
+    #[tokio::test]
+    async fn idp_links_are_one_per_realm_provider_and_external_id() {
+        let store = MemoryStore::default();
+        let link = |realm: &str, alias: &str, ext: &str, user: &str| IdentityProviderLinkRecord {
+            id: String::new(),
+            realm_id: realm.into(),
+            org_id: None,
+            user_id: user.into(),
+            idp_alias: alias.into(),
+            external_user_id: ext.into(),
+            external_username: None,
+            created_at: TimestampTz::now(),
+        };
+        for l in [
+            link(R, "google", "x1", "ada"),
+            link(R, "google", "x2", "bob"),
+            link(R, "github", "x1", "cyd"),
+            link("q", "google", "x1", "dan"),
+            link(R, "google", "x1", "eve"),
+        ] {
+            store.upsert_idp_link(l).await.expect("link");
+        }
+        let who = |realm: &'static str, alias: &'static str, ext: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_idp_link_by_external(realm, alias, ext)
+                    .await
+                    .expect("get")
+                    .map(|l| l.user_id)
+            }
+        };
+        assert_eq!(who(R, "google", "x1").await.as_deref(), Some("eve"));
+        assert_eq!(who(R, "google", "x2").await.as_deref(), Some("bob"));
+        assert_eq!(who(R, "github", "x1").await.as_deref(), Some("cyd"));
+        assert_eq!(who("q", "google", "x1").await.as_deref(), Some("dan"));
+        assert_eq!(who(R, "github", "x2").await, None);
+        assert_eq!(store.inner.read().idp_links.len(), 4);
+    }
+
+    /// The sweeper removes what expired (auth sessions, codes, PAR requests, SSO and offline
+    /// sessions past either limit, revocation records) and counts exactly that.
+    #[tokio::test]
+    async fn the_sweeper_removes_and_counts_only_what_expired() {
+        let store = MemoryStore::default();
+        let now = TimestampTz::now();
+        let (past, future) = (
+            now - SignedDuration::from_hours(1),
+            now + SignedDuration::from_hours(1),
+        );
+        seed_sessions(&store);
+        {
+            let mut st = store.inner.write();
+            for (i, at) in [past, future].into_iter().enumerate() {
+                let mut s = auth_session(R, &format!("as{i}"));
+                s.expires_at = at;
+                st.auth_sessions.push(s);
+                st.auth_codes.push(AuthorizationCodeRecord {
+                    code_hash: format!("code{i}"),
+                    realm_id: R.into(),
+                    org_id: None,
+                    client_id: "app".into(),
+                    user_id: "ada".into(),
+                    sso_session_id: "s-ada".into(),
+                    redirect_uri: "https://x.test/cb".into(),
+                    scope: "openid".into(),
+                    mapper_scopes: Vec::new(),
+                    code_challenge: String::new(),
+                    code_challenge_method: String::new(),
+                    nonce: None,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    dpop_jkt: None,
+                    auth_time: 0,
+                    consumed: false,
+                    created_at: now,
+                    expires_at: at,
+                });
+                st.par_requests.push(ParRequestRecord {
+                    request_uri_hash: format!("par{i}"),
+                    realm_id: R.into(),
+                    client_id: "app".into(),
+                    params: std::collections::BTreeMap::new(),
+                    consumed: false,
+                    expires_at: at,
+                });
+                st.revoked_tokens.push(RevokedTokenRecord {
+                    jti_hash: format!("jti{i}"),
+                    realm_id: R.into(),
+                    expires_at: at,
+                });
+            }
+            // r's ada: SSO idle limit passed; r's bob: SSO max limit passed.
+            st.sso_sessions[0].idle_expires_at = past;
+            st.sso_sessions[1].max_expires_at = past;
+            // Offline: one past its idle limit, one past its max limit.
+            st.offline_sessions[0].idle_expires_at = past;
+            st.offline_sessions[1].max_expires_at = past;
+        }
+        assert_eq!(store.sweep_expired().await.expect("sweep"), 8);
+        {
+            let st = store.inner.read();
+            assert_eq!(st.auth_sessions.len(), 1);
+            assert_eq!(st.auth_sessions[0].id, "as1");
+            assert_eq!(st.auth_codes.len(), 1);
+            assert_eq!(st.auth_codes[0].code_hash, "code1");
+            assert_eq!(st.par_requests.len(), 1);
+            assert_eq!(st.par_requests[0].request_uri_hash, "par1");
+            assert_eq!(st.revoked_tokens.len(), 1);
+            assert_eq!(st.revoked_tokens[0].jti_hash, "jti1");
+            assert_eq!(st.sso_sessions.len(), 2);
+            assert!(st.sso_sessions.iter().all(|s| s.realm_id == "q"));
+            assert_eq!(st.offline_sessions.len(), 6);
+        }
+        assert_eq!(store.sweep_expired().await.expect("again"), 0);
+    }
+
+    /// A rename may take a client id another realm uses; it renames this client's service
+    /// account and no other person.
+    #[tokio::test]
+    async fn a_client_rename_is_checked_and_applied_in_its_own_realm() {
+        let store = MemoryStore::default();
+        let mut app = store.upsert_client(client("app")).await.expect("client");
+        store
+            .upsert_client(ClientRepresentation {
+                realm_id: "q".into(),
+                ..client("fresh")
+            })
+            .await
+            .expect("q's client");
+        store
+            .create_user(UserRepresentation {
+                username: "service-account-app".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("sa")
+            })
+            .await
+            .expect("service account");
+        store.create_user(user("ada")).await.expect("person");
+        store
+            .create_user(UserRepresentation {
+                realm_id: "q".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("q-sa")
+            })
+            .await
+            .expect("q's account");
+        for (realm, id, name) in [
+            ("q", "q-fresh", "service-account-fresh"),
+            (R, "held", "service-account-held"),
+        ] {
+            store
+                .create_user(UserRepresentation {
+                    realm_id: realm.into(),
+                    username: name.into(),
+                    ..user(id)
+                })
+                .await
+                .expect("namesake person");
+        }
+        app.client_id = "held".into();
+        let taken = store.upsert_client(app.clone()).await;
+        assert!(
+            matches!(taken, Err(KaisatsuError::Conflict(_))),
+            "{taken:?}"
+        );
+        app.client_id = "fresh".into();
+        let renamed = store.upsert_client(app).await.expect("q's id is free in r");
+        assert_eq!(renamed.client_id, "fresh");
+        let name = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                let u = store
+                    .get_user_by_id(realm, None, id)
+                    .await
+                    .expect("read")
+                    .expect("person");
+                (u.username, u.service_account_client_id)
+            }
+        };
+        assert_eq!(
+            name(R, "sa").await,
+            ("service-account-fresh".to_owned(), Some("fresh".to_owned()))
+        );
+        assert_eq!(name(R, "ada").await, ("ada".to_owned(), None));
+        assert_eq!(
+            name("q", "q-sa").await,
+            ("q-sa".to_owned(), Some("app".to_owned()))
+        );
+    }
+
+    /// A mapping written again replaces only itself, a removal takes only the named one, and a
+    /// role delete takes only that role's mappings: kind, holder, client, name and realm each
+    /// tell mappings apart.
+    #[tokio::test]
+    async fn role_mappings_are_told_apart_by_every_part() {
+        let store = MemoryStore::default();
+        let (app, other) = (
+            store.upsert_client(client("app")).await.expect("client"),
+            store.upsert_client(client("other")).await.expect("client"),
+        );
+        let mut g = group("ada", None, "/ada");
+        g.id = "ada".into();
+        store.upsert_group(g).await.expect("group");
+        for realm in [R, "q"] {
+            for id in ["ada", "bob"] {
+                store
+                    .create_user(UserRepresentation {
+                        realm_id: realm.into(),
+                        ..user(id)
+                    })
+                    .await
+                    .expect("person");
+            }
+        }
+        let m = |realm: &str, kind: &str, who: &str, uuid: Option<&str>, name: &str| {
+            RoleMappingRecord {
+                id: String::new(),
+                realm_id: realm.into(),
+                org_id: None,
+                principal_kind: kind.into(),
+                principal_id: who.into(),
+                role_id: name.into(),
+                role_name: name.into(),
+                client_uuid: uuid.map(str::to_owned),
+            }
+        };
+        let all = [
+            m(R, "user", "ada", None, "reader"),
+            m(R, "user", "ada", None, "writer"),
+            m(R, "user", "ada", Some(&app.id), "reader"),
+            m(R, "user", "ada", Some(&other.id), "reader"),
+            m(R, "user", "bob", None, "reader"),
+            m(R, "group", "ada", None, "reader"),
+            m("q", "user", "ada", None, "reader"),
+        ];
+        for mapping in all.iter().cloned() {
+            store.add_role_mapping(mapping).await.expect("map");
+        }
+        store
+            .add_role_mapping(m(R, "user", "ada", None, "reader"))
+            .await
+            .expect("again");
+        let held =
+            |realm: &'static str, kind: &'static str, who: &'static str, uuid: Option<String>| {
+                let store = &store;
+                async move {
+                    let mut got: Vec<String> = store
+                        .list_role_mappings_for_principal(realm, kind, who, uuid.as_deref())
+                        .await
+                        .expect("mappings")
+                        .into_iter()
+                        .map(|rm| rm.role_name)
+                        .collect();
+                    got.sort();
+                    got
+                }
+            };
+        let (a, o) = (Some(app.id.clone()), Some(other.id.clone()));
+        assert_eq!(
+            held(R, "user", "ada", None).await,
+            ["reader", "writer"],
+            "ada's once"
+        );
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        assert_eq!(held(R, "user", "ada", o.clone()).await, ["reader"]);
+        assert_eq!(held(R, "user", "bob", None).await, ["reader"]);
+        assert_eq!(held(R, "group", "ada", None).await, ["reader"]);
+        assert_eq!(held("q", "user", "ada", None).await, ["reader"]);
+
+        store
+            .remove_role_mapping(R, "user", "ada", Some(&other.id), "reader")
+            .await
+            .expect("remove");
+        assert!(held(R, "user", "ada", o.clone()).await.is_empty());
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        let person = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("ada");
+        assert_eq!(
+            person.client_roles.get("app"),
+            Some(&vec!["reader".to_owned()])
+        );
+        assert!(person.client_roles.get("other").is_none_or(Vec::is_empty));
+        store
+            .remove_role_mapping(R, "user", "ada", None, "writer")
+            .await
+            .expect("remove");
+        assert_eq!(held(R, "user", "ada", None).await, ["reader"]);
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        assert_eq!(held(R, "group", "ada", None).await, ["reader"]);
+        assert_eq!(held(R, "user", "bob", None).await, ["reader"]);
+        assert_eq!(held("q", "user", "ada", None).await, ["reader"]);
+
+        store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "reader".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        assert!(store.delete_role(R, None, "reader").await.expect("delete"));
+        assert!(
+            held(R, "user", "bob", None).await.is_empty(),
+            "the realm role is gone"
+        );
+        assert!(held(R, "group", "ada", None).await.is_empty());
+        assert_eq!(
+            held(R, "user", "ada", a).await,
+            ["reader"],
+            "the client role stays"
+        );
+        assert_eq!(
+            held("q", "user", "ada", None).await,
+            ["reader"],
+            "q keeps its role"
+        );
+    }
+
+    /// Deleting the second client's role takes it from that client's holders, not the first's.
+    #[tokio::test]
+    async fn deleting_a_role_of_another_client_leaves_the_first_clients_holders() {
+        let store = MemoryStore::default();
+        let (app, other) = (
+            store.upsert_client(client("app")).await.expect("client"),
+            store.upsert_client(client("other")).await.expect("client"),
+        );
+        store.create_user(user("both")).await.expect("user");
+        for c in [&app, &other] {
+            let role = store
+                .upsert_role(RoleRepresentation {
+                    realm_id: R.into(),
+                    name: "reader".into(),
+                    client_role: true,
+                    container_id: Some(c.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .expect("role");
+            store
+                .add_role_mapping(mapping("both", &role, Some(&c.id)))
+                .await
+                .expect("map");
+        }
+        assert!(
+            store
+                .delete_role(R, Some(&other.id), "reader")
+                .await
+                .expect("delete")
+        );
+        let held = store
+            .get_user_by_id(R, None, "both")
+            .await
+            .expect("read")
+            .expect("person")
+            .client_roles;
+        assert_eq!(held.get("app"), Some(&vec!["reader".to_owned()]));
+        assert!(held.get("other").is_none_or(Vec::is_empty));
+    }
+
+    /// A role is one per realm, container and name: written again it keeps its id; a realm role
+    /// and a client role of one name, or one name in two realms, are separate roles.
+    #[tokio::test]
+    async fn roles_are_one_per_realm_container_and_name() {
+        let store = MemoryStore::default();
+        let app = store.upsert_client(client("app")).await.expect("client");
+        let role = |realm: &str, container: Option<&str>| RoleRepresentation {
+            realm_id: realm.into(),
+            name: "reader".into(),
+            client_role: container.is_some(),
+            container_id: container.map(str::to_owned),
+            ..Default::default()
+        };
+        let realm_role = store.upsert_role(role(R, None)).await.expect("role");
+        let client_role = store
+            .upsert_role(role(R, Some(&app.id)))
+            .await
+            .expect("role");
+        let q_role = store.upsert_role(role("q", None)).await.expect("role");
+        assert_ne!(realm_role.id, client_role.id);
+        assert_ne!(realm_role.id, q_role.id);
+        let again = store
+            .upsert_role(RoleRepresentation {
+                description: Some("again".into()),
+                ..role(R, None)
+            })
+            .await
+            .expect("again");
+        assert_eq!(again.id, realm_role.id, "the same role keeps its id");
+        let realm_roles = store.list_roles(R, None).await.expect("realm roles");
+        assert_eq!(realm_roles.len(), 1);
+        assert_eq!(realm_roles[0].description.as_deref(), Some("again"));
+        let client_roles = store
+            .list_roles(R, Some(&app.id))
+            .await
+            .expect("client roles");
+        assert_eq!(client_roles.len(), 1);
+        assert_eq!(client_roles[0].id, client_role.id);
+        assert_eq!(store.list_roles("q", None).await.expect("q").len(), 1);
+        assert!(
+            store
+                .list_roles("q", Some(&app.id))
+                .await
+                .expect("q")
+                .is_empty()
+        );
+    }
+
+    /// Membership is per realm: a group or person of another realm is not found, a second add
+    /// is one membership, and a removal or a group delete takes only that membership.
+    #[tokio::test]
+    async fn group_membership_is_per_realm_group_and_person() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for id in ["ada", "bob"] {
+                store
+                    .create_user(UserRepresentation {
+                        realm_id: realm.into(),
+                        ..user(id)
+                    })
+                    .await
+                    .expect("person");
+            }
+            for name in ["one", "two"] {
+                let mut g = group(name, None, &format!("/{name}"));
+                g.realm_id = realm.into();
+                g.id = name.into();
+                store.upsert_group(g).await.expect("group");
+            }
+        }
+        store.create_user(user("only-r")).await.expect("person");
+        let mut only = group("only", None, "/only");
+        only.id = "only".into();
+        store.upsert_group(only).await.expect("group");
+        let missing = store.add_user_to_group("q", "ada", "only").await;
+        assert!(
+            matches!(missing, Err(KaisatsuError::NotFound(_))),
+            "{missing:?}"
+        );
+        let nobody = store.add_user_to_group("q", "only-r", "one").await;
+        assert!(
+            matches!(nobody, Err(KaisatsuError::NotFound(_))),
+            "{nobody:?}"
+        );
+        for (realm, person, g) in [
+            (R, "ada", "one"),
+            (R, "ada", "one"),
+            (R, "ada", "two"),
+            (R, "bob", "one"),
+            ("q", "ada", "one"),
+        ] {
+            store
+                .add_user_to_group(realm, person, g)
+                .await
+                .expect("member");
+        }
+        let members = |realm: &'static str, g: &'static str| {
+            let store = &store;
+            async move {
+                let mut ids: Vec<String> = store
+                    .list_group_members(realm, None, g, 0, 100)
+                    .await
+                    .expect("members")
+                    .into_iter()
+                    .map(|u| u.id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+        assert_eq!(members(R, "one").await, ["ada", "bob"], "ada once");
+        store
+            .remove_user_from_group(R, "ada", "two")
+            .await
+            .expect("remove");
+        store
+            .remove_user_from_group(R, "bob", "two")
+            .await
+            .expect("remove nothing");
+        assert!(members(R, "two").await.is_empty());
+        assert_eq!(members(R, "one").await, ["ada", "bob"]);
+        assert_eq!(members("q", "one").await, ["ada"]);
+        store
+            .add_user_to_group(R, "ada", "two")
+            .await
+            .expect("member again");
+        assert!(store.delete_group(R, None, "one").await.expect("delete"));
+        assert_eq!(
+            members(R, "two").await,
+            ["ada"],
+            "another group keeps its members"
+        );
+        assert_eq!(
+            members("q", "one").await,
+            ["ada"],
+            "q's group keeps its members"
+        );
+        assert!(
+            store
+                .get_group("q", None, "one")
+                .await
+                .expect("get")
+                .is_some()
+        );
+    }
+
     /// A role mapped twice is held once; removing a client role from a person who holds none of
     /// that client changes nothing, and a realm role goes on its own.
     #[tokio::test]
@@ -3512,6 +5740,256 @@ mod tests {
             .expect("claim");
         let claimed: Vec<&str> = claimed.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(claimed, ["kept-id", "with-user"], "a sent row stays sent");
+        for id in ["late-1", "late-2"] {
+            store
+                .enqueue_outbox(row(id, "pending"))
+                .await
+                .expect("enqueue");
+        }
+        let one = store
+            .claim_outbox_batch(R, 1, std::time::Duration::from_secs(60), 3)
+            .await
+            .expect("claim");
+        assert_eq!(
+            one.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            ["late-1"],
+            "a claim stops at its limit"
+        );
+    }
+
+    /// A credential, provider, required action and admin event handed over with an id (and a
+    /// credential with its creation time) keep them; the store fills in only what is missing.
+    #[tokio::test]
+    async fn rows_handed_over_with_an_id_keep_it() {
+        let store = MemoryStore::default();
+        store
+            .upsert_credential(CredentialRecord {
+                created_date: 42,
+                ..credential(R, "pw", "p", "password")
+            })
+            .await
+            .expect("credential");
+        let creds = store.list_credentials(R, "p").await.expect("list");
+        assert_eq!(
+            creds
+                .iter()
+                .map(|c| (c.id.as_str(), c.created_date))
+                .collect::<Vec<_>>(),
+            [("pw", 42)]
+        );
+        store
+            .upsert_idp(IdentityProviderRepresentation {
+                internal_id: "idp-1".into(),
+                realm_id: R.into(),
+                alias: "corp".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("idp");
+        let idp = store.get_idp(R, "corp").await.expect("get").expect("idp");
+        assert_eq!(idp.internal_id, "idp-1");
+        store
+            .upsert_required_action(RequiredActionConfig {
+                id: "ra-1".into(),
+                realm_id: R.into(),
+                ..Default::default()
+            })
+            .await
+            .expect("required action");
+        let ids: Vec<String> = store
+            .list_required_actions(R)
+            .await
+            .expect("list")
+            .into_iter()
+            .map(|ra| ra.id)
+            .collect();
+        assert!(ids.contains(&"ra-1".to_owned()), "{ids:?}");
+        assert!(!ids.contains(&format!("{R}:CONFIGURE_TOTP")), "{ids:?}");
+        store
+            .append_admin_event(AdminEvent {
+                id: "ae-1".into(),
+                realm_id: R.into(),
+                org_id: None,
+                time: 1,
+                operation_type: "CREATE".into(),
+                resource_type: "USER".into(),
+                resource_path: "users/p".into(),
+                actor_id: "a".into(),
+                actor_client_id: None,
+                representation: None,
+            })
+            .await
+            .expect("admin event");
+        let events = store.list_admin_events(R, None).await.expect("list");
+        assert_eq!(
+            events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["ae-1"]
+        );
+    }
+
+    /// A person, group or client nobody stored reads as none, and the store hands out the key
+    /// encryption key it was built with.
+    #[tokio::test]
+    async fn unknown_rows_read_as_none_and_the_kek_is_the_one_given() {
+        let kek = Kek::generate_for_tests();
+        let store = MemoryStore::new(kek.clone());
+        assert!(
+            store
+                .get_user_by_id(R, None, "ghost")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_group_by_path(R, None, "/nowhere")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_client_by_uuid(R, None, "ghost")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        let sealed = kek.encrypt(b"aad", b"secret").expect("encrypt");
+        assert_eq!(
+            store.kek().decrypt(b"aad", &sealed).expect("decrypt"),
+            b"secret"
+        );
+        let other = MemoryStore::default();
+        assert!(
+            other.kek().decrypt(b"aad", &sealed).is_err(),
+            "another store's key"
+        );
+    }
+
+    /// Mapping a client role twice lists it once; removing a mapping of a person nobody stored
+    /// drops the row and touches no one.
+    #[tokio::test]
+    async fn a_client_role_mapped_twice_is_held_once() {
+        let store = MemoryStore::default();
+        let app = store.upsert_client(client("app")).await.expect("client");
+        let role = store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "reader".into(),
+                client_role: true,
+                container_id: Some(app.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        store.create_user(user("holder")).await.expect("user");
+        for _ in 0..2 {
+            store
+                .add_role_mapping(mapping("holder", &role, Some(&app.id)))
+                .await
+                .expect("map");
+        }
+        let holder = store
+            .get_user_by_id(R, None, "holder")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            holder.client_roles.get("app"),
+            Some(&vec!["reader".to_owned()])
+        );
+        store
+            .inner
+            .write()
+            .role_mappings
+            .push(mapping("ghost", &role, Some(&app.id)));
+        store
+            .remove_role_mapping(R, "user", "ghost", Some(&app.id), "reader")
+            .await
+            .expect("remove");
+        let st = store.inner.read();
+        assert!(st.role_mappings.iter().all(|m| m.principal_id != "ghost"));
+        assert!(st.role_mappings.iter().any(|m| m.principal_id == "holder"));
+    }
+
+    /// Realms list by name and a person's groups by path, whatever order they were stored in;
+    /// removing a client mapping from a person holding none of that client's roles leaves their
+    /// realm roles alone.
+    #[tokio::test]
+    async fn realms_and_a_persons_groups_list_in_order() {
+        let store = MemoryStore::default();
+        for name in ["zeta", "alpha", "mid"] {
+            store
+                .upsert_realm(RealmConfig {
+                    realm: name.into(),
+                    ..RealmConfig::default()
+                })
+                .await
+                .expect("realm");
+        }
+        let realms: Vec<String> = store
+            .list_realms()
+            .await
+            .expect("realms")
+            .into_iter()
+            .map(|r| r.realm)
+            .collect();
+        assert_eq!(realms, ["alpha", "mid", "zeta"]);
+        store.create_user(user("ada")).await.expect("person");
+        for name in ["zed", "abe"] {
+            let mut g = group(name, None, &format!("/{name}"));
+            g.id = name.into();
+            store.upsert_group(g).await.expect("group");
+            store.add_user_to_group(R, "ada", name).await.expect("join");
+        }
+        let paths: Vec<String> = store
+            .list_user_groups(R, "ada")
+            .await
+            .expect("groups")
+            .into_iter()
+            .map(|g| g.path)
+            .collect();
+        assert_eq!(paths, ["/abe", "/zed"]);
+        let app = store.upsert_client(client("app")).await.expect("client");
+        store.inner.write().users[0].realm_roles = vec!["reader".into()];
+        store
+            .remove_role_mapping(R, "user", "ada", Some(&app.id), "reader")
+            .await
+            .expect("remove");
+        let ada = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            ada.realm_roles,
+            ["reader"],
+            "a client mapping is not a realm role"
+        );
+        assert!(!ada.client_roles.contains_key("app"));
+        let reader = RoleRepresentation {
+            id: "reader-id".into(),
+            name: "reader".into(),
+            ..Default::default()
+        };
+        let mut for_group = mapping("abe", &reader, None);
+        for_group.principal_kind = "group".into();
+        store.inner.write().role_mappings.push(for_group);
+        store
+            .remove_role_mapping(R, "group", "abe", None, "reader")
+            .await
+            .expect("remove");
+        assert!(store.inner.read().role_mappings.is_empty());
+        let ada = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            ada.realm_roles,
+            ["reader"],
+            "a group's mapping is not the person's"
+        );
     }
 
     /// A row handed over without an id gets a fresh one, on its own and beside a person's update.

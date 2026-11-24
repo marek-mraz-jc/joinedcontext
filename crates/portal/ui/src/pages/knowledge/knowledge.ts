@@ -1,5 +1,6 @@
 // The knowledge assistant's administration routes (API/01 §34, T-3057): what a project's
 // sources hold once crawled. The answers are jc-assistant's; the shapes below are API/05 §3.
+import JCRender from "../../generated/assistantRender";
 import { ApiError, readCsrfToken } from "../../api/client";
 import type { ProblemDetails } from "../../api/client";
 import type { Manifest } from "../../api/manifest";
@@ -337,18 +338,6 @@ export interface Citation {
   title?: string;
 }
 
-/** The events of API/05 §1.3, as the chat panel reads them. */
-export type ChatEvent =
-  | { name: "conversation"; id: string }
-  | { name: "tool"; tool: string; endpoint?: string; status: "started" | "done" | "failed" }
-  | { name: "script"; code: string; output?: string; error?: string }
-  | { name: "answer"; text: string }
-  | { name: "citations"; citations: Citation[] }
-  | { name: "data"; data: DataTable }
-  | { name: "visualization"; visual: Visual | null }
-  | { name: "error"; detail: string; title?: string }
-  | { name: "done"; tokens: number };
-
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -366,7 +355,7 @@ function webUrl(value: unknown): string | undefined {
   return typeof value === "string" && /^https?:\/\//.test(value) ? value : undefined;
 }
 
-function dataTable(d: Record<string, unknown>): DataTable | null {
+export function dataTable(d: Record<string, unknown>): DataTable | null {
   if (!Array.isArray(d.columns) || d.columns.length === 0) return null;
   const columns = d.columns.map((c) => (typeof c === "string" ? c : JSON.stringify(c)));
   const rows = (Array.isArray(d.rows) ? d.rows : []).filter(Array.isArray).slice(0, 50) as unknown[][];
@@ -490,80 +479,6 @@ export function visualOf(d: Record<string, unknown>): Visual | null {
   return { spec: { height: lying ? barsHeight(rows.length) : LINE_HEIGHT, ...rest, data: { values: rows } }, rows };
 }
 
-/** One event block's name and data as a `ChatEvent`; `null` for one this panel does not show. */
-function chatEvent(name: string, data: unknown): ChatEvent | null {
-  const d = (data ?? {}) as Record<string, unknown>;
-  switch (name) {
-    case "conversation":
-      return { name, id: text(d.id) };
-    case "tool": {
-      const status = d.status === "done" || d.status === "failed" ? d.status : "started";
-      return { name, tool: text(d.name), endpoint: typeof d.endpoint === "string" ? d.endpoint : undefined, status };
-    }
-    case "script":
-      return {
-        name,
-        code: text(d.code),
-        output: typeof d.output === "string" ? d.output : undefined,
-        error: typeof d.error === "string" ? d.error : undefined,
-      };
-    case "answer":
-      return { name, text: text(d.text) };
-    case "citations":
-      return {
-        name,
-        citations: (Array.isArray(data) ? data : [])
-          .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null && typeof c.n === "number")
-          .map((c) => ({
-            n: c.n as number,
-            // An uploaded file is cited as `upload:{source}/{file}`, shown by name, never as a link (T-4869).
-            url: typeof c.url === "string" && /^(https?:\/\/|upload:)/.test(c.url) ? c.url : undefined,
-            tool: typeof c.tool === "string" ? c.tool : undefined,
-            endpoint: typeof c.endpoint === "string" ? c.endpoint : undefined,
-            title: typeof c.title === "string" ? c.title : undefined,
-          })),
-      };
-    case "data": {
-      const table = dataTable(d);
-      return table ? { name, data: table } : null;
-    }
-    case "visualization":
-      return { name, visual: visualOf(d) };
-    case "error":
-      return { name, detail: text(d.detail), title: text(d.title) || undefined };
-    case "done":
-      return { name, tokens: typeof d.tokens === "number" ? d.tokens : 0 };
-    default:
-      return null;
-  }
-}
-
-/**
- * The complete Server-Sent Events in `buffer`, and what is left of an event still arriving. A
- * block whose data is not JSON is skipped: the stream goes on.
- */
-export function readEvents(buffer: string): { events: ChatEvent[]; rest: string } {
-  const events: ChatEvent[] = [];
-  const blocks = buffer.replace(/\r\n/g, "\n").split("\n\n");
-  const rest = blocks.pop() ?? "";
-  for (const block of blocks) {
-    let name = "";
-    let data = "";
-    for (const line of block.split("\n")) {
-      if (line.startsWith("event:")) name = line.slice(6).trim();
-      else if (line.startsWith("data:")) data += line.slice(5).trim();
-    }
-    if (!name) continue;
-    try {
-      const event = chatEvent(name, JSON.parse(data));
-      if (event) events.push(event);
-    } catch {
-      // A malformed block is skipped; the next one may be whole.
-    }
-  }
-  return { events, rest };
-}
-
 export interface ChatQuestion {
   conversation?: string;
   message: string;
@@ -572,16 +487,39 @@ export interface ChatQuestion {
 }
 
 /**
+ * The hosts the Portal chat's links may go to (T-7790), as the widget's `linkHosts` (platform
+ * chat/widget.rs `link_hosts`, T-4149): the pages the deployment is placed on, its website
+ * sources' start addresses and the national open data portal. The chat adds the hosts each
+ * answer cites and this Portal's own.
+ */
+export function linkHostsOf(origins: unknown, named: string[] | undefined, rows: KnowledgeSourceRow[]): string[] {
+  const urls = [
+    ...(Array.isArray(origins) ? origins.filter((o): o is string => typeof o === "string") : []),
+    ...rows.filter((row) => (named ?? []).includes(row.source)).flatMap((row) => row.startUrls),
+  ];
+  const hosts = urls.flatMap((url) => {
+    try {
+      return [new URL(url).hostname.replace(/^www\./, "")];
+    } catch {
+      return [];
+    }
+  });
+  return [...new Set([...hosts, "data.gov.sk"])].sort();
+}
+
+/**
  * Asks `deployment` as the signed-in person (API/01 §34, AG-115) and hands each event to
- * `onEvent` as it arrives. A refusal before the stream starts throws an `ApiError` with the
- * Portal's sentence.
+ * `onEvent` by its name and parsed data as it arrives (the widget's parser, T-7790). `onOpen`
+ * gets the response's `Retry-After` first, so a limit can say when it resets. A refusal before
+ * the stream starts throws an `ApiError` with the Portal's sentence.
  */
 export async function askAssistant(
   project: string,
   deployment: string,
   question: ChatQuestion,
-  onEvent: (event: ChatEvent) => void,
+  onEvent: (name: string, data: unknown) => void,
   signal?: AbortSignal,
+  onOpen?: (retryAfter: string | null) => void,
 ): Promise<void> {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream" };
   const csrf = readCsrfToken();
@@ -592,6 +530,7 @@ export async function askAssistant(
       { method: "POST", credentials: "same-origin", headers, body: JSON.stringify(question), signal },
     ),
   );
+  onOpen?.(response.headers.get("Retry-After"));
   if (!response.ok || !response.body) {
     const problem = (await response.json().catch(() => null)) as ProblemDetails | null;
     const detail = typeof problem?.detail === "string" ? problem.detail : `HTTP ${response.status}`;
@@ -600,15 +539,15 @@ export async function askAssistant(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const hand = (events: { name: string; data: unknown }[]) => events.forEach((event) => onEvent(event.name, event.data));
   for (;;) {
     const chunk = await reader.read();
     if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    const { events, rest } = readEvents(buffer);
-    buffer = rest;
-    events.forEach(onEvent);
+    const read = JCRender.events(buffer + decoder.decode(chunk.value, { stream: true }));
+    buffer = read.rest;
+    hand(read.events);
   }
-  readEvents(`${buffer}${decoder.decode()}\n\n`).events.forEach(onEvent);
+  hand(JCRender.events(`${buffer}${decoder.decode()}\n\n`).events);
 }
 
 /**

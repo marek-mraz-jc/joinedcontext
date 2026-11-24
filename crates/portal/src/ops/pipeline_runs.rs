@@ -385,4 +385,136 @@ mod tests {
         assert_eq!(next, Some(1));
         assert_eq!(page(Vec::new(), LOG_LINES), (Vec::new(), None));
     }
+
+    use super::super::testkit::{admin, caller, envelope, person, state};
+    use super::super::{call, find, Via};
+    use crate::pipeline_log::NewLine;
+
+    /// Pipeline `counters` of doprava with two runs: one sent record, then one record failing in
+    /// step 2 and one sent.
+    async fn logged() -> crate::state::AppState {
+        let state = state();
+        state
+            .mirror
+            .upsert(envelope("Pipeline", "counters", "doprava", json!({})));
+        let new = |id: &str, step: Option<i32>, outcome: Outcome, message: &str| NewLine {
+            record_id: id.into(),
+            step,
+            outcome,
+            message: message.into(),
+        };
+        for (run, lines) in [
+            (
+                "2026-11-01T10:00:00Z",
+                vec![new("a", None, Outcome::Sent, "")],
+            ),
+            (
+                "2026-11-01T11:00:00Z",
+                vec![
+                    new("b", Some(2), Outcome::Failed, "speed is no number"),
+                    new("c", None, Outcome::Sent, ""),
+                ],
+            ),
+        ] {
+            state
+                .pipeline_log
+                .append("doprava", "counters", run, &lines)
+                .await
+                .expect("logged");
+        }
+        state
+    }
+
+    async fn logs(state: &crate::state::AppState, input: Value) -> Result<Value, OpError> {
+        call(
+            find(LOGS).expect("listed"),
+            &admin(state),
+            state,
+            "doprava",
+            input,
+        )
+        .await
+    }
+
+    /// Without a run the newest one's lines come back beside the list of runs; a step keeps only
+    /// the lines that failed in it.
+    #[tokio::test]
+    async fn the_newest_runs_lines_come_back_and_a_step_narrows_them() {
+        let state = logged().await;
+        let all = logs(&state, json!({ "name": "counters" }))
+            .await
+            .expect("the logs");
+        let runs = all["runs"].as_array().expect("runs");
+        assert_eq!(runs.len(), 2, "{all}");
+        assert_eq!(all["run"], runs[0]["run"], "{all}");
+        assert!(all.get("next").is_none(), "{all}");
+        let newest = all["run"].as_str().unwrap_or_default().to_owned();
+        let (other, lines_of_other) = if newest.starts_with("2026-11-01T11") {
+            ("2026-11-01T10:00:00Z", 1)
+        } else {
+            ("2026-11-01T11:00:00Z", 2)
+        };
+        let one = logs(&state, json!({ "name": "counters", "run": other }))
+            .await
+            .expect("one run");
+        assert_eq!(one["run"], other);
+        assert_eq!(
+            one["lines"].as_array().map(Vec::len),
+            Some(lines_of_other),
+            "{one}"
+        );
+
+        let step = logs(
+            &state,
+            json!({ "name": "counters", "run": "2026-11-01T11:00:00Z", "step": 2 }),
+        )
+        .await
+        .expect("one step");
+        let lines = step["lines"].as_array().expect("lines");
+        assert_eq!(lines.len(), 1, "{step}");
+        assert_eq!(
+            (lines[0]["recordId"].as_str(), lines[0]["message"].as_str()),
+            (Some("b"), Some("speed is no number"))
+        );
+    }
+
+    /// A pipeline that never ran answers no run and no lines; an unknown pipeline and a caller
+    /// who may not read the project get the same 404.
+    #[tokio::test]
+    async fn a_pipeline_that_never_ran_has_no_lines_and_a_stranger_finds_none() {
+        let state = logged().await;
+        state
+            .mirror
+            .upsert(envelope("Pipeline", "idle", "doprava", json!({})));
+        let idle = logs(&state, json!({ "name": "idle" }))
+            .await
+            .expect("an answer");
+        assert_eq!(
+            (
+                idle["runs"].clone(),
+                idle["run"].clone(),
+                idle["lines"].clone()
+            ),
+            (json!([]), Value::Null, json!([]))
+        );
+        for (who, name) in [
+            (admin(&state), "gone"),
+            (caller(person("mallory", &[]), Via::Mcp), "counters"),
+        ] {
+            match call(
+                find(LOGS).expect("listed"),
+                &who,
+                &state,
+                "doprava",
+                json!({ "name": name }),
+            )
+            .await
+            {
+                Err(OpError::Api(crate::error::ApiError::NotFound(why))) => {
+                    assert!(why.contains("not found"), "{why}")
+                }
+                other => panic!("a 404, got {other:?}"),
+            }
+        }
+    }
 }

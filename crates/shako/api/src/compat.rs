@@ -722,10 +722,7 @@ async fn compat_get_git_tree(
     let per_page = q.per_page.or(q.limit).unwrap_or(1000).clamp(1, 1000);
 
     let res =
-        tokio::task::spawn_blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))
-            .and_then(|r| r);
+        crate::service::blocking(move || list_tree_entries(&disk_path, &git_ref, recursive)).await;
 
     match res {
         Ok((tree_sha, all_entries)) => {
@@ -1295,7 +1292,7 @@ async fn compat_list_commits(
     }
     let path_filter = q.path;
 
-    let res = tokio::task::spawn_blocking(move || {
+    let res = crate::service::blocking(move || {
         list_commits(
             &disk_path,
             &git_ref,
@@ -1305,8 +1302,6 @@ async fn compat_list_commits(
         )
     })
     .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r)
     .map(|commits| commits.into_iter().skip(skip).collect::<Vec<_>>());
 
     match res {
@@ -1352,10 +1347,7 @@ async fn compat_get_git_commit(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
-    let res = tokio::task::spawn_blocking(move || read_commit_info(&disk_path, &sha))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res = crate::service::blocking(move || read_commit_info(&disk_path, &sha)).await;
 
     match res {
         Ok(c) => (
@@ -1411,10 +1403,7 @@ async fn compat_list_tags(
     let page = q.page.unwrap_or(1).max(1);
     let limit = q.limit.or(q.per_page).unwrap_or(50).clamp(1, 500);
 
-    let res = tokio::task::spawn_blocking(move || list_tags(&disk_path))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res = crate::service::blocking(move || list_tags(&disk_path)).await;
 
     match res {
         Ok(all_tags) => {

@@ -28,5 +28,6 @@ uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 zeroize = { version = "1.9", features = ["derive"] }
 
 [dev-dependencies]
+kaisatsu-store-memory = { path = "../store-memory" }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

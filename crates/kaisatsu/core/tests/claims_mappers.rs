@@ -249,6 +249,78 @@ fn built_in_claims_differ_per_token_kind() {
     assert!(at.get("realm_access").is_none() && at.get("resource_access").is_none());
 }
 
+/// The amr, acr, full-name, client-role and sub mappers write their claim where the built-in
+/// claims do not: user info without the profile scope, an empty amr, a claim name of their own,
+/// and `sub` back to the local id after a pairwise mapper.
+#[test]
+fn mappers_write_what_the_built_in_claims_leave_out() {
+    let ui = |kind: &str| mapper(kind, &[("userinfo.token.claim", "true")]);
+    let mut f = Fixture::new(vec![
+        ui("oidc-amr-mapper"),
+        ui("oidc-acr-mapper"),
+        ui("oidc-full-name-mapper"),
+        mapper(
+            "oidc-usermodel-client-role-mapper",
+            &[
+                ("usermodel.clientRoleMapping.clientId", "portal-api"),
+                ("claim.name", "pa"),
+            ],
+        ),
+        mapper(
+            "oidc-sha256-pairwise-sub-mapper",
+            &[
+                ("sectorIdentifierUri", "https://portal.example/callbacks"),
+                ("pairwiseSubAlgorithmSalt", "salt"),
+            ],
+        ),
+        mapper("oidc-sub-mapper", &[]),
+    ]);
+    f.scopes.clear();
+    let info = f.eval(TokenKind::UserInfo);
+    assert_eq!(info["amr"], json!(["pwd", "otp"]));
+    assert_eq!(info["acr"], "mfa");
+    assert_eq!(info["name"], "Alice Liddell");
+    let at = f.eval(TokenKind::AccessToken);
+    assert_eq!(at["pa"], json!(["reader"]));
+    assert_eq!(at["sub"], "u-1", "the sub mapper after the pairwise one");
+    f.amr.clear();
+    let at = f.eval(TokenKind::AccessToken);
+    assert_eq!(at["amr"], json!([]), "the amr mapper writes an empty list");
+    assert!(f.eval(TokenKind::UserInfo).get("amr").is_some());
+}
+
+/// Without the profile and email scopes, a property mapper of the username or the e-mail fills
+/// its standard claim; the organization claim of a pinned organization scope is in tokens, never
+/// in user info.
+#[test]
+fn property_mappers_fill_standard_claims_and_organization_skips_user_info() {
+    let f = Fixture::new(vec![
+        mapper(
+            "oidc-usermodel-property-mapper",
+            &[
+                ("user.attribute", "username"),
+                ("claim.name", "preferred_username"),
+            ],
+        ),
+        mapper(
+            "oidc-usermodel-property-mapper",
+            &[("user.attribute", "email"), ("claim.name", "email")],
+        ),
+    ]);
+    let mut ctx = f.ctx();
+    ctx.active_scopes = &[];
+    ctx.granted_scope_string = "openid organization:pinned-org";
+    let at = evaluate_mappers(&ctx, TokenKind::AccessToken).unwrap();
+    assert_eq!(at["preferred_username"], "alice");
+    assert_eq!(at["email"], "alice@hel.fi");
+    assert_eq!(at["organization"], json!({"pinned-org": {}}));
+    let info = evaluate_mappers(&ctx, TokenKind::UserInfo).unwrap();
+    assert!(info.get("organization").is_none());
+    ctx.granted_scope_string = "openid";
+    let plain = evaluate_mappers(&ctx, TokenKind::AccessToken).unwrap();
+    assert!(plain.get("organization").is_none(), "no organization scope");
+}
+
 /// IDN-02, TEN-04: a token says what kind of subject it names; a workload's token also carries its
 /// project's id, read from the client registry row and never from the client id's text. A mapper
 /// cannot write either claim, and a malformed id is left out for the verifier to refuse.
@@ -620,6 +692,26 @@ fn unknown_mapper_kinds_are_refused() {
     let mut f = Fixture::new(vec![]);
     f.scopes[0].protocol_mappers = vec![mapper("nope", &[])];
     assert!(evaluate_mappers(&f.ctx(), TokenKind::IdToken).is_err());
+    // Refused also when it would not apply to the token kind asked for.
+    let off = Fixture::new(vec![mapper(
+        "script-mapper",
+        &[("access.token.claim", "false")],
+    )]);
+    let err = evaluate_mappers(&off.ctx(), TokenKind::AccessToken).unwrap_err();
+    assert!(err.to_string().contains("script-mapper"), "{err}");
+    // Every known kind is evaluated, none refused.
+    for kind in known_mapper_kinds() {
+        let cfg: &[(&str, &str)] = if *kind == "oidc-sha256-pairwise-sub-mapper" {
+            &[("sectorIdentifierUri", "https://sector-a.example.org/cb")]
+        } else {
+            &[]
+        };
+        let f = Fixture::new(vec![mapper(kind, cfg)]);
+        assert!(
+            evaluate_mappers(&f.ctx(), TokenKind::AccessToken).is_ok(),
+            "{kind}"
+        );
+    }
 }
 
 /// K4: Proved red against pre-K4 where `oidc-sha256-pairwise-sub-mapper` returned the plain

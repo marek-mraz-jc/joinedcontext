@@ -1,0 +1,1302 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ArchiveFormat": {
+      "description": "The archive formats an `http` connection reads (PL-72).",
+      "oneOf": [
+        {
+          "description": "A zip archive: stored or deflated members, no Zip64.",
+          "enum": [
+            "zip"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Authorization": {
+      "additionalProperties": false,
+      "description": "An `Authorization` header whose value is assembled from a secret (CC-06).",
+      "properties": {
+        "header": {
+          "description": "The header the credential is written into, `Authorization` when absent.\n\nAn open-data feed that authenticates with an API key usually wants it in a header of its own; without this the only way to reach such a feed would be to write the key into `headers` as a value, which is what MF-35 exists to prevent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            }
+          ],
+          "description": "Where the credential comes from."
+        },
+        "scheme": {
+          "description": "The scheme written before the secret.\n\n`Bearer` when absent on `Authorization`, and nothing at all on any other header: a vendor key header takes the bare key and refuses a scheme in front of it. An explicit scheme always wins.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "headerRef"
+      ],
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "DataSourceSpec": {
+      "additionalProperties": false,
+      "description": "Desired state of a `DataSource`: one connection and its credentials (MF-35).",
+      "properties": {
+        "gtfsRt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GtfsRtConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The GTFS-realtime connection, present when `type` is `gtfs-rt`."
+        },
+        "http": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The HTTP connection, present when `type` is `http`."
+        },
+        "input": {
+          "description": "Verbatim input configuration document for runner-provided inputs (PL-50)."
+        },
+        "mqtt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MqttConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The MQTT connection, present when `type` is `mqtt`."
+        },
+        "personalFields": {
+          "description": "The fields of this source's records that hold personal data (AG-158): a sample of the source answered to an MCP client or an agent run leaves them out and names them.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "secrets": {
+          "description": "Secret references for runner-provided inputs (PL-50, MF-35).",
+          "items": {
+            "$ref": "#/definitions/SecretRef"
+          },
+          "type": "array"
+        },
+        "tls": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TlsSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Transport security for the connection above."
+        },
+        "type": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DataSourceType"
+            }
+          ],
+          "description": "Which connection block below is the live one."
+        },
+        "webSocket": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebSocketConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The WebSocket connection, present when `type` is `websocket`."
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebhookConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The webhook a sender pushes to, present when `type` is `webhook`."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DataSourceType": {
+      "description": "Which kind of feed a DataSource connects to: a typed connection or any runner input (MF-35, PL-50).",
+      "examples": [
+        "mqtt",
+        "http",
+        "websocket",
+        "gtfs-rt",
+        "webhook",
+        "nats",
+        "csv",
+        "http_client"
+      ],
+      "type": "string"
+    },
+    "GtfsFeed": {
+      "description": "The three feeds GTFS-realtime defines.",
+      "oneOf": [
+        {
+          "description": "Where the vehicles are.",
+          "enum": [
+            "vehiclePositions"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "How the trips are running against the timetable.",
+          "enum": [
+            "tripUpdates"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Service alerts.",
+          "enum": [
+            "alerts"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "GtfsRtConnection": {
+      "additionalProperties": false,
+      "description": "A GTFS-realtime feed (Architecture/08 §6).",
+      "properties": {
+        "feed": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/GtfsFeed"
+            }
+          ],
+          "description": "Which of the three GTFS-realtime feeds this URL serves."
+        },
+        "url": {
+          "description": "The protobuf feed URL, `http://` or `https://`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feed",
+        "url"
+      ],
+      "type": "object"
+    },
+    "HttpArchive": {
+      "additionalProperties": false,
+      "description": "The named members of the archive an `http` connection serves (PL-72, Architecture/08 §6).\n\nThe runner reads the directory from the archive's last 64 KiB and then each member by its own range, so a member nobody named is never fetched or inflated.",
+      "properties": {
+        "format": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ArchiveFormat"
+            }
+          ],
+          "description": "The archive format; `zip` is the only one."
+        },
+        "maxBytes": {
+          "description": "The largest member accepted, packed and unpacked, in bytes; 32 MiB when absent, at most 256 MiB. A deflated member's inflate stops at the size its directory declares.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The member names to read, at most 20, each letters, digits, `.`, `_`, `-` and `/`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "format",
+        "members"
+      ],
+      "type": "object"
+    },
+    "HttpBodyFormat": {
+      "description": "How an `http` connection splits the body it fetched into messages (PL-114).",
+      "oneOf": [
+        {
+          "description": "A CSV file with a header row: one message per row, the shape Bento's `csv` input sends.",
+          "enum": [
+            "csv"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A spreadsheet (xlsx, xlsm, xlsb, xls or ods): one message per row of its first sheet, keyed by the header row, each value as text the way the sheet's CSV export writes it, dates in RFC 3339 (the runner's `unarchive` format `xlsx`, T-7058).",
+          "enum": [
+            "xlsx"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A zip holding one ESRI shapefile layer (`.shp`, `.dbf`, `.prj`): one GeoJSON Feature per record, reprojected from the `.prj`'s CRS to WGS 84, properties from the `.dbf` (the runner's `unarchive` format `shapefile`, T-7089).",
+          "enum": [
+            "shapefile"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "HttpConnection": {
+      "additionalProperties": false,
+      "description": "An HTTP resource the runner polls (Architecture/08 §6).",
+      "properties": {
+        "archive": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpArchive"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The members of a zip archive to read, by HTTP `Range`, instead of the whole body (PL-72)."
+        },
+        "authorization": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Authorization"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `Authorization` header, built from a secret (CC-06)."
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpBodyFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the body becomes messages: `csv` or `xlsx` hands each row to the steps as one message keyed by the header's column names, `shapefile` each record of a zipped shapefile as a WGS 84 GeoJSON Feature; absent, the whole body is one message (PL-114)."
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Static request headers. A header carrying a credential belongs in `authorization`.",
+          "type": "object"
+        },
+        "maxBytes": {
+          "description": "The largest response body accepted, in bytes; 32 MiB when absent, at most 256 MiB. The runner refuses a larger body before any step of the pipeline sees it (PL-113).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "paging": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpPaging"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the runner walks a paged source page by page (PL-31, T-7056): each page is one message, split by `records` as a single body is. Absent, the URL is read once."
+        },
+        "preset": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpPreset"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A known kind of open data API (T-7067): the runner sends its query parameters and walks its pages, so `paging` and `records` stay unset. CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings, with the URL of its search, query or items resource."
+        },
+        "records": {
+          "description": "Where the records sit in a JSON body: a dotted path to an array, `data.stations` for a GBFS feed. The runner hands each element to the steps as one message; absent, the whole body is one message. Names only, never an expression (PL-114).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sheet": {
+          "description": "The sheet of an `xlsx` body to read, by its name as the workbook's tab shows it (`Stations 2026`); absent, the first sheet (T-7086).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout": {
+          "description": "Request timeout as a Bento duration, `10s`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "The URL to fetch, `http://` or `https://`.",
+          "type": "string"
+        },
+        "verb": {
+          "description": "HTTP method, `GET` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "HttpPaging": {
+      "additionalProperties": false,
+      "description": "How a paged `http` source is walked (PL-31, T-7056): rendered to the runner's `paginate` option, so no mapping writes its own loop. `records` (`spec.http.records`) names each page's array; `page`, `offset`, `total` and `maxRecords` count it. A run is complete only when a stop rule held: an empty or short page, the total reached, `more` false, or no next cursor or URL.",
+      "properties": {
+        "cursor": {
+          "description": "`cursor`: the body path to the next cursor, `meta.next`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursorHeader": {
+          "description": "`cursor`: the header the cursor is sent in, instead of a parameter.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursorParam": {
+          "description": "`cursor`: the query parameter the cursor is sent in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delay": {
+          "description": "The pause between pages as a duration, `200ms`, at most a minute.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "`offset`: the page size asked for. The offset moves by the records received.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limitParam": {
+          "description": "`offset`: the page size parameter, `limit` when absent (ArcGIS `resultRecordCount`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "maxPages": {
+          "description": "The most pages one run reads, 1 to 10000, 1000 when absent; reaching it fails the run.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxRecords": {
+          "description": "The most records one run reads; reaching it before a stop rule fails the run.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HttpPagingMode"
+            }
+          ],
+          "description": "`page`, `offset`, `cursor`, `link` (RFC 8288 `rel=next`) or `nextUrl`."
+        },
+        "more": {
+          "description": "The body path to a boolean saying another page exists, `exceededTransferLimit`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next": {
+          "description": "`nextUrl`: the body path to the next URL, `@odata.nextLink` or `links[rel=next].href`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offsetParam": {
+          "description": "`offset`: the offset parameter, `offset` when absent (ArcGIS `resultOffset`, OData `$skip`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "orderBy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HttpPagingOrder"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A parameter that keeps the order stable across pages, `orderByFields=OBJECTID`."
+        },
+        "param": {
+          "description": "`page`: the page number parameter, `page` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "description": "`page`: the page size asked for; a shorter page ends the walk.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sizeParam": {
+          "description": "`page`: the page size parameter, sent with `size`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "`page` and `offset`: the first page number (1) or offset (0).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total": {
+          "description": "The body path to the count the first page announces, `numberMatched`; a run that read another number of records fails.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "HttpPagingMode": {
+      "description": "How a paged source names its next page.",
+      "oneOf": [
+        {
+          "description": "A page number parameter.",
+          "enum": [
+            "page"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An offset and a page size parameter.",
+          "enum": [
+            "offset"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A cursor read from the body and sent back.",
+          "enum": [
+            "cursor"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The `Link` header's `rel=next` target.",
+          "enum": [
+            "link"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A next URL read from the body.",
+          "enum": [
+            "nextUrl"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "HttpPagingOrder": {
+      "additionalProperties": false,
+      "description": "The order parameter of a paged source.",
+      "properties": {
+        "param": {
+          "description": "The parameter name, `orderByFields` or `$orderby`.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value, `OBJECTID`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "param",
+        "value"
+      ],
+      "type": "object"
+    },
+    "HttpPreset": {
+      "additionalProperties": false,
+      "description": "A known kind of open data API an `http` connection reads (T-7067): the preset sends the API's own query parameters and walks its pages, so a person picks the kind and the URL and types no parameter. Each field belongs to the kinds its comment names; another kind refuses it.",
+      "properties": {
+        "expand": {
+          "description": "`sensorThings`: the related entities read with each one, `Datastreams/Observations`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HttpPresetKind"
+            }
+          ],
+          "description": "`ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`."
+        },
+        "objectIdField": {
+          "description": "`arcgisFeature`: the field that keeps the order stable across pages, `OBJECTID` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "organization": {
+          "description": "`ckan` (`package_search`): the one organization whose datasets are read, `bcn`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outFields": {
+          "description": "`arcgisFeature`: the fields read, named one by one (never `*`), so a new column of the layer reaches no pipeline unasked.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pageSize": {
+          "description": "Every kind: the records asked for per page, 1 to 10000, 1000 when absent. `odata` with a page size pages by `$top`/`$skip`; without one it follows `@odata.nextLink`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resourceId": {
+          "description": "`ckan` (`datastore_search`): the resource whose rows are read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "srsName": {
+          "description": "`wfs`: the coordinate system asked for, `EPSG:4326` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "typeNames": {
+          "description": "`wfs`: the feature type read, `avoindata:Helsinki_osoiteluettelo`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "HttpPresetKind": {
+      "description": "The open data APIs a preset reads.",
+      "oneOf": [
+        {
+          "description": "CKAN `package_search` (datasets) or `datastore_search` (rows of one resource).",
+          "enum": [
+            "ckan"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An ArcGIS Feature Service layer's `query`.",
+          "enum": [
+            "arcgisFeature"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An OData v4 entity set.",
+          "enum": [
+            "odata"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A WFS 2.0 `GetFeature`.",
+          "enum": [
+            "wfs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An OGC API Features collection's `items`.",
+          "enum": [
+            "ogcFeatures"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An OGC SensorThings entity set, `Things` or `Datastreams`.",
+          "enum": [
+            "sensorThings"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttConnection": {
+      "additionalProperties": false,
+      "description": "An MQTT connection (Architecture/08 §6).",
+      "properties": {
+        "brokerRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "An `MqttBroker` of the DataSource's own project, read on its internal listener with no credential (PL-76); takes the place of `urls`, `username` and `passwordRef`."
+        },
+        "cleanSession": {
+          "description": "Whether the broker forgets the subscription between connections.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "passwordRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the password comes from (CC-06)."
+        },
+        "qos": {
+          "description": "Quality of service, 0, 1 or 2. Absent leaves Bento's default.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "topics": {
+          "description": "Topic filters to subscribe to; at least one.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "urls": {
+          "description": "Broker URLs, `tcp://host:1883` or `tls://host:8883`; at least one, unless `brokerRef` names a broker of the platform instead.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "username": {
+          "description": "The user the runner authenticates as; the password is a reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "topics"
+      ],
+      "type": "object"
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Reference to a credential stored in SOPS or OpenBao (PF-36).\n\n`deny_unknown_fields` is a security control: it rejects inline `value:` or `password:` fields at parse time, enforcing that secrets never appear in Git or manifest files.",
+      "properties": {
+        "envVar": {
+          "description": "Optional environment variable name for injection into runners.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Optional key within secret.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Secret name in secret store.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "TlsSettings": {
+      "additionalProperties": false,
+      "description": "How the runner trusts the feed's certificate.",
+      "properties": {
+        "caCertRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A private certificate authority the feed's certificate chains to."
+        },
+        "insecureSkipVerify": {
+          "description": "Kept so a manifest can state the choice; only `false` is accepted (see [`DataSourceSpec::validate`]).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "TypedRef": {
+      "additionalProperties": false,
+      "description": "Structured typed resource reference (MF-07).",
+      "properties": {
+        "kind": {
+          "description": "Target resource kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Target resource name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target resource namespace (defaults to caller namespace if omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "WebSocketConnection": {
+      "additionalProperties": false,
+      "description": "A WebSocket the runner keeps open (Architecture/08 §6).",
+      "properties": {
+        "openMessage": {
+          "description": "A message sent once the socket opens, usually a subscription request.\n\nA socket that needs a credential authenticates inside this message: Bento's websocket input sends no `Authorization` header, and a field the renderer cannot honour would be a promise the runner breaks.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "The socket URL, `ws://` or `wss://`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "WebhookAuth": {
+      "additionalProperties": false,
+      "description": "A webhook's authentication; there is no `public` option.",
+      "properties": {
+        "bearer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebhookBearer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`Authorization: Bearer <token>`."
+        },
+        "hmac": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebhookHmac"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The body's hex SHA-256 HMAC in the provider's header, with or without `sha256=`."
+        }
+      },
+      "type": "object"
+    },
+    "WebhookBearer": {
+      "additionalProperties": false,
+      "description": "A webhook that sends a fixed bearer token.",
+      "properties": {
+        "tokenRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            }
+          ],
+          "description": "The token the sender presents."
+        }
+      },
+      "required": [
+        "tokenRef"
+      ],
+      "type": "object"
+    },
+    "WebhookConnection": {
+      "additionalProperties": false,
+      "description": "A pushed feed: the runner's shared ingest listener answers its POSTs (PL-122, ADR-N-071).\n\nOnly the reconciler renders the `http_server` input this becomes, so the managed door keeps authentication and both caps whatever a manifest says; an author-written `http_server` stays refused (PL-50).",
+      "properties": {
+        "auth": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WebhookAuth"
+            }
+          ],
+          "description": "How a sender proves it may post: exactly one of `hmac` and `bearer`."
+        },
+        "maxBodyBytes": {
+          "description": "The largest body accepted, in bytes (1 to 16777216; 1048576 when absent). A larger one answers 413 before any step runs.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxInFlight": {
+          "description": "How many requests may wait for their answer at once (1 to 1024; 64 when absent); more answer 503.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "type": "object"
+    },
+    "WebhookHmac": {
+      "additionalProperties": false,
+      "description": "An HMAC-signed webhook (GitHub's `X-Hub-Signature-256`, a form tool's own header).",
+      "properties": {
+        "header": {
+          "description": "The header the provider writes its signature into, such as `X-Hub-Signature-256`.",
+          "type": "string"
+        },
+        "secretRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            }
+          ],
+          "description": "The shared signing secret."
+        }
+      },
+      "required": [
+        "header",
+        "secretRef"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/DataSourceSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_DataSourceSpec",
+  "type": "object"
+}

@@ -34,12 +34,16 @@ function sse(events) {
 }
 
 // A streamed 200: each chunk one read; `signal` keeps the stream open until it aborts.
-function stream(chunks, signal) {
+function headersOf(values = {}) {
+  return { get: (name) => (Object.prototype.hasOwnProperty.call(values, name) ? values[name] : null) };
+}
+
+function stream(chunks, signal, headers) {
   const encoder = new TextEncoder();
   const state = { cancelled: false };
   let i = 0;
   return {
-    ok: true, status: 200, state,
+    ok: true, status: 200, state, headers: headersOf(headers),
     json: () => Promise.reject(new SyntaxError("a stream")),
     body: {
       getReader: () => ({
@@ -63,9 +67,9 @@ function stream(chunks, signal) {
   };
 }
 
-function reply(status, body) {
+function reply(status, body, headers) {
   return {
-    ok: status >= 200 && status < 300, status, body: null,
+    ok: status >= 200 && status < 300, status, body: null, headers: headersOf(headers),
     json: () => (body === undefined ? Promise.reject(new SyntaxError("no body")) : Promise.resolve(body))
   };
 }
@@ -135,6 +139,7 @@ function open(o = {}) {
     "/chat": () => stream([sse(ANSWER)]),
     "/feedback": () => reply(204),
     "/resume": () => stream([sse(ANSWER)]),
+    "/cancel": () => reply(204),
     "/map/": () => reply(200, { features: [] })
   };
   win.fetch = (url, init = {}) => {
@@ -453,7 +458,7 @@ test("an answer streams, shows its reads, table, chart, script and sources, then
   const item = chat.$(".jc-bot");
   assert.equal(text(item.querySelector(".jc-answer strong")), "dobrý");
   const marks = Array.from(item.querySelectorAll(".jc-cite a"));
-  assert.deepEqual(marks.map(text), ["1", "2"], "an uploaded file outside the http sources has no marker");
+  assert.deepEqual(marks.map(text), ["1", "2", "3"], "an uploaded file is a source too, as in the Portal (T-7790)");
   assert.equal(marks[0].getAttribute("aria-label"), "Zdroj 1");
   assert.deepEqual(Array.from(item.querySelectorAll(".jc-answer a[target]")).map((a) => a.href), ["https://example.sk/air"], "a link to an uncited host is words");
   const cards = item.querySelector(".jc-cards");
@@ -467,7 +472,8 @@ test("an answer streams, shows its reads, table, chart, script and sources, then
   assert.equal(item.querySelector(".jc-sources").getAttribute("aria-expanded"), "false");
   assert.deepEqual(Array.from(item.querySelectorAll(".jc-badge")).map((b) => b.getAttribute("data-kind")), ["page", "table"]);
   const names = Array.from(cards.querySelectorAll(".jc-card")).map((li) => li.children[1].textContent);
-  assert.deepEqual(names, ["Ovzdušie mesta", "Živé dáta: Stanice"]);
+  assert.deepEqual(names, ["Ovzdušie mesta", "Živé dáta: Stanice", "plan.pdf"]);
+  assert.equal(cards.querySelectorAll(".jc-card")[2].querySelector("a"), null, "a file is named, never linked");
   assert.equal(cards.querySelectorAll(".jc-part-place").length, 1, "the same card once");
   assert.match(text(cards.querySelectorAll(".jc-card")[1]), /nie je v katalógu/);
   assert.equal(text(cards.querySelector(".jc-part-contact strong")), "Úrad");
@@ -519,7 +525,7 @@ test("the live line follows each step: a check's verdict replaces it, a read's e
         const encoder = new TextEncoder();
         let i = 0;
         const parts = [sse(events1), null, sse([at({ stage: "answering", count: 2 }), ["tool", { status: "failed" }], ["step", { source: "B", topic: "T2", count: 9 }], ["answer", { text: "Hotovo." }]])];
-        return { ok: true, status: 200, body: { getReader: () => ({
+        return { ok: true, status: 200, headers: headersOf(), body: { getReader: () => ({
           async read() {
             if (i === 1) { i += 1; await gate; }
             if (i < parts.length) return { done: false, value: encoder.encode(parts[i++]) };
@@ -595,6 +601,90 @@ test("Stop keeps the text that arrived and says that the visitor stopped it", as
   assert.equal(text(chat.$(".jc-status")), "Odpoveď ste zastavili.");
   assert.equal(chat.$(".jc-stop").hidden, true);
   chat.$(".jc-stop").click();
+});
+
+test("Stop cancels the held turn on the server with the visitor's token (T-7790)", async () => {
+  const chat = open({ routes: { "/chat": (init) => stream([sse([["conversation", { id: CONV, turn: TURN }], ["delta", { text: "Zatiaľ" }]])], init.signal) } });
+  chat.ask("Otázka?");
+  await flush(10);
+  chat.$(".jc-stop").click();
+  await flush();
+  const cancels = chat.calls.filter((c) => c.url.endsWith("/turns/" + TURN + "/cancel"));
+  assert.equal(cancels.length, 1);
+  assert.equal(cancels[0].url, API + "/api/v1/d/bb/turns/" + TURN + "/cancel");
+  assert.equal(cancels[0].init.method, "POST");
+  assert.equal(cancels[0].init.headers["X-JC-Visitor"], "tok-1");
+  assert.equal(cancels[0].init.credentials, "omit");
+  assert.equal(text(chat.$(".jc-status")), "Odpoveď ste zastavili.");
+  // An answer with no held turn (no `turn` yet) stops in the browser alone; a failed cancel is quiet.
+  const early = open({ routes: { "/chat": (init) => stream([sse([["conversation", { id: CONV }]])], init.signal) } });
+  early.ask("Otázka?");
+  await flush(10);
+  early.$(".jc-stop").click();
+  await flush();
+  assert.equal(early.calls.filter((c) => c.url.includes("/cancel")).length, 0);
+  const refused = open({ routes: { "/chat": (init) => stream([sse([["conversation", { id: CONV, turn: TURN }]])], init.signal), "/cancel": () => { throw new TypeError("offline"); } } });
+  refused.ask("Otázka?");
+  await flush(10);
+  refused.$(".jc-fresh").click();
+  await flush();
+  assert.equal(refused.calls.filter((c) => c.url.includes("/cancel")).length, 1, "a new conversation cancels too");
+});
+
+test("the answer shows when it arrives and its source marks when the citations come (T-7790)", async () => {
+  let release;
+  const gate = new Promise((done) => { release = done; });
+  const chat = open({
+    config: { linkHosts: ["example.sk"] },
+    routes: {
+      "/chat": () => {
+        const encoder = new TextEncoder();
+        const parts = [sse([["conversation", { id: CONV, turn: TURN }], ["answer", { text: "Do **18:00** [1]." }]]), null,
+          sse([["citations", [{ n: 1, url: "https://example.sk/k", title: "Knižnica" }]]])];
+        let i = 0;
+        return { ok: true, status: 200, headers: headersOf(), body: { getReader: () => ({
+          async read() {
+            if (i === 1) { i += 1; await gate; }
+            if (i < parts.length) return { done: false, value: encoder.encode(parts[i++]) };
+            return { done: true };
+          },
+          cancel: () => Promise.resolve()
+        }) } };
+      }
+    }
+  });
+  chat.ask("Dokedy?");
+  await flush(10);
+  assert.equal(text(chat.$(".jc-streaming")), "Do 18:00 .");
+  assert.equal(chat.$(".jc-streaming strong").textContent, "18:00");
+  assert.equal(chat.$(".jc-progress"), null);
+  release();
+  await flush(10);
+  assert.equal(chat.$(".jc-streaming"), null);
+  assert.deepEqual(chat.$$(".jc-bot .jc-cite a").map(text), ["1"]);
+  assert.equal(chat.$$(".jc-bot .jc-answer").length, 1, "one answer, shown again with its marks");
+});
+
+test("a limit names its reset time from Retry-After in every widget language (T-7790)", async () => {
+  const now = Date.now();
+  const time = (lang, s) => new Intl.DateTimeFormat(lang, { hour: "numeric", minute: "2-digit" }).format(new Date(now + s * 1000));
+  const limited = open({ routes: { "/chat": () => reply(429, { title: "Daily Limit Reached", detail: "Limit sa obnoví o polnoci." }, { "Retry-After": "60" }) } });
+  limited.ask("Otázka?");
+  await flush();
+  assert.equal(text(limited.$("[role=alert]")), "Asistent dosiahol svoj limit. Skúste to znova po " + time("sk", 60) + ".");
+  assert.equal(limited.$(".jc-retry"), null);
+  for (const [lang, words] of [["en", "Try again after"], ["cs", "Zkuste to znovu po"], ["de", "Versuchen Sie es nach"], ["fi", "Yritä uudelleen klo"]]) {
+    const capped = open({ config: { languages: [lang] }, languages: [lang], routes: { "/chat": () => stream([sse([["error", { status: 429, title: "Daily Limit Reached", detail: "x" }], ["done", {}]])], undefined, { "Retry-After": "120" }) } });
+    capped.ask("Q?");
+    await flush();
+    const said = text(capped.$("[role=alert]"));
+    assert.ok(said.includes(words) && said.includes(time(lang, 120)), lang + ": " + said);
+  }
+  const busy = open({ config: { languages: ["en"] }, languages: ["en"], routes: { "/chat": () => reply(429, { title: "Too Many Requests" }, { "Retry-After": "5" }) } });
+  busy.ask("Q?");
+  await flush();
+  assert.match(text(busy.$("[role=alert]")), /^You asked many questions at once\. Try again after /);
+  assert.ok(busy.$(".jc-retry"), "busy still offers Retry");
 });
 
 test("a streamed answer without a final view is shown from its deltas, and the log follows the end", async () => {

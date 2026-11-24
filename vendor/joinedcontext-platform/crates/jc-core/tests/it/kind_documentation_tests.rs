@@ -26,13 +26,25 @@ use serde_json::Value;
 /// A visualization's `data.source` is the tag of an internally tagged enum (T-4642): `schemars`
 /// writes it as a bare `enum` member of each `oneOf` branch, and the branch carries the
 /// variant's doc comment, which says what that source reads. A DelegationPolicy subject's `kind`
-/// is the same shape, documented on the enum (T-5952).
+/// is the same shape, documented on the enum (T-5952). A Dashboard reads the same
+/// visualization data, and a Portal block's `type` tags its block the same way, each branch
+/// carrying its variant's doc comment (T-7766).
 const DOCUMENTED_BY_ITS_PARENT: &[(&str, &str, &str)] = &[
     ("Organization", "Group", "The members of one group."),
     (
         "Endpoint",
         "source",
         "The Endpoint's `file.csv` of one entity type.",
+    ),
+    (
+        "Dashboard",
+        "source",
+        "The Endpoint's `file.csv` of one entity type.",
+    ),
+    (
+        "Portal",
+        "type",
+        "A heading, an introduction, an image and the dataset search box.",
     ),
     (
         "DelegationPolicy",

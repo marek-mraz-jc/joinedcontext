@@ -17,9 +17,10 @@ slots:
   url: { range: uri }
   dateObserved: { range: datetime }
   pm10: { range: float }
+  category: {}
 classes:
   Event:
-    slots: [name, startDate, url]
+    slots: [name, startDate, url, category]
   Article:
     slots: [headline, datePublished, url]
   AirQualityObserved:

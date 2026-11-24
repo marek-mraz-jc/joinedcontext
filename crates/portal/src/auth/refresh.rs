@@ -78,14 +78,14 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
             let mut request = request;
             request.extensions_mut().insert(fresh.clone());
             let response = next.run(request).await;
-            match session::store_in(jar, &fresh, realm.as_deref()) {
-                Ok(jar) => {
+            // Sealing a session serializes plain strings and numbers; its error is a 500.
+            session::store_in(jar, &fresh, realm.as_deref())
+                .map(|jar| {
                     state.keep_session_claims(&fresh);
                     state.keep_access_token(&fresh, access);
                     (jar, response).into_response()
-                }
-                Err(err) => err.into_response(),
-            }
+                })
+                .unwrap_or_else(IntoResponse::into_response)
         }
         // Still inside the leeway: this request runs on the token it has, the next one retries.
         // Parallel requests from one page share a refresh token this way without a lock.
@@ -97,9 +97,8 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
                 let target = request
                     .uri()
                     .path_and_query()
-                    .map(|pq| pq.as_str().to_string())
-                    .unwrap_or_else(|| path.clone());
-                (jar, Redirect::to(&login_redirect(&target))).into_response()
+                    .map_or(path.as_str(), |pq| pq.as_str());
+                (jar, Redirect::to(&login_redirect(target))).into_response()
             } else {
                 (jar, ApiError::Unauthorized).into_response()
             }
@@ -210,6 +209,152 @@ mod tests {
         assert!(!is_exempt("/api/v1/auth/me"));
         assert!(!is_exempt("/api/v1/projects/helsinki/spaces"));
         assert!(!is_exempt("/projects/helsinki/spaces"));
+    }
+
+    /// A Portal session of `realm` (`None`: the installation's) whose access token ends in
+    /// `access_in` seconds, as the browser sends its cookies back.
+    fn cookies_of(state: &AppState, realm: Option<&str>, access_in: i64) -> String {
+        let mut session = crate::auth::endpoint_token::tests::signed_in();
+        session.access_expires_at = session::now_unix() + access_in;
+        session.identity.groups = vec!["portal-approver".into(), "ba-editors".into()];
+        state.keep_session_claims(&session);
+        let jar = session::store_in(
+            PrivateCookieJar::new(state.config.cookie_key.clone()),
+            &session,
+            realm,
+        )
+        .expect("store");
+        let response = (jar, axum::http::StatusCode::OK).into_response();
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok()?.split(';').next().map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    /// The portal routes behind the middleware: the handler answers the groups of the session
+    /// the middleware handed it, `-` when it handed none.
+    fn routes(state: AppState) -> axum::Router {
+        axum::Router::new()
+            .route(
+                "/projects",
+                axum::routing::get(
+                    |session: Option<axum::Extension<session::Session>>| async move {
+                        session.map_or("-".to_owned(), |s| s.0.identity.groups.join(","))
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn_with_state(state, middleware))
+    }
+
+    async fn get(app: axum::Router, cookies: &str, accept: &str) -> Response {
+        use tower::ServiceExt;
+        let request = Request::builder()
+            .uri("/projects?page=2")
+            .header(header::COOKIE, cookies)
+            .header(header::ACCEPT, accept)
+            .body(axum::body::Body::empty())
+            .expect("request");
+        app.oneshot(request).await.expect("answer")
+    }
+
+    async fn text(response: Response) -> String {
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .expect("body");
+        String::from_utf8(body.to_vec()).expect("utf-8")
+    }
+
+    /// A Portal with no realm client cannot refresh: inside the leeway the live token serves
+    /// the request; once it is over a fetch gets 401 and a navigation the login page with the
+    /// interrupted location, and both clear the cookies.
+    #[tokio::test]
+    async fn a_refresh_with_no_realm_client_keeps_a_live_token_and_ends_an_expired_one() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let live = cookies_of(&state, None, 30);
+        let answer = get(routes(state.clone()), &live, "application/json").await;
+        assert_eq!(answer.status(), axum::http::StatusCode::OK);
+        assert!(
+            answer.headers().get(header::SET_COOKIE).is_none(),
+            "nothing rotated"
+        );
+
+        let over = cookies_of(&state, None, -1);
+        let fetch = get(routes(state.clone()), &over, "application/json").await;
+        assert_eq!(fetch.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert!(
+            fetch.headers().get(header::SET_COOKIE).is_some(),
+            "cookies cleared"
+        );
+        let navigation = get(routes(state.clone()), &over, "text/html").await;
+        assert_eq!(navigation.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            navigation
+                .headers()
+                .get(header::LOCATION)
+                .map(|v| v.as_bytes()),
+            Some(&b"/login?redirect_to=%2Fprojects%3Fpage%3D2"[..])
+        );
+        // A session far from expiry is not refreshed: the request runs as it came.
+        let fresh = cookies_of(&state, None, 3600);
+        let untouched = get(routes(state), &fresh, "text/html").await;
+        assert!(untouched.headers().get(header::SET_COOKIE).is_none());
+        assert_eq!(text(untouched).await, "-");
+    }
+
+    /// T-7133, T-7001: an Organization realm's session is refreshed at that realm, and the
+    /// refreshed session never carries the installation's bootstrap group.
+    #[tokio::test]
+    async fn an_organization_realms_session_is_refreshed_there_and_confined() {
+        use crate::organization_host::{scope, OrganizationHost};
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "fresh-access-4410", "token_type": "Bearer",
+                "expires_in": 300, "refresh_token": "fresh-refresh-4410"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let installation = crate::auth::oidc::tests::config_for(&server);
+        let setting = crate::auth::realms::RealmSetting {
+            organization: "ba".into(),
+            issuer: format!("{}/realms/bb", server.uri())
+                .parse()
+                .expect("issuer"),
+            jwks_url: format!("{}/realms/bb/protocol/openid-connect/certs", server.uri())
+                .parse()
+                .expect("jwks"),
+        };
+        let base: url::Url = "https://portal.ba.test".parse().expect("base");
+        let realm =
+            crate::auth::realms::OrganizationRealm::new(&setting, &installation, &base, None);
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.organization_realms = crate::auth::realms::OrganizationRealms::new(
+            [("ba".to_owned(), std::sync::Arc::new(realm))]
+                .into_iter()
+                .collect(),
+        );
+        let host = OrganizationHost {
+            organization: "ba".into(),
+            base,
+        };
+        let answer = scope(host, async move {
+            let cookies = cookies_of(&state, Some("ba"), 30);
+            let answer = get(routes(state.clone()), &cookies, "application/json").await;
+            let rotated = answer.headers().get_all(header::SET_COOKIE).iter().count();
+            (answer.status(), rotated, text(answer).await)
+        })
+        .await;
+        assert_eq!(answer.0, axum::http::StatusCode::OK);
+        assert!(answer.1 >= 2, "session and refresh cookies rotate");
+        assert_eq!(answer.2, "ba-editors");
     }
 
     #[test]

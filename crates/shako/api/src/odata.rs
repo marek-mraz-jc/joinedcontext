@@ -286,9 +286,7 @@ async fn build_entity_table(
                 .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
                 .await?;
             let disk_path = repo_disk_path(state.repo_root(), repo.instance_id, repo.id)?;
-            let branches = tokio::task::spawn_blocking(move || list_branches(&disk_path))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            let branches = crate::service::blocking(move || list_branches(&disk_path)).await?;
             branches
                 .into_iter()
                 .map(|(name, sha)| {
@@ -314,9 +312,7 @@ async fn build_entity_table(
                 return MemoryTable::new(info, Vec::new()).map_err(map_table_error);
             };
             let disk_path = repo_disk_path(state.repo_root(), repo.instance_id, repo.id)?;
-            let tags = tokio::task::spawn_blocking(move || list_tags(&disk_path))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            let tags = crate::service::blocking(move || list_tags(&disk_path)).await?;
             tags.into_iter()
                 .map(|(name, _id, target_sha, annotated)| {
                     json!({
@@ -356,11 +352,10 @@ async fn build_entity_table(
             }
             let disk_path = repo_disk_path(state.repo_root(), repo.instance_id, repo.id)?;
             let ref_label = git_ref.clone();
-            let commits = tokio::task::spawn_blocking(move || {
+            let commits = crate::service::blocking(move || {
                 list_commits(&disk_path, &git_ref, None, 1000, 10_000)
             })
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            .await?;
             // `Position` keeps the walk's order through a page: a page is otherwise ordered by
             // its key, which sorts commits by their sha.
             commits
@@ -683,13 +678,10 @@ async fn apply_pr_expansions(
                 .unwrap_or_default()
                 .to_owned();
             let disk_path = repo_disk_path(state.repo_root(), ctx.instance_id, repo_id)?;
-            let files = tokio::task::spawn_blocking(move || {
-                diff_refs_files(&disk_path, &base_sha, &head_sha)
-            })
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or_default();
+            let files =
+                crate::service::blocking(move || diff_refs_files(&disk_path, &base_sha, &head_sha))
+                    .await
+                    .unwrap_or_default();
             if let Some(obj) = row.as_object_mut() {
                 obj.insert("Files".into(), files_rows(files));
             }
@@ -1042,9 +1034,7 @@ async fn repo_navigation_get(
         }
         ("Commits", Some(k)) => {
             let sha = unquote_odata_key(k);
-            let c = tokio::task::spawn_blocking(move || read_commit_info(&disk_path, &sha))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            let c = crate::service::blocking(move || read_commit_info(&disk_path, &sha)).await?;
             Ok(json!({
                 "Id": format!("{}:{}", repo.id, c.sha),
                 "RepoId": repo.id.to_string(),
@@ -1591,9 +1581,8 @@ async fn exec_bound_repo_tree(
         .unwrap_or(1000)
         .clamp(1, 1000);
     let (sha, entries) =
-        tokio::task::spawn_blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
+        crate::service::blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
+            .await?;
     let total = entries.len();
     let page: Vec<Value> = entries
         .into_iter()
@@ -1703,11 +1692,10 @@ async fn exec_bound_repo_history(
         .and_then(|v| v.parse().ok())
         .unwrap_or(50)
         .clamp(1, 1000);
-    let commits = tokio::task::spawn_blocking(move || {
+    let commits = crate::service::blocking(move || {
         list_commits(&disk_path, &git_ref, path.as_deref(), top, 10_000)
     })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))??;
+    .await?;
     let rows: Vec<Value> = commits
         .into_iter()
         .map(|c| {
@@ -1760,13 +1748,12 @@ async fn exec_bound_repo_compare(
         arg(args, "Base").ok_or_else(|| ShakoError::BadRequest("Compare requires Base".into()))?;
     let head =
         arg(args, "Head").ok_or_else(|| ShakoError::BadRequest("Compare requires Head".into()))?;
-    let (m, files) = tokio::task::spawn_blocking(move || {
+    let (m, files) = crate::service::blocking(move || {
         let m = check_mergeability(&disk_path, &base, &head)?;
         let files = diff_refs_files(&disk_path, &base, &head)?;
         Ok::<_, ShakoError>((m, files))
     })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))??;
+    .await?;
     Ok(json!({ "mergeability": m, "files": files }))
 }
 
@@ -1782,11 +1769,10 @@ async fn exec_bound_pr_mergeable(
         .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
         .await?
         .ok_or_else(|| ShakoError::NotFound("pull request not found".into()))?;
-    let m = tokio::task::spawn_blocking(move || {
+    let m = crate::service::blocking(move || {
         check_mergeability(&disk_path, &pr.base_ref, &pr.head_ref)
     })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))??;
+    .await?;
     Ok(serde_json::to_value(m).unwrap_or(Value::Null))
 }
 
