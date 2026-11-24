@@ -26,18 +26,18 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(passed, is_allowed(&Method::POST, &headers, None));
     if passed {
         let presented = headers.get(CSRF_HEADER).and_then(|v| v.to_str().ok());
-        let jar = axum_extra_free_cookie(&headers);
+        let jar = last_csrf_cookie(&headers);
         assert!(presented.is_some_and(|p| !p.is_empty() && Some(p) == jar.as_deref()));
     }
 });
 
-/// The last `__Host-jc_csrf` value of the `Cookie` line, read without the Portal's parser.
-fn axum_extra_free_cookie(headers: &HeaderMap) -> Option<String> {
+/// The last `__Host-jc_csrf` value of the `Cookie` line that parses, each pair read by the cookie
+/// crate as the jar reads it (RFC 6265 trimming, percent-decoded) and not by the jar itself.
+fn last_csrf_cookie(headers: &HeaderMap) -> Option<String> {
     let line = headers.get(header::COOKIE)?.to_str().ok()?;
-    // RFC 6265 5.2: the name and the value are read with the whitespace around them removed.
     line.split(';')
-        .filter_map(|pair| pair.split_once('='))
-        .filter(|(name, _)| name.trim() == CSRF_COOKIE)
-        .map(|(_, value)| value.trim().to_owned())
+        .filter_map(|pair| cookie::Cookie::parse_encoded(pair).ok())
+        .filter(|c| c.name() == CSRF_COOKIE)
+        .map(|c| c.value().to_owned())
         .last()
 }
