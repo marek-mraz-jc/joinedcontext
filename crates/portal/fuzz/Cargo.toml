@@ -163,3 +163,31 @@ path = "fuzz_targets/auth_realms_parse.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "agents_model_calls"
+path = "fuzz_targets/agents_model_calls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agents_merge_patch"
+path = "fuzz_targets/agents_merge_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agents_tool_answer"
+path = "fuzz_targets/agents_tool_answer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agents_code_paths"
+path = "fuzz_targets/agents_code_paths.rs"
+test = false
+doc = false
+bench = false

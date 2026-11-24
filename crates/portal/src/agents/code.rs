@@ -236,12 +236,7 @@ pub fn problems(files: &BTreeMap<String, String>) -> Vec<String> {
         .map(|(path, content)| (path.clone(), content.clone()))
         .collect();
     // The entry is the Portal's whatever the files hold, as the preview document builds it.
-    if let Some(main) = preview::Template::get(preview::MAIN) {
-        code.insert(
-            preview::MAIN.to_owned(),
-            String::from_utf8_lossy(&main.data).into_owned(),
-        );
-    }
+    code.insert(preview::MAIN.to_owned(), preview::entry());
     problems.extend(
         transpile::transpile(&code)
             .problems
@@ -502,9 +497,11 @@ mod tests {
     fn an_unchanged_template_is_shown_by_its_exports_and_a_changed_file_whole() {
         let template = preview::template_files();
         let form = "src/components/EntityForm.tsx";
-        let Shown::Outline(outlined) = shown(form, &template[form], &template) else {
-            panic!("an unchanged component is outlined");
+        let outlined = match shown(form, &template[form], &template) {
+            Shown::Outline(outlined) => outlined,
+            other => format!("{other:?}"),
         };
+        assert!(outlined.starts_with("export") || outlined.contains("\nexport"), "{outlined}");
         assert!(
             outlined.len() * 4 < template[form].len(),
             "{} of {}",

@@ -278,15 +278,10 @@ pub fn patched(current: &Value, patch: &Value) -> Result<Value, String> {
                 .to_owned(),
         );
     }
-    let mut before = current.clone();
-    if let Value::Object(fields) = &mut before {
-        fields.remove("status");
-    }
+    let before = without_status(current.clone());
     let mut after = before.clone();
     crate::plan::merge_patch(&mut after, patch);
-    if let Value::Object(fields) = &mut after {
-        fields.remove("status");
-    }
+    let after = without_status(after);
     for pointer in [
         "/apiVersion",
         "/kind",
@@ -303,6 +298,13 @@ pub fn patched(current: &Value, patch: &Value) -> Result<Value, String> {
         return Err("the patch changes nothing in the manifest".to_owned());
     }
     Ok(after)
+}
+
+fn without_status(mut manifest: Value) -> Value {
+    if let Value::Object(fields) = &mut manifest {
+        fields.remove("status");
+    }
+    manifest
 }
 
 /// What a pipeline's test exercises: what it reads, how it maps and where it writes.
@@ -678,6 +680,23 @@ mod tests {
         assert!(same.is_err_and(|e| e.contains("changes nothing")));
         let listed = patched(&pipeline(), &json!(["suspended"]));
         assert!(listed.is_err_and(|e| e.contains("merge patch")));
+        // T-7711: a status in the patch is dropped like the manifest's own, and a patch that
+        // only writes a status changes nothing.
+        let status = patched(&pipeline(), &json!({ "status": { "phase": "Ready" } }));
+        assert!(status.is_err_and(|e| e.contains("changes nothing")));
+        let mixed = patched(
+            &pipeline(),
+            &json!({ "status": { "phase": "Ready" }, "spec": { "period": "1h" } }),
+        )
+        .expect("the period changes");
+        assert!(mixed.get("status").is_none(), "{mixed}");
+        assert_eq!(mixed["spec"]["period"], "1h");
+        // A current manifest that is no object (a broken read) carries no kind or name to keep:
+        // the patch is the whole result, and no identity pointer moved.
+        assert_eq!(
+            patched(&json!("broken"), &json!({ "spec": { "a": 1 } })).expect("a manifest"),
+            json!({ "spec": { "a": 1 } })
+        );
     }
 
     #[test]
@@ -718,6 +737,18 @@ mod tests {
         let removal = "```json\n{\"tool\":\"change_resource\",\"kind\":\"ContextSpace\",\"name\":\"test-space\",\"delete\":true}\n```";
         assert!(tool_call(removal).expect("a call").expect("parses").delete);
         assert!(tool_call("```json\n{\"tool\":\"navigate\",\"route\":\"/\"}\n```").is_none());
+        // T-7711: a call whose fields have the wrong shape is named back with the tool; a fence
+        // that is no JSON is passed over for the call after it.
+        let wrong = tool_call("```json\n{\"tool\":\"change_resource\",\"kind\":5}\n```")
+            .expect("a call")
+            .expect_err("kind is text");
+        assert!(wrong.starts_with("the change_resource call does not parse"), "{wrong}");
+        let after_prose = "```json\n{not json\n```\n```json\n{\"tool\":\"change_resource\",\"kind\":\"Role\",\"name\":\"r\",\"delete\":true}\n```";
+        assert_eq!(
+            tool_call(after_prose).expect("a call").expect("parses").name,
+            "r"
+        );
+        assert!(tool_call("no fence").is_none());
     }
 
     #[test]
@@ -748,6 +779,20 @@ mod tests {
             ),
             "/projects/helsinki/csrs?delete=zvolen"
         );
+        // T-7711: members and CKAN instances have pages of their own.
+        assert_eq!(
+            route("helsinki", "RoleBinding", "rolebindings", "ann", false),
+            "/projects/helsinki/settings/members?edit=ann"
+        );
+        assert_eq!(
+            route("helsinki", "CkanInstance", "ckaninstances", "data", true),
+            "/projects/helsinki/ckan?delete=data"
+        );
+        assert_eq!(
+            page_of("ServiceAccount"),
+            Ok("settings/service-accounts")
+        );
+        assert!(page_of("Spaceship").is_err_and(|e| e.contains("not a kind")));
     }
 
     /// AG-45: one sentence carries the name and the fields into the form, so the person types
@@ -871,6 +916,14 @@ mod tests {
             ),
             ("org", "Role", "roles", "r", "/organization/roles"),
             ("org", "Group", "groups", "g", "/organization/groups"),
+            ("org", "RoleBinding", "rolebindings", "b", "/organization/members"),
+            (
+                "org",
+                "ServiceAccount",
+                "serviceaccounts",
+                "s",
+                "/organization/service-accounts",
+            ),
             (
                 "org",
                 "Organization",
