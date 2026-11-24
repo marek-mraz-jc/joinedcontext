@@ -228,6 +228,10 @@ pub fn wildcard_serves(wildcard: &Value, edge: &Value, apex: &str) -> bool {
             .any(|tls| names(&tls["hosts"]) && &tls["secretName"] == secret)
 }
 
+/// The warning when the wildcard certificate cannot be read.
+const WILDCARD_UNREAD: &str =
+    "the wildcard certificate was not read; each App host keeps a certificate of its own";
+
 fn no_backend() -> HostState {
     HostState::Failed(format!(
         "the edge Ingress {EDGE_INGRESS} routes no backend to copy"
@@ -299,10 +303,10 @@ impl AppHosts {
                     .collect();
             }
             Ok(_) => {}
-            Err(err) => tracing::warn!(
-                error = %said(&format!("Certificate {APPS_WILDCARD_CERTIFICATE}"), &err),
-                "the wildcard certificate was not read; each App host keeps a certificate of its own"
-            ),
+            Err(err) => {
+                let error = said(&format!("Certificate {APPS_WILDCARD_CERTIFICATE}"), &err);
+                tracing::warn!(%error, "{WILDCARD_UNREAD}");
+            }
         }
         let issuer = match self.issuer().await {
             Ok(issuer) => issuer,

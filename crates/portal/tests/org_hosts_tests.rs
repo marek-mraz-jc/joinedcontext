@@ -521,6 +521,128 @@ async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
     (out, text)
 }
 
+/// A ledger that reads but refuses writes (a read-only session): the request waits, nothing is
+/// counted and no Certificate is created, so the pacing never undercounts.
+#[tokio::test]
+async fn a_ledger_that_cannot_be_written_requests_no_certificate() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("readonly"));
+    row(&pool, &host, "dns-ok").await;
+    let server = api(&[&host]).await;
+    holds(&server, labelled("Ingress", &host)).await;
+    fallback(&server).await;
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("the test database");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+    let read_only = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.options([("default_transaction_read_only", "on")]))
+        .await
+        .expect("a read-only pool");
+    let hosts = OrgHosts::new(
+        KubeClient::with_token(&server.uri(), "token").expect("a client"),
+        NS.to_owned(),
+        read_only,
+        dns(&[]),
+    );
+
+    let ((), log) = logged(hosts.converge(false)).await;
+
+    assert!(
+        log.contains("the certificate ledger could not be written"),
+        "{log}"
+    );
+    assert!(log.contains("a host's detail was not written"), "{log}");
+    assert!(
+        posted(&server, CERTS, &[&host]).await.is_empty(),
+        "no certificate without its slot"
+    );
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_host_certificates WHERE host = $1")
+            .bind(&host)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(counted, 0);
+    assert_eq!(state(&pool, &host).await, ("dns-ok".to_owned(), None));
+    done(&pool, &[&host]).await;
+}
+
+/// A refused request whose slot cannot be given back keeps the slot (errs on Let's Encrypt's
+/// side), logs it, and the host says what the API server answered.
+#[tokio::test]
+async fn a_slot_that_cannot_be_given_back_stays_taken() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("keep"));
+    row(&pool, &host, "dns-ok").await;
+    let server = api(&[]).await;
+    holds(&server, labelled("Ingress", &host)).await;
+    Mock::given(method("POST"))
+        .and(path(CERTS))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_json(json!({ "message": "admission webhook down" })),
+        )
+        .mount(&server)
+        .await;
+    fallback(&server).await;
+    // Only this host's slot refuses its delete, so no other test's ledger is touched.
+    let guard = format!("org_hosts_keep_{}", run("g").replace('.', "_"));
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION {guard}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF OLD.host = '{host}' THEN RAISE EXCEPTION 'slot delete refused'; END IF; RETURN OLD; END $$"
+    )))
+    .execute(&pool)
+    .await
+    .expect("the guard function");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER {guard} BEFORE DELETE ON organization_host_certificates FOR EACH ROW EXECUTE FUNCTION {guard}()"
+    )))
+    .execute(&pool)
+    .await
+    .expect("the guard trigger");
+
+    let ((), log) = logged(wave(&server, &pool, dns(&[])).converge(false)).await;
+
+    for drop in [
+        format!("DROP TRIGGER {guard} ON organization_host_certificates"),
+        format!("DROP FUNCTION {guard}()"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(drop))
+            .execute(&pool)
+            .await
+            .expect("the guard dropped");
+    }
+    assert!(
+        log.contains("a failed request keeps its certificate slot"),
+        "{log}"
+    );
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_host_certificates WHERE host = $1")
+            .bind(&host)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(counted, 1, "the slot stays taken");
+    let (now, detail) = state(&pool, &host).await;
+    assert_eq!(now, "dns-ok");
+    assert_eq!(
+        detail.as_deref(),
+        Some(
+            format!(
+                "the API server answered 500 for Certificate {}",
+                object_name(&host)
+            )
+            .as_str()
+        )
+    );
+    clear_ledger(&pool).await;
+    done(&pool, &[&host]).await;
+}
+
 /// Each reconciler step's audit row is also its log line, naming the actor and the step.
 #[tokio::test]
 async fn an_audited_step_is_logged_with_its_actor() {

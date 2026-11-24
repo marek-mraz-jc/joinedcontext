@@ -628,14 +628,8 @@ async fn audit(
     .bind(after)
     .execute(conn)
     .await?;
-    tracing::info!(
-        target: "operator_audit",
-        actor = ACTOR,
-        action,
-        before = %before.map(serde_json::Value::to_string).unwrap_or_default(),
-        after = %after,
-        "operator audit"
-    );
+    let before = before.map(Value::to_string).unwrap_or_default();
+    tracing::info!(target: "operator_audit", actor = ACTOR, action, %before, %after, "operator audit");
     Ok(())
 }
 

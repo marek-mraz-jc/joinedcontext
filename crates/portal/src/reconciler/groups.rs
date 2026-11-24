@@ -98,15 +98,15 @@ fn requires_second_factor(mirror: &Mirror, organization: &str) -> bool {
     match serde_json::from_value::<OrganizationPolicies>(policies) {
         Ok(policies) => policies.sign_in.second_factor == Some(SecondFactor::Required),
         Err(why) => {
-            tracing::warn!(
-                %organization,
-                %why,
-                "Organization policies do not parse: second factor kept as required"
-            );
+            tracing::warn!(%organization, %why, "{POLICIES_UNPARSED}");
             true
         }
     }
 }
+
+/// The warning when an Organization's `spec.policies` does not parse.
+const POLICIES_UNPARSED: &str =
+    "Organization policies do not parse: second factor kept as required";
 
 /// The id of the Organization manifest `organization` (`sk_bbsk` for `bbsk.sk`, EP-186), as the
 /// gateway derives a tenant's Organization (PF-130): from its `spec.domain` alone.

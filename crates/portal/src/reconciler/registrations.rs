@@ -502,6 +502,11 @@ impl RegistrationSync {
     }
 }
 
+/// The log line of a registration that is not written, and why.
+fn warn_refused(namespace: &str, name: &str, error: &dyn std::fmt::Display, what: &str) {
+    tracing::warn!(%namespace, registration = %name, %error, "{what}");
+}
+
 /// Why a request did not reach the broker, as the outcome says it.
 fn unsent(err: reqwest::Error) -> String {
     err.to_string()
@@ -514,6 +519,14 @@ fn unsent(err: reqwest::Error) -> String {
 /// one the specification defines and writing a second one here would be a second place for a
 /// registration to stop matching.
 fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
+    declared_as(mirror, context_gateway::store::TenantNames::from_env())
+}
+
+/// [`declared`] with the tenant naming given, which the environment decides in a Portal.
+fn declared_as(
+    mirror: &Mirror,
+    names: context_gateway::store::TenantNames,
+) -> (Vec<Declared>, Vec<Refused>) {
     let mut found = Vec::new();
     let mut refused = Vec::new();
     for namespace in mirror.namespaces() {
@@ -528,12 +541,12 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
                 match serde_json::from_value(envelope.spec.clone()) {
                     Ok(spec) => spec,
                     Err(err) => {
-                        tracing::warn!(
-                            namespace = %namespace,
-                            registration = %name,
-                            error = %err,
-                            "a ContextSourceRegistration manifest does not parse and is not written"
-                        );
+                        warn_refused(
+                        &namespace,
+                        &name,
+                        &err,
+                        "a ContextSourceRegistration manifest does not parse and is not written",
+                    );
                         refused.push((
                             namespace.clone(),
                             name,
@@ -546,43 +559,33 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
             // that names another is refused here as well as at validation, because the mirror
             // holds what Git holds and Git may hold a file written before the rule.
             if let Err(err) = spec.validate_scope(Some(&namespace)) {
-                tracing::warn!(
-                    namespace = %namespace,
-                    registration = %name,
-                    error = %err,
-                    "a ContextSourceRegistration reaches outside its project and is not written"
+                warn_refused(
+                    &namespace,
+                    &name,
+                    &err,
+                    "a ContextSourceRegistration reaches outside its project and is not written",
                 );
                 refused.push((namespace.clone(), name, format!("the manifest reaches outside its project, so it is not registered (PF-48): {err}")));
                 continue;
             }
-            let metadata = match serde_json::to_value(&envelope.metadata)
+            // ObjectMeta serialises to an object with a string `name`; every other member lands in
+            // RawMetadata's flattened map, so this cannot fail.
+            let metadata = serde_json::to_value(&envelope.metadata)
                 .and_then(serde_json::from_value::<RawMetadata>)
-            {
-                Ok(metadata) => metadata,
-                Err(err) => {
-                    tracing::warn!(
-                        namespace = %namespace,
-                        registration = %name,
-                        error = %err,
-                        "a ContextSourceRegistration's metadata does not parse"
-                    );
-                    refused.push((namespace.clone(), name, format!("the manifest's metadata does not parse, so it is not registered: {err}")));
+                .expect("ObjectMeta always reads as RawMetadata");
+            // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
+            let space = match crate::spaces::tenant_as(
+                mirror,
+                &namespace,
+                spec.context_space_ref.name(),
+                names,
+            ) {
+                Ok(tenant) => tenant,
+                Err(reason) => {
+                    refused.push((namespace.clone(), name, format!("not registered: {reason}")));
                     continue;
                 }
             };
-            // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
-            let space =
-                match crate::spaces::tenant(mirror, &namespace, spec.context_space_ref.name()) {
-                    Ok(tenant) => tenant,
-                    Err(reason) => {
-                        refused.push((
-                            namespace.clone(),
-                            name,
-                            format!("not registered: {reason}"),
-                        ));
-                        continue;
-                    }
-                };
             found.push((
                 namespace.clone(),
                 name,
@@ -1467,6 +1470,32 @@ mod tests {
         assert!(
             log.contains("a ContextSourceRegistration manifest does not parse"),
             "{log}"
+        );
+    }
+
+    /// Under project-key tenant names a space of a project the registry holds no key for has no
+    /// tenant yet: the registration is refused with that reason, never written to a guess.
+    #[test]
+    fn a_space_without_a_project_key_tenant_is_not_registered() {
+        let mirror = mirror_with(vec![
+            csr("from-hub", json!({ "kind": "Endpoint", "name": "x" })),
+            envelope("ContextSpace", "hub", json!({ "urnSegment": "hub" })),
+        ]);
+        let (found, refused) =
+            declared_as(&mirror, context_gateway::store::TenantNames::ProjectKey);
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(
+            refused[0]
+                .2
+                .starts_with("not registered: the space helsinki/hub has no broker tenant yet: "),
+            "{refused:?}"
+        );
+        let (found, refused) = declared_as(&mirror, context_gateway::store::TenantNames::Segment);
+        assert_eq!(
+            (found.len(), refused.len()),
+            (1, 0),
+            "segment names need no registry"
         );
     }
 
