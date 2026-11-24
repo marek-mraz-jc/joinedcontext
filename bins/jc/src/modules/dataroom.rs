@@ -555,12 +555,23 @@ struct RunTime {
 /// a set published while a catalogue is written waits and never interleaves with it.
 #[cfg(feature = "portal")]
 fn follow_organizations(
+    run: RunTime,
+    shutdown: &tokio_util::sync::CancellationToken,
+    tasks: &tokio_util::task::TaskTracker,
+) {
+    follow_organizations_of(&super::follow::ORGANIZATIONS, run, shutdown, tasks);
+}
+
+/// [`follow_organizations`] on the sets `published` hands over.
+#[cfg(feature = "portal")]
+fn follow_organizations_of(
+    published: &super::follow::Published<super::follow::Organizations>,
     mut run: RunTime,
     shutdown: &tokio_util::sync::CancellationToken,
     tasks: &tokio_util::task::TaskTracker,
 ) {
     let (tx, mut rx) = tokio::sync::watch::channel(None);
-    super::follow::ORGANIZATIONS.follow("dataroom", move |set| {
+    published.follow("dataroom", move |set| {
         tx.send_replace(Some(set.clone()));
     });
     let shutdown = shutdown.clone();
@@ -706,24 +717,12 @@ fn follow_appearances(
         let mut seen: BTreeMap<CatalogueId, BrandingBlock> = BTreeMap::new();
         loop {
             if let Some(portal) = super::PORTAL_STATE.get() {
-                let wanted = catalogue_looks(&portal.mirror, &catalogue, &portals, &configured);
-                let mut branding = shared
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                seen.retain(|id, _| {
-                    let kept = wanted.contains_key(id);
-                    if !kept {
-                        branding.remove(id);
-                    }
-                    kept
-                });
-                for (id, block) in wanted {
-                    if seen.get(&id) != Some(&block) {
-                        tracing::info!(catalogue = %id, "dataroom: catalogue branding follows its appearance");
-                        branding.insert(id, block.clone());
-                        seen.insert(id, block);
-                    }
-                }
+                apply_looks(
+                    &portal.mirror,
+                    (&catalogue, &portals, &configured),
+                    &shared,
+                    &mut seen,
+                );
             }
             tokio::select! {
                 () = shutdown.cancelled() => return,
@@ -731,6 +730,42 @@ fn follow_appearances(
             }
         }
     });
+}
+
+/// One round of [`follow_appearances`]: each catalogue's branding as `mirror` has it now
+/// ([`catalogue_looks`] of `wanted`'s catalogues, portals and configured blocks) written over
+/// `shared` where it changed since `seen`; a catalogue `seen` holds that no longer has a look
+/// leaves `shared`.
+#[cfg(feature = "portal")]
+fn apply_looks(
+    mirror: &joinedcontext_portal::store::Mirror,
+    wanted: (
+        &BTreeMap<String, CatalogueId>,
+        &[super::portals::OrganizationPortals],
+        &BTreeMap<CatalogueId, BrandingBlock>,
+    ),
+    shared: &std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>,
+    seen: &mut BTreeMap<CatalogueId, BrandingBlock>,
+) {
+    let (catalogue, portals, configured) = wanted;
+    let wanted = catalogue_looks(mirror, catalogue, portals, configured);
+    let mut branding = shared
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    seen.retain(|id, _| {
+        let kept = wanted.contains_key(id);
+        if !kept {
+            branding.remove(id);
+        }
+        kept
+    });
+    for (id, block) in wanted {
+        if seen.get(&id) != Some(&block) {
+            tracing::info!(catalogue = %id, "dataroom: catalogue branding follows its appearance");
+            branding.insert(id, block.clone());
+            seen.insert(id, block);
+        }
+    }
 }
 
 /// Each catalogue's branding as `mirror` has it now: every Organization's catalogue its
@@ -892,13 +927,23 @@ fn with_dashboards(
         .map(|(name, &(_, id))| (id, name.clone()))
         .collect();
     state.with_dashboard_resolver(move |catalogue, lang| {
-        match (organization.get(catalogue), super::PORTAL_STATE.get()) {
-            (Some(name), Some(state)) => {
-                super::appearance::dashboard_cards(&state.mirror, name, lang)
-            }
-            _ => Vec::new(),
-        }
+        dashboard_cards_of(&organization, super::PORTAL_STATE.get(), catalogue, lang)
     })
+}
+
+/// The dashboard cards of `catalogue`'s Organization in `portal`'s mirror; none for a catalogue
+/// of no Organization or while no Portal runs here.
+#[cfg(feature = "portal")]
+fn dashboard_cards_of(
+    organization: &BTreeMap<CatalogueId, String>,
+    portal: Option<&joinedcontext_portal::state::AppState>,
+    catalogue: &CatalogueId,
+    lang: &str,
+) -> Vec<dataroom_api::DashboardCard> {
+    match (organization.get(catalogue), portal) {
+        (Some(name), Some(state)) => super::appearance::dashboard_cards(&state.mirror, name, lang),
+        _ => Vec::new(),
+    }
 }
 
 /// `block` with an Organization's appearance over it, member by member; a logo that fails the
@@ -963,9 +1008,7 @@ fn with_appearance(
         tracing::warn!(
             "dataroom: an appearance colour below WCAG AA on the background; jc's colours show"
         );
-        if let Some(members) = over.as_object_mut() {
-            members.remove("colours");
-        }
+        over["colours"] = serde_json::Value::Null;
         shown = block;
         shown.apply_override_json(&over);
     }
@@ -1206,6 +1249,125 @@ mod tests {
     use dataroom_harvest::{MapFetcher, validate_outbound_url};
     use std::collections::BTreeSet;
 
+    /// Each failing step of a Postgres start refuses it with a module error, on real Postgres
+    /// (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares): an owner that may not
+    /// create the schema, a request role no login holds (the grant), a request URL that does not
+    /// parse, a request login with BYPASSRLS, and a catalogue to check that the request login may
+    /// not read. No password reaches a message.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test reads its database URL, as the split test does.
+    async fn each_failing_step_of_a_postgres_start_refuses_it() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
+            println!(
+                "SKIP each_failing_step_of_a_postgres_start: DATAROOM_TEST_DATABASE_URL is unset"
+            );
+            return;
+        };
+        let base = PgConnectOptions::from_str(&admin_url).unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone())
+            .await
+            .unwrap();
+        let db = format!("jc_drfail_{}", std::process::id());
+        let dir = tempfile::tempdir().unwrap();
+        let mut statements = vec![
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+            "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+                .to_owned(),
+        ];
+        for (role, create) in [
+            ("jc_drf_owner", true),
+            ("jc_drf_app", false),
+            ("jc_drf_guest", false),
+        ] {
+            let create = if create { "CREATE, " } else { "" };
+            statements.push(format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'pw-{role}-7782';
+                 GRANT {create}CONNECT ON DATABASE {db} TO {role};"
+            ));
+        }
+        for statement in statements {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        let url = |role: &str| {
+            format!(
+                "postgres://{role}@{}:{}/{db}",
+                base.get_host(),
+                base.get_port()
+            )
+        };
+        let file = |role: &str| {
+            let file = dir.path().join(role);
+            std::fs::write(&file, format!("pw-{role}-7782")).unwrap();
+            file
+        };
+        let section = |request: &str, owner: Option<&str>| DataroomSection {
+            database: Some(crate::pg::DatabaseSection {
+                url: url(request),
+                password_file: file(request),
+                max_connections: Some(1),
+                migrate_url: owner.map(url),
+                migrate_password_file: owner.map(file),
+                maintenance_url: None,
+                maintenance_password_file: None,
+            }),
+            ..DataroomSection::default()
+        };
+        let refused = |cfg: DataroomSection, moves: Vec<(OrgId, OrgId, CatalogueId)>| async move {
+            open_store(&cfg, &moves)
+                .await
+                .err()
+                .expect("the start is refused")
+                .to_string()
+        };
+        let quiet = |e: &str| !e.contains("-7782");
+        let e = refused(section("jc_drf_app", Some("jc_drf_guest")), Vec::new()).await;
+        assert!(
+            e.contains("dataroom") && quiet(&e),
+            "an owner without CREATE: {e}"
+        );
+        let e = refused(section("jc_drf_nobody", Some("jc_drf_owner")), Vec::new()).await;
+        assert!(e.contains("grant to jc_drf_nobody") && quiet(&e), "{e}");
+        let mut unparsable = section("jc_drf_app", Some("jc_drf_owner"));
+        unparsable.database.as_mut().expect("a section").url = "not a url".into();
+        let e = refused(unparsable, Vec::new()).await;
+        assert!(e.contains("url") && quiet(&e), "{e}");
+        let installation = OrgId::parse_verified(&DataroomSection::default().org_id).unwrap();
+        let catalogue =
+            CatalogueId::parse_verified("00000000-0000-7000-8000-000000007782").unwrap();
+        let moves = vec![(
+            installation,
+            OrgId::of_organization(installation, "city"),
+            catalogue,
+        )];
+        let e = refused(section("jc_drf_guest", None), moves).await;
+        assert!(
+            e.contains("dataroom") && quiet(&e),
+            "a catalogue the login may not read: {e}"
+        );
+        sqlx::raw_sql("ALTER ROLE jc_drf_app BYPASSRLS")
+            .execute(&admin)
+            .await
+            .unwrap();
+        let e = refused(section("jc_drf_app", None), Vec::new()).await;
+        assert!(e.contains("dataroom") && quiet(&e), "BYPASSRLS: {e}");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER ROLE jc_drf_app NOBYPASSRLS; DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+    }
+
     /// ODP-12 on real Postgres (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares):
     /// two Organizations' catalogues written as before the split, under the installation's one
     /// OrgId, then a start of the module as its NOSUPERUSER migration and request roles. Every
@@ -1223,6 +1385,7 @@ mod tests {
             );
             return;
         };
+        let (log, _guard) = super::super::capture_log();
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
@@ -1391,10 +1554,9 @@ mod tests {
         );
         // Without the migration owner nothing moves: the start stops and names the fix.
         let mut no_owner = cfg.clone();
-        if let Some(db) = no_owner.database.as_mut() {
-            db.migrate_url = None;
-            db.migrate_password_file = None;
-        }
+        let db = no_owner.database.as_mut().expect("a database section");
+        db.migrate_url = None;
+        db.migrate_password_file = None;
         let moves: Vec<_> = organizations
             .iter()
             .map(|o| {
@@ -1423,6 +1585,11 @@ mod tests {
         .await
         .expect("the module starts and moves both catalogues");
         shutdown.cancel();
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            logged.contains("moved to its Organization's OrgId") && logged.contains("moved="),
+            "{logged}"
+        );
 
         for org in &organizations {
             let request =
@@ -1514,6 +1681,86 @@ mod tests {
         .expect("the module starts");
         shutdown.cancel();
         built
+    }
+
+    /// A set the host registry publishes after the follower started reaches it: the row's
+    /// catalogue is served (its branding held) without a restart, and a shutdown ends it.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_published_organization_set_reaches_the_follower() {
+        static PUBLISHED: super::super::follow::Published<super::super::follow::Organizations> =
+            super::super::follow::Published::new();
+        let (_router, writer) = runtime_dataroom().await;
+        let installation = OrgId::parse_verified(&DataroomSection::default().org_id).unwrap();
+        let run = RunTime {
+            writer,
+            branding: Arc::default(),
+            installation,
+            default_catalogue: CatalogueId::parse_verified(
+                &DataroomSection::default().catalogue_id,
+            )
+            .unwrap(),
+            configured: BTreeMap::new(),
+            own: BrandingBlock::default(),
+            live: crate::siblings::LiveAddresses::default(),
+            scheme: "https".into(),
+            assistant_widget: None,
+            publishes: false,
+            applied: BTreeMap::new(),
+        };
+        let branding = run.branding.clone();
+        let (shutdown, tasks) = (
+            tokio_util::sync::CancellationToken::new(),
+            tokio_util::task::TaskTracker::new(),
+        );
+        follow_organizations_of(&PUBLISHED, run, &shutdown, &tasks);
+        let id = "00000000-0000-7000-8000-000000007782";
+        assert!(PUBLISHED.publish(super::super::follow::Organizations {
+            run_time: vec![organization("rt7782", id)],
+            removed: Vec::new(),
+        }));
+        let id = CatalogueId::parse_verified(id).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !branding.read().unwrap().contains_key(&id) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the published row is served");
+        shutdown.cancel();
+        tasks.close();
+        tokio::time::timeout(std::time::Duration::from_secs(10), tasks.wait())
+            .await
+            .expect("the follower ends with the shutdown");
+    }
+
+    /// `[dataroom.hidden]` is written over the default catalogue's list at the start.
+    #[tokio::test]
+    async fn a_configured_hidden_list_starts_the_module() {
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let cfg = DataroomSection {
+            hidden: Some(BTreeMap::from([("air".to_owned(), "gate".to_owned())])),
+            ..DataroomSection::default()
+        };
+        let (shutdown, tasks) = (
+            tokio_util::sync::CancellationToken::new(),
+            tokio_util::task::TaskTracker::new(),
+        );
+        let built =
+            build_with_writer(&cfg, &[], ctx, Mount::default(), None, &shutdown, &tasks).await;
+        shutdown.cancel();
+        assert!(built.is_ok(), "the hidden list is seeded");
     }
 
     fn organization(name: &str, catalogue_id: &str) -> OrganizationSection {
@@ -1618,7 +1865,10 @@ mod tests {
     /// module starts, and the Portal's publisher token is refused on every catalogue.
     #[tokio::test]
     async fn without_a_token_issuer_no_catalogue_admits_the_publisher() {
+        let (log, _guard) = super::super::capture_log();
         let (router, _) = start(&[], false).await.expect("starts without an issuer");
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(logged.contains("no issuer of service tokens"), "{logged}");
         let status = action(
             &router,
             "localhost",
@@ -1898,6 +2148,19 @@ mod tests {
             .await;
         assert_eq!(decided("twin", "package_list", None).await, not_found);
         assert_eq!(decided("bare", "package_list", None).await, not_found);
+        // While rt7186 is served its catalogue id is taken for any other row; a fresh id is
+        // served beside it.
+        let mut thief = organization("thief7186", &org.catalogue_id);
+        thief.hosts.opendata = Some("data.thief7186.sk".into());
+        let other = organization("other7186", "00000000-0000-7000-8000-000000007187");
+        run.apply(&set(vec![org.clone(), thief, other], Vec::new()))
+            .await;
+        assert!(run.applied.contains_key("other7186"), "a distinct id");
+        assert!(!run.applied.contains_key("thief7186"), "another's id");
+        assert!(
+            run.applied.contains_key("rt7186"),
+            "its own id stays its own"
+        );
         run.apply(&set(Vec::new(), vec!["rt7186".into()])).await;
         assert_eq!(
             decided("rt7186", "package_list", None).await,
@@ -2148,10 +2411,9 @@ mod tests {
     ) -> dataroom_server::CatalogueSpec {
         spec.base = Some(format!("https://{host}"));
         spec.host = host.to_owned();
-        if let Some(route) = spec.portal.as_mut() {
-            route.host = Some(host.to_owned());
-            route.redirect = redirect;
-        }
+        let route = spec.portal.as_mut().expect("a further portal's route");
+        route.host = Some(host.to_owned());
+        route.redirect = redirect;
         spec
     }
 
@@ -2674,11 +2936,10 @@ mod tests {
         .unwrap();
         let mut files = BTreeSet::new();
         for (name, shown) in &prod_resources {
-            let entry = nkod
-                .converted
-                .get(name)
-                .or_else(|| hub.converted.get(name))
-                .unwrap_or_else(|| panic!("{name} is converted"));
+            let entry = [&nkod, &hub]
+                .into_iter()
+                .find_map(|source| source.converted.get(name))
+                .expect("every prod resource is converted");
             let file = dataroom_harvest::converted::sheet_address(
                 &format!("{GATEWAY}/api/endpoint/{}/", entry.endpoint),
                 entry,
@@ -2731,7 +2992,7 @@ mod tests {
         for (name, org) in &served {
             let ds = listed
                 .get(name.as_str())
-                .unwrap_or_else(|| panic!("{name} is not listed"));
+                .expect("every served dataset is listed");
             assert_eq!(&ds.publisher_id, org, "{name}");
             assert!(
                 ds.endpoint_url
@@ -2956,8 +3217,7 @@ mod tests {
     #[cfg(feature = "portal")]
     #[test]
     fn style_tokens_reach_the_catalogue_and_unreadable_pairs_give_way() {
-        let _log =
-            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
+        let (log, _guard) = super::super::capture_log();
         let look = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
             serde_json::from_value(v).expect("an appearance")
         };
@@ -2997,6 +3257,8 @@ mod tests {
         let shown = with_appearance(BrandingBlock::default(), Some(&pale));
         assert_eq!(shown.layout.tokens.header_text, None);
         assert_eq!(shown.layout.tokens.font_size_px, Some(15));
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(logged.contains("colour pair below WCAG AA"), "{logged}");
         // Reset: no tokens on the portal or its Organization shows the theme's.
         let reset = with_appearance(
             BrandingBlock::default(),
@@ -3113,7 +3375,13 @@ mod tests {
             .expect("an appearance");
         pale.validate()
             .expect("one colour of a pair passes jc-core");
+        let (log, _guard) = super::super::capture_log();
         let shown = with_appearance(configured.clone(), Some(&pale));
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            logged.contains("below WCAG AA on the background"),
+            "{logged}"
+        );
         assert_eq!(
             shown.colours, configured.colours,
             "jc's colours keep it readable"
@@ -3269,6 +3537,264 @@ mod tests {
             "not another Organization's"
         );
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
+    }
+
+    /// What no catalogue holds gets no look: a portal of an Organization jc serves no catalogue
+    /// for, an Organization no portal row names, one without a configured block, and a portal
+    /// stylesheet jc-core refuses (linked nowhere, logged); a portal's pages without a look of
+    /// its own go over its Organization's.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn looks_of_what_no_catalogue_holds_go_nowhere() {
+        use joinedcontext_portal::resource::ResourceEnvelope;
+        let ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+        let envelope = |kind: &str, name: &str, spec: serde_json::Value| ResourceEnvelope {
+            api_version: jc_core::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: jc_core::ObjectMeta::new(name, ns),
+            spec,
+            status: None,
+        };
+        let installation = OrgId::parse_verified("00000000-0000-7000-8000-000000000001").unwrap();
+        let org = |name: &str, cat: &str| super::super::portals::OrganizationPortals {
+            name: name.into(),
+            org_id: OrgId::of_organization(installation, name),
+            catalogue_id: CatalogueId::parse_verified(cat).unwrap(),
+            scheme: "https".into(),
+            opendata: format!("data.{name}.test"),
+            listed: Vec::new(),
+            harvest_hosts: Vec::new(),
+            config_dir: None,
+            own_gateway: None,
+        };
+        // ghost has portals but no catalogue here; lonely a catalogue but no portal row; bare a
+        // catalogue and portals but no configured block.
+        let portals = vec![
+            org("city", "00000000-0000-7000-8000-0000000000c1"),
+            org("ghost", "00000000-0000-7000-8000-0000000000c3"),
+            org("bare", "00000000-0000-7000-8000-0000000000c5"),
+        ];
+        let id = |cat: &str| CatalogueId::parse_verified(cat).unwrap();
+        let (city, lonely, bare) = (
+            id("00000000-0000-7000-8000-0000000000c1"),
+            id("00000000-0000-7000-8000-0000000000c4"),
+            id("00000000-0000-7000-8000-0000000000c5"),
+        );
+        let catalogue = BTreeMap::from([
+            ("city".to_owned(), city),
+            ("lonely".to_owned(), lonely),
+            ("bare".to_owned(), bare),
+        ]);
+        let configured = BTreeMap::from([
+            (city, BrandingBlock::default()),
+            (lonely, BrandingBlock::default()),
+        ]);
+        let mirror = joinedcontext_portal::store::Mirror::new();
+        let fields = serde_json::json!([{ "name": "funding", "label": { "sk": "Financovanie" },
+            "type": "enum", "values": ["eu", "city"] }]);
+        mirror.upsert(envelope(
+            "Organization",
+            "city",
+            serde_json::json!({ "domain": "city.test", "installation": true,
+                "appearance": { "colours": { "primary": "#0b5394" } } }),
+        ));
+        for name in ["ghost", "bare", "lonely"] {
+            mirror.upsert(envelope(
+                "Organization",
+                name,
+                serde_json::json!({ "domain": format!("{name}.test"), "datasetFields": fields }),
+            ));
+        }
+        let home = serde_json::json!([{ "slug": "home", "rows": [{ "blocks": [
+            { "type": "numbers", "items": ["datasets"] }] }] }]);
+        let everything = |org: &str, path: &str| {
+            serde_json::json!({ "organizationRef": org, "path": path, "pages": home,
+                "appearance": { "colours": { "primary": "#7a1f5c" },
+                    "css": ".site-header { background: #7a1f5c }" } })
+        };
+        mirror.upsert(envelope("Portal", "ghost-x", everything("ghost", "x")));
+        mirror.upsert(envelope("Portal", "lonely-y", everything("lonely", "y")));
+        mirror.upsert(envelope(
+            "Portal",
+            "bare-z",
+            serde_json::json!({ "organizationRef": "bare", "path": "z", "pages": home }),
+        ));
+        mirror.upsert(envelope(
+            "Portal",
+            "city-plain",
+            serde_json::json!({ "organizationRef": "city", "path": "plain", "pages": home }),
+        ));
+        mirror.upsert(envelope(
+            "Portal",
+            "city-bad",
+            serde_json::json!({ "organizationRef": "city", "path": "bad",
+                "appearance": { "css": ".site-header { color: #000 } </style>" } }),
+        ));
+        let (log, _guard) = super::super::capture_log();
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        let city_org = OrgId::of_organization(installation, "city");
+        let plain = CatalogueId::of_portal(city_org, "plain");
+        let bad = CatalogueId::of_portal(city_org, "bad");
+        assert_eq!(
+            looks.keys().copied().collect::<BTreeSet<_>>(),
+            BTreeSet::from([city, lonely, plain, bad]),
+            "ghost's, bare's and their portals' catalogues get nothing"
+        );
+        assert_eq!(looks[&city].colours.primary, "#0b5394");
+        assert_eq!(
+            looks[&lonely],
+            BrandingBlock::default(),
+            "no portal reaches it"
+        );
+        assert!(
+            looks[&plain].layout.page("home").is_some(),
+            "pages over the look"
+        );
+        assert_eq!(
+            looks[&plain].colours.primary, "#0b5394",
+            "its Organization's look"
+        );
+        assert!(
+            looks[&bad].layout.stylesheet.is_none(),
+            "refused, linked nowhere"
+        );
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            logged.contains("a portal stylesheet jc-core refuses"),
+            "{logged}"
+        );
+    }
+
+    /// One round of the appearance follower writes what changed into the shared branding and
+    /// takes out a catalogue whose look went; an unchanged round writes nothing.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_follower_writes_changed_looks_and_takes_out_gone_ones() {
+        use joinedcontext_portal::resource::ResourceEnvelope;
+        let ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+        let envelope = |kind: &str, name: &str, spec: serde_json::Value| ResourceEnvelope {
+            api_version: jc_core::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: jc_core::ObjectMeta::new(name, ns),
+            spec,
+            status: None,
+        };
+        let installation = OrgId::parse_verified("00000000-0000-7000-8000-000000000001").unwrap();
+        let city = CatalogueId::parse_verified("00000000-0000-7000-8000-0000000000c1").unwrap();
+        let portals = vec![super::super::portals::OrganizationPortals {
+            name: "city".into(),
+            org_id: OrgId::of_organization(installation, "city"),
+            catalogue_id: city,
+            scheme: "https".into(),
+            opendata: "data.city.test".into(),
+            listed: Vec::new(),
+            harvest_hosts: Vec::new(),
+            config_dir: None,
+            own_gateway: None,
+        }];
+        let catalogue = BTreeMap::from([("city".to_owned(), city)]);
+        let configured = BTreeMap::from([(city, BrandingBlock::default())]);
+        let mirror = joinedcontext_portal::store::Mirror::new();
+        mirror.upsert(envelope(
+            "Organization",
+            "city",
+            serde_json::json!({ "domain": "city.test" }),
+        ));
+        let portal = |look: bool| {
+            let mut spec = serde_json::json!({ "organizationRef": "city", "path": "mobility" });
+            if look {
+                spec["appearance"] = serde_json::json!({ "colours": { "primary": "#7a1f5c" } });
+            }
+            envelope("Portal", "city-mobility", spec)
+        };
+        mirror.upsert(portal(true));
+        let shared = std::sync::RwLock::new(BTreeMap::new());
+        let mut seen = BTreeMap::new();
+        let round = |seen: &mut BTreeMap<CatalogueId, BrandingBlock>| {
+            apply_looks(&mirror, (&catalogue, &portals, &configured), &shared, seen);
+        };
+        let mobility = CatalogueId::of_portal(portals[0].org_id, "mobility");
+        round(&mut seen);
+        assert_eq!(shared.read().unwrap()[&mobility].colours.primary, "#7a1f5c");
+        assert_eq!(seen.len(), 2);
+        shared.write().unwrap().clear();
+        round(&mut seen);
+        assert!(
+            shared.read().unwrap().is_empty(),
+            "an unchanged round writes nothing"
+        );
+        mirror.upsert(portal(false));
+        shared
+            .write()
+            .unwrap()
+            .insert(mobility, BrandingBlock::default());
+        round(&mut seen);
+        assert!(
+            !shared.read().unwrap().contains_key(&mobility),
+            "a gone look leaves"
+        );
+        assert!(!seen.contains_key(&mobility));
+    }
+
+    /// A catalogue's dashboard cards come from its Organization in the Portal's mirror; a
+    /// catalogue of no Organization, or no Portal in the process, has none.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn dashboard_cards_need_an_organization_and_a_portal() {
+        let city = CatalogueId::parse_verified("00000000-0000-7000-8000-0000000000c1").unwrap();
+        let other = CatalogueId::parse_verified("00000000-0000-7000-8000-0000000000c2").unwrap();
+        let organization = BTreeMap::from([(city, "city".to_owned())]);
+        let portal = joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        );
+        assert!(dashboard_cards_of(&organization, None, &city, "sk").is_empty());
+        assert!(dashboard_cards_of(&organization, Some(&portal), &other, "sk").is_empty());
+        assert!(
+            dashboard_cards_of(&organization, Some(&portal), &city, "sk").is_empty(),
+            "an Organization with no dashboard in the mirror shows none"
+        );
+    }
+
+    /// The catalogue's assistant widget is the page of the assistant module beside it, for the
+    /// deployment named; none without that module.
+    #[test]
+    fn the_assistant_widget_is_the_page_of_the_assistant_beside_it() {
+        let mut siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        assert_eq!(assistant_widget(&siblings, "city"), None);
+        siblings.insert_remote(
+            Module::Assistant,
+            crate::siblings::Sibling::direct(
+                "https://assistant.city.test".into(),
+                "http://assistant:8080".into(),
+            ),
+        );
+        assert_eq!(
+            assistant_widget(&siblings, "city").as_deref(),
+            Some("https://assistant.city.test/d/city/widget")
+        );
+    }
+
+    /// A heading or a body font set alone goes over that one, the other keeps the theme's.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_heading_or_body_font_alone_sets_only_its_own() {
+        let look = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
+            serde_json::from_value(v).expect("an appearance")
+        };
+        let theme = BrandingBlock::default();
+        let heading = with_appearance(
+            theme.clone(),
+            Some(&look(serde_json::json!({ "headingFont": "serif" }))),
+        );
+        assert_ne!(heading.fonts.heading, theme.fonts.heading);
+        assert_eq!(heading.fonts.body, theme.fonts.body);
+        let body = with_appearance(
+            theme.clone(),
+            Some(&look(serde_json::json!({ "bodyFont": "mono" }))),
+        );
+        assert_eq!(body.fonts.heading, theme.fonts.heading);
+        assert_ne!(body.fonts.body, theme.fonts.body);
     }
 
     /// T-7746: each catalogue carries its own Organization's dataset fields under the
@@ -3446,8 +3972,7 @@ mod tests {
     /// `catalogue.propose` set on the default catalogue.
     #[tokio::test]
     async fn the_configured_host_replaces_a_proposed_one() {
-        let _log =
-            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
+        let (log, _guard) = super::super::capture_log();
         let (store, org, cat, _) = stored_default("opendata.city.example").await;
         let mut proposed = store.get_catalogue(org, cat).await.unwrap().unwrap();
         proposed.host = "proposed.example".into();
@@ -3456,6 +3981,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            logged.contains("default catalogue moved")
+                && logged.contains("from=proposed.example")
+                && logged.contains("to=opendata.city.example"),
+            "{logged}"
+        );
     }
 
     #[tokio::test]
@@ -3518,6 +4050,28 @@ mod tests {
         assert!(!without.contains("<script>"), "{without}");
     }
 
+    /// The Organization's CKAN publisher is made once: a second start finds it and keeps it.
+    #[tokio::test]
+    async fn the_organizations_publisher_is_made_once() {
+        let (store, ctx) = catalogue().await;
+        let org = organization("city7782", "00000000-0000-7000-8000-000000007782");
+        ensure_publisher(&store, ctx.org_id, ctx.catalogue_id, &org, "https")
+            .await
+            .unwrap();
+        let get = || async {
+            store
+                .get_publisher(&ctx, "city7782")
+                .await
+                .unwrap()
+                .expect("the publisher")
+        };
+        let made = get().await;
+        ensure_publisher(&store, ctx.org_id, ctx.catalogue_id, &org, "http")
+            .await
+            .unwrap();
+        assert_eq!(get().await, made, "the stored one is kept");
+    }
+
     #[tokio::test]
     async fn the_hidden_list_is_written_over_the_stored_one() {
         let (store, ctx) = catalogue().await;
@@ -3534,6 +4088,19 @@ mod tests {
                 .hidden_datasets
         };
         assert_eq!(get().await, one);
+        let modified = || async {
+            store
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .modified
+        };
+        let before = modified().await;
+        seed_hidden(&store, ctx.org_id, ctx.catalogue_id, &one)
+            .await
+            .unwrap();
+        assert_eq!(modified().await, before, "the same list writes nothing");
         seed_hidden(&store, ctx.org_id, ctx.catalogue_id, &BTreeMap::new())
             .await
             .unwrap();

@@ -59,7 +59,17 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
 /// namespace). `None` while no Portal runs here: daiya keeps no sessions (PORTAL-CALLS.md G-5).
 #[cfg(feature = "portal")]
 fn page_reader(headers: &axum::http::HeaderMap, num: i64, name: &str) -> Option<String> {
-    let portal = super::PORTAL_STATE.get()?;
+    reader_in(super::PORTAL_STATE.get()?, headers, num, name)
+}
+
+/// [`page_reader`] against the Portal state `portal`.
+#[cfg(feature = "portal")]
+fn reader_in(
+    portal: &joinedcontext_portal::state::AppState,
+    headers: &axum::http::HeaderMap,
+    num: i64,
+    name: &str,
+) -> Option<String> {
     let project = if num == 1 {
         joinedcontext_portal::permissions::ORG_NAMESPACE
     } else {
@@ -292,6 +302,94 @@ mod tests {
         assert_eq!(gateway_reach(&elsewhere), None, "a host of its own");
     }
 
+    /// A dashboards password below daiya's floor refuses the start, the password never echoed.
+    #[tokio::test]
+    async fn a_short_dashboards_password_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut given = BTreeMap::new();
+        given.insert(
+            Secret::DashboardsPassword,
+            crate::setup::Given {
+                secret: jc_secret::Secret::new("short-pw-7782".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        );
+        let short = Setup::prepare(tmp.path(), &[Module::Daiya, Module::Portal], &given).unwrap();
+        let e = state(&DaiyaSection::default(), &short)
+            .await
+            .err()
+            .expect("a short password refuses");
+        assert!(e.contains("at least 16 characters"), "{e}");
+        assert!(!e.contains("short-pw-7782"), "never echoed: {e}");
+    }
+
+    /// An organization number or name declared twice, or one below 2, refuses the start.
+    #[tokio::test]
+    async fn organizations_declared_twice_or_below_two_refuse_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let org = |id: i64, name: &str| daiya_server::config::NumberedOrganization {
+            id,
+            name: name.into(),
+        };
+        for organizations in [
+            vec![org(2, "city"), org(2, "town")],
+            vec![org(2, "city"), org(3, "city")],
+            vec![org(1, "installation")],
+        ] {
+            let cfg = DaiyaSection {
+                organizations: organizations.clone(),
+                ..DaiyaSection::default()
+            };
+            let e = build(
+                &cfg,
+                &setup(tmp.path(), &[Module::Daiya]),
+                &siblings(None),
+                mount(),
+            )
+            .await
+            .err()
+            .expect("refused");
+            assert!(!e.is_empty(), "{organizations:?}");
+        }
+        let cfg = DaiyaSection {
+            organizations: vec![org(2, "city"), org(3, "town")],
+            ..DaiyaSection::default()
+        };
+        assert!(
+            build(
+                &cfg,
+                &setup(tmp.path(), &[Module::Daiya]),
+                &siblings(None),
+                mount()
+            )
+            .await
+            .is_ok(),
+            "distinct numbers from 2 start"
+        );
+    }
+
+    /// Without a Portal cookie nobody reads a page, the installation's (number 1, the `org`
+    /// namespace) or a project's; with no Portal in the process nobody either.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_page_without_a_portal_cookie_has_no_reader() {
+        let none = axum::http::HeaderMap::new();
+        assert_eq!(page_reader(&none, 1, "org"), None);
+        let portal = joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        );
+        assert_eq!(reader_in(&portal, &none, 1, "installation"), None);
+        assert_eq!(reader_in(&portal, &none, 7, "city"), None);
+        let mut forged = axum::http::HeaderMap::new();
+        forged.insert(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_static("jc_session=not-a-session"),
+        );
+        assert_eq!(reader_in(&portal, &forged, 7, "city"), None);
+    }
+
     #[test]
     fn the_endpoint_bases_are_the_gateways_two_addresses_once_each() {
         assert!(gateway_endpoint_bases(&siblings(None)).is_empty());
@@ -313,8 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_bad_prometheus_reach_or_provisioning_root_refuses_the_start() {
-        let _log =
-            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
+        let (log, _guard) = super::super::capture_log();
         let tmp = tempfile::tempdir().unwrap();
         let roles = [Module::Daiya];
         let bad_reach = DaiyaSection {
@@ -359,5 +456,10 @@ mod tests {
             .body(axum::body::Body::empty())
             .unwrap();
         assert!(router.oneshot(health).await.unwrap().status().is_success());
+        let log = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            log.contains("daiya: provisioning loaded") && log.contains("datasources=0"),
+            "{log}"
+        );
     }
 }
