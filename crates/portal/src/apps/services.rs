@@ -587,7 +587,8 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(
             body,
-            json!({"type": "https://joinedcontext.com/errors/quota", "title": "Conflict", "status": 409, "detail": "taken"})
+            json!({"type": "https://joinedcontext.com/errors/quota", "title": "Conflict", "status": 409, "detail": "taken",
+                "hint": crate::error::hint_of("quota").expect("quota has a hint")})
         );
     }
 
