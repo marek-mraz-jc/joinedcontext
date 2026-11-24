@@ -66,12 +66,15 @@ pub fn generator_version() -> String {
 #[derive(Clone)]
 struct State {
     slots: Arc<Semaphore>,
+    /// [`COMPILE_TIMEOUT`]; a field so a test can run past it.
+    timeout: Duration,
 }
 
 /// The module's router: `/healthz`, `/generate`, and a JSON 404 for anything else.
 pub fn router() -> Router {
     let state = State {
         slots: Arc::new(Semaphore::new(WORK_SLOTS)),
+        timeout: COMPILE_TIMEOUT,
     };
     Router::new().fallback(move |req: Request| dispatch(state.clone(), req))
 }
@@ -184,7 +187,7 @@ async fn generate_route(state: State, body: Body) -> Response {
         let _permit = permit;
         generate(&body)
     });
-    match tokio::time::timeout(COMPILE_TIMEOUT, job).await {
+    match tokio::time::timeout(state.timeout, job).await {
         Ok(Ok((status, payload))) => {
             let errors = payload["errors"].as_array().map_or(0, Vec::len);
             tracing::info!(
@@ -206,7 +209,7 @@ async fn generate_route(state: State, body: Body) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             &[format!(
                 "the generator did not answer within {} s",
-                COMPILE_TIMEOUT.as_secs()
+                state.timeout.as_secs()
             )],
         ),
     }

@@ -483,6 +483,73 @@ mod tests {
     }
 
     #[test]
+    fn a_pipeline_that_writes_nowhere_ends_the_row_at_itself() {
+        let mirror = helsinki();
+        mirror.upsert(manifest(
+            "helsinki",
+            "DataSource",
+            "loose-in",
+            json!({ "type": "mqtt", "mqtt": { "brokerRef": { "kind": "MqttBroker", "name": "sensors" }, "topics": ["loose/#"] } }),
+        ));
+        let mut spec = pipeline(json!("loose-in"));
+        spec.as_object_mut()
+            .expect("an object")
+            .remove("targetEndpoint");
+        mirror.upsert(manifest("helsinki", "Pipeline", "loose", spec));
+        let rows = bindings(&mirror, "helsinki", "sensors", &|_, _| true);
+        let loose = rows
+            .iter()
+            .find(|b| b.topic_filter.as_deref() == Some("loose/#"))
+            .expect("the loose topic");
+        assert_eq!(loose.pipeline, Some(Hop::named("Pipeline", "loose")));
+        assert_eq!(
+            (&loose.endpoint, &loose.entity_type, &loose.attributes),
+            (&None, &None, &None)
+        );
+    }
+
+    #[test]
+    fn the_mapper_is_the_first_compute_step_after_any_processor() {
+        let spec = |steps: Value| -> PipelineSpec {
+            serde_json::from_value(json!({ "class": "auto", "steps": steps })).expect("a pipeline")
+        };
+        let processor = json!({ "processor": { "log": { "message": "in" } } });
+        let mapper = mapper_of(&spec(json!([
+            processor,
+            { "kind": "bloblang", "bloblang": MAPPER }
+        ])))
+        .expect("the mapper after the processor");
+        assert_eq!(mapper.code, MAPPER);
+        assert!(
+            mapper_of(&spec(json!([processor]))).is_none(),
+            "no compute step"
+        );
+    }
+
+    #[test]
+    fn a_field_name_that_is_no_identifier_is_read_quoted() {
+        let mapper = Mapper {
+            state: serde_json::from_value(json!({
+                "type": "WeatherObserved",
+                "attributes": {
+                    "temperature": { "field": "air-temp" },
+                    "humidity": { "field": "rel hum" },
+                }
+            }))
+            .expect("a mapper state"),
+            code: "root.temperature = this.\"air-temp\"\nroot.humidity = this.rel_hum\n".to_owned(),
+        };
+        assert_eq!(
+            attributes_of(&mapper),
+            vec![AttributeBinding {
+                from: Some("air-temp".to_owned()),
+                to: "temperature".to_owned()
+            }],
+            "humidity reads another field than `this.\"rel hum\"`"
+        );
+    }
+
+    #[test]
     fn a_source_no_pipeline_of_the_project_reads_has_no_pipeline() {
         let rows = of(&|_, _| true);
         let idle = rows

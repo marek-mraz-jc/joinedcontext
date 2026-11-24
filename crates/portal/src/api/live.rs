@@ -76,12 +76,11 @@ pub async fn watch(
     // A window that fell behind misses changes rather than the stream: its next event reads again.
     let stream = BroadcastStream::new(receiver).filter_map(|item| {
         let changed = item.ok()?;
-        Some(Ok::<_, std::convert::Infallible>(
-            Event::default()
-                .event("changed")
-                .json_data(changed.as_ref())
-                .unwrap_or_else(|_| Event::default().comment("unserializable")),
-        ))
+        let event = Event::default()
+            .event("changed")
+            .json_data(changed.as_ref())
+            .ok()?;
+        Some(Ok::<_, std::convert::Infallible>(event))
     });
     let mut response = Sse::new(stream)
         .keep_alive(
