@@ -169,6 +169,20 @@ mod tests {
     }
 
     #[test]
+    fn a_cast_that_is_not_a_bool_is_refused_and_a_bool_is_read_as_bento_reads_it() {
+        let obj = |v: serde_json::Value| v.as_object().expect("object").clone();
+        let e = XmlDocumentScanner::from_config(&obj(
+            serde_json::json!({"operator": "to_json", "cast": "yes"}),
+        ))
+        .expect_err("refused");
+        assert!(e.to_string().contains("field cast must be a bool"), "{e}");
+        XmlDocumentScanner::from_config(&obj(
+            serde_json::json!({"operator": "to_json", "cast": true}),
+        ))
+        .expect("a bool cast");
+    }
+
+    #[test]
     fn a_doctype_is_refused() {
         let conf = serde_json::json!({"operator": "to_json"});
         let scanner =

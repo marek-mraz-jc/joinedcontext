@@ -443,11 +443,9 @@ impl FileInput {
             let file = std::fs::File::open(&for_read).map_err(|e| {
                 CoreError::other(format!("failed to read '{}': {e}", for_read.display()))
             })?;
-            let metadata = file.metadata().map_err(|e| {
-                CoreError::other(format!("failed to stat '{}': {e}", for_read.display()))
-            })?;
-            let (mod_unix, mod_rfc3339) =
-                mod_time_meta(metadata.modified().unwrap_or_else(|_| SystemTime::now()));
+            // An open file whose times cannot be read is stamped now, as one without a mtime.
+            let modified = file.metadata().and_then(|m| m.modified());
+            let (mod_unix, mod_rfc3339) = mod_time_meta(modified);
             let path_str = for_read.to_string_lossy().into_owned();
             let annotate: Box<dyn Fn(&mut Part) + Send> = Box::new(move |p: &mut Part| {
                 p.meta_set_str("path", path_str.clone());
@@ -478,12 +476,11 @@ impl Input for FileInput {
         _ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
         loop {
-            if self.current.is_none() {
-                self.current = Some(self.open_next_file().ok_or(CoreError::EndOfInput)?);
-            }
-            let Some(cur) = self.current.as_mut() else {
-                continue;
+            let cur = match self.current.take() {
+                Some(cur) => cur,
+                None => self.open_next_file().ok_or(CoreError::EndOfInput)?,
             };
+            let cur = self.current.insert(cur);
             let Some(batch) = cur.recv().await? else {
                 self.current = None;
                 continue;
@@ -578,7 +575,8 @@ fn scan_reader(
             Ok(())
         }
         FileScannerKind::Chunker { size } => loop {
-            let mut buf = Vec::with_capacity(*size);
+            // `size` comes from the config: grow with the data, never allocate it up front.
+            let mut buf = Vec::with_capacity((*size).min(SCAN_BUFFER));
             (&mut *r)
                 .take(*size as u64)
                 .read_to_end(&mut buf)
@@ -1069,19 +1067,20 @@ impl Input for SequenceInput {
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
         loop {
-            let Some(front) = self.inputs.front_mut() else {
+            let Some(mut front) = self.inputs.pop_front() else {
                 return Err(CoreError::EndOfInput);
             };
             match front.read_batch(ctx).await {
-                Ok(res) => return Ok(res),
                 Err(CoreError::EndOfInput) => {
-                    let mut done = self.inputs.pop_front().unwrap();
-                    let _ = done.close().await;
+                    let _ = front.close().await;
                     if let Some(next) = self.inputs.front_mut() {
                         next.connect(ctx).await?;
                     }
                 }
-                Err(e) => return Err(e),
+                res => {
+                    self.inputs.push_front(front);
+                    return res;
+                }
             }
         }
     }
@@ -1230,9 +1229,13 @@ impl Input for EmptyInput {
     }
 }
 
-/// `mod_time_unix` and `mod_time` of a file modified at `t` (whole seconds, rounded down).
-fn mod_time_meta(t: SystemTime) -> (i64, String) {
-    let t = Timestamp::try_from(t).unwrap_or_else(|_| Timestamp::now());
+/// `mod_time_unix` and `mod_time` of a file modified at `t` (whole seconds, rounded down); now
+/// when the time cannot be read or lies outside jiff's range.
+fn mod_time_meta(t: std::io::Result<SystemTime>) -> (i64, String) {
+    let t = t
+        .ok()
+        .and_then(|t| Timestamp::try_from(t).ok())
+        .unwrap_or_else(Timestamp::now);
     (
         ekiben_bloblang::time_format::unix_floor(t, 1_000_000_000).unwrap_or_default(),
         jc_time::format_rfc3339(t, jc_time::SecondsFormat::Secs, true),
@@ -1247,8 +1250,8 @@ mod scanner_config_tests {
     fn mod_time_is_whole_seconds_rounded_down_as_the_chrono_build_wrote_it() {
         use std::time::{Duration, UNIX_EPOCH};
         let got = [
-            mod_time_meta(UNIX_EPOCH + Duration::from_millis(1_771_628_400_999)),
-            mod_time_meta(UNIX_EPOCH - Duration::from_millis(500)),
+            mod_time_meta(Ok(UNIX_EPOCH + Duration::from_millis(1_771_628_400_999))),
+            mod_time_meta(Ok(UNIX_EPOCH - Duration::from_millis(500))),
         ];
         assert_eq!(
             got,
@@ -1257,6 +1260,15 @@ mod scanner_config_tests {
                 (-1, "1969-12-31T23:59:59Z".to_string()),
             ]
         );
+        // An unreadable time and one past jiff's year 9999 are stamped now.
+        let before = Timestamp::now().as_second();
+        for t in [
+            Err(std::io::Error::other("no mtime")),
+            Ok(UNIX_EPOCH + Duration::from_secs(400_000_000_000)),
+        ] {
+            let (unix, _) = mod_time_meta(t);
+            assert!((before..=before + 5).contains(&unix), "{unix}");
+        }
     }
 
     fn scanner(conf: serde_json::Value) -> Result<FileScannerKind, CoreError> {

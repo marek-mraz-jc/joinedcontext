@@ -480,6 +480,18 @@ mod tests {
     }
 
     #[test]
+    fn a_range_below_the_field_minimum_is_refused_and_an_impossible_date_never_fires() {
+        assert_eq!(
+            parse("0 0 0 * *").expect_err("refused"),
+            "beginning of range (0) below minimum (1): 0"
+        );
+        assert!(parse("0 0 30 2 *")
+            .expect("parses")
+            .next(at("2026-01-01T00:00:00Z"))
+            .is_none());
+    }
+
+    #[test]
     fn bad_expressions_name_the_fault_like_robfig() {
         for (expr, want) in [
             ("bogus", "expected 5 to 6 fields, found 1: [bogus]"),

@@ -85,15 +85,16 @@ impl LinesScanner {
                 if buf.is_empty() {
                     break;
                 }
-                match memchr(last, buf) {
+                let (found, used) = match memchr(last, buf) {
                     Some(i) => (true, i + 1),
                     None => (false, buf.len()),
+                };
+                if line.len() + used > self.max_buffer_size {
+                    return Err(CoreError::other("bufio.Scanner: token too long"));
                 }
+                line.extend_from_slice(&buf[..used]);
+                (found, used)
             };
-            if line.len() + used > self.max_buffer_size {
-                return Err(CoreError::other("bufio.Scanner: token too long"));
-            }
-            line.extend_from_slice(&r.fill_buf().map_err(read_err)?[..used]);
             r.consume(used);
             if found && line.ends_with(delim) {
                 line.truncate(line.len() - delim.len());
@@ -147,6 +148,50 @@ mod tests {
             Ok(())
         })?;
         Ok(out)
+    }
+
+    #[test]
+    fn config_refusals_name_the_field_and_an_empty_delimiter_is_newline() {
+        let obj = |v: serde_json::Value| v.as_object().expect("object").clone();
+        for (conf, want) in [
+            (
+                serde_json::json!({"custom_delimiter": 1}),
+                "field custom_delimiter must be a string",
+            ),
+            (
+                serde_json::json!({"max_buffer_size": 0}),
+                "field max_buffer_size must be a positive integer",
+            ),
+            (
+                serde_json::json!({"max_buffer_size": "big"}),
+                "field max_buffer_size must be a positive integer",
+            ),
+        ] {
+            let e = LinesScanner::from_config(&obj(conf.clone())).expect_err("refused");
+            assert!(e.to_string().contains(want), "{conf}: {e}");
+        }
+        let s = LinesScanner::from_config(&obj(serde_json::json!({"custom_delimiter": ""})))
+            .expect("scanner");
+        assert!(s.splits_on_newline());
+        assert_eq!(
+            lines(serde_json::json!({"custom_delimiter": ""}), b"a\r\nb").expect("lines"),
+            ["a", "b"]
+        );
+    }
+
+    #[test]
+    fn a_read_error_is_answered() {
+        struct Broken;
+        impl std::io::Read for Broken {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk gone"))
+            }
+        }
+        let s = LinesScanner::default();
+        let e = s
+            .scan(&mut std::io::BufReader::new(Broken), &mut |_| Ok(()))
+            .expect_err("read error");
+        assert!(e.to_string().contains("disk gone"), "{e}");
     }
 
     // Outputs recorded from Bento 1.22 (`file` input, `lines` scanner) on the same bytes.

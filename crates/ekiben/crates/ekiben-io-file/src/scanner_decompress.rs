@@ -44,9 +44,7 @@ impl Algorithm {
     /// The whole decompressed stream; concatenated gzip, bzip2, lz4 and zstd members read on as Go's readers do.
     pub fn decompress(self, raw: &[u8]) -> Result<Vec<u8>, CoreError> {
         let mut out = Vec::new();
-        self.reader(raw)?
-            .read_to_end(&mut out)
-            .map_err(|e| CoreError::other(e.to_string()))?;
+        self.reader(raw)?.read_to_end(&mut out).map_err(io_err)?;
         Ok(out)
     }
 
@@ -60,16 +58,17 @@ impl Algorithm {
             Self::Bzip2 => Box::new(bzip2::read::MultiBzDecoder::new(raw)),
             Self::Lz4 => Box::new(lz4_flex::frame::FrameDecoder::new(raw)),
             Self::Snappy => Box::new(snap::read::FrameDecoder::new(raw)),
-            Self::Zstd => Box::new(
-                zstd::stream::read::Decoder::new(raw)
-                    .map_err(|e| CoreError::other(e.to_string()))?,
-            ),
+            Self::Zstd => Box::new(zstd::stream::read::Decoder::new(raw).map_err(io_err)?),
         };
         Ok(Box::new(Capped {
             inner,
             left: MAX_DECOMPRESSED_BYTES,
         }))
     }
+}
+
+fn io_err(e: std::io::Error) -> CoreError {
+    CoreError::other(e.to_string())
 }
 
 /// Fails the read once the decompressed bytes pass the cap.
@@ -154,6 +153,19 @@ mod tests {
             Algorithm::Gzip.decompress(&two).expect("two members").len(),
             body.len() * 2
         );
+    }
+
+    #[test]
+    fn every_name_parses_to_its_algorithm_and_a_corrupt_stream_fails() {
+        let names = [
+            "gzip", "pgzip", "zlib", "flate", "bzip2", "lz4", "snappy", "zstd",
+        ];
+        let algos = names.map(|n| Algorithm::parse(n).expect("known"));
+        use Algorithm::*;
+        assert_eq!(algos, [Gzip, Pgzip, Zlib, Flate, Bzip2, Lz4, Snappy, Zstd]);
+        for a in algos {
+            assert!(a.decompress(&[0xFF; 32]).is_err(), "{a:?}");
+        }
     }
 
     #[test]

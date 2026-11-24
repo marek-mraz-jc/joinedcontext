@@ -271,9 +271,10 @@ impl client::Handler for Pinned {
         };
         let seen = data.fingerprint(HashAlg::Sha256).to_string();
         let ok = seen == self.fingerprint;
-        if let Ok(mut s) = self.seen.lock() {
-            *s = Some(seen);
-        }
+        *self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(seen);
         Ok(ok)
     }
 }
@@ -284,12 +285,14 @@ pub struct Session {
     _ssh: Handle<Pinned>,
 }
 
+/// `r`, its error named as the step `what` that failed.
+fn step<T, E: std::fmt::Display>(what: &str, r: Result<T, E>) -> Result<T, CoreError> {
+    r.map_err(|e| CoreError::other(format!("sftp input: {what}: {e}")))
+}
+
 /// Connects to `target` through `org`'s outbound rule, checks the pinned host key, logs in and
 /// opens the SFTP subsystem.
 pub async fn connect(target: &SftpTarget, org: &OrgContext) -> Result<Session, CoreError> {
-    let failed = |what: &str, e: &dyn std::fmt::Display| {
-        CoreError::other(format!("sftp input: {what}: {e}"))
-    };
     let addrs =
         ekiben_io_http::outbound::resolve_host_checked(&target.host, target.port, org).await?;
     let tcp = ekiben_io_http::outbound::connect_checked(&addrs, CONNECT_TIMEOUT).await?;
@@ -303,22 +306,28 @@ pub async fn connect(target: &SftpTarget, org: &OrgContext) -> Result<Session, C
         fingerprint: target.host_key_fingerprint.clone(),
         seen: seen.clone(),
     };
-    let mut ssh = tokio::time::timeout(CONNECT_TIMEOUT, client::connect_stream(config, tcp, handler))
-        .await
-        .map_err(|_| CoreError::other("sftp input: the server did not complete the SSH handshake in 15 s"))?
-        .map_err(|e| match e {
-            russh::Error::UnknownKey => CoreError::config(format!(
-                "sftp input: the server presented host key {}, which does not match host_key_fingerprint {}; confirm the server's fingerprint with its operator before changing the pin",
-                seen.lock().ok().and_then(|s| s.clone()).unwrap_or_else(|| "(none)".into()),
-                target.host_key_fingerprint
-            )),
-            e => failed("ssh handshake", &e),
-        })?;
+    let handshake = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        client::connect_stream(config, tcp, handler),
+    )
+    .await
+    .map_err(|_| {
+        CoreError::other("sftp input: the server did not complete the SSH handshake in 15 s")
+    })?;
+    let mut ssh = match handshake {
+        // only check_server_key refuses a key, and it records the key it saw first
+        Err(russh::Error::UnknownKey) => return Err(CoreError::config(format!(
+            "sftp input: the server presented host key {}, which does not match host_key_fingerprint {}; confirm the server's fingerprint with its operator before changing the pin",
+            seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone().unwrap_or_default(),
+            target.host_key_fingerprint
+        ))),
+        other => step("ssh handshake", other)?,
+    };
     let auth = match (&target.password, &target.private_key) {
-        (Some(p), _) => ssh
-            .authenticate_password(target.username.clone(), p.expose())
-            .await
-            .map_err(|e| failed("login", &e))?,
+        (Some(p), _) => {
+            ssh.authenticate_password(target.username.clone(), p.expose())
+                .await
+        }
         (None, Some(k)) => {
             let key = decode_secret_key(
                 k.expose(),
@@ -332,27 +341,21 @@ pub async fn connect(target: &SftpTarget, org: &OrgContext) -> Result<Session, C
                 PrivateKeyWithHashAlg::new(Arc::new(key), None),
             )
             .await
-            .map_err(|e| failed("login", &e))?
         }
         (None, None) => return Err(CoreError::config("sftp input: no password or private_key")),
     };
-    if !matches!(auth, AuthResult::Success) {
+    if !matches!(step("login", auth)?, AuthResult::Success) {
         return Err(CoreError::config(format!(
             "sftp input: the server refused the credentials of user {}",
             target.username
         )));
     }
-    let channel = ssh
-        .channel_open_session()
-        .await
-        .map_err(|e| failed("session", &e))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| failed("sftp subsystem", &e))?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| failed("sftp", &e))?;
+    let channel = step("session", ssh.channel_open_session().await)?;
+    step(
+        "sftp subsystem",
+        channel.request_subsystem(true, "sftp").await,
+    )?;
+    let sftp = step("sftp", SftpSession::new(channel.into_stream()).await)?;
     Ok(Session { sftp, _ssh: ssh })
 }
 
@@ -390,10 +393,7 @@ impl SftpInput {
         let mut found = Vec::new();
         let now = SystemTime::now();
         for (dir, pattern) in &self.s.paths {
-            let entries = sftp
-                .read_dir(dir.clone())
-                .await
-                .map_err(|e| CoreError::other(format!("sftp input: listing {dir}: {e}")))?;
+            let entries = step(&format!("listing {dir}"), sftp.read_dir(dir.clone()).await)?;
             for entry in entries {
                 let name = entry.file_name();
                 let meta = entry.metadata();
@@ -409,17 +409,14 @@ impl SftpInput {
                     );
                     continue;
                 }
-                if let Some(w) = &self.s.watcher {
+                // from_config gives a watcher its cache
+                if let (Some(w), Some(c)) = (&self.s.watcher, &self.cache) {
                     let old_enough = meta
                         .modified()
                         .ok()
                         .and_then(|m| now.duration_since(m).ok())
                         .is_some_and(|age| age >= w.minimum_age);
-                    let seen = match &self.cache {
-                        Some(c) => c.exists(&path).await?,
-                        None => false,
-                    };
-                    if !old_enough || seen {
+                    if !old_enough || c.exists(&path).await? {
                         continue;
                     }
                 }
@@ -432,15 +429,15 @@ impl SftpInput {
     }
 
     async fn read_file(&self, sftp: &SftpSession, path: &str) -> Result<Vec<u8>, CoreError> {
-        let io = |e: &dyn std::fmt::Display| {
-            CoreError::other(format!("sftp input: reading {path}: {e}"))
-        };
-        let file = sftp.open(path.to_string()).await.map_err(|e| io(&e))?;
+        let what = format!("reading {path}");
+        let file = step(&what, sftp.open(path.to_string()).await)?;
         let mut body = Vec::new();
-        file.take(self.s.max_file_bytes as u64 + 1)
-            .read_to_end(&mut body)
-            .await
-            .map_err(|e| io(&e))?;
+        step(
+            &what,
+            file.take(self.s.max_file_bytes as u64 + 1)
+                .read_to_end(&mut body)
+                .await,
+        )?;
         if body.len() > self.s.max_file_bytes {
             return Err(CoreError::other(format!(
                 "sftp input: {path} is larger than max_file_bytes ({} bytes)",

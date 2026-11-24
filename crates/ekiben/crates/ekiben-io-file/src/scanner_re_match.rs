@@ -126,6 +126,36 @@ mod tests {
     }
 
     #[test]
+    fn config_refusals_name_the_field() {
+        let obj = |v: serde_json::Value| v.as_object().expect("object").clone();
+        for (conf, want) in [
+            (serde_json::json!({}), "field pattern is required"),
+            (
+                serde_json::json!({"pattern": "x", "max_buffer_size": "big"}),
+                "field max_buffer_size must be a positive integer",
+            ),
+            (
+                serde_json::json!({"pattern": "("}),
+                "re_match: invalid pattern",
+            ),
+        ] {
+            let e = ReMatchScanner::from_config(&obj(conf.clone())).expect_err("refused");
+            assert!(e.to_string().contains(want), "{conf}: {e}");
+        }
+        // the default buffer takes a 64 KiB segment and refuses a longer one
+        let s = ReMatchScanner::from_config(&obj(serde_json::json!({"pattern": "#"})))
+            .expect("scanner");
+        assert_eq!(s.split(&vec![b'a'; 64 * 1024]).expect("fits").len(), 1);
+        assert!(s.split(&vec![b'a'; 64 * 1024 + 1]).is_err());
+    }
+
+    #[test]
+    fn a_stream_with_one_match_at_its_start_is_one_segment() {
+        check("#", "#abc", &["#abc"]);
+        check("#", "ab#c", &["ab", "#c"]);
+    }
+
+    #[test]
     fn a_segment_over_max_buffer_size_fails() {
         let long = "x".repeat(201);
         let err = scanner("split")

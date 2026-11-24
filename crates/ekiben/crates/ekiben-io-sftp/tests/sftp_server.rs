@@ -244,3 +244,228 @@ async fn a_watcher_takes_each_new_file_once() {
     assert_eq!(lines(&b), ["e1"]);
     assert!(cache.exists(&format!("{dir}/d.csv")).await.expect("cache"));
 }
+
+fn private_key_target(s: &Server, pin: &str, key: Option<&str>) -> SftpTarget {
+    SftpTarget {
+        password: None,
+        private_key: key.map(|k| SecretString::new(k.to_string())),
+        ..target(s, pin)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connect_names_missing_undecodable_and_refused_credentials() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let c = ctx(Arc::default());
+    let pin = pin(&s, &c).await;
+    fn err<T>(r: Result<T, CoreError>) -> String {
+        match r {
+            Ok(_) => panic!("connected"),
+            Err(e) => e.to_string(),
+        }
+    }
+    let e = err(connect(&private_key_target(&s, &pin, None), &c.org).await);
+    assert!(e.contains("no password or private_key"), "{e}");
+    let e = err(connect(&private_key_target(&s, &pin, Some("not a key")), &c.org).await);
+    assert!(e.contains("credentials.private_key does not decode"), "{e}");
+    // a well-formed key the server does not know
+    let dir = tempfile::TempDir::new().expect("tmp");
+    let path = dir.path().join("id");
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&path)
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    let key = std::fs::read_to_string(&path).expect("key");
+    let e = err(connect(&private_key_target(&s, &pin, Some(&key)), &c.org).await);
+    assert!(e.contains("refused the credentials of user"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_over() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let c = ctx(Arc::default());
+    let pin = pin(&s, &c).await;
+    let dir = format!("/upload/cap-{}", std::process::id());
+    let session = connect(&target(&s, &pin), &c.org).await.expect("connects");
+    session.sftp.create_dir(dir.clone()).await.expect("mkdir");
+    put(&s, &pin, &c, &format!("{dir}/a.csv"), "a1\n").await;
+    put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1\n").await;
+    put(&s, &pin, &c, &format!("{dir}/big.csv"), "far too long\n").await;
+    put(&s, &pin, &c, &format!("{dir}/empty.csv"), "").await;
+
+    let mut i = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/*.csv")], "max_file_bytes": 4, "delete_on_finish": true}),
+        &c,
+    );
+    assert_eq!(i.input_type(), "sftp");
+    let (b, ack) = i.read_batch(&c).await.expect("a.csv");
+    assert_eq!(lines(&b), ["a1"]);
+    assert!(i.is_connected());
+    // b.csv grows past the cap between the listing and its read
+    put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1 grew\n").await;
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read a file past max_file_bytes"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("is larger than max_file_bytes (4 bytes)"), "{e}");
+    // acked from a thread without a runtime: the delete cannot run, the file stays
+    std::thread::spawn(move || ack.ack()).join().expect("ack");
+    // the empty file is deleted without a batch and the big one never listed
+    assert!(matches!(i.read_batch(&c).await, Err(CoreError::EndOfInput)));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut left: Vec<String> = session
+        .sftp
+        .read_dir(dir.clone())
+        .await
+        .expect("list")
+        .map(|e| e.file_name())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["a.csv", "b.csv", "big.csv"]);
+    i.close().await.expect("closes");
+    assert!(!i.is_connected());
+
+    // a listing of a missing directory fails a one-off read
+    let mut gone = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/none/*.csv")]}),
+        &c,
+    );
+    let e = match gone.read_batch(&c).await {
+        Ok(_) => panic!("listed a missing directory"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        e.contains(&format!("sftp input: listing {dir}/none")),
+        "{e}"
+    );
+
+    // without delete_on_finish or a watcher an ack changes nothing on the server
+    let mut keep = input(&s, &pin, json!({"paths": [format!("{dir}/a.csv")]}), &c);
+    let (_, ack) = keep.read_batch(&c).await.expect("a.csv");
+    ack.ack();
+    // an ack whose file is gone already only logs the failed delete
+    let mut del = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/a.csv")], "delete_on_finish": true}),
+        &c,
+    );
+    let (_, ack) = del.read_batch(&c).await.expect("a.csv again");
+    session
+        .sftp
+        .remove_file(format!("{dir}/a.csv"))
+        .await
+        .expect("removed");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(matches!(
+        del.read_batch(&c).await,
+        Err(CoreError::EndOfInput)
+    ));
+}
+
+/// A cache whose deletes fail, to show a failed forget is only logged.
+#[derive(Default)]
+struct StickyCache(MemCache);
+
+#[async_trait]
+impl Cache for StickyCache {
+    async fn get(&self, key: &str) -> Result<Bytes, CoreError> {
+        self.0.get(key).await
+    }
+    async fn set(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
+        self.0.set(key, value, ttl).await
+    }
+    async fn add(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
+        self.0.add(key, value, ttl).await
+    }
+    async fn delete(&self, _: &str) -> Result<(), CoreError> {
+        Err(CoreError::other("cache down"))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let cache = Arc::new(MemCache::default());
+    let c = ctx(cache.clone());
+    let pin = pin(&s, &c).await;
+    let dir = format!("/upload/ride-{}", std::process::id());
+    let session = connect(&target(&s, &pin), &c.org).await.expect("connects");
+    session.sftp.create_dir(dir.clone()).await.expect("mkdir");
+    put(&s, &pin, &c, &format!("{dir}/f.csv"), "f1\n").await;
+    put(&s, &pin, &c, &format!("{dir}/g.csv"), "g1\n").await;
+    let watcher =
+        json!({"enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "seen"});
+    let mut i = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/*.csv")], "watcher": watcher}),
+        &c,
+    );
+    let (b, ack) = i.read_batch(&c).await.expect("f.csv");
+    assert_eq!(lines(&b), ["f1"]);
+    // a nacked file leaves the cache, so a later poll reads it again
+    ack.nack(BatchError::new(b, "output down".to_string()));
+    // g.csv vanishes between the listing and its read: skipped, forgotten, read never
+    session
+        .sftp
+        .remove_file(format!("{dir}/g.csv"))
+        .await
+        .expect("removed");
+    let (b, _ack) = tokio::time::timeout(Duration::from_secs(5), i.read_batch(&c))
+        .await
+        .expect("in time")
+        .expect("f.csv again");
+    assert_eq!(lines(&b), ["f1"]);
+    assert!(!cache.exists(&format!("{dir}/g.csv")).await.expect("cache"));
+
+    // a watched directory that does not exist is listed again and again, never an error
+    let sticky: Arc<dyn Cache> = Arc::new(StickyCache::default());
+    c.resources
+        .insert_cache(&OrgId::new("org-sftp"), "sticky", sticky);
+    let mut w = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/none/*.csv")], "watcher": {
+            "enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "sticky"}}),
+        &c,
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), w.read_batch(&c))
+            .await
+            .is_err()
+    );
+    // a nack whose forget fails is only logged
+    let mut f = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/f.csv")], "watcher": {
+            "enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "sticky"}}),
+        &c,
+    );
+    let (b, ack) = f.read_batch(&c).await.expect("f.csv");
+    ack.nack(BatchError::new(b, "output down".to_string()));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(400), f.read_batch(&c))
+            .await
+            .is_err(),
+        "the file stays seen: the cache kept it"
+    );
+}

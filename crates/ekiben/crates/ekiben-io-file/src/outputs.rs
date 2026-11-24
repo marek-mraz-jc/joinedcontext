@@ -466,24 +466,59 @@ impl Output for RetryOutput {
 /// On failure of tier $i$, sets `fallback_error` metadata and routes only the failed parts
 /// (narrowed via `SortGroup` when `BatchError` has indexed errors) to tier $i+1$.
 pub struct FallbackOutput {
-    outputs: Vec<Arc<dyn Output>>,
+    first: Arc<dyn Output>,
+    rest: Vec<Arc<dyn Output>>,
 }
 
 impl FallbackOutput {
     pub fn from_config(conf: &ComponentConfig, ctx: &StreamContext) -> Result<Self, CoreError> {
-        let arr = conf
+        let (first, rest) = conf
             .config
             .as_array()
-            .filter(|a| !a.is_empty())
+            .and_then(|a| a.split_first())
             .ok_or_else(|| {
                 CoreError::config("attempting to create fallback output type with no outputs")
             })?;
-        let mut outputs = Vec::with_capacity(arr.len());
-        for item in arr {
+        let build = |item: &JsonValue| {
             let c = ComponentConfig::from_json_value(item, "drop", None)?;
-            outputs.push(ctx.registry.build_output(&c, ctx)?);
+            ctx.registry.build_output(&c, ctx)
+        };
+        Ok(Self {
+            first: build(first)?,
+            rest: rest.iter().map(build).collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+/// Sets `fallback_error` on the parts the next tier gets: the failed ones only, when the batch
+/// error names them, otherwise every part.
+fn mark_failed(err: &CoreError, sorter: &mut SortGroup, batch: &mut Batch) {
+    if let CoreError::Batch(b_err) = err {
+        if batch.len() > 1 && b_err.indexed_errors() > 0 {
+            let mut only_errs = Vec::new();
+            let mut seen = HashSet::new();
+            b_err.walk_parts_by_source(sorter, batch, |idx, part, err_opt| {
+                if let Some(err_str) = err_opt {
+                    if seen.insert(idx) {
+                        let mut tmp = part.shallow_copy();
+                        tmp.meta_set_str("fallback_error", err_str);
+                        only_errs.push(tmp);
+                    }
+                }
+                true
+            });
+            if !only_errs.is_empty() {
+                (*sorter, *batch) = SortGroup::new(only_errs);
+                return;
+            }
         }
-        Ok(Self { outputs })
+    }
+    let msg = match err {
+        CoreError::Batch(b_err) => b_err.message.clone(),
+        other => other.to_string(),
+    };
+    for m in batch.iter_mut() {
+        m.meta_set_str("fallback_error", msg.clone());
     }
 }
 
@@ -495,59 +530,23 @@ impl Output for FallbackOutput {
 
     /// Bento closes a composite output's children with it (a batched child flushes).
     async fn close(&self) -> Result<(), CoreError> {
-        close_all(self.outputs.iter()).await
+        close_all(std::iter::once(&self.first).chain(&self.rest)).await
     }
 
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
-        let (mut out_sorter, mut current_batch) = SortGroup::new(batch);
-        let mut last_err = None;
-
-        for out in &self.outputs {
-            match out.write_batch(ctx, current_batch.clone()).await {
+        let (mut sorter, mut current) = SortGroup::new(batch);
+        let mut err = match self.first.write_batch(ctx, current.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        for out in &self.rest {
+            mark_failed(&err, &mut sorter, &mut current);
+            match out.write_batch(ctx, current.clone()).await {
                 Ok(()) => return Ok(()),
-                Err(CoreError::Batch(b_err)) => {
-                    if current_batch.len() > 1 && b_err.indexed_errors() > 0 {
-                        let mut only_errs = Vec::new();
-                        let mut seen = HashSet::new();
-                        b_err.walk_parts_by_source(
-                            &out_sorter,
-                            &current_batch,
-                            |idx, part, err_opt| {
-                                if let Some(err_str) = err_opt {
-                                    if seen.insert(idx) {
-                                        let mut tmp = part.shallow_copy();
-                                        tmp.meta_set_str("fallback_error", err_str);
-                                        only_errs.push(tmp);
-                                    }
-                                }
-                                true
-                            },
-                        );
-                        if !only_errs.is_empty() {
-                            let (ns, nb) = SortGroup::new(only_errs);
-                            out_sorter = ns;
-                            current_batch = nb;
-                            last_err = Some(CoreError::Batch(b_err));
-                            continue;
-                        }
-                    }
-                    let err_msg = b_err.message.clone();
-                    for m in &mut current_batch {
-                        m.meta_set_str("fallback_error", err_msg.clone());
-                    }
-                    last_err = Some(CoreError::Batch(b_err));
-                }
-                Err(other_err) => {
-                    let err_msg = other_err.to_string();
-                    for m in &mut current_batch {
-                        m.meta_set_str("fallback_error", err_msg.clone());
-                    }
-                    last_err = Some(other_err);
-                }
+                Err(e) => err = e,
             }
         }
-
-        Err(last_err.unwrap_or_else(|| CoreError::other("all fallback outputs failed")))
+        Err(err)
     }
 }
 
@@ -673,9 +672,19 @@ impl Output for SwitchOutput {
 /// supporting `fan_out`, `fan_out_fail_fast`, `fan_out_sequential`, `fan_out_sequential_fail_fast`,
 /// `round_robin`, and `greedy`.
 pub struct BrokerOutput {
-    pattern: String,
+    pattern: BrokerPattern,
     outputs: Vec<Arc<dyn Output>>,
     rr_cursor: AtomicUsize,
+}
+
+/// How a broker hands a batch to its outputs; the `_fail_fast` names behave as the plain ones.
+enum BrokerPattern {
+    /// Every output at once.
+    FanOut,
+    /// Every output, one after the other.
+    Sequential,
+    /// One output, the next one in turn, the others tried when it fails (`round_robin`, `greedy`).
+    RoundRobin,
 }
 
 impl BrokerOutput {
@@ -690,26 +699,21 @@ impl BrokerOutput {
             .and_then(JsonValue::as_u64)
             .unwrap_or(1)
             .max(1) as usize;
-        let pattern = obj
+        let name = obj
             .get("pattern")
             .and_then(JsonValue::as_str)
-            .unwrap_or("fan_out")
-            .to_string();
-        if !matches!(
-            pattern.as_str(),
-            "fan_out"
-                | "fan_out_fail_fast"
-                | "fan_out_sequential"
-                | "fan_out_sequential_fail_fast"
-                | "round_robin"
-                | "greedy"
-        ) {
-            return Err(CoreError::config(format!(
-                "broker pattern was not recognised: {pattern}"
-            )));
-        }
-
-        let is_retry_wrapped = matches!(pattern.as_str(), "fan_out" | "fan_out_sequential");
+            .unwrap_or("fan_out");
+        let pattern = match name {
+            "fan_out" | "fan_out_fail_fast" => BrokerPattern::FanOut,
+            "fan_out_sequential" | "fan_out_sequential_fail_fast" => BrokerPattern::Sequential,
+            "round_robin" | "greedy" => BrokerPattern::RoundRobin,
+            _ => {
+                return Err(CoreError::config(format!(
+                    "broker pattern was not recognised: {name}"
+                )))
+            }
+        };
+        let is_retry_wrapped = matches!(name, "fan_out" | "fan_out_sequential");
 
         let out_arr = obj
             .get("outputs")
@@ -751,8 +755,8 @@ impl Output for BrokerOutput {
     }
 
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
-        match self.pattern.as_str() {
-            "fan_out" | "fan_out_fail_fast" => {
+        match self.pattern {
+            BrokerPattern::FanOut => {
                 let mut futs = Vec::with_capacity(self.outputs.len());
                 for out in &self.outputs {
                     let b = batch.iter().map(Part::shallow_copy).collect();
@@ -763,26 +767,28 @@ impl Output for BrokerOutput {
                 }
                 Ok(())
             }
-            "fan_out_sequential" | "fan_out_sequential_fail_fast" => {
+            BrokerPattern::Sequential => {
                 for out in &self.outputs {
                     let b = batch.iter().map(Part::shallow_copy).collect();
                     out.write_batch(ctx, b).await?;
                 }
                 Ok(())
             }
-            "round_robin" | "greedy" => {
+            BrokerPattern::RoundRobin => {
+                // from_config builds at least one output, so the first try always runs
                 let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed);
-                let mut last_err = None;
-                for offset in 0..self.outputs.len() {
-                    let idx = (start + offset) % self.outputs.len();
-                    match self.outputs[idx].write_batch(ctx, batch.clone()).await {
-                        Ok(()) => return Ok(()),
-                        Err(e) => last_err = Some(e),
+                let n = self.outputs.len();
+                let mut res = Ok(());
+                for offset in 0..n {
+                    res = self.outputs[(start + offset) % n]
+                        .write_batch(ctx, batch.clone())
+                        .await;
+                    if res.is_ok() {
+                        break;
                     }
                 }
-                Err(last_err.unwrap_or_else(|| CoreError::other("no broker outputs available")))
+                res
             }
-            _ => unreachable!(),
         }
     }
 }

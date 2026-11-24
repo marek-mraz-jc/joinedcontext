@@ -196,6 +196,77 @@ mod tests {
 
     const RAGGED: &str = "a,b,c\n1,2,3\n4,5\n";
 
+    #[test]
+    fn config_refusals_name_the_field() {
+        for (conf, want) in [
+            (
+                serde_json::json!({"parse_header_row": "yes"}),
+                "field parse_header_row must be true or false",
+            ),
+            (
+                serde_json::json!({"custom_delimiter": ";;"}),
+                "field custom_delimiter must be one ASCII character",
+            ),
+            (
+                serde_json::json!({"expected_headers": [1]}),
+                "field expected_headers must be a list of strings",
+            ),
+            (
+                serde_json::json!({"expected_headers": "id"}),
+                "field expected_headers must be a list of strings",
+            ),
+            (
+                serde_json::json!({"expected_number_of_fields": -1}),
+                "field expected_number_of_fields must be a whole number",
+            ),
+            (
+                serde_json::json!({"expected_headers": ["a"], "parse_header_row": false}),
+                "expected_headers is set but parse_header_row is false",
+            ),
+        ] {
+            let e = rows(conf.clone(), "a\n").expect_err("refused");
+            assert!(e.to_string().contains(want), "{conf}: {e}");
+        }
+        // an empty delimiter is the comma
+        assert_eq!(
+            rows(
+                serde_json::json!({"custom_delimiter": "", "parse_header_row": false}),
+                "a,b\n"
+            )
+            .expect("rows"),
+            [r#"["a","b"]"#]
+        );
+    }
+
+    #[test]
+    fn a_row_that_is_not_utf8_fails_or_is_flagged_and_skipped() {
+        let scan = |conf: serde_json::Value| {
+            let s = CsvScanner::from_config(conf.as_object().expect("object"), "delimiter")?;
+            let mut out = Vec::new();
+            s.scan(&mut &b"h\n\xff\nok\n"[..], &mut |p| {
+                out.push((
+                    String::from_utf8_lossy(&p.as_bytes_ref()).into_owned(),
+                    p.error_get().is_some(),
+                ));
+                Ok(())
+            })?;
+            Ok::<_, CoreError>(out)
+        };
+        let e = scan(serde_json::json!({})).expect_err("invalid UTF-8");
+        assert!(e.to_string().contains("UTF-8"), "{e}");
+        let got = scan(serde_json::json!({"continue_on_error": true})).expect("rows");
+        assert_eq!(got.len(), 2);
+        assert!(got[0].1, "the bad row is flagged");
+        assert_eq!(got[1], (r#"{"h":"ok"}"#.to_string(), false));
+        // a ragged row read on is flagged with its line
+        let got = rows(serde_json::json!({"continue_on_error": true}), RAGGED).expect("rows");
+        assert_eq!(got.len(), 2);
+        assert!(
+            got[1].contains("record on line 3: wrong number of fields"),
+            "{got:?}"
+        );
+    }
+
     // Outputs and errors recorded from Bento 1.22 on the same file.
     #[test]
     fn field_counts_follow_go_csv() {
