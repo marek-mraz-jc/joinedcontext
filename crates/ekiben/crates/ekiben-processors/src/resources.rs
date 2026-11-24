@@ -155,21 +155,14 @@ impl Entries {
         self.clock
     }
 
-    fn touch(&mut self, key: &str) {
-        let now = self.tick();
-        if let Some(e) = self.map.get_mut(key) {
-            self.by_use.remove(&e.used);
-            e.used = now;
-            self.by_use.insert(now, key.to_string());
-        }
-    }
-
     fn insert(&mut self, key: &str, value: Bytes, expires_at: Option<Instant>, cap: Option<usize>) {
         if let Some(cap) = cap {
-            while !self.map.contains_key(key) && self.map.len() >= cap.max(1) {
-                let Some((_, oldest)) = self.by_use.pop_first() else {
-                    break;
-                };
+            // by_use holds one entry per key, so it runs dry only once the map is empty.
+            while let Some((_, oldest)) = (!self.map.contains_key(key)
+                && self.map.len() >= cap.max(1))
+            .then(|| self.by_use.pop_first())
+            .flatten()
+            {
                 self.map.remove(&oldest);
             }
         }
@@ -268,16 +261,19 @@ impl MemoryCache {
 impl Cache for MemoryCache {
     async fn get(&self, key: &str) -> Result<Bytes, CoreError> {
         let mut guard = self.lock();
-        let Some(entry) = guard.map.get(key) else {
+        let now = guard.tick();
+        let Entries { map, by_use, .. } = &mut *guard;
+        let Some(entry) = map.get_mut(key) else {
             return Err(CoreError::KeyNotFound(key.to_string()));
         };
+        by_use.remove(&entry.used);
         if entry.expires_at.is_some_and(|exp| Instant::now() >= exp) {
-            guard.remove(key);
+            map.remove(key);
             return Err(CoreError::KeyNotFound(key.to_string()));
         }
-        let value = entry.value.clone();
-        guard.touch(key);
-        Ok(value)
+        entry.used = now;
+        by_use.insert(now, key.to_string());
+        Ok(entry.value.clone())
     }
 
     async fn set(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
@@ -412,6 +408,35 @@ mod tests {
         c.set("a", b("4"), None).await.unwrap();
         assert_eq!(c.get("c").await.unwrap(), b("3"));
         assert_eq!(c.get("a").await.unwrap(), b("4"));
+    }
+
+    #[tokio::test]
+    async fn a_deleted_key_frees_its_place_and_deleting_a_missing_key_changes_nothing() {
+        let c = MemoryCache::new(None, Some(2));
+        c.set("a", b("1"), None).await.unwrap();
+        c.set("b", b("2"), None).await.unwrap();
+        c.delete("a").await.unwrap();
+        c.delete("never-set").await.unwrap();
+        assert!(matches!(c.get("a").await, Err(CoreError::KeyNotFound(_))));
+        // One key held under a cap of two: a new key evicts nothing.
+        c.set("c", b("3"), None).await.unwrap();
+        assert_eq!(c.get("b").await.unwrap(), b("2"));
+        assert_eq!(c.get("c").await.unwrap(), b("3"));
+        // b was read before c, so b is the least recently used and goes first.
+        c.get("c").await.unwrap();
+        c.set("d", b("4"), None).await.unwrap();
+        assert!(matches!(c.get("b").await, Err(CoreError::KeyNotFound(_))));
+        // An expired key read once is gone from the use order too: two fresh keys fit.
+        let t = MemoryCache::new(None, Some(2));
+        t.set("x", b("1"), Some(Duration::from_nanos(1)))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        assert!(t.get("x").await.is_err());
+        t.set("y", b("2"), None).await.unwrap();
+        t.set("z", b("3"), None).await.unwrap();
+        assert_eq!(t.get("y").await.unwrap(), b("2"));
+        assert_eq!(t.get("z").await.unwrap(), b("3"));
     }
 
     #[tokio::test]

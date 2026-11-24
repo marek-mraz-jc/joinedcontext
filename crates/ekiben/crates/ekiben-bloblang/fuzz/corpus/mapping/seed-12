@@ -1,0 +1,1 @@
+root = "é\x41\U0001F600".hash("sha256").encode("hex")

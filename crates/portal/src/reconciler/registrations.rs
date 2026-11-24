@@ -377,7 +377,7 @@ impl RegistrationSync {
             .json(&shared.grant(hub))
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() {
             true => Ok(()),
             false => Err(refusal(
@@ -394,7 +394,7 @@ impl RegistrationSync {
             .authorized(self.http.delete(shared.grant_url(hub)))?
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
         {
             true => Ok(()),
@@ -454,7 +454,7 @@ impl RegistrationSync {
             .json(body)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         if created.status().is_success() {
             return Ok(());
         }
@@ -477,7 +477,7 @@ impl RegistrationSync {
             .json(&patch)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match updated.status().is_success() {
             true => Ok(()),
             false => Err(refusal("the broker refused the update", updated, None).await),
@@ -493,13 +493,23 @@ impl RegistrationSync {
             .header(TENANT_HEADER, space)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
         {
             true => Ok(()),
             false => Err(refusal("the broker refused the delete", response, None).await),
         }
     }
+}
+
+/// The log line of a registration that is not written, and why.
+fn warn_refused(namespace: &str, name: &str, error: &dyn std::fmt::Display, what: &str) {
+    tracing::warn!(%namespace, registration = %name, %error, "{what}");
+}
+
+/// Why a request did not reach the broker, as the outcome says it.
+fn unsent(err: reqwest::Error) -> String {
+    err.to_string()
 }
 
 /// Every declared registration of the mirror: `(project, name, hub space, manifest)`, and the
@@ -509,6 +519,14 @@ impl RegistrationSync {
 /// one the specification defines and writing a second one here would be a second place for a
 /// registration to stop matching.
 fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
+    declared_as(mirror, context_gateway::store::TenantNames::from_env())
+}
+
+/// [`declared`] with the tenant naming given, which the environment decides in a Portal.
+fn declared_as(
+    mirror: &Mirror,
+    names: context_gateway::store::TenantNames,
+) -> (Vec<Declared>, Vec<Refused>) {
     let mut found = Vec::new();
     let mut refused = Vec::new();
     for namespace in mirror.namespaces() {
@@ -523,12 +541,12 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
                 match serde_json::from_value(envelope.spec.clone()) {
                     Ok(spec) => spec,
                     Err(err) => {
-                        tracing::warn!(
-                            namespace = %namespace,
-                            registration = %name,
-                            error = %err,
-                            "a ContextSourceRegistration manifest does not parse and is not written"
-                        );
+                        warn_refused(
+                        &namespace,
+                        &name,
+                        &err,
+                        "a ContextSourceRegistration manifest does not parse and is not written",
+                    );
                         refused.push((
                             namespace.clone(),
                             name,
@@ -541,43 +559,33 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
             // that names another is refused here as well as at validation, because the mirror
             // holds what Git holds and Git may hold a file written before the rule.
             if let Err(err) = spec.validate_scope(Some(&namespace)) {
-                tracing::warn!(
-                    namespace = %namespace,
-                    registration = %name,
-                    error = %err,
-                    "a ContextSourceRegistration reaches outside its project and is not written"
+                warn_refused(
+                    &namespace,
+                    &name,
+                    &err,
+                    "a ContextSourceRegistration reaches outside its project and is not written",
                 );
                 refused.push((namespace.clone(), name, format!("the manifest reaches outside its project, so it is not registered (PF-48): {err}")));
                 continue;
             }
-            let metadata = match serde_json::to_value(&envelope.metadata)
+            // ObjectMeta serialises to an object with a string `name`; every other member lands in
+            // RawMetadata's flattened map, so this cannot fail.
+            let metadata = serde_json::to_value(&envelope.metadata)
                 .and_then(serde_json::from_value::<RawMetadata>)
-            {
-                Ok(metadata) => metadata,
-                Err(err) => {
-                    tracing::warn!(
-                        namespace = %namespace,
-                        registration = %name,
-                        error = %err,
-                        "a ContextSourceRegistration's metadata does not parse"
-                    );
-                    refused.push((namespace.clone(), name, format!("the manifest's metadata does not parse, so it is not registered: {err}")));
+                .expect("ObjectMeta always reads as RawMetadata");
+            // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
+            let space = match crate::spaces::tenant_as(
+                mirror,
+                &namespace,
+                spec.context_space_ref.name(),
+                names,
+            ) {
+                Ok(tenant) => tenant,
+                Err(reason) => {
+                    refused.push((namespace.clone(), name, format!("not registered: {reason}")));
                     continue;
                 }
             };
-            // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
-            let space =
-                match crate::spaces::tenant(mirror, &namespace, spec.context_space_ref.name()) {
-                    Ok(tenant) => tenant,
-                    Err(reason) => {
-                        refused.push((
-                            namespace.clone(),
-                            name,
-                            format!("not registered: {reason}"),
-                        ));
-                        continue;
-                    }
-                };
             found.push((
                 namespace.clone(),
                 name,
@@ -1172,5 +1180,566 @@ mod tests {
             Some("transport")
         );
         assert_eq!(reference_name(&json!(7)), None);
+    }
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const REGISTRATIONS: &str = "/broker/ngsi-ld/v1/csourceRegistrations";
+    const GRANT: &str = "/broker/q/grants/src/hub";
+
+    async fn broker_answering(routes: &[(&str, &str, u16)]) -> MockServer {
+        let server = MockServer::start().await;
+        for (verb, at, status) in routes {
+            Mock::given(method(*verb))
+                .and(path(*at))
+                .respond_with(ResponseTemplate::new(*status))
+                .mount(&server)
+                .await;
+        }
+        server
+    }
+
+    fn sync_on(server: &MockServer) -> RegistrationSync {
+        RegistrationSync::new(format!("{}/broker/", server.uri()))
+    }
+
+    fn error_of(outcome: &RegistrationOutcome) -> &str {
+        match outcome {
+            RegistrationOutcome::Error(reason) => reason,
+            RegistrationOutcome::Written => "written",
+        }
+    }
+
+    /// The provider's grant refused: the registration it admits is not written either.
+    #[tokio::test]
+    async fn a_refused_grant_writes_no_registration() {
+        let server = broker_answering(&[("PUT", GRANT, 500)]).await;
+        Mock::given(method("POST"))
+            .and(path(REGISTRATIONS))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let outcomes = sync_on(&server)
+            .converge(&shared_read(true), &Mirror::new())
+            .await;
+        assert!(
+            error_of(&outcomes[0].2).starts_with("the broker refused the provider's export grant"),
+            "{outcomes:?}"
+        );
+    }
+
+    /// Two registrations of one hub space reading one provider space through two Endpoints: the
+    /// first is written, the second refused, since one grant names one view.
+    #[tokio::test]
+    async fn one_provider_space_is_read_through_one_endpoint_per_hub_space() {
+        let mirror = shared_read(true);
+        let mut second = csr(
+            "from-espoo-2",
+            json!({ "kind": "Endpoint", "name": "shared-2", "namespace": "espoo" }),
+        );
+        second.spec["federation"] = json!({ "identity": "anonymous" });
+        mirror.upsert(second);
+        mirror.upsert(in_project(
+            "espoo",
+            envelope(
+                "Endpoint",
+                "shared-2",
+                json!({ "contextSpaceRef": "src", "slug": "second-slug" }),
+            ),
+        ));
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "espoo-2",
+            json!({ "alias": "espoo-2", "endpointSlug": "second-slug" }),
+        ));
+        let server = broker_answering(&[("PUT", GRANT, 200), ("POST", REGISTRATIONS, 201)]).await;
+        let outcomes = sync_on(&server).converge(&mirror, &Mirror::new()).await;
+        let by_name: BTreeMap<_, _> = outcomes
+            .iter()
+            .map(|(_, name, outcome)| (name.as_str(), outcome))
+            .collect();
+        assert_eq!(error_of(by_name["from-espoo"]), "written");
+        assert!(
+            error_of(by_name["from-espoo-2"])
+                .contains(&format!("through Endpoint slug {SHARED_SLUG}")),
+            "{outcomes:?}"
+        );
+    }
+
+    /// A hub space on a broker this Portal has no address for registers nothing, and its gone
+    /// registration is not removed from a broker it cannot reach; the warning says so.
+    #[tokio::test]
+    async fn a_hub_on_an_unreachable_broker_registers_and_removes_nothing() {
+        let mirror = shared_read(true);
+        mirror.upsert(envelope(
+            "ContextSpace",
+            "hub",
+            json!({ "urnSegment": "hub", "brokerRef": "edge-2" }),
+        ));
+        let server = broker_answering(&[]).await;
+        let sync = sync_on(&server);
+        let outcomes = sync.converge(&mirror, &Mirror::new()).await;
+        assert!(
+            error_of(&outcomes[0].2).contains("lives on a broker this Portal has no address for"),
+            "{outcomes:?}"
+        );
+        let (outcomes, log) = super::super::logged(sync.converge(&Mirror::new(), &mirror)).await;
+        assert!(outcomes.is_empty());
+        assert!(
+            log.contains("registration not removed: its broker has no address"),
+            "{log}"
+        );
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
+
+    /// A registration gone since the last pass is deleted, and its shared read's grant with it;
+    /// a delete either the broker refuses is logged and tried again next pass.
+    #[tokio::test]
+    async fn a_gone_registration_and_its_grant_are_removed_or_the_refusal_logged() {
+        let id = registration_id("from-espoo");
+        let at = format!("{REGISTRATIONS}/{id}");
+        let server =
+            broker_answering(&[("DELETE", at.as_str(), 204), ("DELETE", GRANT, 404)]).await;
+        let sync = sync_on(&server);
+        let (_, log) =
+            super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
+        assert!(
+            log.contains("registration removed with its manifest"),
+            "{log}"
+        );
+        assert!(
+            log.contains("export grant removed with its shared read"),
+            "{log}"
+        );
+
+        let server =
+            broker_answering(&[("DELETE", at.as_str(), 500), ("DELETE", GRANT, 500)]).await;
+        let sync = sync_on(&server);
+        let (_, log) =
+            super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
+        assert!(log.contains("registration not removed"), "{log}");
+        assert!(log.contains("export grant not removed"), "{log}");
+        assert!(
+            log.contains("the broker refused to remove the export grant"),
+            "{log}"
+        );
+    }
+
+    fn resolve(mirror: &Mirror) -> Result<Option<String>, String> {
+        let (found, refused) = declared(mirror);
+        assert!(refused.is_empty(), "{refused:?}");
+        let (project, _, _, _, manifest) = &found[0];
+        RegistrationSync::new("http://127.0.0.1:42101/broker")
+            .shared_member(
+                mirror,
+                project,
+                manifest,
+                "http://127.0.0.1:42101/broker/ngsi-ld/v1",
+            )
+            .map(|shared| shared.map(|s| s.slug))
+    }
+
+    /// Each thing a shared read needs of the provider's Endpoint, missing, is said by name; a
+    /// SharedSpaceReference may name the Endpoint by its endpointRef instead of its slug.
+    #[test]
+    fn a_shared_read_names_what_the_providers_endpoint_lacks() {
+        let mirror = shared_read(false);
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "by-ref",
+            json!({ "endpointRef": { "project": "espoo", "name": "shared" } }),
+        ));
+        assert_eq!(resolve(&mirror), Ok(Some(SHARED_SLUG.to_owned())));
+
+        let edit = |spec: Value| {
+            let mirror = shared_read(true);
+            mirror.upsert(in_project("espoo", envelope("Endpoint", "shared", spec)));
+            mirror
+        };
+        assert_eq!(
+            resolve(&edit(json!({ "contextSpaceRef": "src" }))),
+            Err("the Endpoint espoo/shared has no slug yet, so nothing is registered".to_owned())
+        );
+        assert_eq!(
+            resolve(&edit(json!({ "slug": SHARED_SLUG }))),
+            Err("the Endpoint espoo/shared names no Context Space".to_owned())
+        );
+        let mirror = shared_read(true);
+        mirror.upsert(in_project(
+            "espoo",
+            envelope(
+                "ContextSpace",
+                "src",
+                json!({ "urnSegment": "src", "brokerRef": "edge-2" }),
+            ),
+        ));
+        assert!(resolve(&mirror)
+            .err()
+            .unwrap_or_default()
+            .contains("lives on a broker this Portal has no address"));
+        let mirror = shared_read(true);
+        mirror.remove(&crate::resource::ResourceKey {
+            namespace: "espoo".into(),
+            kind: "Endpoint".into(),
+            name: "shared".into(),
+        });
+        assert_eq!(resolve(&mirror), Err("endpointRef names the Endpoint espoo/shared, which does not exist, so nothing is registered".to_owned()));
+    }
+
+    /// Only an anonymous or serviceAccount registration of another project's Endpoint is a
+    /// shared read: a spec that does not parse, one without an endpointRef, one of the hub's own
+    /// project and a caller registration are not.
+    #[test]
+    fn only_another_projects_endpoint_is_a_shared_read() {
+        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker");
+        let mirror = shared_read(true);
+        let manifest = |spec: Value| RawManifest {
+            api_version: API_VERSION.into(),
+            kind: "ContextSourceRegistration".into(),
+            metadata: RawMetadata {
+                name: "r".into(),
+                namespace: Some("helsinki".into()),
+                rest: serde_json::Map::new(),
+            },
+            spec,
+            status: None,
+        };
+        let ngsi_ld = "http://127.0.0.1:42101/broker/ngsi-ld/v1";
+        let base = csr(
+            "x",
+            json!({ "kind": "Endpoint", "name": "shared", "namespace": "espoo" }),
+        )
+        .spec;
+        let mut own = base.clone();
+        own["endpointRef"]["namespace"] = json!("helsinki");
+        let mut caller = base.clone();
+        caller["federation"] = json!({ "identity": "caller" });
+        let mut none = base.clone();
+        none.as_object_mut()
+            .expect("an object")
+            .remove("endpointRef");
+        for spec in [json!({ "contextSpaceRef": 7 }), none, own, caller] {
+            assert!(
+                matches!(
+                    sync.shared_member(&mirror, "helsinki", &manifest(spec.clone()), ngsi_ld),
+                    Ok(None)
+                ),
+                "{spec}"
+            );
+        }
+    }
+
+    /// A member that reaches outside its project is refused with the reason before anything is
+    /// sent.
+    #[tokio::test]
+    async fn a_registration_outside_its_project_is_refused() {
+        let mut outside = csr(
+            "outside",
+            json!({ "kind": "Endpoint", "name": "x", "namespace": "espoo" }),
+        );
+        outside.spec["federation"] = json!({ "identity": "caller" });
+        let broken = envelope(
+            "ContextSourceRegistration",
+            "broken",
+            json!({ "contextSpaceRef": 7 }),
+        );
+        let mirror = mirror_with(vec![outside, broken]);
+        let ((found, refused), log) = super::super::logged(async { declared(&mirror) }).await;
+        assert!(found.is_empty(), "{found:?}");
+        let reasons: BTreeMap<_, _> = refused
+            .iter()
+            .map(|(_, name, reason)| (name.as_str(), reason.as_str()))
+            .collect();
+        assert!(
+            reasons["outside"].starts_with(
+                "the manifest reaches outside its project, so it is not registered (PF-48): "
+            ),
+            "{reasons:?}"
+        );
+        assert!(log.contains("reaches outside its project"), "{log}");
+        assert!(
+            reasons["broken"].starts_with("the manifest does not parse, so it is not registered: "),
+            "{reasons:?}"
+        );
+        assert!(
+            log.contains("a ContextSourceRegistration manifest does not parse"),
+            "{log}"
+        );
+    }
+
+    /// Under project-key tenant names a space of a project the registry holds no key for has no
+    /// tenant yet: the registration is refused with that reason, never written to a guess.
+    #[test]
+    fn a_space_without_a_project_key_tenant_is_not_registered() {
+        let mirror = mirror_with(vec![
+            csr("from-hub", json!({ "kind": "Endpoint", "name": "x" })),
+            envelope("ContextSpace", "hub", json!({ "urnSegment": "hub" })),
+        ]);
+        let (found, refused) =
+            declared_as(&mirror, context_gateway::store::TenantNames::ProjectKey);
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(
+            refused[0]
+                .2
+                .starts_with("not registered: the space helsinki/hub has no broker tenant yet: "),
+            "{refused:?}"
+        );
+        let (found, refused) = declared_as(&mirror, context_gateway::store::TenantNames::Segment);
+        assert_eq!(
+            (found.len(), refused.len()),
+            (1, 0),
+            "segment names need no registry"
+        );
+    }
+
+    /// A caller registration whose member has no gateway address does not render: it is an error
+    /// and nothing is sent to the broker.
+    #[tokio::test]
+    async fn a_registration_that_does_not_render_is_an_error_and_sends_nothing() {
+        let mut caller = csr("local", json!({ "kind": "Endpoint", "name": "local" }));
+        caller.spec["federation"] = json!({ "identity": "caller" });
+        let mirror = mirror_with(vec![
+            caller,
+            envelope("ContextSpace", "hub", json!({ "urnSegment": "hub" })),
+            envelope(
+                "Endpoint",
+                "local",
+                json!({ "contextSpaceRef": "hub", "slug": "local-slug" }),
+            ),
+        ]);
+        let server = broker_answering(&[]).await;
+        let outcomes = sync_on(&server).converge(&mirror, &Mirror::new()).await;
+        assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+        assert_ne!(error_of(&outcomes[0].2), "written");
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
+
+    /// A shared read still declared keeps its grant: a second pass writes the grant and the
+    /// registration again and deletes nothing.
+    #[tokio::test]
+    async fn a_kept_shared_read_keeps_its_grant() {
+        let server = broker_answering(&[("PUT", GRANT, 200), ("POST", REGISTRATIONS, 201)]).await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let outcomes = sync_on(&server)
+            .converge(&shared_read(true), &shared_read(true))
+            .await;
+        assert_eq!(outcomes[0].2, RegistrationOutcome::Written);
+    }
+
+    /// A conflict on a body that is not an object patches it as it is: nothing to strip.
+    #[tokio::test]
+    async fn a_conflict_on_a_body_without_members_patches_it_unchanged() {
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 409),
+            (
+                "PATCH",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                204,
+            ),
+        ])
+        .await;
+        let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
+        assert_eq!(
+            sync_on(&server)
+                .write(&ngsi_ld, "hub", "urn:r", &json!(["x"]))
+                .await,
+            Ok(())
+        );
+        let sent = server.received_requests().await.expect("recorded");
+        assert_eq!(sent[1].body, b"[\"x\"]".to_vec());
+    }
+
+    /// The broker's answers to a write, a delete and a grant: a conflict is patched without the
+    /// id, every refusal names what was refused, a missing one deletes as done, an unreachable
+    /// broker and an unreadable admin token each fail the call.
+    #[tokio::test]
+    async fn every_broker_answer_to_a_call_is_an_outcome() {
+        let body = json!({ "id": "urn:r", "type": "ContextSourceRegistration", "endpoint": "x" });
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 409),
+            (
+                "PATCH",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                400,
+            ),
+        ])
+        .await;
+        let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
+        let sync = sync_on(&server);
+        let err = sync
+            .write(&ngsi_ld, "hub", "urn:r", &body)
+            .await
+            .expect_err("refused update");
+        assert!(err.starts_with("the broker refused the update"), "{err}");
+        let sent = server.received_requests().await.expect("recorded");
+        let patch: Value = serde_json::from_slice(&sent[1].body).expect("json");
+        assert_eq!(patch, json!({ "endpoint": "x" }));
+
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 500),
+            (
+                "DELETE",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                500,
+            ),
+            ("PUT", GRANT, 201),
+            ("DELETE", GRANT, 500),
+        ])
+        .await;
+        let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
+        let sync = sync_on(&server);
+        assert!(sync
+            .write(&ngsi_ld, "hub", "urn:r", &body)
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused the registration"));
+        assert!(sync
+            .delete(&ngsi_ld, "hub", "urn:r")
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused the delete"));
+        let shared = SharedMember {
+            broker: format!("{}/broker", server.uri()),
+            member: MemberSource {
+                endpoint: ngsi_ld.clone(),
+                tenant: "src".into(),
+                gateway: None,
+            },
+            tenant: "src".into(),
+            slug: SHARED_SLUG.into(),
+            caller: (ANONYMOUS_ROLES.0, ANONYMOUS_ROLES.1.to_owned()),
+        };
+        assert_eq!(sync.put_grant(&shared, "hub").await, Ok(()));
+        assert!(sync
+            .delete_grant(&shared, "hub")
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused to remove the export grant"));
+        let gone = broker_answering(&[(
+            "DELETE",
+            "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+            404,
+        )])
+        .await;
+        assert_eq!(
+            sync_on(&gone)
+                .delete(&format!("{}/broker/ngsi-ld/v1", gone.uri()), "hub", "urn:r")
+                .await,
+            Ok(())
+        );
+
+        // Unreachable: every call fails with what the client said.
+        let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
+        let closed = format!(
+            "http://127.0.0.1:{}",
+            socket.local_addr().expect("its address").port()
+        );
+        let offline = RegistrationSync::new(format!("{closed}/broker"));
+        let unreachable = SharedMember {
+            broker: format!("{closed}/broker"),
+            ..shared
+        };
+        assert!(offline
+            .write(
+                &format!("{closed}/broker/ngsi-ld/v1"),
+                "hub",
+                "urn:r",
+                &body
+            )
+            .await
+            .is_err());
+        assert!(offline
+            .delete(&format!("{closed}/broker/ngsi-ld/v1"), "hub", "urn:r")
+            .await
+            .is_err());
+        assert!(offline.put_grant(&unreachable, "hub").await.is_err());
+        assert!(offline.delete_grant(&unreachable, "hub").await.is_err());
+
+        // A configured admin token that cannot be read sends nothing at all.
+        let locked = RegistrationSync::new(format!("{closed}/broker"))
+            .with_admin_token(Some("/nonexistent/token".into()));
+        let unreadable = Err("the broker's admin token is not readable".to_owned());
+        assert_eq!(locked.put_grant(&unreachable, "hub").await, unreadable);
+        assert_eq!(locked.delete_grant(&unreachable, "hub").await, unreadable);
+        assert_eq!(locked.delete(&closed, "hub", "urn:r").await, unreadable);
+    }
+
+    /// A run's outcome lands on its manifest: written is Live with no condition; an outcome
+    /// without a manifest is dropped and one without a status is kept as it is.
+    #[test]
+    fn a_registration_outcome_is_recorded_on_its_manifest() {
+        let mut live = envelope("ContextSourceRegistration", "live", json!({}));
+        live.status = Some(crate::resource::Status {
+            phase: crate::resource::Phase::Error,
+            observed_revision: None,
+            source_url: None,
+            conditions: vec![super::super::streams::make_condition(
+                "RegistrationWritten",
+                "False",
+                "BrokerRefused",
+                "x",
+            )],
+            build: None,
+            shard: None,
+            domain_verification: None,
+            jobs: Vec::new(),
+            notifications: None,
+        });
+        let bare = envelope("ContextSourceRegistration", "bare", json!({}));
+        let mirror = mirror_with(vec![live, bare]);
+        record(
+            &mirror,
+            vec![
+                (
+                    "helsinki".into(),
+                    "live".into(),
+                    RegistrationOutcome::Written,
+                ),
+                (
+                    "helsinki".into(),
+                    "bare".into(),
+                    RegistrationOutcome::Error("ignored".into()),
+                ),
+                (
+                    "helsinki".into(),
+                    "nobody".into(),
+                    RegistrationOutcome::Written,
+                ),
+            ],
+        );
+        let status = mirror
+            .get("helsinki", "ContextSourceRegistration", "live")
+            .and_then(|e| e.status)
+            .expect("a status");
+        assert_eq!(
+            (status.phase, status.conditions.len()),
+            (crate::resource::Phase::Live, 0)
+        );
+        assert!(mirror
+            .get("helsinki", "ContextSourceRegistration", "bare")
+            .expect("kept")
+            .status
+            .is_none());
+        assert!(mirror
+            .get("helsinki", "ContextSourceRegistration", "nobody")
+            .is_none());
     }
 }

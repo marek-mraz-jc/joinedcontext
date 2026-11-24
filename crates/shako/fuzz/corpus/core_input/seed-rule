@@ -1,0 +1,1 @@
+{"rule_name":"main","enable_push":true,"enable_force_push":true,"protected_file_patterns":"docs/**","unprotected_file_patterns":"docs/public/**"}

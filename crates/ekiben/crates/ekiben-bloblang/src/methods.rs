@@ -609,9 +609,9 @@ fn eval_general_method(
             ]);
             let exec = pure_env
                 .compile_mapping(&map_str)
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::text)?;
             exec.exec_on_value(target_val.clone())
-                .map_err(|e| e.to_string())
+                .map_err(crate::error::text)
         })()),
         _ => None,
     }

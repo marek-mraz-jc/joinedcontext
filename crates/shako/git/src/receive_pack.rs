@@ -957,3 +957,535 @@ fn format_report_status(
         Ok(inner)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{FLUSH, pack_of, pkt, put, receive, repo, text};
+    use shako_core::BranchProtectionRule;
+
+    const ZERO: &str = "0000000000000000000000000000000000000000";
+
+    /// Commands (the first carrying `caps`), a flush, then `pack`.
+    fn body(commands: &[String], caps: &str, pack: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (i, command) in commands.iter().enumerate() {
+            let line = if i == 0 {
+                format!("{command}\0{caps}")
+            } else {
+                command.clone()
+            };
+            write_text_line(&mut out, &line).expect("pkt");
+        }
+        write_flush(&mut out).expect("flush");
+        out.extend_from_slice(pack);
+        out
+    }
+
+    /// A source with `main` at `c1` then `c2`, and an empty destination.
+    struct Push {
+        _tmp: tempfile::TempDir,
+        source: PathBuf,
+        dest: PathBuf,
+        c1: ObjectId,
+        c2: ObjectId,
+    }
+
+    fn push() -> Push {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = repo(tmp.path(), 1, true);
+        let c1 = put(&source, "main", "a.txt", b"one\n");
+        let c2 = put(&source, "main", "b.txt", b"two\n");
+        let dest = repo(tmp.path(), 2, false);
+        Push {
+            _tmp: tmp,
+            source,
+            dest,
+            c1,
+            c2,
+        }
+    }
+
+    fn create(p: &Push, tip: ObjectId, refname: &str, caps: &str) -> ReceivePackOutcome {
+        let pack = pack_of(&p.source, &tip.to_string());
+        receive(
+            &p.dest,
+            &RefPolicy::default(),
+            &body(&[format!("{ZERO} {tip} {refname}")], caps, &pack),
+        )
+        .expect("receive")
+    }
+
+    fn report(p: &Push, commands: &[String], caps: &str, pack: &[u8]) -> String {
+        text(
+            &receive(&p.dest, &RefPolicy::default(), &body(commands, caps, pack))
+                .expect("receive")
+                .response_bytes,
+        )
+    }
+
+    #[test]
+    fn the_advertisement_lists_branches_and_tags_but_never_head() {
+        let p = push();
+        let empty = text(&advertise_receive_pack(&p.dest).expect("adv"));
+        assert!(
+            empty.contains(&format!(
+                "{ZERO} capabilities^{{}}\0{RECEIVE_PACK_CAPABILITIES}"
+            )),
+            "{empty}"
+        );
+        create(&p, p.c2, "refs/heads/main", "report-status");
+        create(&p, p.c1, "refs/tags/v1", "report-status");
+        let adv = text(&advertise_receive_pack(&p.dest).expect("adv"));
+        assert!(
+            adv.contains(&format!("{} refs/heads/main\0report-status", p.c2)),
+            "{adv}"
+        );
+        assert!(adv.contains(&format!("{} refs/tags/v1\n", p.c1)), "{adv}");
+        assert!(!adv.contains(" HEAD"), "{adv}");
+        assert!(advertise_receive_pack(&p.dest.join("none")).is_err());
+    }
+
+    #[test]
+    fn a_command_knows_a_create_and_a_delete_by_its_zero_ids() {
+        let zero = ObjectId::null(gix_hash::Kind::Sha1);
+        let one = ObjectId::from_hex(b"1111111111111111111111111111111111111111").expect("id");
+        let cmd = |old_oid, new_oid| RefUpdateCommand {
+            old_oid,
+            new_oid,
+            refname: "refs/heads/main".into(),
+        };
+        assert!(cmd(zero, one).is_create() && !cmd(zero, one).is_delete());
+        assert!(cmd(one, zero).is_delete() && !cmd(one, zero).is_create());
+        assert!(!cmd(one, one).is_create() && !cmd(one, one).is_delete());
+    }
+
+    #[test]
+    fn a_malformed_command_list_is_refused_before_anything_is_stored() {
+        let p = push();
+        let new = p.c1;
+        let refused = |raw: &[u8], says: &str| {
+            let err = receive(&p.dest, &RefPolicy::default(), raw).expect_err(says);
+            assert_eq!(err.status_code(), 400, "{says}: {err}");
+            assert!(err.to_string().contains(says), "{says}: {err}");
+        };
+        refused(
+            &pkt(&[&format!("{ZERO} {new} refs/heads/main")]),
+            "missing flush packet",
+        );
+        refused(b"0008\xff\xfe\xfd\xfc0000", "non-utf8 command line");
+        refused(
+            &pkt(&["only two", FLUSH]),
+            "malformed receive-pack command 'only two'",
+        );
+        refused(
+            &pkt(&[&format!("zz {new} refs/heads/main"), FLUSH]),
+            "invalid old_id",
+        );
+        refused(
+            &pkt(&[&format!("{ZERO} zz refs/heads/main"), FLUSH]),
+            "invalid new_id",
+        );
+        refused(b"0000PACK", "requires at least one command");
+        let mut long = Vec::new();
+        let filler = format!("shallow {}", "a".repeat(65_000));
+        for _ in 0..17 {
+            write_text_line(&mut long, &filler).expect("pkt");
+        }
+        refused(&long, "commands exceed");
+        // A lone flush is git asking before a large push: an empty answer.
+        let probe = receive(&p.dest, &RefPolicy::default(), b"0000").expect("probe");
+        assert!(probe.response_bytes.is_empty() && probe.updated_refs.is_empty());
+        assert!(!crate::compact::has_active_quarantine(&p.dest));
+    }
+
+    #[test]
+    fn a_push_past_the_ref_limit_or_with_a_bad_pack_is_an_unpack_error() {
+        let p = push();
+        let many: Vec<String> = (0..=MAX_REFS_PER_PUSH)
+            .map(|i| format!("{ZERO} {} refs/heads/b{i}", p.c1))
+            .collect();
+        let out = report(&p, &many, "report-status", b"");
+        assert!(
+            out.contains("unpack error too many refs in push (limit 1000)"),
+            "{}",
+            &out[..80]
+        );
+        let one = [format!("{ZERO} {} refs/heads/main", p.c1)];
+        let out = report(&p, &one, "report-status", b"JUNK");
+        assert!(out.contains("unpack error missing PACK header"), "{out}");
+        assert!(out.contains("ng refs/heads/main unpacker error"), "{out}");
+        let out = report(&p, &one, "report-status", b"PACK\0\0\0\x09garbage");
+        assert!(out.contains("unpack error invalid pack header"), "{out}");
+        let mut pack = pack_of(&p.source, &p.c1.to_string());
+        pack.truncate(pack.len() - 30);
+        let out = report(&p, &one, "report-status", &pack);
+        assert!(
+            out.contains("unpack error ") && !out.contains("unpack ok"),
+            "{out}"
+        );
+        // A pack that reads but leaves out an object the tip needs.
+        let full = pack_of(&p.source, &p.c1.to_string());
+        let out = report(
+            &p,
+            &[format!("{ZERO} {} refs/heads/main", p.c2)],
+            "report-status",
+            &full,
+        );
+        assert!(
+            out.contains("ng refs/heads/main missing necessary objects"),
+            "{out}"
+        );
+        assert!(
+            crate::repo::list_branches(&p.dest)
+                .expect("branches")
+                .is_empty()
+        );
+        assert!(!crate::compact::has_active_quarantine(&p.dest));
+    }
+
+    #[test]
+    fn the_report_follows_the_asked_format() {
+        let p = push();
+        let out = create(
+            &p,
+            p.c1,
+            "refs/heads/main",
+            "report-status-v2 side-band-64k",
+        );
+        let lines = crate::pktline::parse_all_pkt_lines(&out.response_bytes).expect("framed");
+        let inner: Vec<u8> = lines
+            .iter()
+            .filter_map(|l| match l {
+                crate::pktline::PktLine::Data(d) => d.strip_prefix(b"\x01").map(<[u8]>::to_vec),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let inner = text(&inner);
+        assert!(inner.contains("ok refs/heads/main"), "{inner}");
+        assert!(inner.contains("option refname refs/heads/main"), "{inner}");
+        assert!(inner.contains(&format!("option old-oid {ZERO}")), "{inner}");
+        assert!(
+            inner.contains(&format!("option new-oid {}", p.c1)),
+            "{inner}"
+        );
+        assert!(out.pack_size_bytes > 0);
+
+        let out = create(&p, p.c1, "refs/heads/one-k", "report-status side-band");
+        assert!(
+            text(&out.response_bytes).contains("\u{1}000eunpack ok"),
+            "{:?}",
+            text(&out.response_bytes)
+        );
+        let out = create(&p, p.c1, "refs/heads/quiet", "ofs-delta");
+        assert!(out.response_bytes.is_empty());
+        assert_eq!(
+            out.updated_refs.len(),
+            1,
+            "no report asked, the ref still moves"
+        );
+    }
+
+    #[test]
+    fn each_ref_is_checked_against_what_the_repository_holds() {
+        let p = push();
+        create(&p, p.c1, "refs/heads/main", "report-status");
+        let (c1, c2) = (p.c1, p.c2);
+        let pack = pack_of(&p.source, &c2.to_string());
+        let cases = [
+            (
+                format!("{ZERO} {c2} refs/pull/1/head"),
+                "refusing to update non-branch/tag ref",
+            ),
+            (
+                format!("{ZERO} {c2} HEAD"),
+                "refusing to update non-branch/tag ref",
+            ),
+            (format!("{ZERO} {c2} refs/heads/a..b"), "ng refs/heads/a..b"),
+            (
+                format!("{ZERO} {c2} refs/heads/main"),
+                "ng refs/heads/main fetch first",
+            ),
+            (
+                format!("{c2} {c2} refs/heads/main"),
+                "ng refs/heads/main fetch first",
+            ),
+            (
+                format!("{c1} {c2} refs/heads/other"),
+                "ng refs/heads/other fetch first",
+            ),
+        ];
+        for (command, says) in cases {
+            let out = report(&p, std::slice::from_ref(&command), "report-status", &pack);
+            assert!(
+                out.contains("unpack ok") && out.contains(says),
+                "{command}: {out}"
+            );
+        }
+        assert_eq!(
+            crate::repo::list_branches(&p.dest).expect("branches").len(),
+            1
+        );
+        // A refused push leaves no pack beside the one the accepted push stored.
+        let packs = std::fs::read_dir(p.dest.join("objects/pack"))
+            .expect("dir")
+            .count();
+        assert_eq!(packs, 2, "one .pack and its .idx");
+
+        // A fast-forward, then a delete with no pack at all.
+        let out = report(
+            &p,
+            &[format!("{c1} {c2} refs/heads/main")],
+            "report-status",
+            &pack,
+        );
+        assert!(out.contains("ok refs/heads/main"), "{out}");
+        let gone = receive(
+            &p.dest,
+            &RefPolicy::default(),
+            &body(
+                &[format!("{c2} {ZERO} refs/heads/main")],
+                "report-status",
+                b"",
+            ),
+        )
+        .expect("delete");
+        assert!(text(&gone.response_bytes).contains("ok refs/heads/main"));
+        assert_eq!(gone.pack_size_bytes, 0);
+        assert!(gone.updated_refs[0].is_delete());
+        assert!(
+            crate::repo::list_branches(&p.dest)
+                .expect("branches")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_protected_branch_refuses_a_push_that_rewrites_it() {
+        let p = push();
+        create(&p, p.c2, "refs/heads/main", "report-status");
+        let protected = RefPolicy {
+            branch_rules: vec![BranchProtectionRule {
+                rule_name: "main".into(),
+                enable_push: true,
+                ..BranchProtectionRule::default()
+            }],
+            tag_rules: vec![],
+        };
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let rewind = body(
+            &[format!("{} {} refs/heads/main", p.c2, p.c1)],
+            "report-status",
+            &pack,
+        );
+        let out = text(
+            &receive(&p.dest, &protected, &rewind)
+                .expect("receive")
+                .response_bytes,
+        );
+        assert!(out.contains("ng refs/heads/main"), "{out}");
+        assert_eq!(
+            crate::repo::list_branches(&p.dest).expect("branches")[0].1,
+            p.c2.to_string()
+        );
+    }
+
+    #[test]
+    fn an_atomic_push_moves_every_ref_or_none() {
+        let p = push();
+        let pack = pack_of(&p.source, &p.c2.to_string());
+        let both = [
+            format!("{ZERO} {} refs/heads/main", p.c2),
+            format!("{ZERO} {} refs/tags/v1", p.c1),
+        ];
+        let half = [both[0].clone(), format!("{ZERO} {} refs/pull/1/head", p.c2)];
+        let out = report(&p, &half, "report-status atomic", &pack);
+        assert!(
+            out.contains("ng refs/heads/main atomic push failed"),
+            "{out}"
+        );
+        assert!(
+            crate::repo::list_branches(&p.dest)
+                .expect("branches")
+                .is_empty()
+        );
+        assert_eq!(
+            std::fs::read_dir(p.dest.join("objects/pack"))
+                .expect("dir")
+                .count(),
+            0,
+            "the refused pack is gone"
+        );
+        let out = report(&p, &both, "report-status atomic", &pack);
+        assert!(
+            out.contains("ok refs/heads/main") && out.contains("ok refs/tags/v1"),
+            "{out}"
+        );
+        assert_eq!(crate::repo::list_tags(&p.dest).expect("tags").len(), 1);
+    }
+
+    #[test]
+    fn the_secret_scan_names_each_rule_and_lets_references_through() {
+        let key = format!("-----BEGIN {}PRIVATE KEY-----", "RSA ");
+        let aws = format!("AKIA{}", "ABCDEFGHIJKLMNOP");
+        assert_eq!(
+            scan_blob_for_secrets("k.pem", format!("a\nb\n{key}\n").as_bytes()).as_deref(),
+            Some("pre-receive secret scan blocked private-key in 'k.pem' line 3")
+        );
+        assert!(
+            scan_blob_for_secrets("x.txt", aws.as_bytes())
+                .is_some_and(|m| m.contains("aws-access-key"))
+        );
+        let manifest =
+            |body: &str| format!("apiVersion: joinedcontext.com/v1\nkind: DataSource\n{body}");
+        let literal = format!("hunter{}", "2x9q");
+        for open in [
+            "${PW}",
+            "${{ secrets.PW }}",
+            "ENC[AES256,abc]",
+            "''",
+            "\"\"",
+        ] {
+            let yaml = manifest(&format!("spec:\n  password: {open}\n"));
+            assert_eq!(
+                scan_blob_for_secrets("s.yaml", yaml.as_bytes()),
+                None,
+                "{open}"
+            );
+        }
+        let found = |path: &str, yaml: &str| scan_blob_for_secrets(path, yaml.as_bytes());
+        let listed = manifest(&format!("spec:\n  items:\n  - token: {literal}\n"));
+        assert!(found("s.yml", &listed).is_some_and(|m| m.contains("line 5 (field 'token'")));
+        let tagged = manifest(&format!("spec: !Custom\n  apiKey: {literal}\n"));
+        assert!(found("s.yaml", &tagged).is_some_and(|m| m.contains("field 'apiKey'")));
+        // A flow mapping names the field on another line: the refusal has no line number.
+        let flow = manifest(&format!("spec: {{password: {literal}}}\n"));
+        assert_eq!(
+            found("s.yaml", &flow).as_deref(),
+            Some(
+                "pre-receive secret scan blocked literal-secret-field in 's.yaml' (field 'password'; name the credential with secretRef)"
+            )
+        );
+        let second = format!(
+            "{}---\n{}",
+            manifest("spec: {}\n"),
+            manifest(&format!("spec:\n  secret: {literal}\n"))
+        );
+        assert!(found("s.yaml", &second).is_some());
+        // Not a manifest, not YAML, not parseable, a ${...} that is no plain name: as written.
+        assert_eq!(found("s.yaml", &format!("password: {literal}\n")), None);
+        assert_eq!(
+            found(
+                "s.json",
+                &manifest(&format!("spec:\n  password: {literal}\n"))
+            ),
+            None
+        );
+        assert_eq!(found("s.yaml", "a: [\n"), None);
+        let odd = manifest("spec:\n  password: ${a-b}\n");
+        assert!(found("s.yaml", &odd).is_some());
+        let empty_ref = manifest("spec:\n  password: ${}\n");
+        assert!(found("s.yaml", &empty_ref).is_some());
+    }
+
+    /// One pack entry: its type and inflated size in git's header encoding, then `extra`
+    /// (an ofs-delta's base distance) and `data` deflated.
+    fn entry(kind: u8, data: &[u8], extra: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut size = data.len() as u64;
+        let mut out = vec![(kind << 4) | (size & 0x0f) as u8];
+        size >>= 4;
+        while size > 0 {
+            *out.last_mut().expect("first byte") |= 0x80;
+            out.push((size & 0x7f) as u8);
+            size >>= 7;
+        }
+        out.extend_from_slice(extra);
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(data).expect("deflate");
+        out.extend(z.finish().expect("deflate"));
+        out
+    }
+
+    /// git's ofs-delta base distance: big-endian 7-bit groups, each but the last minus one.
+    fn distance(mut n: u64) -> Vec<u8> {
+        let mut out = vec![(n & 0x7f) as u8];
+        n >>= 7;
+        while n > 0 {
+            n -= 1;
+            out.insert(0, 0x80 | (n & 0x7f) as u8);
+            n >>= 7;
+        }
+        out
+    }
+
+    /// A whole pack file of `entries` with its header and SHA-1 trailer.
+    fn raw_pack(entries: &[Vec<u8>]) -> File {
+        use std::io::Write as _;
+        let mut bytes = b"PACK\0\0\0\x02".to_vec();
+        bytes.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        for e in entries {
+            bytes.extend_from_slice(e);
+        }
+        let mut hasher = gix_hash::hasher(gix_hash::Kind::Sha1);
+        hasher.update(&bytes);
+        let trailer = hasher.try_finalize().expect("sha1");
+        bytes.extend_from_slice(trailer.as_bytes());
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(&bytes).expect("write");
+        std::io::Seek::rewind(&mut file).expect("rewind");
+        file
+    }
+
+    /// A chain of ofs-deltas on one blob, each based on the entry before it.
+    fn delta_chain(deltas: usize) -> Vec<Vec<u8>> {
+        let mut entries = vec![entry(3, b"x", &[])];
+        let mut offsets = vec![12u64];
+        for _ in 0..deltas {
+            let at = offsets.last().expect("base") + entries.last().expect("base").len() as u64;
+            let base = *offsets.last().expect("base");
+            entries.push(entry(6, &[1, 1, 0x01, b'y'], &distance(at - base)));
+            offsets.push(at);
+        }
+        entries
+    }
+
+    #[test]
+    fn the_pack_scan_refuses_deep_chains_huge_objects_and_broken_delta_headers() {
+        let (_, count) = scan_pack(&raw_pack(&delta_chain(MAX_DELTA_CHAIN_DEPTH)), 0)
+            .expect("a chain at the limit");
+        assert_eq!(count, MAX_DELTA_CHAIN_DEPTH as u64 + 1);
+        let err = scan_pack(&raw_pack(&delta_chain(MAX_DELTA_CHAIN_DEPTH + 1)), 0)
+            .expect_err("one past the limit");
+        assert!(
+            err.contains("delta chain depth 51 exceeds limit 50"),
+            "{err}"
+        );
+
+        // A small delta whose header claims a result past the object cap.
+        let mut huge = vec![1u8];
+        let mut size = MAX_SINGLE_OBJECT_BYTES + 1;
+        while size >= 0x80 {
+            huge.push(0x80 | (size & 0x7f) as u8);
+            size >>= 7;
+        }
+        huge.push(size as u8);
+        let pack = raw_pack(&[entry(3, b"x", &[]), entry(6, &huge, &distance(14))]);
+        let err = scan_pack(&pack, 0).expect_err("result too large");
+        assert!(err.contains("exceeds limit"), "{err}");
+
+        // A delta whose size header never ends.
+        let pack = raw_pack(&[entry(3, b"x", &[]), entry(6, &[0x80], &distance(14))]);
+        let err = scan_pack(&pack, 0).expect_err("truncated header");
+        assert!(err.contains("truncated delta header"), "{err}");
+
+        // A whole object over the cap, refused from its inflated size.
+        let blob = vec![0u8; MAX_SINGLE_OBJECT_BYTES as usize + 1];
+        let err = scan_pack(&raw_pack(&[entry(3, &blob, &[])]), 0).expect_err("object too large");
+        assert!(
+            err.contains(&format!("object size {}", blob.len())),
+            "{err}"
+        );
+    }
+}

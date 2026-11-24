@@ -1,0 +1,55 @@
+# Fuzzing the shared crates' outside inputs under libFuzzer (T-7805): chart specs and the rows they
+# draw (jc-chart), requests through the router's host table and id addresses (jc-router), tenancy
+# keys and internal names (jc-types) and secret files (jc-secret). Each input must end in an
+# answer or a refusal, never a panic, a hang or an allocation past the input's size.
+# From the jc root: `cargo +nightly fuzz run --fuzz-dir crates/shared/fuzz <target>
+# crates/shared/fuzz/corpus/<target> -- -max_total_time=300`. Not a workspace member.
+[package]
+name = "jc-shared-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+axum = "0.8"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1.54", features = ["rt"] }
+jc-chart = { path = "../jc-chart" }
+jc-router = { path = "../jc-router" }
+jc-secret = { path = "../jc-secret" }
+jc-types = { path = "../jc-types" }
+
+[[bin]]
+name = "chart_spec"
+path = "fuzz_targets/chart_spec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "router_request"
+path = "fuzz_targets/router_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tenancy_keys"
+path = "fuzz_targets/tenancy_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secret_file"
+path = "fuzz_targets/secret_file.rs"
+test = false
+doc = false
+bench = false

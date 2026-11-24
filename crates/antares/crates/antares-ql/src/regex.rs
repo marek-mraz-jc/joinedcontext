@@ -188,6 +188,17 @@ pub fn compile(pattern: &str) -> Result<Arc<regex::Regex>, String> {
     outcome.map_err(String::from)
 }
 
+/// `pattern` as a selector reads it, anchored at both ends: the program for
+/// `^(?:pattern)$`. `Err` also for a pattern that compiles only inside that
+/// wrapper: one that closes the group early (`a)|(b`) would leave one branch
+/// anchored at the start only and the other at the end only, selecting far
+/// more ids than its author reads into it (T-7799). Every reader and every
+/// admission of an `idPattern` goes through here.
+pub fn compile_anchored(pattern: &str) -> Result<Arc<regex::Regex>, String> {
+    compile(pattern)?;
+    compile(&format!("^(?:{pattern})$"))
+}
+
 /// The retained program for `pattern`, without compiling anything. A
 /// retained refusal holds no program and reads as `None` here.
 pub fn cached(pattern: &str) -> Option<Arc<regex::Regex>> {
@@ -305,6 +316,21 @@ mod tests {
             !first.is_match("urn:ngsi-ld:Vehicle:compiled-once-x"),
             "a shared program still rejects what the pattern excludes"
         );
+    }
+
+    /// A pattern that parses only inside the `^(?:...)$` wrapper is refused,
+    /// and a whole pattern is anchored at both ends (T-7799).
+    #[test]
+    fn anchored_refuses_a_pattern_that_closes_the_wrapper() {
+        let _serial = serial_lock();
+        for p in ["a)|(b", "urn:x:a)|(.*", ".*)|(urn:x:b", "x)(y"] {
+            assert!(compile_anchored(p).is_err(), "{p}");
+        }
+        let re = compile_anchored("urn:x:a|urn:x:b").expect("valid");
+        assert!(re.is_match("urn:x:b"));
+        assert!(!re.is_match("urn:x:bb"), "anchored at the end");
+        assert!(!re.is_match("zurn:x:a"), "anchored at the start");
+        assert!(compile_anchored("(?i)URN:x:[a-z]+").is_ok_and(|re| re.is_match("urn:X:q")));
     }
 
     /// An invalid pattern yields `Regex::new`'s own error, verbatim, so the

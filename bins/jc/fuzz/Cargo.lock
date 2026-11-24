@@ -2143,9 +2143,11 @@ dependencies = [
 name = "jc-fuzz"
 version = "0.0.0"
 dependencies = [
+ "axum",
  "jc",
  "libfuzzer-sys",
  "serde_json",
+ "url",
 ]
 
 [[package]]
