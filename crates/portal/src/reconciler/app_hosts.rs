@@ -757,7 +757,7 @@ mod tests {
     fn failed(state: Option<&HostState>) -> String {
         match state {
             Some(HostState::Failed(reason)) => reason.clone(),
-            other => panic!("expected a failure, got {other:?}"),
+            other => format!("not a failure: {other:?}"),
         }
     }
 
@@ -1072,6 +1072,7 @@ mod tests {
             .converge(&apps(&["bikes"]), "city.example")
             .await;
         assert_eq!(states.get("bikes"), Some(&HostState::Ready));
+        assert_eq!(failed(states.get("bikes")), "not a failure: Some(Ready)");
 
         // Held but not issued yet: what cert-manager last said, and the missing Ingress is made.
         let server = MockServer::start().await;

@@ -892,7 +892,7 @@ mod tests {
             .iter()
             .find(|outcome| outcome.name == name)
             .cloned()
-            .unwrap_or_else(|| panic!("no outcome for {name}: {outcomes:?}"))
+            .expect("an outcome of that name")
     }
 
     #[test]
@@ -1087,6 +1087,22 @@ mod tests {
             Some("the realm did not return the group it just created")
         );
 
+        // The root made, and the search answers something that is not a list of groups.
+        let keycloak = realm(json!([])).await;
+        answer(&keycloak, "POST", "/groups", 201, json!({})).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/groups")))
+            .and(query_param("exact", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "x" })))
+            .mount(&keycloak)
+            .await;
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
+        let error = only(&outcomes, "bbsk/members").error.unwrap_or_default();
+        assert!(error.contains("expected a sequence"), "{error}");
+
         // The children not listed, then the subgroup's create refused.
         let keycloak = realm(json!([managed("root", "bbsk")])).await;
         answer(&keycloak, "GET", "/groups/root/children", 500, json!({})).await;
@@ -1243,6 +1259,7 @@ mod tests {
         let mirror = mirror_of(vec![
             manifest("Group", "refused", members(&[])),
             manifest("Group", "warned", members(&[])),
+            manifest("Group", "clean", members(&[])),
             bare,
         ]);
         let outcome = |name: &str, error: Option<&str>, warnings: &[&str]| GroupOutcome {
@@ -1258,6 +1275,7 @@ mod tests {
                 outcome("warned", None, &["a has no user", "b has no user"]),
                 outcome("bare", Some("ignored"), &[]),
                 outcome("nobody", Some("ignored"), &[]),
+                outcome("clean", None, &[]),
             ],
         );
         let condition = |name: &str| {
@@ -1293,5 +1311,14 @@ mod tests {
             .status
             .is_none());
         assert!(mirror.get(ORG_NAMESPACE, "Group", "nobody").is_none());
+        let clean = mirror
+            .get(ORG_NAMESPACE, "Group", "clean")
+            .and_then(|g| g.status)
+            .expect("a status");
+        assert_eq!(
+            (clean.phase, clean.conditions.len()),
+            (Phase::Live, 0),
+            "a clean run changes nothing"
+        );
     }
 }

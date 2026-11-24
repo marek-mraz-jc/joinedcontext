@@ -1102,7 +1102,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path(format!("{SURFACE}/types")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "typeList": ["https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "Vehicle", 7] })))
+                "typeList": ["https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "Vehicle", "Bus", 7] })))
             .mount(&server)
             .await;
         for (name, count) in [
@@ -1111,6 +1111,7 @@ mod tests {
                 "3",
             ),
             ("Vehicle", "40"),
+            ("Bus", "3"),
         ] {
             Mock::given(method("GET"))
                 .and(path(format!("{SURFACE}/entities")))
@@ -1125,8 +1126,10 @@ mod tests {
             types_of(&http, &server.uri(), "door").await,
             Ok(vec![
                 ("Vehicle".to_owned(), 40),
+                ("Bus".to_owned(), 3),
                 ("ParkingSpot".to_owned(), 3)
-            ])
+            ]),
+            "by count, then by name"
         );
 
         let types = |list: ResponseTemplate| {
@@ -1243,6 +1246,65 @@ mod tests {
         assert!(wanted["urn:ngsi-ld:DataService:empty"]
             .get("entityTypes")
             .is_none());
+    }
+
+    /// The DCAT-AP feed refused or not JSON fails the run before anything is written.
+    #[tokio::test]
+    async fn a_feed_that_does_not_read_fails_the_run() {
+        let repo =
+            Repository::from_manifests(vec![endpoint("city", CATALOG, CATALOG, "public")], None)
+                .expect("a repository");
+        for (template, said) in [
+            (
+                ResponseTemplate::new(502),
+                "the DCAT-AP feed did not read: ",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_string("<rdf/>"),
+                "the DCAT-AP feed is not JSON: ",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/catalog.jsonld"))
+                .respond_with(template)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(201))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let (sync, _) = wave(&server);
+            let err = sync.converge(&repo).await.expect_err(said);
+            assert!(err.starts_with(said), "{err}");
+        }
+        let empty = Repository::from_manifests(Vec::new(), None).expect("a repository");
+        let server = MockServer::start().await;
+        let (sync, _) = wave(&server);
+        assert_eq!(
+            sync.converge(&empty).await,
+            Ok(None),
+            "no catalogue Endpoint, no wave"
+        );
+    }
+
+    /// A space's area is its `area` rule's four corners alone; another rule or a malformed bbox
+    /// gives none, and a public Endpoint without a slug is no place.
+    #[test]
+    fn a_place_takes_only_a_well_formed_area() {
+        let mut air = endpoint("city", "air", "air", "unused");
+        air.kind = "ContextSpace".to_owned();
+        air.spec = json!({ "quality": [{ "kind": "freshness" }, { "kind": "area", "bbox": "17,48,18,49" }] });
+        let mut public = endpoint("city", "air-now", "air", "air-now");
+        public.spec["audience"] = json!("public");
+        let mut unnamed = endpoint("city", "unnamed", "air", "x");
+        unnamed.spec = json!({ "contextSpaceRef": "air", "audience": "public" });
+        let repo =
+            Repository::from_manifests(vec![air, public, unnamed], None).expect("a repository");
+        let found = places(&repo);
+        assert_eq!(found.keys().collect::<Vec<_>>(), ["air-now"]);
+        assert_eq!(found["air-now"].bbox, None);
     }
 
     /// Two installation catalogues say nowhere to write: none is written and the error says so.

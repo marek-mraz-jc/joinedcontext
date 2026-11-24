@@ -377,7 +377,7 @@ impl RegistrationSync {
             .json(&shared.grant(hub))
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() {
             true => Ok(()),
             false => Err(refusal(
@@ -394,7 +394,7 @@ impl RegistrationSync {
             .authorized(self.http.delete(shared.grant_url(hub)))?
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
         {
             true => Ok(()),
@@ -454,7 +454,7 @@ impl RegistrationSync {
             .json(body)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         if created.status().is_success() {
             return Ok(());
         }
@@ -477,7 +477,7 @@ impl RegistrationSync {
             .json(&patch)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match updated.status().is_success() {
             true => Ok(()),
             false => Err(refusal("the broker refused the update", updated, None).await),
@@ -493,13 +493,18 @@ impl RegistrationSync {
             .header(TENANT_HEADER, space)
             .send()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(unsent)?;
         match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
         {
             true => Ok(()),
             false => Err(refusal("the broker refused the delete", response, None).await),
         }
     }
+}
+
+/// Why a request did not reach the broker, as the outcome says it.
+fn unsent(err: reqwest::Error) -> String {
+    err.to_string()
 }
 
 /// Every declared registration of the mirror: `(project, name, hub space, manifest)`, and the
@@ -1199,7 +1204,7 @@ mod tests {
     fn error_of(outcome: &RegistrationOutcome) -> &str {
         match outcome {
             RegistrationOutcome::Error(reason) => reason,
-            RegistrationOutcome::Written => panic!("expected an error, it was written"),
+            RegistrationOutcome::Written => "written",
         }
     }
 
@@ -1252,7 +1257,7 @@ mod tests {
             .iter()
             .map(|(_, name, outcome)| (name.as_str(), outcome))
             .collect();
-        assert_eq!(by_name["from-espoo"], &RegistrationOutcome::Written);
+        assert_eq!(error_of(by_name["from-espoo"]), "written");
         assert!(
             error_of(by_name["from-espoo-2"])
                 .contains(&format!("through Endpoint slug {SHARED_SLUG}")),
@@ -1436,7 +1441,12 @@ mod tests {
             json!({ "kind": "Endpoint", "name": "x", "namespace": "espoo" }),
         );
         outside.spec["federation"] = json!({ "identity": "caller" });
-        let mirror = mirror_with(vec![outside]);
+        let broken = envelope(
+            "ContextSourceRegistration",
+            "broken",
+            json!({ "contextSpaceRef": 7 }),
+        );
+        let mirror = mirror_with(vec![outside, broken]);
         let ((found, refused), log) = super::super::logged(async { declared(&mirror) }).await;
         assert!(found.is_empty(), "{found:?}");
         let reasons: BTreeMap<_, _> = refused
@@ -1450,6 +1460,79 @@ mod tests {
             "{reasons:?}"
         );
         assert!(log.contains("reaches outside its project"), "{log}");
+        assert!(
+            reasons["broken"].starts_with("the manifest does not parse, so it is not registered: "),
+            "{reasons:?}"
+        );
+        assert!(
+            log.contains("a ContextSourceRegistration manifest does not parse"),
+            "{log}"
+        );
+    }
+
+    /// A caller registration whose member has no gateway address does not render: it is an error
+    /// and nothing is sent to the broker.
+    #[tokio::test]
+    async fn a_registration_that_does_not_render_is_an_error_and_sends_nothing() {
+        let mut caller = csr("local", json!({ "kind": "Endpoint", "name": "local" }));
+        caller.spec["federation"] = json!({ "identity": "caller" });
+        let mirror = mirror_with(vec![
+            caller,
+            envelope("ContextSpace", "hub", json!({ "urnSegment": "hub" })),
+            envelope(
+                "Endpoint",
+                "local",
+                json!({ "contextSpaceRef": "hub", "slug": "local-slug" }),
+            ),
+        ]);
+        let server = broker_answering(&[]).await;
+        let outcomes = sync_on(&server).converge(&mirror, &Mirror::new()).await;
+        assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+        assert_ne!(error_of(&outcomes[0].2), "written");
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
+
+    /// A shared read still declared keeps its grant: a second pass writes the grant and the
+    /// registration again and deletes nothing.
+    #[tokio::test]
+    async fn a_kept_shared_read_keeps_its_grant() {
+        let server = broker_answering(&[("PUT", GRANT, 200), ("POST", REGISTRATIONS, 201)]).await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let outcomes = sync_on(&server)
+            .converge(&shared_read(true), &shared_read(true))
+            .await;
+        assert_eq!(outcomes[0].2, RegistrationOutcome::Written);
+    }
+
+    /// A conflict on a body that is not an object patches it as it is: nothing to strip.
+    #[tokio::test]
+    async fn a_conflict_on_a_body_without_members_patches_it_unchanged() {
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 409),
+            (
+                "PATCH",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                204,
+            ),
+        ])
+        .await;
+        let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
+        assert_eq!(
+            sync_on(&server)
+                .write(&ngsi_ld, "hub", "urn:r", &json!(["x"]))
+                .await,
+            Ok(())
+        );
+        let sent = server.received_requests().await.expect("recorded");
+        assert_eq!(sent[1].body, b"[\"x\"]".to_vec());
     }
 
     /// The broker's answers to a write, a delete and a grant: a conflict is patched without the

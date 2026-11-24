@@ -836,7 +836,7 @@ mod tests {
     fn waits(step: Step) -> String {
         match step {
             Step::Waits(reason) => reason,
-            Step::Moved(next) => panic!("expected a wait, it moved to {next}"),
+            Step::Moved(next) => format!("moved to {next}"),
         }
     }
 
@@ -851,9 +851,10 @@ mod tests {
     fn ours(kind: &str, extra: Value) -> Value {
         let mut object =
             json!({ "kind": kind, "metadata": { "name": object_name(HOST), "labels": labels() } });
-        if let (Some(object), Some(extra)) = (object.as_object_mut(), extra.as_object()) {
-            object.extend(extra.clone());
-        }
+        object
+            .as_object_mut()
+            .expect("an object")
+            .extend(extra.as_object().expect("an object").clone());
         object
     }
 
@@ -894,6 +895,15 @@ mod tests {
         assert_eq!(
             waits(hosts.dns(HOST, &template()).await),
             format!("waiting for DNS: the lookup of {HOST} got no answer; tried again next pass")
+        );
+        let unset = wave(
+            &server,
+            pool.clone(),
+            Canned([("dev.example", Some(edge))].into()),
+        );
+        assert_eq!(
+            waits(unset.dns(HOST, &template()).await),
+            format!("waiting for DNS: {HOST} has no record yet; add a CNAME to dev.example")
         );
         let unresolved = wave(&server, pool, Canned([("dev.example", None)].into()));
         assert_eq!(
@@ -953,6 +963,31 @@ mod tests {
         assert_eq!(
             hosts.edge().await.err().as_deref(),
             Some("the edge Certificate apisix-edge in apisix names no issuer to request a host's from")
+        );
+        let refused = MockServer::start().await;
+        answer(
+            &refused,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            template(),
+        )
+        .await;
+        answer(
+            &refused,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            502,
+            json!({}),
+        )
+        .await;
+        assert_eq!(
+            wave(&refused, pool.clone(), Canned(Default::default()))
+                .edge()
+                .await
+                .err()
+                .as_deref(),
+            Some("the API server answered 502 for Certificate apisix-edge")
         );
         let (_, issuer) = hosts
             .with_dns01_issuer(Some("letsencrypt-dns01".into()))
@@ -1166,10 +1201,10 @@ mod tests {
             .expect(0)
             .mount(&server)
             .await;
-        assert!(matches!(
-            widen(&server).widen(HOST, &template()).await,
-            Step::Moved("served")
-        ));
+        assert_eq!(
+            waits(widen(&server).widen(HOST, &template()).await),
+            "moved to served"
+        );
     }
 
     /// A database that does not answer: a move is not made and says so, a detail is not written
