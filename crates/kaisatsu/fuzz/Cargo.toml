@@ -1,8 +1,11 @@
 # Fuzzes what kaisatsu-core and kaisatsu-store-memory read from outside (T-7608): branding blocks
 # and SVG logos an admin uploads, locale headers and ui_locales, protocol mapper configs with the
-# users and clients they map, and OData query strings against the in-memory store. Each target
+# users and clients they map, and OData query strings against the in-memory store; and what
+# kaisatsu-oidc and kaisatsu-login read (T-7802): redirect URIs, DPoP proofs and JWKs, the
+# Authorization and Cookie headers, outbound URLs and private hosts, CIMD documents and the stored
+# login state with the inputs that drive it. Each target
 # must end in a value or an error, never a panic, a hang or an allocation past the input's size.
-# Run by hand: cargo +nightly fuzz run <branding|locale|mappers|odata_query> -- -max_total_time=300.
+# Run by hand: cargo +nightly fuzz run <target> -- -max_total_time=300.
 # Not a member of the root workspace.
 [package]
 name = "kaisatsu-fuzz"
@@ -20,6 +23,10 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1.54", features = ["rt"] }
 kaisatsu-core = { path = "../core" }
 kaisatsu-store-memory = { path = "../store-memory" }
+kaisatsu-oidc = { path = "../oidc" }
+kaisatsu-login = { path = "../login" }
+http = "1.5"
+url = "2.5"
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
 
@@ -47,6 +54,48 @@ bench = false
 [[bin]]
 name = "odata_query"
 path = "fuzz_targets/odata_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redirect_uri"
+path = "fuzz_targets/redirect_uri.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dpop_proof"
+path = "fuzz_targets/dpop_proof.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_headers"
+path = "fuzz_targets/auth_headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "outbound_url"
+path = "fuzz_targets/outbound_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cimd_metadata"
+path = "fuzz_targets/cimd_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "login_machine"
+path = "fuzz_targets/login_machine.rs"
 test = false
 doc = false
 bench = false

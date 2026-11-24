@@ -58,6 +58,25 @@ async fn app_and_kek() -> (Router, Arc<MemoryStore>, Kek) {
 /// The state behind [`app`], for tests that serve it twice (with and without the floor).
 async fn console_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
     let (state, store, kek) = setup_dev_realm_state().await;
+    add_console_client(store.as_ref()).await;
+    (state, store, kek)
+}
+
+/// The console on a store that fails or loses the calls a test names.
+async fn fault_app() -> (Router, Arc<MemoryStore>, Arc<fault_store::FaultStore>) {
+    let kek = Kek::generate_for_tests();
+    let memory = Arc::new(MemoryStore::new(kek.clone()));
+    let faults = fault_store::FaultStore::new(memory.clone());
+    let state = setup_dev_realm_on(faults.clone(), kek).await;
+    add_console_client(memory.as_ref()).await;
+    (
+        router(state, mount()).layer(Extension(mount())),
+        memory,
+        faults,
+    )
+}
+
+async fn add_console_client(store: &dyn Store) {
     store
         .upsert_client(ClientRepresentation {
             id: "account-console-id".into(),
@@ -89,7 +108,6 @@ async fn console_state() -> (KaisatsuState, Arc<MemoryStore>, Kek) {
         })
         .await
         .unwrap();
-    (state, store, kek)
 }
 
 async fn call(
@@ -288,6 +306,87 @@ async fn rest(
     )
     .await;
     (st, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn the_console_refuses_a_revoked_token_and_survives_lost_rows() {
+    let (app, store, faults) = fault_app().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    // A session another tab ended meanwhile: ending it again is still done, nothing fails.
+    faults.empty("delete_sso_session", 0, 1);
+    let (st, body) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/sessions/{}", me.sid),
+        &me.token,
+        None,
+    )
+    .await;
+    assert!(st.is_success(), "{st} {body}");
+    // A revoked access token is no caller.
+    let other = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let jti = decode_jwt_payload(&other.token)["jti"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&jti),
+            realm_id: "dev".into(),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(1),
+        })
+        .await
+        .unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &other.token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // The console page whose branding cannot be read: a 500 naming nothing of the store.
+    faults.fail_always("get_branding");
+    let (st, _, body) = call(
+        &app,
+        Method::GET,
+        "/realms/dev/account/personal-info",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(!body.contains("injected"), "{body}");
+}
+
+#[tokio::test]
+async fn signing_out_other_devices_skips_a_session_another_request_ended_first() {
+    let (app, store, faults) = fault_app().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let other = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
+    // The other session's delete finds it gone already (ended in another tab).
+    faults.empty("delete_sso_session", 0, 1);
+    let (st, h, html) = page
+        .post(
+            &app,
+            &[
+                ("new_password", "BrandNewPass123!x"),
+                ("password_confirm", "BrandNewPass123!x"),
+                ("logout-sessions", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(st, StatusCode::SEE_OTHER, "{html}");
+    assert_eq!(
+        param(&location(&h), "kc_action_status").as_deref(),
+        Some("success")
+    );
+    assert!(
+        store
+            .get_sso_session("dev", &me.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let _ = other;
 }
 
 #[tokio::test]
