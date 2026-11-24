@@ -1,0 +1,50 @@
+# Fuzzes ekiben-processors' outside inputs (T-7686): every unarchive format over any message
+# (zip, tar, csv, xlsx/ods, shapefile, XML, JSON documents), json_schema over any schema and
+# document, and any processor config list. Each must end in a value, a flag or a refusal, never a
+# panic, a hang or unbounded memory. Run by hand or by the on-demand ekiben-fuzz workflow:
+# cargo +nightly fuzz run <target> -- -max_total_time=3600. Not a member of the ekiben workspace.
+[package]
+name = "ekiben-processors-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ekiben-bloblang = { path = "../../ekiben-bloblang" }
+ekiben-core = { path = "../../ekiben-core" }
+ekiben-processors = { path = ".." }
+serde_json = "1"
+tokio = { version = "1", features = ["rt"] }
+
+[lib]
+path = "src/lib.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "unarchive"
+path = "fuzz_targets/unarchive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_schema"
+path = "fuzz_targets/json_schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

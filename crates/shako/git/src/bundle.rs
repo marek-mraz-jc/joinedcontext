@@ -157,3 +157,143 @@ pub(crate) fn collect_all_tree_objects(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::{create_branch, list_branches, list_tags, set_ref_direct};
+    use crate::testutil::{annotated_tag, put, repo};
+
+    #[test]
+    fn a_full_backup_restores_every_branch_and_tag_into_an_empty_repository() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = repo(tmp.path(), 1, true);
+        let tip = put(&source, "main", "a.txt", b"a\n");
+        create_branch(&source, "feature", "main").expect("branch");
+        put(&source, "feature", "f.txt", b"f\n");
+        annotated_tag(&source, "v1", tip, gix_object::Kind::Commit);
+        let blob = gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, b"a\n")
+            .expect("hash");
+        set_ref_direct(&source, "refs/tags/blob", &blob.to_string()).expect("blob tag");
+
+        let backup = create_full_backup_bundle(&source).expect("backup");
+        let header = String::from_utf8_lossy(
+            &backup[..backup.windows(2).position(|w| w == b"\n\n").expect("end")],
+        )
+        .into_owned();
+        assert!(header.starts_with("# v2 git bundle\n"), "{header}");
+        assert!(
+            header.contains(&format!("{tip} HEAD")) && header.contains("refs/tags/blob"),
+            "{header}"
+        );
+
+        let dest = repo(tmp.path(), 2, false);
+        restore_from_bundle(&dest, &backup).expect("restore");
+        assert_eq!(
+            list_branches(&dest).expect("b"),
+            list_branches(&source).expect("b")
+        );
+        assert_eq!(list_tags(&dest).expect("t"), list_tags(&source).expect("t"));
+        assert!(open_isolated(&dest).expect("open").has_object(blob));
+        // An empty repository backs up to a header alone and an empty pack.
+        let empty = create_full_backup_bundle(&repo(tmp.path(), 3, false)).expect("empty");
+        assert!(empty.starts_with(b"# v2 git bundle\n\nPACK"));
+    }
+
+    #[test]
+    fn a_restore_refuses_a_bundle_without_header_end_utf8_header_or_pack() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest = repo(tmp.path(), 1, false);
+        for (bytes, says) in [
+            (&b"# v2 git bundle\n"[..], "missing header terminator"),
+            (&b"\xff\xfe\n\nPACK"[..], "not UTF-8"),
+            (&b"# v2 git bundle\n\nJUNK"[..], "contains no PACK"),
+        ] {
+            let err = restore_from_bundle(&dest, bytes).expect_err(says);
+            assert_eq!(err.status_code(), 400, "{err}");
+            assert!(err.to_string().contains(says), "{err}");
+        }
+        let err =
+            restore_from_bundle(&dest, b"# v2 git bundle\n\nPACKgarbage").expect_err("corrupt");
+        assert!(
+            matches!(&err, ShakoError::Git(m) if m.contains("index-pack failed")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_restore_skips_prerequisites_options_and_head_and_refuses_a_bad_ref_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = repo(tmp.path(), 1, true);
+        let tip = put(&source, "main", "a.txt", b"a\n");
+        let mut single = Vec::new();
+        create_single_ref_bundle(
+            &source,
+            "main",
+            &mut single,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("bundle");
+        let pack = &single[single.windows(2).position(|w| w == b"\n\n").expect("end") + 2..];
+        let with = |header: &str| [header.as_bytes(), b"\n\n", pack].concat();
+        let dest = repo(tmp.path(), 2, false);
+        let header = format!(
+            "# v2 git bundle\n-{tip} a prerequisite\n@filter blob:none\n\n  \nno-space-here\n{tip} HEAD\n{tip} refs/heads/restored"
+        );
+        // The blank line inside the header ends it early: the lines after it are pack garbage.
+        let err =
+            restore_from_bundle(&dest, &with(&header)).expect_err("header ends at the blank line");
+        assert_eq!(err.status_code(), 400);
+        let header = format!(
+            "# v2 git bundle\n-{tip} a prerequisite\n@filter blob:none\n  \nno-space-here\n{tip} HEAD\n{tip} refs/heads/restored"
+        );
+        restore_from_bundle(&dest, &with(&header)).expect("restore");
+        assert_eq!(
+            list_branches(&dest).expect("b"),
+            [("restored".to_owned(), tip.to_string())]
+        );
+        let bad = format!("# v2 git bundle\n{tip} refs/heads/a..b");
+        assert!(restore_from_bundle(&dest, &with(&bad)).is_err());
+    }
+
+    #[test]
+    fn a_single_ref_bundle_names_its_tip_and_needs_a_known_ref_and_admission() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = repo(tmp.path(), 1, true);
+        let tip = put(&source, "main", "a.txt", b"a\n");
+        let mut out = Vec::new();
+        create_single_ref_bundle(
+            &source,
+            &tip.to_string(),
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("bundle");
+        assert!(out.starts_with(
+            format!("# v2 git bundle\n{tip} refs/heads/bundle\n{tip} HEAD\n\nPACK").as_bytes()
+        ));
+        let err =
+            create_single_ref_bundle(&source, "nope", Vec::new(), &mut crate::testutil::admit_all)
+                .expect_err("unknown");
+        assert_eq!(err.status_code(), 404);
+        let err = create_single_ref_bundle(&source, "main", Vec::new(), &mut |_| {
+            Err(ShakoError::Overloaded("busy".into()))
+        })
+        .expect_err("refused");
+        assert!(matches!(err, ShakoError::Overloaded(_)));
+        let err = create_single_ref_bundle(
+            &source,
+            "main",
+            crate::testutil::Refusing,
+            &mut crate::testutil::admit_all,
+        )
+        .expect_err("writer");
+        assert!(matches!(err, ShakoError::Storage(_)), "{err}");
+        let handle = open_isolated(&source).expect("open");
+        assert!(
+            collect_all_objects_from_tips(&handle, &[])
+                .expect("none")
+                .is_empty()
+        );
+    }
+}

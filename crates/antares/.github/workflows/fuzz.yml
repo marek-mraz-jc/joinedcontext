@@ -38,11 +38,11 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      # 6 of the 29 targets at a time: the account runs 20 jobs, the trains
+      # 6 of the 33 targets at a time: the account runs 20 jobs, the trains
       # need the rest (T-5639)
       max-parallel: 6
       matrix:
-        target: ${{ fromJSON(inputs.targets || '["parse_q", "scope_q", "geo_params", "expand_entity", "q_to_sql", "type_selection", "projection", "representation", "join", "temporal", "order_by", "link_header", "tenant_header", "accept_header", "body_bounds", "id_pattern", "datetime", "linkml_read", "view_config_load", "odata_url_parse", "odata_json_body", "odata_batch_multipart", "odata_batch_json", "mcp_tool_arguments", "mcp_cursor", "ws_client_message", "residual_compile", "model_names", "wasm_handle", "store_id_pattern"]') }}
+        target: ${{ fromJSON(inputs.targets || '["parse_q", "scope_q", "geo_params", "expand_entity", "q_to_sql", "type_selection", "projection", "representation", "join", "temporal", "order_by", "link_header", "tenant_header", "accept_header", "body_bounds", "id_pattern", "datetime", "linkml_read", "view_config_load", "odata_url_parse", "odata_json_body", "odata_batch_multipart", "odata_batch_json", "mcp_tool_arguments", "mcp_cursor", "ws_client_message", "residual_compile", "model_names", "wasm_handle", "store_id_pattern", "sta_query", "bus_change_event", "ogc_items_query"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly

@@ -1143,19 +1143,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-ngsi-input"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "jc-core",
+ "serde_json",
+]
+
+[[package]]
 name = "jc-platform-fuzz"
 version = "0.0.0"
 dependencies = [
  "functions",
+ "http",
  "jc-core",
  "jc-dcat",
  "jc-manifest",
+ "jc-ngsi-input",
+ "jc-relationships",
  "jc-tabular",
  "libfuzzer-sys",
  "reqwest",
  "serde_json",
  "serde_norway",
  "tokio",
+]
+
+[[package]]
+name = "jc-relationships"
+version = "0.1.0"
+dependencies = [
+ "jc-core",
+ "serde_json",
 ]
 
 [[package]]

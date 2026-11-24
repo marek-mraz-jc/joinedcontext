@@ -414,6 +414,259 @@ async fn an_object_the_portal_did_not_label_is_untouched_and_the_host_shows_conf
     done(&pool, &[&host]).await;
 }
 
+/// No edge Ingress to copy: every moving host stays where it is and says why.
+#[tokio::test]
+async fn without_the_edge_ingress_each_moving_host_says_why() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    let host = format!("{}.bbsk.sk", run("noedge"));
+    row(&pool, &host, "approved").await;
+    let server = MockServer::start().await;
+    fallback(&server).await;
+
+    wave(&server, &pool, dns(&[(&host, EDGE_IP)]))
+        .converge(false)
+        .await;
+
+    assert_eq!(
+        state(&pool, &host).await,
+        (
+            "approved".to_owned(),
+            Some(
+                "the edge Ingress apisix is not in apisix; the apisix chart renders it".to_owned()
+            )
+        )
+    );
+    assert!(writes(&server, &[&host]).await.is_empty());
+    done(&pool, &[&host]).await;
+}
+
+/// A lookup that removes the host on the way, as an operator would mid-pass.
+struct RemovedWhileResolving {
+    pool: PgPool,
+    host: String,
+}
+
+impl Addresses for RemovedWhileResolving {
+    fn addresses<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<BTreeSet<IpAddr>, Unanswered>> {
+        Box::pin(async move {
+            if name == self.host {
+                joinedcontext_portal::host_registry::remove(&self.pool, name)
+                    .await
+                    .expect("removed");
+            }
+            Ok([EDGE_IP.parse().expect("an address")].into())
+        })
+    }
+}
+
+/// A host an operator removed while the pass looked it up is not moved on: its state stays
+/// `removed`, nothing is created and no step is audited for it.
+#[tokio::test]
+async fn a_host_removed_mid_pass_is_not_moved_on() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    let host = format!("{}.bbsk.sk", run("gone"));
+    row(&pool, &host, "approved").await;
+    let server = api(&[&host]).await;
+    fallback(&server).await;
+    let dns = Arc::new(RemovedWhileResolving {
+        pool: pool.clone(),
+        host: host.clone(),
+    });
+    OrgHosts::new(
+        KubeClient::with_token(&server.uri(), "token").expect("a client"),
+        NS.to_owned(),
+        pool.clone(),
+        dns,
+    )
+    .converge(false)
+    .await;
+
+    assert_eq!(state(&pool, &host).await.0, "removed");
+    assert!(writes(&server, &[&host]).await.is_empty());
+    assert!(audited(&pool, &host).await.is_empty());
+}
+
+/// What `run` logs.
+async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
+    #[derive(Clone, Default)]
+    struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let sink = Sink::default();
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let out = run.await;
+    drop(guard);
+    let text =
+        String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
+    (out, text)
+}
+
+/// A ledger that reads but refuses writes (a read-only session): the request waits, nothing is
+/// counted and no Certificate is created, so the pacing never undercounts.
+#[tokio::test]
+async fn a_ledger_that_cannot_be_written_requests_no_certificate() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("readonly"));
+    row(&pool, &host, "dns-ok").await;
+    let server = api(&[&host]).await;
+    holds(&server, labelled("Ingress", &host)).await;
+    fallback(&server).await;
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("the test database");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+    let read_only = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.options([("default_transaction_read_only", "on")]))
+        .await
+        .expect("a read-only pool");
+    let hosts = OrgHosts::new(
+        KubeClient::with_token(&server.uri(), "token").expect("a client"),
+        NS.to_owned(),
+        read_only,
+        dns(&[]),
+    );
+
+    let ((), log) = logged(hosts.converge(false)).await;
+
+    assert!(
+        log.contains("the certificate ledger could not be written"),
+        "{log}"
+    );
+    assert!(log.contains("a host's detail was not written"), "{log}");
+    assert!(
+        posted(&server, CERTS, &[&host]).await.is_empty(),
+        "no certificate without its slot"
+    );
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_host_certificates WHERE host = $1")
+            .bind(&host)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(counted, 0);
+    assert_eq!(state(&pool, &host).await, ("dns-ok".to_owned(), None));
+    done(&pool, &[&host]).await;
+}
+
+/// A refused request whose slot cannot be given back keeps the slot (errs on Let's Encrypt's
+/// side), logs it, and the host says what the API server answered.
+#[tokio::test]
+async fn a_slot_that_cannot_be_given_back_stays_taken() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("keep"));
+    row(&pool, &host, "dns-ok").await;
+    let server = api(&[]).await;
+    holds(&server, labelled("Ingress", &host)).await;
+    Mock::given(method("POST"))
+        .and(path(CERTS))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_json(json!({ "message": "admission webhook down" })),
+        )
+        .mount(&server)
+        .await;
+    fallback(&server).await;
+    // Only this host's slot refuses its delete, so no other test's ledger is touched.
+    let guard = format!("org_hosts_keep_{}", run("g").replace('.', "_"));
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION {guard}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF OLD.host = '{host}' THEN RAISE EXCEPTION 'slot delete refused'; END IF; RETURN OLD; END $$"
+    )))
+    .execute(&pool)
+    .await
+    .expect("the guard function");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER {guard} BEFORE DELETE ON organization_host_certificates FOR EACH ROW EXECUTE FUNCTION {guard}()"
+    )))
+    .execute(&pool)
+    .await
+    .expect("the guard trigger");
+
+    let ((), log) = logged(wave(&server, &pool, dns(&[])).converge(false)).await;
+
+    for drop in [
+        format!("DROP TRIGGER {guard} ON organization_host_certificates"),
+        format!("DROP FUNCTION {guard}()"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(drop))
+            .execute(&pool)
+            .await
+            .expect("the guard dropped");
+    }
+    assert!(
+        log.contains("a failed request keeps its certificate slot"),
+        "{log}"
+    );
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_host_certificates WHERE host = $1")
+            .bind(&host)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(counted, 1, "the slot stays taken");
+    let (now, detail) = state(&pool, &host).await;
+    assert_eq!(now, "dns-ok");
+    assert_eq!(
+        detail.as_deref(),
+        Some(
+            format!(
+                "the API server answered 500 for Certificate {}",
+                object_name(&host)
+            )
+            .as_str()
+        )
+    );
+    clear_ledger(&pool).await;
+    done(&pool, &[&host]).await;
+}
+
+/// Each reconciler step's audit row is also its log line, naming the actor and the step.
+#[tokio::test]
+async fn an_audited_step_is_logged_with_its_actor() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("logged"));
+    row(&pool, &host, "approved").await;
+    let server = api(&[&host]).await;
+    fallback(&server).await;
+    let hosts = wave(&server, &pool, dns(&[(&host, EDGE_IP)]));
+
+    let ((), log) = logged(hosts.converge(false)).await;
+
+    let line = log
+        .lines()
+        .find(|line| {
+            line.contains("operator audit") && line.contains("host.dns-ok") && line.contains(&host)
+        })
+        .unwrap_or_else(|| panic!("no audit line for {host}: {log}"));
+    assert!(line.contains("actor=\"reconciler\""), "{line}");
+    done(&pool, &[&host]).await;
+}
+
 /// §7 O3 "Pacing": the eleventh new certificate in 24 hours waits, and so does the 21st in 7
 /// days for one registered domain; each host says until when.
 #[tokio::test]

@@ -971,6 +971,159 @@ mod tests {
 
     const PORTAL: &str = "https://portal.example.sk";
 
+    fn envelope(
+        kind: &str,
+        name: &str,
+        spec: serde_json::Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: crate::resource::ObjectMeta {
+                name: name.into(),
+                namespace: Some("p".into()),
+                ..Default::default()
+            },
+            spec,
+            status: None,
+        }
+    }
+
+    fn reading(space: &str) -> AppSpec {
+        let mut spec = spec();
+        spec.data_needs = serde_json::from_value(serde_json::json!([{
+            "contextSpaceRef": { "kind": "ContextSpace", "name": space },
+            "types": ["AirQualityObserved"], "operations": ["queryEntity"]
+        }]))
+        .expect("a need");
+        spec
+    }
+
+    /// A name that is no DNS label has no origin, no published App, and an App asked for by one
+    /// is a 404; a request without a `Host` is on no origin.
+    #[test]
+    fn a_name_that_is_no_label_has_no_origin_and_no_app() {
+        let apex = url::Url::parse("https://example.org").expect("url");
+        for name in ["Bad_Name", "a.b", "", "-x"] {
+            assert_eq!(app_origin(&apex, name), None, "{name}");
+        }
+        assert_eq!(
+            app_origin(&apex, "bikes").map(String::from).as_deref(),
+            Some("https://bikes.apps.example.org/")
+        );
+        let config = crate::config::Config {
+            apps_url: Some(apex.clone()),
+            ..crate::config::Config::for_tests()
+        };
+        let state = AppState::new(config, None);
+        let uri: Uri = "/".parse().expect("uri");
+        let refused = off_its_origin(&state, &HeaderMap::new(), "Bad_Name", &uri).expect("refused");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        assert!(published_app(&state, "Bad_Name").is_none());
+        let origin = app_origin(&apex, "bikes").expect("an origin");
+        assert!(!is_origin(&HeaderMap::new(), &origin));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("bikes.apps.example.org:443"),
+        );
+        assert!(is_origin(&headers, &origin));
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("bikes.apps.example.org:8443"),
+        );
+        assert!(!is_origin(&headers, &origin));
+    }
+
+    /// An App that reads a space the platform holds no endpoint of gets no configuration.
+    #[test]
+    fn an_app_whose_space_has_no_endpoint_gets_no_configuration() {
+        let mirror = crate::store::Mirror::new();
+        assert_eq!(
+            served_config(&mirror, "p", "a", &reading("air"), "example.org"),
+            None
+        );
+        assert_eq!(
+            served_config(&mirror, "p", "a", &spec(), "example.org"),
+            None
+        );
+    }
+
+    /// One endpoint per slug, at most MAX_ENDPOINTS of them, and a shared reference that names
+    /// neither an endpoint nor a slug adds nothing.
+    #[test]
+    fn served_endpoints_are_unique_by_slug_and_bounded() {
+        use crate::agents::endpoints::MAX_ENDPOINTS;
+        let mirror = crate::store::Mirror::new();
+        for i in 0..MAX_ENDPOINTS + 2 {
+            mirror.upsert(envelope(
+                "Endpoint",
+                &format!("e{i}"),
+                serde_json::json!({ "contextSpaceRef": "air", "slug": format!("s{i}") }),
+            ));
+        }
+        mirror.upsert(envelope(
+            "Endpoint",
+            "e0-twin",
+            serde_json::json!({ "contextSpaceRef": "air", "slug": "s0" }),
+        ));
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "nothing",
+            serde_json::json!({ "endpointRef": {}, "endpointSlug": "" }),
+        ));
+        let served = served_endpoints(&mirror, "p", "a", &reading("air"));
+        assert_eq!(served.len(), MAX_ENDPOINTS);
+        let mut slugs: Vec<&str> = served.iter().map(|e| e.slug.as_str()).collect();
+        slugs.dedup();
+        assert_eq!(slugs.len(), MAX_ENDPOINTS, "no slug twice");
+        assert_eq!(served[0].slug, "s0");
+    }
+
+    /// AP-87: the annotation that says the image ships an App's bundle is refused where it ships
+    /// none, naming the App.
+    #[test]
+    fn a_claim_of_a_shipped_bundle_this_portal_lacks_is_refused() {
+        let mut app = envelope("App", "bikes", serde_json::json!({}));
+        assert_eq!(unshipped_claim(None, &app), None);
+        app.metadata.annotations.insert(
+            jc_core::kinds::app::SHIPPED_WITH_ANNOTATION.to_owned(),
+            "true".to_owned(),
+        );
+        let said = unshipped_claim(None, &app).expect("refused");
+        assert!(said.contains("'bikes'") && said.contains("AP-87"), "{said}");
+    }
+
+    /// AP-72: an App without a build is no missing build; one whose build this host lacks is.
+    #[test]
+    fn only_a_build_this_host_lacks_is_missing() {
+        let mirror = crate::store::Mirror::new();
+        mirror.upsert(envelope("App", "unbuilt", serde_json::json!({})));
+        let mut built = envelope("App", "built", serde_json::json!({}));
+        built.status = Some(
+            serde_json::from_value(serde_json::json!({ "build": {
+                "digest": format!("sha256:{}", "a".repeat(64)),
+                "commit": "c", "sdkVersion": "0.4.1", "builtAt": "2026-09-17T06:00:00Z",
+            } }))
+            .expect("a status"),
+        );
+        mirror.upsert(built);
+        let cache = std::env::temp_dir().join(format!("jc-missing-{}", std::process::id()));
+        assert_eq!(build_missing(cache.to_str(), &mirror), ["built"]);
+        assert!(build_missing(None, &mirror).is_empty());
+    }
+
+    #[test]
+    fn a_csp_keyword_is_quoted_and_an_origin_is_not() {
+        assert_eq!(quoted("self").as_deref(), Some("'self'"));
+        assert_eq!(quoted("none").as_deref(), Some("'none'"));
+        assert_eq!(
+            quoted("https://a.example").as_deref(),
+            Some("https://a.example")
+        );
+        assert_eq!(quoted("http://a.example"), None);
+    }
+
     /// T-3359: a wasm App that stores files reaches the store's public origin, that origin
     /// alone; one without blob storage, any other App, or no configured origin gains nothing.
     #[test]

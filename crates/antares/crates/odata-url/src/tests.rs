@@ -1604,6 +1604,22 @@ fn search_is_bounded() {
 }
 
 #[test]
+fn a_skip_past_the_limit_names_the_skip_limit() {
+    let e = err("Buildings?$skip=10001");
+    assert_eq!(
+        e.kind,
+        UrlErrorKind::LimitExceeded {
+            limit: LimitKind::Skip,
+            max: 10_000
+        }
+    );
+    assert!(e.to_string().ends_with(": skip (max 10000)"), "{e}");
+    assert!(ok("Buildings?$skip=10000")
+        .to_string()
+        .contains("$skip=10000"));
+}
+
+#[test]
 fn search_writes_its_canonical_form() {
     for (query, written) in [
         ("$search=a b OR c", "$search=a%20AND%20b%20OR%20c"),

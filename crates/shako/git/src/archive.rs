@@ -133,3 +133,164 @@ pub fn create_archive(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::set_ref_direct;
+    use crate::testutil::repo;
+    use std::io::{Cursor, Read as _};
+
+    /// A commit on `feature/x` holding `README.md`, an executable `run.sh` and a submodule.
+    fn fixture(dir: &Path) -> std::path::PathBuf {
+        let path = repo(dir, 1, false);
+        let handle = open_isolated(&path).expect("open");
+        let readme = handle.write_blob(b"# readme\n").expect("blob").detach();
+        let script = handle.write_blob(b"#!/bin/sh\n").expect("blob").detach();
+        let sub =
+            gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111").expect("id");
+        let entry = |name: &str, mode: EntryKind, oid| gix_object::tree::Entry {
+            mode: mode.into(),
+            filename: name.into(),
+            oid,
+        };
+        let tree = gix_object::Tree {
+            entries: vec![
+                entry("README.md", EntryKind::Blob, readme),
+                entry("run.sh", EntryKind::BlobExecutable, script),
+                entry("vendor", EntryKind::Commit, sub),
+            ],
+        };
+        let tree = handle.write_object(&tree).expect("tree").detach();
+        let sig = gix::actor::Signature {
+            name: "a".into(),
+            email: "a@example.org".into(),
+            time: gix::date::Time::new(1_700_000_000, 0),
+        };
+        let commit = gix_object::Commit {
+            tree,
+            parents: Default::default(),
+            author: sig.clone(),
+            committer: sig,
+            encoding: None,
+            message: "m".into(),
+            extra_headers: Vec::new(),
+        };
+        let commit = handle.write_object(&commit).expect("commit").detach();
+        set_ref_direct(&path, "refs/heads/feature/x", &commit.to_string()).expect("ref");
+        path
+    }
+
+    fn archive(
+        path: &Path,
+        name: &str,
+        git_ref: &str,
+        format: ArchiveFormat,
+    ) -> ShakoResult<Vec<u8>> {
+        let mut out = Cursor::new(Vec::new());
+        create_archive(
+            path,
+            name,
+            git_ref,
+            format,
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )?;
+        Ok(out.into_inner())
+    }
+
+    #[test]
+    fn a_zip_holds_each_file_under_the_prefix_with_its_mode_and_no_submodule() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = fixture(tmp.path());
+        let bytes = archive(&path, "dest", " feature/x ", ArchiveFormat::Zip).expect("zip");
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("a zip");
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i).expect("entry");
+            names.push((
+                file.name().expect("name").into_owned(),
+                file.unix_mode().map(|m| m & 0o777),
+            ));
+            let mut body = String::new();
+            file.read_to_string(&mut body).expect("read");
+            assert!(body.starts_with('#'), "{body}");
+        }
+        assert_eq!(
+            names,
+            [
+                ("dest-feature-x/README.md".to_owned(), Some(0o644)),
+                ("dest-feature-x/run.sh".to_owned(), Some(0o755)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tar_gz_holds_each_file_with_its_mode_and_the_commit_time() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = fixture(tmp.path());
+        let bytes = archive(&path, "dest", "feature/x", ArchiveFormat::TarGz).expect("tar.gz");
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(Cursor::new(bytes)));
+        let entries: Vec<_> = tar
+            .entries()
+            .expect("entries")
+            .map(|e| {
+                let e = e.expect("entry");
+                let header = e.header();
+                (
+                    e.path().expect("path").to_string_lossy().into_owned(),
+                    header.mode().expect("mode"),
+                    header.mtime().expect("mtime"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("dest-feature-x/README.md".to_owned(), 0o644, 1_700_000_000),
+                ("dest-feature-x/run.sh".to_owned(), 0o755, 1_700_000_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_archive_refuses_a_bad_name_or_ref_an_unknown_ref_a_refusal_and_a_failed_write() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = fixture(tmp.path());
+        assert!(archive(&path, "../x", "feature/x", ArchiveFormat::Zip).is_err());
+        for bad in ["", "  ", "a..b", "a\\b", "a\0b"] {
+            let err = archive(&path, "dest", bad, ArchiveFormat::Zip).expect_err(bad);
+            assert!(
+                err.to_string().contains("invalid archive ref"),
+                "{bad:?}: {err}"
+            );
+        }
+        let err = archive(&path, "dest", "nope", ArchiveFormat::TarGz).expect_err("unknown");
+        assert_eq!(err.status_code(), 404);
+        let err = create_archive(
+            &path,
+            "dest",
+            "feature/x",
+            ArchiveFormat::Zip,
+            Cursor::new(Vec::new()),
+            &mut |_| Err(ShakoError::Overloaded("busy".into())),
+        )
+        .expect_err("refused");
+        assert!(matches!(err, ShakoError::Overloaded(_)));
+        for format in [ArchiveFormat::Zip, ArchiveFormat::TarGz] {
+            // A writer with no room: every write fails, seeking works.
+            let mut room = [0u8; 0];
+            let full = Cursor::new(&mut room[..]);
+            let err = create_archive(
+                &path,
+                "dest",
+                "feature/x",
+                format,
+                full,
+                &mut crate::testutil::admit_all,
+            )
+            .expect_err("no room");
+            assert!(matches!(err, ShakoError::Git(_)), "{format:?}: {err}");
+        }
+    }
+}

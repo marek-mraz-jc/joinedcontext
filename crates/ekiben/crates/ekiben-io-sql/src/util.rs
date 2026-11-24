@@ -1431,6 +1431,21 @@ mod tests {
             .unwrap();
         assert_eq!(pg_value(&row, 0).unwrap(), Value::String("7".into()));
         assert!(pg_value(&row, 9).unwrap_err().contains("out of bounds"));
+        // NULL, a uuid, the infinite timestamps and dates, time and timetz in the binary protocol
+        let got = rows(
+            &db,
+            "SELECT $1::int4 AS x, NULL::int4 AS n, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS u, \
+             'infinity'::timestamp AS ti, '-infinity'::timestamptz AS tn, 'infinity'::date AS di, \
+             '-infinity'::date AS dn, '04:05:06.5'::time AS t, '04:05:06+02:30'::timetz AS tz, \
+             '2024-01-02 03:04:05.25'::timestamp AS ts, '2024-01-02'::date AS d",
+            vec![Value::Int(1)],
+            false,
+        )
+        .await;
+        assert_eq!(
+            got[0].as_ref().unwrap().to_go_json(),
+            r#"{"d":"2024-01-02T00:00:00Z","di":"infinity","dn":"-infinity","n":null,"t":"0000-01-01T04:05:06.5Z","ti":"infinity","tn":"-infinity","ts":"2024-01-02T03:04:05.25Z","tz":"0000-01-01T04:05:06+02:30","u":"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","x":1}"#
+        );
         db.close().await;
     }
 
@@ -1524,6 +1539,36 @@ mod tests {
         assert!(mysql_value(&row, 9, false, true)
             .unwrap_err()
             .contains("out of bounds"));
+        // A DOUBLE and a TIME of day in the binary protocol
+        let got = rows(
+            &db,
+            "SELECT ? AS x, CAST(2.5 AS DOUBLE) AS d, CAST('04:05:06' AS TIME) AS t, CAST('2024-01-02' AS DATE) AS dt",
+            vec![Value::Int(1)],
+            false,
+        )
+        .await;
+        assert_eq!(
+            got[0].as_ref().unwrap().to_go_json(),
+            r#"{"d":2.5,"dt":"2024-01-02","t":"04:05:06","x":1}"#
+        );
+        // parseTime turns a text-protocol DATETIME into a time; other columns stay text
+        let got = rows(
+            &db,
+            "SELECT CAST('2024-01-02 03:04:05' AS DATETIME) AS t, 7 AS a",
+            vec![],
+            true,
+        )
+        .await;
+        assert_eq!(
+            got[0].as_ref().unwrap().to_go_json(),
+            r#"{"a":"7","t":"2024-01-02T03:04:05Z"}"#
+        );
+        // exec with and without arguments on MySQL
+        assert_eq!(db.driver(), Driver::MySql);
+        db.exec_raw("DO 1; DO 2").await.unwrap();
+        exec(&db, "DO ?", &[Value::Int(1)]).await.unwrap();
+        let e = exec(&db, "DO ?, ?", &[Value::Int(1)]).await.unwrap_err();
+        assert!(!db_error_text(&e).is_empty());
         db.close().await;
     }
 
