@@ -9920,7 +9920,15 @@
         "contactBoth": "Uveďte jméno i e-mail kontaktu, nebo ani jedno.",
         "email": "Zadejte e-mailovou adresu, například opendata@example.org.",
         "period": "Konec období nemůže být před jeho začátkem. Vyberte datum konce po začátku.",
-        "title": "Zadejte název datové sady."
+        "title": "Zadejte název datové sady.",
+        "fieldRequired": "Vaše organizace toto pole vyžaduje: vyplňte ho.",
+        "field": {
+          "text": "Napište jeden řádek textu.",
+          "number": "Napište číslo.",
+          "date": "Vyberte datum.",
+          "url": "Napište adresu https://.",
+          "enum": "Vyberte jednu z nabízených hodnot."
+        }
       },
       "datasetTitle": "Název datové sady",
       "datasetTitleHelp": "Název, pod kterým ji katalog uvádí, v jazyce {language}.",
@@ -9948,7 +9956,17 @@
         "dcat": "Záznam DCAT-AP (JSON-LD)"
       },
       "inCatalogue": "Již v katalogu",
-      "typeNew": "V katalogu nic neodpovídá: napište nový a vyberte „Nové“."
+      "typeNew": "V katalogu nic neodpovídá: napište nový a vyberte „Nové“.",
+      "orgFields": "Pole vaší organizace",
+      "orgFieldsHelp": "Další údaje, které vaše organizace žádá u každé datové sady. Portál otevřených dat je ukáže v tabulce O datové sadě.",
+      "fieldHint": {
+        "text": "Jeden řádek textu, například: Financováno městem",
+        "number": "Číslo, například: 12.5",
+        "date": "Datum, například: 2026-11-23",
+        "url": "Adresa https://, například: https://example.org/zprava",
+        "enum": "Vyberte jednu z hodnot, které určila vaše organizace."
+      },
+      "fieldRefused": "Vaše organizace odmítla pole „{field}“ ({reason}). Vraťte se, opravte ho a navrhněte znovu."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",

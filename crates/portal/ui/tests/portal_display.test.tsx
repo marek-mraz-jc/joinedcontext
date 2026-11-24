@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { displayFaults, displayOf, moved, resolved } from "../src/pages/portals/portalDisplay";
+import { displayFaults, displayOf, fieldRowsOf, moved, resolved } from "../src/pages/portals/portalDisplay";
 import type { Display } from "../src/pages/portals/portalDisplay";
 import { ownLists } from "../src/pages/portals/PortalDisplay";
 import { expectAxeClean, jsonResponse, problem, renderRoute } from "./pageHarness";
@@ -33,6 +33,21 @@ describe("the display model", () => {
     expect(resolved(undefined, undefined, "fields").rows.every((r) => r.shown)).toBe(true);
     // The editor starts with only the lists the portal sets itself; the rest stay inherited.
     expect(Object.keys(ownLists(own, ORG_DISPLAY))).toEqual(["sections"]);
+  });
+
+  it("offers the Organization's own dataset fields as about rows: shown on the built-in page, hidden where a list leaves them out (T-7746)", () => {
+    const fieldRows = fieldRowsOf([{ name: "funding" }, { name: "reviewed" }]);
+    expect(fieldRows).toEqual(["extras.x_funding", "extras.x_reviewed"]);
+    const builtIn = resolved(undefined, undefined, "about", fieldRows);
+    expect(builtIn.rows.slice(-2).map((r) => [r.name, r.shown])).toEqual([
+      ["extras.x_funding", true],
+      ["extras.x_reviewed", true],
+    ]);
+    const listed = resolved(undefined, ORG_DISPLAY, "about", fieldRows);
+    expect(listed.rows.filter((r) => r.name.startsWith("extras.")).map((r) => r.shown)).toEqual([false, false]);
+    // doprava hides them: a portal list without the field rows publishes none of them.
+    const doprava = displayOf({ about: listed.rows });
+    expect(doprava?.dataset?.about).toEqual(["license", "publisher"]);
   });
 
   it("writes only shown rows and filled headings, and nothing for lists left inherited", () => {

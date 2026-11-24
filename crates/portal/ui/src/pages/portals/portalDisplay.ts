@@ -75,22 +75,40 @@ function listOf(display: Display | undefined, list: DisplayList): DisplaySection
   return (names ?? []).map((name) => ({ name }));
 }
 
-function builtIn(list: DisplayList): readonly string[] {
-  return list === "sections" ? DATASET_SECTIONS : list === "about" ? ABOUT_FIELDS : DATASET_LIST_FIELDS;
+/**
+ * The names a list knows; the about table also knows the Organization's own dataset fields as
+ * `extras.x_<name>` (`fieldRows`, T-7746), which the built-in page shows after its rows.
+ */
+function builtIn(list: DisplayList, fieldRows: readonly string[] = []): readonly string[] {
+  return list === "sections" ? DATASET_SECTIONS : list === "about" ? [...ABOUT_FIELDS, ...fieldRows] : DATASET_LIST_FIELDS;
+}
+
+/** The about rows of the Organization's own dataset fields (`spec.datasetFields`, T-7746). */
+export function fieldRowsOf(fields: { name: string }[] | undefined): string[] {
+  return (fields ?? []).map((field) => `extras.x_${field.name}`);
+}
+
+/** `rows` with a hidden row for every name of the list they leave out. */
+export function completed(rows: DisplayRow[], list: DisplayList, fieldRows: readonly string[] = []): DisplayRow[] {
+  const missing = builtIn(list, fieldRows).filter((name) => !rows.some((r) => r.name === name));
+  return [...rows, ...missing.map((name) => ({ name, shown: false, heading: {} }))];
 }
 
 /** The list that shows and the level it comes from: the portal's, else the Organization's, else built-in. */
-export function resolved(own: Display | undefined, organization: Display | undefined, list: DisplayList): { rows: DisplayRow[]; from: DisplayLevel } {
+export function resolved(
+  own: Display | undefined,
+  organization: Display | undefined,
+  list: DisplayList,
+  fieldRows: readonly string[] = [],
+): { rows: DisplayRow[]; from: DisplayLevel } {
   const mine = listOf(own, list);
   const theirs = listOf(organization, list);
   const from: DisplayLevel = mine.length > 0 ? "portal" : theirs.length > 0 ? "organization" : "builtIn";
-  const chosen: DisplaySection[] = from === "portal" ? mine : from === "organization" ? theirs : builtIn(list).map((name) => ({ name }));
+  const chosen: DisplaySection[] =
+    from === "portal" ? mine : from === "organization" ? theirs : builtIn(list, fieldRows).map((name) => ({ name }));
   const rows: DisplayRow[] = chosen.map((s) => ({ name: s.name, shown: true, heading: { ...(s.heading ?? {}) } }));
   // Every name the list knows shows in the editor; those the level leaves out are hidden.
-  for (const name of builtIn(list)) {
-    if (!rows.some((r) => r.name === name)) rows.push({ name, shown: false, heading: {} });
-  }
-  return { rows, from };
+  return { rows: completed(rows, list, fieldRows), from };
 }
 
 /** `rows` moved by one place, `at` going up (`-1`) or down (`1`). */

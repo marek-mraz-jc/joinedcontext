@@ -283,6 +283,15 @@ pub fn package_of(
             let laws = json!(catalog.applicable_legislation).to_string();
             push_extra(&mut payload, "applicable_legislation", &laws);
         }
+        // T-7746: the Organization's own dataset fields, each the extra `x_<name>`; the Portal
+        // checked each against the Organization's definitions at propose.
+        for (name, value) in &catalog.fields {
+            push_extra(
+                &mut payload,
+                &format!("{}{name}", jc_core::kinds::dataset_fields::EXTRA_PREFIX),
+                value,
+            );
+        }
     }
     if let Some(notes) = text_in(record.get("dct:description"), language) {
         payload["notes"] = json!(notes);

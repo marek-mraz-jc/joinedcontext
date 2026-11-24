@@ -53419,6 +53419,17 @@
             "type": "object",
             "description": "The drafted `spec.catalog` (EP-78), or the one the Endpoint already declares."
           },
+          "datasetFields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {},
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "description": "The project's own Organization's dataset fields (`spec.datasetFields`, T-7746), which the\nform fills into `catalog.fields`; never another Organization's."
+          },
           "endpoint": {
             "type": "string"
           },

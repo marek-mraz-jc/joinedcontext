@@ -1995,6 +1995,7 @@ async fn dispatch_ui_route(
                     pub_rec.as_ref(),
                     rdf_fmt,
                     selected.stack.renderer,
+                    &branding.dataset_fields,
                 );
                 return (
                     StatusCode::OK,

@@ -33,6 +33,15 @@ export const FREQUENCIES = [
 
 export type CatalogBlock = Record<string, unknown>;
 
+/** One of the Organization's own dataset fields (`spec.datasetFields`, T-7746), as the draft offers them. */
+export type DatasetField = {
+  name: string;
+  label: Record<string, string>;
+  type: "text" | "number" | "date" | "url" | "enum";
+  values?: string[];
+  required?: boolean;
+};
+
 export interface PublishForm {
   /** The language the texts below are in: the draft's keyword language, else the reader's. */
   language: string;
@@ -47,6 +56,8 @@ export interface PublishForm {
   temporalStart: string;
   temporalEnd: string;
   frequency: string;
+  /** The Organization's own dataset fields by name (`catalog.fields`, T-7746). */
+  fields: Record<string, string>;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -83,7 +94,48 @@ export function formOf(catalog: CatalogBlock, fallbackLanguage: string): Publish
     temporalStart: str(temporal.start),
     temporalEnd: str(temporal.end),
     frequency: str(catalog.frequency),
+    fields: Object.fromEntries(
+      Object.entries(record(catalog.fields)).filter((e): e is [string, string] => typeof e[1] === "string"),
+    ),
   };
+}
+
+/**
+ * The Organization field a refusal names (`invalid spec.catalog.fields.<name>: <reason>`, jc-core
+ * `dataset_fields::check_values`) with its label, so the form says which of its fields to correct.
+ */
+export function fieldRefusal(text: string, fields: DatasetField[], language: string): { label: string; reason: string } | null {
+  const found = /spec\.catalog\.fields\.([a-z0-9-]+):\s*(.+)$/m.exec(text);
+  if (!found) return null;
+  const field = fields.find((f) => f.name === found[1]);
+  return { label: field ? fieldLabel(field, language) : found[1], reason: found[2].trim() };
+}
+
+/** A field's label in `language`, else in any language, else its name. */
+export function fieldLabel(field: DatasetField, language: string): string {
+  return field.label[language] ?? Object.values(field.label)[0] ?? field.name;
+}
+
+/**
+ * What is wrong with the Organization's fields, as locale keys per field name; the Portal checks
+ * the same rules again at propose (jc-core `dataset_fields::check_values`).
+ */
+export function fieldProblems(form: PublishForm, fields: DatasetField[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const field of fields) {
+    const value = (form.fields[field.name] ?? "").trim();
+    if (value === "") {
+      if (field.required) out[field.name] = "catalogue.publish.error.fieldRequired";
+      continue;
+    }
+    const wrong =
+      (field.type === "number" && !/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(value)) ||
+      (field.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+      (field.type === "url" && !/^https:\/\/[^\s/?#@"'<>`\\]+([/?#][^\s"'<>`\\]*)?$/.test(value)) ||
+      (field.type === "enum" && !(field.values ?? []).includes(value));
+    if (wrong) out[field.name] = `catalogue.publish.error.field.${field.type}`;
+  }
+  return out;
 }
 
 /** What is wrong with the form, as locale keys per field; empty when it can be proposed. */
@@ -150,6 +202,12 @@ export function catalogOf(draft: CatalogBlock, form: PublishForm): CatalogBlock 
     !form.temporalStart && !form.temporalEnd,
   );
   set("frequency", form.frequency, form.frequency === "");
+  const fields = Object.fromEntries(
+    Object.entries(form.fields)
+      .map(([name, value]) => [name, value.trim()] as const)
+      .filter(([, value]) => value !== ""),
+  );
+  set("fields", fields, Object.keys(fields).length === 0);
   return out;
 }
 

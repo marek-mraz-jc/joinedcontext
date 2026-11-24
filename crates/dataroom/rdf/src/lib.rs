@@ -10,7 +10,7 @@ pub mod rdfxml;
 pub mod turtle;
 
 pub use dcat::{
-    accepted_profiles, catalogue_to_graph, dataset_to_graph, graph_to_datasets,
+    accepted_profiles, add_field_triples, catalogue_to_graph, dataset_to_graph, graph_to_datasets,
     negotiate_rdf_format, parse, parse_datasets_from_rdf, parse_rdf_graph, serialize_catalogue,
     serialize_dataset, HydraPageInfo, RdfFormat,
 };

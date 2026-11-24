@@ -159,6 +159,53 @@ pub struct BrandingBlock {
     /// serde skips it, so no catalogue override writes it.
     #[serde(skip)]
     pub layout: BrandingLayout,
+    /// The Organization's own dataset fields (`spec.datasetFields`, T-7746): their labels on the
+    /// dataset page and their DCAT properties. Only the host sets it: serde skips it, so no
+    /// catalogue override writes it.
+    #[serde(skip)]
+    pub dataset_fields: BrandingDatasetFields,
+}
+
+/// An Organization's own dataset fields as its catalogues show and serve them (T-7746).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BrandingDatasetFields {
+    /// The Organization's name, the JSON-LD prefix `fields-<organization>`.
+    pub organization: String,
+    /// The DCAT namespace, `https://<installation domain>/ns/dataset-fields/<organization>/`.
+    pub namespace: String,
+    /// The definitions, each checked by jc-core.
+    pub fields: Vec<jc_core::kinds::DatasetField>,
+}
+
+impl BrandingDatasetFields {
+    /// Each defined field a dataset fills with a value its definition admits, in the
+    /// definitions' order: a value the type refuses (a record that reached the store by another
+    /// door) shows nowhere.
+    pub fn filled<'a>(
+        &'a self,
+        extras: &'a BTreeMap<String, String>,
+    ) -> impl Iterator<Item = (&'a jc_core::kinds::DatasetField, &'a str)> + 'a {
+        self.fields.iter().filter_map(move |field| {
+            let value = extras.get(&field.extra_key())?.trim();
+            (!value.is_empty() && field.check_value(value).is_ok()).then_some((field, value))
+        })
+    }
+
+    /// The XML Schema datatype of the field's literal (its local name), `None` for plain text.
+    pub fn xsd_type(field: &jc_core::kinds::DatasetField) -> Option<&'static str> {
+        use jc_core::kinds::DatasetFieldType as T;
+        match field.kind {
+            T::Date => Some("date"),
+            T::Number => Some("decimal"),
+            T::Url => Some("anyURI"),
+            T::Text | T::Enum => None,
+        }
+    }
+
+    /// The field's DCAT property IRI; `None` without a namespace.
+    pub fn property(&self, field: &jc_core::kinds::DatasetField) -> Option<String> {
+        (!self.namespace.is_empty()).then(|| format!("{}{}", self.namespace, field.name))
+    }
 }
 
 /// What an Organization's appearance sets of the catalogue's layout beyond colours and fonts,
@@ -441,6 +488,7 @@ impl Default for BrandingBlock {
             publishers: BTreeMap::new(),
             pages: BTreeMap::new(),
             layout: BrandingLayout::default(),
+            dataset_fields: BrandingDatasetFields::default(),
         }
     }
 }

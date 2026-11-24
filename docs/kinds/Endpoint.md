@@ -71,6 +71,7 @@ The catalogue description of one Endpoint (EP-78).
 | `attribution` | map of string | no | The words the attribution duty asks for, per language: `dct:rights`. |
 | `contactPoint` | [ContactPoint](#contactpoint) | no | Where questions about it go: `dcat:contactPoint`, a role address (EP-80). |
 | `datasets` | list of [CatalogDataset](#catalogdataset) | no | The catalogue datasets of this Endpoint, each a slice narrowed by its types and query (ADR-N-068, EP-175). Listed, they replace the Endpoint's single dataset; empty is one dataset of the whole Endpoint. |
+| `fields` | map of string | no | The values of the Organization's own dataset fields by name, such as `{funding: eu, reviewed: 2026-11-23}` (T-7746); the Portal checks each against the Organization's `spec.datasetFields` at propose. |
 | `frequency` | [Frequency](#frequency) | no | How often the data changes, from the EU frequency table: `dct:accrualPeriodicity`. |
 | `harvest` | boolean | no | Whether the installation's and the project's feeds list the record (EP-139, EP-84, EP-127). `false` for a door over data other datasets already publish, such as a whole space split into one dataset per type: its own record stays, a harvester never takes the same data twice. Unset is `true`. |
 | `keywords` | map of list of string | no | Keywords per language: `dcat:keyword`. |

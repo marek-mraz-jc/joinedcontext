@@ -10122,6 +10122,13 @@ export interface components {
             attributes: components["schemas"]["DraftAttribute"][];
             /** @description The drafted `spec.catalog` (EP-78), or the one the Endpoint already declares. */
             catalog: Record<string, never>;
+            /**
+             * @description The project's own Organization's dataset fields (`spec.datasetFields`, T-7746), which the
+             *     form fills into `catalog.fields`; never another Organization's.
+             */
+            datasetFields?: {
+                [key: string]: unknown;
+            }[];
             endpoint: string;
             /** @description The Endpoint's audience is not `public`: the proposal makes it public, in the red lane. */
             makesPublic: boolean;

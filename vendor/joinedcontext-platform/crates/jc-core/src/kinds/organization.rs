@@ -53,6 +53,10 @@ pub struct OrganizationSpec {
     /// over the installation's branding (UIX-16).
     #[serde(default, skip_serializing_if = "OrganizationAppearance::is_unset")]
     pub appearance: OrganizationAppearance,
+    /// Up to 20 extra metadata fields its datasets fill in the dataset form, each stored as the
+    /// dataset extra `x_<name>` and served in DCAT (T-7746).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dataset_fields: Vec<crate::kinds::DatasetField>,
 }
 
 /// Where an Organization lived before an installation held several (PF-121): it still loads,
@@ -257,6 +261,7 @@ impl OrganizationSpec {
                     .to_owned(),
             });
         }
+        crate::kinds::dataset_fields::validate(&self.dataset_fields)?;
 
         Ok(())
     }

@@ -12,6 +12,7 @@ use crate::rdfxml::{parse_rdfxml_bytes, serialize_rdfxml};
 use crate::turtle::{
     parse_ntriples_bytes, parse_turtle_bytes, serialize_ntriples, serialize_turtle,
 };
+use dataroom_core::branding::BrandingDatasetFields;
 use dataroom_core::vocab::{
     eu_iri_to_language, find_licence, format_to_eu_iri, frequency_to_eu_iri,
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
@@ -1173,6 +1174,32 @@ fn insert_agent(g: &mut RdfGraph, subject: &SubjectNode, iri: Option<String>, na
     }
 }
 
+/// The Organization's own dataset fields as DCAT properties (T-7746): each field a dataset fills
+/// with a value its definition admits, a literal under `<namespace><name>`, typed `xsd:date`,
+/// `xsd:decimal` or `xsd:anyURI` by its type. A national profile's compact JSON-LD names only
+/// the terms its harvester reads and carries none.
+pub fn add_field_triples(
+    g: &mut RdfGraph,
+    catalogue: &Catalogue,
+    datasets: &[Dataset],
+    fields: &BrandingDatasetFields,
+) {
+    let base = catalogue.base_url();
+    for dataset in datasets {
+        let subject = SubjectNode::Named(dataset.canonical_uri(&base));
+        for (field, value) in fields.filled(&dataset.extras) {
+            let Some(property) = fields.property(field) else {
+                continue;
+            };
+            let literal = match BrandingDatasetFields::xsd_type(field) {
+                Some(local) => LiteralValue::typed(value, format!("{}{local}", ns::XSD)),
+                None => LiteralValue::plain(value),
+            };
+            g.insert(subject.clone(), property, Term::Literal(literal));
+        }
+    }
+}
+
 /// Serializes one [`Dataset`] in the requested [`RdfFormat`] and [`DcatProfile`] (C7, C17).
 pub fn serialize_dataset(
     dataset: &Dataset,
@@ -1180,11 +1207,13 @@ pub fn serialize_dataset(
     publisher: Option<&Publisher>,
     format: RdfFormat,
     profile: DcatProfile,
+    fields: &BrandingDatasetFields,
 ) -> String {
     if let (RdfFormat::JsonLd, Some(keys)) = (format, &profile.render.json_ld) {
         return serialize_compact_dataset(dataset, catalogue, publisher, profile, keys);
     }
-    let g = dataset_to_graph(dataset, catalogue, publisher, profile);
+    let mut g = dataset_to_graph(dataset, catalogue, publisher, profile);
+    add_field_triples(&mut g, catalogue, std::slice::from_ref(dataset), fields);
     match format {
         RdfFormat::Turtle => serialize_turtle(&g),
         RdfFormat::JsonLd => serialize_graph_jsonld(&g),
@@ -1201,11 +1230,13 @@ pub fn serialize_catalogue(
     format: RdfFormat,
     profile: DcatProfile,
     hydra: Option<&HydraPageInfo>,
+    fields: &BrandingDatasetFields,
 ) -> String {
     if let (RdfFormat::JsonLd, Some(keys), None) = (format, &profile.render.json_ld, hydra) {
         return serialize_compact_catalogue(catalogue, datasets, keys);
     }
-    let g = catalogue_to_graph(catalogue, datasets, publishers, profile, hydra);
+    let mut g = catalogue_to_graph(catalogue, datasets, publishers, profile, hydra);
+    add_field_triples(&mut g, catalogue, datasets, fields);
     match format {
         RdfFormat::Turtle => serialize_turtle(&g),
         RdfFormat::JsonLd => serialize_graph_jsonld(&g),
@@ -1888,7 +1919,14 @@ mod tests {
             DcatProfile::from_token("dcat-ap-cz").expect("installed"),
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
-            let emitted_ttl = serialize_dataset(ds_cz, &cat, None, RdfFormat::Turtle, profile);
+            let emitted_ttl = serialize_dataset(
+                ds_cz,
+                &cat,
+                None,
+                RdfFormat::Turtle,
+                profile,
+                &Default::default(),
+            );
             let reparsed = parse_datasets_from_rdf(
                 &emitted_ttl,
                 RdfFormat::Turtle,
@@ -1934,6 +1972,7 @@ mod tests {
             None,
             RdfFormat::Turtle,
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
+            &Default::default(),
         );
         let sk_reparsed = parse_datasets_from_rdf(
             &sk_emitted,
@@ -2119,7 +2158,14 @@ mod tests {
             RdfFormat::RdfXml,
             RdfFormat::JsonLd,
         ] {
-            let text = serialize_dataset(&ds, &cat, None, format, DcatProfile::eu());
+            let text = serialize_dataset(
+                &ds,
+                &cat,
+                None,
+                format,
+                DcatProfile::eu(),
+                &Default::default(),
+            );
             let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
                 Ok(v) => v,
                 Err(e) => panic!("{format:?} output must parse: {e}\n{text}"),
@@ -2142,7 +2188,14 @@ mod tests {
             DcatProfile::from_token("dcat-ap-cz").expect("installed"),
             DcatProfile::from_token("dcat-ap-sk-2.0").expect("installed"),
         ] {
-            let text = serialize_dataset(&ds, &cat, None, RdfFormat::JsonLd, profile);
+            let text = serialize_dataset(
+                &ds,
+                &cat,
+                None,
+                RdfFormat::JsonLd,
+                profile,
+                &Default::default(),
+            );
             let g = match parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default()) {
                 Ok(v) => v,
                 Err(e) => panic!("{profile:?} JSON-LD must parse: {e}\n{text}"),
@@ -2249,7 +2302,8 @@ mod tests {
                 RdfFormat::RdfXml,
                 RdfFormat::JsonLd,
             ] {
-                let text = serialize_dataset(&src, &cat, None, format, profile);
+                let text =
+                    serialize_dataset(&src, &cat, None, format, profile, &Default::default());
                 let back = match parse_datasets_from_rdf(
                     &text,
                     format,
@@ -2565,6 +2619,7 @@ mod tests {
                     format,
                     profile,
                     Some(&hydra),
+                    &Default::default(),
                 );
                 let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
                     Ok(v) => v,
@@ -2725,7 +2780,14 @@ mod tests {
         let ds: Dataset = serde_json::from_value(v).expect("dataset");
         let cid = ds.catalogue_id;
         let cat = sample_catalogue(ds.org_id, cid);
-        let ttl = serialize_dataset(&ds, &cat, None, RdfFormat::NTriples, DcatProfile::eu());
+        let ttl = serialize_dataset(
+            &ds,
+            &cat,
+            None,
+            RdfFormat::NTriples,
+            DcatProfile::eu(),
+            &Default::default(),
+        );
         let lines: Vec<&str> = ttl
             .lines()
             .filter(|l| l.contains("issued") || l.contains("modified") || l.contains("Date>"))
@@ -2802,6 +2864,7 @@ mod tests {
             Some(&publisher),
             RdfFormat::JsonLd,
             DcatProfile::from_token("dcat-ap-cz").expect("installed"),
+            &Default::default(),
         );
         assert!(text.contains("https://e.org/publisher/city"));
 
@@ -2827,6 +2890,7 @@ mod tests {
             RdfFormat::JsonLd,
             DcatProfile::from_token("sk").expect("installed"),
             None,
+            &Default::default(),
         );
         assert!(!sk.contains("poskytovateľ"));
 

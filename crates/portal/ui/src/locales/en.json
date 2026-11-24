@@ -9920,7 +9920,15 @@
         "contactBoth": "Give the contact's name and e-mail together, or neither.",
         "email": "Enter an e-mail address such as opendata@example.org.",
         "period": "The end of the period cannot be before its start. Pick an end date after the start.",
-        "title": "Give the dataset a title."
+        "title": "Give the dataset a title.",
+        "fieldRequired": "Your organization requires this field. Fill it in.",
+        "field": {
+          "text": "Enter one line of text.",
+          "number": "Enter a number.",
+          "date": "Pick a date.",
+          "url": "Enter an https:// address.",
+          "enum": "Pick one of the listed values."
+        }
       },
       "datasetTitle": "Dataset title",
       "datasetTitleHelp": "The name the catalogue lists, in the language {language}.",
@@ -9948,7 +9956,17 @@
         "dcat": "DCAT-AP record (JSON-LD)"
       },
       "inCatalogue": "Already in the catalogue",
-      "typeNew": "None in the catalogue matches: type a new one and pick “New”."
+      "typeNew": "None in the catalogue matches: type a new one and pick “New”.",
+      "orgFields": "Your organization's fields",
+      "orgFieldsHelp": "Extra details your organization asks for on every dataset. The open data portal shows them in the dataset's About table.",
+      "fieldHint": {
+        "text": "One line of text, for example: Funded by the city",
+        "number": "A number, for example: 12.5",
+        "date": "A date, for example: 2026-11-23",
+        "url": "An https:// address, for example: https://example.org/report",
+        "enum": "Pick one of the values your organization set."
+      },
+      "fieldRefused": "Your organization refused the field “{field}” ({reason}). Go back, correct it and propose again."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
