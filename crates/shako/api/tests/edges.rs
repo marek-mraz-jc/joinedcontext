@@ -707,13 +707,16 @@ impl SecretStore for FaultSecrets {
     }
 }
 
+/// The headers of each hook delivery, in order.
+type Deliveries = Arc<Mutex<Vec<Vec<(String, String)>>>>;
+
 struct World {
     app: Router,
     state: ShakoState,
     store: Arc<FaultStore>,
     secrets: Arc<FaultSecrets>,
     /// The headers of each hook delivery the outbound guard let out.
-    deliveries: Arc<Mutex<Vec<Vec<(String, String)>>>>,
+    deliveries: Deliveries,
     _root: tempfile::TempDir,
 }
 
@@ -751,7 +754,7 @@ fn world() -> World {
                 Subject::authenticated("outsider", "outsider", vec![org]),
             ),
         ]);
-    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let deliveries: Deliveries = Arc::new(Mutex::new(Vec::new()));
     let seen = deliveries.clone();
     let guard = OutboundGuard::new(OutboundPolicy {
         allowed_hosts: Some(vec!["github.com".into(), "hooks.city.example".into()]),
@@ -920,7 +923,7 @@ impl World {
 
     /// Runs git on the bare repository, as a push from outside would change it.
     async fn git(&self, name: &str, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
+        let out = jc_secret::spawn::command("git")
             .arg("-C")
             .arg(self.disk(name).await)
             .args(["-c", "user.name=Ada", "-c", "user.email=ada@city.example"])
@@ -2367,7 +2370,7 @@ async fn commits_read_by_id_and_page_past_the_limit() {
             }
         ));
     }
-    let mut child = std::process::Command::new("git")
+    let mut child = jc_secret::spawn::command("git")
         .arg("-C")
         .arg(w.disk("site").await)
         .args(["fast-import", "--quiet"])
