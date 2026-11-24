@@ -780,6 +780,24 @@ mod tests {
             ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
             ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            // Go's fmtSbx: case, the space and # flags, width either side.
+            ("%x|%X", vec![st("zz"), st("zz")], "7a7a|7A7A"),
+            (
+                "% x|%# x|%#x",
+                vec![st("zz"), st("zz"), st("zz")],
+                "7a 7a|0x7a 0x7a|0x7a7a",
+            ),
+            (
+                "%12x|%-12x|",
+                vec![st("zz"), st("zz")],
+                "        7a7a|7a7a        |",
+            ),
+            (
+                "%# 14x|%#8x|% 8x|",
+                vec![st("zz"), st("zz"), st("zz")],
+                "     0x7a 0x7a|  0x7a7a|   7a 7a|",
+            ),
+            ("%.1x|%08x", vec![st("zz"), st("zz")], "7a|00007a7a"),
             // A nil inside a slice or map prints <nil> under any verb, at the top only under %v.
             (
                 "%d",

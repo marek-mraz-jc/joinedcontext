@@ -317,6 +317,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn literals_decode_and_a_misspelt_one_is_refused() {
+        assert_eq!(
+            decode_with_numbers(b"[true,false,null]"),
+            Some(Value::Array(
+                vec![Value::Bool(true), Value::Bool(false), Value::Null].into()
+            ))
+        );
+        for bad in [&b"tru"[..], b"fals", b"nul", b"[true,nil]"] {
+            assert_eq!(decode_with_numbers(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
     fn numbers_keep_the_text_go_would_not_print() {
         let v = decode_with_numbers(
             br#"{"a":5.0,"b":1E2,"c":10,"d":5.5,"e":-0,"f":12345678901234567890123,"g":[0.10]}"#,

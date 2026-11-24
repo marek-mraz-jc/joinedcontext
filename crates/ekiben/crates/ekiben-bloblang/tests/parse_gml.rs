@@ -230,6 +230,8 @@ fn from_names_the_crs_of_a_gml_without_srs_name() {
 fn malformed_gml_is_an_error_naming_the_fault() {
     let cases: &[(&str, &str)] = &[
         (r#"<!DOCTYPE x [<!ENTITY e "1">]><gml:Point><gml:pos>&e; 2</gml:pos></gml:Point>"#, "forbidden"),
+        (r#"<!DOCTYPE x><gml:Point><gml:pos>1 2</gml:pos></gml:Point>"#, "DTD and entity declarations are forbidden"),
+        (r#"<gml:Point><!ENTITY e "1"><gml:pos>1 2</gml:pos></gml:Point>"#, "DTD and entity declarations are forbidden"),
         ("<gml:Point><gml:pos>1 &bogus;</gml:pos></gml:Point>", "unknown entity"),
         ("<gml:Point><gml:pos>NaN 2</gml:pos></gml:Point>", "finite"),
         ("<gml:Point><gml:pos>inf 2</gml:pos></gml:Point>", "finite"),

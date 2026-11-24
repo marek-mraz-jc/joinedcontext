@@ -1623,6 +1623,16 @@ mod tests {
     }
 
     #[test]
+    fn rounding_follows_the_wall_clock_of_the_offset() -> R {
+        let day = 86_400_000_000_000;
+        let late = at("2026-11-24T23:40:00+01:00")?;
+        assert_eq!(rfc(&round_local(&late, day)?), "2026-11-25T00:00:00+01:00");
+        let early = at("2026-11-24T00:20:00-05:00")?;
+        assert_eq!(rfc(&round_local(&early, day)?), "2026-11-24T00:00:00-05:00");
+        Ok(())
+    }
+
+    #[test]
     fn rounding_and_rfc3339_follow_chrono() -> R {
         let z = at("2026-03-04T10:07:30+01:00")?;
         assert_eq!(
