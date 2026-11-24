@@ -274,15 +274,12 @@ async fn forward(
     ) {
         return refusal;
     }
-    let mut resp_builder = Response::builder().status(status);
-
     // The body is buffered below, so the gateway's framing does not describe what the run gets:
     // `transfer-encoding` beside the length axum sets makes hyper drop the connection after the
     // audit line, and Linkerd answers the run an empty 500 (T-6434).
-    for (k, v) in upstream_resp.headers().iter() {
-        if !DROPPED_ANSWER_HEADERS.contains(&k.as_str()) {
-            resp_builder = resp_builder.header(k, v);
-        }
+    let mut answer_headers = upstream_resp.headers().clone();
+    for name in DROPPED_ANSWER_HEADERS {
+        answer_headers.remove(*name);
     }
 
     // Past the cap the run gets the refusal, and the audit line says 502 like any other outage.
@@ -314,7 +311,5 @@ async fn forward(
         return refusal;
     }
 
-    resp_builder
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (status, answer_headers, Body::from(resp_bytes)).into_response()
 }

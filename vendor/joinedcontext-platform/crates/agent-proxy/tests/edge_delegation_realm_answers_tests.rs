@@ -15,128 +15,58 @@ use agent_proxy::runs::RunContext;
 use base64::Engine;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const PERSON: &str = "demo.steward@hel.fi";
 const PORTAL_TOKEN: &str = "portal-service-account-token";
 const PERSON_TOKEN: &str = "person-access-token";
 const REFRESH: &str = "delegated-refresh-token";
 
-/// What the realm answers one request: a status and a body, or nothing (the connection closes).
-type Answer = Option<(u16, String)>;
+mod raw_upstream;
 
-/// A realm on a socket: `answer` gets each request's path and form body, and the requests are
-/// kept in order of arrival.
+use raw_upstream::{broken, reply, Answer, RawUpstream};
+
+/// The realm on a socket, its issuer at `/realms/jc`.
 struct Realm {
     issuer: String,
-    seen: Arc<Mutex<Vec<(String, String)>>>,
+    upstream: RawUpstream,
 }
 
 impl Realm {
     async fn start(answer: impl Fn(&str, &str) -> Answer + Send + Sync + 'static) -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a port");
-        let addr = listener.local_addr().expect("an address");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let (answer, log) = (Arc::new(answer), Arc::clone(&seen));
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let (answer, log) = (Arc::clone(&answer), Arc::clone(&log));
-                tokio::spawn(async move {
-                    let Some((path, body)) = read_request(&mut socket).await else {
-                        return;
-                    };
-                    log.lock().expect("the log").push((path.clone(), body.clone()));
-                    if let Some((status, text)) = answer(&path, &body) {
-                        let head = format!(
-                            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            text.len()
-                        );
-                        let _ = socket.write_all(head.as_bytes()).await;
-                        let _ = socket.write_all(text.as_bytes()).await;
-                    }
-                });
-            }
-        });
+        let upstream = RawUpstream::start(answer).await;
         Self {
-            issuer: format!("http://{addr}/realms/jc"),
-            seen,
+            issuer: format!("{}/realms/jc", upstream.base),
+            upstream,
         }
     }
 
     fn paths(&self) -> Vec<String> {
-        self.seen
-            .lock()
-            .expect("the log")
-            .iter()
-            .map(|(path, _)| path.clone())
-            .collect()
+        self.upstream.paths()
     }
 
     fn bodies_at(&self, suffix: &str) -> Vec<String> {
-        self.seen
-            .lock()
-            .expect("the log")
-            .iter()
-            .filter(|(path, _)| path.ends_with(suffix))
-            .map(|(_, body)| body.clone())
-            .collect()
+        self.upstream.bodies_at(suffix)
     }
-}
-
-/// The path and body of one HTTP/1.1 request, read to its `Content-Length`.
-async fn read_request(socket: &mut tokio::net::TcpStream) -> Option<(String, String)> {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    let head_end = loop {
-        let n = socket.read(&mut chunk).await.ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break at + 4;
-        }
-    };
-    let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
-    let length = head
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse::<usize>().ok())?
-        })
-        .unwrap_or(0);
-    while buf.len() < head_end + length {
-        let n = socket.read(&mut chunk).await.ok()?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    let path = head.split_whitespace().nth(1)?.to_owned();
-    Some((path, String::from_utf8_lossy(&buf[head_end..]).into_owned()))
 }
 
 /// The introspection of the person's token and the Portal's, both active.
 fn introspection(body: &str) -> Answer {
     if body.contains(&format!("token={PORTAL_TOKEN}")) {
-        return Some((200, r#"{"active":true,"azp":"portal-api"}"#.to_owned()));
+        return reply(200, r#"{"active":true,"azp":"portal-api"}"#);
     }
-    Some((
+    reply(
         200,
-        format!(r#"{{"active":true,"azp":"edge","username":"{PERSON}"}}"#),
-    ))
+        &format!(r#"{{"active":true,"azp":"edge","username":"{PERSON}"}}"#),
+    )
 }
 
 /// An exchange answering a grant that is already due for its refresh.
 fn exchange(refresh: Option<&str>) -> Answer {
     let refresh = refresh.map_or(String::new(), |r| format!(r#","refresh_token":"{r}""#));
-    Some((
+    reply(
         200,
-        format!(r#"{{"access_token":"delegated-1","expires_in":0{refresh}}}"#),
-    ))
+        &format!(r#"{{"access_token":"delegated-1","expires_in":0{refresh}}}"#),
+    )
 }
 
 fn config(realm: &Realm, extra: &[(&'static str, String)]) -> Arc<Config> {
@@ -206,7 +136,7 @@ fn captured() -> String {
 /// An introspection answer that is not JSON is the realm's failure, never a yes.
 #[tokio::test]
 async fn an_introspection_that_is_not_json_judges_nothing() {
-    let realm = Realm::start(|_, _| Some((200, "<html>maintenance</html>".to_owned()))).await;
+    let realm = Realm::start(|_, _| reply(200, "<html>maintenance</html>")).await;
     let grants = Grants::new(config(&realm, &[]));
     let judged = grants.is_portal(PORTAL_TOKEN).await;
     assert!(judged.is_err(), "{judged:?}");
@@ -219,7 +149,8 @@ async fn an_introspection_that_is_not_json_judges_nothing() {
 async fn an_exchange_the_realm_breaks_off_or_garbles_binds_nothing() {
     for (case, answer) in [
         ("closed", None),
-        ("not json", Some((200, "{\"access_token\":".to_owned()))),
+        ("broken off", broken(200, 64, "{\"access_token\":")),
+        ("not json", reply(200, "{\"access_token\":")),
     ] {
         let realm = Realm::start(move |path, body| {
             if path.ends_with("/introspect") {
@@ -295,8 +226,8 @@ async fn a_refresh_the_realm_fails_keeps_the_grant_and_a_new_refresh_token_is_ke
         }
         match *at.lock().expect("the step") {
             0 => None,
-            1 => Some((503, "{}".to_owned())),
-            2 => Some((200, "[]".to_owned())),
+            1 => reply(503, "{}"),
+            2 => reply(200, "[]"),
             3 => exchange(Some("rotated-refresh-token")),
             _ => exchange(None),
         }
@@ -321,7 +252,7 @@ async fn a_refresh_the_realm_fails_keeps_the_grant_and_a_new_refresh_token_is_ke
 /// Ending a run that holds no grant asks the realm nothing.
 #[tokio::test]
 async fn ending_a_run_without_a_grant_asks_the_realm_nothing() {
-    let realm = Realm::start(|_, _| Some((200, "{}".to_owned()))).await;
+    let realm = Realm::start(|_, _| reply(200, "{}")).await;
     Grants::new(config(&realm, &[])).end("run-without-grant").await;
     assert!(realm.paths().is_empty(), "{:?}", realm.paths());
 }
@@ -331,7 +262,7 @@ async fn ending_a_run_without_a_grant_asks_the_realm_nothing() {
 #[tokio::test]
 async fn a_revocation_refused_or_unheard_drops_the_grant_and_is_logged_without_the_token() {
     captured();
-    for (case, revoked) in [("refused", Some((400, "{}".to_owned()))), ("unheard", None)] {
+    for (case, revoked) in [("refused", reply(400, "{}")), ("unheard", None)] {
         let realm = Realm::start(move |path, body| {
             if path.ends_with("/introspect") {
                 return introspection(body);

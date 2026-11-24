@@ -519,3 +519,53 @@ fn read_secret(
     }
     Ok(String::new())
 }
+
+/// The Organization realm list over any text, for the fuzz target `config` (T-7795). Compiled
+/// only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// A set that is refused changes nothing; a set that is taken holds realms whose key URL is
+    /// a certs URL and no issuer twice.
+    pub fn realms(raw: &str) {
+        let installation = Url::parse("http://keycloak:8080/realms/joinedcontext").expect("a URL");
+        let held = OrganizationRealms::default();
+        match held.replace(raw, &installation) {
+            Err(_) => assert!(held.current().is_empty()),
+            Ok(count) => {
+                let realms = held.current();
+                assert_eq!(realms.len(), count);
+                for (i, realm) in realms.iter().enumerate() {
+                    assert!(realm.jwks_url.ends_with(CERTS));
+                    assert!(realms[..i].iter().all(|o| o.issuer != realm.issuer));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A writer that panicked while holding the realm set poisons its lock; the set it left is
+    /// still read, and the next replacement still lands (T-7795).
+    #[test]
+    fn a_poisoned_realm_set_is_still_read_and_replaced() {
+        let held = OrganizationRealms::default();
+        let poisoner = held.clone();
+        let _ = std::thread::spawn(move || {
+            let _slot = poisoner.0.write().expect("the lock");
+            panic!("a writer dies holding the realm set");
+        })
+        .join();
+        assert!(held.0.is_poisoned());
+        assert!(held.current().is_empty());
+        let installation = Url::parse("http://keycloak:8080/realms/joinedcontext").expect("a URL");
+        let raw = r#"[{"organization":"bbsk","issuer":"https://idm.bbsk.sk/realms/bbsk","jwks_url":"https://idm.bbsk.sk/realms/bbsk/protocol/openid-connect/certs"}]"#;
+        assert_eq!(held.replace(raw, &installation).expect("taken"), 1);
+        assert_eq!(held.current()[0].organization, "bbsk");
+    }
+}

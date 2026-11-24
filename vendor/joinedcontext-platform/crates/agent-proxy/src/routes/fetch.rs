@@ -149,18 +149,19 @@ pub async fn handler(
         duration_ms: start.elapsed().as_millis(),
     });
 
-    Response::builder()
-        .status(status)
-        .header(
-            axum::http::header::CONTENT_TYPE,
-            match content_type.is_empty() {
-                true => "application/octet-stream".to_owned(),
-                false => content_type,
-            },
-        )
-        .header(REMAINING_HEADER, left.to_string())
-        .body(Body::from(body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    let content_type = match content_type.is_empty() {
+        true => "application/octet-stream".to_owned(),
+        false => content_type,
+    };
+    (
+        status,
+        [
+            (axum::http::header::CONTENT_TYPE.as_str(), content_type),
+            (REMAINING_HEADER, left.to_string()),
+        ],
+        Body::from(body),
+    )
+        .into_response()
 }
 
 /// One URL the run is allowed to ask for, or the problem document saying why not.

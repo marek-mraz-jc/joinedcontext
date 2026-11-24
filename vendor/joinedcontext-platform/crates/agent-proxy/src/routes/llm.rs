@@ -47,9 +47,7 @@ fn with_reasoning(body: &Bytes, rest: &str, effort: &str) -> Bytes {
             );
         }
     }
-    serde_json::to_vec(&map)
-        .map(Bytes::from)
-        .unwrap_or_else(|_| body.clone())
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// The body with `model` set to the run's profile model (F-PLT1-006): the profile's model and
@@ -67,7 +65,7 @@ fn with_model(body: Bytes, model: &str) -> Bytes {
         return body;
     }
     map.insert("model".into(), json!(model));
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// The body with its output capped at `left`, what remains of the run's token budget
@@ -98,7 +96,7 @@ fn within_budget(body: Bytes, left: u64) -> Bytes {
     if !lowered {
         return body;
     }
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// Why the body's OpenRouter `provider` field is refused, or `None` when it is absent or holds
@@ -160,7 +158,7 @@ fn routed(body: Bytes, routes: bool) -> Bytes {
     if map.remove("provider").is_none() {
         return body;
     }
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// Each reasoning effort and the thinking budget it is on Anthropic messages (AG-72).
@@ -189,9 +187,7 @@ fn with_stream_usage(body: &Bytes, rest: &str) -> Bytes {
         return body.clone();
     };
     options.entry("include_usage").or_insert(json!(true));
-    serde_json::to_vec(&map)
-        .map(Bytes::from)
-        .unwrap_or_else(|_| body.clone())
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// What a stream that reports no usage is counted as: the output it was allowed and a quarter of
@@ -201,7 +197,7 @@ fn uncounted_stream(body: &Bytes) -> u64 {
         .ok()
         .and_then(|value| value.get("max_tokens").and_then(Value::as_u64))
         .unwrap_or(STREAM_OUTPUT_UNSAID);
-    allowed + body.len() as u64 / 4
+    allowed.saturating_add(body.len() as u64 / 4)
 }
 
 /// The output a stream is counted for when its request names no `max_tokens`.
@@ -838,11 +834,12 @@ pub async fn handler(
         return refusal;
     }
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        Body::from(resp_bytes),
+    )
+        .into_response()
 }
 
 /// One streamed call: whose it is, what it asked and what it counts as without a usage.
@@ -957,12 +954,15 @@ fn stream_through(
     let body = futures::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|chunk| (chunk, rx))
     });
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/event-stream")
-        .header("Cache-Control", "no-cache")
-        .body(Body::from_stream(body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+            (axum::http::header::CACHE_CONTROL, "no-cache"),
+        ],
+        Body::from_stream(body),
+    )
+        .into_response()
 }
 
 /// The body rewrites and the stream reader over any bytes, for the fuzz target `llm_body`

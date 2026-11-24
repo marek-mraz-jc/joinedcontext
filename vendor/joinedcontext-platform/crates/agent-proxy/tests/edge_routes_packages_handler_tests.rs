@@ -151,23 +151,24 @@ async fn a_path_that_would_leave_the_host_is_refused() {
     }
 }
 
-/// T-1301: a NUL or a space inside a segment is not a way out of the host: the URL parser
-/// encodes it back into the one segment it came from, so the request is the ordinary one that
-/// fails on a name nothing answers.
+/// T-1301: a space inside a segment is not a way out of the host: the URL parser encodes it
+/// back into the one segment it came from, so the request is the ordinary one that fails on a
+/// name nothing answers. A control character is refused before anything is sent: the parser
+/// drops a tab or a line break, which can fold two dots into a `..` segment (T-7795).
 #[tokio::test]
-async fn a_control_character_in_the_path_stays_inside_one_segment() {
-    for rest in ["a%00b", "a%20b", "a%0d%0ab"] {
+async fn a_space_stays_inside_one_segment_and_a_control_character_is_refused() {
+    for (rest, status) in [
+        ("a%20b", StatusCode::BAD_GATEWAY),
+        ("a%00b", StatusCode::FORBIDDEN),
+        ("a%0d%0ab", StatusCode::FORBIDDEN),
+        (".%09./a", StatusCode::FORBIDDEN),
+    ] {
         let response = get(
             &["registry.invalid"],
             &format!("/v1/packages/registry.invalid/{rest}"),
         )
         .await;
-        assert_eq!(
-            response.status(),
-            StatusCode::BAD_GATEWAY,
-            "'{rest}' answered {}",
-            response.status()
-        );
+        assert_eq!(response.status(), status, "'{rest}' answered {}", response.status());
     }
 }
 

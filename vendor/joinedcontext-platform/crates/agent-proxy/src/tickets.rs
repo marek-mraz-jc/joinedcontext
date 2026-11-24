@@ -124,4 +124,34 @@ mod tests {
         assert_eq!(tickets.verify(&reminted, "new").await, Ok(true));
         assert_eq!(tickets.hashed.load(Ordering::Relaxed), 5);
     }
+
+    /// A closed Argon2 gate verifies nothing: the ticket is refused, never let through
+    /// unchecked (T-7795).
+    #[tokio::test]
+    async fn a_closed_argon2_gate_refuses_the_ticket() {
+        let cache = TicketCache::default();
+        cache.argon2.close();
+        let run = run_with_ticket("the-ticket");
+        assert!(!cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert_eq!(cache.hashed.load(Ordering::Relaxed), 0);
+    }
+
+    /// A poisoned cache is skipped: every call pays its Argon2 verify again, a wrong ticket is
+    /// still refused, and forgetting a run does not panic (T-7795).
+    #[tokio::test]
+    async fn a_poisoned_cache_falls_back_to_argon2_on_every_call() {
+        let cache = TicketCache::default();
+        let poisoner = cache.clone();
+        let _ = std::thread::spawn(move || {
+            let _map = poisoner.verified.lock().expect("the lock");
+            panic!("a caller dies holding the cache");
+        })
+        .join();
+        let run = run_with_ticket("the-ticket");
+        assert!(cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert!(cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert!(!cache.verify(&run, "another").await.expect("a PHC hash"));
+        assert_eq!(cache.hashed.load(Ordering::Relaxed), 3);
+        cache.forget(&run.id);
+    }
 }

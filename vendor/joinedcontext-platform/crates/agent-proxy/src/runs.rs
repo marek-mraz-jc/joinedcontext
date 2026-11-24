@@ -226,3 +226,59 @@ impl RunResolver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(status: &str) -> RunContext {
+        serde_json::from_value(serde_json::json!({
+            "id": "run-1", "project": "p", "appName": "a", "endpointSlug": "e",
+            "allowsWrite": false, "branch": "b", "pathPrefix": "", "status": status,
+            "ticketHash": "$argon2id$secret-hash", "maxTokens": 1, "allowedHosts": [],
+            "requestsPerMinute": 1, "maxResponseBytes": 1, "createdBy": "u", "modelName": "m"
+        }))
+        .expect("a run")
+    }
+
+    /// A resolver's debug form names the Portal and whether it holds credentials, and nothing
+    /// of any run it caches (T-7795).
+    #[test]
+    fn the_debug_form_names_the_portal_and_no_run() {
+        let shown = format!("{:?}", RunResolver::with_cached(run("building")));
+        assert!(shown.contains("http://portal/"), "{shown}");
+        assert!(shown.contains("credentials: false"), "{shown}");
+        assert!(!shown.contains("argon2"), "{shown}");
+    }
+
+    /// A cached record past its time is asked for again: a Portal that cannot be reached is
+    /// then the platform's failure, not the stale record (T-7795).
+    #[tokio::test]
+    async fn an_expired_record_is_asked_for_again() {
+        let resolver = RunResolver::with_cached_at(
+            Url::parse("http://portal.invalid:8080").expect("a URL"),
+            run("building"),
+        );
+        resolver.cache.write().await.insert(
+            "run-1".to_owned(),
+            (Instant::now() - Duration::from_secs(1), Arc::new(run("building"))),
+        );
+        assert!(matches!(
+            resolver.resolve("run-1").await,
+            Err(RunError::Transport(_))
+        ));
+    }
+
+    /// A Portal base that cannot hold a path asks nobody and says so (T-7795).
+    #[tokio::test]
+    async fn a_portal_base_that_cannot_hold_a_path_asks_nobody() {
+        let resolver = RunResolver::with_cached_at(
+            Url::parse("mailto:portal@example.invalid").expect("a URL"),
+            run("building"),
+        );
+        match resolver.resolve_fresh("run-1").await {
+            Err(RunError::Transport(why)) => assert!(why.contains("cannot hold a path"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+}

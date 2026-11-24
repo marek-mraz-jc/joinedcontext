@@ -116,6 +116,36 @@ pub async fn maintain(state: ProxyState) {
     tokio::join!(end_finished, model_key::watch(state));
 }
 
+/// The proxy on `listener` until `shutdown` resolves: the configuration checked for its three
+/// credentials first (AG-35), then the state the binary runs, [`maintain`] beside the
+/// [`router`]. The binary passes its bound address and Ctrl-C; a suite passes a port of its own
+/// and a signal it holds.
+pub async fn serve(
+    config: config::Config,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    config.require_secrets()?;
+    tracing::info!(bind = %config.bind, "starting jc-agent-proxy daemon");
+    let config = Arc::new(config);
+    // The credentials come first: the resolver asks the Portal with a token of this proxy's own
+    // client now, not with a string both sides held (AG-52, T-2271).
+    let credentials = inject::CredentialManager::new(config.clone());
+    let runs = runs::RunResolver::new(config.portal_base.clone(), credentials.clone());
+    let state = Arc::new(ProxyState::new(
+        config,
+        runs,
+        credentials,
+        limits::LimitManager::default(),
+    ));
+    let maintenance = tokio::spawn(maintain((*state).clone()));
+    let served = axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown)
+        .await;
+    maintenance.abort();
+    Ok(served?)
+}
+
 pub fn router(state: Arc<ProxyState>) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))

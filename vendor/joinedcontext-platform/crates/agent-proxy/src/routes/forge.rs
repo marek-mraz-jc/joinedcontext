@@ -369,9 +369,10 @@ pub async fn handler(
         return refusal;
     }
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        Body::from(resp_bytes),
+    )
+        .into_response()
 }
