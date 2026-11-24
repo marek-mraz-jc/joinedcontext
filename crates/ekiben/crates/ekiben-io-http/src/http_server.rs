@@ -1421,3 +1421,195 @@ pub(crate) fn fuzz_path(pattern: &str, path: &str) -> Option<usize> {
         .matches(&percent_decode(path))
         .map(|vars| vars.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn conf(val: JsonValue) -> Result<HttpServerConf, CoreError> {
+        HttpServerConf::from_json(&val, &ekiben_bloblang::Environment::new())
+    }
+
+    fn refused(val: JsonValue, want: &str) {
+        let err = conf(val.clone())
+            .err()
+            .unwrap_or_else(|| panic!("{val} must be refused"))
+            .to_string();
+        assert!(err.contains(want), "{val}: {err}");
+    }
+
+    #[test]
+    fn a_path_pattern_refuses_what_it_cannot_route_and_matches_exactly() {
+        for (path, want) in [
+            ("hooks", "must start with '/'"),
+            ("/a/{id:[0-9]+}", "are not supported by ekiben"),
+            ("/a/{}", "bad path variable '{}'"),
+            ("/a/{x{y}", "bad path variable"),
+            ("/a/b}c", "bad path segment 'b}c'"),
+        ] {
+            let err = PathPattern::parse(path).err().expect(path).to_string();
+            assert!(err.contains(want), "{path}: {err}");
+        }
+        let exact = PathPattern::parse("/s/{id}/r").unwrap();
+        assert_eq!(exact.as_str(), "/s/{id}/r");
+        assert_eq!(
+            exact.matches("/s/a1/r"),
+            Some(vec![("id".into(), "a1".into())])
+        );
+        for miss in ["/s/a1", "/s/a1/r/", "/s/a1/x", "/s/a1/r/more"] {
+            assert_eq!(exact.matches(miss), None, "{miss}");
+        }
+        let root = PathPattern::parse("/").unwrap();
+        assert!(root.matches("/").is_some());
+        assert_eq!(root.matches("//"), None);
+        let prefix = PathPattern::parse("/hooks/").unwrap();
+        assert!(prefix.matches("/hooks/a/b").is_some());
+        assert!(prefix.matches("/hooks/").is_some());
+        assert_eq!(prefix.matches("/hooks"), None);
+        assert_eq!(prefix.matches("/other/a"), None);
+    }
+
+    #[test]
+    fn an_http_server_config_is_refused_naming_the_field() {
+        for (val, want) in [
+            (
+                json!({ "cert_file": "/c.pem" }),
+                "http_server.cert_file: ekiben does not terminate TLS",
+            ),
+            (json!({ "key_file": "/k.pem" }), "http_server.key_file"),
+            (
+                json!({ "ws_path": "/ws" }),
+                "websocket ingestion is not supported",
+            ),
+            (
+                json!({ "allowed_verbs": "POST" }),
+                "expected a list of strings",
+            ),
+            (json!({ "timeout": "soon" }), "soon"),
+            (
+                json!({ "sync_response": { "status": "${! nope( }" } }),
+                "sync_response.status",
+            ),
+            (
+                json!({ "sync_response": { "headers": { "X-A": "${! nope( }" } } }),
+                "sync_response.headers.X-A",
+            ),
+            (
+                json!({ "sync_response": { "headers": ["X-A"] } }),
+                "sync_response.headers: expected a map",
+            ),
+            (
+                json!({ "auth": "token" }),
+                "expected one of bearer, hmac or public",
+            ),
+            (
+                json!({ "auth": { "bearer": 7 } }),
+                "auth.bearer: expected a string",
+            ),
+            (
+                json!({ "auth": { "bearer": "" } }),
+                "auth.bearer must not be empty",
+            ),
+            (
+                json!({ "auth": { "hmac": "s" } }),
+                "auth.hmac: expected an object",
+            ),
+            (
+                json!({ "auth": { "hmac": { "header": "bad header", "secret": "s" } } }),
+                "not a valid header name",
+            ),
+            (
+                json!({ "auth": { "hmac": { "secret": "" } } }),
+                "auth.hmac.secret must not be empty",
+            ),
+            (
+                json!({ "auth": { "hmac": { "secret": "s", "algorithm": "md5" } } }),
+                "'md5' is not supported",
+            ),
+            (
+                json!({ "auth": { "public": "yes" } }),
+                "auth.public: expected a boolean",
+            ),
+            (
+                json!({ "auth": { "public": true, "basic": "x" } }),
+                "field basic is not recognised",
+            ),
+        ] {
+            refused(val, want);
+        }
+        // A header value that is not a string is read as its JSON text.
+        let c = conf(
+            json!({ "sync_response": { "headers": { "X-N": 5 } }, "auth": { "public": true } }),
+        )
+        .expect("a number header");
+        assert_eq!(c.response_header_keys, vec!["X-N".to_string()]);
+    }
+
+    #[test]
+    fn the_request_readers_take_what_go_takes_and_refuse_the_rest() {
+        assert_eq!(percent_decode("/a%20b/%zz/%4"), "/a b/%zz/%4");
+        assert_eq!(canonical_header_key("x-custom-HEADER"), "X-Custom-Header");
+
+        let token = SecretString::new("t0k");
+        let mut h = HeaderMap::new();
+        assert!(!bearer_ok(&h, &token));
+        h.insert("authorization", HeaderValue::from_static("bearer t0k"));
+        assert!(bearer_ok(&h, &token));
+        h.insert("authorization", HeaderValue::from_static("Bearer other"));
+        assert!(!bearer_ok(&h, &token));
+
+        let secret = SecretString::new("s3");
+        let sig = hmac_signature("s3", b"body");
+        let mut h = HeaderMap::new();
+        assert!(!hmac_ok(&h, "x-signature", &secret, b"body"));
+        h.insert("x-signature", HeaderValue::from_static("sha256=not-hex"));
+        assert!(!hmac_ok(&h, "x-signature", &secret, b"body"));
+        h.insert(
+            "x-signature",
+            HeaderValue::from_str(&format!(" sha256={sig} ")).unwrap(),
+        );
+        assert!(hmac_ok(&h, "x-signature", &secret, b"body"));
+        assert!(!hmac_ok(&h, "x-signature", &secret, b"other"));
+
+        assert!(parse_media_type("").is_err());
+        assert!(parse_media_type("text").is_err());
+        assert!(parse_media_type("text/plain; charset").is_err());
+        let (media, params) = parse_media_type("Multipart/Form-Data; ; Boundary=\"xyz\"").unwrap();
+        assert_eq!(media, "multipart/form-data");
+        assert_eq!(params["boundary"], "xyz");
+
+        assert_eq!(find(b"abc", b"", 0), None);
+        assert_eq!(find(b"abc", b"c", 4), None);
+        assert!(parse_multipart(b"--x--", "").is_err());
+        assert!(parse_multipart(b"--x--", &"b".repeat(71)).is_err());
+        assert!(parse_multipart(b"no delimiter here", "x").is_err());
+        assert!(parse_multipart(b"--x\r\nno blank line", "x").is_err());
+        assert!(parse_multipart(b"--x\r\n\r\nunterminated", "x").is_err());
+        let parts = parse_multipart(
+            b"--x\r\nA: 1\r\n\r\none\r\n--x\r\n\r\ntwo\r\n--x--\r\n",
+            "x",
+        )
+        .unwrap();
+        assert_eq!(parts, vec![Bytes::from("one"), Bytes::from("two")]);
+    }
+
+    #[test]
+    fn a_body_is_sniffed_as_go_sniffs_it() {
+        assert_eq!(
+            detect_content_type(b"  <!DOCTYPE HTML><p>"),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(detect_content_type(b"<html>"), "text/html; charset=utf-8");
+        assert_eq!(detect_content_type(b"plain"), "text/plain; charset=utf-8");
+        assert_eq!(detect_content_type(b"\x00\x01"), "application/octet-stream");
+        assert_eq!(
+            detect_content_type(&[0xff, 0xfe]),
+            "application/octet-stream"
+        );
+        // A two-byte character cut at the 512-byte window still reads as text.
+        let mut cut = vec![b'a'; 511];
+        cut.extend("é".as_bytes());
+        assert_eq!(detect_content_type(&cut), "text/plain; charset=utf-8");
+    }
+}
