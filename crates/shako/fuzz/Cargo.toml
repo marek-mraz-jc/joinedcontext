@@ -1,0 +1,49 @@
+# Fuzzes what shako-api reads from outside (T-7661): OData paths, keys, query strings and action
+# bodies, Gitea REST bodies, and webhook signatures. Requests go through the public routers onto
+# an in-memory forge seeded once, as a reader, so a fuzzed write is refused and the forge never
+# grows. Each request must end in an answer, never a panic, a hang or an allocation past the
+# input's size. Run by hand: cargo +nightly fuzz run <odata|rest|signature> -- -max_total_time=300.
+# Not a member of the root workspace.
+[package]
+name = "shako-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+axum = { version = "0.8", features = ["json"] }
+serde_json = "1"
+tempfile = "3.27"
+tokio = { version = "1.54", features = ["rt"] }
+tower = { version = "0.5", features = ["util"] }
+shako-api = { path = "../api" }
+shako-core = { path = "../core" }
+shako-store-memory = { path = "../store-memory" }
+
+[[bin]]
+name = "odata"
+path = "fuzz_targets/odata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rest"
+path = "fuzz_targets/rest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signature"
+path = "fuzz_targets/signature.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
