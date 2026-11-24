@@ -523,6 +523,8 @@ mod tests {
                 "seed {seed} draw {draw}: {name}"
             );
         }
+        // Draws of exactly 50 (male) tell `>` from `>=`.
+        assert!(boundary > 0);
     }
 
     #[test]
