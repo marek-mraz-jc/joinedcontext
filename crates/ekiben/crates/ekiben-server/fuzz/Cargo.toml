@@ -1,0 +1,73 @@
+# Fuzzes every ekiben-server entry point that reads outside input (T-7583): cron expressions and
+# zones, quotas files and bodies, organization variable and token files, `ekiben test` definitions,
+# `--set metrics.*` arguments and the API's Authorization and X-Jc-Org headers. Each must answer a
+# value or an error, never panic, hang or allocate without bound. Run by hand (the ekiben workspace
+# builds for musl by default, which the sanitizer cannot link):
+# cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu -- -max_total_time=300
+# Not a member of the ekiben workspace.
+[package]
+name = "ekiben-server-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ekiben-server = { path = "..", default-features = false }
+ekiben-core = { path = "../../ekiben-core" }
+axum = "0.8"
+jiff = "0.2"
+serde_json = "1"
+
+[[bin]]
+name = "cron"
+path = "fuzz_targets/cron.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "quotas"
+path = "fuzz_targets/quotas.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_files"
+path = "fuzz_targets/org_files.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "test_definition"
+path = "fuzz_targets/test_definition.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "metrics_set"
+path = "fuzz_targets/metrics_set.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_headers"
+path = "fuzz_targets/auth_headers.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+# The ekiben workspace's patches (jaq's evaluation budget), which a separate workspace does not inherit.
+[patch.crates-io]
+jaq-core = { path = "../../../../../vendor/jaq-core" }
+jaq-json = { path = "../../../../../vendor/jaq-json" }

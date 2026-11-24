@@ -69384,6 +69384,32 @@
   }
  },
  {
+  "name": "parse_log rfc3164 an RFC 3339 timestamp with a leap second",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2024"
+   }
+  },
+  "input": "<1>2003-10-11T22:14:60Z host app: msg",
+  "expected": {
+   "text": "{\"facility\":0,\"priority\":1,\"severity\":1}\n"
+  }
+ },
+ {
+  "name": "parse_log rfc3164 a stamp with a leap second",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc3164",
+    "default_year": "2024"
+   }
+  },
+  "input": "<1>Oct 11 22:14:60 host app: msg",
+  "expected": {
+   "text": "ERROR: expecting a Stamp timestamp [col 16]\n"
+  }
+ },
+ {
   "name": "parse_log rfc5424 hand a duplicated element id",
   "processor": {
    "parse_log": {
@@ -70125,6 +70151,90 @@
   "input": "<1>1 - - - - - [abc][abc\"",
   "expected": {
    "text": "ERROR: duplicate structured data element id [col 24]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 an SD-ID error in a third element keeps the first two",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][b][=x] m",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 22]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 cut at a third element's bracket",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][b][",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 22]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 cut inside a third element's SD-ID",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][b][c",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 23]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 a bad byte inside a third element's SD-ID",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 - - - - - [a][b][c= m",
+  "expected": {
+   "text": "ERROR: expecting a structured data element id (from 1 to max 32 US-ASCII characters; except `=`, ` `, `]`, and `\"` [col 23]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 a timestamp on a day the month lacks",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15Z - - - - -",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15Z\": day out of range [col 25]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 a numeric-offset timestamp on a day the month lacks, run into the hostname",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15+01:00x - - - - -",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15+01:00\": day out of range [col 30]\n"
+  }
+ },
+ {
+  "name": "parse_log rfc5424 a timestamp with a leap second",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-10-11T22:14:60Z - - - - -",
+  "expected": {
+   "text": "ERROR: expecting a RFC3339MICRO timestamp or a nil value [col 22]\n"
   }
  }
 ]

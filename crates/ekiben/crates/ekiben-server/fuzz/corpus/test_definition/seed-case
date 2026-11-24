@@ -1,0 +1,6 @@
+tests:
+  - name: up
+    target_processors: /pipeline/processors
+    mocks: {call: {noop: {}}}
+    input_batch: [{content: a, metadata: {k: v}}]
+    output_batches: [[{content_equals: A, json_contains: {a: 1}}]]

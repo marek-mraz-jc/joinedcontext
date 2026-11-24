@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use ekiben_core::{CoreError, OrgId, StreamConfig};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -117,21 +117,11 @@ impl ServerAuthConfig {
             .is_some_and(|o| std::str::from_utf8(provided).is_ok_and(|token| o.verify(token)))
     }
 
-    /// Whether the auth middleware guards the API.
-    pub fn guards_routes(&self) -> bool {
-        self.require_auth || self.is_enabled()
-    }
-
     /// Verifies the request's `Authorization: Bearer <token>` header in constant time and
-    /// returns the organization the call acts for (always `Some`): the default organization
-    /// without auth, the `X-Jc-Org` organization (or the default) for the admin token, the
-    /// token's organization for an organization token. `401` for a missing or wrong token,
-    /// `403` for an organization token naming another organization in `X-Jc-Org`.
-    pub fn authenticate(&self, headers: &HeaderMap) -> Result<Option<OrgId>, StatusCode> {
-        self.identify(headers).map(|c| Some(c.org))
-    }
-
-    /// As [`Self::authenticate`], with whether the caller is the admin.
+    /// returns the caller: the default organization without auth, the `X-Jc-Org` organization
+    /// (or the default) for the admin token, the token's organization for an organization token.
+    /// `401` for a missing or wrong token, `403` for an organization token naming another
+    /// organization in `X-Jc-Org`, `400` for an `X-Jc-Org` that is not an organization id.
     pub fn identify(&self, headers: &HeaderMap) -> Result<Caller, StatusCode> {
         if !self.is_enabled() {
             if self.require_auth {
@@ -205,35 +195,6 @@ impl ServerAuthConfig {
         }
         matched_org
     }
-
-    /// Admits only the admin bearer token: `401` without a valid token, `403` for an organization
-    /// token or when no admin token is configured (a server without auth has no admin).
-    pub fn authenticate_admin(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
-        if self.admin_bearer_token.is_none() && self.oidc.is_none() {
-            return Err(StatusCode::FORBIDDEN);
-        }
-        let provided = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| {
-                s.strip_prefix("Bearer ")
-                    .or_else(|| s.strip_prefix("bearer "))
-            })
-            .ok_or(StatusCode::UNAUTHORIZED)?
-            .as_bytes();
-        if let Some(ref admin_tok) = self.admin_bearer_token {
-            if constant_time_eq_slices(provided, admin_tok.as_bytes()) {
-                return Ok(());
-            }
-        }
-        if self.oidc_admits(provided) {
-            return Ok(());
-        }
-        if self.match_org_token(provided).is_some() {
-            return Err(StatusCode::FORBIDDEN);
-        }
-        Err(StatusCode::UNAUTHORIZED)
-    }
 }
 
 /// Routes that answer without a token: the liveness probe, and the readiness probe unless
@@ -251,10 +212,10 @@ fn is_open_route(path: &str, guard_probes: bool) -> bool {
 /// wrong tokens get the same 401 body.
 async fn require_auth_layer(
     State(state): State<Arc<ServerState>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
-    if state.auth.guards_routes() && !is_open_route(req.uri().path(), state.auth.guard_probes) {
+    if !is_open_route(req.uri().path(), state.auth.guard_probes) {
         if let Some(oidc) = &state.auth.oidc {
             let token = bearer_token(req.headers())
                 .and_then(|t| std::str::from_utf8(t).ok())
@@ -264,7 +225,9 @@ async fn require_auth_layer(
             }
         }
         match state.auth.identify(req.headers()) {
-            Ok(_) => {}
+            Ok(caller) => {
+                req.extensions_mut().insert(caller);
+            }
             Err(StatusCode::FORBIDDEN) => {
                 return (StatusCode::FORBIDDEN, "Forbidden").into_response()
             }
@@ -421,11 +384,10 @@ async fn handle_ready(State(state): State<Arc<ServerState>>, headers: HeaderMap)
 
 /// `GET /metrics`: Bento's Prometheus exposition. An organization token sees only its own
 /// organization's series; the admin (or a server without auth) sees them all.
-async fn handle_metrics(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
-    let caller = match state.auth.identify(&headers) {
-        Ok(c) => c,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+async fn handle_metrics(
+    State(state): State<Arc<ServerState>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
     let body = if caller.sees_all() {
         state.manager.metrics_registry.render_prometheus()
     } else {
@@ -444,26 +406,20 @@ async fn handle_metrics(State(state): State<Arc<ServerState>>, headers: HeaderMa
 
 async fn handle_list_streams(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     let list = state.manager.list(caller_org.as_ref()).await;
     Json(list).into_response()
 }
 
 async fn handle_set_streams(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
@@ -480,7 +436,7 @@ async fn handle_set_streams(
             return (StatusCode::BAD_REQUEST, e).into_response();
         }
         let val_str = serde_json::to_string(val).unwrap_or_default();
-        match parse_and_lint_stream(&state, id, &val_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, id, &val_str, caller_org.as_ref()) {
             Ok((conf, lints, _)) => {
                 for l in lints {
                     all_lints.push(format!("stream '{id}': {l}"));
@@ -492,14 +448,7 @@ async fn handle_set_streams(
     }
 
     if !chilled && !all_lints.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "lint_errors": all_lints,
-                "linting_errors": all_lints,
-            })),
-        )
-            .into_response();
+        return lint_response(&all_lints);
     }
 
     let existing = state.manager.list(caller_org.as_ref()).await;
@@ -528,13 +477,10 @@ async fn handle_set_streams(
 
 async fn handle_get_stream(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     match state.manager.read(&id, caller_org.as_ref()).await {
         Ok(info) => Json(info).into_response(),
         Err(e) => map_core_err_to_response(e),
@@ -543,15 +489,12 @@ async fn handle_get_stream(
 
 async fn handle_create_stream(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     if let Err(e) = validate_stream_id(&id) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
@@ -559,20 +502,13 @@ async fn handle_create_stream(
     let body_str = String::from_utf8_lossy(&body);
 
     let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &id, &body_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, &id, &body_str, caller_org.as_ref()) {
             Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
 
     if !chilled && !lints.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "lint_errors": lints,
-                "linting_errors": lints,
-            })),
-        )
-            .into_response();
+        return lint_response(&lints);
     }
 
     if params.is_run_once() {
@@ -588,15 +524,12 @@ async fn handle_create_stream(
 
 async fn handle_put_stream(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     if let Err(e) = validate_stream_id(&id) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
@@ -604,20 +537,13 @@ async fn handle_put_stream(
     let body_str = String::from_utf8_lossy(&body);
 
     let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &id, &body_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, &id, &body_str, caller_org.as_ref()) {
             Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
 
     if !chilled && !lints.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "lint_errors": lints,
-                "linting_errors": lints,
-            })),
-        )
-            .into_response();
+        return lint_response(&lints);
     }
 
     if params.is_run_once() {
@@ -637,14 +563,11 @@ async fn handle_put_stream(
 
 async fn handle_patch_stream(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
     body: Bytes,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     let patch_json: JsonValue = match serde_norway::from_slice(&body) {
         Ok(v) => v,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Error: {e}")).into_response(),
@@ -661,13 +584,10 @@ async fn handle_patch_stream(
 
 async fn handle_delete_stream(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     match state.manager.delete(&id, caller_org.as_ref()).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => map_core_err_to_response(e),
@@ -676,13 +596,10 @@ async fn handle_delete_stream(
 
 async fn handle_stream_stats(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
+    let caller_org = Some(caller.org);
     match state.manager.read_stats(&id, caller_org.as_ref()).await {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => map_core_err_to_response(e),
@@ -691,16 +608,12 @@ async fn handle_stream_stats(
 
 async fn handle_post_resource(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path((res_type, id)): Path<(String, String)>,
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = match state.auth.authenticate(&headers) {
-        Ok(org) => org,
-        Err(code) => return (code, "Unauthorized").into_response(),
-    };
-    let org_id = caller_org.unwrap_or_default();
+    let org_id = caller.org;
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
@@ -713,14 +626,7 @@ async fn handle_post_resource(
                     .into_iter()
                     .map(|m| format!("environment variable '{m}' was not defined"))
                     .collect();
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "lint_errors": lints,
-                        "linting_errors": lints,
-                    })),
-                )
-                    .into_response();
+                return lint_response(&lints);
             }
             err.best_attempt
         }
@@ -750,20 +656,24 @@ async fn handle_post_resource(
             .into_response(),
         Err(ResourceError::Build(e)) => {
             if !chilled {
-                let lints = vec![e.to_string()];
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "lint_errors": lints,
-                        "linting_errors": lints,
-                    })),
-                )
-                    .into_response()
+                lint_response(&[e.to_string()])
             } else {
                 (StatusCode::BAD_REQUEST, e.to_string()).into_response()
             }
         }
     }
+}
+
+/// The 400 answer listing a config's lint errors, under both of Bento's keys.
+fn lint_response(lints: &[String]) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "lint_errors": lints,
+            "linting_errors": lints,
+        })),
+    )
+        .into_response()
 }
 
 /// A parsed stream config, its lint errors and the config as posted (before interpolation).
@@ -773,7 +683,6 @@ fn parse_and_lint_stream(
     state: &ServerState,
     id: &str,
     body_str: &str,
-    chilled: bool,
     caller_org: Option<&OrgId>,
 ) -> Result<ParsedStream, Box<Response>> {
     let mut env_lints = Vec::new();
@@ -815,7 +724,6 @@ fn parse_and_lint_stream(
         lint_report.add_error(err);
     }
 
-    let _ = chilled;
     let posted = StreamConfig::posted_json(body_str);
     Ok((conf, lint_report.lint_errors, posted))
 }
@@ -823,11 +731,13 @@ fn parse_and_lint_stream(
 /// `GET /orgs/{org}/quotas` (admin only): the organization's current quotas.
 async fn handle_get_quotas(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(org): Path<String>,
 ) -> Response {
-    if let Err(code) = state.auth.authenticate_admin(&headers) {
-        return (code, "the quota API needs the admin token").into_response();
+    // The admin token or an OIDC client; an organization token, or a server without auth, has no
+    // admin (a missing or wrong token never reaches here: 401 from the middleware).
+    if !caller.admin {
+        return (StatusCode::FORBIDDEN, "the quota API needs the admin token").into_response();
     }
     if let Err(msg) = validate_stream_id(&org) {
         return (
@@ -845,12 +755,14 @@ async fn handle_get_quotas(
 /// second, without a restart; other organizations are untouched.
 async fn handle_put_quotas(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
+    Extension(caller): Extension<Caller>,
     Path(org): Path<String>,
     body: Bytes,
 ) -> Response {
-    if let Err(code) = state.auth.authenticate_admin(&headers) {
-        return (code, "the quota API needs the admin token").into_response();
+    // The admin token or an OIDC client; an organization token, or a server without auth, has no
+    // admin (a missing or wrong token never reaches here: 401 from the middleware).
+    if !caller.admin {
+        return (StatusCode::FORBIDDEN, "the quota API needs the admin token").into_response();
     }
     if let Err(msg) = validate_stream_id(&org) {
         return (
@@ -869,13 +781,6 @@ async fn handle_put_quotas(
                 .into_response()
         }
     };
-    if let Err(field) = quotas.validate() {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("{field} must be at least 1"),
-        )
-            .into_response();
-    }
     let ctx = state
         .manager
         .resources
@@ -883,23 +788,14 @@ async fn handle_put_quotas(
     Json(ctx.get_quotas()).into_response()
 }
 
-/// Parses a quotas body; an error names the offending field (serde alone omits it for a bad value).
+/// Parses a quotas body: a JSON object of `OrgQuotas` fields ([`crate::config_dir::quotas_from_map`]).
 fn parse_quotas(body: &[u8]) -> Result<ekiben_core::OrgQuotas, String> {
-    let value: JsonValue = serde_json::from_slice(body).map_err(|e| e.to_string())?;
-    serde_json::from_value(value.clone()).map_err(|e| {
-        let field = value.as_object().and_then(|map| {
-            map.iter().find_map(|(k, v)| {
-                let one = serde_json::json!({ k: v });
-                serde_json::from_value::<ekiben_core::OrgQuotas>(one)
-                    .is_err()
-                    .then_some(k.clone())
-            })
-        });
-        match field {
-            Some(name) => format!("field `{name}`: {e}"),
-            None => e.to_string(),
-        }
-    })
+    let value: JsonValue = serde_json::from_slice(body).map_err(json_error_text)?;
+    crate::config_dir::quotas_from_map(&value)
+}
+
+pub(crate) fn json_error_text(e: serde_json::Error) -> String {
+    e.to_string()
 }
 
 pub(crate) fn validate_stream_id(id: &str) -> Result<(), String> {

@@ -198,6 +198,125 @@ async fn the_runner_clients_kaisatsu_token_is_admitted_and_every_other_token_ref
     );
 }
 
+/// Serves `body` with `status` at /certs.
+async fn provider(status: u16, body: Vec<u8>) -> String {
+    let app = axum::Router::new().route(
+        "/certs",
+        axum::routing::get(move || {
+            let body = body.clone();
+            async move { (axum::http::StatusCode::from_u16(status).unwrap(), body) }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}/certs")
+}
+
+#[tokio::test]
+async fn a_provider_that_fails_or_answers_garbage_admits_nothing() {
+    let signer = key("k1");
+    let good = sign(&signer, Some("k1"), claims());
+    let huge = vec![b' '; 300 * 1024];
+    for url in [
+        provider(500, b"{}".to_vec()).await,
+        provider(200, b"not a jwks".to_vec()).await,
+        provider(200, huge).await,
+        "http://127.0.0.1:1/certs".to_string(),
+    ] {
+        let base = ekiben(&url, &[RUNNER]).await;
+        assert_eq!(
+            status(&base, Some(&good)).await,
+            StatusCode::UNAUTHORIZED,
+            "{url}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn tokens_without_kid_with_a_foreign_algorithm_or_by_client_id_are_judged_by_the_rules() {
+    let signer = key("k1");
+    let (url, _) = jwks(signer.jwk.clone()).await;
+    let oidc = OidcAuth::new(&url, ISSUER, "ekiben", vec![" ".into(), RUNNER.into()]).unwrap();
+    let debug = format!("{oidc:?}");
+    assert!(debug.contains(RUNNER) && debug.contains(&url), "{debug}");
+    let good = sign(&signer, Some("k1"), claims());
+    oidc.prepare(&good).await;
+    assert!(oidc.verify(&good));
+    // Known key: no fetch, still admitted.
+    oidc.prepare(&good).await;
+    assert!(oidc.verify(&good));
+    // `client_id` stands in for `azp`.
+    let mut c = claims();
+    c.as_object_mut().unwrap().remove("azp");
+    c["client_id"] = json!(RUNNER);
+    assert!(oidc.verify(&sign(&signer, Some("k1"), c)));
+    assert!(!oidc.verify(&sign(&signer, None, claims())));
+    let hs = encode(
+        &Header {
+            kid: Some("k1".into()),
+            ..Header::new(Algorithm::HS256)
+        },
+        &claims(),
+        &EncodingKey::from_secret(b"k"),
+    )
+    .unwrap();
+    assert!(!oidc.verify(&hs));
+    assert!(!oidc.verify("not.a.jwt"));
+    oidc.prepare("not.a.jwt").await;
+
+    // A key published for RS256 does not verify an ES256 token.
+    let mut rs_jwk = signer.jwk.clone();
+    rs_jwk["alg"] = json!("RS256");
+    let (url, _) = jwks(rs_jwk).await;
+    let oidc = OidcAuth::new(&url, ISSUER, "ekiben", vec![RUNNER.into()]).unwrap();
+    oidc.prepare(&good).await;
+    assert!(!oidc.verify(&good));
+    // A JWK that is not a usable key refuses too.
+    let (url, _) =
+        jwks(json!({"kty": "EC", "crv": "P-256", "kid": "k1", "x": "!!!", "y": "!!!"})).await;
+    let oidc = OidcAuth::new(&url, ISSUER, "ekiben", vec![RUNNER.into()]).unwrap();
+    oidc.prepare(&good).await;
+    assert!(!oidc.verify(&good));
+}
+
+#[tokio::test]
+async fn an_org_token_is_refused_by_the_admin_routes_of_an_oidc_server() {
+    let signer = key("k1");
+    let (url, _) = jwks(signer.jwk.clone()).await;
+    let oidc = OidcAuth::new(&url, ISSUER, "ekiben", vec![RUNNER.into()]).unwrap();
+    let state = ServerState::new(
+        StreamManager::new(
+            build_full_registry(),
+            ResourceManager::new(),
+            None,
+            EnvAccess::AllowListed,
+        ),
+        ServerAuthConfig {
+            org_tokens: vec![("tok-a".into(), ekiben_core::OrgId::new("org-a"))],
+            oidc: Some(Arc::new(oidc)),
+            ..Default::default()
+        },
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = build_router(state);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let c = reqwest::Client::new();
+    let quotas = format!("http://{addr}/orgs/org-a/quotas");
+    let res = c.get(&quotas).bearer_auth("tok-a").send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let good = sign(&signer, Some("k1"), claims());
+    let res = c.get(&quotas).bearer_auth(&good).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = c.get(&quotas).bearer_auth("nobody").send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn no_configured_client_admits_no_token() {
     let signer = key("k1");

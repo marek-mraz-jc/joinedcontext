@@ -155,28 +155,19 @@ pub fn format_go_layout(dt: &Zoned, layout: &str) -> String {
         } else if rem.starts_with("05") {
             out.push_str(&format!("{:02}", dt.second()));
             i += 2;
-        } else if rem.starts_with(".999999999")
-            || rem.starts_with(".999999")
-            || rem.starts_with(".999")
-        {
+        } else if rem.starts_with(".999") {
             let dots = rem[1..].bytes().take_while(|b| *b == b'9').count();
-            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
-            if nanos > 0 {
-                let s = format!("{:09}", nanos);
-                let trimmed = s[..dots.min(9)].trim_end_matches('0');
-                if !trimmed.is_empty() {
-                    out.push('.');
-                    out.push_str(trimmed);
-                }
+            let s = format!("{:09}", dt.subsec_nanosecond());
+            // A zero fraction trims to nothing and prints no dot, as Go's formatNano.
+            let trimmed = s[..dots.min(9)].trim_end_matches('0');
+            if !trimmed.is_empty() {
+                out.push('.');
+                out.push_str(trimmed);
             }
             i += 1 + dots;
-        } else if rem.starts_with(".000000000")
-            || rem.starts_with(".000000")
-            || rem.starts_with(".000")
-        {
+        } else if rem.starts_with(".000") {
             let zeros = rem[1..].bytes().take_while(|b| *b == b'0').count();
-            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
-            let s = format!("{:09}", nanos);
+            let s = format!("{:09}", dt.subsec_nanosecond());
             out.push('.');
             out.push_str(&s[..zeros.min(9)]);
             i += 1 + zeros;
@@ -233,6 +224,22 @@ pub fn format_go_layout(dt: &Zoned, layout: &str) -> String {
         } else if rem.starts_with('1') && !rem[1..].starts_with(|c: char| c.is_ascii_digit()) {
             out.push_str(&dt.month().to_string());
             i += 1;
+        } else if rem.starts_with('3') {
+            // Go's stdHour12, stdMinute and stdSecond: `3`, `4` and `5` without padding.
+            out.push_str(
+                &match dt.hour() % 12 {
+                    0 => 12,
+                    x => x,
+                }
+                .to_string(),
+            );
+            i += 1;
+        } else if rem.starts_with('4') {
+            out.push_str(&dt.minute().to_string());
+            i += 1;
+        } else if rem.starts_with('5') {
+            out.push_str(&dt.second().to_string());
+            i += 1;
         } else {
             let ch = rem.chars().next().unwrap();
             out.push(ch);
@@ -284,15 +291,12 @@ pub fn round_local(dt: &Zoned, span_nanos: i64) -> Result<Zoned, String> {
     let local = dt.timestamp().as_nanosecond() + i128::from(dt.offset().seconds()) * 1_000_000_000;
     let stamp =
         i64::try_from(local).map_err(|_| "timestamp exceeds num_nanoseconds limit".to_string())?;
-    let delta_down = stamp % span_nanos;
-    if delta_down == 0 {
+    // Euclidean: a stamp before 1970 rounds the same way as one after it.
+    let down = stamp.rem_euclid(span_nanos);
+    if down == 0 {
         return Ok(dt.clone());
     }
-    let (up, down) = if delta_down < 0 {
-        (delta_down.abs(), span_nanos - delta_down.abs())
-    } else {
-        (span_nanos - delta_down, delta_down)
-    };
+    let up = span_nanos - down;
     let shift = if up <= down { up } else { -down };
     // `stamp` fits an i64 of nanoseconds (years 1677 to 2262), far inside jiff's range.
     let Ok(ts) = dt
@@ -591,6 +595,16 @@ pub fn parse_go_layout(input: &str, layout: &str) -> Result<Zoned, String> {
             month = v;
             li += 1;
             si += n;
+        } else if let Some(slot) = match lrem.as_bytes()[0] {
+            b'3' => Some(&mut hour),
+            b'4' => Some(&mut minute),
+            b'5' => Some(&mut second),
+            _ => None,
+        } {
+            let (v, n) = take_digits(srem, 1, 2)?;
+            *slot = v;
+            li += 1;
+            si += n;
         } else {
             let lch = lrem.chars().next().unwrap();
             let sch = srem
@@ -754,6 +768,13 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<Zoned, String> {
                     offset_secs = ofs;
                     si += consumed;
                 }
+                'a' | 'A' => {
+                    let alpha_len = srem.bytes().take_while(u8::is_ascii_alphabetic).count();
+                    if alpha_len == 0 {
+                        return Err(format!("expected weekday name in '{input}'"));
+                    }
+                    si += alpha_len;
+                }
                 'Z' => {
                     if srem.starts_with('Z') {
                         offset_secs = 0;
@@ -815,7 +836,8 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<Zoned, String> {
     else {
         return Err(format!("invalid date {year}-{month}-{day}"));
     };
-    fixed_civil(dt, offset_secs).or_else(|_| fixed_civil(dt, 0))
+    fixed_civil(dt, offset_secs)
+        .map_err(|_| format!("failed to parse {input:?} with {format:?}: cannot parse \"%z\""))
 }
 
 /// Formats a timestamp using `strftime` specifiers (`itchyny/timefmt-go` compatible, including `%f` for 6-digit microseconds).
@@ -875,6 +897,19 @@ pub fn format_strftime(dt: &Zoned, format: &str) -> String {
                     dt.second()
                 )),
                 '%' => out.push('%'),
+                // timefmt-go's composites, spelled out so no locale table decides them.
+                'c' => out.push_str(&format_strftime(dt, "%a %b %e %H:%M:%S %Y")),
+                'D' | 'x' => out.push_str(&format_strftime(dt, "%m/%d/%y")),
+                'R' => out.push_str(&format_strftime(dt, "%H:%M")),
+                'r' => out.push_str(&format_strftime(dt, "%I:%M:%S %p")),
+                'X' => out.push_str(&format_strftime(dt, "%H:%M:%S")),
+                'v' => out.push_str(&format_strftime(dt, "%e-%b-%Y")),
+                '+' => out.push_str(&format_strftime(dt, "%a %b %e %H:%M:%S %Z %Y")),
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'j' | 'u' | 'w' | 'k' | 'l' | 'C' | 'G' | 'g' | 'V' | 'U' | 'W' => {
+                    out.push_str(&dt.strftime(&format!("%{spec}")).to_string());
+                }
                 other => {
                     out.push('%');
                     out.push(other);
@@ -976,41 +1011,90 @@ pub fn parse_go_duration_nanos(input: &str) -> Result<i64, String> {
     if s == "0" {
         return Ok(0);
     }
-    let mut total_nanos: f64 = 0.0;
+    // Go's time.ParseDuration: integer nanoseconds, refused past the int64 range.
+    const LIMIT: u64 = 1 << 63;
+    let invalid = || format!("time: invalid duration {input:?}");
+    let mut total: u64 = 0;
     while !s.is_empty() {
-        let num_len = s
-            .bytes()
-            .take_while(|b| b.is_ascii_digit() || *b == b'.')
-            .count();
-        if num_len == 0 {
+        let int_len = s.bytes().take_while(u8::is_ascii_digit).count();
+        let mut v: u64 = 0;
+        for d in s[..int_len].bytes() {
+            v = v
+                .checked_mul(10)
+                .and_then(|v| v.checked_add(u64::from(d - b'0')))
+                .filter(|v| *v <= LIMIT)
+                .ok_or_else(invalid)?;
+        }
+        s = &s[int_len..];
+        let (mut frac, mut scale, mut frac_len) = (0u64, 1.0f64, 0usize);
+        if let Some(r) = s.strip_prefix('.') {
+            s = r;
+            frac_len = s.bytes().take_while(u8::is_ascii_digit).count();
+            let mut overflow = false;
+            for d in s[..frac_len].bytes() {
+                if overflow {
+                    continue;
+                }
+                match frac
+                    .checked_mul(10)
+                    .and_then(|f| f.checked_add(u64::from(d - b'0')))
+                    .filter(|f| *f <= LIMIT)
+                {
+                    Some(f) => {
+                        frac = f;
+                        scale *= 10.0;
+                    }
+                    None => overflow = true,
+                }
+            }
+            s = &s[frac_len..];
+        }
+        if int_len == 0 && frac_len == 0 {
             return Err(format!("invalid duration: {input}"));
         }
-        let val: f64 = s[..num_len]
-            .parse()
-            .map_err(|_| format!("invalid number in duration: {input}"))?;
-        s = &s[num_len..];
-        let unit_end = s
+        let unit_len = s
             .char_indices()
-            .take_while(|(_, c)| !c.is_ascii_digit() && *c != '.')
-            .map(|(i, c)| i + c.len_utf8())
-            .last()
-            .ok_or_else(|| format!("missing unit in duration: {input}"))?;
-        let unit = &s[..unit_end];
-        s = &s[unit_end..];
-        let mult: f64 = match unit {
-            "ns" => 1.0,
-            "us" | "µs" | "μs" => 1_000.0,
-            "ms" => 1_000_000.0,
-            "s" => 1_000_000_000.0,
-            "m" => 60.0 * 1_000_000_000.0,
-            "h" => 3600.0 * 1_000_000_000.0,
+            .find(|(_, c)| c.is_ascii_digit() || *c == '.')
+            .map_or(s.len(), |(i, _)| i);
+        if unit_len == 0 {
+            return Err(format!("missing unit in duration: {input}"));
+        }
+        let unit = &s[..unit_len];
+        s = &s[unit_len..];
+        let mult: u64 = match unit {
+            "ns" => 1,
+            "us" | "µs" | "μs" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60 * 1_000_000_000,
+            "h" => 3600 * 1_000_000_000,
             _ => return Err(format!("unknown unit {unit:?} in duration {input:?}")),
         };
-        total_nanos += val * mult;
+        if v > LIMIT / mult {
+            return Err(invalid());
+        }
+        v *= mult;
+        if frac > 0 {
+            // float64 as Go computes it; the fraction is below one unit.
+            v += (frac as f64 * (mult as f64 / scale)) as u64;
+            if v > LIMIT {
+                return Err(invalid());
+            }
+        }
+        total = total
+            .checked_add(v)
+            .filter(|t| *t <= LIMIT)
+            .ok_or_else(invalid)?;
     }
-    let res = total_nanos.round() as i64;
-    Ok(if neg { -res } else { res })
+    if neg {
+        return Ok(0i64.wrapping_sub_unsigned(total));
+    }
+    i64::try_from(total).map_err(|_| invalid())
 }
+
+/// The largest number one ISO 8601 period component may hold: every sum of components then fits
+/// its field, and adding one to a date stays inside i64 arithmetic.
+const MAX_PERIOD_UNITS: f64 = 1e9;
 
 /// Parses an ISO 8601 duration (`P3Y6M4DT12H30M5S`, `PT2H`, `PT2.5S`, `P1W`, `P1D`)
 /// into `(years, months, weeks, days, nanos)`.
@@ -1057,17 +1141,44 @@ impl Iso8601Period {
                 return Err(format!("invalid ISO-8601 duration '{input}'"));
             }
             let num_str = &rest[..num_len];
-            let unit = rest.as_bytes()[num_len] as char;
-            rest = &rest[num_len + 1..];
+            // num_len < rest.len() and the number is ASCII, so a unit char follows.
+            let unit = rest[num_len..].chars().next().unwrap_or_default();
+            rest = &rest[num_len + unit.len_utf8()..];
             let val: f64 = num_str
                 .parse()
                 .map_err(|_| format!("invalid number in ISO-8601 duration '{input}'"))?;
+            if val.abs() > MAX_PERIOD_UNITS {
+                return Err(format!(
+                    "ISO-8601 duration '{input}': {num_str} is out of range (at most {MAX_PERIOD_UNITS} per unit)"
+                ));
+            }
+            let out_of_range = || format!("ISO-8601 duration '{input}' is out of range");
             if !in_time {
                 match unit {
-                    'Y' => period.years += val as i32,
-                    'M' => period.months += val as i32,
-                    'W' => period.weeks += val as i64,
-                    'D' => period.days += val as i64,
+                    'Y' => {
+                        period.years = period
+                            .years
+                            .checked_add(val as i32)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'M' => {
+                        period.months = period
+                            .months
+                            .checked_add(val as i32)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'W' => {
+                        period.weeks = period
+                            .weeks
+                            .checked_add(val as i64)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'D' => {
+                        period.days = period
+                            .days
+                            .checked_add(val as i64)
+                            .ok_or_else(out_of_range)?
+                    }
                     _ => {
                         return Err(format!(
                             "invalid date unit '{unit}' in ISO-8601 duration '{input}'"
@@ -1075,20 +1186,22 @@ impl Iso8601Period {
                     }
                 }
             } else {
-                match unit {
-                    'H' => period.nanos += (val * 3600.0 * 1e9).round() as i64,
-                    'M' => period.nanos += (val * 60.0 * 1e9).round() as i64,
-                    'S' => {
-                        // Truncate beyond 1 decimal place as documented in Bento's parse_duration_iso8601
-                        let truncated = (val * 10.0).trunc() / 10.0;
-                        period.nanos += (truncated * 1e9).round() as i64;
-                    }
+                let nanos = match unit {
+                    'H' => (val * 3600.0 * 1e9).round(),
+                    'M' => (val * 60.0 * 1e9).round(),
+                    // Truncate beyond 1 decimal place as documented in Bento's parse_duration_iso8601
+                    'S' => ((val * 10.0).trunc() / 10.0 * 1e9).round(),
                     _ => {
                         return Err(format!(
                             "invalid time unit '{unit}' in ISO-8601 duration '{input}'"
                         ))
                     }
-                }
+                };
+                // 1e9 hours is past i64 nanoseconds: the cast saturates and checked_add refuses it.
+                period.nanos = period
+                    .nanos
+                    .checked_add(nanos as i64)
+                    .ok_or_else(out_of_range)?;
             }
         }
         Ok(period)
@@ -1096,38 +1209,44 @@ impl Iso8601Period {
 
     pub fn negate(self) -> Self {
         Self {
-            years: -self.years,
-            months: -self.months,
-            weeks: -self.weeks,
-            days: -self.days,
-            nanos: -self.nanos,
+            years: self.years.saturating_neg(),
+            months: self.months.saturating_neg(),
+            weeks: self.weeks.saturating_neg(),
+            days: self.days.saturating_neg(),
+            nanos: self.nanos.saturating_neg(),
         }
     }
 
     /// Approximate duration in nanoseconds matching `rickb777/period.DurationApprox`:
     /// 1 year = 365.2425 days (31556952s), 1 month = 30.436875 days (2629746s), 1 day = 86400s.
-    pub fn approx_nanos(&self) -> i64 {
-        let year_nanos = (self.years as i64) * 31_556_952_000_000_000;
-        let month_nanos = (self.months as i64) * 2_629_746_000_000_000;
-        let week_nanos = self.weeks * 7 * 86_400_000_000_000;
-        let day_nanos = self.days * 86_400_000_000_000;
-        year_nanos + month_nanos + week_nanos + day_nanos + self.nanos
+    /// An error past i64 nanoseconds (about 292 years).
+    pub fn approx_nanos(&self) -> Result<i64, String> {
+        let total = i128::from(self.years) * 31_556_952_000_000_000
+            + i128::from(self.months) * 2_629_746_000_000_000
+            + i128::from(self.weeks) * 7 * 86_400_000_000_000
+            + i128::from(self.days) * 86_400_000_000_000
+            + i128::from(self.nanos);
+        i64::try_from(total).map_err(|_| "ISO-8601 duration exceeds int64 nanoseconds".to_string())
     }
 
     pub fn add_to(&self, dt: &Zoned) -> Zoned {
-        let mut total_months = (i32::from(dt.year()) * 12 + (i32::from(dt.month()) - 1))
-            + self.years * 12
-            + self.months;
+        let mut total_months = (i64::from(dt.year()) * 12 + (i64::from(dt.month()) - 1))
+            + i64::from(self.years) * 12
+            + i64::from(self.months);
         let new_year = total_months.div_euclid(12);
         total_months = total_months.rem_euclid(12);
         let new_month = (total_months + 1) as u32;
-        let max_day = days_in_month(new_year, new_month);
-        let new_day = (dt.day() as u32).min(max_day);
+        // Go's AddDate normalises an overflowing day: Jan 31 + 1 month is Mar 2 (Mar 1 in a
+        // leap year), so the day is added onto the first of the new month.
         let base_date = i16::try_from(new_year)
             .ok()
-            .and_then(|y| civil::Date::new(y, new_month as i8, new_day as i8).ok())
-            .unwrap_or_else(|| dt.date());
-        let days = self.weeks.saturating_mul(7).saturating_add(self.days);
+            .and_then(|y| civil::Date::new(y, new_month as i8, 1).ok())
+            .unwrap_or_else(|| dt.date().first_of_month());
+        let days = self
+            .weeks
+            .saturating_mul(7)
+            .saturating_add(self.days)
+            .saturating_add(i64::from(dt.day()) - 1);
         base_date
             .to_datetime(dt.time())
             .checked_add(SignedDuration::from_secs(days.saturating_mul(86_400)))
@@ -1135,21 +1254,6 @@ impl Iso8601Period {
             .ok()
             .and_then(|t| fixed_civil(t, dt.offset().seconds()).ok())
             .unwrap_or_else(|| dt.clone())
-    }
-}
-
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        2 => {
-            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        // April, June, September and November.
-        _ => 30,
     }
 }
 
@@ -1365,6 +1469,77 @@ mod tests {
     }
 
     #[test]
+    fn a_fraction_whose_shown_digits_are_all_zero_prints_no_dot() -> R {
+        // Go's formatNano trims the zeros of a `.999` fraction and drops the dot when none is left.
+        let dt = at("2026-11-24T10:00:07.000000005Z")?;
+        assert_eq!(format_go_layout(&dt, "05.999"), "07");
+        assert_eq!(format_go_layout(&dt, "05.999999"), "07");
+        assert_eq!(format_go_layout(&dt, "05.999999999"), "07.000000005");
+        Ok(())
+    }
+
+    #[test]
+    fn each_zone_and_clock_token_is_followed_by_the_rest_of_the_layout() -> R {
+        let dt = at("2026-11-24T15:04:05.5+01:00")?;
+        for (layout, want) in [
+            ("Z07:00|", "+01:00|"),
+            ("Z0700|", "+0100|"),
+            ("-07:00|", "+01:00|"),
+            ("-0700|", "+0100|"),
+            ("Z07|", "+01|"),
+            ("PM|pm|", "PM|pm|"),
+            ("06|2|1|", "26|24|11|"),
+            ("05.000|05.999|", "05.500|05.5|"),
+        ] {
+            assert_eq!(format_go_layout(&dt, layout), want, "{layout}");
+        }
+        let utc = at("2026-11-24T15:04:05Z")?;
+        assert_eq!(
+            format_go_layout(&utc, "Z07:00|Z0700|Z07|MST|"),
+            "Z|Z|Z|UTC|"
+        );
+        assert_eq!(
+            format_go_layout(&utc, "-07:00|-0700|-07|"),
+            "+00:00|+0000|+00|"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_fraction_in_the_layout_reads_its_own_digits_and_an_offset_reads_mid_layout() -> R {
+        let dt = parse_go_layout("10:00:00.123|", "15:04:05.000|")?;
+        assert_eq!((dt.second(), dt.subsec_nanosecond()), (0, 123_000_000));
+        let dt = parse_go_layout("2026-11-24T10:00:00+01:00|x", "2006-01-02T15:04:05Z07:00|x")?;
+        assert_eq!(rfc(&dt), "2026-11-24T10:00:00+01:00");
+        let dt = parse_go_layout("2026-11-24T10:00:00-0130|x", "2006-01-02T15:04:05-0700|x")?;
+        assert_eq!(rfc(&dt), "2026-11-24T10:00:00-01:30");
+        Ok(())
+    }
+
+    #[test]
+    fn a_padded_day_reads_after_other_tokens() -> R {
+        for (input, layout) in [
+            ("Nov 24 2026", "Jan _2 2006"),
+            ("Nov  4 2026", "Jan _2 2006"),
+        ] {
+            let dt = parse_go_layout(input, layout)?;
+            assert_eq!((dt.year(), dt.month()), (2026, 11), "{input}");
+        }
+        assert_eq!(parse_go_layout("Nov 24 2026", "Jan _2 2006")?.day(), 24);
+        assert_eq!(parse_go_layout("Nov  4 2026", "Jan _2 2006")?.day(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn strptime_twelve_hour_clock_maps_midnight_and_noon() -> R {
+        for (input, hour) in [("12 AM", 0), ("03 AM", 3), ("12 PM", 12), ("03 pm", 15)] {
+            let dt = parse_strptime(&format!("2026-11-24 {input}"), "%Y-%m-%d %I %p")?;
+            assert_eq!(dt.hour(), hour, "{input}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn strptime_reads_every_directive_and_refuses_out_of_range_fields() -> R {
         let p = parse_strptime;
         assert_eq!(rfc(&p("31.02.2026", "%d.%m.%Y")?), "2026-03-03T00:00:00Z");
@@ -1380,7 +1555,10 @@ mod tests {
             rfc(&p("2026 CET 100%", "%Y %Z 100%%")?),
             "2026-01-01T00:00:00Z"
         );
-        assert_eq!(rfc(&p("2026 +9900", "%Y %z")?), "2026-01-01T00:00:00Z");
+        assert_eq!(
+            p("2026 +9900", "%Y %z").err().as_deref(),
+            Some("failed to parse \"2026 +9900\" with \"%Y %z\": cannot parse \"%z\"")
+        );
         assert_eq!(
             rfc(&p("2026 +01:00", "%Y %z")?),
             "2026-01-01T00:00:00+01:00"
@@ -1438,6 +1616,26 @@ mod tests {
     }
 
     #[test]
+    fn go_durations_drop_fraction_digits_past_the_limit_and_refuse_a_sum_past_it() {
+        // Digits past what a u64 fraction can hold are dropped, as Go's leadingFraction does.
+        assert_eq!(
+            parse_go_duration_nanos("1.000000000000000000000001s"),
+            Ok(1_000_000_000)
+        );
+        assert!(parse_go_duration_nanos("9223372036.854775807s").is_ok());
+        assert!(parse_go_duration_nanos("9223372036.854775809s").is_err());
+    }
+
+    #[test]
+    fn strptime_weekday_names_need_letters() {
+        assert!(parse_strptime("Tue 2026-11-24", "%a %Y-%m-%d").is_ok());
+        assert_eq!(
+            parse_strptime("2026-11-24", "%a%Y-%m-%d").map(|_| ()),
+            Err("expected weekday name in '2026-11-24'".to_string())
+        );
+    }
+
+    #[test]
     fn go_durations_read_every_unit_sign_and_refuse_bad_text() {
         let d = parse_go_duration_nanos;
         assert_eq!(d("0"), Ok(0));
@@ -1448,7 +1646,7 @@ mod tests {
         assert_eq!(d("h").err().as_deref(), Some("invalid duration: h"));
         assert_eq!(
             d("1.2.3s").err().as_deref(),
-            Some("invalid number in duration: 1.2.3s")
+            Some("missing unit in duration: 1.2.3s")
         );
         assert_eq!(d("5").err().as_deref(), Some("missing unit in duration: 5"));
         assert_eq!(
@@ -1469,7 +1667,7 @@ mod tests {
         );
         assert_eq!(
             Iso8601Period::parse("P1Y1M1W1D")?.approx_nanos(),
-            31_556_952_000_000_000 + 2_629_746_000_000_000 + 8 * 86_400_000_000_000
+            Ok(31_556_952_000_000_000 + 2_629_746_000_000_000 + 8 * 86_400_000_000_000)
         );
         let errors = [
             ("1Y", "invalid ISO-8601 duration '1Y': must start with 'P'"),
@@ -1480,6 +1678,21 @@ mod tests {
             ("P1-2D", "invalid number in ISO-8601 duration 'P1-2D'"),
             ("P1X", "invalid date unit 'X' in ISO-8601 duration 'P1X'"),
             ("PT1D", "invalid time unit 'D' in ISO-8601 duration 'PT1D'"),
+            // A multi-byte unit is named, not sliced through (fuzz crash, time target).
+            ("P1Y2\u{4cf}", "invalid date unit '\u{4cf}' in ISO-8601 duration 'P1Y2\u{4cf}'"),
+            ("PT5\u{e9}", "invalid time unit '\u{e9}' in ISO-8601 duration 'PT5\u{e9}'"),
+            (
+                "P1000000001D",
+                "ISO-8601 duration 'P1000000001D': 1000000001 is out of range (at most 1000000000 per unit)",
+            ),
+            (
+                "P1000000000Y1000000000Y1000000000Y",
+                "ISO-8601 duration 'P1000000000Y1000000000Y1000000000Y' is out of range",
+            ),
+            (
+                "PT1000000000H1000000000H1000000000H",
+                "ISO-8601 duration 'PT1000000000H1000000000H1000000000H' is out of range",
+            ),
         ];
         for (input, want) in errors {
             assert_eq!(
@@ -1488,14 +1701,29 @@ mod tests {
                 "{input}"
             );
         }
+        // Past i64 nanoseconds the approximation is an error, not a wrapped number.
+        let far = Iso8601Period::parse("P300Y")?;
+        assert_eq!(
+            far.approx_nanos(),
+            Err("ISO-8601 duration exceeds int64 nanoseconds".to_string())
+        );
+        // Components summing to i32::MIN negate to i32::MAX instead of overflowing.
+        let low = Iso8601Period::parse("P-1000000000Y-1000000000Y-147483648Y")?;
+        assert_eq!((low.years, low.negate().years), (i32::MIN, i32::MAX));
+        // A date pushed past year 32767 keeps the original date, as one past jiff's range does.
+        let start = at("2026-01-31T10:00:00+01:00")?;
+        assert_eq!(
+            rfc(&Iso8601Period::parse("P1000000000Y")?.add_to(&start)),
+            rfc(&start)
+        );
         let month = Iso8601Period::parse("P1M")?;
         assert_eq!(
             rfc(&month.add_to(&at("2026-01-31T10:00:00+01:00")?)),
-            "2026-02-28T10:00:00+01:00"
+            "2026-03-03T10:00:00+01:00"
         );
         assert_eq!(
             rfc(&month.add_to(&at("2024-01-31T10:00:00Z")?)),
-            "2024-02-29T10:00:00Z"
+            "2024-03-02T10:00:00Z"
         );
         assert_eq!(
             rfc(&Iso8601Period::parse("P1M")?
@@ -1512,15 +1740,16 @@ mod tests {
             rfc(&Iso8601Period::parse("P9999999D")?.add_to(&start)),
             rfc(&start)
         );
-        assert_eq!(
-            [
-                days_in_month(2026, 4),
-                days_in_month(2100, 2),
-                days_in_month(2000, 2),
-                days_in_month(2026, 12)
-            ],
-            [30, 28, 29, 31]
-        );
+        Ok(())
+    }
+
+    #[test]
+    fn rounding_follows_the_wall_clock_of_the_offset() -> R {
+        let day = 86_400_000_000_000;
+        let late = at("2026-11-24T23:40:00+01:00")?;
+        assert_eq!(rfc(&round_local(&late, day)?), "2026-11-25T00:00:00+01:00");
+        let early = at("2026-11-24T00:20:00-05:00")?;
+        assert_eq!(rfc(&round_local(&early, day)?), "2026-11-24T00:00:00-05:00");
         Ok(())
     }
 

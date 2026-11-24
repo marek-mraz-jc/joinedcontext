@@ -99,6 +99,17 @@ describe("the organization's domain on Organization → Settings", () => {
     await expectNoViolations(domain);
   });
 
+  it("keeps Copy when the browser refuses the clipboard", async () => {
+    const user = userEvent.setup();
+    renderAccess({ state: "pending", challenge: "Q2hhbGxlbmdlLW9mLXRoaXMtaW5zdGFuY2U", record: RECORD });
+    const domain = await section();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("denied"));
+    await user.click(within(domain).getByRole("button", { name: en.access.domain.copy }));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(RECORD));
+    expect(within(domain).getByRole("button", { name: en.access.domain.copy })).toBeTruthy();
+    expect(within(domain).queryByRole("button", { name: en.access.domain.copied })).toBeNull();
+  });
+
   it("shows why a failed domain failed, and the record to put right", async () => {
     renderAccess({
       state: "failed",

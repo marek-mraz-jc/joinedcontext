@@ -177,9 +177,10 @@ function useLabels(slug: string, language: string): (type: string) => Record<str
   return useMemo(() => {
     const parsed = model.data;
     const byType = new Map<string, Record<string, string>>();
-    for (const klass of parsed?.classes ?? []) {
-      if (!parsed) break;
-      byType.set(klass.name, Object.fromEntries(classSlots(parsed, klass).map((slot) => [slot.name, columnLabel(slot, slot.name, language)])));
+    if (parsed) {
+      for (const klass of parsed.classes ?? []) {
+        byType.set(klass.name, Object.fromEntries(classSlots(parsed, klass).map((slot) => [slot.name, columnLabel(slot, slot.name, language)])));
+      }
     }
     return (type: string) => byType.get(type) ?? {};
   }, [model.data, language]);

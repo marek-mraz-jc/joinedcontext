@@ -302,19 +302,13 @@ impl ImapInput {
         Ok(session)
     }
 
-    fn session(&mut self) -> Result<&mut ImapSession, CoreError> {
-        self.session
-            .as_mut()
-            .ok_or_else(|| CoreError::other("imap: not connected"))
-    }
-
     /// The unread mails of the mailbox (from the sender, when named), oldest first.
-    async fn search(&mut self) -> Result<(), CoreError> {
+    async fn search(&mut self, session: &mut ImapSession) -> Result<(), CoreError> {
         let query = match &self.from {
             Some(from) => format!("UNSEEN FROM \"{from}\""),
             None => "UNSEEN".to_string(),
         };
-        let found = self.session()?.uid_search(&query).await;
+        let found = session.uid_search(&query).await;
         let mut uids: Vec<u32> = found
             .map_err(|e| self.failed("SEARCH", e))?
             .into_iter()
@@ -326,39 +320,34 @@ impl ImapInput {
         Ok(())
     }
 
-    /// Reads the next mail whose attachments match, queueing one message per attachment.
-    async fn next_mail(&mut self) -> Result<bool, CoreError> {
+    /// Reads the next mail whose attachments match, queueing one message per attachment; queues
+    /// nothing when no mail is left.
+    async fn next_mail(&mut self, session: &mut ImapSession) -> Result<(), CoreError> {
         while let Some(uid) = self.uids.pop_front() {
             // An attachment travels base64-encoded, a third larger than its bytes.
             let limit = self.max_attachment_bytes * 4 / 3 + MAX_MAIL_OVERHEAD;
-            let fetches: Vec<_> = {
-                let session = self.session()?;
-                let stream = session
+            let fetches: Vec<_> = async {
+                session
                     .uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")
-                    .await;
-                match stream {
-                    Ok(stream) => stream.try_collect().await,
-                    Err(e) => Err(e),
-                }
+                    .await?
+                    .try_collect()
+                    .await
             }
+            .await
             .map_err(|e| self.failed("FETCH RFC822.SIZE", e))?;
             let size = fetches.iter().find_map(|f| f.size).unwrap_or(0) as u64;
             if size > limit {
-                tracing::warn!(
-                    uid,
-                    size,
-                    "imap: mail larger than max_attachment_bytes allows, left unread"
-                );
+                tracing::warn!(uid, size, "imap: mail too large, left unread");
                 continue;
             }
-            let fetches: Vec<_> = {
-                let session = self.session()?;
-                let stream = session.uid_fetch(uid.to_string(), "BODY.PEEK[]").await;
-                match stream {
-                    Ok(stream) => stream.try_collect().await,
-                    Err(e) => Err(e),
-                }
+            let fetches: Vec<_> = async {
+                session
+                    .uid_fetch(uid.to_string(), "BODY.PEEK[]")
+                    .await?
+                    .try_collect()
+                    .await
             }
+            .await
             .map_err(|e| self.failed("FETCH BODY.PEEK[]", e))?;
             let Some(raw) = fetches.iter().find_map(|f| f.body()) else {
                 continue;
@@ -366,10 +355,10 @@ impl ImapInput {
             let queued = self.attachments_of(uid, raw);
             if queued > 0 {
                 self.given.insert(uid, (queued, 0));
-                return Ok(true);
+                return Ok(());
             }
         }
-        Ok(false)
+        Ok(())
     }
 
     /// Queues the attachments of mail `uid` the filters keep; how many.
@@ -422,26 +411,30 @@ impl ImapInput {
     }
 
     /// Flags or moves the mails whose every attachment was acknowledged.
-    async fn settle(&mut self, acked: Vec<u32>) -> Result<(), CoreError> {
-        let mut done = Vec::new();
-        for uid in acked {
-            if let Some((given, ok)) = self.given.get_mut(&uid) {
-                *ok += 1;
-                if *ok == *given {
-                    done.push(uid);
-                }
-            }
-        }
+    async fn settle(&mut self, session: &mut ImapSession, acked: Vec<u32>) {
+        let done: Vec<u32> = acked
+            .into_iter()
+            .filter(|uid| {
+                self.given.get_mut(uid).is_some_and(|(given, ok)| {
+                    *ok += 1;
+                    *ok == *given
+                })
+            })
+            .collect();
         for uid in done {
             self.given.remove(&uid);
-            let after = self.after.clone();
-            let session = self.session()?;
-            let result = match &after {
-                AfterAck::Seen => match session.uid_store(uid.to_string(), "+FLAGS (\\Seen)").await
-                {
-                    Ok(stream) => stream.try_collect::<Vec<_>>().await.map(|_| ()),
-                    Err(e) => Err(e),
-                },
+            let result = match &self.after {
+                AfterAck::Seen => {
+                    async {
+                        session
+                            .uid_store(uid.to_string(), "+FLAGS (\\Seen)")
+                            .await?
+                            .try_collect::<Vec<_>>()
+                            .await
+                            .map(drop)
+                    }
+                    .await
+                }
                 AfterAck::Move(to) => session.uid_mv(uid.to_string(), to).await,
             };
             if let Err(e) = result {
@@ -449,7 +442,28 @@ impl ImapInput {
                 tracing::warn!(uid, error = %e, "imap: an acknowledged mail was not marked");
             }
         }
-        Ok(())
+    }
+
+    /// One step of a run on the open session: the next attachment, or the end of the run.
+    async fn next(
+        &mut self,
+        session: &mut ImapSession,
+    ) -> Result<(Batch, AckResponder), CoreError> {
+        if !self.searched {
+            self.search(session).await?;
+        }
+        let ready = self.acks.ready();
+        self.settle(session, ready).await;
+        if self.ready.is_empty() {
+            self.next_mail(session).await?;
+        }
+        let Some(Attachment { uid, part }) = self.ready.pop_front() else {
+            let rest = self.acks.all(ACK_WAIT).await;
+            self.settle(session, rest).await;
+            return Err(CoreError::EndOfInput);
+        };
+        let ack = self.acks.responder(uid);
+        Ok((vec![part], ack))
     }
 }
 
@@ -470,22 +484,14 @@ impl Input for ImapInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        self.connect(ctx).await?;
-        if !self.searched {
-            self.search().await?;
-        }
-        let ready = self.acks.ready();
-        self.settle(ready).await?;
-        if self.ready.is_empty() && !self.next_mail().await? {
-            let rest = self.acks.all(ACK_WAIT).await;
-            self.settle(rest).await?;
-            return Err(CoreError::EndOfInput);
-        }
-        let Some(Attachment { uid, part }) = self.ready.pop_front() else {
-            return Err(CoreError::EndOfInput);
+        let mut session = match self.session.take() {
+            Some(session) => session,
+            None => self.open(ctx).await?,
         };
-        let ack = self.acks.responder(uid);
-        Ok((vec![part], ack))
+        // The session stays open whatever the step answers; close() or drop ends it.
+        let step = self.next(&mut session).await;
+        self.session = Some(session);
+        step
     }
 
     fn is_connected(&self) -> bool {
@@ -498,6 +504,47 @@ impl Input for ImapInput {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_names(text: &str) {
+    if let Ok(from) = sender(text) {
+        assert!(!from.contains(['"', ' ', '\\', '\r', '\n']), "{from:?}");
+    }
+    if let Ok(name) = mailbox_name(text, "mailbox") {
+        assert!(!name.chars().any(char::is_control), "{name:?}");
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_mail(raw: &[u8]) -> usize {
+    let mut input = ImapInput {
+        host: "imap.example.org".into(),
+        port: 993,
+        root_cas: None,
+        username: "u".into(),
+        password: "p".into(),
+        mailbox: "INBOX".into(),
+        from: None,
+        subject: None,
+        attachment: glob::Pattern::new("*").expect("a literal glob"),
+        after: AfterAck::Seen,
+        max_attachment_bytes: 1024 * 1024,
+        max_messages: 1,
+        timeout: Duration::from_secs(1),
+        session: None,
+        uids: VecDeque::new(),
+        ready: VecDeque::new(),
+        given: BTreeMap::new(),
+        acks: Acks::new(),
+        searched: false,
+    };
+    let queued = input.attachments_of(1, raw);
+    for a in &input.ready {
+        let name = a.part.meta_get_str("attachment_filename");
+        assert!(!name.contains(['/', '\\']), "{name}");
+    }
+    queued
 }
 
 #[cfg(test)]

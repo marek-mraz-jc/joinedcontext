@@ -165,6 +165,11 @@ impl Reader<'_> {
         for _ in 0..len {
             let key = match self.value(depth + 1)? {
                 Value::String(s) => s,
+                // Go's decoder cannot hash an array or map key, and its JSON text here would
+                // double its escapes at each nesting level: 200 bytes would build gigabytes.
+                Value::Array(_) | Value::Object(_) => {
+                    return Err("msgpack: a map key must be a scalar, not an array or map".into())
+                }
                 other => other.to_string_coerced(),
             };
             out.insert(key, self.value(depth + 1)?);
@@ -354,6 +359,25 @@ mod tests {
                 ]
                 .into_iter()
                 .collect()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_container_map_key_is_refused_before_its_text_can_grow() {
+        let refused = Err("msgpack: a map key must be a scalar, not an array or map".to_string());
+        assert_eq!(decode(&[0x81, 0x90, 0x01]), refused);
+        assert_eq!(decode(&[0x81, 0x80, 0x01]), refused);
+        // 100 maps each keyed by the next: as text the innermost key would carry 2^100 escapes
+        let mut nested = vec![0x81; 100];
+        nested.extend([0xc0, 0x01]);
+        nested.extend(vec![0x01; 99]);
+        assert_eq!(decode(&nested), refused);
+        // a scalar key still reads as its text
+        assert_eq!(
+            decode(&[0x81, 0xc2, 0x01]),
+            Ok(Value::Object(
+                [("false".to_string(), Value::Int(1))].into_iter().collect()
             ))
         );
     }

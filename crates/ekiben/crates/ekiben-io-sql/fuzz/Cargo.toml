@@ -1,0 +1,42 @@
+# Fuzzes what the sql components read from outside (T-7582): DSNs, component configs, and the
+# text and wire forms of column and argument values. Each target must end in a value or an error,
+# never a panic, a hang or an allocation past the input's size. Run by hand:
+# cargo +nightly fuzz run <dsn|lint|values> -- -max_total_time=300. Not a member of the ekiben
+# workspace.
+[package]
+name = "ekiben-io-sql-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+ekiben-io-sql = { path = "..", features = ["fuzzing"] }
+
+[[bin]]
+name = "dsn"
+path = "fuzz_targets/dsn.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lint"
+path = "fuzz_targets/lint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "values"
+path = "fuzz_targets/values.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

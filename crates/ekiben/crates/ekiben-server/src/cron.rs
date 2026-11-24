@@ -233,9 +233,7 @@ fn parse_cron_field_u64(
             v += step;
         }
     }
-    if mask == 0 {
-        return Err(CoreError::config(format!("empty cron field '{field}'")));
-    }
+    // Every part sets at least its start bit, so the mask is never empty.
     Ok(mask)
 }
 
@@ -292,5 +290,83 @@ mod tests {
             );
         }
         assert!(CronSchedule::parse("0 9 * * *", Some("Mars/Olympus")).is_err());
+    }
+
+    fn err(expr: &str) -> String {
+        CronSchedule::parse(expr, None).expect_err(expr).to_string()
+    }
+
+    #[test]
+    fn every_adds_its_period_and_refuses_zero_or_garbage() {
+        assert_eq!(
+            next("@every 90s", "UTC", "2026-03-28T10:00:00Z").as_deref(),
+            Some("2026-03-28T10:01:30+00:00")
+        );
+        assert!(err("@every 0s").contains("greater than zero"));
+        assert!(CronSchedule::parse("@every soon", None).is_err());
+        // A period past the timestamp range has no next run.
+        let huge = CronSchedule::Every(Duration::from_secs(u64::MAX));
+        assert!(huge.next_after(Timestamp::UNIX_EPOCH).is_none());
+    }
+
+    #[test]
+    fn aliases_and_empty_or_utc_zones_run_in_utc() {
+        let from = "2026-03-28T10:30:00Z"; // a Saturday
+        for (expr, want) in [
+            ("@hourly", "2026-03-28T11:00:00+00:00"),
+            ("@daily", "2026-03-29T00:00:00+00:00"),
+            ("@midnight", "2026-03-29T00:00:00+00:00"),
+            ("@weekly", "2026-03-29T00:00:00+00:00"),
+            ("@monthly", "2026-04-01T00:00:00+00:00"),
+            ("@yearly", "2027-01-01T00:00:00+00:00"),
+            ("@annually", "2027-01-01T00:00:00+00:00"),
+        ] {
+            assert_eq!(next(expr, "", from).as_deref(), Some(want), "{expr}");
+            assert_eq!(next(expr, "utc", from).as_deref(), Some(want), "{expr}");
+        }
+    }
+
+    #[test]
+    fn fields_steps_ranges_and_names_pick_the_next_minute() {
+        let from = "2026-03-28T10:07:30Z"; // a Saturday
+        for (expr, want) in [
+            ("*/15 * * * *", "2026-03-28T10:15:00+00:00"),
+            ("5/20 * * * *", "2026-03-28T10:25:00+00:00"),
+            ("0,50 * * * *", "2026-03-28T10:50:00+00:00"),
+            ("0 0 * * MON-FRI", "2026-03-30T00:00:00+00:00"),
+            ("0 0 * * 7", "2026-03-29T00:00:00+00:00"),
+            ("0 0 * * sun", "2026-03-29T00:00:00+00:00"),
+            ("0 0 1 jan *", "2027-01-01T00:00:00+00:00"),
+            ("0 12 15 * *", "2026-04-15T12:00:00+00:00"),
+            ("30 9-17/4 * * *", "2026-03-28T13:30:00+00:00"),
+            // Day of month and day of week both restricted: either one fires.
+            ("0 0 13 * FRI", "2026-04-03T00:00:00+00:00"),
+        ] {
+            assert_eq!(next(expr, "UTC", from).as_deref(), Some(want), "{expr}");
+        }
+    }
+
+    #[test]
+    fn a_date_that_never_comes_has_no_next_run() {
+        assert_eq!(next("0 0 30 2 *", "UTC", "2026-03-28T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn malformed_fields_are_refused_with_the_reason() {
+        assert!(err("* * * *").contains("must have 5 fields"));
+        assert!(err("* * * * * *").contains("must have 5 fields"));
+        assert!(err("*/0 * * * *").contains("step cannot be 0"));
+        assert!(err("*/x * * * *").contains("invalid cron step 'x'"));
+        assert!(err("5-3 * * * *").contains("invalid cron range '5-3'"));
+        assert!(err("60 * * * *").contains("out of bounds (0..=59)"));
+        assert!(err("* 24 * * *").contains("out of bounds (0..=23)"));
+        assert!(err("* * 0 * *").contains("out of bounds (1..=31)"));
+        assert!(err("* * * 13 *").contains("out of bounds (1..=12)"));
+        assert!(err("* * * * 8").contains("out of bounds (0..=7)"));
+        assert!(err("x * * * *").contains("invalid cron value 'x'"));
+        assert!(err("1-x * * * *").contains("invalid cron value 'x'"));
+        assert!(err("x-1 * * * *").contains("invalid cron value 'x'"));
+        assert!(err("1, * * * *").contains("invalid cron value ''"));
+        assert!(err("* * * FOO *").contains("invalid cron value 'FOO'"));
     }
 }

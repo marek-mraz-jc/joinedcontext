@@ -81,3 +81,70 @@ pub static ORGANIZATIONS: Published<Organizations> = Published::new();
 /// ARCH/TEN-04): the gateway keeps each Organization's host to its own projects by it (T-7411).
 #[cfg(all(feature = "portal", feature = "gateway"))]
 pub static PROJECT_TENANTS: Published<BTreeMap<String, String>> = Published::new();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recorder() -> (Arc<Mutex<Vec<u32>>>, impl Fn(&u32) + Send + Sync + 'static) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let into = Arc::clone(&seen);
+        (seen, move |set: &u32| into.lock().unwrap().push(*set))
+    }
+
+    #[test]
+    fn a_follower_before_the_first_set_waits_and_a_late_one_gets_the_last_at_once() {
+        let published = Published::<u32>::new();
+        let (early, follow) = recorder();
+        published.follow("early", follow);
+        assert!(early.lock().unwrap().is_empty(), "nothing published yet");
+        #[cfg(feature = "portal")]
+        {
+            assert!(published.publish(1));
+            assert!(published.publish(2));
+            let (late, follow) = recorder();
+            published.follow("late", follow);
+            assert_eq!(*late.lock().unwrap(), vec![2], "the last set only, at once");
+            assert_eq!(*early.lock().unwrap(), vec![1, 2]);
+        }
+    }
+
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_set_equal_to_the_last_reaches_nobody() {
+        let published = Published::<u32>::new();
+        let (seen, follow) = recorder();
+        published.follow("m", follow);
+        assert!(published.publish(7));
+        assert!(!published.publish(7), "an equal set is not handed out");
+        assert!(published.publish(8));
+        assert_eq!(*seen.lock().unwrap(), vec![7, 8]);
+    }
+
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_module_built_again_replaces_its_follower() {
+        let published = Published::<u32>::new();
+        let (first, follow) = recorder();
+        published.follow("m", follow);
+        let (second, follow) = recorder();
+        published.follow("m", follow);
+        assert!(published.publish(3));
+        assert!(first.lock().unwrap().is_empty(), "the old follower is gone");
+        assert_eq!(*second.lock().unwrap(), vec![3]);
+    }
+
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_follower_that_panicked_leaves_the_set_usable() {
+        let published = Arc::new(Published::<u32>::new());
+        published.follow("bad", |set: &u32| assert_ne!(*set, 1, "refuses one"));
+        let inner = Arc::clone(&published);
+        let crashed = std::thread::spawn(move || inner.publish(1)).join();
+        assert!(crashed.is_err(), "the follower panicked under the lock");
+        let (seen, follow) = recorder();
+        published.follow("good", follow);
+        assert!(published.publish(2), "a poisoned lock is taken over");
+        assert_eq!(*seen.lock().unwrap(), vec![2]);
+    }
+}

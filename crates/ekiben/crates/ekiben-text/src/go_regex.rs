@@ -306,18 +306,23 @@ impl<'a> Parser<'a> {
                 }
             }
             let item_start = self.pos;
-            let lo = match self.class_char()? {
+            self.bump();
+            let lo = match self.class_char(c)? {
                 Ok(ch) => ch,
                 Err(set) => {
                     out.push_str(&set);
                     continue;
                 }
             };
-            let rest = self.rest();
-            if rest.starts_with('-') && !rest.starts_with("-]") && rest.len() > 1 {
+            let end = self
+                .rest()
+                .strip_prefix('-')
+                .filter(|r| !r.starts_with(']'));
+            if let Some(h) = end.and_then(|r| r.chars().next()) {
                 self.bump();
                 let hi_start = self.pos;
-                let hi = match self.class_char()? {
+                self.bump();
+                let hi = match self.class_char(h)? {
                     Ok(ch) => ch,
                     // Go reads a class escape (`\d`) as no range end at all
                     Err(_) => {
@@ -342,19 +347,17 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// One class member: a code point, or (as `Err`) a nested set already in Rust syntax.
-    fn class_char(&mut self) -> Result<Result<u32, String>, String> {
-        let Some(c) = self.bump() else {
-            return Err(err("missing closing ]", self.src));
-        };
+    /// One class member starting with `c` (already consumed): a code point, or (as `Err`) a
+    /// nested set already in Rust syntax.
+    fn class_char(&mut self, c: char) -> Result<Result<u32, String>, String> {
         if c != '\\' {
             return Ok(Ok(u32::from(c)));
         }
         Ok(match self.escape(true)? {
             Escape::Char(ch) => Ok(u32::from(ch)),
             Escape::Surrogate(point) => Ok(point),
-            Escape::Class(set) => Err(set),
-            Escape::Assert(a) | Escape::Quote(a) => Err(a),
+            // in a class `escape` answers no assertion or quote, which are Rust text all the same
+            Escape::Class(set) | Escape::Assert(set) | Escape::Quote(set) => Err(set),
         })
     }
 

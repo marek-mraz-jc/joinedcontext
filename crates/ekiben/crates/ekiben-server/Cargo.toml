@@ -43,14 +43,12 @@ axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_norway = { workspace = true }
-bytes = { workspace = true }
 jc-time = { workspace = true }
 jiff = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 subtle = { workspace = true }
-thiserror = { workspace = true }
 futures = { workspace = true }
 regex = { workspace = true }
 sha2 = { workspace = true }
