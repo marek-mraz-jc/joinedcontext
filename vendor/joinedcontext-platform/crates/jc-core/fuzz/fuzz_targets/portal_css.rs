@@ -23,7 +23,14 @@ fuzz_target!(|data: &[u8]| {
             .next_back()
             .is_some_and(|c| c.is_ascii_alphanumeric() || "-_\\#@".contains(c) || !c.is_ascii())
     };
-    for refused in ["@import", "@font-face", "@namespace", "expression(", "!important", ":has("] {
+    for refused in [
+        "@import",
+        "@font-face",
+        "@namespace",
+        "expression(",
+        "!important",
+        ":has(",
+    ] {
         for (at, _) in bare.match_indices(refused) {
             assert!(after_name(at), "{refused} in {out}");
         }
@@ -43,7 +50,10 @@ fuzz_target!(|data: &[u8]| {
     // A `url(` right after a name character is a dimension's unit and a parenthesis, which no
     // browser fetches; every function `url(` names a portal file.
     for (at, _) in bare.match_indices("url(") {
-        assert!(after_name(at) || lower[at..].starts_with("url(\"/files/"), "{out}");
+        assert!(
+            after_name(at) || lower[at..].starts_with("url(\"/files/"),
+            "{out}"
+        );
     }
     // What the check writes checks again, and a second rewrite changes nothing more (the first
     // may still respell a token, `2e` + `x` as `2\65 x`). Taking the prefixes off is exact only
