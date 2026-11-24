@@ -548,4 +548,103 @@ mod tests {
         let same = organization_drift(&rows[3..], &["zilina".to_owned()]);
         assert!(same.is_empty(), "{same:?}");
     }
+
+    /// A pool whose server refuses every connection.
+    fn unreachable() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool")
+    }
+
+    fn organization(mirror: &Mirror, name: &str) {
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Organization".to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec: serde_json::json!({ "domain": format!("{name}.example") }),
+            status: None,
+        });
+    }
+
+    fn pipeline(mirror: &Mirror, project: &str) {
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Pipeline".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("aq", project),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+    }
+
+    /// A registry the Portal cannot reach answers 503 with a retry hint and never a verdict:
+    /// no host is admitted or refused on a database error.
+    #[tokio::test]
+    async fn an_unreachable_registry_is_unavailable_never_a_verdict() {
+        let pool = unreachable();
+        let mirror = Mirror::new();
+        organization(&mirror, "smartcity");
+        let rules = Rules {
+            base_domain: "jcdev.example",
+            login_host: "idm.jcdev.example",
+            reserved: jc_core::names::RESERVED_LABELS,
+        };
+        let p = Proposal {
+            host: "maps.jcdev.example",
+            organization: "smartcity",
+            organization_id: None,
+            role: SIGN_IN_ROLE,
+            by: "ops",
+        };
+        for got in [
+            propose(&pool, &mirror, &rules, &p).await,
+            check_proposal(&pool, &mirror, &rules, &p).await,
+        ] {
+            assert!(
+                matches!(&got, Err(ApiError::Unavailable(m)) if m.contains("try again")),
+                "{got:?}"
+            );
+        }
+        assert!(rows(&pool).await.is_err());
+        assert!(remove(&pool, "maps.jcdev.example").await.is_err());
+    }
+
+    /// The drift and unplaced-pipeline reports read the database only when the mirror holds
+    /// something to compare: a loading Portal reports nothing, a reachable mirror with an
+    /// unreachable database is an error and not "no drift".
+    #[tokio::test]
+    async fn the_reports_read_the_database_only_when_the_mirror_holds_something() {
+        let pool = unreachable();
+        let mirror = Mirror::new();
+        assert!(matches!(report_drift(&pool, &mirror).await, Ok(None)));
+        assert!(report_unplaced_pipelines(&pool, &mirror).await.is_ok());
+        pipeline(&mirror, crate::permissions::ORG_NAMESPACE);
+        pipeline(
+            &mirror,
+            &format!("b-{}", jc_types::ProjectId::mint().path_segment()),
+        );
+        assert_eq!(
+            unplaced_pipelines(&pool, &mirror).await.ok(),
+            Some(Vec::new()),
+            "a branch and the organizations namespace are no projects of their own"
+        );
+        organization(&mirror, "smartcity");
+        assert!(report_drift(&pool, &mirror).await.is_err());
+        pipeline(&mirror, "zilina");
+        assert_eq!(
+            unplaced_pipelines(&pool, &mirror).await.ok(),
+            Some(vec![("zilina".to_owned(), 1)]),
+            "a project no manifest places has no key to look up"
+        );
+        assert!(report_unplaced_pipelines(&pool, &mirror).await.is_ok());
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Project".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("zilina", crate::permissions::ORG_NAMESPACE),
+            spec: serde_json::json!({ "organizationRef": "smartcity" }),
+            status: None,
+        });
+        assert!(unplaced_pipelines(&pool, &mirror).await.is_err());
+        assert!(report_unplaced_pipelines(&pool, &mirror).await.is_err());
+    }
 }

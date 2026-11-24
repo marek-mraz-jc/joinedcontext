@@ -360,6 +360,89 @@ mod tests {
         );
     }
 
+    async fn written_is_empty_soon(hub: &LiveHub) -> bool {
+        for _ in 0..200 {
+            if hub.written.lock().map(|w| w.is_empty()).unwrap_or(false) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// A subscription that could not be written leaves no renew time, so the next window
+    /// writes it again instead of waiting for RENEW_AFTER.
+    #[tokio::test]
+    async fn a_subscription_without_a_writer_is_tried_again_by_the_next_window() {
+        let hub = Arc::new(LiveHub::new("https://portal.example", None));
+        let _a = hub.watch("p", "bikes", "p-bikes", "Station");
+        assert!(written_is_empty_soon(&hub).await, "failed write forgotten");
+        let _b = hub.watch("p", "bikes", "p-bikes", "Station");
+        assert!(written_is_empty_soon(&hub).await);
+    }
+
+    /// A refused token writes nothing to the broker and is tried again by the next window.
+    #[tokio::test]
+    async fn a_refused_token_writes_no_subscription() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let writer = SubscriptionSync::new(
+            server.uri(),
+            &format!("{}/realms/jc", server.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+            "hel.fi",
+        );
+        let hub = Arc::new(LiveHub::new(
+            "https://portal.example",
+            Some(Arc::new(writer)),
+        ));
+        let _a = hub.watch("p", "bikes", "helsinki-bikes", "Station");
+        assert!(written_is_empty_soon(&hub).await, "refusal forgotten");
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert!(!requests.is_empty(), "the token was asked for");
+        assert!(
+            requests
+                .iter()
+                .all(|r| !r.url.path().contains("/subscriptions")),
+            "no subscription without a token"
+        );
+    }
+
+    fn poison<T>(lock: &Mutex<T>) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = lock.lock();
+            panic!("a window panicked holding the lock");
+        }));
+        assert!(lock.is_poisoned());
+    }
+
+    /// A window that panicked while holding one of the hub's locks does not take live updates
+    /// down for every other window: the hub reads through the poison.
+    #[tokio::test]
+    async fn the_hub_keeps_serving_after_a_panic_poisoned_its_locks() {
+        let hub = Arc::new(LiveHub::new("https://portal.example", None));
+        let old = hub.watch("p", "a", "a", "Station");
+        poison(&hub.channels);
+        poison(&hub.keys);
+        poison(&hub.written);
+        let mut rx = hub.watch("p", "b", "b", "Station");
+        assert!(hub.deliver(&hub.key("p", "b", "Station")));
+        assert_eq!(rx.recv().await.expect("a change").entity_type, "Station");
+        assert!(hub.deliver(&hub.key("p", "a", "Station")));
+        drop(old);
+        drop(rx);
+        let _c = hub.watch("p", "c", "c", "Station");
+        assert!(!hub.deliver(&hub.key("p", "a", "Station")), "pruned");
+        assert!(!hub.deliver(&hub.key("p", "b", "Station")), "pruned");
+        assert!(hub.deliver(&hub.key("p", "c", "Station")));
+    }
+
     /// F-POR4-021: a pair no window listens to any more is forgotten at the next watch.
     #[tokio::test]
     async fn a_pair_without_windows_is_forgotten() {
