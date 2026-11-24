@@ -1511,6 +1511,157 @@ async fn a_page_by_its_address_reads_its_index_and_keeps_to_the_project() {
     drop_database(admin, pool, &name).await;
 }
 
+/// T-7789: `chunk_endpoints` holds each passage's Endpoint addresses: filled for the passages
+/// stored before the migration, kept with the text by the trigger, readable only in its own
+/// project's scope as the app role, and the page lookups read it by index under row-level
+/// security. An internal page is never named to a public channel.
+#[tokio::test]
+async fn chunk_endpoints_are_filled_kept_with_the_text_and_keep_to_their_project() {
+    let (admin, pool, name) = database("endpoints").await;
+    MIGRATOR.undo(&pool, 26).await.expect("down to 0026");
+    let address =
+        "https://data.example/api/endpoint/bb-air/ngsi-ld/v1/entities?type=AirQualityObserved";
+    let before = site(
+        &pool,
+        "helsinki",
+        "hel-ckan",
+        &[(
+            &format!("# Ovzdušie\n\nDáta: {address}&q=isPartOf==\"x\" a /api/endpoint/bb-air/odata/v4/Station."),
+            "sk",
+            "public",
+            embedding(0, None),
+        )],
+    )
+    .await;
+    MIGRATOR.run(&pool).await.expect("up to 0027 and on");
+    sqlx::query("GRANT SELECT, INSERT, UPDATE, DELETE ON chunk_endpoints TO assistant_app")
+        .execute(&pool)
+        .await
+        .expect("grant the new table");
+    let rows = |pool: PgPool, project: &'static str| async move {
+        let mut tx = project_scope(&pool, project).await.expect("scope");
+        let rows: Vec<(i64, String, String, bool, String)> = sqlx::query_as(
+            "SELECT chunk_id, slug, kind, narrows, visibility FROM chunk_endpoints ORDER BY chunk_id, slug, kind",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .expect("rows");
+        tx.rollback().await.expect("rollback");
+        rows
+    };
+    let app = app_pool(&pool).await;
+    assert_eq!(
+        rows(app.clone(), "helsinki").await,
+        vec![
+            (
+                before[0],
+                "bb-air".into(),
+                "".into(),
+                false,
+                "public".into()
+            ),
+            (
+                before[0],
+                "bb-air".into(),
+                "AirQualityObserved".into(),
+                true,
+                "public".into()
+            ),
+            (
+                before[0],
+                "bb-air".into(),
+                "Station".into(),
+                false,
+                "public".into()
+            ),
+        ],
+        "the migration filled the passage stored before it"
+    );
+
+    // Stored after: by the trigger, as the app role inside its project's scope.
+    let staff = site(
+        &pool,
+        "helsinki",
+        "hel-intranet",
+        &[(
+            "Staff: /api/endpoint/hel-staff",
+            "en",
+            "internal",
+            embedding(1, None),
+        )],
+    )
+    .await;
+    let espoo = site(
+        &pool,
+        "espoo",
+        "esp-ckan",
+        &[(
+            "/api/endpoint/esp-air/odata/v4/AirQualityObserved",
+            "en",
+            "public",
+            embedding(2, None),
+        )],
+    )
+    .await;
+    let helsinki = rows(app.clone(), "helsinki").await;
+    assert!(helsinki.contains(&(
+        staff[0],
+        "hel-staff".into(),
+        "".into(),
+        false,
+        "internal".into()
+    )));
+    assert!(
+        helsinki.iter().all(|(chunk, ..)| *chunk != espoo[0]),
+        "another project's rows are not readable: {helsinki:?}"
+    );
+    assert_eq!(rows(app.clone(), "espoo").await.len(), 2);
+
+    // An internal page is named to an internal channel and never to a visitor.
+    let intranet = vec!["hel-intranet".to_owned()];
+    let mut tx = project_scope(&app, "helsinki").await.expect("scope");
+    let visitor = endpoint_page(&mut tx, "hel-staff", &intranet, true)
+        .await
+        .expect("lookup");
+    let staffer = endpoint_page(&mut tx, "hel-staff", &intranet, false)
+        .await
+        .expect("lookup");
+    // Three rows are read whole whatever the indexes: the planner is told to prefer an index.
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("no seq scan");
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT url FROM chunk_endpoints WHERE slug = 'bb-air' AND kind = ''",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .expect("plan");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(visitor, None);
+    assert_eq!(staffer, Some("https://hel-intranet.example/#0".to_owned()));
+    let plan = plan.join("\n");
+    assert!(
+        plan.contains("chunk_endpoints_lookup"),
+        "the lookup reads its index:\n{plan}"
+    );
+
+    // A rewritten passage keeps only what it names now.
+    let mut tx = project_scope(&app, "helsinki").await.expect("scope");
+    sqlx::query("UPDATE chunks SET text = 'Nothing here' WHERE id = $1")
+        .bind(before[0])
+        .execute(&mut *tx)
+        .await
+        .expect("new text");
+    tx.commit().await.expect("commit");
+    assert!(rows(app.clone(), "helsinki")
+        .await
+        .iter()
+        .all(|(chunk, ..)| *chunk != before[0]));
+    app.close().await;
+    drop_database(admin, pool, &name).await;
+}
+
 /// T-6547: the embedder's claim of chunks without a vector reads index `chunks_embedding_pending`
 /// as the app role under row-level security, never every chunk of every project (on dev 1.2 to
 /// 2.4 s a claim, 105 an hour), and still answers only the session's project's pending chunks.

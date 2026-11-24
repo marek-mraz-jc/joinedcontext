@@ -1142,48 +1142,8 @@ async fn a_data_question_is_answered_from_the_endpoints_live_values() {
     tx.rollback().await.expect("rollback");
     assert_eq!(tokens, 1330);
 
-    // T-4731: the same first question within LIVE_LIFE is answered from the cache at once, with
-    // no model call and no read: the table, the answer and its citations as they were sent.
+    // A follow-up reads the types kept by the first question (T-7789: no answer is kept).
     let calls_before = model_calls(&w.proxy).await.len();
-    let reads_before = tool_calls_of(&w.gateway, "query_entities").await.len();
-    let (_, again, _) = answer_of(
-        &w.app,
-        ask(
-            json!({"message": "aké je NO2 na námestí SNP"}),
-            Some(ORIGIN),
-        ),
-    )
-    .await;
-    assert_eq!(
-        again.last().map(|(_, d)| d["cached"].clone()),
-        Some(json!(true))
-    );
-    let names: Vec<&str> = again.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(
-        names,
-        // The read's step too, so the replayed answer can still be checked (T-4801).
-        [
-            "conversation",
-            "step",
-            "data",
-            "answer",
-            "citations",
-            "done"
-        ]
-    );
-    let first: Vec<&Value> = events
-        .iter()
-        .filter(|(n, _)| ["step", "data", "answer", "citations"].contains(&n.as_str()))
-        .map(|(_, d)| d)
-        .collect();
-    let replayed: Vec<&Value> = again[1..5].iter().map(|(_, d)| d).collect();
-    assert_eq!(replayed, first);
-    assert_eq!(model_calls(&w.proxy).await.len(), calls_before);
-    assert_eq!(
-        tool_calls_of(&w.gateway, "query_entities").await.len(),
-        reads_before
-    );
-    // A follow-up in the conversation is never answered from the cache.
     script_routed(&w.proxy, vec![
         completion(json!({"role": "assistant", "content": "{\"route\": \"data\", \"data\": [{\"endpoint\": \"ovzdusie\", \"type\": \"AirQualityObserved\"}]}"}), 400),
     ], vec![], vec![
@@ -3282,27 +3242,6 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     assert_eq!(done["cached"], false);
     assert!(done["firstTokenMs"].as_u64().is_some() && done["totalMs"].as_u64().is_some());
 
-    // The same first question, written otherwise, is answered from the cache.
-    let (_, again, _) = answer_of(
-        &w.app,
-        ask(json!({"message": "  dokedy je OTVORENÁ knižnica "}), None),
-    )
-    .await;
-    assert_eq!(
-        model_calls(&w.proxy).await.len(),
-        2,
-        "the cache made a model call"
-    );
-    let names: Vec<&str> = again.iter().map(|(n, _)| n.as_str()).collect();
-    // The follow-up chips are replayed too (T-4731).
-    assert_eq!(
-        names,
-        ["conversation", "answer", "citations", "followups", "done"]
-    );
-    assert_eq!(again[1].1["text"], answer);
-    assert_eq!(again[2].1, events[13].1);
-    assert_eq!(again[4].1["cached"], true);
-    without_internals(&again[4].1);
     // The skip is counted, so the eval shows how often the judgement is saved (T-4360).
     let mut tx = assistant::project_scope(&w.pool, "hronov")
         .await
@@ -3314,6 +3253,23 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
             .expect("timings");
     tx.rollback().await.expect("rollback");
     assert_eq!(skipped, [true]);
+
+    // T-7789: the same first question again is answered afresh: no answer is kept, so none is
+    // replayed to the next visitor, and the router is asked again.
+    let (_, again, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Dokedy je otvorená knižnica?"}), None),
+    )
+    .await;
+    assert!(model_calls(&w.proxy).await.len() > 2, "{again:?}");
+    assert_eq!(again[1].0, "stage", "{again:?}");
+    assert_eq!(again[1].1["stage"], "understanding");
+    assert!(
+        !again
+            .iter()
+            .any(|(n, d)| n == "answer" && d["text"] == answer),
+        "the first answer was replayed: {again:?}"
+    );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
@@ -3639,6 +3595,123 @@ async fn a_router_that_fails_searches_the_question_and_a_refusal_is_not_cached()
     assert!(
         again.iter().all(|(_, d)| d["cached"] != true),
         "a refusal was cached"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-7789: a silent gateway holds no question past one routing deadline. Its Endpoint never lists
+/// its tools in time and has no listing kept, so the question goes on without it after
+/// `ROUTING_DEADLINE`, and the reader is told "understanding" before anything is listed.
+#[tokio::test]
+async fn a_silent_gateway_holds_the_question_one_routing_deadline_at_most() {
+    let w = world("chatsilent", deployment(Channel::Public, 50_000, 10)).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/endpoint/{SLUG}/mcp")))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)))
+        .mount(&w.gateway)
+        .await;
+    script_routed(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica otváracie hodiny\"]}"}),
+            130,
+        )],
+        vec![],
+        vec![streamed(&["Knižnica je otvorená od 9.00 do 18.00 [1]."], 900, 40)],
+    )
+    .await;
+    let began = std::time::Instant::now();
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Dokedy je otvorená knižnica?"}), None),
+    )
+    .await;
+    let took = began.elapsed();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        (events[1].0.as_str(), &events[1].1["stage"]),
+        ("stage", &json!("understanding")),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|(n, _)| n == "answer"),
+        "answered without the Endpoint: {events:?}"
+    );
+    assert!(
+        took < assistant::chat::routed::ROUTING_DEADLINE + std::time::Duration::from_secs(4),
+        "the question waited {took:?} on a silent gateway"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-7789: 16 questions at once from 16 visitors, against a model that takes 200 ms a call, are
+/// each answered: none is refused with 503 (the service holds `MAX_QUESTIONS`), and 9 in 10 end
+/// within 10 s, the owner's budget for a whole answer.
+#[tokio::test]
+async fn sixteen_questions_at_once_are_answered_within_the_budget() {
+    let mut sources_only = deployment(Channel::Public, 50_000, 10);
+    sources_only.spec.connectors.clear();
+    let w = world("chatload", sources_only).await;
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
+    let pause = std::time::Duration::from_millis(200);
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .and(body_string_contains(ROUTER))
+        .respond_with(
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica otváracie hodiny\"]}"}),
+                130,
+            )
+            .set_delay(pause),
+        )
+        .with_priority(1)
+        .mount(&w.proxy)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .respond_with(
+            streamed(&["Knižnica je otvorená od 9.00 do 18.00 [1]."], 900, 40).set_delay(pause),
+        )
+        .with_priority(2)
+        .mount(&w.proxy)
+        .await;
+    const QUESTIONS: usize = 16;
+    let asked = (0..QUESTIONS).map(|i| {
+        let app = w.app.clone();
+        async move {
+            let began = std::time::Instant::now();
+            let (status, events, _) = answer_of(
+                &app,
+                ask_from(
+                    json!({"message": "Dokedy je otvorená knižnica?"}),
+                    None,
+                    &format!("203.0.113.{}", 100 + i),
+                ),
+            )
+            .await;
+            (status, events, began.elapsed())
+        }
+    });
+    let mut took = Vec::new();
+    for (status, events, elapsed) in futures_util::future::join_all(asked).await {
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !events
+                .iter()
+                .any(|(n, d)| n == "error" && d["status"] == 503),
+            "a question was refused: {events:?}"
+        );
+        assert!(
+            events.iter().any(|(n, _)| n == "answer"),
+            "unanswered: {events:?}"
+        );
+        took.push(elapsed);
+    }
+    took.sort_unstable();
+    let p90 = took[(QUESTIONS * 9).div_ceil(10) - 1];
+    assert!(
+        p90 < std::time::Duration::from_secs(10),
+        "p90 {p90:?}, all {took:?}"
     );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }

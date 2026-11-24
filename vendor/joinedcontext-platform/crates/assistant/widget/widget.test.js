@@ -441,7 +441,8 @@ test("an answer streams, shows its reads, table, chart, script and sources, then
   chat.ask("  Aký je vzduch?  ");
   assert.equal(chat.$(".jc-submit").hidden, true);
   assert.equal(chat.$(".jc-stop").hidden, false);
-  assert.equal(text(chat.$(".jc-now")), "Hľadám…");
+  // T-7789: before any event the line reads as the first stage will
+  assert.equal(text(chat.$(".jc-now")), "Rozmýšľam nad otázkou…");
   await flush(12);
   const sent = JSON.parse(chat.chats()[0].init.body);
   assert.equal(sent.message, "Aký je vzduch?");

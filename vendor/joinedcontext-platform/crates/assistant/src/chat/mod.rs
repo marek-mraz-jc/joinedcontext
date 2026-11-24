@@ -760,7 +760,8 @@ async fn record(
     )
     .bind(&deployment.project)
     .bind(&deployment.name)
-    .bind(spent.cached)
+    // No answer is kept since T-7789; the column keeps the earlier turns' history.
+    .bind(false)
     .bind(i32::try_from(spent.calls).unwrap_or(i32::MAX))
     .bind(ms(spent.first_token_ms))
     .bind(ms(Some(total_ms)))
@@ -820,14 +821,25 @@ pub fn over_cost_cap(spent_micros: u64, cap_usd: f64) -> bool {
 /// Whether a [`warm_types`] runs, so a slow minute never stacks a second one on it.
 static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Clears [`WARMING`] when a warm-up ends, a panicking one included, so the next one runs.
+struct Warming;
+
+impl Drop for Warming {
+    fn drop(&mut self) {
+        WARMING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// Warms routing's type lists for every deployment's connectors that anyone may read, ahead of
 /// the first question (T-4611). Called after each read of the manifests; a run still going when
-/// the next one is due is left to finish.
+/// the next one is due is left to finish. The connectors are listed first and the sources'
+/// languages read after, so a slow language count never holds a listing (T-7789).
 pub async fn warm_types(state: Arc<ChatState>) {
     use std::sync::atomic::Ordering;
     if WARMING.swap(true, Ordering::AcqRel) {
         return;
     }
+    let _warming = Warming;
     let snapshot = state
         .snapshot
         .read()
@@ -835,7 +847,20 @@ pub async fn warm_types(state: Arc<ChatState>) {
         .unwrap_or_default();
     let mut connectors = Vec::new();
     for deployment in &snapshot.deployments {
-        // The sources' languages too, so no question waits on them (T-7765).
+        // No person: only what a visitor may read is listed, with no token.
+        let mut failed = Vec::new();
+        for connector in connected(&state, deployment, None, None, &mut failed, None).await {
+            if !connectors
+                .iter()
+                .any(|c: &Connected| c.surface.slug == connector.surface.slug)
+            {
+                connectors.push(connector);
+            }
+        }
+    }
+    routed::warm(&state.answers, &state.http, &connectors).await;
+    // The sources' languages too, so no question waits on them (T-7765).
+    for deployment in &snapshot.deployments {
         if deployment.spec.routes() != Routes::Data {
             routed::warm_languages(
                 &state.answers,
@@ -846,19 +871,7 @@ pub async fn warm_types(state: Arc<ChatState>) {
             )
             .await;
         }
-        // No person: only what a visitor may read is listed, with no token.
-        let mut failed = Vec::new();
-        for connector in connected(&state, deployment, None, None, &mut failed).await {
-            if !connectors
-                .iter()
-                .any(|c: &Connected| c.surface.slug == connector.surface.slug)
-            {
-                connectors.push(connector);
-            }
-        }
     }
-    routed::warm(&state.answers, &state.http, &connectors).await;
-    WARMING.store(false, Ordering::Release);
 }
 
 /// The name a connector gives a resolved Endpoint: `{project}/{endpoint}` for a project of
@@ -892,13 +905,16 @@ fn reached(state: &ChatState, deployment: &Deployment) -> Vec<String> {
 /// asker may reach, with their tools: a public Endpoint without a token; on an `internal`
 /// deployment, any other Endpoint with the person's token, when there is one (AG-106, AG-115).
 /// One that joined by the selector or the server is offered every read tool. One whose tools
-/// cannot be listed is reported and left out (AG-104).
+/// cannot be listed is reported and left out (AG-104). Past `deadline` a public Endpoint is
+/// listed by its last listing however old, and one with none, or read with a token, is left out
+/// as one that failed (T-7789); warming passes none and waits as long as each connector allows.
 async fn connected(
     state: &ChatState,
     deployment: &Deployment,
     chosen: Option<&[String]>,
     person: Option<&PersonToken>,
     failed: &mut Vec<Event>,
+    deadline: Option<tokio::time::Instant>,
 ) -> Vec<Connected> {
     let Ok(snapshot) = state.snapshot.read().map(|s| s.clone()) else {
         return Vec::new();
@@ -964,12 +980,24 @@ async fn connected(
     let listings: Vec<_> = reachable
         .iter()
         .map(|(connector, _, _, _, surface)| async move {
-            match mcp::reads_any(&connector.tools) {
-                true => routed::listing(&state.answers, &state.http, surface)
-                    .await
-                    .map(|listed| mcp::picked(&listed, &connector.tools)),
-                false => Ok(Vec::new()),
+            if !mcp::reads_any(&connector.tools) {
+                return Ok(Vec::new());
             }
+            let listing = routed::listing(&state.answers, &state.http, surface);
+            let listed = match deadline {
+                None => listing.await,
+                // A kept listing answers on the first poll, before the deadline is looked at.
+                Some(at) => match tokio::time::timeout_at(at, listing).await {
+                    Ok(listed) => listed,
+                    Err(_) => surface
+                        .token
+                        .is_none()
+                        .then(|| state.answers.listing_within(&surface.slug, Duration::MAX))
+                        .flatten()
+                        .ok_or_else(|| "the Endpoint did not list its tools in time".to_owned()),
+                },
+            };
+            listed.map(|listed| mcp::picked(&listed, &connector.tools))
         })
         .collect();
     let listed: Vec<_> = futures_util::stream::iter(listings)
@@ -1303,7 +1331,8 @@ fn done(spent: &Spent, total_ms: u64, anonymous: bool) -> serde_json::Value {
         return json!({
             "firstTokenMs": spent.first_token_ms,
             "totalMs": total_ms,
-            "cached": spent.cached,
+            // API/05 names it; no answer is kept since T-7789.
+            "cached": false,
             "stagesMs": spent.stages.json(),
         });
     }
@@ -1314,7 +1343,8 @@ fn done(spent: &Spent, total_ms: u64, anonymous: bool) -> serde_json::Value {
         "modelCalls": spent.calls,
         "firstTokenMs": spent.first_token_ms,
         "totalMs": total_ms,
-        "cached": spent.cached,
+        // API/05 names it; no answer is kept since T-7789.
+        "cached": false,
         "stagesMs": spent.stages.json(),
         "judgeSkipped": spent.stages.judge_skipped,
         "providers": spent.providers.json(),
@@ -2181,6 +2211,17 @@ async fn ask(
             "question asked"
         );
         let trace = trace::Trace::new(logged_question);
+        // The first event, before any listing or model call (T-7789): the reader sees "Reading
+        // your question" at once, then the stages in the order they run.
+        let reading = Event::Stage {
+            stage: "understanding",
+            topic: None,
+            detail: agent::Detail::default(),
+        };
+        if let Some(turn) = &held {
+            turn.push(&reading);
+        }
+        let _ = tx.send(reading).await;
         let mut failed = Vec::new();
         // `answer.routes` narrows what the answer may use (T-4281): `rag` connects nothing,
         // `data` searches nothing.
@@ -2188,14 +2229,22 @@ async fn ask(
         let connectors = if routes == Routes::Rag {
             Vec::new()
         } else {
-            connected(
+            // One deadline for every listing (T-7789): past it a connector is named by its last
+            // listing however old, so a slow or silent gateway never holds the question.
+            let began = Instant::now();
+            let deadline = tokio::time::Instant::now() + routed::ROUTING_DEADLINE;
+            let listed = connected(
                 &state,
                 &deployment,
                 question.connectors.as_deref(),
                 person.as_ref(),
                 &mut failed,
+                Some(deadline),
             )
-            .await
+            .await;
+            let output = format!("{} connectors offered", listed.len());
+            trace.note("tool", "connected", began, None, Some(&output));
+            listed
         };
         let sources = if routes == Routes::Data {
             Vec::new()
@@ -2377,7 +2426,6 @@ async fn ask(
             model_calls = spent.calls,
             first_token_ms = spent.first_token_ms,
             total_ms,
-            cached = spent.cached,
             "question answered"
         );
         if let Err(err) = record(&state.pool, &deployment, &conversation_id, &spent, total_ms).await
