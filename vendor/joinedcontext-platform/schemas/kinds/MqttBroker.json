@@ -1,0 +1,583 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "MqttAddress": {
+      "description": "How a broker is addressed from outside (ADR-N-048 §2.11).",
+      "oneOf": [
+        {
+          "description": "`<name>.<project>.mqtt.<domain>` on 8883.",
+          "enum": [
+            "platform"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A port of the allowance's `ports`.",
+          "enum": [
+            "dedicatedPort"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A name of the allowance's `customHostnames`, one the city owns, on 8883.",
+          "enum": [
+            "customHostname"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttBrokerSpec": {
+      "additionalProperties": false,
+      "description": "One MQTT edge broker (MF-54).",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MqttAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the broker is reached from outside; absent is `dedicatedPort` when `port` is set, else `platform` (ADR-N-048 §2.11)."
+        },
+        "allowedSources": {
+          "description": "The networks devices may connect from, in CIDR notation, at most 32; empty admits any address (PF-129). The edge and the gateway both hold a device to it.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "capture": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MqttCapture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much a `capture` broker keeps; read only in that mode."
+        },
+        "deviceAuth": {
+          "description": "How devices may authenticate, a non-empty subset of `token` and `clientCertificate`; absent is `[token]` (ADR-N-048 §2.12).",
+          "items": {
+            "$ref": "#/definitions/MqttDeviceAuth"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "hostname": {
+          "description": "One of the allowance's `customHostnames`, e.g. `mqtt.city.example`; required with `address: customHostname` and read only there.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limits": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MqttLimits"
+            }
+          ],
+          "default": {
+            "maxConnections": 1000,
+            "maxMessageBytes": 65536,
+            "messagesPerSecond": 10
+          },
+          "description": "Per-client and per-broker limits, each within the platform ceiling."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MqttMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the broker does with a message; absent is `ingest` (ADR-N-048 §2.10)."
+        },
+        "port": {
+          "description": "A dedicated port from 18830–18849 instead of TLS by SNI on 8883; required with `address: dedicatedPort` and read only there.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "roles": {
+          "description": "Who may connect and to which topics; at least one role.",
+          "items": {
+            "$ref": "#/definitions/MqttRole"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roles"
+      ],
+      "type": "object"
+    },
+    "MqttCapture": {
+      "additionalProperties": false,
+      "description": "`spec.capture` of a `capture` broker.",
+      "properties": {
+        "messagesPerTopic": {
+          "default": 20,
+          "description": "Messages kept per topic, newest first.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "window": {
+          "default": "PT1H",
+          "description": "How long a message is kept from its arrival, an ISO 8601 duration `PT…`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MqttDeviceAuth": {
+      "description": "How a device proves who it is when it connects (ADR-N-048 §2.12).",
+      "oneOf": [
+        {
+          "description": "A Keycloak access token of a ServiceAccount as the CONNECT password.",
+          "enum": [
+            "token"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A client certificate the project's client CA signed, its common name the ServiceAccount.",
+          "enum": [
+            "clientCertificate"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttLimits": {
+      "additionalProperties": false,
+      "description": "The broker's limits (MF-54).",
+      "properties": {
+        "connectionsPerAddress": {
+          "description": "Connections one source address may hold at once at the edge, in `1..=maxConnections`; absent means [`CONNECTIONS_PER_ADDRESS`] or `maxConnections` when lower (T-5888).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxConnections": {
+          "default": 1000,
+          "description": "Connections the broker holds at once.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "maxMessageBytes": {
+          "default": 65536,
+          "description": "The largest message, in bytes.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "messagesPerSecond": {
+          "default": 10,
+          "description": "Messages one client may publish per second.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "MqttMode": {
+      "description": "What a broker does with a message (ADR-N-048 §2.10).",
+      "oneOf": [
+        {
+          "description": "Devices publish and nothing else; the project's pipelines are the only subscribers.",
+          "enum": [
+            "ingest"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`ingest`, and the Portal keeps the newest messages for the project's stewards.",
+          "enum": [
+            "capture"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Devices may also subscribe, each under its own `${clientid}`.",
+          "enum": [
+            "relay"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttRole": {
+      "additionalProperties": false,
+      "description": "A role: the topic filters it grants. Who holds it is a ServiceAccount RoleBinding `mqtt/<broker>/<role>` (ADR-N-048 §2.13, [`crate::mqtt::roles_held`]).",
+      "properties": {
+        "name": {
+          "description": "A DNS label, unique among the broker's roles.",
+          "type": "string"
+        },
+        "publish": {
+          "description": "Topic filters the role may publish to; `${clientid}` is the connecting client.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why the role's devices share their topics; required with `sharedTopics`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serviceAccounts": {
+          "description": "Deprecated (T-5872): ServiceAccounts of the broker's own project, by name. Still read for one release beside the bindings; `jcctl migrate` moves them to `mqtt/<broker>/<role>` bindings on each account.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sharedTopics": {
+          "description": "The role's devices share their `publish` topics, so each may publish as any other; without it every `publish` filter holds `${clientid}` before any wildcard (T-5561).",
+          "type": "boolean"
+        },
+        "subscribe": {
+          "description": "Topic filters the role may subscribe to, each under the client's own `${clientid}`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/MqttBrokerSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_MqttBrokerSpec",
+  "type": "object"
+}

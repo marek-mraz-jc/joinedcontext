@@ -1,0 +1,1284 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AttributeCapabilities": {
+      "additionalProperties": false,
+      "description": "One attribute's capabilities in a grant (ADR-N-066, DM-147). A field left unset takes the `*` entry's field, then the grant's own behaviour without the block.",
+      "properties": {
+        "history": {
+          "description": "Whether its history is readable; `true` needs `queryTemporal` or `retrieveTemporal`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "metadata": {
+          "description": "The metadata members passed for this attribute, e.g. `[observedAt, unitCode]`.",
+          "items": {
+            "$ref": "#/definitions/MetadataMember"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "read": {
+          "description": "Whether the current value is readable, e.g. `false` to keep an attribute for history only.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "versions": {
+          "description": "Version capabilities: `read` needs the action `readVersions`, `keep` a write operation.",
+          "items": {
+            "$ref": "#/definitions/VersionsCapability"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "write": {
+          "description": "The write kinds allowed on this attribute, e.g. `[update]`; needs a write operation.",
+          "items": {
+            "$ref": "#/definitions/WriteCapability"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "EntitySelector": {
+      "additionalProperties": false,
+      "description": "Entity type and id/pattern selector within a policy grant (R6).",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Urn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Explicit target entity URN."
+        },
+        "idPattern": {
+          "description": "Anchored regular expression matching target entity URNs (R24, R33).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "Target entity type short name in PascalCase.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "MetadataMember": {
+      "description": "A metadata member a grant may pass for an attribute (ADR-N-066 2.4, DM-139).",
+      "oneOf": [
+        {
+          "description": "When the value was observed.",
+          "enum": [
+            "observedAt"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The value's unit.",
+          "enum": [
+            "unitCode"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "When the attribute was created.",
+          "enum": [
+            "createdAt"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "When the attribute was last changed.",
+          "enum": [
+            "modifiedAt"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The organization of the last change.",
+          "enum": [
+            "modifiedBy.organization"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Whether a person, a pipeline or a client made the last change.",
+          "enum": [
+            "modifiedBy.actorKind"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Who made the last change: a person's `sub` or a client id; never public (DM-140).",
+          "enum": [
+            "modifiedBy.actor"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Every provenance member of a version; never public (DM-140).",
+          "enum": [
+            "provenance"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The reason typed with a change, which can name a person (DM-151).",
+          "enum": [
+            "reason"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Operation": {
+      "description": "Table 4.20-1: every named distributed API operation in ETSI GS CIM 009 (R8).\n\nClosed enum ensures no proprietary verbs (`upsertEntity`, `read`, `write`) are accepted, satisfying the strict R8 CIM 009 vocabulary guarantee.",
+      "oneOf": [
+        {
+          "description": "Create entity (`POST /entities`).",
+          "enum": [
+            "createEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update entity (`PATCH /entities/{id}`).",
+          "enum": [
+            "updateEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Append entity attributes (`POST /entities/{id}/attrs`).",
+          "enum": [
+            "appendAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update entity attributes (`PATCH /entities/{id}/attrs`).",
+          "enum": [
+            "updateAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete entity attributes (`DELETE /entities/{id}/attrs/{attr}`).",
+          "enum": [
+            "deleteAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete entity (`DELETE /entities/{id}`).",
+          "enum": [
+            "deleteEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch create entities (`POST /entityOperations/create`).",
+          "enum": [
+            "createBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch upsert entities (`POST /entityOperations/upsert`).",
+          "enum": [
+            "upsertBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch update entities (`POST /entityOperations/update`).",
+          "enum": [
+            "updateBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch delete entities (`POST /entityOperations/delete`).",
+          "enum": [
+            "deleteBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Upsert temporal entity attributes (`POST /temporal/entities/{id}/attrs`).",
+          "enum": [
+            "upsertTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Append temporal entity attributes (`POST /temporal/entities/{id}/attrs`).",
+          "enum": [
+            "appendAttrsTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal entity attributes (`DELETE /temporal/entities/{id}/attrs/{attr}`).",
+          "enum": [
+            "deleteAttrsTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update temporal attribute instance (`PATCH /temporal/entities/{id}/attrs/{attr}/{instance}`).",
+          "enum": [
+            "updateAttrInstanceTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal attribute instance (`DELETE /temporal/entities/{id}/attrs/{attr}/{instance}`).",
+          "enum": [
+            "deleteAttrInstanceTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal entity (`DELETE /temporal/entities/{id}`).",
+          "enum": [
+            "deleteTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Merge entity (`PATCH /entities/{id}`).",
+          "enum": [
+            "mergeEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Replace entity (`PUT /entities/{id}`).",
+          "enum": [
+            "replaceEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Replace entity attributes (`PATCH /entities/{id}/attrs`).",
+          "enum": [
+            "replaceAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch merge entities (`POST /entityOperations/merge`).",
+          "enum": [
+            "mergeBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Purge entity permanently (`DELETE /entities/{id}?purge=true`).",
+          "enum": [
+            "purgeEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve single entity (`GET /entities/{id}`).",
+          "enum": [
+            "retrieveEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query entities (`GET /entities` or `POST /entityOperations/query`).",
+          "enum": [
+            "queryEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch query entities (`POST /entityOperations/query`).",
+          "enum": [
+            "queryBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve temporal entity (`GET /temporal/entities/{id}`).",
+          "enum": [
+            "retrieveTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query temporal entities (`GET /temporal/entities`).",
+          "enum": [
+            "queryTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve entity types list (`GET /types`).",
+          "enum": [
+            "retrieveEntityTypes"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve details of the available entity types (`GET /types?details=true`).",
+          "enum": [
+            "retrieveEntityTypeDetails"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve one entity type's information (`GET /types/{type}`).",
+          "enum": [
+            "retrieveEntityTypeInfo"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve attribute types list (`GET /attributes`).",
+          "enum": [
+            "retrieveAttrTypes"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve details of the available attributes (`GET /attributes?details=true`).",
+          "enum": [
+            "retrieveAttrTypeDetails"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve one attribute's information (`GET /attributes/{attr}`).",
+          "enum": [
+            "retrieveAttrTypeInfo"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create context subscription (`POST /subscriptions`).",
+          "enum": [
+            "createSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update context subscription (`PATCH /subscriptions/{id}`).",
+          "enum": [
+            "updateSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context subscription (`GET /subscriptions/{id}`).",
+          "enum": [
+            "retrieveSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query context subscriptions (`GET /subscriptions`).",
+          "enum": [
+            "querySubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete context subscription (`DELETE /subscriptions/{id}`).",
+          "enum": [
+            "deleteSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context entity map (`GET /entityMaps/{id}`).",
+          "enum": [
+            "retrieveEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update context entity map (`PATCH /entityMaps/{id}`).",
+          "enum": [
+            "updateEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete context entity map (`DELETE /entityMaps/{id}`).",
+          "enum": [
+            "deleteEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create entity map query on entities.",
+          "enum": [
+            "createEntityMapQueryEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create entity map query on temporal entities.",
+          "enum": [
+            "createEntityMapQueryTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context source identity (`GET /csourceIdentity`).",
+          "enum": [
+            "retrieveContextSourceIdentity"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "OperationGroup": {
+      "description": "Table 4.20-2: the five distributed operation group names (R8).",
+      "oneOf": [
+        {
+          "description": "Consumption, subscription, and entity map operations.",
+          "enum": [
+            "federationOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Association operations without entity map support.",
+          "enum": [
+            "associationOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Entity and attribute update operations.",
+          "enum": [
+            "updateOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve and query entity operations.",
+          "enum": [
+            "retrieveOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Full redirection operations.",
+          "enum": [
+            "redirectionOps"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "OperationRef": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Operation"
+            }
+          ],
+          "description": "Individual named operation from CIM 009 Table 4.20-1."
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OperationGroup"
+            }
+          ],
+          "description": "Operation group from CIM 009 Table 4.20-2."
+        }
+      ],
+      "description": "Reference to a CIM 009 operation or operation group (R8).\n\nClosed enum ensures no proprietary verbs (`read`, `write`, `upsertEntity`) are permitted, satisfying the strict R8 CIM 009 vocabulary guarantee."
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PlatformAction": {
+      "description": "What a Policy grants beyond CIM 009's operations (ADR-N-054 2.4, 2.6; T-4666).",
+      "oneOf": [
+        {
+          "description": "`versions=all` on a temporal query (DM-114).",
+          "enum": [
+            "readVersions"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The data subject's rights on the space: export, rectification, erasure (DM-124..DM-126).",
+          "enum": [
+            "personalData"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Keep a copy of what the grant reads in the grantee's own space: a Pipeline of another project copies this space only when a Policy names its account with `store` (SHR-03). It grants no read; the copy holds what the grant's own operations and attributes show.",
+          "enum": [
+            "store"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PolicyEffect": {
+      "description": "Whether a policy grants access or takes it away (GW4, GW8).\n\nA prohibition subtracts from a grant that stays in force. It is not how a resource is kept private in the first place: the default verdict is already DENY (GW5), so a type nobody was granted is closed without any policy naming it.",
+      "oneOf": [
+        {
+          "description": "The policy grants the operations it lists (the default).",
+          "enum": [
+            "permission"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The policy denies them, and is evaluated before any permission (GW4).",
+          "enum": [
+            "prohibition"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PolicyRule": {
+      "additionalProperties": false,
+      "description": "One rule of a Policy's `rules[]` (ADR-N-057 decision 1): the single-rule members of [`PolicySpec`], while `assigner`, `contextSpaceRef` and `validity` stay on the Policy.",
+      "properties": {
+        "actions": {
+          "description": "Granted platform actions (ADR-N-054).",
+          "items": {
+            "$ref": "#/definitions/PlatformAction"
+          },
+          "type": "array"
+        },
+        "assignee": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Principal"
+            }
+          ],
+          "description": "Grantee principal of this rule."
+        },
+        "effect": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PolicyEffect"
+            }
+          ],
+          "description": "Whether this rule grants or takes away (GW4, GW8)."
+        },
+        "geoQ": {
+          "description": "Residual geographic query filter string (R7, GW11, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "information": {
+          "description": "Target entity types and attribute whitelist (R6, R9).",
+          "items": {
+            "$ref": "#/definitions/RegistrationInfo"
+          },
+          "type": "array"
+        },
+        "operations": {
+          "description": "Granted CIM 009 operations or operation groups (R8).",
+          "items": {
+            "$ref": "#/definitions/OperationRef"
+          },
+          "type": "array"
+        },
+        "q": {
+          "description": "Residual NGSI-LD query filter string (R7, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopeQ": {
+          "description": "Residual scope query filter string (R7, R13, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "temporalQ": {
+          "description": "Residual temporal query filter string (R7, GW11, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "assignee"
+      ],
+      "type": "object"
+    },
+    "PolicySpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of a [`Policy`][crate::kinds::Policy] resource (ADR 002, R1..R9).",
+      "properties": {
+        "actions": {
+          "description": "Granted platform actions CIM 009 has no operation for (ADR-N-054, T-4666).",
+          "items": {
+            "$ref": "#/definitions/PlatformAction"
+          },
+          "type": "array"
+        },
+        "assignee": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Principal"
+            }
+          ],
+          "description": "Grantee principal receiving permissions; unset when the Policy lists `rules`."
+        },
+        "assigner": {
+          "description": "Granting data owner (e.g. `did:web:banskabystrica.sk`).",
+          "type": "string"
+        },
+        "contextSpaceRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            }
+          ],
+          "description": "Reference to the target ContextSpace."
+        },
+        "effect": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PolicyEffect"
+            }
+          ],
+          "description": "Whether this policy grants or takes away (GW4, GW8)."
+        },
+        "geoQ": {
+          "description": "Residual geographic query filter string (R7, GW11, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "information": {
+          "description": "Target entity types and attribute whitelist (R6, R9).",
+          "items": {
+            "$ref": "#/definitions/RegistrationInfo"
+          },
+          "type": "array"
+        },
+        "operations": {
+          "description": "Granted CIM 009 operations or operation groups (R8); empty when the Policy grants `actions` alone.",
+          "items": {
+            "$ref": "#/definitions/OperationRef"
+          },
+          "type": "array"
+        },
+        "q": {
+          "description": "Residual NGSI-LD query filter string (R7, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rules": {
+          "description": "Several grants and prohibitions in one Policy (ADR-N-057 decision 1), instead of the single rule above; [`PolicySpec::expand`] turns either shape into one grant per rule.",
+          "items": {
+            "$ref": "#/definitions/PolicyRule"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "scopeQ": {
+          "description": "Residual scope query filter string (R7, R13, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "temporalQ": {
+          "description": "Residual temporal query filter string (R7, GW11, EP-56).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "validity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Validity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional time validity window for this policy."
+        }
+      },
+      "required": [
+        "assigner",
+        "contextSpaceRef"
+      ],
+      "type": "object"
+    },
+    "Principal": {
+      "additionalProperties": false,
+      "description": "Identity principal receiving a policy grant (ADR 002).",
+      "properties": {
+        "id": {
+          "description": "Identifier of the principal (username, role name, group name, DID). An `organization` assignee has none: it is always the Policy's own Organization (ADR-N-067 2.3).",
+          "type": "string"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PrincipalKind"
+            }
+          ],
+          "description": "Category of principal."
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PrincipalKind": {
+      "description": "Principal category for authorization rules.",
+      "oneOf": [
+        {
+          "description": "Individual human user identity: their Keycloak user id (the token's `sub`), or a client's own `service-account-<client>` user (PF-126).",
+          "enum": [
+            "user"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Group of users.",
+          "enum": [
+            "group"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Platform role.",
+          "enum": [
+            "role"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Non-human service account.",
+          "enum": [
+            "serviceAccount"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Decentralized identifier (`did:web:...`).",
+          "enum": [
+            "did"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Every member of the Policy's own Organization, the one its project belongs to: the verified token's `jc_org` names it (ADR-N-067 2.3). It carries no id, so a manifest cannot name another Organization.",
+          "enum": [
+            "organization"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Ref": {
+      "anyOf": [
+        {
+          "description": "Bare string resource name.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            }
+          ],
+          "description": "Typed reference with kind, name, and optional namespace."
+        }
+      ],
+      "description": "Reference to another resource, either bare name or typed reference (MF-07)."
+    },
+    "RegistrationInfo": {
+      "additionalProperties": false,
+      "description": "Specification of target entity types, properties, and relationships (R6).",
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/definitions/AttributeCapabilities"
+          },
+          "description": "What the grant lets a caller do with each attribute, keyed by attribute name or `*` (ADR-N-066, DM-147). It only narrows what the operations and actions grant.",
+          "type": "object"
+        },
+        "entities": {
+          "description": "Target entity selectors.",
+          "items": {
+            "$ref": "#/definitions/EntitySelector"
+          },
+          "type": "array"
+        },
+        "propertyNames": {
+          "description": "Whitelist of readable or writable property names (R6, R9).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "relationshipNames": {
+          "description": "Whitelist of readable or writable relationship names (R6, R9).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entities"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "TypedRef": {
+      "additionalProperties": false,
+      "description": "Structured typed resource reference (MF-07).",
+      "properties": {
+        "kind": {
+          "description": "Target resource kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Target resource name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target resource namespace (defaults to caller namespace if omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Urn": {
+      "description": "NGSI-LD entity URN (ADR-N-041, PF-43): urn:ngsi-ld:{Type}:{id}; the prefixed shape urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId} is optional",
+      "pattern": "^urn:ngsi-ld:[A-Z][A-Za-z0-9]{1,63}:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2}){0,255}$",
+      "type": "string"
+    },
+    "Validity": {
+      "additionalProperties": false,
+      "description": "Temporal validity window for a policy grant.",
+      "properties": {
+        "from": {
+          "description": "Effective start timestamp (UTC).",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "description": "Effective expiration timestamp (UTC).",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VersionsCapability": {
+      "description": "What a grant may do with an attribute's versions (ADR-N-066 2.3).",
+      "oneOf": [
+        {
+          "description": "Read the version chain (`versions=all`).",
+          "enum": [
+            "read"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Keep every allowed write of the attribute as a version, whatever the client sends.",
+          "enum": [
+            "keep"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "WriteCapability": {
+      "description": "A write kind a grant may allow on an attribute (ADR-N-066 2.1).",
+      "oneOf": [
+        {
+          "description": "Change the attribute's value.",
+          "enum": [
+            "update"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Add the attribute or an instance of it.",
+          "enum": [
+            "append"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete the attribute or an instance of it.",
+          "enum": [
+            "delete"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PolicySpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_PolicySpec",
+  "type": "object"
+}
