@@ -874,7 +874,14 @@ mod tests {
     #[test]
     fn the_indexed_languages_map_to_their_two_letter_codes_and_no_other() {
         use super::iso639_1;
-        for (three, two) in [("slk", "sk"), ("ces", "cs"), ("fin", "fi"), ("eng", "en"), ("deu", "de"), ("swe", "sv")] {
+        for (three, two) in [
+            ("slk", "sk"),
+            ("ces", "cs"),
+            ("fin", "fi"),
+            ("eng", "en"),
+            ("deu", "de"),
+            ("swe", "sv"),
+        ] {
             assert_eq!(iso639_1(three), Some(two));
         }
         assert_eq!(iso639_1("hun"), None);

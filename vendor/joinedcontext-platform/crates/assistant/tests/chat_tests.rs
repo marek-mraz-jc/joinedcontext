@@ -4067,7 +4067,12 @@ async fn a_store_that_is_down_is_said_and_a_long_history_turn_or_unknown_id_refu
         .body(Body::from(json!({"message": "a"}).to_string()))
         .expect("a request");
     assert_eq!(
-        w.app.clone().oneshot(unknown).await.expect("an answer").status(),
+        w.app
+            .clone()
+            .oneshot(unknown)
+            .await
+            .expect("an answer")
+            .status(),
         StatusCode::NOT_FOUND
     );
 

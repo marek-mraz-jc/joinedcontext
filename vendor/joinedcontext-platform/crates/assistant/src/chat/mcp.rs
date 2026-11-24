@@ -454,7 +454,10 @@ mod tests {
         assert_eq!(format!("{token:?}"), "PersonToken(..)");
     }
 
-    async fn server_answering(status: u16, body: serde_json::Value) -> (wiremock::MockServer, super::Server) {
+    async fn server_answering(
+        status: u16,
+        body: serde_json::Value,
+    ) -> (wiremock::MockServer, super::Server) {
         use wiremock::matchers::{header, method, path};
         let mock = wiremock::MockServer::start().await;
         wiremock::Mock::given(method("POST"))
@@ -476,18 +479,41 @@ mod tests {
     async fn each_failed_listing_says_why() {
         let http = reqwest::Client::new();
         for (status, body, why) in [
-            (500, json!({}), "the Endpoint answered 500 Internal Server Error"),
-            (200, json!({"error": {"message": "unknown tool"}}), "the Endpoint refused: unknown tool"),
+            (
+                500,
+                json!({}),
+                "the Endpoint answered 500 Internal Server Error",
+            ),
+            (
+                200,
+                json!({"error": {"message": "unknown tool"}}),
+                "the Endpoint refused: unknown tool",
+            ),
             (200, json!({"error": {}}), "the Endpoint refused: an error"),
-            (200, json!({"jsonrpc": "2.0"}), "the Endpoint's answer has no result"),
-            (200, json!({"result": {"isError": true}}), "the server refused to list its Endpoints"),
+            (
+                200,
+                json!({"jsonrpc": "2.0"}),
+                "the Endpoint's answer has no result",
+            ),
+            (
+                200,
+                json!({"result": {"isError": true}}),
+                "the server refused to list its Endpoints",
+            ),
         ] {
             let (_mock, server) = server_answering(status, body).await;
             assert_eq!(server.endpoints(&http).await, Err(why.to_owned()));
         }
-        let (_mock, server) = server_answering(200, json!({"result": {"structuredContent": {"endpoints": [{"slug": "air"}]}}})).await;
+        let (_mock, server) = server_answering(
+            200,
+            json!({"result": {"structuredContent": {"endpoints": [{"slug": "air"}]}}}),
+        )
+        .await;
         let lent = server.endpoints(&http).await.expect("listed");
-        assert_eq!(lent.iter().map(|l| l.slug.as_str()).collect::<Vec<_>>(), ["air"]);
+        assert_eq!(
+            lent.iter().map(|l| l.slug.as_str()).collect::<Vec<_>>(),
+            ["air"]
+        );
     }
 
     #[tokio::test]
@@ -498,7 +524,10 @@ mod tests {
             timeout: std::time::Duration::from_secs(5),
             token: None,
         };
-        let err = server.endpoints(&reqwest::Client::new()).await.expect_err("unreachable");
+        let err = server
+            .endpoints(&reqwest::Client::new())
+            .await
+            .expect_err("unreachable");
         assert!(!err.contains("gateway.invalid"), "{err}");
     }
 }

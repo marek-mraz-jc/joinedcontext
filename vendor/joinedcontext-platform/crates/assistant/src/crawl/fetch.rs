@@ -399,14 +399,24 @@ mod tests {
             allow_plain_http: true,
             max_page_bytes: 64,
         };
-        let base = Url::parse(&format!("http://{HOST}:{}/", server.address().port())).expect("a URL");
+        let base =
+            Url::parse(&format!("http://{HOST}:{}/", server.address().port())).expect("a URL");
         (client, policy, base)
     }
 
     async fn get(server: &MockServer, at: &str) -> FetchOutcome {
         let (client, policy, base) = fixture(server);
         let url = base.join(at).expect("joins");
-        fetch_url(&client, &policy, HOST, &url, policy.max_page_bytes, None, None).await
+        fetch_url(
+            &client,
+            &policy,
+            HOST,
+            &url,
+            policy.max_page_bytes,
+            None,
+            None,
+        )
+        .await
     }
 
     #[tokio::test]
@@ -434,8 +444,16 @@ mod tests {
         .await;
         assert!(matches!(outcome, FetchOutcome::NotModified { final_url } if final_url == url));
         // A validator that is no header value is left out, never sent broken.
-        let outcome =
-            fetch_url(&client, &policy, HOST, &url, 64, Some("bad\nvalue"), Some("x\ny")).await;
+        let outcome = fetch_url(
+            &client,
+            &policy,
+            HOST,
+            &url,
+            64,
+            Some("bad\nvalue"),
+            Some("x\ny"),
+        )
+        .await;
         assert!(matches!(outcome, FetchOutcome::Status(s) if s == StatusCode::NOT_FOUND));
     }
 
@@ -463,7 +481,12 @@ mod tests {
             .mount(&server)
             .await;
         match get(&server, "old").await {
-            FetchOutcome::Success { final_url, body, status, .. } => {
+            FetchOutcome::Success {
+                final_url,
+                body,
+                status,
+                ..
+            } => {
                 assert_eq!(final_url.path(), "/new");
                 assert_eq!(status, StatusCode::OK);
                 assert_eq!(body, b"moved");
@@ -492,15 +515,16 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(path("/bytes"))
-            .respond_with(
-                ResponseTemplate::new(302)
-                    .append_header("location", reqwest::header::HeaderValue::from_bytes(b"/\xff").expect("a value")),
-            )
+            .respond_with(ResponseTemplate::new(302).append_header(
+                "location",
+                reqwest::header::HeaderValue::from_bytes(b"/\xff").expect("a value"),
+            ))
             .mount(&server)
             .await;
         Mock::given(path("/creds"))
             .respond_with(
-                ResponseTemplate::new(302).insert_header("location", format!("http://u:p@{HOST}/x")),
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("http://u:p@{HOST}/x")),
             )
             .mount(&server)
             .await;
@@ -512,12 +536,24 @@ mod tests {
             FetchOutcome::Failed(why) => why,
             other => panic!("failed, not {other:?}"),
         };
-        assert_eq!(failed(get(&server, "loop").await), "too many redirects (> 5 hops)");
-        assert_eq!(failed(get(&server, "bare").await), "redirect missing location header");
-        assert_eq!(failed(get(&server, "bytes").await), "invalid location header encoding");
+        assert_eq!(
+            failed(get(&server, "loop").await),
+            "too many redirects (> 5 hops)"
+        );
+        assert_eq!(
+            failed(get(&server, "bare").await),
+            "redirect missing location header"
+        );
+        assert_eq!(
+            failed(get(&server, "bytes").await),
+            "invalid location header encoding"
+        );
         assert!(failed(get(&server, "badurl").await).starts_with("invalid redirect URL"));
         // A hop that carries credentials is refused before it is sent.
-        assert!(matches!(get(&server, "creds").await, FetchOutcome::RedirectExternal { .. } | FetchOutcome::Refused));
+        assert!(matches!(
+            get(&server, "creds").await,
+            FetchOutcome::RedirectExternal { .. } | FetchOutcome::Refused
+        ));
     }
 
     #[tokio::test]
@@ -531,14 +567,18 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(65)))
             .mount(&server)
             .await;
-        assert!(matches!(get(&server, "gone").await, FetchOutcome::Status(s) if s == StatusCode::GONE));
+        assert!(
+            matches!(get(&server, "gone").await, FetchOutcome::Status(s) if s == StatusCode::GONE)
+        );
         assert!(matches!(get(&server, "big").await, FetchOutcome::TooLarge));
     }
 
     #[tokio::test]
     async fn a_body_longer_than_its_stream_allows_is_too_large_without_a_length() {
         use tokio::io::AsyncWriteExt;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let addr = listener.local_addr().expect("addr");
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("a connection");
@@ -550,8 +590,14 @@ mod tests {
             );
             let _ = socket.write_all(answer.as_bytes()).await;
         });
-        let client = Client::builder().resolve(HOST, addr).build().expect("a client");
-        let policy = CrawlPolicy { allow_plain_http: true, max_page_bytes: 64 };
+        let client = Client::builder()
+            .resolve(HOST, addr)
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
         let url = Url::parse(&format!("http://{HOST}:{}/", addr.port())).expect("a URL");
         assert!(matches!(
             fetch_url(&client, &policy, HOST, &url, 64, None, None).await,
@@ -562,7 +608,10 @@ mod tests {
     #[tokio::test]
     async fn an_unreachable_site_fails_with_the_whole_chain_and_a_refused_one_is_refused() {
         let client = Client::builder().build().expect("a client");
-        let policy = CrawlPolicy { allow_plain_http: true, max_page_bytes: 64 };
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
         let url = Url::parse("http://nothing.invalid/").expect("a URL");
         assert!(matches!(
             fetch_url(&client, &policy, "nothing.invalid", &url, 64, None, None).await,

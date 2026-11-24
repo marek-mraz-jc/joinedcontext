@@ -415,7 +415,10 @@ async fn a_sitemap_check_an_upload_and_a_catalogue_without_its_address_are_each_
     assert_eq!(jobs[1].0, "data");
     assert_ne!(jobs[1].1, "done", "{jobs:?}");
     assert!(
-        jobs[1].2.as_deref().is_some_and(|e| e.contains("JC_ASSISTANT_ENDPOINT_URL")),
+        jobs[1]
+            .2
+            .as_deref()
+            .is_some_and(|e| e.contains("JC_ASSISTANT_ENDPOINT_URL")),
         "{jobs:?}"
     );
     assert_eq!((jobs[2].0.as_str(), jobs[2].1.as_str()), ("files", "done"));

@@ -510,7 +510,10 @@ mod tests {
         let mut wide = zip(&[("word/document.xml", 10)], false);
         let end = wide.len() - 22;
         wide[end + 10..end + 12].copy_from_slice(&0xFFFF_u16.to_le_bytes());
-        assert_eq!(sniff("x.docx", &wide), Err("a ZIP64 archive is not read".into()));
+        assert_eq!(
+            sniff("x.docx", &wide),
+            Err("a ZIP64 archive is not read".into())
+        );
         let mut moved = zip(&[("word/document.xml", 10)], false);
         let end = moved.len() - 22;
         moved[end + 16..end + 20].copy_from_slice(&0_u32.to_le_bytes());

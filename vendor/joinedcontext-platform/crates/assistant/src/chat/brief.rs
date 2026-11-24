@@ -427,10 +427,19 @@ mod tests {
                 assert!(seen.insert(line), "{lang} {kind:?} repeats another line");
             }
             let offered = reply(Brief::Clarify, lang, true);
-            assert!(offered.starts_with(&reply(Brief::Clarify, lang, false)), "{lang}");
-            assert!(offered.len() > reply(Brief::Clarify, lang, false).len(), "{lang}");
+            assert!(
+                offered.starts_with(&reply(Brief::Clarify, lang, false)),
+                "{lang}"
+            );
+            assert!(
+                offered.len() > reply(Brief::Clarify, lang, false).len(),
+                "{lang}"
+            );
         }
-        assert_eq!(reply(Brief::Greeting, "pl", false), reply(Brief::Greeting, "sk", false));
+        assert_eq!(
+            reply(Brief::Greeting, "pl", false),
+            reply(Brief::Greeting, "sk", false)
+        );
     }
 
     #[test]
@@ -450,11 +459,20 @@ mod tests {
     #[test]
     fn chips_fall_back_to_the_first_language_and_drop_blank_ones() {
         let suggestions = std::collections::BTreeMap::from([
-            ("sk".to_owned(), vec![" Kde parkovať? ".to_owned(), "  ".to_owned()]),
+            (
+                "sk".to_owned(),
+                vec![" Kde parkovať? ".to_owned(), "  ".to_owned()],
+            ),
             ("en".to_owned(), vec!["Where to park?".to_owned()]),
         ]);
-        assert_eq!(chips(&suggestions, Brief::Clarify, "en", "sk"), ["Where to park?"]);
-        assert_eq!(chips(&suggestions, Brief::Clarify, "de", "sk"), ["Kde parkovať?"]);
+        assert_eq!(
+            chips(&suggestions, Brief::Clarify, "en", "sk"),
+            ["Where to park?"]
+        );
+        assert_eq!(
+            chips(&suggestions, Brief::Clarify, "de", "sk"),
+            ["Kde parkovať?"]
+        );
         assert!(chips(&suggestions, Brief::Clarify, "de", "hu").is_empty());
         assert!(chips(&suggestions, Brief::Greeting, "en", "sk").is_empty());
     }

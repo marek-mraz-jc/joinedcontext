@@ -619,8 +619,16 @@ async fn a_page_and_a_document_not_modified_are_kept_and_the_page_s_links_walked
         .mount(&server)
         .await;
     for (p, kind, body) in [
-        ("/", "text/html; charset=utf-8", r#"<html lang="en"><body><a href="/doc.pdf">Doc</a><a href="/next">Next</a></body></html>"#),
-        ("/next", "text/html; charset=utf-8", "<html><body>Next</body></html>"),
+        (
+            "/",
+            "text/html; charset=utf-8",
+            r#"<html lang="en"><body><a href="/doc.pdf">Doc</a><a href="/next">Next</a></body></html>"#,
+        ),
+        (
+            "/next",
+            "text/html; charset=utf-8",
+            "<html><body>Next</body></html>",
+        ),
         ("/doc.pdf", "application/pdf", "%PDF-1.4 one"),
     ] {
         Mock::given(method("GET"))
@@ -647,7 +655,11 @@ async fn a_page_and_a_document_not_modified_are_kept_and_the_page_s_links_walked
     let first = crawl_site(&pool, &crawler, "hel", "helsinki", "nm", &spec, &mut by_ref)
         .await
         .expect("first crawl");
-    assert_eq!((first.pages_fetched, first.documents_fetched), (2, 1), "{first:?}");
+    assert_eq!(
+        (first.pages_fetched, first.documents_fetched),
+        (2, 1),
+        "{first:?}"
+    );
     assert_eq!((sink.pages.len(), sink.documents.len()), (2, 1));
 
     let mut again = RecordingSink::default();
@@ -683,10 +695,18 @@ async fn each_failed_document_is_recorded_with_its_reason() {
     spec.sitemap = false;
     // Port 1 on loopback: privileged, nothing listens there.
     let dead = "http://www.city.test:1/dead.pdf".to_owned();
-    mount_site(&server, 200, &["/fail.pdf", "/away.pdf", &dead], &[("/fail.pdf", 503)]).await;
+    mount_site(
+        &server,
+        200,
+        &["/fail.pdf", "/away.pdf", &dead],
+        &[("/fail.pdf", 503)],
+    )
+    .await;
     Mock::given(method("GET"))
         .and(path("/away.pdf"))
-        .respond_with(ResponseTemplate::new(302).insert_header("location", "https://elsewhere.test/x.pdf"))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header("location", "https://elsewhere.test/x.pdf"),
+        )
         .mount(&server)
         .await;
     let mut sink = RecordingSink::default();
@@ -710,7 +730,11 @@ async fn each_failed_document_is_recorded_with_its_reason() {
             .unwrap_or_default()
     };
     assert_eq!(reason("/fail.pdf"), "HTTP 503", "{errors:?}");
-    assert_eq!(reason("/away.pdf"), "a redirect left the site", "{errors:?}");
+    assert_eq!(
+        reason("/away.pdf"),
+        "a redirect left the site",
+        "{errors:?}"
+    );
     assert!(!reason("/dead.pdf").is_empty(), "{errors:?}");
     assert_eq!(report.failed, 3, "{report:?}");
     drop_database(admin, pool, &db_name).await;

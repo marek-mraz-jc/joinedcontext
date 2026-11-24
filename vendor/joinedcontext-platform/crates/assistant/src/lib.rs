@@ -1001,19 +1001,33 @@ mod tests {
     fn each_error_says_what_failed_and_only_a_database_one_has_a_source() {
         use std::error::Error as _;
         let cases = [
-            (Error::Embedding("no rows".into()), "the embedding is not usable: no rows"),
-            (Error::Project("../x".into()), "`../x` is not a project name"),
+            (
+                Error::Embedding("no rows".into()),
+                "the embedding is not usable: no rows",
+            ),
+            (
+                Error::Project("../x".into()),
+                "`../x` is not a project name",
+            ),
             (Error::Crawl("refused".into()), "the crawl failed: refused"),
-            (Error::Extract("broken".into()), "the text could not be read: broken"),
+            (
+                Error::Extract("broken".into()),
+                "the text could not be read: broken",
+            ),
             (Error::Model("gone".into()), "the embedding model: gone"),
-            (Error::TooLarge("text 3".into()), "the embedder refused the text: text 3"),
+            (
+                Error::TooLarge("text 3".into()),
+                "the embedder refused the text: text 3",
+            ),
         ];
         for (error, said) in cases {
             assert_eq!(error.to_string(), said);
             assert!(error.source().is_none());
         }
         let database = Error::Database(sqlx::Error::RowNotFound);
-        assert!(database.to_string().starts_with("the assistant's database: "));
+        assert!(database
+            .to_string()
+            .starts_with("the assistant's database: "));
         assert!(database.source().is_some());
     }
 }

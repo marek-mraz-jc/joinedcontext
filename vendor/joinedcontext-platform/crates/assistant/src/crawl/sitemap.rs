@@ -307,7 +307,9 @@ mod tests {
             .iter()
             .map(|loc| format!("<url><loc>{loc}</loc><lastmod>2026-09-01</lastmod></url>"))
             .collect();
-        format!(r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>"#)
+        format!(
+            r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>"#
+        )
     }
 
     /// An index lists its sitemaps one level deep: the site's own are read, one on another host,
@@ -342,8 +344,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string(urlset(&[&at("/three")])))
             .mount(&server)
             .await;
-        let client = Client::builder().resolve(HOST, *server.address()).build().expect("a client");
-        let policy = CrawlPolicy { allow_plain_http: true, ..CrawlPolicy::default() };
+        let client = Client::builder()
+            .resolve(HOST, *server.address())
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            ..CrawlPolicy::default()
+        };
         let listed = fetch_sitemap_urls(
             &client,
             &policy,
@@ -361,10 +369,18 @@ mod tests {
         assert_eq!(listed.lastmod.len(), 2);
 
         // The page cap stops the index before its next sitemap is read.
-        let capped = fetch_sitemap_urls(&client, &policy, HOST, &[at("/index.xml"), at("/b.xml")], 1).await;
+        let capped =
+            fetch_sitemap_urls(&client, &policy, HOST, &[at("/index.xml"), at("/b.xml")], 1).await;
         assert_eq!(capped.urls.len(), 1);
         // Plain http is refused without the fixture's leave, before any request.
-        let https_only = fetch_sitemap_urls(&client, &CrawlPolicy::default(), HOST, &[at("/index.xml")], 10).await;
+        let https_only = fetch_sitemap_urls(
+            &client,
+            &CrawlPolicy::default(),
+            HOST,
+            &[at("/index.xml")],
+            10,
+        )
+        .await;
         assert!(https_only.urls.is_empty());
     }
 

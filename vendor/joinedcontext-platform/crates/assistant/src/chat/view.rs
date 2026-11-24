@@ -1362,7 +1362,10 @@ mod tests {
         let one = json!({"id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved",
             "pm10": {"type": "Property", "value": 9.0, "observedAt": "2026-10-01T08:00:00Z"}});
         assert_eq!(
-            history(&one.to_string(), &json!({})).expect("a history").rows.len(),
+            history(&one.to_string(), &json!({}))
+                .expect("a history")
+                .rows
+                .len(),
             1
         );
         let maxed = json!({"entities": [{"id": "urn:ngsi-ld:AirQualityObserved:c", "type": "AirQualityObserved",
@@ -1380,7 +1383,10 @@ mod tests {
             (0..40 * 24)
                 .map(|h| {
                     let at = start + time::Duration::hours(h);
-                    json!([offset + (h % 24) as f64, at.format(&Rfc3339).expect("a time")])
+                    json!([
+                        offset + (h % 24) as f64,
+                        at.format(&Rfc3339).expect("a time")
+                    ])
                 })
                 .collect()
         };
@@ -1391,10 +1397,16 @@ mod tests {
         let table = history_table("air", "AirQualityObserved", &read, "");
         let chart = super::super::viz::aggregated(&table).expect("a chart");
         assert_eq!(chart["spec"]["encoding"]["x"]["scale"]["type"], "utc");
-        assert_eq!(chart["spec"]["encoding"]["x"]["axis"]["format"], "%-d %b %Y");
+        assert_eq!(
+            chart["spec"]["encoding"]["x"]["axis"]["format"],
+            "%-d %b %Y"
+        );
         assert_eq!(chart["spec"]["encoding"]["color"]["legend"], Value::Null);
         assert_eq!(chart["series"], "a");
-        assert_eq!(chart["spec"]["mark"]["point"], true, "40 points are drawn as points");
+        assert_eq!(
+            chart["spec"]["mark"]["point"], true,
+            "40 points are drawn as points"
+        );
 
         let two = json!({"entities": [
             {"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved", "pm10": {"type": "Property", "values": values(0.0)}},
@@ -1402,7 +1414,10 @@ mod tests {
         let read = history(&two.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
         let table = history_table("air", "AirQualityObserved", &read, "");
         let chart = super::super::viz::aggregated(&table).expect("a chart");
-        assert_eq!(chart["spec"]["encoding"]["color"]["legend"]["orient"], "bottom");
+        assert_eq!(
+            chart["spec"]["encoding"]["color"]["legend"]["orient"],
+            "bottom"
+        );
         assert!(chart.get("series").is_none());
     }
 

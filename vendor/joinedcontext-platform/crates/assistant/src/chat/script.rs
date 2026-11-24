@@ -141,7 +141,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_thrown_error_is_the_scripts_failure() {
-        let server = sandbox(200, json!({ "error": { "message": "data is not defined" } })).await;
+        let server = sandbox(
+            200,
+            json!({ "error": { "message": "data is not defined" } }),
+        )
+        .await;
         assert_eq!(
             ran(&server).await,
             Err("the script failed: data is not defined".to_owned())

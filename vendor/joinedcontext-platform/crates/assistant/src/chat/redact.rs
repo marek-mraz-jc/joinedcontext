@@ -315,7 +315,10 @@ mod tests {
         use super::{iban, luhn};
         assert!(iban("SK31 1200 0000 1987 4263 7541"));
         assert!(!iban("SK31 1200"), "too short");
-        assert!(!iban("SK31 1200 0000 1987 4263 754!"), "not a letter or digit");
+        assert!(
+            !iban("SK31 1200 0000 1987 4263 754!"),
+            "not a letter or digit"
+        );
         assert!(!iban("SK32 1200 0000 1987 4263 7541"), "check digits");
         assert!(luhn("4111 1111 1111 1111"));
         assert!(!luhn("4111 1111 1111 1112"));

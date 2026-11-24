@@ -666,13 +666,41 @@ mod tests {
     #[test]
     fn each_unusable_address_is_named_by_its_key_and_what_it_breaks() {
         for (key, value, what) in [
-            ("JC_ASSISTANT_FUNCTIONS_URL", "http://fn/x", "the sandbox address is not usable"),
-            ("JC_ASSISTANT_ENDPOINT_URL", "https://data/x", "the public Endpoint address is not usable"),
-            ("JC_ASSISTANT_PORTAL_URL", "https://portal/x", "the Portal address is not usable"),
-            ("JC_ASSISTANT_VIZ_URL", "https://charts.city.test", "the chart renderer's address is not usable"),
-            ("JC_ASSISTANT_REACH", "10.0.0.1:80", "the gateway's reach is not usable"),
-            ("JC_ASSISTANT_GATEWAY_URL", "http://gw/mcp", "the chat is not configured"),
-            ("JC_ASSISTANT_PROXY_URL", "not a url", "the chat is not configured"),
+            (
+                "JC_ASSISTANT_FUNCTIONS_URL",
+                "http://fn/x",
+                "the sandbox address is not usable",
+            ),
+            (
+                "JC_ASSISTANT_ENDPOINT_URL",
+                "https://data/x",
+                "the public Endpoint address is not usable",
+            ),
+            (
+                "JC_ASSISTANT_PORTAL_URL",
+                "https://portal/x",
+                "the Portal address is not usable",
+            ),
+            (
+                "JC_ASSISTANT_VIZ_URL",
+                "https://charts.city.test",
+                "the chart renderer's address is not usable",
+            ),
+            (
+                "JC_ASSISTANT_REACH",
+                "10.0.0.1:80",
+                "the gateway's reach is not usable",
+            ),
+            (
+                "JC_ASSISTANT_GATEWAY_URL",
+                "http://gw/mcp",
+                "the chat is not configured",
+            ),
+            (
+                "JC_ASSISTANT_PROXY_URL",
+                "not a url",
+                "the chat is not configured",
+            ),
         ] {
             let Err((refused, why)) = config(&env(&chat_env(&[(key, value)]))) else {
                 panic!("{key} is refused");
@@ -686,7 +714,10 @@ mod tests {
             .collect();
         assert_eq!(
             config(&env(&missing)).err(),
-            Some(("the chat is not configured", "JC_ASSISTANT_LLM is required".into()))
+            Some((
+                "the chat is not configured",
+                "JC_ASSISTANT_LLM is required".into()
+            ))
         );
     }
 
@@ -745,7 +776,10 @@ mod tests {
         );
         assert_eq!(
             status(&router, "/readyz").await,
-            (axum::http::StatusCode::SERVICE_UNAVAILABLE, "starting".into())
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "starting".into()
+            )
         );
         ready.store(true, Ordering::Relaxed);
         assert_eq!(

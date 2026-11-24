@@ -552,7 +552,10 @@ mod tests {
     async fn the_visitor_worker_is_served_as_a_script_that_is_never_sniffed() {
         let answer = visitor().await;
         let headers = answer.headers();
-        assert_eq!(headers[header::CONTENT_TYPE], "text/javascript; charset=utf-8");
+        assert_eq!(
+            headers[header::CONTENT_TYPE],
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         let body = axum::body::to_bytes(answer.into_body(), usize::MAX)
             .await

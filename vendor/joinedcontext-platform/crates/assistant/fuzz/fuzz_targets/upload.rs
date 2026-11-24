@@ -12,10 +12,14 @@ fuzz_target!(|data: &[u8]| {
     if let Some(kept) = upload::file_name(&name) {
         // Folders are kept, a way out never is: no empty, `.` or `..` part, no `\\`.
         assert!(
-            kept.split('/').all(|part| !part.is_empty() && part != "." && part != ".."),
+            kept.split('/')
+                .all(|part| !part.is_empty() && part != "." && part != ".."),
             "a kept name has no way out: {kept:?}"
         );
-        assert!(!kept.contains('\\'), "a kept name has no backslash: {kept:?}");
+        assert!(
+            !kept.contains('\\'),
+            "a kept name has no backslash: {kept:?}"
+        );
         let _ = upload::sniff(kept, bytes);
     }
     let _ = upload::sniff(&name, bytes);

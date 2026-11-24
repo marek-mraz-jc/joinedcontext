@@ -29,7 +29,10 @@ fuzz_target!(|data: &[u8]| {
     let _ = extract::chrome_only(&text);
     let _ = extract::language_of(&text);
     let at = extract::cut(&text, cap);
-    assert!(text.is_char_boundary(at), "cut lands on a character boundary");
+    assert!(
+        text.is_char_boundary(at),
+        "cut lands on a character boundary"
+    );
     let _ = extract::pieces(&text, cap);
     let _ = heading(&text);
     let _ = guide::rewrite(&text, "https://portal.example.org", "hronov");
