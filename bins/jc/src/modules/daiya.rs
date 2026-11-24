@@ -136,3 +136,226 @@ pub async fn build(
     }
     Ok(router(state, mount))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pg::DatabaseSection;
+    use crate::siblings::Sibling;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn database(migrate: bool) -> DatabaseSection {
+        DatabaseSection {
+            url: "postgres://daiya_app@db:5432/daiya".into(),
+            password_file: PathBuf::from("/run/secrets/app"),
+            max_connections: Some(7),
+            migrate_url: migrate.then(|| "postgres://daiya_owner@db:5432/daiya".into()),
+            migrate_password_file: migrate.then(|| PathBuf::from("/run/secrets/owner")),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        }
+    }
+
+    #[test]
+    fn the_store_is_memory_without_a_database_and_postgres_with_one() {
+        assert!(matches!(
+            store_config(&DaiyaSection::default()),
+            StoreConfig::Memory
+        ));
+        let cfg = DaiyaSection {
+            database: Some(database(true)),
+            ..DaiyaSection::default()
+        };
+        let StoreConfig::Postgres {
+            url,
+            password_file,
+            max_connections,
+            migrate,
+        } = store_config(&cfg)
+        else {
+            panic!("a database section makes a Postgres store");
+        };
+        assert_eq!(url, "postgres://daiya_app@db:5432/daiya");
+        assert_eq!(password_file, PathBuf::from("/run/secrets/app"));
+        assert_eq!(max_connections, 7);
+        let migrate = migrate.expect("both migration keys set");
+        assert_eq!(migrate.url, "postgres://daiya_owner@db:5432/daiya");
+        assert_eq!(migrate.password_file, PathBuf::from("/run/secrets/owner"));
+        // A migration URL without its password file migrates nothing.
+        let mut half = database(false);
+        half.migrate_url = Some("postgres://daiya_owner@db/daiya".into());
+        let cfg = DaiyaSection {
+            database: Some(half),
+            ..DaiyaSection::default()
+        };
+        assert!(matches!(
+            store_config(&cfg),
+            StoreConfig::Postgres { migrate: None, .. }
+        ));
+    }
+
+    fn mount() -> Mount {
+        Mount::new("daiya", "http", "localhost", "").unwrap()
+    }
+
+    fn setup(dir: &std::path::Path, roles: &[Module]) -> Setup {
+        Setup::prepare(dir, roles, &BTreeMap::new()).unwrap()
+    }
+
+    fn siblings(gateway: Option<(&str, &str)>) -> Siblings {
+        let mut siblings = Siblings::new(&[], "127.0.0.1:8080".parse().unwrap());
+        if let Some((public, internal)) = gateway {
+            siblings.insert_remote(
+                Module::Gateway,
+                Sibling::direct(public.into(), internal.into()),
+            );
+        }
+        siblings
+    }
+
+    #[tokio::test]
+    async fn alone_daiya_keeps_no_server_admin_and_beside_the_portal_holds_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let alone = state(
+            &DaiyaSection::default(),
+            &setup(tmp.path(), &[Module::Daiya]),
+        )
+        .await
+        .unwrap();
+        let beside = setup(tmp.path(), &[Module::Daiya, Module::Portal]);
+        let password = beside.value(Secret::DashboardsPassword).unwrap().to_owned();
+        let held = state(&DaiyaSection::default(), &beside).await.unwrap();
+        let basic = |user: &str, password: &str| {
+            use base64::Engine as _;
+            let mut headers = axum::http::HeaderMap::new();
+            let token =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+            headers.insert(
+                axum::http::header::AUTHORIZATION,
+                format!("Basic {token}").parse().unwrap(),
+            );
+            headers.insert("x-grafana-org-id", "1".parse().unwrap());
+            headers
+        };
+        let ask = |st: DaiyaState, headers: axum::http::HeaderMap| async move {
+            use tower::ServiceExt as _;
+            let mut request = axum::http::Request::get("/api/org")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            *request.headers_mut() = headers;
+            router(st, mount()).oneshot(request).await.unwrap().status()
+        };
+        assert!(
+            ask(held.clone(), basic(DASHBOARDS_USER, &password))
+                .await
+                .is_success(),
+            "the Portal's client is daiya's server administrator"
+        );
+        assert_eq!(
+            ask(held, basic(DASHBOARDS_USER, "wrong")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ask(alone, basic(DASHBOARDS_USER, &password)).await,
+            axum::http::StatusCode::UNAUTHORIZED,
+            "standalone daiya holds no Portal password"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_database_that_cannot_open_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = database(false);
+        db.password_file = tmp.path().join("missing");
+        let cfg = DaiyaSection {
+            database: Some(db),
+            ..DaiyaSection::default()
+        };
+        let e = state(&cfg, &setup(tmp.path(), &[Module::Daiya]))
+            .await
+            .err()
+            .expect("an unreadable password file refuses the start");
+        assert!(!e.is_empty());
+    }
+
+    #[test]
+    fn only_a_gateway_on_jcs_own_listener_is_reached_there() {
+        assert_eq!(gateway_reach(&siblings(None)), None, "no gateway known");
+        let own = siblings(Some((
+            "https://city.test/gateway",
+            "http://127.0.0.1:8080/gateway",
+        )));
+        assert!(gateway_reach(&own).is_some());
+        let bare = siblings(Some(("https://gw.city.test", "http://127.0.0.1:8080")));
+        assert!(gateway_reach(&bare).is_some(), "the listener's root counts");
+        // A longer port that starts like the listener's is another listener.
+        let other_port = siblings(Some(("https://gw.city.test", "http://127.0.0.1:80801/gw")));
+        assert_eq!(gateway_reach(&other_port), None);
+        let elsewhere = siblings(Some(("https://gw.city.test", "http://gateway:8080/gw")));
+        assert_eq!(gateway_reach(&elsewhere), None, "a host of its own");
+    }
+
+    #[test]
+    fn the_endpoint_bases_are_the_gateways_two_addresses_once_each() {
+        assert!(gateway_endpoint_bases(&siblings(None)).is_empty());
+        let two = siblings(Some((
+            "https://city.test/gateway",
+            "http://127.0.0.1:8080/gateway",
+        )));
+        assert_eq!(gateway_endpoint_bases(&two).len(), 2);
+        let same = siblings(Some((
+            "https://city.test/gateway",
+            "https://city.test/gateway",
+        )));
+        assert_eq!(
+            gateway_endpoint_bases(&same).len(),
+            1,
+            "an equal pair counts once"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bad_prometheus_reach_or_provisioning_root_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roles = [Module::Daiya];
+        let bad_reach = DaiyaSection {
+            prometheus_reach: Some("not a url".into()),
+            ..DaiyaSection::default()
+        };
+        let e = build(
+            &bad_reach,
+            &setup(tmp.path(), &roles),
+            &siblings(None),
+            mount(),
+        )
+        .await
+        .err()
+        .expect("an unparsable reach refuses the start");
+        assert!(!e.is_empty());
+        let bad_dir = DaiyaSection {
+            provisioning_dir: Some(tmp.path().join("missing")),
+            ..DaiyaSection::default()
+        };
+        assert!(
+            build(
+                &bad_dir,
+                &setup(tmp.path(), &roles),
+                &siblings(None),
+                mount()
+            )
+            .await
+            .is_err(),
+            "a provisioning root that is not there refuses the start"
+        );
+        let good = DaiyaSection {
+            prometheus_reach: Some("http://prometheus-proxy:9090".into()),
+            provisioning_dir: Some(tmp.path().join("empty")),
+            ..DaiyaSection::default()
+        };
+        std::fs::create_dir_all(tmp.path().join("empty")).unwrap();
+        build(&good, &setup(tmp.path(), &roles), &siblings(None), mount())
+            .await
+            .expect("a valid reach and an empty provisioning root start");
+    }
+}
