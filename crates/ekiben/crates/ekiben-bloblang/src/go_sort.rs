@@ -339,7 +339,7 @@ fn reverse_range<T, F: FnMut(usize, &T, usize, &T) -> bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::{pdqsort, sort_slice, Data};
+    use super::{heap_sort, pdqsort, sort_slice, Data};
 
     #[test]
     fn equal_keys_land_where_go_puts_them() {
