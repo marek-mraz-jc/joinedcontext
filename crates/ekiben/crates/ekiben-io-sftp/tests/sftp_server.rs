@@ -282,11 +282,15 @@ async fn a_watcher_takes_each_new_file_once() {
         &pin,
         json!({
             "paths": [format!("{dir}/*.csv")],
-            "watcher": {"enabled": true, "minimum_age": "0s", "poll_interval": "200ms", "cache": "seen"},
+            "watcher": {"enabled": true, "minimum_age": "0s", "poll_interval": "2s", "cache": "seen"},
         }),
         &c,
     );
-    let (b, ack) = i.read_batch(&c).await.expect("d.csv");
+    // The first listing runs at once; only later polls wait poll_interval.
+    let (b, ack) = tokio::time::timeout(Duration::from_millis(1500), i.read_batch(&c))
+        .await
+        .expect("d.csv before the first poll_interval")
+        .expect("d.csv");
     assert_eq!(lines(&b), ["d1"]);
     ack.ack();
     // Nothing new: the next read waits for a file.
@@ -304,6 +308,15 @@ async fn a_watcher_takes_each_new_file_once() {
     assert!(cache.exists(&format!("{dir}/d.csv")).await.expect("cache"));
     // a watcher without delete_on_finish leaves an acked file on the server
     assert!(session.sftp.metadata(format!("{dir}/d.csv")).await.is_ok());
+    // A shutdown during the wait for new files ends the stream after the pause.
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let mut stopping = c.clone();
+    stopping.shutdown_rx = rx;
+    tx.send(true).expect("shutdown");
+    let end = tokio::time::timeout(Duration::from_secs(6), i.read_batch(&stopping))
+        .await
+        .expect("ends in time");
+    assert!(matches!(end, Err(CoreError::EndOfInput)));
 }
 
 fn private_key_target(s: &Server, pin: &str, key: Option<&str>) -> SftpTarget {
