@@ -4418,6 +4418,252 @@ mod tests {
         assert_eq!(get("q", "b").await, None);
     }
 
+    /// SSO sessions, client sessions, offline sessions and refresh families of realms r and q:
+    /// people ada and bob, SSO session `s-{person}`, clients app and other.
+    fn seed_sessions(store: &MemoryStore) {
+        let now = TimestampTz::now();
+        let later = now + SignedDuration::from_hours(1);
+        let mut st = store.inner.write();
+        for realm in [R, "q"] {
+            for person in ["ada", "bob"] {
+                let sso = format!("s-{person}");
+                st.sso_sessions.push(SsoSession {
+                    id: sso.clone(),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    handle_hash: format!("{realm}-{sso}"),
+                    user_id: person.into(),
+                    username: person.into(),
+                    ip_address: String::new(),
+                    user_agent: String::new(),
+                    start: 0,
+                    last_access: 0,
+                    auth_time: 0,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    clients: HashMap::new(),
+                    idle_expires_at: later,
+                    max_expires_at: later,
+                });
+                for client in ["app", "other"] {
+                    st.client_sessions.push(ClientSession {
+                        id: format!("{sso}-{client}"),
+                        realm_id: realm.into(),
+                        org_id: None,
+                        sso_session_id: sso.clone(),
+                        client_id: client.into(),
+                        user_id: person.into(),
+                        scopes: Vec::new(),
+                        created_at: now,
+                        last_access: now,
+                    });
+                    st.offline_sessions.push(OfflineSession {
+                        id: format!("off-{person}-{client}"),
+                        realm_id: realm.into(),
+                        org_id: None,
+                        user_id: person.into(),
+                        client_id: client.into(),
+                        scopes: Vec::new(),
+                        created_at: now,
+                        last_access: now,
+                        idle_expires_at: later,
+                        max_expires_at: later,
+                    });
+                    for offline in [false, true] {
+                        st.refresh_families.push(RefreshTokenFamily {
+                            id: format!("{person}-{client}-{offline}"),
+                            realm_id: realm.into(),
+                            org_id: None,
+                            sso_session_id: sso.clone(),
+                            user_id: person.into(),
+                            client_id: client.into(),
+                            scope: "openid".into(),
+                            mapper_scopes: Vec::new(),
+                            acr: "1".into(),
+                            amr: Vec::new(),
+                            auth_time: 0,
+                            rotation_counter: 0,
+                            current_jti_hash: format!("{realm}-{person}-{client}-{offline}"),
+                            previous_hashes: Vec::new(),
+                            dpop_jkt: None,
+                            offline,
+                            offline_since: offline.then_some(now),
+                            revoked: false,
+                            expires_at: later,
+                            act: None,
+                            only_audience: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// `{realm}/{id}` of the client sessions, offline sessions and revoked families left.
+    fn session_state(store: &MemoryStore) -> [Vec<String>; 3] {
+        let st = store.inner.read();
+        let mut out = [
+            st.client_sessions
+                .iter()
+                .map(|c| format!("{}/{}", c.realm_id, c.id))
+                .collect::<Vec<_>>(),
+            st.offline_sessions
+                .iter()
+                .map(|o| format!("{}/{}", o.realm_id, o.id))
+                .collect(),
+            st.refresh_families
+                .iter()
+                .filter(|f| f.revoked)
+                .map(|f| format!("{}/{}", f.realm_id, f.id))
+                .collect(),
+        ];
+        for v in &mut out {
+            v.sort();
+        }
+        out
+    }
+
+    /// Ending one SSO session takes its client sessions and revokes its online families, never
+    /// its offline ones, another session's or another realm's.
+    #[tokio::test]
+    async fn ending_an_sso_session_takes_only_its_own_rows() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let gone = store.delete_sso_session(R, "s-ada").await.expect("delete");
+        assert_eq!(
+            gone.map(|s| (s.realm_id, s.user_id)),
+            Some((R.to_owned(), "ada".to_owned()))
+        );
+        assert!(
+            store
+                .delete_sso_session(R, "s-ada")
+                .await
+                .expect("again")
+                .is_none()
+        );
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 6);
+        assert!(
+            client.iter().all(|c| !c.starts_with("r/s-ada")),
+            "{client:?}"
+        );
+        assert!(client.contains(&"q/s-ada-app".to_owned()));
+        assert_eq!(offline.len(), 8, "offline sessions stay");
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-other-false"]);
+        assert!(
+            store
+                .get_sso_session("q", "s-ada")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        assert!(
+            store
+                .get_sso_session(R, "s-bob")
+                .await
+                .expect("get")
+                .is_some()
+        );
+    }
+
+    /// Signing a person out everywhere takes their SSO and client sessions and revokes all
+    /// their families in that realm only.
+    #[tokio::test]
+    async fn signing_a_person_out_takes_their_sessions_in_that_realm() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let gone = store
+            .delete_user_sso_sessions(R, "bob")
+            .await
+            .expect("delete");
+        assert_eq!(
+            gone.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["s-bob"]
+        );
+        assert!(gone.iter().all(|s| s.realm_id == R));
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(
+            client
+                .iter()
+                .filter(|c| c.starts_with("r/"))
+                .collect::<Vec<_>>(),
+            ["r/s-ada-app", "r/s-ada-other"]
+        );
+        assert_eq!(client.len(), 6);
+        assert_eq!(offline.len(), 8);
+        assert_eq!(
+            revoked,
+            [
+                "r/bob-app-false",
+                "r/bob-app-true",
+                "r/bob-other-false",
+                "r/bob-other-true"
+            ]
+        );
+        assert_eq!(
+            store
+                .list_user_sso_sessions(R, "ada")
+                .await
+                .expect("ada")
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .list_user_sso_sessions(R, "bob")
+                .await
+                .expect("bob")
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .list_user_sso_sessions("q", "bob")
+                .await
+                .expect("q")
+                .len(),
+            1
+        );
+    }
+
+    /// An offline session is replaced by its id in its realm; revoking a person's offline access
+    /// to one client takes that client's sessions and families only.
+    #[tokio::test]
+    async fn offline_sessions_go_per_realm_person_and_client() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        let mut again = store.inner.read().offline_sessions[0].clone();
+        assert_eq!(
+            (again.realm_id.as_str(), again.id.as_str()),
+            (R, "off-ada-app")
+        );
+        again.scopes = vec!["offline_access".into()];
+        store.upsert_offline_session(again).await.expect("again");
+        {
+            let st = store.inner.read();
+            assert_eq!(st.offline_sessions.len(), 8);
+            let ours: Vec<_> = st
+                .offline_sessions
+                .iter()
+                .filter(|o| o.id == "off-ada-app")
+                .map(|o| (o.realm_id.as_str(), o.scopes.len()))
+                .collect();
+            assert!(
+                ours.contains(&(R, 1)) && ours.contains(&("q", 0)),
+                "{ours:?}"
+            );
+        }
+        store
+            .delete_user_client_offline_sessions(R, "ada", "app")
+            .await
+            .expect("revoke");
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 8, "online sessions stay");
+        assert_eq!(offline.len(), 7);
+        assert!(!offline.contains(&"r/off-ada-app".to_owned()));
+        assert!(offline.contains(&"q/off-ada-app".to_owned()));
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+    }
+
     /// A rename may take a client id another realm uses; it renames this client's service
     /// account and no other person.
     #[tokio::test]

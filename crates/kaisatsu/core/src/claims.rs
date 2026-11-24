@@ -1222,6 +1222,46 @@ mod tests {
 
     /// A pairwise subject needs one redirect host: an address that is no URL, or has no host,
     /// counts none.
+    /// A person's client roles: the direct ones plus the client composites of each realm role
+    /// they hold, sorted and once each; a client role named like a held realm role adds nothing,
+    /// and an empty list is dropped.
+    #[test]
+    fn effective_client_roles_add_only_held_realm_roles_composites() {
+        let role =
+            |name: &str, client_role: bool, composites: &[(&str, &[&str])]| RoleRepresentation {
+                name: name.into(),
+                client_role,
+                composites: crate::model::RoleComposites {
+                    client: composites
+                        .iter()
+                        .map(|(c, r)| {
+                            ((*c).to_owned(), r.iter().map(|x| (*x).to_owned()).collect())
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+        let all = [
+            role("editor", false, &[("app", &["write", "read"])]),
+            role("admin", true, &[("app", &["delete"])]),
+            role("unheld", false, &[("app", &["export"])]),
+        ];
+        let direct = HashMap::from([
+            ("app".to_owned(), vec!["read".to_owned()]),
+            ("empty".to_owned(), Vec::new()),
+        ]);
+        let got = effective_client_roles(&direct, &["editor".into(), "admin".into()], &all);
+        assert_eq!(
+            got,
+            BTreeMap::from([(
+                "app".to_owned(),
+                vec!["read".to_owned(), "write".to_owned()]
+            )])
+        );
+        assert!(effective_client_roles(&HashMap::new(), &[], &all).is_empty());
+    }
+
     /// The subject a client sees: local without a pairwise mapper; with one on an active scope
     /// (before the client's own mappers) or on the client, the pairwise value of its sector.
     #[test]
