@@ -3132,6 +3132,9 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     .await
     .expect("dates");
     tx.commit().await.expect("commit");
+    // Warming reads the sources' languages ahead of the first question, which never waits on
+    // them (T-7765).
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
     script_routed(
         &w.proxy,
         vec![completion(
