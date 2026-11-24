@@ -28,6 +28,15 @@ exclude_re = [
   # jc-chart Canvas::line: on an axis the line does not move along, the step's sign is never used
   # (dx or dy is 0 and Bresenham never steps that way), so < and <= draw alike (T-7622).
   'jc-chart/src/raster\.rs:\d+:\d+: replace < with <= in Canvas::line',
+  # jc model_tools relationships: inline_order counts up from the number of slot definitions, so `*=` keeps the
+  # attributes' order increasing (or all equal from 0 or 1), and a tie picks the end placed first as `+=` does (T-7641).
+  'bins/jc/src/modules/model_tools/checks\.rs:\d+:\d+: replace \+= with \*= in relationships',
+  # jc model_tools relationships: the key of a pair only has to be the same from both ends; `>` orders it the other
+  # way round and dedups the same pairs (T-7641).
+  'bins/jc/src/modules/model_tools/checks\.rs:\d+:\d+: replace <= with > in relationships',
+  # jc model_tools declared_range: the fallback to another class's attribute runs only for a slot listed under
+  # `slots:` that no slot definition holds, which induced_slot refuses first ("No such slot"), so it never runs (T-7641).
+  'bins/jc/src/modules/model_tools/checks\.rs:132:\d+: replace == with != in declared_range',
   # jc-chart Canvas::disc: the offsets run -r..=r, so cx - x covers the same pixels as cx + x (T-7622).
   'jc-chart/src/raster\.rs:\d+:\d+: replace \+ with - in Canvas::disc',
   # jc-chart check: Instant::now() equal to the deadline to the nanosecond is never observed (T-7622).

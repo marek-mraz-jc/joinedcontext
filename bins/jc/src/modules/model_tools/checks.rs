@@ -1058,4 +1058,64 @@ slots:
         );
         assert!(e.iter().any(|m| m.contains("Nowhere")), "{e:?}");
     }
+
+    #[test]
+    fn attribute_ends_find_their_own_attribute_and_may_share_a_name() {
+        let body = "\
+classes:
+  A:
+    is_a: Entity
+    attributes:
+      label:
+        range: string
+      link:
+        range: B
+        inverse: link
+        annotations:
+          ngsi_ld_kind: Relationship
+  B:
+    is_a: Entity
+    attributes:
+      link:
+        range: A
+        inverse: link
+        annotations:
+          ngsi_ld_kind: Relationship
+";
+        assert_eq!(errors(body), Vec::<String>::new());
+    }
+
+    #[test]
+    fn of_two_attribute_ends_the_first_declared_is_stored_and_the_second_computed() {
+        let body = "\
+classes:
+  A:
+    is_a: Entity
+    slots: [note]
+    attributes:
+      to:
+        range: B
+        inverse: back
+        annotations:
+          ngsi_ld_kind: Relationship
+  B:
+    is_a: Entity
+    attributes:
+      back:
+        range: A
+        inverse: to
+        required: true
+        annotations:
+          ngsi_ld_kind: Relationship
+slots:
+  note:
+    range: string
+";
+        let e = errors(body);
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert!(
+            e[0].starts_with("classes.B.attributes.back: required-on-computed-end: back on B"),
+            "{e:?}"
+        );
+    }
 }
