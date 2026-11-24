@@ -526,4 +526,130 @@ mod tests {
             Err(OpError::Api(ApiError::Unavailable(_)))
         ));
     }
+
+    /// Each action is its broker operation with its body: entities, or the ids a delete names.
+    #[test]
+    fn each_action_is_its_broker_operation_with_its_ids() {
+        let entity = json!({ "id": "urn:ngsi-ld:Bus:1", "type": "Bus" });
+        for (action, path) in [
+            ("create", "ngsi-ld/v1/entityOperations/create"),
+            (
+                "upsert",
+                "ngsi-ld/v1/entityOperations/upsert?options=update",
+            ),
+            ("merge", "ngsi-ld/v1/entityOperations/merge"),
+        ] {
+            let call = input(
+                json!({ "endpoint": "bus", "action": action, "entities": [entity, { "type": "Bus" }] }),
+            );
+            assert_eq!(
+                request_of(&call),
+                (path, json!([entity, { "type": "Bus" }]))
+            );
+            assert_eq!(
+                named_ids(&call),
+                ["urn:ngsi-ld:Bus:1"],
+                "an entity without an id names none"
+            );
+        }
+        let delete = input(
+            json!({ "endpoint": "bus", "action": "delete", "ids": ["urn:ngsi-ld:Bus:2"], "reason": "sold" }),
+        );
+        assert_eq!(
+            request_of(&delete),
+            (
+                "ngsi-ld/v1/entityOperations/delete",
+                json!(["urn:ngsi-ld:Bus:2"])
+            )
+        );
+        assert_eq!(named_ids(&delete), ["urn:ngsi-ld:Bus:2"]);
+    }
+
+    /// The gateway's answer: every id on 201/204, the broker's own split on 207 (empty lists
+    /// when it names none), and a refusal naming the Endpoint and what to do for the rest.
+    #[test]
+    fn the_gateways_answer_is_the_written_ids_or_a_refusal_to_act_on() {
+        let ids = || vec!["urn:ngsi-ld:Bus:1".to_owned()];
+        for status in [201, 204] {
+            assert_eq!(
+                answer_of("bus", status, &Value::Null, Action::Create, ids()).expect("written"),
+                json!({ "written": ["urn:ngsi-ld:Bus:1"], "errors": [] })
+            );
+        }
+        let split = json!({ "success": ["urn:ngsi-ld:Bus:1"], "errors": [{ "entityId": "urn:ngsi-ld:Bus:2" }] });
+        assert_eq!(
+            answer_of("bus", 207, &split, Action::Upsert, ids()).expect("split"),
+            json!({ "written": ["urn:ngsi-ld:Bus:1"], "errors": [{ "entityId": "urn:ngsi-ld:Bus:2" }] })
+        );
+        assert_eq!(
+            answer_of("bus", 207, &Value::Null, Action::Upsert, ids()).expect("split"),
+            json!({ "written": [], "errors": [] })
+        );
+        let why = json!({ "detail": "speed is no number" });
+        match answer_of("bus", 400, &why, Action::Create, ids()) {
+            Err(OpError::Api(ApiError::BadRequest(m))) => {
+                assert_eq!(m, "Endpoint bus refused the entities: speed is no number")
+            }
+            other => panic!("a 400, got {other:?}"),
+        }
+        for (status, action, operation) in [
+            (401, Action::Merge, "mergeBatch"),
+            (403, Action::Delete, "deleteBatch"),
+            (403, Action::Create, "createBatch"),
+            (403, Action::Upsert, "upsertBatch"),
+        ] {
+            match answer_of(
+                "bus",
+                status,
+                &json!({ "title": "Forbidden" }),
+                action,
+                ids(),
+            ) {
+                Err(OpError::Api(ApiError::Denied(m))) => {
+                    assert!(
+                        m.starts_with(
+                            "Endpoint bus's Policy does not let you write this: Forbidden;"
+                        ),
+                        "{m}"
+                    );
+                    assert!(
+                        m.contains(&format!("grants the operation {operation} ")),
+                        "{m}"
+                    );
+                }
+                other => panic!("a 403, got {other:?}"),
+            }
+        }
+        match answer_of("bus", 404, &Value::Null, Action::Create, ids()) {
+            Err(OpError::Api(ApiError::NotFound(m))) => assert_eq!(
+                m,
+                "the gateway does not serve writes on Endpoint bus: no reason given"
+            ),
+            other => panic!("a 404, got {other:?}"),
+        }
+        match answer_of(
+            "bus",
+            409,
+            &json!({ "detail": "exists" }),
+            Action::Create,
+            ids(),
+        ) {
+            Err(OpError::Api(ApiError::Conflict(m))) => assert_eq!(
+                m,
+                "Endpoint bus: exists; upsert writes an entity that exists"
+            ),
+            other => panic!("a 409, got {other:?}"),
+        }
+        match answer_of("bus", 502, &Value::Null, Action::Create, ids()) {
+            Err(OpError::Api(ApiError::Unavailable(m))) => {
+                assert!(
+                    m.starts_with(
+                        "the gateway answered 502 for Endpoint bus; nothing is known written"
+                    ),
+                    "{m}"
+                )
+            }
+            other => panic!("a 503, got {other:?}"),
+        }
+    }
 }

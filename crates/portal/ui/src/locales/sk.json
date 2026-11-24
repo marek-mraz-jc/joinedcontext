@@ -10367,7 +10367,6 @@
       "question": "Vaša otázka",
       "send": "Odoslať",
       "failed": "Odpoveď sa nepodarilo načítať. Skúste znova.",
-      "modelUnavailable": "Model asistenta neodpovedal. Otázka zostala v poli: skúste to o minútu znova.",
       "liveData": "Živé dáta",
       "sourceNumber": "Zdroj {n}",
       "data": "Údaje, ktoré odpoveď prečítala",
@@ -10375,7 +10374,27 @@
       "dataset": "Otvoriť dataset",
       "download": "Stiahnuť údaje",
       "again": "Skúsiť znova",
-      "closest": "Zdroje, ktoré najlepšie zodpovedajú vašej otázke"
+      "closest": "Zdroje, ktoré najlepšie zodpovedajú vašej otázke",
+      "stop": "Zastaviť",
+      "stopped": "Odpoveď ste zastavili. Čo prišlo, ostáva.",
+      "followups": "Môžete sa opýtať aj",
+      "csv": "Stiahnuť CSV",
+      "empty": "Opýtajte sa na zdroje a údaje tohto projektu. Odpoveď uvedie svoje zdroje.",
+      "questionHint": "Napríklad: Ktoré stanice dnes namerali PM10 nad 40? Enter odošle, Shift+Enter začne nový riadok.",
+      "trouble": {
+        "failed": "Odpoveď sa nepodarilo načítať. Skúste to znova.",
+        "offline": "Nepodarilo sa spojiť so službou. Skontrolujte pripojenie a skúste to znova.",
+        "busy": "Veľa otázok naraz. Počkajte chvíľu a skúste to znova.",
+        "busyAt": "Veľa otázok naraz. Skúste to znova po {time}.",
+        "paused": "Asistent teraz neodpovedá. Skúste to neskôr.",
+        "limit": "Asistent dosiahol svoj limit. Skúste to znova neskôr.",
+        "limitAt": "Asistent dosiahol svoj limit. Skúste to znova po {time}.",
+        "full": "Tento rozhovor je už dlhý. Zavrite okno a opýtajte sa v novom.",
+        "unreachable": "Model asistenta neodpovedal. Otázka ostáva: skúste to o minútu znova.",
+        "unanswered": "Asistent nevedel zostaviť odpoveď. Skúste sa opýtať inými slovami.",
+        "slow": "Odpoveď trvala príliš dlho. Skúste otázku položiť kratšie alebo inak.",
+        "declined": "Na túto otázku asistent neodpovedá."
+      }
     },
     "embed": {
       "title": "Vložiť",

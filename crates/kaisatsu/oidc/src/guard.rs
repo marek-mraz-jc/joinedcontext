@@ -560,15 +560,22 @@ impl OutboundGuard {
     /// The first address `host` resolves to, once every address it resolves to passed the W12
     /// rule under `exempt`.
     async fn resolve_judged(host: &str, port: u16, exempt: Exempt) -> Result<SocketAddr> {
-        let Ok(lookup) =
-            tokio::time::timeout(OUTBOUND_TIMEOUT, tokio::net::lookup_host((host, port))).await
-        else {
+        Self::judge_lookup(tokio::net::lookup_host((host, port)), exempt).await
+    }
+
+    /// [`Self::resolve_judged`] over any lookup: a timed-out, failed or empty answer is refused.
+    async fn judge_lookup<I: IntoIterator<Item = SocketAddr>>(
+        lookup: impl std::future::Future<Output = std::io::Result<I>>,
+        exempt: Exempt,
+    ) -> Result<SocketAddr> {
+        let Ok(lookup) = tokio::time::timeout(OUTBOUND_TIMEOUT, lookup).await else {
             return Err(KaisatsuError::OutboundRefused(
                 "DNS resolution timed out".into(),
             ));
         };
         let addrs: Vec<SocketAddr> = lookup
             .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
+            .into_iter()
             .collect();
         for addr in &addrs {
             if Self::refuses_resolved(exempt, addr.ip()) {
@@ -641,6 +648,36 @@ fn refused(e: reqwest::Error) -> KaisatsuError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A resolver that never answers is cut at the outbound deadline, and one that answers
+    /// with no address is refused, never dialled.
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_that_hangs_or_finds_nothing_is_refused() {
+        let hang = std::future::pending::<std::io::Result<Vec<SocketAddr>>>();
+        let err = OutboundGuard::judge_lookup(hang, Exempt::No)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("DNS resolution timed out"),
+            "{err}"
+        );
+        let empty = async { Ok(Vec::<SocketAddr>::new()) };
+        let err = OutboundGuard::judge_lookup(empty, Exempt::No)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("DNS returned no addresses"),
+            "{err}"
+        );
+        let public: SocketAddr = "1.1.1.1:443".parse().unwrap();
+        let found = async move { Ok(vec![public]) };
+        assert_eq!(
+            OutboundGuard::judge_lookup(found, Exempt::No)
+                .await
+                .unwrap(),
+            public
+        );
+    }
 
     fn loopback() -> OutboundGuard {
         OutboundGuard::new(OutboundPolicy {

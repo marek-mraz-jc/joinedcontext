@@ -2435,6 +2435,141 @@ mod tests {
 
     /// A forge that holds nothing yet and takes every write; `open` is the head branch of a
     /// change already open on it.
+    /// A revert is refused, with nothing planned, when main moved the files since, when the change
+    /// touched files no plan writes, or when it left nothing; otherwise it may be planned.
+    #[test]
+    fn a_revert_is_refused_when_main_moved_or_outside_files_or_nothing_is_left() {
+        let one = [create("Endpoint", "air")];
+        match revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one) {
+            Err(OpError::Api(ApiError::Conflict(why))) => {
+                assert!(
+                    why.starts_with("main changed projects/p/a.yaml since change 'c1'"),
+                    "{why}"
+                );
+                assert!(why.contains(PLAN), "{why}");
+            }
+            other => panic!("a 409, got {other:?}"),
+        }
+        match revertible("c1", &[], vec!["README.md".into()], &one) {
+            Err(OpError::Api(ApiError::Unprocessable { detail, errors })) => {
+                assert!(
+                    detail.contains("touched files a plan cannot write"),
+                    "{detail}"
+                );
+                assert_eq!(errors, ["README.md"]);
+            }
+            other => panic!("a 422, got {other:?}"),
+        }
+        match revertible("c1", &[], Vec::new(), &[]) {
+            Err(OpError::Api(ApiError::Conflict(why))) => {
+                assert_eq!(why, "change 'c1' left nothing to revert")
+            }
+            other => panic!("a 409, got {other:?}"),
+        }
+        assert!(revertible("c1", &[], Vec::new(), &one).is_ok());
+    }
+
+    /// Only a manifest of one of this Portal's kinds, with a name, is named.
+    #[test]
+    fn a_manifest_is_named_only_when_it_is_a_kind_of_this_portal() {
+        assert_eq!(
+            manifest_names(&json!({ "kind": "Endpoint", "metadata": { "name": "air" } })),
+            Some(("Endpoint".to_owned(), "air".to_owned()))
+        );
+        assert_eq!(
+            manifest_names(&json!({ "kind": "Deployment", "metadata": { "name": "x" } })),
+            None
+        );
+        assert_eq!(
+            manifest_names(&json!({ "kind": "Endpoint", "metadata": {} })),
+            None
+        );
+        assert_eq!(
+            manifest_names(&json!({ "metadata": { "name": "air" } })),
+            None
+        );
+    }
+
+    /// The forge's pull request 7 as `row` adds to a merged Portal change.
+    async fn forge_with_pull(row: Value, status: u16) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let mut pull = json!({ "Number": 7, "Head": "portal/air-1", "HeadSha": "h1", "Base": "main",
+                               "Merged": true, "MergeBase": "b1", "MergeCommitSha": "m1" });
+        if let (Some(pull), Value::Object(row)) = (pull.as_object_mut(), row) {
+            pull.extend(row);
+        }
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/PullRequests(7)",
+            ))
+            .respond_with(ResponseTemplate::new(status).set_body_json(pull))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn merged_of(
+        row: Value,
+        status: u16,
+    ) -> Result<(crate::forge::PullRequest, String), OpError> {
+        let server = forge_with_pull(row, status).await;
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        merged_change(&forge, 7, "doprava", "c7").await
+    }
+
+    /// A merged Portal or workspace change is answered with the commit it merged as, or its head
+    /// when the forge names no merge commit.
+    #[tokio::test]
+    async fn a_merged_portal_change_answers_the_commit_it_merged_as() {
+        let (pull, after) = merged_of(json!({}), 200).await.expect("merged");
+        assert_eq!((pull.number, after.as_str()), (7, "m1"));
+        let (_, after) = merged_of(
+            json!({ "Head": "refs/heads/workspace/air", "MergeCommitSha": "" }),
+            200,
+        )
+        .await
+        .expect("merged");
+        assert_eq!(after, "h1");
+    }
+
+    /// A pull request the forge does not have, or one the Portal did not open, is not found; one
+    /// not merged yet is a conflict that says to reject it instead; a forge failure is its own.
+    #[tokio::test]
+    async fn a_change_that_is_not_a_merged_portal_change_is_refused() {
+        for (row, status) in [(json!({}), 404), (json!({ "Head": "feature/x" }), 200)] {
+            match merged_of(row, status).await {
+                Err(OpError::Api(ApiError::NotFound(why))) => {
+                    assert_eq!(why, "change 'c7' not found in project 'doprava'")
+                }
+                other => panic!("a 404, got {other:?}"),
+            }
+        }
+        for row in [json!({ "Merged": false }), json!({ "MergeBase": "" })] {
+            match merged_of(row, 200).await {
+                Err(OpError::Api(ApiError::Conflict(why))) => {
+                    assert!(
+                        why.contains("is not merged") && why.contains("reject it"),
+                        "{why}"
+                    )
+                }
+                other => panic!("a 409, got {other:?}"),
+            }
+        }
+        match merged_of(json!({}), 500).await {
+            Err(OpError::Api(ApiError::Unavailable(why))) => {
+                assert!(
+                    why.starts_with("The Git repository did not answer"),
+                    "{why}"
+                )
+            }
+            other => panic!("the forge's outage, got {other:?}"),
+        }
+    }
+
     async fn empty_forge(open: Option<String>) -> wiremock::MockServer {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

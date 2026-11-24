@@ -27,6 +27,27 @@
     return true;
   };
   const onPage = (rect) => rect.width > 0 && rect.height > 0 && rect.right + scrollX > 0 && rect.bottom + scrollY > 0;
+  // Under another box, such as the page behind a modal dialog: the topmost element at its centre is
+  // neither it, inside it nor around it, even once scrolled to (and back): a box below the fold or
+  // scrolled out of its list is measured as a person scrolling would see it. One that cannot reach
+  // the screen is measured too.
+  // ponytail: elementFromPoint passes over pointer-events: none, so such a box over words hides nothing here.
+  const atCentre = (rect) => {
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    return x < 0 || y < 0 || x >= innerWidth || y >= innerHeight ? null : document.elementFromPoint(x, y);
+  };
+  const shows = (element, top) => element.contains(top) || top.contains(element);
+  const covered = (element, measure) => {
+    const now = atCentre(measure());
+    if (now && shows(element, now)) return false;
+    const kept = [];
+    for (let box = element; box; box = box.parentElement) kept.push([box, box.scrollLeft, box.scrollTop]);
+    element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    const top = atCentre(measure());
+    for (const [box, left, up] of kept) box.scrollTo({ left, top: up, behavior: "instant" });
+    return Boolean(top) && !shows(element, top);
+  };
 
   const text = new Map();
   const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -35,12 +56,14 @@
     if (!parent || parent.closest("script, style, noscript, template, option") || !readable.test(node.data) || !shown(parent)) continue;
     const range = document.createRange();
     range.selectNodeContents(node);
-    if ([...range.getClientRects()].some(onPage)) text.set(parent, node.data);
+    const first = () => [...range.getClientRects()].find(onPage);
+    if (first() && !covered(parent, first)) text.set(parent, node.data);
   }
   for (const field of document.querySelectorAll("input:not([type=hidden], [type=checkbox], [type=radio], [type=range], [type=color]), select, textarea")) {
     const words = field.tagName === "SELECT" ? field.selectedOptions[0]?.text : field.value || field.placeholder;
     // A password's value is never copied into a report.
-    if (words && shown(field) && onPage(field.getBoundingClientRect())) text.set(field, field.type === "password" ? "(password)" : words);
+    const box = () => field.getBoundingClientRect();
+    if (words && shown(field) && onPage(box()) && !covered(field, box)) text.set(field, field.type === "password" ? "(password)" : words);
   }
   for (const [element, words] of text) {
     let size = parseFloat(getComputedStyle(element).fontSize);
@@ -52,7 +75,10 @@
 
   const controls = "button, a[href], input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=tab], [role=checkbox], [role=radio], [role=switch], [role=menuitem], [role=option], [role=slider], [role=combobox]";
   for (const control of document.querySelectorAll(controls)) {
-    const boxes = [control, ...(control.labels ?? [])].filter(shown).map((part) => part.getBoundingClientRect()).filter(onPage);
+    const boxes = [control, ...(control.labels ?? [])]
+      .filter(shown)
+      .filter((part) => onPage(part.getBoundingClientRect()) && !covered(part, () => part.getBoundingClientRect()))
+      .map((part) => part.getBoundingClientRect());
     if (!boxes.length) continue;
     // A link inside a sentence is as tall as its line (WCAG 2.5.8's inline exception).
     if (control.matches("a[href]") && getComputedStyle(control).display === "inline") {
