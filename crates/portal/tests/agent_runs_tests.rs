@@ -5088,6 +5088,18 @@ mod durable_store {
             ))
             .await
             .expect("created");
+        // c: created in a's second, expired before b.
+        let c = format!("{project}-c");
+        store
+            .create_run(&run(
+                &project,
+                &c,
+                "air",
+                "2026-11-24T10:00:00Z",
+                "1999-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
         let read = store.get_run(&a).await.expect("read").expect("held");
         assert_eq!(
             (read.project.as_str(), read.app_name.as_str()),
@@ -5100,7 +5112,7 @@ mod durable_store {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        assert_eq!(listed, [b.clone(), a.clone()], "newest first");
+        assert_eq!(listed, [b.clone(), a.clone(), c.clone()], "newest first, then by id");
         let trees = RunFilter {
             app: Some("trees".into()),
             ..RunFilter::default()
@@ -5132,7 +5144,11 @@ mod durable_store {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        assert!(expired.contains(&b) && !expired.contains(&a), "{expired:?}");
+        let (ec, eb) = (
+            expired.iter().position(|id| *id == c).expect("c expired"),
+            expired.iter().position(|id| *id == b).expect("b expired"),
+        );
+        assert!(ec < eb && !expired.contains(&a), "soonest first: {expired:?}");
         let queued: Vec<String> = store
             .list_in_status(AgentRunStatus::Queued)
             .await
@@ -5144,7 +5160,8 @@ mod durable_store {
             queued.iter().position(|id| *id == a).expect("a queued"),
             queued.iter().position(|id| *id == b).expect("b queued"),
         );
-        assert!(ia < ib, "oldest first: {queued:?}");
+        let ic = queued.iter().position(|id| *id == c).expect("c queued");
+        assert!(ia < ic && ic < ib, "oldest first, then by id: {queued:?}");
         // A store that never saw the run finds it project by project, and an id no project
         // holds is no run.
         let other = AgentStore::new(Some(pool.clone()), mirror);

@@ -1137,6 +1137,8 @@ mod tests {
             .await
             .expect("url");
         store.record_first_version("run-a").await.expect("first");
+        let first = store.get_run("run-a").await.expect("read").expect("held");
+        store.record_first_version("run-a").await.expect("kept");
         let endpoints = [crate::agents::endpoints::RunEndpoint {
             name: "bikes".into(),
             slug: "s1".into(),
@@ -1152,6 +1154,7 @@ mod tests {
         assert_eq!(read.files["src/App.tsx"], "x");
         assert_eq!(read.preview_url.as_deref(), Some("https://q.example"));
         assert!(read.first_frame_ms.is_some() && read.first_version_ms.is_some());
+        assert_eq!(read.first_version_ms, first.first_version_ms, "the first one stays");
         assert_eq!(
             (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
             ("bikes", "s1")
@@ -1179,6 +1182,24 @@ mod tests {
             known.get(&format!("run-{KNOWN_RUNS}")).map(String::as_str),
             Some("helsinki")
         );
+    }
+
+    /// T-7711: a thread that panicked while holding the run-project memory leaves it usable.
+    #[test]
+    fn a_poisoned_run_project_memory_is_still_read() {
+        let store = AgentStore::new(None, Arc::default());
+        store.learn([&run("run-1", "helsinki", "2026-09-12T10:15:30Z")]);
+        let poisoned = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = store.known();
+                    panic!("a holder panicked");
+                })
+                .join()
+        });
+        assert!(poisoned.is_err());
+        assert!(store.projects.is_poisoned());
+        assert_eq!(store.known().get("run-1").map(String::as_str), Some("helsinki"));
     }
 
     #[tokio::test]

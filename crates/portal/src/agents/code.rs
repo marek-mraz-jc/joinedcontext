@@ -497,10 +497,12 @@ mod tests {
     fn an_unchanged_template_is_shown_by_its_exports_and_a_changed_file_whole() {
         let template = preview::template_files();
         let form = "src/components/EntityForm.tsx";
-        let outlined = match shown(form, &template[form], &template) {
-            Shown::Outline(outlined) => outlined,
-            other => format!("{other:?}"),
-        };
+        let outlined = outline(&template[form]);
+        assert_eq!(
+            shown(form, &template[form], &template),
+            Shown::Outline(outlined.clone()),
+            "an unchanged component is outlined"
+        );
         assert!(
             outlined.starts_with("export") || outlined.contains("\nexport"),
             "{outlined}"
