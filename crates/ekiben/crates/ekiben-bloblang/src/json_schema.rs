@@ -512,6 +512,8 @@ mod tests {
                 "patternProperties" => serde_json::json!({ "patternProperties": { "^a$": r } }),
                 "additionalProperties" => serde_json::json!({ "additionalProperties": r }),
                 "items-schema" => serde_json::json!({ "items": r }),
+                // A schema dependency validates the same object again, one level deeper.
+                "dependencies" => serde_json::json!({ "dependencies": { "a": r } }),
                 other => serde_json::json!({ other: [r] }),
             };
             defs.insert(format!("d{i}"), d);
@@ -543,6 +545,7 @@ mod tests {
             "additionalProperties",
             "items",
             "items-schema",
+            "dependencies",
         ] {
             let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
             assert_eq!(run(&ok, doc), Ok(()), "{key}");

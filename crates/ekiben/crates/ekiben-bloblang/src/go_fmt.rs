@@ -816,6 +816,7 @@ mod tests {
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
             // An index without its closing bracket is a bad index.
             ("%[1d", vec![i(5)], "%!d(BADINDEX)"),
+            ("%.[9]d", vec![i(5)], "%!d(BADINDEX)"),
             // A precision turns the zero flag off: Go pads with spaces then.
             (
                 "%08.3d|%-08d|%8.2f|%08.2f",
