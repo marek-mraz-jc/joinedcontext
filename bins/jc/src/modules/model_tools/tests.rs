@@ -486,7 +486,6 @@ fn parity() {
     }
 }
 
-
 /// A model with every NGSI-LD kind, a type chain, units, an enum with meanings, an inline
 /// object, a relationship pair, an abstract parent and a slot name that is no identifier.
 const RICH: &str = r#"id: https://city.example/models/rich
@@ -623,20 +622,41 @@ fn a_model_with_every_kind_of_slot_renders_each_artifact() {
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
 
     let ctx = &out["context"]["@context"];
-    assert_eq!(ctx["ext"], "https://ext.example/vocab#", "emit_prefixes and mappings emit ext");
-    assert_eq!(ctx["heat"]["@type"], "xsd:float", "Celsius → Temperature → float");
-    assert_eq!(ctx["label"], json!({"@id": "ext:label", "@container": "@language"}));
+    assert_eq!(
+        ctx["ext"], "https://ext.example/vocab#",
+        "emit_prefixes and mappings emit ext"
+    );
+    assert_eq!(
+        ctx["heat"]["@type"], "xsd:float",
+        "Celsius → Temperature → float"
+    );
+    assert_eq!(
+        ctx["label"],
+        json!({"@id": "ext:label", "@container": "@language"})
+    );
     assert_eq!(ctx["note"]["@type"], "@json");
     assert_eq!(ctx["words"]["@type"], "@vocab");
     assert_eq!(ctx["extra"]["@container"], "@list");
     assert_eq!(ctx["zones"]["@type"], "@id");
-    assert_eq!(ctx["payload"], "@json", "a jsonld_keyword replaces the term");
-    assert_eq!(ctx["streetName"], json!({"@id": "city:street"}), "an attribute's alias");
+    assert_eq!(
+        ctx["payload"], "@json",
+        "a jsonld_keyword replaces the term"
+    );
+    assert_eq!(
+        ctx["streetName"],
+        json!({"@id": "city:street"}),
+        "an attribute's alias"
+    );
     assert_eq!(ctx["state"]["@context"]["meaning"], "@id");
     assert_eq!(ctx["page"]["@type"], "xsd:anyURI");
 
     let broker = &out["brokerSchema"];
-    for (key, value) in [("version", "1.2.0"), ("title", "Rich"), ("license", "CC-BY-4.0"), ("default_prefix", "city")] {
+    for (key, value) in [
+        ("version", "1.2.0"),
+        ("title", "Rich"),
+        ("license", "CC-BY-4.0"),
+        ("default_prefix", "city"),
+    ] {
         assert_eq!(broker[key], value, "{key}");
     }
     let station = &broker["classes"]["Station"];
@@ -647,15 +667,27 @@ fn a_model_with_every_kind_of_slot_renders_each_artifact() {
         json!({"name": "level", "required": true, "annotations": {"shown": {"tag": "shown", "value": "false"}}}),
         "only what the usage changes"
     );
-    assert_eq!(station["annotations"]["rank"]["value"], "3", "a number annotation is text");
-    assert_eq!(broker["slots"]["heat"]["range"], "float", "a type resolves to its built-in");
+    assert_eq!(
+        station["annotations"]["rank"]["value"], "3",
+        "a number annotation is text"
+    );
+    assert_eq!(
+        broker["slots"]["heat"]["range"], "float",
+        "a type resolves to its built-in"
+    );
     assert_eq!(broker["slots"]["label"]["rank"], 1);
     assert_eq!(
         broker["slots"]["level"]["unit"],
         json!({"ucum_code": "m", "symbol": "m", "exact_mappings": ["qudt:M"]})
     );
-    assert_eq!(broker["slots"]["level"]["annotations"]["strict"]["value"], "true");
-    assert_eq!(broker["slots"]["level"]["annotations"]["threshold"]["value"], "4.5");
+    assert_eq!(
+        broker["slots"]["level"]["annotations"]["strict"]["value"],
+        "true"
+    );
+    assert_eq!(
+        broker["slots"]["level"]["annotations"]["threshold"]["value"],
+        "4.5"
+    );
     assert_eq!(
         broker["enums"]["State"],
         json!({"name": "State", "description": "The state", "permissible_values": {
@@ -709,7 +741,10 @@ fn a_model_with_every_kind_of_slot_renders_each_artifact() {
     ] {
         assert!(ts.contains(line), "{line}\n{ts}");
     }
-    assert!(!ts.contains("type: \"Place\""), "an abstract class has no row type");
+    assert!(
+        !ts.contains("type: \"Place\""),
+        "an abstract class has no row type"
+    );
 }
 
 /// `generate` on `MODEL` with `from` replaced by `to`, its `errors`.
@@ -723,14 +758,32 @@ fn errors_with(from: &str, to: &str) -> Vec<String> {
 #[test]
 fn context_failures_name_the_term_and_hold_back_the_example() {
     let e = errors_with("  status:\n", "  status:\n    slot_uri: a:b:c\n");
-    assert!(e[0].starts_with("context: 'a:b:c' is neither a CURIE (prefix:name, one colon) nor a URI"), "{e:?}");
-    assert!(e.iter().any(|m| m == "example: the @context did not render"), "{e:?}");
+    assert!(
+        e[0].starts_with("context: 'a:b:c' is neither a CURIE (prefix:name, one colon) nor a URI"),
+        "{e:?}"
+    );
+    assert!(
+        e.iter()
+            .any(|m| m == "example: the @context did not render"),
+        "{e:?}"
+    );
 
     let e = errors_with("  status:\n", "  status:\n    exact_mappings: [a:b:c]\n");
-    assert!(e[0].starts_with("context: Definition status - unrecognized prefix: a:b:c"), "{e:?}");
+    assert!(
+        e[0].starts_with("context: Definition status - unrecognized prefix: a:b:c"),
+        "{e:?}"
+    );
 
-    let e = errors_with("  ParkingSpot:\n", "  ParkingSpot:\n    class_uri: https://smartdatamodels.org/dataModel.Parking/ParkingSpot\n");
-    assert!(e[0].starts_with("context: these terms are minted under a namespace the organisation does not own"), "{e:?}");
+    let e = errors_with(
+        "  ParkingSpot:\n",
+        "  ParkingSpot:\n    class_uri: https://smartdatamodels.org/dataModel.Parking/ParkingSpot\n",
+    );
+    assert!(
+        e[0].starts_with(
+            "context: these terms are minted under a namespace the organisation does not own"
+        ),
+        "{e:?}"
+    );
     assert!(e[0].ends_with("'ParkingSpot' → https://smartdatamodels.org/dataModel.Parking/ParkingSpot (reserved: https://smartdatamodels.org/)"), "{e:?}");
     // The same IRI imported with its upstream source is no squat.
     let e = errors_with(
@@ -755,47 +808,88 @@ fn the_context_follows_prefixes_mappings_and_any_of() {
         );
     let (_, out) = generate(&source(&model));
     let ctx = &out["context"]["@context"];
-    assert_eq!(ctx["odd"], json!({"@id": "https://odd.example/x", "@prefix": true}), "{out}");
-    assert_eq!(ctx["foreign"], "http://example.org/UNKNOWN/foreign/", "an unknown mapping prefix");
-    assert_eq!(ctx["either"]["@type"], "xsd:integer", "a class or one literal type");
-    assert!(ctx["mixed"].get("@type").is_none(), "two literal types coerce to none: {ctx}");
+    assert_eq!(
+        ctx["odd"],
+        json!({"@id": "https://odd.example/x", "@prefix": true}),
+        "{out}"
+    );
+    assert_eq!(
+        ctx["foreign"], "http://example.org/UNKNOWN/foreign/",
+        "an unknown mapping prefix"
+    );
+    assert_eq!(
+        ctx["either"]["@type"], "xsd:integer",
+        "a class or one literal type"
+    );
+    assert!(
+        ctx["mixed"].get("@type").is_none(),
+        "two literal types coerce to none: {ctx}"
+    );
     assert_eq!(ctx["near"]["@id"], "odd:near");
-    assert_eq!(ctx["far"]["@id"], "https://far.example/far", "a URI no prefix covers stays whole");
+    assert_eq!(
+        ctx["far"]["@id"], "https://far.example/far",
+        "a URI no prefix covers stays whole"
+    );
 }
 
 #[test]
 fn without_a_default_prefix_the_vocab_is_the_model_id() {
     for (id, vocab) in [
-        ("https://city.example/models/parking", "https://city.example/models/parking/"),
-        ("https://city.example/models/parking#", "https://city.example/models/parking#"),
+        (
+            "https://city.example/models/parking",
+            "https://city.example/models/parking/",
+        ),
+        (
+            "https://city.example/models/parking#",
+            "https://city.example/models/parking#",
+        ),
     ] {
         let model = MODEL
-            .replace("id: https://city.example/models/parking\n", &format!("id: {id}\n"))
+            .replace(
+                "id: https://city.example/models/parking\n",
+                &format!("id: {id}\n"),
+            )
             .replace("default_prefix: city\n", "")
             .replace("default_range: string\n", "");
         let (_, out) = generate(&source(&model));
         assert_eq!(out["context"]["@context"]["@vocab"], vocab, "{out}");
     }
     let e = errors_with("default_prefix: city\n", "default_prefix: nowhere\n");
-    assert!(e[0].contains("default_prefix 'nowhere' is not declared under prefixes"), "{e:?}");
+    assert!(
+        e[0].contains("default_prefix 'nowhere' is not declared under prefixes"),
+        "{e:?}"
+    );
 }
 
 #[test]
 fn a_type_the_broker_cannot_hold_is_named_and_holds_back_every_saved_artifact() {
-    let model = MODEL.replace("    range: integer\n", "    range: Odd\n") + "types:\n  Odd:\n    uri: city:odd\n";
+    let model = MODEL.replace("    range: integer\n", "    range: Odd\n")
+        + "types:\n  Odd:\n    uri: city:odd\n";
     let (_, out) = generate(&source(&model));
     let e = errors_of(&out);
     assert!(e[0].starts_with("brokerSchema: slot 'capacity': range 'Odd' is not a class, an enum or a type based on one of"), "{e:?}");
-    assert_eq!(e[1], "jsonSchema, docs, example, typescript: the broker schema did not render");
-    assert!(out.get("context").is_some(), "the context renders on its own");
+    assert_eq!(
+        e[1],
+        "jsonSchema, docs, example, typescript: the broker schema did not render"
+    );
+    assert!(
+        out.get("context").is_some(),
+        "the context renders on its own"
+    );
 }
 
 #[test]
 fn a_flag_the_broker_reads_otherwise_is_refused_before_a_save() {
-    let model = MODEL.replace("    is_a: Entity\n", "    is_a: Entity\n    annotations:\n      qb_dsd: \"False\"\n");
+    let model = MODEL.replace(
+        "    is_a: Entity\n",
+        "    is_a: Entity\n    annotations:\n      qb_dsd: \"False\"\n",
+    );
     let (_, out) = generate(&source(&model));
     let e = errors_of(&out);
-    assert!(e[0].starts_with("brokerSchema: the broker refuses this schema: "), "{e:?}");
+    assert!(
+        e[0].starts_with("brokerSchema: the broker refuses this schema: "),
+        "{e:?}"
+    );
     assert!(out.get("brokerSchema").is_none());
 }
 
@@ -803,7 +897,11 @@ fn a_flag_the_broker_reads_otherwise_is_refused_before_a_save() {
 fn the_saved_artifacts_refuse_reserved_names_endless_nesting_and_unmapped_members() {
     let (_, out) = generate(&source(&MODEL.replace("SpotStatus", "Geometry")));
     let e = errors_of(&out);
-    assert!(e.iter().any(|m| m.starts_with("typescript: 'Geometry' is a name jc-types.ts declares itself")), "{e:?}");
+    assert!(
+        e.iter()
+            .any(|m| m.starts_with("typescript: 'Geometry' is a name jc-types.ts declares itself")),
+        "{e:?}"
+    );
 
     let head = &MODEL[..MODEL.find("classes:").unwrap_or_default()];
     let nested = format!(
@@ -811,10 +909,19 @@ fn the_saved_artifacts_refuse_reserved_names_endless_nesting_and_unmapped_member
     );
     let (_, out) = generate(&source(&nested));
     let e = errors_of(&out);
-    assert!(e.iter().any(|m| m.contains("nests inline objects more than 8 deep")), "{e:?}");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("nests inline objects more than 8 deep")),
+        "{e:?}"
+    );
 
     let e = errors_with("  status:\n", "  status:\n    alias: state\n");
-    assert!(e.iter().any(|m| m.starts_with("example: the generated example carries members the generated @context does not define")), "{e:?}");
+    assert!(
+        e.iter().any(|m| m.starts_with(
+            "example: the generated example carries members the generated @context does not define"
+        )),
+        "{e:?}"
+    );
 }
 
 /// The first entry of `errors` for `text`, the whole answer when there is none.
@@ -830,20 +937,41 @@ fn first_error(text: &str) -> String {
 fn a_document_of_the_wrong_shape_is_refused_in_plain_words() {
     let head = "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n";
     for (body, expected) in [
-        ("classes:\n  A:\n    annotations: [a]\n", "annotations are a map of tag to value"),
-        ("classes: 3\n", "class definitions are a map of name to definition"),
+        (
+            "classes:\n  A:\n    annotations: [a]\n",
+            "annotations are a map of tag to value",
+        ),
+        (
+            "classes: 3\n",
+            "class definitions are a map of name to definition",
+        ),
         ("classes:\n  - just text\n", "class entries are maps"),
-        ("classes:\n  - is_a: Entity\n", "class entries name themselves"),
-        ("slots:\n  s:\n    unit: 3\n", "a unit is a map (ucum_code, symbol, exact_mappings, ...)"),
-        ("slots:\n  s:\n    any_of: 3\n", "any_of is a list of slot expressions"),
+        (
+            "classes:\n  - is_a: Entity\n",
+            "class entries name themselves",
+        ),
+        (
+            "slots:\n  s:\n    unit: 3\n",
+            "a unit is a map (ucum_code, symbol, exact_mappings, ...)",
+        ),
+        (
+            "slots:\n  s:\n    any_of: 3\n",
+            "any_of is a list of slot expressions",
+        ),
         ("prefixes: [a]\n", "prefixes are a map of prefix to IRI"),
         ("classes:\n  A: 3\n", "class 'A' is not a map of metaslots"),
     ] {
         let e = first_error(&format!("{head}{body}"));
         assert!(e.contains(expected), "{body}: {e}");
     }
-    assert_eq!(first_error("- a\n- b\n"), "the schema document must be a mapping of LinkML fields, not a list");
-    assert!(first_error("just text\n").starts_with("the schema document must be a mapping of LinkML fields, not "));
+    assert_eq!(
+        first_error("- a\n- b\n"),
+        "the schema document must be a mapping of LinkML fields, not a list"
+    );
+    assert!(
+        first_error("just text\n")
+            .starts_with("the schema document must be a mapping of LinkML fields, not ")
+    );
     assert!(first_error("name: m\n").contains("SchemaDefinition.id must be supplied"));
 }
 
@@ -889,20 +1017,45 @@ types:
     let (_, out) = generate(&source(model));
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     let broker = &out["brokerSchema"];
-    assert_eq!(broker["name"], "long", "the name falls back to the id's last segment");
-    assert_eq!(broker["slots"]["reading"]["range"], "integer", "a number range is its text");
-    assert!(broker["slots"]["empty"].get("unit").is_none(), "a null unit is none");
-    assert_eq!(broker["classes"]["Meter"]["slot_usage"]["counted"]["inlined"], true, "inlined_as_list inlines: {broker}");
-    assert_eq!(broker["classes"]["Meter"]["annotations"]["shown"]["value"], "yes");
-    assert_eq!(broker["classes"]["Spare"]["name"], "Spare", "a class with no metaslots");
-    assert_eq!(out["context"]["@context"]["long"], "https://city.example/models/long/");
+    assert_eq!(
+        broker["name"], "long",
+        "the name falls back to the id's last segment"
+    );
+    assert_eq!(
+        broker["slots"]["reading"]["range"], "integer",
+        "a number range is its text"
+    );
+    assert!(
+        broker["slots"]["empty"].get("unit").is_none(),
+        "a null unit is none"
+    );
+    assert_eq!(
+        broker["classes"]["Meter"]["slot_usage"]["counted"]["inlined"], true,
+        "inlined_as_list inlines: {broker}"
+    );
+    assert_eq!(
+        broker["classes"]["Meter"]["annotations"]["shown"]["value"],
+        "yes"
+    );
+    assert_eq!(
+        broker["classes"]["Spare"]["name"], "Spare",
+        "a class with no metaslots"
+    );
+    assert_eq!(
+        out["context"]["@context"]["long"],
+        "https://city.example/models/long/"
+    );
 }
 
 #[test]
 fn a_name_the_model_does_not_define_is_named() {
     for (from, to, expected) in [
         ("    is_a: Entity\n", "    is_a: Nowhere\n", "Nowhere"),
-        ("    slots: [status, capacity]\n", "    slots: [status, capacity, gone]\n", "No such slot gone"),
+        (
+            "    slots: [status, capacity]\n",
+            "    slots: [status, capacity, gone]\n",
+            "No such slot gone",
+        ),
         ("  capacity:\n", "  capacity:\n    is_a: absent\n", "absent"),
     ] {
         let e = errors_with(from, to);
@@ -917,24 +1070,39 @@ fn types_resolve_through_typeof_and_their_uri_coerces_the_term() {
         + "types:\n  Link:\n    typeof: uriorcurie\n    uri: http://www.w3.org/ns/shex#iri\n  Bare:\n    typeof: string\n    uri: xsd:string\n  Strange:\n    typeof: string\n    uri: odd:thing\n  Child:\n    typeof: Parent\n  Parent:\n    typeof: integer\n";
     let (_, out) = generate(&source(&model));
     let e = errors_of(&out);
-    assert!(e[0].starts_with("context: Unknown CURIE prefix: odd"), "{e:?}");
+    assert!(
+        e[0].starts_with("context: Unknown CURIE prefix: odd"),
+        "{e:?}"
+    );
     let fixed = model.replace("    uri: odd:thing\n", "    uri: thing\n");
     let (_, out) = generate(&source(&fixed));
-    assert!(errors_of(&out)[0].starts_with("context: Unknown CURIE prefix: @base (thing)"), "{out}");
+    assert!(
+        errors_of(&out)[0].starts_with("context: Unknown CURIE prefix: @base (thing)"),
+        "{out}"
+    );
     let fixed = model.replace("    uri: odd:thing\n", "    uri: xsd:token\n");
     let (_, out) = generate(&source(&fixed));
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     let ctx = &out["context"]["@context"];
     // A shex:iri type coerces to `@id`, which only a Relationship keeps: a Property drops it.
     assert_eq!(ctx["link"], json!({"@id": "city:link"}), "{ctx}");
-    assert!(ctx["plain"].get("@type").is_none(), "xsd:string coerces to nothing");
-    assert_eq!(ctx["chained"]["@type"], "xsd:integer", "Child → Parent → integer");
+    assert!(
+        ctx["plain"].get("@type").is_none(),
+        "xsd:string coerces to nothing"
+    );
+    assert_eq!(
+        ctx["chained"]["@type"], "xsd:integer",
+        "Child → Parent → integer"
+    );
     assert_eq!(out["brokerSchema"]["slots"]["chained"]["range"], "integer");
 }
 
 #[test]
 fn a_default_prefix_written_as_the_model_iri_is_refused_before_a_save() {
-    let e = errors_with("default_prefix: city\n", "default_prefix: https://city.example/models/parking/\n");
+    let e = errors_with(
+        "default_prefix: city\n",
+        "default_prefix: https://city.example/models/parking/\n",
+    );
     assert!(
         e.iter().any(|m| m.contains("brokerSchema: the broker refuses this schema: malformed LinkML schema: default_prefix \"https://city.example/models/parking/\" is not declared")),
         "{e:?}"
@@ -969,14 +1137,22 @@ async fn spawn_serves_on_a_loopback_port_until_shutdown() {
 async fn an_empty_body_asks_for_the_source() {
     let (status, out) = call("POST", "/generate", Body::empty()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(errors_of(&out), vec!["'source' must be the LinkML document as a string".to_owned()]);
+    assert_eq!(
+        errors_of(&out),
+        vec!["'source' must be the LinkML document as a string".to_owned()]
+    );
 }
 
 fn body_of(resp: Response) -> impl std::future::Future<Output = (StatusCode, Value)> {
     async move {
         let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap_or_default();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap_or_default();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 }
 
@@ -985,7 +1161,10 @@ async fn a_stopping_module_and_a_slow_compilation_answer_503() {
     let body = || Body::from(json!({"source": MODEL}).to_string());
     let closed = Arc::new(Semaphore::new(1));
     closed.close();
-    let state = State { slots: closed, timeout: COMPILE_TIMEOUT };
+    let state = State {
+        slots: closed,
+        timeout: COMPILE_TIMEOUT,
+    };
     let (status, out) = body_of(generate_route(state, body()).await).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(errors_of(&out), vec!["model tools is stopping".to_owned()]);
@@ -996,11 +1175,17 @@ async fn a_stopping_module_and_a_slow_compilation_answer_503() {
         vec!["x"; 150_000].join(", ")
     );
     let slots = Arc::new(Semaphore::new(1));
-    let state = State { slots: slots.clone(), timeout: Duration::from_nanos(1) };
+    let state = State {
+        slots: slots.clone(),
+        timeout: Duration::from_nanos(1),
+    };
     let big = Body::from(json!({ "source": big }).to_string());
     let (status, out) = body_of(generate_route(state, big).await).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(errors_of(&out), vec!["the generator did not answer within 0 s".to_owned()]);
+    assert_eq!(
+        errors_of(&out),
+        vec!["the generator did not answer within 0 s".to_owned()]
+    );
     // The compilation past its timeout keeps its slot until it ends.
     let permit = tokio::time::timeout(Duration::from_secs(10), slots.acquire_owned()).await;
     assert!(permit.is_ok(), "the slot comes back when the job ends");
@@ -1030,17 +1215,32 @@ enums:
     permissible_values:
       broken: {}
 ";
-    let model = MODEL.replace("  - ngsi-ld-core\n", "  - ngsi-ld-core\n  - org.shared.v1\n");
+    let model = MODEL.replace(
+        "  - ngsi-ld-core\n",
+        "  - ngsi-ld-core\n  - org.shared.v1\n",
+    );
     let mut body = source(&model);
     body.insert("imports".to_owned(), json!({ "org.shared.v1": shared }));
     let (_, out) = generate(&body);
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     let broker = &out["brokerSchema"];
-    assert!(broker["classes"]["ParkingSpot"].get("description").is_none(), "{broker}");
+    assert!(
+        broker["classes"]["ParkingSpot"]
+            .get("description")
+            .is_none(),
+        "{broker}"
+    );
     assert_eq!(broker["slots"]["capacity"]["range"], "integer");
-    assert!(broker["enums"]["SpotStatus"]["permissible_values"].get("broken").is_none());
+    assert!(
+        broker["enums"]["SpotStatus"]["permissible_values"]
+            .get("broken")
+            .is_none()
+    );
     let ctx = &out["context"]["@context"];
-    assert_eq!(ctx["extra"], "https://extra.example/", "a prefix only the import declares");
+    assert_eq!(
+        ctx["extra"], "https://extra.example/",
+        "a prefix only the import declares"
+    );
 }
 
 #[test]
@@ -1057,12 +1257,22 @@ fn usages_attributes_and_units_reach_each_artifact() {
         .replacen("classes:\n", "classes:\n  Garage:\n    is_a: Entity\n    attributes:\n      capacity:\n        range: integer\n", 1);
     // A usage that makes a slot the identifier: the broker refuses it beside Entity's id.
     let (_, out) = generate(&source(&model));
-    assert!(errors_of(&out)[0].contains("a second identifier \"ref\""), "{out}");
-    let model = model.replace("      ref:\n        identifier: true\n", "      ref:\n        required: true\n");
+    assert!(
+        errors_of(&out)[0].contains("a second identifier \"ref\""),
+        "{out}"
+    );
+    let model = model.replace(
+        "      ref:\n        identifier: true\n",
+        "      ref:\n        required: true\n",
+    );
     let (_, out) = generate(&source(&model));
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     let ctx = &out["context"]["@context"];
-    assert_eq!(ctx["reference"], json!({"@id": "city:ref"}), "the alias names the term");
+    assert_eq!(
+        ctx["reference"],
+        json!({"@id": "city:ref"}),
+        "the alias names the term"
+    );
     // any_of with a class and no literal type coerces to `@id`, which a Property drops.
     assert_eq!(ctx["code"], json!({"@id": "city:code"}));
     assert_eq!(
@@ -1070,29 +1280,68 @@ fn usages_attributes_and_units_reach_each_artifact() {
         json!({"symbol": "pcs", "exactMappings": []})
     );
     let e = errors_with("  status:\n", "  status:\n    slot_uri: :status\n");
-    assert!(e[0].contains("\":status\" is not an IRI, a CURIE on a declared prefix or an IRI-safe name"), "{e:?}");
+    assert!(
+        e[0].contains(
+            "\":status\" is not an IRI, a CURIE on a declared prefix or an IRI-safe name"
+        ),
+        "{e:?}"
+    );
 }
 
 #[test]
 fn a_type_with_neither_uri_nor_parent_or_a_type_cycle_is_named() {
     let base = MODEL.replace("    range: integer\n", "    range: Loose\n");
-    let e = errors_of(&generate(&source(&(base.clone() + "types:\n  Loose:\n    description: no uri, no typeof\n"))).1);
-    assert!(e[0].starts_with("context: range 'Loose' names no type of the schema or its imports"), "{e:?}");
-    let e = errors_of(&generate(&source(&(base.clone() + "types:\n  Loose:\n    typeof: Other\n  Other:\n    typeof: Loose\n"))).1);
-    assert!(e.iter().any(|m| m.contains("Loose")), "a cycle is refused: {e:?}");
+    let e = errors_of(
+        &generate(&source(
+            &(base.clone() + "types:\n  Loose:\n    description: no uri, no typeof\n"),
+        ))
+        .1,
+    );
+    assert!(
+        e[0].starts_with("context: range 'Loose' names no type of the schema or its imports"),
+        "{e:?}"
+    );
+    let e = errors_of(
+        &generate(&source(
+            &(base.clone() + "types:\n  Loose:\n    typeof: Other\n  Other:\n    typeof: Loose\n"),
+        ))
+        .1,
+    );
+    assert!(
+        e.iter().any(|m| m.contains("Loose")),
+        "a cycle is refused: {e:?}"
+    );
     let e = errors_of(&generate(&source(&(base + "types:\n  Loose:\n    typeof: Ghost\n"))).1);
-    assert!(e.iter().any(|m| m.contains("Ghost") || m.contains("Loose")), "{e:?}");
+    assert!(
+        e.iter().any(|m| m.contains("Ghost") || m.contains("Loose")),
+        "{e:?}"
+    );
 }
 
 #[test]
 fn more_document_shapes_are_refused_in_plain_words() {
-    assert_eq!(first_error("true\n"), "the schema document must be a mapping of LinkML fields, not a boolean");
-    assert_eq!(first_error("3\n"), "the schema document must be a mapping of LinkML fields, not a number");
-    assert!(first_error("~\n").starts_with("the schema document must be a mapping of LinkML fields, not "));
+    assert_eq!(
+        first_error("true\n"),
+        "the schema document must be a mapping of LinkML fields, not a boolean"
+    );
+    assert_eq!(
+        first_error("3\n"),
+        "the schema document must be a mapping of LinkML fields, not a number"
+    );
+    assert!(
+        first_error("~\n")
+            .starts_with("the schema document must be a mapping of LinkML fields, not ")
+    );
     let head = "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n";
     for (body, expected) in [
-        ("prefixes:\n  p:\n    prefix_prefix: p\n", "Prefix.prefix_reference must be supplied"),
-        ("classes:\n  A:\n    annotations:\n      a:\n        tag: a\n        value: 1\n        annotations: [x]\n", "annotations are a map of tag to value"),
+        (
+            "prefixes:\n  p:\n    prefix_prefix: p\n",
+            "Prefix.prefix_reference must be supplied",
+        ),
+        (
+            "classes:\n  A:\n    annotations:\n      a:\n        tag: a\n        value: 1\n        annotations: [x]\n",
+            "annotations are a map of tag to value",
+        ),
     ] {
         let e = first_error(&format!("{head}{body}"));
         assert!(e.contains(expected), "{body}: {e}");

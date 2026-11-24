@@ -594,7 +594,11 @@ fn named(
                 out.insert(name, Value::Object(obj));
             }
         }
-        Some(_) => return Err(format!("{what} definitions are a map of name to definition")),
+        Some(_) => {
+            return Err(format!(
+                "{what} definitions are a map of name to definition"
+            ));
+        }
     }
     Ok(out)
 }
@@ -1393,7 +1397,9 @@ mod tests {
         assert_eq!(py_float(1.5e20), "1.5e+20");
         assert_eq!(py_float(-2.25e-7), "-2.25e-07");
         assert_eq!(
-            py_json(&Value::String("q\"b\\n\nr\rt\tb\u{8}f\u{c}c\u{1}".to_owned())),
+            py_json(&Value::String(
+                "q\"b\\n\nr\rt\tb\u{8}f\u{c}c\u{1}".to_owned()
+            )),
             r#""q\"b\\n\nr\rt\tb\bf\fc\u0001""#
         );
         for (v, t) in [
@@ -1424,7 +1430,10 @@ mod tests {
         assert_eq!(camelcase("a__b"), "AB", "a run of underscores is one break");
         assert!(!is_model_import("orgairv1"), "no dot");
         assert_eq!(text_list(&Value::Null), Vec::<Value>::new());
-        assert_eq!(text_list(&serde_json::json!(3)), vec![Value::String("3".to_owned())]);
+        assert_eq!(
+            text_list(&serde_json::json!(3)),
+            vec![Value::String("3".to_owned())]
+        );
     }
 
     #[test]
@@ -1436,13 +1445,22 @@ mod tests {
         };
         let e = parse_yaml("a: [1, 2", limits, &mut used).unwrap_err();
         assert!(e.contains("did not find expected"), "{e}");
-        let v = parse_yaml("1: one\ntrue: yes\n~: none\nf: 1.5\nbig: 18446744073709551615\nneg: -3\n", limits, &mut used);
+        let v = parse_yaml(
+            "1: one\ntrue: yes\n~: none\nf: 1.5\nbig: 18446744073709551615\nneg: -3\n",
+            limits,
+            &mut used,
+        );
         assert_eq!(
             v,
-            Ok(serde_json::json!({"1": "one", "True": "yes", "None": "none", "f": 1.5, "big": 18446744073709551615u64, "neg": -3}))
+            Ok(
+                serde_json::json!({"1": "one", "True": "yes", "None": "none", "f": 1.5, "big": 18446744073709551615u64, "neg": -3})
+            )
         );
         let e = parse_yaml("a: {b: {c: {d: {e: 1}}}}", limits, &mut used).unwrap_err();
-        assert_eq!(e, "the model nests deeper than 4 levels, deeper than Model Tools reads");
+        assert_eq!(
+            e,
+            "the model nests deeper than 4 levels, deeper than Model Tools reads"
+        );
     }
 
     fn view(source: &str) -> View {
@@ -1498,14 +1516,29 @@ slots:
         let level = |class: &str| v.induced_slot("level", Some(class)).unwrap_or_default();
         assert_eq!(level("Tighter")["maximum_value"], 5);
         assert_eq!(level("Tighter")["minimum_value"], 2);
-        assert_eq!(level("Looser")["maximum_value"], 10, "a usage cannot widen a maximum");
+        assert_eq!(
+            level("Looser")["maximum_value"],
+            10,
+            "a usage cannot widen a maximum"
+        );
         assert_eq!(level("Looser")["minimum_value"], 0, "nor lower a minimum");
-        assert_eq!(v.class_slots("Tighter"), Ok(vec!["level".to_owned()]), "inherited once");
+        assert_eq!(
+            v.class_slots("Tighter"),
+            Ok(vec!["level".to_owned()]),
+            "inherited once"
+        );
         // Without a class a slot is a slot definition or any class's attribute.
-        assert_eq!(v.induced_slot("level", None).unwrap_or_default()["maximum_value"], 10);
+        assert_eq!(
+            v.induced_slot("level", None).unwrap_or_default()["maximum_value"],
+            10
+        );
         assert!(v.induced_slot("note", None).is_ok());
         // A slot whose parent is only an attribute inherits nothing from it, and stays a slot.
         assert!(v.induced_slot("derived", None).is_ok());
-        assert!(v.induced_slot("nowhere", None).unwrap_err().starts_with("No such slot nowhere"));
+        assert!(
+            v.induced_slot("nowhere", None)
+                .unwrap_err()
+                .starts_with("No such slot nowhere")
+        );
     }
 }

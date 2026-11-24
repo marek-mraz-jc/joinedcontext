@@ -567,7 +567,12 @@ slots:
             "classes:\n  A:\n    is_a: Entity\n    slots: [s]\nslots:\n  s:\n    annotations:\n      ngsi_ld_kind: Thing\n",
         );
         assert_eq!(bad.len(), 1, "{bad:?}");
-        assert!(bad[0].starts_with("slot 's' declares ngsi_ld_kind 'Thing', which is not one of Property, GeoProperty"), "{bad:?}");
+        assert!(
+            bad[0].starts_with(
+                "slot 's' declares ngsi_ld_kind 'Thing', which is not one of Property, GeoProperty"
+            ),
+            "{bad:?}"
+        );
     }
 
     #[test]
@@ -640,23 +645,44 @@ enums:
       on: {}
 ";
         let e = errors(body);
-        assert!(has(&e, "slots.count: primitive-range: count on A is a Relationship with the range integer"), "{e:?}");
-        assert!(has(&e, "slots.state: primitive-range: state on A is a Relationship with the range State"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                "slots.count: primitive-range: count on A is a Relationship with the range integer"
+            ),
+            "{e:?}"
+        );
+        assert!(
+            has(
+                &e,
+                "slots.state: primitive-range: state on A is a Relationship with the range State"
+            ),
+            "{e:?}"
+        );
         assert_eq!(e.len(), 2, "{e:?}");
     }
 
     #[test]
     fn on_delete_takes_one_of_three_rules_and_only_on_one_end() {
         let e = errors(&pair("      on_delete: explode\n", ""));
-        assert!(has(&e, "slots.here: on-delete-unknown: here on A has on_delete 'explode'; it is one of restrict, cascade, set-null"), "{e:?}");
-        let both = pair(
-            "      on_delete: cascade\n",
-            "      on_delete: restrict\n",
+        assert!(
+            has(
+                &e,
+                "slots.here: on-delete-unknown: here on A has on_delete 'explode'; it is one of restrict, cascade, set-null"
+            ),
+            "{e:?}"
         );
+        let both = pair("      on_delete: cascade\n", "      on_delete: restrict\n");
         let e = errors(&both);
         assert_eq!(e.len(), 1, "{e:?}");
-        assert!(e[0].contains("on-delete-on-both-ends: both here and there carry on_delete"), "{e:?}");
-        assert_eq!(errors(&pair("      on_delete: set-null\n", "")), Vec::<String>::new());
+        assert!(
+            e[0].contains("on-delete-on-both-ends: both here and there carry on_delete"),
+            "{e:?}"
+        );
+        assert_eq!(
+            errors(&pair("      on_delete: set-null\n", "")),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -678,7 +704,13 @@ slots:
       ngsi_ld_kind: Relationship
 ";
         let e = errors(body);
-        assert!(has(&e, "slots.link: slot-in-two-relationships: link is used by A and C"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                "slots.link: slot-in-two-relationships: link is used by A and C"
+            ),
+            "{e:?}"
+        );
         assert_eq!(e.len(), 1, "one entry for both ends: {e:?}");
     }
 
@@ -701,7 +733,13 @@ slots:
         assert_eq!(e, vec!["slots.b: inverse-missing: b (A → B) names no inverse; add the slot on B that points back".to_owned()]);
         let absent = none.replace("    range: B\n", "    range: B\n    inverse: gone\n");
         let e = errors(&absent);
-        assert_eq!(e, vec!["slots.b: inverse-missing: b names the inverse gone, which B does not have".to_owned()]);
+        assert_eq!(
+            e,
+            vec![
+                "slots.b: inverse-missing: b names the inverse gone, which B does not have"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -719,19 +757,38 @@ slots:
       ngsi_ld_kind: Relationship
 ";
         let e = errors(own);
-        assert!(has(&e, "slots.me: inverse-not-reciprocal: me names itself as its inverse"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                "slots.me: inverse-not-reciprocal: me names itself as its inverse"
+            ),
+            "{e:?}"
+        );
         // `there` is a Property, points elsewhere, or names another inverse: each is one-sided.
         for (b, why) in [
             ("    range: A\n    inverse: here\n", "a Property"),
-            ("    range: B\n    inverse: here\n    annotations:\n      ngsi_ld_kind: Relationship\n", "another range"),
-            ("    range: A\n    inverse: other\n    annotations:\n      ngsi_ld_kind: Relationship\n", "another inverse"),
+            (
+                "    range: B\n    inverse: here\n    annotations:\n      ngsi_ld_kind: Relationship\n",
+                "another range",
+            ),
+            (
+                "    range: A\n    inverse: other\n    annotations:\n      ngsi_ld_kind: Relationship\n",
+                "another inverse",
+            ),
         ] {
-            let body = pair("", "").split("  there:\n").next().unwrap_or_default().to_owned()
+            let body = pair("", "")
+                .split("  there:\n")
+                .next()
+                .unwrap_or_default()
+                .to_owned()
                 + "  there:\n"
                 + b;
             let e = errors(&body);
             assert!(
-                has(&e, "slots.here: inverse-not-reciprocal: here (A → B) names B.there as its inverse, which does not point back at A.here"),
+                has(
+                    &e,
+                    "slots.here: inverse-not-reciprocal: here (A → B) names B.there as its inverse, which does not point back at A.here"
+                ),
                 "{why}: {e:?}"
             );
         }
@@ -743,14 +800,23 @@ slots:
         let e = errors(&pair("", "    required: true\n"));
         assert_eq!(e, vec!["slots.there: required-on-computed-end: there on B is computed on read and cannot be required; make the stored end required instead".to_owned()]);
         // The stored end may be required.
-        assert_eq!(errors(&pair("    required: true\n", "")), Vec::<String>::new());
+        assert_eq!(
+            errors(&pair("    required: true\n", "")),
+            Vec::<String>::new()
+        );
         // One-to-many: the source holds many, the target one, so the source end is computed.
         let e = errors(&pair("    multivalued: true\n    required: true\n", ""));
         assert_eq!(e.len(), 1, "{e:?}");
-        assert!(e[0].starts_with("slots.here: required-on-computed-end: here on A"), "{e:?}");
+        assert!(
+            e[0].starts_with("slots.here: required-on-computed-end: here on A"),
+            "{e:?}"
+        );
         // on_delete names the source even when it comes second.
         let e = errors(&pair("    required: true\n", "      on_delete: cascade\n"));
-        assert!(e[0].starts_with("slots.here: required-on-computed-end"), "{e:?}");
+        assert!(
+            e[0].starts_with("slots.here: required-on-computed-end"),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -781,7 +847,10 @@ slots:
         assert_eq!(errors(body), Vec::<String>::new());
         let broken = body.replace("        range: B\n", "        range: string\n");
         let e = errors(&broken);
-        assert!(has(&e, "classes.A.attributes.owner: primitive-range"), "{e:?}");
+        assert!(
+            has(&e, "classes.A.attributes.owner: primitive-range"),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -801,8 +870,14 @@ slots:
 ";
         let e = errors(body);
         assert_eq!(e.len(), 1, "{e:?}");
-        assert!(e[0].starts_with("these unit mappings use a prefix the model does not declare"), "{e:?}");
-        assert!(e[0].ends_with("'t' → quantitykind:Temperature; 't' → qudt:DEG_C"), "sorted: {e:?}");
+        assert!(
+            e[0].starts_with("these unit mappings use a prefix the model does not declare"),
+            "{e:?}"
+        );
+        assert!(
+            e[0].ends_with("'t' → quantitykind:Temperature; 't' → qudt:DEG_C"),
+            "sorted: {e:?}"
+        );
         let declared = HEAD.replace(
             "prefixes:\n",
             "prefixes:\n  qudt: https://qudt.org/vocab/unit/\n  quantitykind: https://qudt.org/vocab/quantitykind/\n",
@@ -842,47 +917,138 @@ slots:
     #[test]
     fn a_data_structure_definition_with_its_dimensions_and_a_measure_compiles() {
         assert_eq!(errors(CUBE), Vec::<String>::new());
-        assert_eq!(errors(&CUBE.replace("qb_dsd: true", "qb_dsd: false").replace("      qb_component: dimension\n", "").replace("      qb_component: measure\n", "")), Vec::<String>::new());
+        assert_eq!(
+            errors(
+                &CUBE
+                    .replace("qb_dsd: true", "qb_dsd: false")
+                    .replace("      qb_component: dimension\n", "")
+                    .replace("      qb_component: measure\n", "")
+            ),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn a_dsd_flag_is_true_or_false() {
         let e = errors(&CUBE.replace("qb_dsd: true", "qb_dsd: maybe"));
-        assert!(has(&e, "class 'Reading' has qb_dsd 'maybe'; it is true or false"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                "class 'Reading' has qb_dsd 'maybe'; it is true or false"
+            ),
+            "{e:?}"
+        );
         // The class is no cube, so its components belong to none.
-        assert!(has(&e, "slot 'level' declares qb_component but no class using it is annotated qb_dsd: true"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                "slot 'level' declares qb_component but no class using it is annotated qb_dsd: true"
+            ),
+            "{e:?}"
+        );
     }
 
     #[test]
     fn each_component_rule_of_a_cube_is_named() {
         let place = |s: &str| format!("slot '{s}' of the DSD 'Reading'");
         let e = errors(&CUBE.replace("qb_component: measure", "qb_component: total"));
-        assert!(has(&e, &format!("{} has qb_component 'total'; it is dimension or measure", place("level"))), "{e:?}");
-        assert!(has(&e, "the DSD 'Reading' needs at least one dimension and one measure"), "{e:?}");
+        assert!(
+            has(
+                &e,
+                &format!(
+                    "{} has qb_component 'total'; it is dimension or measure",
+                    place("level")
+                )
+            ),
+            "{e:?}"
+        );
+        assert!(
+            has(
+                &e,
+                "the DSD 'Reading' needs at least one dimension and one measure"
+            ),
+            "{e:?}"
+        );
 
         let e = errors(&CUBE.replacen("    required: true\n", "    multivalued: true\n", 1));
-        assert!(has(&e, &format!("{} is a dimension and must be required", place("station"))), "{e:?}");
-        assert!(has(&e, &format!("{} is a dimension and holds one value per observation, so it cannot be multivalued", place("station"))), "{e:?}");
+        assert!(
+            has(
+                &e,
+                &format!("{} is a dimension and must be required", place("station"))
+            ),
+            "{e:?}"
+        );
+        assert!(
+            has(
+                &e,
+                &format!(
+                    "{} is a dimension and holds one value per observation, so it cannot be multivalued",
+                    place("station")
+                )
+            ),
+            "{e:?}"
+        );
 
         let e = errors(&CUBE.replace("      ngsi_ld_kind: VocabProperty\n", ""));
-        assert!(has(&e, &format!("{} is a dimension of kind Property with range string", place("station"))), "{e:?}");
+        assert!(
+            has(
+                &e,
+                &format!(
+                    "{} is a dimension of kind Property with range string",
+                    place("station")
+                )
+            ),
+            "{e:?}"
+        );
 
-        let e = errors(&CUBE.replace("    range: string\n", "    range: date\n").replace("      ngsi_ld_kind: VocabProperty\n", ""));
+        let e = errors(
+            &CUBE
+                .replace("    range: string\n", "    range: date\n")
+                .replace("      ngsi_ld_kind: VocabProperty\n", ""),
+        );
         assert!(has(&e, "the DSD 'Reading' has 2 time dimensions"), "{e:?}");
 
         let e = errors(&CUBE.replace("    unit:\n      ucum_code: m\n", ""));
-        assert!(has(&e, &format!("{} is a measure without a unit; give it one (DM-59)", place("level"))), "{e:?}");
+        assert!(
+            has(
+                &e,
+                &format!(
+                    "{} is a measure without a unit; give it one (DM-59)",
+                    place("level")
+                )
+            ),
+            "{e:?}"
+        );
 
-        let e = errors(&CUBE.replace("      qb_component: measure\n", "      qb_component: measure\n      ngsi_ld_kind: JsonProperty\n"));
-        assert!(has(&e, &format!("{} is a measure of kind JsonProperty; a measure is a Property", place("level"))), "{e:?}");
-        assert!(e.iter().all(|m| m.starts_with("the Data Structure Definition is not a cube: ")), "{e:?}");
+        let e = errors(&CUBE.replace(
+            "      qb_component: measure\n",
+            "      qb_component: measure\n      ngsi_ld_kind: JsonProperty\n",
+        ));
+        assert!(
+            has(
+                &e,
+                &format!(
+                    "{} is a measure of kind JsonProperty; a measure is a Property",
+                    place("level")
+                )
+            ),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .all(|m| m.starts_with("the Data Structure Definition is not a cube: ")),
+            "{e:?}"
+        );
     }
 
     #[test]
     fn a_unit_with_no_field_set_is_no_unit() {
         let e = errors(&CUBE.replace("      ucum_code: m\n", "      symbol: \"\"\n"));
         assert!(has(&e, "is a measure without a unit"), "{e:?}");
-        assert_eq!(errors(&CUBE.replace("      ucum_code: m\n", "      descriptive_name: metre\n")), Vec::<String>::new());
+        assert_eq!(
+            errors(&CUBE.replace("      ucum_code: m\n", "      descriptive_name: metre\n")),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
